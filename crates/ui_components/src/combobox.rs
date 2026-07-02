@@ -7,8 +7,7 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, Entity, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, anchored,
-    deferred, div,
+    ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayAnchorInput,
@@ -25,8 +24,9 @@ use crate::listbox::{
 };
 use crate::overlay::{
     GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
-    consume_overlay_event, emit_overlay_open_change, gpui_overlay_state, outside_press_open_change,
-    resolve_overlay_open_state, set_overlay_open,
+    consume_overlay_event, emit_overlay_open_change, gpui_overlay_state,
+    gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
+    set_overlay_open,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::text_editing::TextEditingPolicy;
@@ -1061,28 +1061,23 @@ impl RenderOnce for Combobox {
                     ),
             )
             .when(open, |this| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .anchor(placement.anchor())
-                            .offset(placement.offset())
-                            .snap_to_window_with_margin(placement.snap_margin())
-                            .child(combobox_content_element(
-                                content_id.clone(),
-                                listbox_id.clone(),
-                                debug_id.clone(),
-                                state.clone(),
-                                self.options,
-                                self.groups,
-                                input_controller.clone(),
-                                runtime.clone(),
-                                self.on_open_change.clone(),
-                                self.on_select.clone(),
-                                self.tokens,
-                            )),
-                    )
-                    .priority(overlay_adapter.deferred_priority()),
-                )
+                this.child(gpui_relative_overlay_layer(
+                    &overlay_adapter,
+                    &placement,
+                    combobox_content_element(
+                        content_id.clone(),
+                        listbox_id.clone(),
+                        debug_id.clone(),
+                        state.clone(),
+                        self.options,
+                        self.groups,
+                        input_controller.clone(),
+                        runtime.clone(),
+                        self.on_open_change.clone(),
+                        self.on_select.clone(),
+                        self.tokens,
+                    ),
+                ))
             })
     }
 }

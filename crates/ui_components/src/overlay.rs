@@ -1,11 +1,15 @@
 //! GPUI adapter helpers for shared overlay behavior.
 
-use open_gpui::{Anchor, App, Edges, Pixels, Point, Window, point, px};
+use open_gpui::{
+    Anchor, AnyElement, App, Edges, IntoElement, ParentElement, Pixels, Point, Window, anchored,
+    deferred, point, px,
+};
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
     OverlayAnchorInput, OverlayLayerKind, OverlayLayerPolicy, OverlayLayerState,
-    OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Rect,
-    UiPx,
+    OverlayPlacementAlignment, OverlayPlacementFit, OverlayPlacementInput,
+    OverlayPlacementResolution, OverlayPlacementSide, OverlayPlacementTrace, OverlayPresence, Rect,
+    UiPx, resolve_overlay_placement,
 };
 
 pub(crate) use crate::geometry::{gpui_point_from_ui, gpui_px_from_ui, ui_point_from_gpui};
@@ -196,58 +200,125 @@ pub fn gpui_overlay_state(overlay: &OverlayResolvedState) -> GpuiOverlayState {
 }
 
 /// Resolved GPUI placement state for an anchored overlay.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GpuiOverlayPlacement {
     anchor: Anchor,
     position: Option<Point<Pixels>>,
     offset: Point<Pixels>,
     snap_margin: Pixels,
-    safe_bounds: Option<Rect>,
+    resolution: OverlayPlacementResolution,
 }
 
 impl GpuiOverlayPlacement {
     /// Resolves GPUI placement fields from renderer-neutral placement input.
     pub fn resolve(input: OverlayPlacementInput, snap_margin: Pixels) -> Self {
+        let has_anchor_position = input.preferred_anchor_bounds().is_some();
+        let resolution = resolve_overlay_placement(input);
+
         Self {
-            anchor: gpui_anchor(input.side(), input.alignment()),
-            position: input
-                .preferred_anchor_bounds()
-                .map(|bounds| gpui_anchor_position(bounds, input.side(), input.alignment())),
-            offset: gpui_offset(input.side(), input.offset()),
+            anchor: gpui_anchor(resolution.side(), resolution.alignment()),
+            position: has_anchor_position.then(|| gpui_point_from_ui(resolution.anchor_point())),
+            offset: gpui_offset(resolution.side(), resolution.offset()),
             snap_margin,
-            safe_bounds: input.safe_bounds(),
+            resolution,
         }
     }
 
     /// Returns the GPUI anchor.
-    pub const fn anchor(self) -> Anchor {
+    pub const fn anchor(&self) -> Anchor {
         self.anchor
     }
 
     /// Returns the preferred window position.
-    pub const fn position(self) -> Option<Point<Pixels>> {
+    pub const fn position(&self) -> Option<Point<Pixels>> {
         self.position
     }
 
     /// Returns the GPUI offset.
-    pub const fn offset(self) -> Point<Pixels> {
+    pub const fn offset(&self) -> Point<Pixels> {
         self.offset
     }
 
     /// Returns the snap-to-window margin.
-    pub const fn snap_margin(self) -> Pixels {
+    pub const fn snap_margin(&self) -> Pixels {
         self.snap_margin
     }
 
     /// Returns the snap margin as GPUI edges.
-    pub fn snap_edges(self) -> Edges<Pixels> {
+    pub fn snap_edges(&self) -> Edges<Pixels> {
         self.snap_margin.into()
     }
 
     /// Returns the original safe bounds, when provided.
-    pub const fn safe_bounds(self) -> Option<Rect> {
-        self.safe_bounds
+    pub const fn safe_bounds(&self) -> Option<Rect> {
+        self.resolution.safe_bounds()
     }
+
+    /// Returns the renderer-neutral placement resolution.
+    pub const fn resolution(&self) -> &OverlayPlacementResolution {
+        &self.resolution
+    }
+
+    /// Returns the selected fit category.
+    pub const fn fit(&self) -> OverlayPlacementFit {
+        self.resolution.fit()
+    }
+
+    /// Returns the diagnostic placement trace.
+    pub const fn trace(&self) -> &OverlayPlacementTrace {
+        self.resolution.trace()
+    }
+}
+
+/// Builds a deferred GPUI anchored overlay without forcing a window position.
+pub(crate) fn gpui_relative_overlay_layer(
+    adapter: &GpuiOverlayState,
+    placement: &GpuiOverlayPlacement,
+    child: impl IntoElement,
+) -> AnyElement {
+    deferred(
+        anchored()
+            .anchor(placement.anchor())
+            .offset(placement.offset())
+            .snap_to_window_with_margin(placement.snap_edges())
+            .child(child),
+    )
+    .priority(adapter.deferred_priority())
+    .into_any_element()
+}
+
+/// Builds a deferred GPUI anchored overlay at the resolved window position.
+pub(crate) fn gpui_positioned_overlay_layer(
+    adapter: &GpuiOverlayState,
+    placement: &GpuiOverlayPlacement,
+    fallback_position: Point<Pixels>,
+    child: impl IntoElement,
+) -> AnyElement {
+    deferred(
+        anchored()
+            .position(placement.position().unwrap_or(fallback_position))
+            .anchor(placement.anchor())
+            .offset(placement.offset())
+            .snap_to_window_with_margin(placement.snap_edges())
+            .child(child),
+    )
+    .priority(adapter.deferred_priority())
+    .into_any_element()
+}
+
+/// Builds a deferred GPUI full-window overlay layer.
+pub(crate) fn gpui_full_window_overlay_layer(
+    adapter: &GpuiOverlayState,
+    child: impl IntoElement,
+) -> AnyElement {
+    deferred(
+        anchored()
+            .position(point(px(0.0), px(0.0)))
+            .snap_to_window()
+            .child(child),
+    )
+    .priority(adapter.deferred_priority())
+    .into_any_element()
 }
 
 /// Resolved open-change request emitted by overlay adapters.
@@ -594,24 +665,6 @@ pub const fn gpui_anchor(
         (OverlayPlacementSide::Bottom, OverlayPlacementAlignment::End) => Anchor::TopRight,
         (OverlayPlacementSide::Left, _) => Anchor::RightCenter,
     }
-}
-
-fn gpui_anchor_position(
-    bounds: Rect,
-    side: OverlayPlacementSide,
-    alignment: OverlayPlacementAlignment,
-) -> Point<Pixels> {
-    let point = match (side, alignment) {
-        (OverlayPlacementSide::Top, OverlayPlacementAlignment::Start) => bounds.top_left(),
-        (OverlayPlacementSide::Top, OverlayPlacementAlignment::Center) => bounds.top_center(),
-        (OverlayPlacementSide::Top, OverlayPlacementAlignment::End) => bounds.top_right(),
-        (OverlayPlacementSide::Right, _) => bounds.right_center(),
-        (OverlayPlacementSide::Bottom, OverlayPlacementAlignment::Start) => bounds.bottom_left(),
-        (OverlayPlacementSide::Bottom, OverlayPlacementAlignment::Center) => bounds.bottom_center(),
-        (OverlayPlacementSide::Bottom, OverlayPlacementAlignment::End) => bounds.bottom_right(),
-        (OverlayPlacementSide::Left, _) => bounds.left_center(),
-    };
-    gpui_point_from_ui(point)
 }
 
 fn gpui_offset(side: OverlayPlacementSide, offset: UiPx) -> Point<Pixels> {

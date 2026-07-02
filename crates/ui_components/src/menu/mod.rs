@@ -13,8 +13,7 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent, ParentElement,
-    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, anchored,
-    deferred, div,
+    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
@@ -26,7 +25,8 @@ use crate::a11y::UiA11yElementExt;
 use crate::focus::focus_ring_shadow;
 
 use crate::overlay::{
-    GpuiOverlayPlacement, consume_overlay_event, emit_overlay_open_change, gpui_overlay_state,
+    GpuiOverlayPlacement, GpuiOverlayState, consume_overlay_event, emit_overlay_open_change,
+    gpui_overlay_state, gpui_positioned_overlay_layer, gpui_relative_overlay_layer,
     outside_press_open_change, resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
@@ -699,31 +699,26 @@ impl RenderOnce for Menu {
                     .child(trigger_label),
             )
             .when(open, |this| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .anchor(placement.anchor())
-                            .offset(placement.offset())
-                            .snap_to_window_with_margin(placement.snap_margin())
-                            .child(menu_content_element(
-                                items,
-                                content_id.clone(),
-                                debug_id.clone(),
-                                state.clone(),
-                                runtime.clone(),
-                                trigger_focus_for_content.clone(),
-                                content_focus.clone(),
-                                scroll_handle.clone(),
-                                focus_restore_for_content.clone(),
-                                on_open_change.clone(),
-                                on_select.clone(),
-                                cx,
-                                overlay_adapter.snap_margin(),
-                                overlay_adapter.deferred_priority(),
-                            )),
-                    )
-                    .priority(overlay_adapter.deferred_priority()),
-                )
+                this.child(gpui_relative_overlay_layer(
+                    &overlay_adapter,
+                    &placement,
+                    menu_content_element(
+                        items,
+                        content_id.clone(),
+                        debug_id.clone(),
+                        state.clone(),
+                        runtime.clone(),
+                        trigger_focus_for_content.clone(),
+                        content_focus.clone(),
+                        scroll_handle.clone(),
+                        focus_restore_for_content.clone(),
+                        on_open_change.clone(),
+                        on_select.clone(),
+                        cx,
+                        overlay_adapter.snap_margin(),
+                        overlay_adapter.deferred_priority(),
+                    ),
+                ))
             })
     }
 }
@@ -1060,18 +1055,16 @@ fn menu_submenu_layer(
         deferred_priority,
     );
 
-    Some(
-        deferred(
-            anchored()
-                .position(placement.position().unwrap_or_default())
-                .anchor(placement.anchor())
-                .offset(placement.offset())
-                .snap_to_window_with_margin(placement.snap_margin())
-                .child(submenu_surface),
-        )
-        .priority(deferred_priority)
-        .into_any_element(),
-    )
+    Some(gpui_positioned_overlay_layer(
+        &GpuiOverlayState::resolve(
+            state.overlay().policy().clone(),
+            deferred_priority,
+            snap_margin,
+        ),
+        &placement,
+        placement.position().unwrap_or_default(),
+        submenu_surface,
+    ))
 }
 
 fn menu_item_elements(

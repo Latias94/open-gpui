@@ -7,7 +7,7 @@ use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, Pixels, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window,
-    anchored, deferred, div, point, px,
+    div, px,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
@@ -20,8 +20,9 @@ use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
     OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
-    consume_overlay_event, emit_overlay_open_change, escape_open_change, gpui_overlay_state,
-    outside_press_open_change, resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
+    consume_overlay_event, emit_overlay_open_change, escape_open_change,
+    gpui_full_window_overlay_layer, gpui_overlay_state, outside_press_open_change,
+    resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
 };
 use crate::theme::{ThemeContext, ThemeResolver};
 
@@ -1008,27 +1009,22 @@ impl RenderOnce for AlertDialog {
                     .child(trigger_label),
             )
             .when(open, |this| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .position(point(px(0.0), px(0.0)))
-                            .snap_to_window()
-                            .child(alert_dialog_layer_element(
-                                content_id.clone(),
-                                debug_id.clone(),
-                                state.clone(),
-                                &theme,
-                                viewport,
-                                runtime.clone(),
-                                cancel_focus.clone(),
-                                action_focus.clone(),
-                                on_cancel.clone(),
-                                on_action.clone(),
-                                on_open_change.clone(),
-                            )),
-                    )
-                    .priority(overlay_adapter.deferred_priority()),
-                )
+                this.child(gpui_full_window_overlay_layer(
+                    &overlay_adapter,
+                    alert_dialog_layer_element(
+                        content_id.clone(),
+                        debug_id.clone(),
+                        state.clone(),
+                        &theme,
+                        viewport,
+                        runtime.clone(),
+                        cancel_focus.clone(),
+                        action_focus.clone(),
+                        on_cancel.clone(),
+                        on_action.clone(),
+                        on_open_change.clone(),
+                    ),
+                ))
             })
     }
 }

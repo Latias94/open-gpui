@@ -7,7 +7,7 @@ use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, Pixels, RenderOnce, SharedString, StatefulInteractiveElement,
-    Styled, Window, anchored, deferred, div, point, px,
+    Styled, Window, div, px,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
@@ -20,8 +20,9 @@ use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::geometry::ui_size_from_gpui_size;
 use crate::overlay::{
     OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
-    consume_overlay_event, emit_overlay_open_change, escape_open_change, gpui_overlay_state,
-    outside_press_open_change, resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
+    consume_overlay_event, emit_overlay_open_change, escape_open_change,
+    gpui_full_window_overlay_layer, gpui_overlay_state, outside_press_open_change,
+    resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
 };
 use crate::theme::ThemeResolver;
 
@@ -934,25 +935,20 @@ impl RenderOnce for Sheet {
                     .child(trigger_label),
             )
             .when(open, |this| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .position(point(px(0.0), px(0.0)))
-                            .snap_to_window()
-                            .child(sheet_layer_element(
-                                content,
-                                content_id.clone(),
-                                debug_id.clone(),
-                                state.clone(),
-                                viewport,
-                                runtime.clone(),
-                                close_focus.clone(),
-                                on_close.clone(),
-                                on_open_change.clone(),
-                            )),
-                    )
-                    .priority(overlay_adapter.deferred_priority()),
-                )
+                this.child(gpui_full_window_overlay_layer(
+                    &overlay_adapter,
+                    sheet_layer_element(
+                        content,
+                        content_id.clone(),
+                        debug_id.clone(),
+                        state.clone(),
+                        viewport,
+                        runtime.clone(),
+                        close_focus.clone(),
+                        on_close.clone(),
+                        on_open_change.clone(),
+                    ),
+                ))
             })
     }
 }

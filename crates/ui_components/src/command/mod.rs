@@ -12,7 +12,7 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, anchored, deferred, div, point, px,
+    StatefulInteractiveElement, Styled, Window, div, point, px,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, Role, Sizable,
@@ -22,7 +22,8 @@ use open_gpui_ui_core::{
 use crate::a11y::UiA11yElementExt;
 use crate::focus::focus_ring_shadow;
 use crate::overlay::{
-    emit_overlay_open_change, gpui_overlay_state, resolve_overlay_open_state, set_overlay_open,
+    emit_overlay_open_change, gpui_full_window_overlay_layer, gpui_overlay_state,
+    resolve_overlay_open_state, set_overlay_open,
 };
 use crate::text_editing::TextEditingPolicy;
 use crate::text_input::TextInputDisplayMode;
@@ -593,10 +594,10 @@ impl RenderOnce for Command {
         let focus_ring = state.focus_ring();
         let dialog_state = state.dialog().cloned();
         let dialog_open = dialog_state.clone().filter(|_| state.open());
-        let dialog_priority = dialog_state
+        let dialog_overlay_adapter = dialog_state
             .as_ref()
-            .map(|dialog| gpui_overlay_state(dialog.overlay()).deferred_priority())
-            .unwrap_or_else(|| gpui_overlay_state(state.overlay()).deferred_priority());
+            .map(|dialog| gpui_overlay_state(dialog.overlay()))
+            .unwrap_or_else(|| gpui_overlay_state(state.overlay()));
         let viewport = window.viewport_size();
         let dialog_enabled = self.dialog_enabled;
         let trigger_label = self.trigger_label;
@@ -683,33 +684,28 @@ impl RenderOnce for Command {
                 ))
             })
             .when_some(dialog_open, |this, dialog_state| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .position(point(px(0.0), px(0.0)))
-                            .snap_to_window()
-                            .child(command_dialog_layer_element(
-                                content_id,
-                                input_id,
-                                listbox_id,
-                                debug_id,
-                                state,
-                                scroll_handle,
-                                viewport_extent,
-                                scroll_offset,
-                                dialog_state,
-                                viewport,
-                                input_controller,
-                                runtime,
-                                on_open_change,
-                                on_query_change,
-                                on_select,
-                                on_selected_values_change,
-                                tokens,
-                            )),
-                    )
-                    .priority(dialog_priority),
-                )
+                this.child(gpui_full_window_overlay_layer(
+                    &dialog_overlay_adapter,
+                    command_dialog_layer_element(
+                        content_id,
+                        input_id,
+                        listbox_id,
+                        debug_id,
+                        state,
+                        scroll_handle,
+                        viewport_extent,
+                        scroll_offset,
+                        dialog_state,
+                        viewport,
+                        input_controller,
+                        runtime,
+                        on_open_change,
+                        on_query_change,
+                        on_select,
+                        on_selected_values_change,
+                        tokens,
+                    ),
+                ))
             })
     }
 }

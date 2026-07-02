@@ -125,10 +125,19 @@ fn overlay_placement_maps_to_gpui_anchor_and_margin() {
 
     let placement = GpuiOverlayPlacement::resolve(input, DEFAULT_OVERLAY_SAFE_MARGIN);
 
-    assert_eq!(placement.anchor(), Anchor::TopRight);
+    assert_eq!(placement.anchor(), Anchor::TopLeft);
     assert_eq!(placement.snap_margin(), DEFAULT_OVERLAY_SAFE_MARGIN);
     assert!(placement.position().is_some());
     assert_eq!(placement.safe_bounds(), input.safe_bounds());
+    assert_eq!(
+        placement.fit().as_str(),
+        "aligned",
+        "adapter should consume the shared placement solver before mapping to a GPUI anchor"
+    );
+    assert_eq!(
+        placement.trace().selected().alignment(),
+        OverlayPlacementAlignment::Start
+    );
 }
 
 #[test]

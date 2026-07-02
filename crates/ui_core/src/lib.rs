@@ -43,10 +43,12 @@ pub use overlay::{
     FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,
     OutsidePressResolution, OverlayAnchorInput, OverlayEdges, OverlayFocusTarget, OverlayLayer,
     OverlayLayerId, OverlayLayerKind, OverlayLayerPolicy, OverlayLayerState,
-    OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, OverlayPresence,
-    OverlayResolvedState, OverlaySize, Rect, anchor_rect_from_point, inset_rect,
-    outer_bounds_with_window_margin, prefer_visual_bounds, rect, resolve_escape_key,
-    resolve_focus_restore, resolve_outside_press,
+    OverlayPlacementAlignment, OverlayPlacementFit, OverlayPlacementInput,
+    OverlayPlacementResolution, OverlayPlacementSide, OverlayPlacementTrace,
+    OverlayPlacementTraceStep, OverlayPresence, OverlayResolvedState, OverlaySize, Rect,
+    anchor_rect_from_point, inset_rect, outer_bounds_with_window_margin, prefer_visual_bounds,
+    rect, resolve_escape_key, resolve_focus_restore, resolve_outside_press,
+    resolve_overlay_placement,
 };
 pub use sizing::{Density, Sizable, Size};
 pub use split::{

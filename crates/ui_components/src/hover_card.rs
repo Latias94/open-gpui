@@ -7,7 +7,7 @@ use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
-    Task, Window, anchored, deferred, div,
+    Task, Window, div,
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -21,7 +21,7 @@ use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
     GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
     consume_overlay_event, emit_overlay_open_change, escape_open_change, gpui_overlay_state,
-    outside_press_open_change, resolve_overlay_open_state,
+    gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
 };
 use crate::theme::ThemeResolver;
 
@@ -940,24 +940,19 @@ impl RenderOnce for HoverCard {
                     .child(trigger_label),
             )
             .when(open, |this| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .anchor(placement.anchor())
-                            .offset(placement.offset())
-                            .snap_to_window_with_margin(placement.snap_margin())
-                            .child(hover_card_content_element(
-                                content,
-                                content_id.clone(),
-                                state.clone(),
-                                runtime.clone(),
-                                content_focus.clone(),
-                                on_open_change.clone(),
-                                debug_id.clone(),
-                            )),
-                    )
-                    .priority(overlay_adapter.deferred_priority()),
-                )
+                this.child(gpui_relative_overlay_layer(
+                    &overlay_adapter,
+                    &placement,
+                    hover_card_content_element(
+                        content,
+                        content_id.clone(),
+                        state.clone(),
+                        runtime.clone(),
+                        content_focus.clone(),
+                        on_open_change.clone(),
+                        debug_id.clone(),
+                    ),
+                ))
             })
     }
 }

@@ -10,7 +10,7 @@ use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent, MouseButton, ParentElement,
     Pixels, Point, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
-    Window, anchored, deferred, div, px,
+    Window, div, px,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, Role, Sizable,
@@ -26,7 +26,8 @@ use crate::menu::{
 };
 use crate::overlay::{
     GpuiOverlayPlacement, consume_overlay_event, emit_overlay_open_change, gpui_overlay_state,
-    outside_press_open_change, resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
+    gpui_positioned_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
+    restore_overlay_focus, set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::ThemeResolver;
@@ -300,31 +301,24 @@ impl RenderOnce for ContextMenu {
                     .child(label),
             )
             .when(state.open(), |this| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .position(
-                                placement
-                                    .position()
-                                    .unwrap_or(gpui_point_from_ui(state.anchor_point())),
-                            )
-                            .snap_to_window_with_margin(placement.snap_margin())
-                            .child(context_menu_surface(
-                                items,
-                                surface_id.clone(),
-                                debug_id.clone(),
-                                state.clone(),
-                                runtime.clone(),
-                                trigger_focus.clone(),
-                                content_focus.clone(),
-                                scroll_handle.clone(),
-                                focus_restore.clone(),
-                                on_open_change.clone(),
-                                on_select.clone(),
-                            )),
-                    )
-                    .priority(overlay_adapter.deferred_priority()),
-                )
+                this.child(gpui_positioned_overlay_layer(
+                    &overlay_adapter,
+                    &placement,
+                    gpui_point_from_ui(state.anchor_point()),
+                    context_menu_surface(
+                        items,
+                        surface_id.clone(),
+                        debug_id.clone(),
+                        state.clone(),
+                        runtime.clone(),
+                        trigger_focus.clone(),
+                        content_focus.clone(),
+                        scroll_handle.clone(),
+                        focus_restore.clone(),
+                        on_open_change.clone(),
+                        on_select.clone(),
+                    ),
+                ))
             })
     }
 }
