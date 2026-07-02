@@ -195,15 +195,15 @@ impl<K, V> MotionSnapshot<K, V> {
 
 /// A target item paired with the currently sampled value for the same identity.
 #[derive(Debug, Clone, PartialEq)]
-pub struct MotionRetargetItem<K, V> {
+pub struct MotionRetargetItem<K, S, T = S> {
     id: K,
-    sampled: Option<V>,
-    target: V,
+    sampled: Option<S>,
+    target: T,
 }
 
-impl<K, V> MotionRetargetItem<K, V> {
+impl<K, S, T> MotionRetargetItem<K, S, T> {
     /// Creates a retargeted item.
-    pub const fn new(id: K, sampled: Option<V>, target: V) -> Self {
+    pub const fn new(id: K, sampled: Option<S>, target: T) -> Self {
         Self {
             id,
             sampled,
@@ -217,46 +217,49 @@ impl<K, V> MotionRetargetItem<K, V> {
     }
 
     /// Returns the sampled value when the identity existed in the interrupted transition.
-    pub const fn sampled(&self) -> Option<&V> {
+    pub const fn sampled(&self) -> Option<&S> {
         self.sampled.as_ref()
     }
 
     /// Returns the target value.
-    pub const fn target(&self) -> &V {
+    pub const fn target(&self) -> &T {
         &self.target
     }
 
     /// Consumes the item and returns its parts.
-    pub fn into_parts(self) -> (K, Option<V>, V) {
+    pub fn into_parts(self) -> (K, Option<S>, T) {
         (self.id, self.sampled, self.target)
     }
 }
 
 /// Stable-id retargeting result for a new target set.
 #[derive(Debug, Clone, PartialEq)]
-pub struct MotionRetargetSet<K, V> {
-    targets: Vec<MotionRetargetItem<K, V>>,
-    leaving: Vec<MotionSnapshot<K, V>>,
+pub struct MotionRetargetSet<K, S, T = S> {
+    targets: Vec<MotionRetargetItem<K, S, T>>,
+    leaving: Vec<MotionSnapshot<K, S>>,
 }
 
-impl<K, V> MotionRetargetSet<K, V> {
+impl<K, S, T> MotionRetargetSet<K, S, T> {
     /// Creates a retarget set.
-    pub fn new(targets: Vec<MotionRetargetItem<K, V>>, leaving: Vec<MotionSnapshot<K, V>>) -> Self {
+    pub fn new(
+        targets: Vec<MotionRetargetItem<K, S, T>>,
+        leaving: Vec<MotionSnapshot<K, S>>,
+    ) -> Self {
         Self { targets, leaving }
     }
 
     /// Returns the target items in target order.
-    pub fn targets(&self) -> &[MotionRetargetItem<K, V>] {
+    pub fn targets(&self) -> &[MotionRetargetItem<K, S, T>] {
         &self.targets
     }
 
     /// Returns sampled items that were not present in the target set.
-    pub fn leaving(&self) -> &[MotionSnapshot<K, V>] {
+    pub fn leaving(&self) -> &[MotionSnapshot<K, S>] {
         &self.leaving
     }
 
     /// Consumes the set and returns its parts.
-    pub fn into_parts(self) -> (Vec<MotionRetargetItem<K, V>>, Vec<MotionSnapshot<K, V>>) {
+    pub fn into_parts(self) -> (Vec<MotionRetargetItem<K, S, T>>, Vec<MotionSnapshot<K, S>>) {
         (self.targets, self.leaving)
     }
 }
@@ -265,10 +268,10 @@ impl<K, V> MotionRetargetSet<K, V> {
 ///
 /// The returned targets preserve target order. The returned leaving snapshots preserve sampled
 /// order for identities that are absent from the target set.
-pub fn retarget_motion_snapshots<K, V>(
-    sampled: impl IntoIterator<Item = MotionSnapshot<K, V>>,
-    targets: impl IntoIterator<Item = MotionSnapshot<K, V>>,
-) -> MotionRetargetSet<K, V>
+pub fn retarget_motion_snapshots<K, S, T>(
+    sampled: impl IntoIterator<Item = MotionSnapshot<K, S>>,
+    targets: impl IntoIterator<Item = MotionSnapshot<K, T>>,
+) -> MotionRetargetSet<K, S, T>
 where
     K: Clone + Eq + Hash,
 {

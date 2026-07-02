@@ -8,8 +8,9 @@ use crate::{
     },
 };
 use open_gpui::{Bounds, Pixels, Window, point, px, size};
-use open_gpui_ui_core::MotionSpec;
-use std::collections::HashMap;
+use open_gpui_ui_core::{
+    MotionSnapshot, MotionSpec, MotionTimeline, MotionTimelineSample, retarget_motion_snapshots,
+};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -17,8 +18,8 @@ pub(crate) struct DockTransitionExecution {
     pub(crate) plan: DockTransitionPlan,
     pub(crate) spec: MotionSpec,
     pub(crate) state: DockTransitionExecutionState,
+    timeline: MotionTimeline,
     last_sample: Option<DockTransitionSample>,
-    started_at: Option<Instant>,
     #[cfg(test)]
     test_started_at: Option<Duration>,
 }
@@ -115,12 +116,15 @@ impl DockTransitionExecutor {
             plan,
             spec,
             state,
+            timeline: MotionTimeline::new(
+                if state == DockTransitionExecutionState::Immediate {
+                    MotionSpec::immediate()
+                } else {
+                    spec
+                },
+                Instant::now(),
+            ),
             last_sample: None,
-            started_at: if state == DockTransitionExecutionState::Scheduled {
-                Some(Instant::now())
-            } else {
-                None
-            },
             #[cfg(test)]
             test_started_at: None,
         });
@@ -140,22 +144,13 @@ impl DockTransitionExecutor {
             return Some(sample.clone());
         }
 
-        let elapsed = execution
-            .started_at
-            .map(|started_at| started_at.elapsed())
-            .unwrap_or(Duration::ZERO);
-        let sample = sample_execution(execution, elapsed);
+        let sample = sample_execution(execution, execution.timeline.sample(Instant::now()));
         execution.last_sample = Some(sample.clone());
         (!sample.complete).then_some(sample)
     }
 
     pub(crate) fn sample(&mut self, window: Option<&Window>) -> Option<DockTransitionSample> {
-        let sample = self.sample_elapsed(|execution| {
-            execution
-                .started_at
-                .map(|started_at| started_at.elapsed())
-                .unwrap_or(Duration::ZERO)
-        })?;
+        let sample = self.sample_timeline(|execution| execution.timeline.sample(Instant::now()))?;
         if sample.needs_frame
             && let Some(window) = window
         {
@@ -170,19 +165,22 @@ impl DockTransitionExecutor {
 
     #[cfg(test)]
     pub(crate) fn sample_for_test(&mut self, now: Duration) -> Option<DockTransitionSample> {
-        self.sample_elapsed(|execution| {
+        self.sample_timeline(|execution| {
             let started_at = *execution.test_started_at.get_or_insert(now);
-            now.saturating_sub(started_at)
+            MotionTimeline::sample_elapsed(
+                execution.timeline.spec(),
+                now.saturating_sub(started_at),
+            )
         })
     }
 
-    fn sample_elapsed(
+    fn sample_timeline(
         &mut self,
-        elapsed_for: impl FnOnce(&mut DockTransitionExecution) -> Duration,
+        timeline_sample_for: impl FnOnce(&mut DockTransitionExecution) -> MotionTimelineSample,
     ) -> Option<DockTransitionSample> {
         let execution = self.current.as_mut()?;
-        let elapsed = elapsed_for(execution);
-        let sample = sample_execution(execution, elapsed);
+        let timeline_sample = timeline_sample_for(execution);
+        let sample = sample_execution(execution, timeline_sample);
         execution.last_sample = Some(sample.clone());
         if sample.complete {
             self.current = None;
@@ -193,15 +191,16 @@ impl DockTransitionExecutor {
 
 fn sample_execution(
     execution: &DockTransitionExecution,
-    elapsed: Duration,
+    timeline_sample: MotionTimelineSample,
 ) -> DockTransitionSample {
-    let progress = transition_progress(execution.spec, execution.state, elapsed);
-    let complete = execution.state == DockTransitionExecutionState::Immediate || progress >= 1.0;
+    let progress = timeline_sample.progress();
+    let complete = execution.state == DockTransitionExecutionState::Immediate
+        || timeline_sample.reached_final_state();
     DockTransitionSample {
         final_scene: execution.plan.final_scene.clone(),
         progress,
         complete,
-        needs_frame: !complete,
+        needs_frame: timeline_sample.is_active() && !complete,
         pane_bounds: pane_bounds_samples(&execution.plan, progress),
         pane_clips: execution
             .plan
@@ -222,17 +221,6 @@ fn sample_execution(
             .map(|transition| overlay_sample(transition, progress))
             .collect(),
     }
-}
-
-fn transition_progress(
-    spec: MotionSpec,
-    state: DockTransitionExecutionState,
-    elapsed: Duration,
-) -> f32 {
-    if state == DockTransitionExecutionState::Immediate || spec.is_immediate() {
-        return 1.0;
-    }
-    spec.progress_at(elapsed)
 }
 
 fn pane_bounds_samples(plan: &DockTransitionPlan, progress: f32) -> Vec<DockPaneBoundsSample> {
@@ -273,28 +261,42 @@ fn retarget_plan_from_sample(
     mut plan: DockTransitionPlan,
     sample: &DockTransitionSample,
 ) -> DockTransitionPlan {
-    let pane_bounds = sample
-        .pane_bounds
-        .iter()
-        .map(|pane| (pane.node, pane.bounds))
-        .collect::<HashMap<_, _>>();
+    let pane_retargets = retarget_motion_snapshots(
+        sample
+            .pane_bounds
+            .iter()
+            .map(|pane| MotionSnapshot::new(pane.node, pane.bounds)),
+        plan.pane_transitions
+            .iter()
+            .enumerate()
+            .map(|(index, transition)| MotionSnapshot::new(transition.node, index)),
+    );
     let scene_bounds = plan.final_scene.bounds;
-    for transition in &mut plan.pane_transitions {
-        if let Some(bounds) = pane_bounds.get(&transition.node).copied() {
-            retarget_pane_transition(transition, bounds, scene_bounds);
+    for retarget in pane_retargets.targets() {
+        if let Some(bounds) = retarget.sampled().copied() {
+            retarget_pane_transition(
+                &mut plan.pane_transitions[*retarget.target()],
+                bounds,
+                scene_bounds,
+            );
         }
     }
 
-    let divider_bounds = sample
-        .dividers
-        .iter()
-        .map(|divider| ((divider.split, divider.index), divider.bounds))
-        .collect::<HashMap<_, _>>();
-    for transition in &mut plan.divider_transitions {
-        if let Some(bounds) = divider_bounds
-            .get(&(transition.split, transition.index))
-            .copied()
-        {
+    let divider_retargets = retarget_motion_snapshots(
+        sample
+            .dividers
+            .iter()
+            .map(|divider| MotionSnapshot::new((divider.split, divider.index), divider.bounds)),
+        plan.divider_transitions
+            .iter()
+            .enumerate()
+            .map(|(index, transition)| {
+                MotionSnapshot::new((transition.split, transition.index), index)
+            }),
+    );
+    for retarget in divider_retargets.targets() {
+        if let Some(bounds) = retarget.sampled().copied() {
+            let transition = &mut plan.divider_transitions[*retarget.target()];
             transition.from = Some(bounds);
             transition.kind = if bounds == transition.to {
                 DockDividerTransitionKind::Unchanged
@@ -304,16 +306,22 @@ fn retarget_plan_from_sample(
         }
     }
 
-    let overlay_bounds = sample
-        .overlays
-        .iter()
-        .map(|overlay| (overlay_key(overlay), overlay.bounds))
-        .collect::<HashMap<_, _>>();
-    for transition in &mut plan.overlay_transitions {
+    let overlay_retargets = retarget_motion_snapshots(
+        sample
+            .overlays
+            .iter()
+            .map(|overlay| MotionSnapshot::new(overlay_key(overlay), overlay.bounds)),
+        plan.overlay_transitions
+            .iter()
+            .enumerate()
+            .map(|(index, transition)| MotionSnapshot::new(transition_key(transition), index)),
+    );
+    for retarget in overlay_retargets.targets() {
+        let transition = &mut plan.overlay_transitions[*retarget.target()];
         if !transition.kind.animates_from_previous_bounds() {
             continue;
         }
-        if let Some(bounds) = overlay_bounds.get(&transition_key(transition)).copied() {
+        if let Some(bounds) = retarget.sampled().copied() {
             transition.from_bounds = Some(bounds);
         }
     }
