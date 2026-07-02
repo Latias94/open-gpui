@@ -723,6 +723,10 @@ clamping handle deltas; tests should exercise those rules without a GPUI window.
 feed to renderers, overlays, hit maps, accessibility descriptors, or motion plans. `SplitterHitMap`
 consumes those resolved handle rectangles and owns handle/junction precedence; component and
 docking adapters should not carry their own handle hit solvers once the scene is available.
+`SplitterLayoutTransition` is the matching renderer-neutral programmatic motion descriptor: it diffs
+two resolved scenes into panel and handle transitions for insert, remove, collapse, expand, and
+resize intents. The descriptor owns geometry and motion intent only; GPUI adapters own frame
+scheduling, interruption policy, and actual rendering.
 
 The GPUI `Splitter` adapter renders resolved panel fractions and resize handles from that state and
 wires pointer dragging through keyed runtime state. Drag move events use the root splitter bounds to

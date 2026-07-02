@@ -51,10 +51,12 @@ pub use overlay::{
 pub use sizing::{Density, Sizable, Size};
 pub use split::{
     SplitTreeChild, SplitTreeNode, SplitterHandleLayout, SplitterHandlePlacement,
-    SplitterHandleState, SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion,
-    SplitterLayoutScene, SplitterMetrics, SplitterPanelDescriptor, SplitterPanelLayout,
-    SplitterPanelState, SplitterResizeOutcome, SplitterResizeResult, SplitterState,
-    normalize_split_fractions, resize_split_fractions_by_pixels, resolve_split_fractions,
+    SplitterHandleState, SplitterHandleTransition, SplitterHandleTransitionKind, SplitterHitMap,
+    SplitterHitTarget, SplitterJunctionHitRegion, SplitterLayoutScene, SplitterLayoutTransition,
+    SplitterMetrics, SplitterPanelDescriptor, SplitterPanelLayout, SplitterPanelState,
+    SplitterPanelTransition, SplitterPanelTransitionKind, SplitterResizeOutcome,
+    SplitterResizeResult, SplitterState, SplitterTransitionIntent, normalize_split_fractions,
+    resize_split_fractions_by_pixels, resolve_split_fractions,
     resolve_split_fractions_with_fill_child,
 };
 pub use table::{

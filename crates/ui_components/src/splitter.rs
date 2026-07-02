@@ -12,10 +12,11 @@ use open_gpui_ui_core::{Orientation, Sizable, Size};
 const EPSILON: f32 = 0.000_1;
 
 pub use open_gpui_ui_core::{
-    SplitterHandleLayout, SplitterHandleState, SplitterHitMap, SplitterHitTarget,
-    SplitterJunctionHitRegion, SplitterLayoutScene, SplitterMetrics, SplitterPanelDescriptor,
-    SplitterPanelLayout, SplitterPanelState, SplitterResizeOutcome, SplitterResizeResult,
-    SplitterState,
+    SplitterHandleLayout, SplitterHandleState, SplitterHandleTransition,
+    SplitterHandleTransitionKind, SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion,
+    SplitterLayoutScene, SplitterLayoutTransition, SplitterMetrics, SplitterPanelDescriptor,
+    SplitterPanelLayout, SplitterPanelState, SplitterPanelTransition, SplitterPanelTransitionKind,
+    SplitterResizeOutcome, SplitterResizeResult, SplitterState, SplitterTransitionIntent,
 };
 
 #[derive(Debug, Clone, Default)]
