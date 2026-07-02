@@ -2,11 +2,12 @@ use jellyflow::{
     NodeGraphStore,
     core::{
         CanvasPoint as JellyPoint, CanvasRect as JellyRect, CanvasSize as JellySize, Edge,
-        EdgeId as JellyEdgeId, Graph, GraphOp, GraphTransaction, Node, NodeId as JellyNodeId,
-        NodeKindKey, PortDirection, PortId as JellyPortId, PortKey,
+        EdgeId as JellyEdgeId, Graph, GraphOp, GraphTransaction, Node, NodeGraphConnectionMode,
+        NodeId as JellyNodeId, NodeKindKey, PortDirection, PortId as JellyPortId, PortKey,
     },
     runtime::{
         io::{NodeGraphEditorConfig, NodeGraphViewState},
+        rules::EdgeEndpoint,
         runtime::{
             chrome::{
                 NodeChromeFactsRequest, NodeChromeLayoutPolicy, NodeChromeState,
@@ -33,10 +34,11 @@ use jellyflow_open_gpui::OpenGpuiNodeRendererResolution;
 use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiAuthoringController,
     OpenGpuiAuthoringOutcome, OpenGpuiAuthoringSkipReason, OpenGpuiBlackboardPlan,
-    OpenGpuiBoundsCollector, OpenGpuiControlEditPlan, OpenGpuiControlEventValue,
-    OpenGpuiControlPlan, OpenGpuiDroppedWireInsertError, OpenGpuiDynamicPortPolicy,
-    OpenGpuiInspectorPlan, OpenGpuiInspectorSurface, OpenGpuiInspectorTargetBounds,
-    OpenGpuiInspectorTargetSource, OpenGpuiMeasurementContext, OpenGpuiMeasurementId,
+    OpenGpuiBoundsCollector, OpenGpuiConnectionSyncError, OpenGpuiConnectionSyncRequest,
+    OpenGpuiControlEditPlan, OpenGpuiControlEventValue, OpenGpuiControlPlan,
+    OpenGpuiDroppedWireInsertError, OpenGpuiDynamicPortPolicy, OpenGpuiInspectorPlan,
+    OpenGpuiInspectorSurface, OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource,
+    OpenGpuiMeasurementContext, OpenGpuiMeasurementId,
     OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource, OpenGpuiMenuPlan,
     OpenGpuiNodeRendererContext, OpenGpuiNodeRendererOutputSource, OpenGpuiNodeRendererRegistry,
     OpenGpuiNodeRendererState, OpenGpuiNodeRendererTable,
@@ -54,7 +56,7 @@ use jellyflow_open_gpui::{
     open_gpui_repeatable_remove_action_element_id, open_gpui_repeatable_reorder_action_element_id,
     open_gpui_slot_action_label_element_id, open_gpui_slot_badge_element_id,
     open_gpui_slot_preview_progress_element_id, open_gpui_slot_status_label_element_id,
-    open_gpui_slot_value_element_id, project_actions_for_surface,
+    open_gpui_slot_value_element_id, plan_connection_sync_transaction, project_actions_for_surface,
     project_blackboards_for_descriptor, project_dropped_wire_menu, project_inspectors_for_surface,
     project_menu, project_node_measurement, project_slot_controls,
     projected_node_surface_graph_layout, repeatable_item_projection, repeatable_surface_projection,
@@ -69,8 +71,8 @@ use open_gpui_canvas::{
     CanvasDocument, CanvasEditor, CanvasEditorInputHandler, CanvasEvent, CanvasHandle,
     CanvasKeyModifiers, CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode,
     CanvasNodeKind, CanvasNodeRenderPolicy, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
-    CanvasToolIntent, CanvasViewport, DocumentError, HandleRole, HitTarget, NodeId, PointerButton,
-    canvas_editor_view_with_frame,
+    CanvasTool, CanvasToolIntent, CanvasViewport, DocumentError, HandleRole, HitTarget, NodeId,
+    PointerButton, canvas_editor_view_with_frame,
 };
 #[cfg(test)]
 use open_gpui_canvas::{CanvasTransaction, DocumentCommand};
@@ -114,6 +116,44 @@ pub(crate) struct GpuiNodeRendererServices {
 
 pub(crate) type GpuiNodeRendererTable =
     OpenGpuiNodeRendererTable<GpuiNodeRendererServices, AnyElement>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CanvasToolOption {
+    id: &'static str,
+    label: &'static str,
+    tool: CanvasTool,
+}
+
+fn canvas_tool_options() -> Vec<CanvasToolOption> {
+    vec![
+        CanvasToolOption {
+            id: "select",
+            label: "Select",
+            tool: CanvasTool::Select,
+        },
+        CanvasToolOption {
+            id: "pan",
+            label: "Pan",
+            tool: CanvasTool::Pan,
+        },
+        CanvasToolOption {
+            id: "connect",
+            label: "Connect",
+            tool: CanvasTool::Connect,
+        },
+    ]
+}
+
+fn product_tool_switcher_visible() -> bool {
+    let options = canvas_tool_options();
+    options
+        .iter()
+        .any(|option| option.tool == CanvasTool::Select)
+        && options.iter().any(|option| option.tool == CanvasTool::Pan)
+        && options
+            .iter()
+            .any(|option| option.tool == CanvasTool::Connect)
+}
 
 fn init_canvas_jellyflow_app(cx: &mut App) {
     init_text_input(cx);
@@ -418,6 +458,18 @@ impl JellyflowCanvasView {
             )
             .child(
                 div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .flex_shrink_0()
+                    .children(
+                        canvas_tool_options()
+                            .into_iter()
+                            .map(|option| self.render_tool_button(option, view.clone())),
+                    ),
+            )
+            .child(
+                div()
                     .text_xs()
                     .truncate()
                     .min_w(px(0.0))
@@ -464,6 +516,34 @@ impl JellyflowCanvasView {
                         },
                     ),
             )
+    }
+
+    fn render_tool_button(
+        &self,
+        option: CanvasToolOption,
+        view: WeakEntity<JellyflowCanvasView>,
+    ) -> AnyElement {
+        let selected = self.editor.tool() == &option.tool;
+        let tool = option.tool.clone();
+        Button::new(
+            format!("jellyflow-toolbar-tool-{}", option.id),
+            option.label,
+        )
+        .variant(if selected {
+            ButtonVariant::Default
+        } else {
+            ButtonVariant::Secondary
+        })
+        .selected(selected)
+        .with_size(Size::XSmall)
+        .on_click(move |event, _window, cx| {
+            cx.stop_propagation();
+            let _ = event;
+            let tool = tool.clone();
+            view.update(cx, |this, cx| this.set_canvas_tool(tool, cx))
+                .ok();
+        })
+        .into_any_element()
     }
 
     fn render_gallery_selector(&self, view: WeakEntity<JellyflowCanvasView>) -> AnyElement {
@@ -764,6 +844,13 @@ impl JellyflowCanvasView {
             Err(error) => {
                 eprintln!("canvas shortcut failed: {error}");
             }
+        }
+    }
+
+    fn set_canvas_tool(&mut self, tool: CanvasTool, cx: &mut Context<Self>) {
+        match self.editor.set_tool(tool) {
+            Ok(()) => cx.notify(),
+            Err(error) => eprintln!("canvas tool switch failed: {error}"),
         }
     }
 
@@ -1128,19 +1215,39 @@ impl JellyflowCanvasView {
     }
 
     fn sync_store_from_canvas_document(&mut self) -> bool {
-        let transaction =
+        let mut changed = false;
+        let transform_transaction =
             canvas_document_transform_transaction(&self.store, self.editor.document());
-        if transaction.is_empty() {
-            return false;
-        }
-
-        match self.store.dispatch_transaction(&transaction) {
-            Ok(_) => true,
-            Err(error) => {
-                eprintln!("canvas transform sync failed: {error}");
-                false
+        if !transform_transaction.is_empty() {
+            match self.store.dispatch_transaction(&transform_transaction) {
+                Ok(_) => changed = true,
+                Err(error) => {
+                    eprintln!("canvas transform sync failed: {error}");
+                }
             }
         }
+
+        match canvas_document_connection_sync_transactions(&self.store, self.editor.document()) {
+            Ok(transactions) => {
+                for transaction in transactions {
+                    match self.store.dispatch_transaction(&transaction) {
+                        Ok(_) => changed = true,
+                        Err(error) => {
+                            eprintln!("canvas connection sync failed: {error}");
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!("canvas connection sync planning failed: {error}");
+            }
+        }
+
+        if changed {
+            self.refresh_editor_from_store();
+        }
+
+        changed
     }
 
     fn update_canvas_viewport_from_bounds(
@@ -3763,6 +3870,79 @@ fn canvas_document_transform_transaction(
     transaction
 }
 
+fn canvas_document_connection_sync_transactions(
+    store: &NodeGraphStore,
+    document: &CanvasDocument,
+) -> Result<Vec<GraphTransaction>, OpenGpuiConnectionSyncError> {
+    let interaction = store.resolved_interaction_state();
+    let mut transactions = Vec::new();
+    let mut seen_projected_edges = Vec::new();
+
+    for canvas_edge in document.edges() {
+        let Some(source_port) = jelly_port_id_from_canvas_endpoint(&canvas_edge.source) else {
+            continue;
+        };
+        let Some(target_port) = jelly_port_id_from_canvas_endpoint(&canvas_edge.target) else {
+            continue;
+        };
+
+        let request = if let Some(edge_id) = jelly_edge_id_from_canvas_edge(canvas_edge) {
+            seen_projected_edges.push(edge_id);
+            let Some(edge) = store.graph().edges().get(&edge_id) else {
+                continue;
+            };
+            if edge.from != source_port {
+                Some(OpenGpuiConnectionSyncRequest::Reconnect {
+                    edge: edge_id,
+                    endpoint: EdgeEndpoint::From,
+                    new_port: source_port,
+                })
+            } else if edge.to != target_port {
+                Some(OpenGpuiConnectionSyncRequest::Reconnect {
+                    edge: edge_id,
+                    endpoint: EdgeEndpoint::To,
+                    new_port: target_port,
+                })
+            } else {
+                None
+            }
+        } else {
+            Some(OpenGpuiConnectionSyncRequest::Connect {
+                source: source_port,
+                target: target_port,
+                edge: None,
+            })
+        };
+
+        if let Some(request) = request
+            && let Some(transaction) = plan_connection_sync_transaction(
+                store.graph(),
+                request,
+                NodeGraphConnectionMode::Strict,
+                &interaction,
+            )?
+        {
+            transactions.push(transaction);
+        }
+    }
+
+    for edge_id in store.graph().edges().keys() {
+        if seen_projected_edges.contains(edge_id) {
+            continue;
+        }
+        if let Some(transaction) = plan_connection_sync_transaction(
+            store.graph(),
+            OpenGpuiConnectionSyncRequest::Delete { edge: *edge_id },
+            NodeGraphConnectionMode::Strict,
+            &interaction,
+        )? {
+            transactions.push(transaction);
+        }
+    }
+
+    Ok(transactions)
+}
+
 fn canvas_value_from_json(value: Value) -> open_gpui_canvas::CanvasValue {
     match value {
         Value::Object(map) => map,
@@ -3786,6 +3966,23 @@ fn canvas_edge_id(id: &JellyEdgeId) -> String {
     id.0.to_string()
 }
 
+fn jelly_edge_id_from_canvas_edge(edge: &open_gpui_canvas::CanvasEdge) -> Option<JellyEdgeId> {
+    edge.data
+        .get("jellyflow_edge_id")
+        .and_then(Value::as_str)
+        .and_then(jelly_edge_id_from_str)
+        .or_else(|| jelly_edge_id_from_str(edge.id.as_str()))
+}
+
+fn jelly_port_id_from_canvas_endpoint(
+    endpoint: &open_gpui_canvas::CanvasEndpoint,
+) -> Option<JellyPortId> {
+    endpoint
+        .handle_id
+        .as_ref()
+        .and_then(|handle| jelly_port_id_from_str(handle.as_str()))
+}
+
 fn jelly_node_id_from_node(node: &CanvasNode) -> Option<JellyNodeId> {
     data_string(node, "jellyflow_node_id")
         .and_then(jelly_node_id_from_str)
@@ -3803,6 +4000,13 @@ fn jelly_port_id_from_str(id: &str) -> Option<JellyPortId> {
     id.parse::<u128>()
         .ok()
         .map(JellyPortId::from_u128)
+        .or_else(|| serde_json::from_value(Value::String(id.to_string())).ok())
+}
+
+fn jelly_edge_id_from_str(id: &str) -> Option<JellyEdgeId> {
+    id.parse::<u128>()
+        .ok()
+        .map(JellyEdgeId::from_u128)
         .or_else(|| serde_json::from_value(Value::String(id.to_string())).ok())
 }
 
@@ -4231,6 +4435,19 @@ mod tests {
                     ..CanvasKeyModifiers::default()
                 },
             })
+        );
+    }
+
+    #[test]
+    fn product_toolbar_exposes_select_pan_and_connect_tools() {
+        assert!(product_tool_switcher_visible());
+        let options = canvas_tool_options();
+        assert_eq!(
+            options
+                .iter()
+                .filter(|option| matches!(option.tool, CanvasTool::Connect))
+                .count(),
+            1
         );
     }
 
@@ -5526,14 +5743,16 @@ mod tests {
             "{report:?}"
         );
         assert!(
-            report
+            !report
                 .gaps
-                .contains(&OpenGpuiHostProductInteractionGap::ToolSwitcherMissing)
+                .contains(&OpenGpuiHostProductInteractionGap::ToolSwitcherMissing),
+            "{report:?}"
         );
         assert!(
-            report
+            !report
                 .gaps
-                .contains(&OpenGpuiHostProductInteractionGap::ConnectFlowNotStoreSynced)
+                .contains(&OpenGpuiHostProductInteractionGap::ConnectFlowNotStoreSynced),
+            "{report:?}"
         );
         assert!(
             report
@@ -5549,9 +5768,10 @@ mod tests {
     }
 
     #[test]
-    fn canvas_edge_edits_are_characterized_as_unsynced_to_jellyflow_store() {
-        let (store, document, _) = project_kit_fixture("shader.blueprint", "shader.material_mix")
-            .expect("shader fixture projects");
+    fn canvas_edge_remove_plans_jellyflow_store_delete_transaction() {
+        let (mut store, document, _) =
+            project_kit_fixture("shader.blueprint", "shader.material_mix")
+                .expect("shader fixture projects");
         let mut editor = editor_for_document(document).expect("shader fixture editor");
         let edge_id = editor
             .document()
@@ -5560,6 +5780,7 @@ mod tests {
             .expect("fixture edge")
             .id
             .clone();
+        let before_edges = store.graph().edges().len();
 
         editor
             .apply_transaction(CanvasTransaction::single(DocumentCommand::RemoveEdge(
@@ -5567,19 +5788,180 @@ mod tests {
             )))
             .expect("remove canvas edge");
 
-        assert_ne!(
-            editor.document().edge_count(),
-            store.graph().edges().len(),
-            "canvas edge edit should create a divergence before U5 sync is implemented"
-        );
-        let transaction = canvas_document_transform_transaction(&store, editor.document());
+        let transactions = canvas_document_connection_sync_transactions(&store, editor.document())
+            .expect("edge remove should plan connection sync");
         assert!(
-            transaction
-                .ops()
+            transactions
                 .iter()
-                .all(|op| matches!(op, GraphOp::SetNodePos { .. } | GraphOp::SetNodeSize { .. })),
-            "current canvas-to-Jellyflow sync must not claim edge synchronization yet: {transaction:?}"
+                .flat_map(GraphTransaction::ops)
+                .any(|op| matches!(op, GraphOp::RemoveEdge { .. })),
+            "{transactions:?}"
         );
+        for transaction in transactions {
+            store
+                .dispatch_transaction(&transaction)
+                .expect("edge remove sync should dispatch");
+        }
+        assert_eq!(store.graph().edges().len(), before_edges - 1);
+    }
+
+    #[test]
+    fn canvas_edge_insert_plans_jellyflow_store_connect_transaction() {
+        assert!(
+            product_connection_store_sync_probe(),
+            "canvas edge insert should dispatch through Jellyflow connection rules"
+        );
+    }
+
+    #[test]
+    fn product_port_hotspot_path_resolves_measured_handle_endpoint() {
+        assert!(
+            product_port_hotspot_path_probe(),
+            "measured product handle should be hit-testable as a connection endpoint"
+        );
+    }
+
+    #[test]
+    fn canvas_edge_update_plans_jellyflow_reconnect_transaction() {
+        assert!(
+            product_reconnect_store_sync_probe(),
+            "canvas edge endpoint update should dispatch through Jellyflow reconnect rules"
+        );
+    }
+
+    fn product_connection_store_sync_probe() -> bool {
+        let mut store = make_demo_store();
+        let Ok((document, _projection)) = project_store(&store) else {
+            return false;
+        };
+        let Ok(mut editor) = editor_for_document(document) else {
+            return false;
+        };
+        let source_port = JellyPortId::from_u128(20);
+        let target_port = JellyPortId::from_u128(40);
+        let edge = open_gpui_canvas::CanvasEdge::new(
+            "canvas-temp-connect",
+            open_gpui_canvas::CanvasEndpoint::new(
+                canvas_node_id(&JellyNodeId::from_u128(2)),
+                Some(canvas_port_id(&source_port)),
+            ),
+            open_gpui_canvas::CanvasEndpoint::new(
+                canvas_node_id(&JellyNodeId::from_u128(4)),
+                Some(canvas_port_id(&target_port)),
+            ),
+        );
+        if editor
+            .apply_transaction(CanvasTransaction::single(DocumentCommand::InsertEdge(edge)))
+            .is_err()
+        {
+            return false;
+        }
+        let Ok(transactions) =
+            canvas_document_connection_sync_transactions(&store, editor.document())
+        else {
+            return false;
+        };
+        if !transactions
+            .iter()
+            .flat_map(GraphTransaction::ops)
+            .any(|op| matches!(op, GraphOp::AddEdge { edge, .. } if edge.from == source_port && edge.to == target_port))
+        {
+            return false;
+        }
+        for transaction in transactions {
+            if store.dispatch_transaction(&transaction).is_err() {
+                return false;
+            }
+        }
+        store
+            .graph()
+            .edges()
+            .values()
+            .any(|edge| edge.from == source_port && edge.to == target_port)
+    }
+
+    fn product_reconnect_store_sync_probe() -> bool {
+        let mut store = make_demo_store();
+        let Ok((document, _projection)) = project_store(&store) else {
+            return false;
+        };
+        let Ok(mut editor) = editor_for_document(document) else {
+            return false;
+        };
+        let edge_id = JellyEdgeId::from_u128(200);
+        let target_port = JellyPortId::from_u128(40);
+        let Some(mut canvas_edge) = editor
+            .document()
+            .edge(&open_gpui_canvas::EdgeId::from(canvas_edge_id(&edge_id)))
+            .cloned()
+        else {
+            return false;
+        };
+        canvas_edge.target = open_gpui_canvas::CanvasEndpoint::new(
+            canvas_node_id(&JellyNodeId::from_u128(4)),
+            Some(canvas_port_id(&target_port)),
+        );
+        if editor
+            .apply_transaction(CanvasTransaction::single(DocumentCommand::UpdateEdge(
+                canvas_edge,
+            )))
+            .is_err()
+        {
+            return false;
+        }
+        let Ok(transactions) =
+            canvas_document_connection_sync_transactions(&store, editor.document())
+        else {
+            return false;
+        };
+        if !transactions
+            .iter()
+            .flat_map(GraphTransaction::ops)
+            .any(|op| matches!(op, GraphOp::SetEdgeEndpoints { id, to, .. } if *id == edge_id && to.to == target_port))
+        {
+            return false;
+        }
+        for transaction in transactions {
+            if store.dispatch_transaction(&transaction).is_err() {
+                return false;
+            }
+        }
+        store
+            .graph()
+            .edges()
+            .get(&edge_id)
+            .is_some_and(|edge| edge.to == target_port)
+    }
+
+    fn product_port_hotspot_path_probe() -> bool {
+        let (measured_store, transform, prompt, _) = measured_transform_store();
+        let Ok((document, _projection)) = project_store(&measured_store) else {
+            return false;
+        };
+        let kind_registry = jellyflow_kind_registry();
+        let runtime = CanvasRuntime::rebuild_with_kind_registry(&document, &kind_registry);
+        let Some(node) = document.node(&NodeId::from(canvas_node_id(&transform))) else {
+            return false;
+        };
+        let measured_prompt_point = node.position + point(px(0.0), px(51.0));
+        let hit_records = runtime
+            .precise_hit_test_with_kind_registry(
+                &document,
+                &kind_registry,
+                measured_prompt_point,
+                connection_hit_options(),
+            )
+            .collect::<Vec<_>>();
+        let facts = CanvasGeometryFacts::with_kind_registry(&document, &kind_registry);
+        facts
+            .connection_endpoint_at(hit_records, CanvasConnectionEndpointRole::Target)
+            .is_some_and(|endpoint| {
+                endpoint.node_id == NodeId::from(canvas_node_id(&transform))
+                    && endpoint
+                        .handle_id
+                        .as_ref()
+                        .is_some_and(|handle| handle.as_str() == canvas_port_id(&prompt))
+            })
     }
 
     fn canvas_host_product_interaction_report() -> OpenGpuiHostProductInteractionReport {
@@ -5635,13 +6017,15 @@ mod tests {
         let drag_sequence_checked =
             product_surface_drag_sequence_probe(ProductSurfaceDragProbeEnd::CommitOutsideCanvas)
                 && product_surface_drag_sequence_probe(ProductSurfaceDragProbeEnd::Cancel);
+        let connect_flow_store_synced = product_connection_store_sync_probe();
+        let port_hotspot_path_checked = product_port_hotspot_path_probe();
 
         let mut report = OpenGpuiHostProductInteractionReport::default();
         report.mark_drag_surface_coverage(product_drag_surfaces, drag_sequence_checked);
         report.mark_control_event_shielding_checked(true);
-        report.mark_port_hotspot_path_checked(false);
-        report.mark_tool_switcher_visible(false);
-        report.mark_connect_flow_store_synced(false);
+        report.mark_port_hotspot_path_checked(port_hotspot_path_checked);
+        report.mark_tool_switcher_visible(product_tool_switcher_visible());
+        report.mark_connect_flow_store_synced(connect_flow_store_synced);
         report.mark_reconnect_affordance_visible(false);
         report.mark_dropped_wire_gesture_connected(false);
         report.mark_repeatable_overflow(hidden_repeatable_overflow, repeatable_overflow_indicators);
