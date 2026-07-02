@@ -6,6 +6,13 @@ status: active
 
 # Log
 
+- 2026-07-02: Split the 8k-line foundation gallery integration test into a small helper facade plus
+  `tests/foundation_gallery/` modules for foundation contracts, overlay contracts/smoke, component
+  catalog/sample contracts, shell/navigation smoke, Table interaction/model smoke, and
+  Tree/VirtualizedList smoke. The facade is now about 533 lines and the largest test owner is the
+  component catalog contract module. Verified with gallery test compilation, focused metadata,
+  Table, Tree/VirtualizedList nextest runs, full `foundation_gallery` nextest, `cargo fmt --all
+  --check`, and `git diff --check`.
 - 2026-07-02: Removed the native UI hybrid registry layer after deciding it duplicated crate source
   and typed contract facts in an AI-assisted workflow. Deleted the manifest/schema projection,
   scaffold recipe metadata, export examples, committed registry JSON/schema artifacts,

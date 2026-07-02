@@ -22,6 +22,11 @@ related_adr:
 related_decision:
   - docs/knowledge/engineering/decisions/open-gpui-native-ui-framework-distribution-strategy.md
 verified_by:
+  - cargo check -p open-gpui-ui-foundation-gallery --tests
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_catalog_metadata_is_separate_from_rendering components_catalog_consumes_component_contract_rows components_page_conformance_gates_reference_core_and_gallery_contracts --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery table --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery tree virtualized_list --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery --no-fail-fast
   - cargo run -p xtask -- verify
   - cargo test -p xtask commands
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_catalog_consumes_component_contract_rows official_component_catalog_entries_have_signals_and_sample_selectors gallery_catalog_entries_satisfy_component_contract_evidence gallery_story_contracts_reference_component_contract_rows gallery_story_contracts_cover_components_state_readouts_and_overlays --no-fail-fast
@@ -73,6 +78,10 @@ verified_by:
   been removed. `component_contract` typed rows remain as internal verification tables.
 - Done: foundation gallery tests consume the typed component contract rows directly for catalog and
   story evidence without moving selector constants into `open-gpui-ui-components`.
+- Done: `examples/ui-foundation-gallery/tests/foundation_gallery.rs` is now a helper/module facade.
+  Test ownership lives under `tests/foundation_gallery/` split by foundation contracts, overlay
+  contracts/smoke, component catalog/sample contracts, shell/navigation smoke, Table interaction
+  smoke, Table model smoke, and Tree/VirtualizedList smoke.
 - Done: Full focused UI verification passed before the merge to `main`: component public surface,
   Menu, ContextMenu, Tree, Table, gallery metadata, overlay, tree, table, full
   `open-gpui-ui-components`, and full `open-gpui-ui-foundation-gallery`.
@@ -85,9 +94,10 @@ verified_by:
 - Not current roadmap work: broad splitting of every remaining 1k+ component file and
   `open-gpui-ui-headless` extraction.
 - Blocked: None.
-- Next action: choose the next fearless refactor from previous analysis. Highest-signal candidates
-  are Table/runtime simplification, gallery sample/runtime decomposition, and source-inspection
-  contract cleanup now that generated registry work is removed.
+- Next action: continue the fearless refactor sequence with Table/runtime simplification or the
+  remaining large gallery runtime/source files. The clearest targets are
+  `crates/ui_components/tests/table.rs`, `examples/ui-foundation-gallery/src/shell.rs`, and
+  `examples/ui-foundation-gallery/src/pages/components/render/sections.rs`.
 
 # Citations
 
