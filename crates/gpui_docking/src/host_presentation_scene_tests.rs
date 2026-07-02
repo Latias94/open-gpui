@@ -202,19 +202,6 @@ fn presentation_scene_exports_viewport_drop_facts(cx: &mut TestAppContext) {
             tab_bar.tabs
         );
     }
-    for label in &scene.tab_labels {
-        assert!(
-            facts.iter().any(
-                |fact| matches!(fact, DockHostDropSceneFact::TabLabel(target)
-                    if target.target_tabs == label.tabs
-                        && target.target_index == label.index
-                        && target.bounds == label.bounds)
-            ),
-            "tab label fact for {:?} index {} should use scene label bounds",
-            label.tabs,
-            label.index
-        );
-    }
     assert!(
         facts.iter().any(
             |fact| matches!(fact, DockHostDropSceneFact::FloatingTitleBar(target)

@@ -2132,9 +2132,8 @@ fn runtime_nested_tab_tear_off_uses_leaf_size_not_tab_label(cx: &mut TestAppCont
         rendered_leaf_bounds.size.height > tab_bounds.size.height * 3.0,
         "test must distinguish the leaf from the tab label"
     );
-    assert!(
-        leaf_bounds.contains(&rendered_leaf_bounds.origin)
-            && leaf_bounds.contains(&rendered_leaf_bounds.bottom_right()),
+    assert_eq!(
+        rendered_leaf_bounds, leaf_bounds,
         "rendered leaf bounds should describe the source leaf interior"
     );
 

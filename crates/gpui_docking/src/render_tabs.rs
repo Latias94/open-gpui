@@ -27,7 +27,7 @@ impl DockHost {
         items: Vec<DockItemId>,
         selected: usize,
         session: &DockHostRenderSession,
-        _viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -336,6 +336,11 @@ impl DockHost {
                     },
                 );
             tab = tab_a11y.apply_to(tab);
+            tab = tab.child(self.render_viewport_drop_scene_fact_probe(
+                viewport_host_scene_frame,
+                move |bounds| drop_scene_fact::tab_label(node, target_index, bounds, is_central),
+                cx,
+            ));
             tab = tab.child(title.clone());
             if session.panel_is_closable(&item) {
                 let close_selector = self.record_debug_selector(

@@ -130,15 +130,6 @@ pub(crate) fn presentation_scene_drop_facts(
         ));
     }
 
-    for label in &scene.tab_labels {
-        let is_central = scene
-            .tab_bars
-            .iter()
-            .find(|tab_bar| tab_bar.tabs == label.tabs)
-            .is_some_and(|tab_bar| tab_bar.is_central);
-        facts.push(tab_label(label.tabs, label.index, label.bounds, is_central));
-    }
-
     for container in &scene.floating_containers {
         if let Some(DockFloatingChromeTarget::SingleTabs(target_tabs)) =
             session.floating_chrome_target(container.node)

@@ -7,6 +7,7 @@ use crate::{
     drop_preview::{
         DockDropPreview, DockDropRoutePreview, DockPreviewDropBox, DockPreviewTabInsertionIndex,
     },
+    drop_runtime::DockHostDropSceneFact,
     drop_scene_fact, geometry,
     host_render_session::{DockHostRenderSession, selected_index},
     interaction::{
@@ -1217,6 +1218,40 @@ impl DockHost {
                 *frame_slot.borrow_mut() = preparation.frame;
                 if preparation.changed || interaction_frame_changed {
                     window.refresh();
+                }
+            },
+            |_, _, _, _| (),
+        )
+        .absolute()
+        .top(px(0.0))
+        .left(px(0.0))
+        .size_full()
+        .into_any_element()
+    }
+
+    /// Publishes render-measured target bounds for regions whose size depends on text shaping.
+    pub(crate) fn render_viewport_drop_scene_fact_probe(
+        &self,
+        frame_slot: &DockViewportHostSceneFrameSlot,
+        fact_for_bounds: impl FnOnce(Bounds<Pixels>) -> DockHostDropSceneFact + 'static,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let entity = cx.entity();
+        let runtime = self.viewport_runtime().clone();
+        let frame_slot = frame_slot.clone();
+        canvas(
+            move |bounds, window, app| {
+                let Some(frame) = frame_slot.borrow().as_ref().cloned() else {
+                    return;
+                };
+                if let Some(next_frame) =
+                    runtime.push_viewport_host_scene_frame_fact(&frame, fact_for_bounds(bounds))
+                {
+                    let frame = Some(next_frame.clone());
+                    *frame_slot.borrow_mut() = Some(next_frame);
+                    entity.update(app, |host, _| {
+                        host.publish_rendered_viewport_host_scene_frame_from_render(frame, window);
+                    });
                 }
             },
             |_, _, _, _| (),
