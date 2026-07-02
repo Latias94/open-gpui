@@ -129,8 +129,8 @@ pub use store::{
 pub use tool::{
     CanvasConnectionDragState, CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey,
     CanvasKeyModifiers, CanvasSelection, CanvasSelectionMode, CanvasTool, CanvasToolContext,
-    CanvasToolId, CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry,
-    CanvasToolRegistryError, PointerButton,
+    CanvasToolId, CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError,
+    PointerButton,
 };
 pub use transform::{
     CanvasResizeHandle, CanvasTransformHandle, CanvasTransformTarget, canvas_transform_handles,

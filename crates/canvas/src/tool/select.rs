@@ -1,5 +1,5 @@
 use super::*;
-use crate::{CanvasResizeHandle, HitOptions};
+use crate::{CanvasConnectionEndpointRole, CanvasResizeHandle, HitOptions};
 use open_gpui::Axis;
 
 pub(super) struct SelectToolStateMachine;
@@ -88,6 +88,17 @@ impl SelectToolStateMachine {
                 *structural,
             )?,
             (
+                ToolState::Reconnecting {
+                    edge_id,
+                    endpoint,
+                    fixed,
+                    ..
+                },
+                CanvasEvent::PointerMove { position, .. },
+            ) => {
+                self.handle_reconnecting_pointer_move(context, position, edge_id, *endpoint, fixed)
+            }
+            (
                 ToolState::Pointing {
                     origin,
                     selection_mode,
@@ -128,11 +139,24 @@ impl SelectToolStateMachine {
                     CanvasToolEffect::SetState(ToolState::Idle),
                 ]
             }
+            (
+                ToolState::Reconnecting {
+                    edge_id, endpoint, ..
+                },
+                CanvasEvent::PointerUp {
+                    position,
+                    button: PointerButton::Primary,
+                    ..
+                },
+            ) => self.handle_reconnecting_pointer_up(context, position, edge_id, *endpoint)?,
             (ToolState::Translating { .. } | ToolState::Resizing { .. }, CanvasEvent::Cancel) => {
                 vec![
                     CanvasToolEffect::CancelGesture,
                     CanvasToolEffect::SetState(ToolState::Idle),
                 ]
+            }
+            (ToolState::Reconnecting { .. }, CanvasEvent::Cancel) => {
+                vec![CanvasToolEffect::SetState(ToolState::Idle)]
             }
             (ToolState::Pointing { base_selection, .. }, CanvasEvent::Cancel)
             | (ToolState::Selecting { base_selection, .. }, CanvasEvent::Cancel) => {
@@ -163,6 +187,15 @@ impl SelectToolStateMachine {
         modifiers: CanvasKeyModifiers,
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
         let document_position = context.viewport().view_to_document(position);
+        if let Some(target) = context.selected_reconnect_target_at(document_position) {
+            return Ok(vec![CanvasToolEffect::SetState(ToolState::Reconnecting {
+                edge_id: target.edge_id,
+                endpoint: target.endpoint,
+                fixed: target.fixed,
+                current: document_position,
+            })]);
+        }
+
         if let Some(handle) = context.transform_handle_at(document_position) {
             let resize_scope = context.resize_selection_scope();
             return Ok(vec![
@@ -357,6 +390,42 @@ impl SelectToolStateMachine {
                 snap_guides: snap.guides,
             }),
         ])
+    }
+
+    fn handle_reconnecting_pointer_move(
+        &self,
+        context: CanvasToolReducerContext<'_>,
+        position: Point<Pixels>,
+        edge_id: &EdgeId,
+        endpoint: CanvasConnectionEndpointRole,
+        fixed: &CanvasEndpoint,
+    ) -> Vec<CanvasToolEffect> {
+        let document_position = context.viewport().view_to_document(position);
+        vec![CanvasToolEffect::SetState(ToolState::Reconnecting {
+            edge_id: edge_id.clone(),
+            endpoint,
+            fixed: fixed.clone(),
+            current: document_position,
+        })]
+    }
+
+    fn handle_reconnecting_pointer_up(
+        &self,
+        context: CanvasToolReducerContext<'_>,
+        position: Point<Pixels>,
+        edge_id: &EdgeId,
+        endpoint: CanvasConnectionEndpointRole,
+    ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
+        let document_position = context.viewport().view_to_document(position);
+        let mut effects = Vec::new();
+        if let Some(candidate) = context.node_endpoint_at(document_position, endpoint) {
+            let transaction = context.reconnect_edge_transaction(edge_id, endpoint, candidate)?;
+            if !transaction.is_empty() {
+                effects.push(CanvasToolEffect::ApplyTransaction(transaction));
+            }
+        }
+        effects.push(CanvasToolEffect::SetState(ToolState::Idle));
+        Ok(effects)
     }
 
     fn handle_pointing_pointer_move(

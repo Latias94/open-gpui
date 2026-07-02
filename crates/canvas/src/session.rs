@@ -2,8 +2,9 @@ use crate::gesture::{CanvasGestureSession, CanvasPreparedGestureCommit};
 use crate::record_scope::normalize_selection;
 use crate::tool::{CanvasSelection, CanvasTool};
 use crate::{
-    CanvasDocument, CanvasKindRegistry, CanvasResizeHandle, CanvasSnapGuide, CanvasTransaction,
-    CanvasViewport, DocumentError, EdgeId, HitTarget, NodeId, ShapeId,
+    CanvasConnectionEndpointRole, CanvasDocument, CanvasKindRegistry, CanvasResizeHandle,
+    CanvasSnapGuide, CanvasTransaction, CanvasViewport, DocumentError, EdgeId, HitTarget, NodeId,
+    ShapeId,
 };
 use open_gpui::{Axis, Pixels, Point};
 use serde::{Deserialize, Serialize};
@@ -46,6 +47,12 @@ pub(crate) enum ToolState {
     },
     Connecting {
         source: crate::CanvasEndpoint,
+        current: Point<Pixels>,
+    },
+    Reconnecting {
+        edge_id: EdgeId,
+        endpoint: CanvasConnectionEndpointRole,
+        fixed: crate::CanvasEndpoint,
         current: Point<Pixels>,
     },
 }

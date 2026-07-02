@@ -17,7 +17,9 @@ use crate::{
     snap_delta_for_selection,
 };
 use indexmap::IndexSet;
-use open_gpui::{Bounds, Pixels, Point, px};
+use open_gpui::{Bounds, Pixels, Point, px, size};
+
+const RECONNECT_HANDLE_VIEW_SIZE: Pixels = px(14.0);
 
 #[derive(Debug)]
 pub(crate) struct CanvasResizeSelectionScope {
@@ -25,6 +27,13 @@ pub(crate) struct CanvasResizeSelectionScope {
     pub(crate) edge_ids: Vec<EdgeId>,
     pub(crate) shape_ids: Vec<ShapeId>,
     pub(crate) structural: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CanvasReconnectTarget {
+    pub(crate) edge_id: EdgeId,
+    pub(crate) endpoint: CanvasConnectionEndpointRole,
+    pub(crate) fixed: CanvasEndpoint,
 }
 
 #[derive(Clone, Copy)]
@@ -442,6 +451,90 @@ impl CanvasToolReducerContext<'_> {
         facts.connection_endpoint_at(records, role)
     }
 
+    pub(crate) fn selected_reconnect_target_at(
+        &self,
+        point: Point<Pixels>,
+    ) -> Option<CanvasReconnectTarget> {
+        let facts = CanvasGeometryFacts::with_router_and_kind_registry(
+            self.document,
+            self.edge_router,
+            Some(self.kind_registry),
+        );
+        let handle_size = size(
+            RECONNECT_HANDLE_VIEW_SIZE * (1.0 / self.viewport.zoom),
+            RECONNECT_HANDLE_VIEW_SIZE * (1.0 / self.viewport.zoom),
+        );
+
+        self.selection
+            .selected_edges()
+            .filter_map(|edge_id| {
+                let edge = self.document.edge(edge_id)?;
+                if edge.locked || edge.hidden {
+                    return None;
+                }
+                let source = facts.endpoint_position(&edge.source).ok()?;
+                let target_position = facts.endpoint_position(&edge.target).ok()?;
+                let mut candidates = Vec::new();
+                if Bounds::centered_at(source, handle_size).contains(&point) {
+                    candidates.push((
+                        distance_squared(point, source),
+                        CanvasReconnectTarget {
+                            edge_id: edge_id.clone(),
+                            endpoint: CanvasConnectionEndpointRole::Source,
+                            fixed: edge.target.clone(),
+                        },
+                    ));
+                }
+                if Bounds::centered_at(target_position, handle_size).contains(&point) {
+                    candidates.push((
+                        distance_squared(point, target_position),
+                        CanvasReconnectTarget {
+                            edge_id: edge_id.clone(),
+                            endpoint: CanvasConnectionEndpointRole::Target,
+                            fixed: edge.source.clone(),
+                        },
+                    ));
+                }
+                candidates
+                    .into_iter()
+                    .min_by(|(left, _), (right, _)| left.total_cmp(right))
+                    .map(|(_, target)| target)
+            })
+            .next()
+    }
+
+    pub(crate) fn reconnect_edge_transaction(
+        &self,
+        edge_id: &EdgeId,
+        endpoint: CanvasConnectionEndpointRole,
+        candidate: CanvasEndpoint,
+    ) -> Result<CanvasTransaction, DocumentError> {
+        let Some(edge) = self.document.edge(edge_id) else {
+            return Err(DocumentError::MissingEdge(edge_id.clone()));
+        };
+        if edge.locked || edge.hidden {
+            return Ok(CanvasTransaction::default());
+        }
+
+        let mut edge = edge.clone();
+        match endpoint {
+            CanvasConnectionEndpointRole::Source => {
+                if candidate == edge.source || candidate == edge.target {
+                    return Ok(CanvasTransaction::default());
+                }
+                edge.source = candidate;
+            }
+            CanvasConnectionEndpointRole::Target => {
+                if candidate == edge.target || candidate == edge.source {
+                    return Ok(CanvasTransaction::default());
+                }
+                edge.target = candidate;
+            }
+        }
+
+        Ok(CanvasTransaction::single(DocumentCommand::UpdateEdge(edge)))
+    }
+
     pub(crate) fn resize_selection_transaction(
         &self,
         handle: CanvasResizeHandle,
@@ -719,6 +812,12 @@ fn resize_point_within(
             point.y,
         ),
     )
+}
+
+fn distance_squared(left: Point<Pixels>, right: Point<Pixels>) -> f32 {
+    let dx = (left.x - right.x).as_f32();
+    let dy = (left.y - right.y).as_f32();
+    dx * dx + dy * dy
 }
 
 fn resize_axis_within(

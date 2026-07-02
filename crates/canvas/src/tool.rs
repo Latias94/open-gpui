@@ -3940,6 +3940,143 @@ mod tests {
     }
 
     #[test]
+    fn select_tool_reconnects_selected_edge_target_handle() {
+        use crate::{CanvasHandle, HandleId, HandleRole};
+
+        let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut source_handle = CanvasHandle::new("out", point(px(100.0), px(50.0)));
+        source_handle.role = HandleRole::Source;
+        source.handles.push(source_handle);
+
+        let mut first_target =
+            CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut first_target_handle = CanvasHandle::new("in", point(px(0.0), px(50.0)));
+        first_target_handle.role = HandleRole::Target;
+        first_target.handles.push(first_target_handle);
+
+        let mut second_target =
+            CanvasNode::new("c", point(px(400.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut second_target_handle = CanvasHandle::new("in", point(px(0.0), px(50.0)));
+        second_target_handle.role = HandleRole::Target;
+        second_target.handles.push(second_target_handle);
+
+        let document = document_fixture()
+            .node(source)
+            .node(first_target)
+            .node(second_target)
+            .edge(CanvasEdge::new(
+                "edge",
+                CanvasEndpoint::new("a", Some("out")),
+                CanvasEndpoint::new("b", Some("in")),
+            ))
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Edge(
+                EdgeId::from("edge"),
+            )))
+            .unwrap();
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(200.0), px(50.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(400.0), px(50.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(400.0), px(50.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        let edge = editor.document().edge(&EdgeId::from("edge")).unwrap();
+        assert_eq!(edge.source.node_id, NodeId::from("a"));
+        assert_eq!(edge.source.handle_id, Some(HandleId::from("out")));
+        assert_eq!(edge.target.node_id, NodeId::from("c"));
+        assert_eq!(edge.target.handle_id, Some(HandleId::from("in")));
+        assert_eq!(editor.document().edge_count(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
+    }
+
+    #[test]
+    fn select_tool_reconnects_selected_edge_source_handle() {
+        use crate::{CanvasHandle, HandleId, HandleRole};
+
+        let mut first_source =
+            CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut first_source_handle = CanvasHandle::new("out", point(px(100.0), px(50.0)));
+        first_source_handle.role = HandleRole::Source;
+        first_source.handles.push(first_source_handle);
+
+        let mut second_source =
+            CanvasNode::new("c", point(px(-200.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut second_source_handle = CanvasHandle::new("out", point(px(100.0), px(50.0)));
+        second_source_handle.role = HandleRole::Source;
+        second_source.handles.push(second_source_handle);
+
+        let mut target =
+            CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut target_handle = CanvasHandle::new("in", point(px(0.0), px(50.0)));
+        target_handle.role = HandleRole::Target;
+        target.handles.push(target_handle);
+
+        let document = document_fixture()
+            .node(first_source)
+            .node(second_source)
+            .node(target)
+            .edge(CanvasEdge::new(
+                "edge",
+                CanvasEndpoint::new("a", Some("out")),
+                CanvasEndpoint::new("b", Some("in")),
+            ))
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Edge(
+                EdgeId::from("edge"),
+            )))
+            .unwrap();
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(100.0), px(50.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(-100.0), px(50.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(-100.0), px(50.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        let edge = editor.document().edge(&EdgeId::from("edge")).unwrap();
+        assert_eq!(edge.source.node_id, NodeId::from("c"));
+        assert_eq!(edge.source.handle_id, Some(HandleId::from("out")));
+        assert_eq!(edge.target.node_id, NodeId::from("b"));
+        assert_eq!(edge.target.handle_id, Some(HandleId::from("in")));
+        assert_eq!(editor.document().edge_count(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
+    }
+
+    #[test]
     fn connect_tool_exposes_read_only_drag_state() {
         use crate::{CanvasHandle, HandleId, HandleRole};
 

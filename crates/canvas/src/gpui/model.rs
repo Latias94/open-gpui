@@ -1,7 +1,8 @@
 use crate::session::ToolState;
 use crate::{
-    CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdgeRouter, CanvasEditor, CanvasEndpoint,
-    CanvasKindRegistry, CanvasRuntime, CanvasSelection, CanvasSnapGuide, CanvasViewport,
+    CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdgeRouter,
+    CanvasEditor, CanvasEndpoint, CanvasKindRegistry, CanvasRuntime, CanvasSelection,
+    CanvasSnapGuide, CanvasViewport,
 };
 use open_gpui::{Hsla, Pixels, TextAlign, px, rgb};
 use std::sync::Arc;
@@ -15,6 +16,11 @@ pub(crate) enum CanvasPaintInteractionState {
     },
     Connecting {
         source: CanvasEndpoint,
+        current: open_gpui::Point<Pixels>,
+    },
+    Reconnecting {
+        endpoint: CanvasConnectionEndpointRole,
+        fixed: CanvasEndpoint,
         current: open_gpui::Point<Pixels>,
     },
     Transforming {
@@ -180,6 +186,16 @@ impl CanvasPaintInteractionState {
                 origin, current, ..
             } => Self::Selecting { origin, current },
             ToolState::Connecting { source, current } => Self::Connecting { source, current },
+            ToolState::Reconnecting {
+                endpoint,
+                fixed,
+                current,
+                ..
+            } => Self::Reconnecting {
+                endpoint,
+                fixed,
+                current,
+            },
             ToolState::Translating { snap_guides, .. }
             | ToolState::Resizing { snap_guides, .. } => Self::Transforming { snap_guides },
         }

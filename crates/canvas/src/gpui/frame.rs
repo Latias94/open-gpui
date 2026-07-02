@@ -3,13 +3,15 @@ use super::model::{
 };
 use super::style::{parse_color, positive_pixels};
 use crate::{
-    CanvasEndpoint, CanvasGeometryFacts, CanvasKindLabel, CanvasRecordId, CanvasRecordScopeOptions,
-    CanvasResolvedSelectionScope, CanvasRoutePath, CanvasRouteSegment, CanvasSelection,
-    CanvasSnapAxis, CanvasSnapGuide, CanvasTransformHandle, CanvasTransformTarget, CanvasViewport,
-    EdgeId, HitOptions, HitTarget, canvas_transform_handles, connection_hit_options,
-    resolve_selection_scope,
+    CanvasConnectionEndpointRole, CanvasEndpoint, CanvasGeometryFacts, CanvasKindLabel,
+    CanvasRecordId, CanvasRecordScopeOptions, CanvasResolvedSelectionScope, CanvasRoutePath,
+    CanvasRouteSegment, CanvasSelection, CanvasSnapAxis, CanvasSnapGuide, CanvasTransformHandle,
+    CanvasTransformTarget, CanvasViewport, EdgeId, HitOptions, HitTarget, canvas_transform_handles,
+    connection_hit_options, resolve_selection_scope,
 };
-use open_gpui::{Bounds, Hsla, Pixels, Point, SharedString, TextRun, Window, WrappedLine, px, size};
+use open_gpui::{
+    Bounds, Hsla, Pixels, Point, SharedString, TextRun, Window, WrappedLine, px, size,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CanvasPaintFrame {
@@ -361,6 +363,18 @@ fn interaction_frame(
                 snap_guides: Vec::new(),
             }
         }
+        CanvasPaintInteractionState::Reconnecting {
+            endpoint,
+            fixed,
+            current,
+        } => CanvasPaintInteractionFrame {
+            selection_bounds: None,
+            structural_selection_bounds: structural_selection_bounds(model, selection_scope),
+            connection_preview: reconnect_preview(model, *endpoint, fixed, *current),
+            reconnect_handles: Vec::new(),
+            transform_handles: Vec::new(),
+            snap_guides: Vec::new(),
+        },
         CanvasPaintInteractionState::Transforming { snap_guides } => CanvasPaintInteractionFrame {
             selection_bounds: None,
             structural_selection_bounds: structural_selection_bounds(model, selection_scope),
@@ -476,29 +490,62 @@ fn connection_preview(
         model.kind_registry.as_ref(),
     );
     let source = facts.endpoint_position(source).ok()?;
-    let target = connection_preview_target_position(model, source, current).unwrap_or(current);
+    let target = connection_preview_endpoint_position(
+        model,
+        CanvasConnectionEndpointRole::Target,
+        source,
+        current,
+    )
+    .unwrap_or(current);
     Some(CanvasPaintConnectionPreview {
         source_view_position: model.viewport.document_to_view(source),
         target_view_position: model.viewport.document_to_view(target),
     })
 }
 
-fn connection_preview_target_position(
+fn reconnect_preview(
     model: &CanvasPaintModel,
-    source: Point<Pixels>,
+    endpoint: CanvasConnectionEndpointRole,
+    fixed: &CanvasEndpoint,
+    current: Point<Pixels>,
+) -> Option<CanvasPaintConnectionPreview> {
+    let facts = CanvasGeometryFacts::with_kind_registry(
+        model.document.as_ref(),
+        model.kind_registry.as_ref(),
+    );
+    let fixed = facts.endpoint_position(fixed).ok()?;
+    let moving =
+        connection_preview_endpoint_position(model, endpoint, fixed, current).unwrap_or(current);
+    Some(match endpoint {
+        CanvasConnectionEndpointRole::Source => CanvasPaintConnectionPreview {
+            source_view_position: model.viewport.document_to_view(moving),
+            target_view_position: model.viewport.document_to_view(fixed),
+        },
+        CanvasConnectionEndpointRole::Target => CanvasPaintConnectionPreview {
+            source_view_position: model.viewport.document_to_view(fixed),
+            target_view_position: model.viewport.document_to_view(moving),
+        },
+    })
+}
+
+fn connection_preview_endpoint_position(
+    model: &CanvasPaintModel,
+    role: CanvasConnectionEndpointRole,
+    fixed: Point<Pixels>,
     current: Point<Pixels>,
 ) -> Option<Point<Pixels>> {
     let facts = CanvasGeometryFacts::with_kind_registry(
         model.document.as_ref(),
         model.kind_registry.as_ref(),
     );
-    facts.connection_preview_target(
+    let endpoint = facts.connection_endpoint_at(
         model
             .runtime
             .precise_hit_test_with_facts(facts, current, connection_hit_options()),
-        source,
-        current,
-    )
+        role,
+    )?;
+    let position = facts.endpoint_position(&endpoint).ok()?;
+    (position != fixed).then_some(position)
 }
 
 fn target_is_selected(target: &HitTarget, selection: &CanvasSelection) -> bool {

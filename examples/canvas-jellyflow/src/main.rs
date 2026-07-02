@@ -6003,6 +6003,14 @@ mod tests {
     }
 
     #[test]
+    fn selected_product_edge_reconnect_gesture_plans_jellyflow_transaction() {
+        assert!(
+            product_reconnect_gesture_sync_probe(),
+            "dragging a selected canvas edge endpoint should update the edge and sync through Jellyflow reconnect rules"
+        );
+    }
+
+    #[test]
     fn selected_product_edge_exposes_reconnect_affordances() {
         assert!(
             product_reconnect_affordance_probe(),
@@ -6122,6 +6130,107 @@ mod tests {
             .edges()
             .get(&edge_id)
             .is_some_and(|edge| edge.to == target_port)
+    }
+
+    fn product_reconnect_gesture_sync_probe() -> bool {
+        let store = make_demo_store();
+        let Ok((document, _projection)) = project_store(&store) else {
+            return false;
+        };
+        let Ok(mut editor) = editor_for_document(document) else {
+            return false;
+        };
+        let edge_id = JellyEdgeId::from_u128(200);
+        let canvas_edge_id = open_gpui_canvas::EdgeId::from(canvas_edge_id(&edge_id));
+        if editor
+            .apply_tool_intent(CanvasToolIntent::ReplaceSelection(HitTarget::Edge(
+                canvas_edge_id.clone(),
+            )))
+            .is_err()
+        {
+            return false;
+        }
+
+        let old_target = endpoint_document_position(
+            editor.document(),
+            JellyNodeId::from_u128(3),
+            JellyPortId::from_u128(30),
+        );
+        let new_target = endpoint_document_position(
+            editor.document(),
+            JellyNodeId::from_u128(4),
+            JellyPortId::from_u128(40),
+        );
+        let (Some(old_target), Some(new_target)) = (old_target, new_target) else {
+            return false;
+        };
+
+        let old_target_view = editor.viewport().document_to_view(old_target);
+        let new_target_view = editor.viewport().document_to_view(new_target);
+        if editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: old_target_view,
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .is_err()
+            || editor
+                .handle_event(CanvasEvent::PointerMove {
+                    position: new_target_view,
+                    modifiers: CanvasKeyModifiers::default(),
+                })
+                .is_err()
+            || editor
+                .handle_event(CanvasEvent::PointerUp {
+                    position: new_target_view,
+                    button: PointerButton::Primary,
+                    modifiers: CanvasKeyModifiers::default(),
+                })
+                .is_err()
+        {
+            return false;
+        }
+
+        let Some(edge) = editor.document().edge(&canvas_edge_id) else {
+            return false;
+        };
+        if !edge
+            .target
+            .handle_id
+            .as_ref()
+            .is_some_and(|handle| handle.as_str() == canvas_port_id(&JellyPortId::from_u128(40)))
+        {
+            return false;
+        }
+
+        let adapter = OpenGpuiAdapter::default();
+        let Ok(transactions) =
+            canvas_document_connection_sync_transactions(&adapter, &store, editor.document())
+        else {
+            return false;
+        };
+        transactions
+            .iter()
+            .flat_map(GraphTransaction::ops)
+            .any(|op| {
+                matches!(
+                    op,
+                    GraphOp::SetEdgeEndpoints { id, to, .. }
+                        if *id == edge_id && to.to == JellyPortId::from_u128(40)
+                )
+            })
+    }
+
+    fn endpoint_document_position(
+        document: &CanvasDocument,
+        node_id: JellyNodeId,
+        port_id: JellyPortId,
+    ) -> Option<open_gpui::Point<open_gpui::Pixels>> {
+        let node = document.node(&NodeId::from(canvas_node_id(&node_id)))?;
+        let handle = node.handle(Some(&open_gpui_canvas::HandleId::from(canvas_port_id(
+            &port_id,
+        ))))?;
+        Some(node.position + handle.position)
     }
 
     fn product_reconnect_affordance_probe() -> bool {
