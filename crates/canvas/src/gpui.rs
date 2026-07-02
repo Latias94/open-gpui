@@ -39,7 +39,7 @@ mod tests {
     };
     use open_gpui::{
         Bounds, Hsla, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
-        MouseMoveEvent, MouseUpEvent, ScrollDelta, ScrollWheelEvent, point, px, rgb, size,
+        MouseMoveEvent, MouseUpEvent, Pixels, ScrollDelta, ScrollWheelEvent, point, px, rgb, size,
     };
 
     #[test]
@@ -1118,6 +1118,19 @@ mod tests {
         );
     }
 
+    fn straight_preview(
+        source: open_gpui::Point<Pixels>,
+        target: open_gpui::Point<Pixels>,
+    ) -> CanvasPaintConnectionPreview {
+        CanvasPaintConnectionPreview {
+            source_view_position: source,
+            target_view_position: target,
+            edge_geometry: CanvasPaintEdgeGeometry {
+                view_path: CanvasRoutePath::polyline([source, target]),
+            },
+        }
+    }
+
     #[test]
     fn connecting_state_adds_connection_preview_feedback() {
         let mut node = CanvasNode::new(
@@ -1145,10 +1158,50 @@ mod tests {
 
         assert_eq!(
             frame.interaction.connection_preview,
-            Some(CanvasPaintConnectionPreview {
-                source_view_position: point(px(110.0), px(60.0)),
-                target_view_position: point(px(180.0), px(120.0)),
-            })
+            Some(straight_preview(
+                point(px(110.0), px(60.0)),
+                point(px(180.0), px(120.0)),
+            ))
+        );
+    }
+
+    #[test]
+    fn connecting_preview_uses_configured_route_policy() {
+        let mut node = CanvasNode::new(
+            "source",
+            point(px(10.0), px(20.0)),
+            size(px(100.0), px(80.0)),
+        );
+        node.handles
+            .push(CanvasHandle::new("out", point(px(100.0), px(40.0))));
+        let document = document_fixture().node(node).build();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .apply_tool_effect(CanvasToolEffect::SetState(ToolState::Connecting {
+                source: CanvasEndpoint::new("source", Some("out")),
+                current: point(px(180.0), px(120.0)),
+            }))
+            .unwrap();
+        let model = CanvasPaintModel::from(&editor);
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(240.0), px(180.0))),
+            CanvasPaintOptions {
+                connection_preview_route: CanvasConnectionPreviewRoute::Orthogonal,
+                ..CanvasPaintOptions::default()
+            },
+        );
+
+        let preview = frame.interaction.connection_preview.unwrap();
+        assert_eq!(
+            preview.edge_geometry.view_path.document_points(),
+            vec![
+                point(px(110.0), px(60.0)),
+                point(px(145.0), px(60.0)),
+                point(px(145.0), px(120.0)),
+                point(px(180.0), px(120.0)),
+            ]
         );
     }
 
@@ -1189,10 +1242,10 @@ mod tests {
 
         assert_eq!(
             frame.interaction.connection_preview,
-            Some(CanvasPaintConnectionPreview {
-                source_view_position: point(px(30.0), px(5.0)),
-                target_view_position: point(px(40.0), px(5.0)),
-            })
+            Some(straight_preview(
+                point(px(30.0), px(5.0)),
+                point(px(40.0), px(5.0)),
+            ))
         );
     }
 
@@ -1234,10 +1287,10 @@ mod tests {
 
         assert_eq!(
             frame.interaction.connection_preview,
-            Some(CanvasPaintConnectionPreview {
-                source_view_position: point(px(110.0), px(60.0)),
-                target_view_position: point(px(200.0), px(60.0)),
-            })
+            Some(straight_preview(
+                point(px(110.0), px(60.0)),
+                point(px(200.0), px(60.0)),
+            ))
         );
     }
 
@@ -1279,10 +1332,72 @@ mod tests {
 
         assert_eq!(
             frame.interaction.connection_preview,
-            Some(CanvasPaintConnectionPreview {
-                source_view_position: point(px(110.0), px(60.0)),
-                target_view_position: point(px(204.0), px(64.0)),
-            })
+            Some(straight_preview(
+                point(px(110.0), px(60.0)),
+                point(px(204.0), px(64.0)),
+            ))
+        );
+    }
+
+    #[test]
+    fn reconnecting_preview_reuses_selected_edge_route_path() {
+        let mut source = CanvasNode::new(
+            "source",
+            point(px(0.0), px(0.0)),
+            size(px(100.0), px(100.0)),
+        );
+        let mut source_handle = CanvasHandle::new("out", point(px(100.0), px(50.0)));
+        source_handle.role = HandleRole::Source;
+        source.handles.push(source_handle);
+
+        let mut target = CanvasNode::new(
+            "target",
+            point(px(200.0), px(0.0)),
+            size(px(100.0), px(100.0)),
+        );
+        let mut target_handle = CanvasHandle::new("in", point(px(0.0), px(50.0)));
+        target_handle.role = HandleRole::Target;
+        target.handles.push(target_handle);
+
+        let mut edge = CanvasEdge::new(
+            "edge",
+            CanvasEndpoint::new("source", Some("out")),
+            CanvasEndpoint::new("target", Some("in")),
+        );
+        edge.route = crate::CanvasEdgeRoute::orthogonal();
+        let document = document_fixture()
+            .node(source)
+            .node(target)
+            .edge(edge)
+            .build();
+        let model = CanvasPaintModel::new(document, CanvasViewport::default()).with_interaction(
+            CanvasPaintInteraction::default().with_internal_tool_state(ToolState::Reconnecting {
+                edge_id: EdgeId::from("edge"),
+                endpoint: crate::CanvasConnectionEndpointRole::Target,
+                fixed: CanvasEndpoint::new("source", Some("out")),
+                current: point(px(260.0), px(120.0)),
+            }),
+        );
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(360.0), px(180.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        let preview = frame
+            .interaction
+            .connection_preview
+            .expect("reconnecting should expose a preview route");
+
+        assert_eq!(
+            preview.edge_geometry.view_path.document_points(),
+            vec![
+                point(px(100.0), px(50.0)),
+                point(px(180.0), px(50.0)),
+                point(px(180.0), px(120.0)),
+                point(px(260.0), px(120.0)),
+            ]
         );
     }
 

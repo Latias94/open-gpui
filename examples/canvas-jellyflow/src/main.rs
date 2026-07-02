@@ -70,11 +70,12 @@ use open_gpui::{
     prelude::*, px, rgb, size,
 };
 use open_gpui_canvas::{
-    CanvasDocument, CanvasEditor, CanvasEditorInputHandler, CanvasEvent, CanvasHandle,
-    CanvasKeyModifiers, CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode,
-    CanvasNodeKind, CanvasNodeRenderPolicy, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
-    CanvasTool, CanvasToolIntent, CanvasViewport, DocumentError, HandleRole, HitTarget, NodeId,
-    PointerButton, canvas_editor_view_with_frame, connection_hit_options,
+    CanvasConnectionPreviewRoute, CanvasDocument, CanvasEditor, CanvasEditorInputHandler,
+    CanvasEvent, CanvasHandle, CanvasKeyModifiers, CanvasKindLabel, CanvasKindPaint,
+    CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeRenderPolicy, CanvasPaintModel,
+    CanvasPaintOptions, CanvasPaintTheme, CanvasTool, CanvasToolIntent, CanvasViewport,
+    DocumentError, HandleRole, HitTarget, NodeId, PointerButton, canvas_editor_view_with_frame,
+    connection_hit_options,
 };
 #[cfg(test)]
 use open_gpui_canvas::{CanvasTransaction, DocumentCommand};
@@ -364,6 +365,7 @@ impl Render for JellyflowCanvasView {
             + self.editor.selection().selected_edges().count();
         let options = CanvasPaintOptions {
             include_handles: true,
+            connection_preview_route: CanvasConnectionPreviewRoute::Orthogonal,
             ..CanvasPaintOptions::default()
         };
         let theme = CanvasPaintTheme {

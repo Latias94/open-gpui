@@ -57,8 +57,8 @@ pub use geometry_facts::{
     CanvasGeometryFacts, CanvasRecordGeometry, CanvasResolvedEdgeGeometry, connection_hit_options,
 };
 pub use gpui::{
-    CanvasEditorInputHandler, CanvasEditorInputMapper, CanvasInputMapper,
-    CanvasPaintConnectionPreview, CanvasPaintEdgeGeometry, CanvasPaintFrame,
+    CanvasConnectionPreviewRoute, CanvasEditorInputHandler, CanvasEditorInputMapper,
+    CanvasInputMapper, CanvasPaintConnectionPreview, CanvasPaintEdgeGeometry, CanvasPaintFrame,
     CanvasPaintInteraction, CanvasPaintInteractionFrame, CanvasPaintLabel, CanvasPaintModel,
     CanvasPaintOptions, CanvasPaintRecord, CanvasPaintSnapGuide, CanvasPaintTheme,
     CanvasPaintTransformHandle, CanvasPreparedPaintFrame, CanvasWidgetOverlayFrame,

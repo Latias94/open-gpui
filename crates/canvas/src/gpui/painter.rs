@@ -148,11 +148,10 @@ pub fn paint_canvas_frame(
     }
 
     if let Some(preview) = &frame.frame.interaction.connection_preview {
-        paint_line(
+        paint_edge(
             window,
             canvas_bounds,
-            preview.source_view_position,
-            preview.target_view_position,
+            &preview.edge_geometry,
             theme.connection_preview_stroke,
             theme.connection_preview_stroke_width,
         );

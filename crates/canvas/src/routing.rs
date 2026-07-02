@@ -165,6 +165,17 @@ impl CanvasEdgeRouter for CanvasDefaultEdgeRouter {
             );
         }
 
+        if route.kind.as_str() == CanvasEdgeRouteKind::CUBIC_BEZIER {
+            let (control_1, control_2) =
+                default_cubic_control_points(request.source, request.target);
+            return CanvasRoutePath::cubic_bezier(
+                request.source,
+                control_1,
+                control_2,
+                request.target,
+            );
+        }
+
         if route.kind.as_str() == CanvasEdgeRouteKind::ORTHOGONAL {
             return CanvasRoutePath::orthogonal(
                 [request.source]
@@ -181,6 +192,21 @@ impl CanvasEdgeRouter for CanvasDefaultEdgeRouter {
                 .chain([request.target]),
         )
     }
+}
+
+fn default_cubic_control_points(
+    source: Point<Pixels>,
+    target: Point<Pixels>,
+) -> (Point<Pixels>, Point<Pixels>) {
+    let dx = target.x.as_f32() - source.x.as_f32();
+    let offset = (dx.abs() * 0.5)
+        .max(40.0)
+        .copysign(if dx == 0.0 { 1.0 } else { dx });
+    let offset = Pixels::from(offset);
+    (
+        Point::new(source.x + offset, source.y),
+        Point::new(target.x - offset, target.y),
+    )
 }
 
 fn append_orthogonal_leg(points: &mut Vec<Point<Pixels>>, from: Point<Pixels>, to: Point<Pixels>) {
@@ -274,6 +300,28 @@ mod tests {
             path.bounds().unwrap(),
             Bounds::from_corners(point(px(0.0), px(-40.0)), point(px(100.0), px(40.0)))
         );
+    }
+
+    #[test]
+    fn default_router_emits_cubic_segment_without_control_points() {
+        let mut edge = CanvasEdge::new(
+            "edge",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        );
+        edge.route = CanvasEdgeRoute::new(CanvasEdgeRouteKind::CUBIC_BEZIER);
+
+        let path = CanvasDefaultEdgeRouter.route_edge(CanvasRouteRequest {
+            edge: &edge,
+            source: point(px(0.0), px(0.0)),
+            target: point(px(100.0), px(30.0)),
+        });
+
+        assert_eq!(path.segments.len(), 1);
+        assert!(matches!(
+            path.segments[0],
+            CanvasRouteSegment::CubicBezier { .. }
+        ));
     }
 
     #[test]

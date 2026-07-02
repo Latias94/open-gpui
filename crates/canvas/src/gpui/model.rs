@@ -1,8 +1,8 @@
 use crate::session::ToolState;
 use crate::{
-    CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdgeRouter,
-    CanvasEditor, CanvasEndpoint, CanvasKindRegistry, CanvasRuntime, CanvasSelection,
-    CanvasSnapGuide, CanvasViewport,
+    CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdgeRoute,
+    CanvasEdgeRouteKind, CanvasEdgeRouter, CanvasEditor, CanvasEndpoint, CanvasKindRegistry,
+    CanvasRuntime, CanvasSelection, CanvasSnapGuide, CanvasViewport,
 };
 use open_gpui::{Hsla, Pixels, TextAlign, px, rgb};
 use std::sync::Arc;
@@ -19,6 +19,7 @@ pub(crate) enum CanvasPaintInteractionState {
         current: open_gpui::Point<Pixels>,
     },
     Reconnecting {
+        edge_id: crate::EdgeId,
         endpoint: CanvasConnectionEndpointRole,
         fixed: CanvasEndpoint,
         current: open_gpui::Point<Pixels>,
@@ -187,11 +188,13 @@ impl CanvasPaintInteractionState {
             } => Self::Selecting { origin, current },
             ToolState::Connecting { source, current } => Self::Connecting { source, current },
             ToolState::Reconnecting {
+                edge_id,
                 endpoint,
                 fixed,
                 current,
                 ..
             } => Self::Reconnecting {
+                edge_id,
                 endpoint,
                 fixed,
                 current,
@@ -202,12 +205,33 @@ impl CanvasPaintInteractionState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CanvasConnectionPreviewRoute {
+    #[default]
+    Straight,
+    Polyline,
+    Orthogonal,
+    CubicBezier,
+}
+
+impl CanvasConnectionPreviewRoute {
+    pub(crate) fn edge_route(self) -> CanvasEdgeRoute {
+        match self {
+            Self::Straight => CanvasEdgeRoute::straight(),
+            Self::Polyline => CanvasEdgeRoute::polyline(std::iter::empty()),
+            Self::Orthogonal => CanvasEdgeRoute::orthogonal(),
+            Self::CubicBezier => CanvasEdgeRoute::new(CanvasEdgeRouteKind::CUBIC_BEZIER),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CanvasPaintOptions {
     pub include_hidden: bool,
     pub include_handles: bool,
     pub include_interaction_feedback: bool,
     pub cull_margin: Pixels,
+    pub connection_preview_route: CanvasConnectionPreviewRoute,
 }
 
 impl Default for CanvasPaintOptions {
@@ -217,6 +241,7 @@ impl Default for CanvasPaintOptions {
             include_handles: false,
             include_interaction_feedback: true,
             cull_margin: Pixels::ZERO,
+            connection_preview_route: CanvasConnectionPreviewRoute::default(),
         }
     }
 }

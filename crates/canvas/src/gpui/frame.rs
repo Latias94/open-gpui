@@ -3,8 +3,9 @@ use super::model::{
 };
 use super::style::{parse_color, positive_pixels};
 use crate::{
-    CanvasConnectionEndpointRole, CanvasEndpoint, CanvasGeometryFacts, CanvasKindLabel,
-    CanvasRecordId, CanvasRecordScopeOptions, CanvasResolvedSelectionScope, CanvasRoutePath,
+    CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasEdge, CanvasEdgeRoute,
+    CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryFacts, CanvasKindLabel, CanvasRecordId,
+    CanvasRecordScopeOptions, CanvasResolvedSelectionScope, CanvasRoutePath, CanvasRouteRequest,
     CanvasRouteSegment, CanvasSelection, CanvasSnapAxis, CanvasSnapGuide, CanvasTransformHandle,
     CanvasTransformTarget, CanvasViewport, EdgeId, HitOptions, HitTarget, canvas_transform_handles,
     connection_hit_options, resolve_selection_scope,
@@ -115,6 +116,7 @@ pub struct CanvasPaintInteractionFrame {
 pub struct CanvasPaintConnectionPreview {
     pub source_view_position: Point<Pixels>,
     pub target_view_position: Point<Pixels>,
+    pub edge_geometry: CanvasPaintEdgeGeometry,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -272,7 +274,7 @@ pub fn collect_visible_records(
         visible_document_bounds,
         records,
         interaction: if options.include_interaction_feedback {
-            interaction_frame(model, selection_scope.as_ref())
+            interaction_frame(model, options, selection_scope.as_ref())
         } else {
             CanvasPaintInteractionFrame::default()
         },
@@ -338,6 +340,7 @@ pub fn prepare_canvas_frame(
 
 fn interaction_frame(
     model: &CanvasPaintModel,
+    options: CanvasPaintOptions,
     selection_scope: Option<&crate::CanvasResolvedSelectionScope>,
 ) -> CanvasPaintInteractionFrame {
     match model.interaction.state() {
@@ -357,20 +360,33 @@ fn interaction_frame(
             CanvasPaintInteractionFrame {
                 selection_bounds: None,
                 structural_selection_bounds: structural_selection_bounds(model, selection_scope),
-                connection_preview: connection_preview(model, source, *current),
+                connection_preview: connection_preview(
+                    model,
+                    source,
+                    *current,
+                    options.connection_preview_route.edge_route(),
+                ),
                 reconnect_handles: Vec::new(),
                 transform_handles: Vec::new(),
                 snap_guides: Vec::new(),
             }
         }
         CanvasPaintInteractionState::Reconnecting {
+            edge_id,
             endpoint,
             fixed,
             current,
         } => CanvasPaintInteractionFrame {
             selection_bounds: None,
             structural_selection_bounds: structural_selection_bounds(model, selection_scope),
-            connection_preview: reconnect_preview(model, *endpoint, fixed, *current),
+            connection_preview: reconnect_preview(
+                model,
+                edge_id,
+                *endpoint,
+                fixed,
+                *current,
+                options.connection_preview_route.edge_route(),
+            ),
             reconnect_handles: Vec::new(),
             transform_handles: Vec::new(),
             snap_guides: Vec::new(),
@@ -484,6 +500,7 @@ fn connection_preview(
     model: &CanvasPaintModel,
     source: &CanvasEndpoint,
     current: Point<Pixels>,
+    route: CanvasEdgeRoute,
 ) -> Option<CanvasPaintConnectionPreview> {
     let facts = CanvasGeometryFacts::with_kind_registry(
         model.document.as_ref(),
@@ -497,17 +514,16 @@ fn connection_preview(
         current,
     )
     .unwrap_or(current);
-    Some(CanvasPaintConnectionPreview {
-        source_view_position: model.viewport.document_to_view(source),
-        target_view_position: model.viewport.document_to_view(target),
-    })
+    Some(connection_preview_frame(model, source, target, route))
 }
 
 fn reconnect_preview(
     model: &CanvasPaintModel,
+    edge_id: &EdgeId,
     endpoint: CanvasConnectionEndpointRole,
     fixed: &CanvasEndpoint,
     current: Point<Pixels>,
+    fallback_route: CanvasEdgeRoute,
 ) -> Option<CanvasPaintConnectionPreview> {
     let facts = CanvasGeometryFacts::with_kind_registry(
         model.document.as_ref(),
@@ -516,16 +532,45 @@ fn reconnect_preview(
     let fixed = facts.endpoint_position(fixed).ok()?;
     let moving =
         connection_preview_endpoint_position(model, endpoint, fixed, current).unwrap_or(current);
+    let route = model
+        .document
+        .edge(edge_id)
+        .map(|edge| edge.route.clone())
+        .unwrap_or(fallback_route);
     Some(match endpoint {
-        CanvasConnectionEndpointRole::Source => CanvasPaintConnectionPreview {
-            source_view_position: model.viewport.document_to_view(moving),
-            target_view_position: model.viewport.document_to_view(fixed),
-        },
-        CanvasConnectionEndpointRole::Target => CanvasPaintConnectionPreview {
-            source_view_position: model.viewport.document_to_view(fixed),
-            target_view_position: model.viewport.document_to_view(moving),
-        },
+        CanvasConnectionEndpointRole::Source => {
+            connection_preview_frame(model, moving, fixed, route)
+        }
+        CanvasConnectionEndpointRole::Target => {
+            connection_preview_frame(model, fixed, moving, route)
+        }
     })
+}
+
+fn connection_preview_frame(
+    model: &CanvasPaintModel,
+    source: Point<Pixels>,
+    target: Point<Pixels>,
+    route: CanvasEdgeRoute,
+) -> CanvasPaintConnectionPreview {
+    let mut edge = CanvasEdge::new(
+        "__connection_preview",
+        CanvasEndpoint::new("__connection_preview_source", None::<&str>),
+        CanvasEndpoint::new("__connection_preview_target", None::<&str>),
+    );
+    edge.route = route;
+    let path = CanvasDefaultEdgeRouter.route_edge(CanvasRouteRequest {
+        edge: &edge,
+        source,
+        target,
+    });
+    CanvasPaintConnectionPreview {
+        source_view_position: model.viewport.document_to_view(source),
+        target_view_position: model.viewport.document_to_view(target),
+        edge_geometry: CanvasPaintEdgeGeometry {
+            view_path: route_path_to_view(&path, model.viewport),
+        },
+    }
 }
 
 fn connection_preview_endpoint_position(
