@@ -178,26 +178,40 @@ fn component_fit_evidence(
     hidden_repeatable_overflow: usize,
     repeatable_overflow_indicators: usize,
 ) -> OpenGpuiComponentFitEvidence {
-    let available_width = (canvas_node.size.width.as_f32() - 20.0).max(1.0);
+    let fit_budget = surface.renderer_context.surface_preset.component_fit_budget;
+    let available_width = fit_budget.available_content_width(JellySize {
+        width: canvas_node.size.width.as_f32(),
+        height: canvas_node.size.height.as_f32(),
+    });
     let text_values = component_fit_text_values(surface);
     let mut compact_regions = 0;
     let mut shell_regions = 0;
     let mut overflow_indicators = repeatable_overflow_indicators;
+    let mut overflow_indicator_required_count = usize::from(hidden_repeatable_overflow > 0);
 
     for text in &text_values {
-        let plan = node_component_kit::adaptive_text_plan(text, available_width, 34.0, 2, 1);
+        let plan = node_component_kit::adaptive_text_plan(
+            text,
+            available_width,
+            fit_budget.text_region_height as f32,
+            fit_budget.full_text_line_budget,
+            fit_budget.compact_text_line_budget,
+        );
         match plan.mode {
             node_component_kit::AdaptiveNodeLayoutMode::Full => {}
             node_component_kit::AdaptiveNodeLayoutMode::Compact => compact_regions += 1,
             node_component_kit::AdaptiveNodeLayoutMode::Shell => shell_regions += 1,
         }
-        overflow_indicators += usize::from(plan.overflow_indicator_required);
+        if plan.overflow_indicator_required {
+            overflow_indicator_required_count += 1;
+            overflow_indicators += 1;
+        }
     }
 
     let control_regions_checked = projected_controls.max(1);
     let control_plan = node_component_kit::adaptive_control_row_plan(
         available_width,
-        34.0,
+        fit_budget.control_region_height as f32,
         surface.title.as_str(),
         surface.summary.as_str(),
     );
@@ -208,6 +222,14 @@ fn component_fit_evidence(
         }
         node_component_kit::AdaptiveNodeLayoutMode::Shell => shell_regions += projected_controls,
     }
+    if control_plan.mode == node_component_kit::AdaptiveNodeLayoutMode::Shell
+        && (control_plan.label_overflow || control_plan.value_overflow)
+    {
+        overflow_indicator_required_count += 1;
+        overflow_indicators += 1;
+    }
+    let overflow_indicator_missing_count =
+        overflow_indicator_required_count.saturating_sub(overflow_indicators);
 
     OpenGpuiComponentFitEvidence {
         text_regions_checked: text_values.len().max(1),
@@ -215,7 +237,9 @@ fn component_fit_evidence(
         repeatable_regions_checked: surface.repeatable_items.len(),
         compact_regions,
         shell_regions,
+        overflow_indicator_required_count,
         overflow_indicator_count: overflow_indicators,
+        overflow_indicator_missing_count,
         clipped_text_regions: 0,
         clipped_control_regions: usize::from(control_plan.clipped),
         hidden_repeatable_regions_without_indicator: usize::from(
