@@ -297,9 +297,10 @@ Result:
 - The native renderer smoke requests a local `wgpu` adapter and device, creates the GPUI renderer
   bind group layouts, and creates the core render pipelines. It also checks that the subpixel sprite
   pipeline is present only when the device exposes `DUAL_SOURCE_BLENDING`.
-- `cargo check -p gpui_wgpu --all-targets --features font-kit` is not a valid migration gate yet
-  because `crates/gpui_wgpu/benches/layout_line.rs` includes font assets that are not present in
-  this extracted workspace. That failure is unrelated to the `wgpu` API.
+- `cargo check -p gpui_wgpu --all-targets --features font-kit` is a valid migration gate after
+  `crates/gpui_wgpu/benches/layout_line.rs` stopped using compile-time font includes. The
+  benchmark now reads optional font paths at runtime and skips initialization when those assets are
+  absent from an extracted workspace.
 
 Decision:
 
