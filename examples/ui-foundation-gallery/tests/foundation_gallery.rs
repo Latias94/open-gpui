@@ -1574,7 +1574,7 @@ fn components_page_samples_expose_component_metadata() {
             .all(|entry| entry.sample_selector.is_none() && entry.state_contract_selector.is_some())
     );
 
-    assert_eq!(gates.len(), 11);
+    assert_eq!(gates.len(), 12);
     assert_eq!(gates[0].id, "public-api-exports");
     assert!(
         gates[0]
@@ -1648,6 +1648,22 @@ fn components_page_samples_expose_component_metadata() {
         gates[10]
             .evidence
             .contains(&"representative_component_a11y_contracts_are_valid")
+    );
+    assert_eq!(gates[11].id, "theme-schema");
+    assert!(
+        gates[11]
+            .evidence
+            .contains(&"crates/ui_components/src/theme/schema.rs")
+    );
+    assert!(
+        gates[11]
+            .evidence
+            .contains(&"crates/ui_components/tests/theme.rs")
+    );
+    assert!(
+        gates[11]
+            .evidence
+            .contains(&"cargo run -p xtask -- scan-theme-drift")
     );
 
     let a11y_claims = pages::components::COMPONENT_A11Y_CLAIMS;

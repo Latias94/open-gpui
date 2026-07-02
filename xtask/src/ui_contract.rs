@@ -26,6 +26,23 @@ struct Docs<'a> {
     verification: &'a str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct A11yClaim {
+    component: String,
+    selector_prefix: String,
+    role: String,
+    label_source: String,
+    value_kind: Option<String>,
+    orientation: Option<String>,
+    actions: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConformanceGate {
+    id: String,
+    evidence: BTreeSet<String>,
+}
+
 pub(crate) fn scan_ui_contract(root: &Path) -> Result<(), ()> {
     println!("==> scan UI contract");
 
@@ -46,16 +63,22 @@ fn ui_contract_failures(root: &Path) -> Vec<String> {
     let mut failures = Vec::new();
     let source_dir = root.join("crates/ui_components/src");
     let registry_path = source_dir.join("component_contract/rows.rs");
+    let conformance_path =
+        root.join("examples/ui-foundation-gallery/src/pages/components/conformance.rs");
     let component_contract_docs_path = root.join("docs/ui/component-contract.md");
     let verification_docs_path = root.join("docs/verification.md");
 
     let registry_source = read_to_string(&registry_path, &mut failures);
+    let conformance_source = read_to_string(&conformance_path, &mut failures);
     let component_contract_docs = read_to_string(&component_contract_docs_path, &mut failures);
     let verification_docs = read_to_string(&verification_docs_path, &mut failures);
     let root_exports = default_reexport_tokens(&source_dir, "lib.rs", &mut failures);
     let prelude_exports = default_reexport_tokens(&source_dir, "prelude.rs", &mut failures);
 
     let Some(registry_source) = registry_source else {
+        return failures;
+    };
+    let Some(conformance_source) = conformance_source else {
         return failures;
     };
     let Some(component_contract_docs) = component_contract_docs else {
@@ -84,6 +107,7 @@ fn ui_contract_failures(root: &Path) -> Vec<String> {
         |entry| source_home_exists(&source_dir, entry),
         |name| removed_primitive_module_exists(&source_dir, name),
     ));
+    failures.extend(audit_gallery_contracts(&conformance_source));
 
     failures
 }
@@ -225,28 +249,16 @@ fn removed_primitive_module_exists(source_dir: &Path, name: &str) -> bool {
 }
 
 fn registry_entries_from_source(source: &str) -> (Vec<RegistryEntry>, Vec<String>) {
+    let (blocks, block_failures) = struct_literal_blocks(source, "ComponentContractEntry");
     let mut entries = Vec::new();
     let mut failures = Vec::new();
-    let mut search_from = 0;
+    failures.extend(block_failures);
 
-    while let Some(relative_start) = source[search_from..].find("ComponentContractEntry") {
-        let start = search_from + relative_start;
-        let Some(open_brace) = source[start..].find('{').map(|offset| start + offset) else {
-            failures.push("registry entry is missing `{`".to_string());
-            break;
-        };
-        let Some(close_brace) = matching_brace(source, open_brace) else {
-            failures.push("registry entry is missing matching `}`".to_string());
-            break;
-        };
-        let block = &source[open_brace + 1..close_brace];
-
+    for block in blocks {
         match registry_entry_from_block(block) {
             Ok(entry) => entries.push(entry),
             Err(error) => failures.push(error),
         }
-
-        search_from = close_brace + 1;
     }
 
     (entries, failures)
@@ -318,9 +330,349 @@ fn enum_variant_field(block: &str, field: &str) -> Option<String> {
 }
 
 fn field_value<'a>(block: &'a str, field: &str) -> Option<&'a str> {
+    Some(field_tail(block, field)?.lines().next().unwrap_or_default())
+}
+
+fn field_tail<'a>(block: &'a str, field: &str) -> Option<&'a str> {
     let marker = format!("{field}:");
     let start = block.find(&marker)? + marker.len();
-    Some(block[start..].lines().next().unwrap_or_default())
+    Some(&block[start..])
+}
+
+fn audit_gallery_contracts(conformance_source: &str) -> Vec<String> {
+    let mut failures = Vec::new();
+    let (claims, claim_parse_failures) = a11y_claims_from_source(conformance_source);
+    failures.extend(claim_parse_failures.into_iter().map(|failure| {
+        format!("examples/ui-foundation-gallery/src/pages/components/conformance.rs: {failure}")
+    }));
+    failures.extend(audit_a11y_claims(&claims));
+
+    let (gates, gate_parse_failures) = conformance_gates_from_source(conformance_source);
+    failures.extend(gate_parse_failures.into_iter().map(|failure| {
+        format!("examples/ui-foundation-gallery/src/pages/components/conformance.rs: {failure}")
+    }));
+    failures.extend(audit_conformance_gate_evidence(&gates));
+
+    failures
+}
+
+fn a11y_claims_from_source(source: &str) -> (Vec<A11yClaim>, Vec<String>) {
+    let (blocks, block_failures) = struct_literal_blocks(source, "ComponentA11yClaim");
+    let mut claims = Vec::new();
+    let mut failures = block_failures;
+
+    for block in blocks {
+        match a11y_claim_from_block(block) {
+            Ok(claim) => claims.push(claim),
+            Err(error) => failures.push(error),
+        }
+    }
+
+    (claims, failures)
+}
+
+fn a11y_claim_from_block(block: &str) -> Result<A11yClaim, String> {
+    let component = string_field(block, "component").ok_or("a11y claim missing `component`")?;
+    let selector_prefix = string_field(block, "selector_prefix")
+        .ok_or_else(|| format!("a11y claim `{component}` missing `selector_prefix`"))?;
+    let role = enum_variant_field(block, "role")
+        .ok_or_else(|| format!("a11y claim `{component}` missing `role`"))?;
+    let label_source = enum_variant_field(block, "label_source")
+        .ok_or_else(|| format!("a11y claim `{component}` missing `label_source`"))?;
+    let value_kind = optional_enum_variant_field(block, "value_kind")
+        .ok_or_else(|| format!("a11y claim `{component}` missing `value_kind`"))?;
+    let orientation = optional_enum_variant_field(block, "orientation")
+        .ok_or_else(|| format!("a11y claim `{component}` missing `orientation`"))?;
+    let actions = action_set_field(block)
+        .ok_or_else(|| format!("a11y claim `{component}` missing `actions`"))?;
+
+    Ok(A11yClaim {
+        component,
+        selector_prefix,
+        role,
+        label_source,
+        value_kind,
+        orientation,
+        actions,
+    })
+}
+
+fn optional_enum_variant_field(block: &str, field: &str) -> Option<Option<String>> {
+    let rest = field_value(block, field)?.trim_start();
+    if rest.starts_with("None") {
+        Some(None)
+    } else {
+        enum_variant_from_source(rest).map(Some)
+    }
+}
+
+fn action_set_field(block: &str) -> Option<BTreeSet<String>> {
+    let rest = field_tail(block, "actions")?.trim_start();
+    if rest.starts_with("&[]") {
+        return Some(BTreeSet::new());
+    }
+
+    let open = rest.find("&[")? + 1;
+    let close = matching_bracket(rest, open)?;
+    Some(enum_variants_with_prefix(
+        &rest[open + 1..close],
+        "AccessibleAction::",
+    ))
+}
+
+fn audit_a11y_claims(claims: &[A11yClaim]) -> Vec<String> {
+    let mut failures = Vec::new();
+    let mut by_component = BTreeMap::new();
+
+    for claim in claims {
+        if let Some(previous) = by_component.insert(claim.component.as_str(), claim) {
+            failures.push(format!(
+                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: duplicate COMPONENT_A11Y_CLAIMS row `{}`; previous selector `{}`, duplicate selector `{}`",
+                claim.component, previous.selector_prefix, claim.selector_prefix
+            ));
+        }
+
+        if !claim.selector_prefix.starts_with("gallery:component-") {
+            failures.push(format!(
+                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{}` selector_prefix `{}` must start with `gallery:component-`",
+                claim.component, claim.selector_prefix
+            ));
+        }
+        if claim.label_source == "NotRequired" {
+            failures.push(format!(
+                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{}` must name the accessible label source",
+                claim.component
+            ));
+        }
+    }
+
+    for required in [
+        "Button",
+        "IconButton",
+        "Checkbox",
+        "Slider",
+        "NumberInput",
+        "Progress",
+        "Listbox option",
+        "Tree item",
+        "Table",
+        "VirtualizedList row",
+        "Splitter handle",
+    ] {
+        if !by_component.contains_key(required) {
+            failures.push(format!(
+                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: COMPONENT_A11Y_CLAIMS is missing representative claim `{required}`"
+            ));
+        }
+    }
+
+    audit_claim_fact(
+        &by_component,
+        "IconButton",
+        "Button",
+        Some("ExplicitLabel"),
+        None,
+        None,
+        &["Click"],
+        &mut failures,
+    );
+    audit_claim_fact(
+        &by_component,
+        "Slider",
+        "Slider",
+        Some("VisibleText"),
+        Some("Percent"),
+        Some("Horizontal"),
+        &["Increment", "Decrement", "SetValue"],
+        &mut failures,
+    );
+    audit_claim_fact(
+        &by_component,
+        "NumberInput",
+        "SpinButton",
+        Some("VisibleText"),
+        Some("Number"),
+        None,
+        &["Increment", "Decrement", "SetValue"],
+        &mut failures,
+    );
+    audit_claim_fact(
+        &by_component,
+        "Table",
+        "Table",
+        Some("VisibleText"),
+        Some("Count"),
+        None,
+        &[],
+        &mut failures,
+    );
+    audit_claim_fact(
+        &by_component,
+        "Splitter handle",
+        "Splitter",
+        Some("Generated"),
+        None,
+        Some("Vertical"),
+        &["Increment", "Decrement"],
+        &mut failures,
+    );
+
+    failures
+}
+
+fn audit_claim_fact(
+    by_component: &BTreeMap<&str, &A11yClaim>,
+    component: &str,
+    expected_role: &str,
+    expected_label_source: Option<&str>,
+    expected_value_kind: Option<&str>,
+    expected_orientation: Option<&str>,
+    expected_actions: &[&str],
+    failures: &mut Vec<String>,
+) {
+    let Some(claim) = by_component.get(component) else {
+        return;
+    };
+
+    if claim.role != expected_role {
+        failures.push(format!(
+            "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` role `{}` should be `{expected_role}`",
+            claim.role
+        ));
+    }
+    if expected_label_source.is_some_and(|expected| claim.label_source != expected) {
+        failures.push(format!(
+            "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` label_source `{}` is not the documented representative source",
+            claim.label_source
+        ));
+    }
+    if claim.value_kind.as_deref() != expected_value_kind {
+        failures.push(format!(
+            "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` value_kind `{:?}` should be `{:?}`",
+            claim.value_kind, expected_value_kind
+        ));
+    }
+    if claim.orientation.as_deref() != expected_orientation {
+        failures.push(format!(
+            "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` orientation `{:?}` should be `{:?}`",
+            claim.orientation, expected_orientation
+        ));
+    }
+    for action in expected_actions {
+        if !claim.actions.contains(*action) {
+            failures.push(format!(
+                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` is missing action `{action}`"
+            ));
+        }
+    }
+}
+
+fn conformance_gates_from_source(source: &str) -> (Vec<ConformanceGate>, Vec<String>) {
+    let (blocks, block_failures) = struct_literal_blocks(source, "ComponentConformanceGate");
+    let mut gates = Vec::new();
+    let mut failures = block_failures;
+
+    for block in blocks {
+        match conformance_gate_from_block(block) {
+            Ok(gate) => gates.push(gate),
+            Err(error) => failures.push(error),
+        }
+    }
+
+    (gates, failures)
+}
+
+fn conformance_gate_from_block(block: &str) -> Result<ConformanceGate, String> {
+    let id = string_field(block, "id").ok_or("conformance gate missing `id`")?;
+    let evidence = evidence_field(block)
+        .ok_or_else(|| format!("conformance gate `{id}` missing `evidence`"))?;
+    Ok(ConformanceGate { id, evidence })
+}
+
+fn evidence_field(block: &str) -> Option<BTreeSet<String>> {
+    let rest = field_tail(block, "evidence")?.trim_start();
+    let open = rest.find("&[")? + 1;
+    let close = matching_bracket(rest, open)?;
+    Some(quoted_strings(&rest[open + 1..close]).into_iter().collect())
+}
+
+fn audit_conformance_gate_evidence(gates: &[ConformanceGate]) -> Vec<String> {
+    let mut failures = Vec::new();
+    let all_evidence = gates
+        .iter()
+        .flat_map(|gate| gate.evidence.iter().map(String::as_str))
+        .collect::<BTreeSet<_>>();
+    let gate_ids = gates
+        .iter()
+        .map(|gate| gate.id.as_str())
+        .collect::<BTreeSet<_>>();
+
+    for required_gate in [
+        "public-api-exports",
+        "gallery-metadata",
+        "a11y-labels",
+        "theme-schema",
+    ] {
+        if !gate_ids.contains(required_gate) {
+            failures.push(format!(
+                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: COMPONENT_CONFORMANCE_GATES is missing `{required_gate}`"
+            ));
+        }
+    }
+
+    for (class, token) in [
+        (
+            "registry",
+            "crates/ui_components/src/component_contract/rows.rs",
+        ),
+        ("registry", "crates/ui_components/tests/public_surface.rs"),
+        (
+            "gallery",
+            "examples/ui-foundation-gallery/tests/foundation_gallery.rs",
+        ),
+        ("a11y", "ComponentA11yContract"),
+        ("a11y", "COMPONENT_A11Y_CLAIMS"),
+        ("a11y", "crates/ui_components/tests/a11y.rs"),
+        ("theme", "crates/ui_components/src/theme/schema.rs"),
+        ("theme", "crates/ui_components/tests/theme.rs"),
+        ("theme", "cargo run -p xtask -- scan-theme-drift"),
+    ] {
+        if !all_evidence.contains(token) {
+            failures.push(format!(
+                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: conformance evidence is missing {class} owner `{token}`"
+            ));
+        }
+    }
+
+    failures
+}
+
+fn struct_literal_blocks<'a>(source: &'a str, type_name: &str) -> (Vec<&'a str>, Vec<String>) {
+    let mut blocks = Vec::new();
+    let mut failures = Vec::new();
+    let mut search_from = 0;
+
+    while let Some(relative_start) = source[search_from..].find(type_name) {
+        let start = search_from + relative_start;
+        let line_start = source[..start].rfind('\n').map_or(0, |index| index + 1);
+        if source[line_start..start].contains("struct") {
+            search_from = start + type_name.len();
+            continue;
+        }
+
+        let Some(open_brace) = source[start..].find('{').map(|offset| start + offset) else {
+            failures.push(format!("{type_name} literal is missing `{{`"));
+            break;
+        };
+        let Some(close_brace) = matching_brace(source, open_brace) else {
+            failures.push(format!("{type_name} literal is missing matching `}}`"));
+            break;
+        };
+        blocks.push(&source[open_brace + 1..close_brace]);
+        search_from = close_brace + 1;
+    }
+
+    (blocks, failures)
 }
 
 fn quoted_value(source: &str) -> Option<String> {
@@ -446,6 +798,45 @@ fn collect_public_reexport_token(item: &str, exports: &mut BTreeSet<String>) {
     }
 }
 
+fn enum_variant_from_source(source: &str) -> Option<String> {
+    let variant_start = source.rfind("::").map(|index| index + 2).unwrap_or(0);
+    let variant = source[variant_start..]
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+        .collect::<String>();
+    (!variant.is_empty()).then_some(variant)
+}
+
+fn enum_variants_with_prefix(source: &str, prefix: &str) -> BTreeSet<String> {
+    let mut variants = BTreeSet::new();
+    let mut rest = source;
+    while let Some(index) = rest.find(prefix) {
+        rest = &rest[index + prefix.len()..];
+        let variant = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+            .collect::<String>();
+        if !variant.is_empty() {
+            variants.insert(variant);
+        }
+    }
+    variants
+}
+
+fn quoted_strings(source: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut rest = source;
+    while let Some(start) = rest.find('"') {
+        rest = &rest[start + 1..];
+        let Some(end) = rest.find('"') else {
+            break;
+        };
+        values.push(rest[..end].to_string());
+        rest = &rest[end + 1..];
+    }
+    values
+}
+
 fn source_without_public_module(source: &str, module_name: &str) -> String {
     let Some((module_start, close_brace)) = public_module_bounds(source, module_name) else {
         return source.to_owned();
@@ -482,6 +873,25 @@ fn matching_brace(source: &str, open_brace: usize) -> Option<usize> {
                 depth = depth.checked_sub(1)?;
                 if depth == 0 {
                     return Some(open_brace + offset);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn matching_bracket(source: &str, open_bracket: usize) -> Option<usize> {
+    let mut depth = 0usize;
+
+    for (offset, ch) in source[open_bracket..].char_indices() {
+        match ch {
+            '[' => depth += 1,
+            ']' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(open_bracket + offset);
                 }
             }
             _ => {}
@@ -659,5 +1069,51 @@ pub use crate::field::Field as FormField;
         assert!(exports.contains("Button"));
         assert!(exports.contains("ButtonState"));
         assert!(exports.contains("FormField"));
+    }
+
+    #[test]
+    fn audit_reports_missing_representative_a11y_claim() {
+        let claims = [A11yClaim {
+            component: "Button".to_string(),
+            selector_prefix: "gallery:component-button-sample".to_string(),
+            role: "Button".to_string(),
+            label_source: "VisibleText".to_string(),
+            value_kind: None,
+            orientation: None,
+            actions: BTreeSet::from(["Click".to_string()]),
+        }];
+
+        let failures = audit_a11y_claims(&claims);
+
+        assert!(has_failure(&failures, "IconButton"));
+    }
+
+    #[test]
+    fn audit_reports_slider_claim_missing_set_value_action() {
+        let claims = [A11yClaim {
+            component: "Slider".to_string(),
+            selector_prefix: "gallery:component-slider-sample".to_string(),
+            role: "Slider".to_string(),
+            label_source: "VisibleText".to_string(),
+            value_kind: Some("Percent".to_string()),
+            orientation: Some("Horizontal".to_string()),
+            actions: BTreeSet::from(["Increment".to_string(), "Decrement".to_string()]),
+        }];
+
+        let failures = audit_a11y_claims(&claims);
+
+        assert!(has_failure(&failures, "SetValue"));
+    }
+
+    #[test]
+    fn audit_reports_missing_conformance_evidence_token() {
+        let gates = [ConformanceGate {
+            id: "a11y-labels".to_string(),
+            evidence: BTreeSet::from(["COMPONENT_A11Y_CLAIMS".to_string()]),
+        }];
+
+        let failures = audit_conformance_gate_evidence(&gates);
+
+        assert!(has_failure(&failures, "ComponentA11yContract"));
     }
 }

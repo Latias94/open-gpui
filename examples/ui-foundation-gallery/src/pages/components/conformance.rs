@@ -316,4 +316,16 @@ pub const COMPONENT_CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "components_page_samples_keep_explicit_a11y_metadata",
         ],
     },
+    ComponentConformanceGate {
+        id: "theme-schema",
+        title: "Theme schema",
+        summary: "Portable theme files, theme recipe ownership, and component color token coverage stay aligned with the component contract.",
+        evidence: &[
+            "crates/ui_components/src/theme/schema.rs",
+            "crates/ui_components/src/theme/recipes.rs",
+            "crates/ui_components/tests/theme.rs",
+            "theme_json_schema_exposes_portable_theme_contract",
+            "cargo run -p xtask -- scan-theme-drift",
+        ],
+    },
 ];
