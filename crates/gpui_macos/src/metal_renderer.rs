@@ -1,6 +1,6 @@
 use crate::metal_atlas::MetalAtlas;
 use anyhow::Result;
-use block::ConcreteBlock;
+use block2::RcBlock;
 use cocoa::{
     base::{NO, YES},
     foundation::{NSSize, NSUInteger},
@@ -475,13 +475,14 @@ impl MetalRenderer {
                 Ok(command_buffer) => {
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
-                    let block = ConcreteBlock::new(move |_| {
+                    let block: RcBlock<dyn Fn(*mut c_void)> = RcBlock::new(move |_| {
                         if let Some(instance_buffer) = instance_buffer.take() {
                             instance_buffer_pool.lock().release(instance_buffer);
                         }
                     });
-                    let block = block.copy();
-                    command_buffer.add_completed_handler(&block);
+                    unsafe {
+                        let _: () = msg_send![command_buffer, addCompletedHandler: &*block];
+                    }
 
                     if self.presents_with_transaction {
                         command_buffer.commit();
@@ -548,13 +549,14 @@ impl MetalRenderer {
                 Ok(command_buffer) => {
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
-                    let block = ConcreteBlock::new(move |_| {
+                    let block: RcBlock<dyn Fn(*mut c_void)> = RcBlock::new(move |_| {
                         if let Some(instance_buffer) = instance_buffer.take() {
                             instance_buffer_pool.lock().release(instance_buffer);
                         }
                     });
-                    let block = block.copy();
-                    command_buffer.add_completed_handler(&block);
+                    unsafe {
+                        let _: () = msg_send![command_buffer, addCompletedHandler: &*block];
+                    }
 
                     // Commit and wait for completion without presenting
                     command_buffer.commit();
@@ -654,13 +656,14 @@ impl MetalRenderer {
                 Ok(command_buffer) => {
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
-                    let block = ConcreteBlock::new(move |_| {
+                    let block: RcBlock<dyn Fn(*mut c_void)> = RcBlock::new(move |_| {
                         if let Some(instance_buffer) = instance_buffer.take() {
                             instance_buffer_pool.lock().release(instance_buffer);
                         }
                     });
-                    let block = block.copy();
-                    command_buffer.add_completed_handler(&block);
+                    unsafe {
+                        let _: () = msg_send![command_buffer, addCompletedHandler: &*block];
+                    }
 
                     // On discrete GPUs (non-unified memory), Managed textures
                     // require an explicit blit synchronize before the CPU can

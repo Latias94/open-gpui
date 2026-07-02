@@ -6,7 +6,7 @@ use crate::{
 };
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
-use block::ConcreteBlock;
+use block2::RcBlock;
 use cocoa::{
     appkit::{
         NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
@@ -1501,13 +1501,12 @@ impl PlatformWindow for MacWindow {
 
             let (done_tx, done_rx) = oneshot::channel();
             let done_tx = Cell::new(Some(done_tx));
-            let block = ConcreteBlock::new(move |answer: NSInteger| {
+            let block: RcBlock<dyn Fn(NSInteger)> = RcBlock::new(move |answer: NSInteger| {
                 let _: () = msg_send![alert, release];
                 if let Some(done_tx) = done_tx.take() {
                     let _ = done_tx.send(answer.try_into().unwrap());
                 }
             });
-            let block = block.copy();
             let lock = self.0.lock();
             let native_window = lock.native_window;
             let closed = lock.closed.clone();
@@ -1518,7 +1517,7 @@ impl PlatformWindow for MacWindow {
                         let _: () = msg_send![
                             alert,
                             beginSheetModalForWindow: native_window
-                            completionHandler: block
+                            completionHandler: &*block
                         ];
                     } else {
                         let _: () = msg_send![alert, release];

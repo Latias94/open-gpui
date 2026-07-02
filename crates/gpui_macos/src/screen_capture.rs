@@ -1,6 +1,6 @@
 use crate::ns_string;
 use anyhow::{Result, anyhow};
-use block::ConcreteBlock;
+use block2::RcBlock;
 use cocoa::{
     base::{YES, id, nil},
     foundation::NSArray,
@@ -129,8 +129,9 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
             }
 
             let tx = Rc::new(RefCell::new(Some(tx)));
-            let handler = ConcreteBlock::new({
-                move |error: id| {
+            let handler: RcBlock<dyn Fn(*mut c_void)> = RcBlock::new({
+                move |error| {
+                    let error = error as id;
                     let result = if error == nil {
                         let stream = MacScreenCaptureStream {
                             meta: meta.clone(),
@@ -149,8 +150,7 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
                     }
                 }
             });
-            let handler = handler.copy();
-            let _: () = msg_send![stream, startCaptureWithCompletionHandler:handler];
+            let _: () = msg_send![stream, startCaptureWithCompletionHandler: &*handler];
             rx
         }
     }
@@ -180,14 +180,14 @@ impl Drop for MacScreenCaptureStream {
                 log::error!("failed to add stream  output {message:?}");
             }
 
-            let handler = ConcreteBlock::new(move |error: id| {
+            let handler: RcBlock<dyn Fn(*mut c_void)> = RcBlock::new(move |error| {
+                let error = error as id;
                 if error != nil {
                     let message: id = msg_send![error, localizedDescription];
                     log::error!("failed to stop screen capture stream {message:?}");
                 }
             });
-            let block = handler.copy();
-            let _: () = msg_send![self.sc_stream, stopCaptureWithCompletionHandler:block];
+            let _: () = msg_send![self.sc_stream, stopCaptureWithCompletionHandler: &*handler];
             let _: () = msg_send![self.sc_stream, release];
             let _: () = msg_send![self.sc_stream_output, release];
         }
@@ -245,41 +245,43 @@ pub(crate) fn get_sources() -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCapture
         let (tx, rx) = oneshot::channel();
         let tx = Rc::new(RefCell::new(Some(tx)));
         let screen_id_to_label = screen_id_to_human_label();
-        let block = ConcreteBlock::new(move |shareable_content: id, error: id| {
-            let Some(tx) = tx.borrow_mut().take() else {
-                return;
-            };
+        let block: RcBlock<dyn Fn(*mut c_void, *mut c_void)> =
+            RcBlock::new(move |shareable_content, error| {
+                let shareable_content = shareable_content as id;
+                let error = error as id;
+                let Some(tx) = tx.borrow_mut().take() else {
+                    return;
+                };
 
-            let result = if error == nil {
-                let displays: id = msg_send![shareable_content, displays];
-                let mut result = Vec::new();
-                for i in 0..displays.count() {
-                    let display = displays.objectAtIndex(i);
-                    let id: CGDirectDisplayID = msg_send![display, displayID];
-                    let meta = screen_id_to_label.get(&id).cloned();
-                    let source = MacScreenCaptureSource {
-                        sc_display: msg_send![display, retain],
-                        meta,
-                    };
-                    result.push(Rc::new(source) as Rc<dyn ScreenCaptureSource>);
-                }
-                Ok(result)
-            } else {
-                let msg: id = msg_send![error, localizedDescription];
-                Err(anyhow!(
-                    "Screen share failed: {:?}",
-                    NSStringExt::to_str(&msg)
-                ))
-            };
-            tx.send(result).ok();
-        });
-        let block = block.copy();
+                let result = if error == nil {
+                    let displays: id = msg_send![shareable_content, displays];
+                    let mut result = Vec::new();
+                    for i in 0..displays.count() {
+                        let display = displays.objectAtIndex(i);
+                        let id: CGDirectDisplayID = msg_send![display, displayID];
+                        let meta = screen_id_to_label.get(&id).cloned();
+                        let source = MacScreenCaptureSource {
+                            sc_display: msg_send![display, retain],
+                            meta,
+                        };
+                        result.push(Rc::new(source) as Rc<dyn ScreenCaptureSource>);
+                    }
+                    Ok(result)
+                } else {
+                    let msg: id = msg_send![error, localizedDescription];
+                    Err(anyhow!(
+                        "Screen share failed: {:?}",
+                        NSStringExt::to_str(&msg)
+                    ))
+                };
+                tx.send(result).ok();
+            });
 
         let _: () = msg_send![
             class!(SCShareableContent),
             getShareableContentExcludingDesktopWindows:YES
                                    onScreenWindowsOnly:YES
-                                     completionHandler:block];
+                                     completionHandler: &*block];
         rx
     }
 }

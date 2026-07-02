@@ -4,7 +4,7 @@ use crate::{
     set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
-use block::ConcreteBlock;
+use block2::RcBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
@@ -732,7 +732,8 @@ impl Platform for MacPlatform {
                 )));
             }
             let done_tx = Cell::new(Some(done_tx));
-            let block = ConcreteBlock::new(move |error: id| {
+            let block: RcBlock<dyn Fn(*mut c_void)> = RcBlock::new(move |error| {
+                let error = error as id;
                 let result = if error == nil {
                     Ok(())
                 } else {
@@ -744,8 +745,7 @@ impl Platform for MacPlatform {
                     let _ = done_tx.send(result);
                 }
             });
-            let block = block.copy();
-            let _: () = msg_send![workspace, setDefaultApplicationAtURL: app toOpenURLsWithScheme: scheme completionHandler: block];
+            let _: () = msg_send![workspace, setDefaultApplicationAtURL: app toOpenURLsWithScheme: scheme completionHandler: &*block];
         }
 
         self.background_executor()
@@ -772,8 +772,9 @@ impl Platform for MacPlatform {
                     panel.setCanCreateDirectories(true.to_objc());
                     panel.setResolvesAliases_(false.to_objc());
                     let done_tx = Cell::new(Some(done_tx));
-                    let block = ConcreteBlock::new(move |response: NSModalResponse| {
-                        let result = if response == NSModalResponse::NSModalResponseOk {
+                    let block: RcBlock<dyn Fn(NSInteger)> = RcBlock::new(move |response| {
+                        let result = if response == NSModalResponse::NSModalResponseOk as NSInteger
+                        {
                             let mut result = Vec::new();
                             let urls = panel.URLs();
                             for i in 0..urls.count() {
@@ -793,13 +794,12 @@ impl Platform for MacPlatform {
                             let _ = done_tx.send(Ok(result));
                         }
                     });
-                    let block = block.copy();
 
                     if let Some(prompt) = options.prompt {
                         let _: () = msg_send![panel, setPrompt: ns_string(&prompt)];
                     }
 
-                    let _: () = msg_send![panel, beginWithCompletionHandler: block];
+                    let _: () = msg_send![panel, beginWithCompletionHandler: &*block];
                 }
             })
             .detach();
@@ -828,9 +828,9 @@ impl Platform for MacPlatform {
                     }
 
                     let done_tx = Cell::new(Some(done_tx));
-                    let block = ConcreteBlock::new(move |response: NSModalResponse| {
+                    let block: RcBlock<dyn Fn(NSInteger)> = RcBlock::new(move |response| {
                         let mut result = None;
-                        if response == NSModalResponse::NSModalResponseOk {
+                        if response == NSModalResponse::NSModalResponseOk as NSInteger {
                             let url = panel.URL();
                             if url.isFileURL() == YES {
                                 result = ns_url_to_path(panel.URL()).ok().map(|mut result| {
@@ -869,8 +869,7 @@ impl Platform for MacPlatform {
                             let _ = done_tx.send(Ok(result));
                         }
                     });
-                    let block = block.copy();
-                    let _: () = msg_send![panel, beginWithCompletionHandler: block];
+                    let _: () = msg_send![panel, beginWithCompletionHandler: &*block];
                 }
             })
             .detach();
