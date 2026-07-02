@@ -731,6 +731,9 @@ scheduling, interruption policy, and actual rendering.
 The GPUI `Splitter` adapter renders resolved panel fractions and resize handles from that state and
 wires pointer dragging through keyed runtime state. Drag move events use the root splitter bounds to
 translate pixels into fraction deltas, then feed those deltas through `SplitterState::resized_by`.
+For programmatic changes that keep the same ordered panel ids, the adapter animates from the current
+runtime fractions to the new resolved fractions with committed layout motion; pointer dragging stays
+immediate and cancels any in-flight programmatic transition.
 Dragging a collapsible panel past its restore threshold clears its collapsed state and resumes
 normal min/max resizing; dragging below that threshold keeps the collapsed fraction stable.
 The adapter may use GPUI layout primitives, cursor styles, drag callbacks, and `Entity` runtime
