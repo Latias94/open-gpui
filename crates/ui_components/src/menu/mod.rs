@@ -13,24 +13,24 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent, ParentElement,
-    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, anchored,
-    deferred, div,
+    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+    CommandDescriptor, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
     OverlayAnchorInput, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
     Rect, Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::focus::focus_ring_shadow;
+use crate::focus::focus_ring_shadow_with_theme;
 
 use crate::overlay::{
-    GpuiOverlayPlacement, consume_overlay_event, emit_overlay_open_change, gpui_overlay_state,
+    GpuiOverlayPlacement, GpuiOverlayState, consume_overlay_event, emit_overlay_open_change,
+    gpui_overlay_state, gpui_positioned_overlay_layer, gpui_relative_overlay_layer,
     outside_press_open_change, resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
-use crate::theme::ThemeResolver;
+use crate::theme::{ThemeContext, ThemeResolver};
 use runtime::{MenuRuntime, handle_menu_submenu_surface_hover, update_menu_hover_target};
 
 pub(crate) use descriptor::menu_open_mode_from_disclosure;
@@ -57,19 +57,26 @@ fn menu_item_element(
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
+    theme: &ThemeContext,
 ) -> AnyElement {
     match item_state.kind() {
-        MenuItemKind::Separator => div()
-            .id(format!("{debug_prefix}-separator:{}", item_state.index()))
-            .debug_selector({
-                let separator_debug_id = debug_id.clone();
-                let separator_index = item_state.index();
-                move || format!("{debug_prefix}:{separator_debug_id}:separator:{separator_index}")
-            })
-            .h(gpui_px_from_ui(metrics.separator_height()))
-            .my_1()
-            .bg(ThemeResolver::resolve(colors.separator()))
-            .into_any_element(),
+        MenuItemKind::Separator => {
+            let separator_color = theme.resolve(colors.separator());
+
+            div()
+                .id(format!("{debug_prefix}-separator:{}", item_state.index()))
+                .debug_selector({
+                    let separator_debug_id = debug_id.clone();
+                    let separator_index = item_state.index();
+                    move || {
+                        format!("{debug_prefix}:{separator_debug_id}:separator:{separator_index}")
+                    }
+                })
+                .h(gpui_px_from_ui(metrics.separator_height()))
+                .my_1()
+                .bg(separator_color)
+                .into_any_element()
+        }
         MenuItemKind::Action
         | MenuItemKind::Checkbox
         | MenuItemKind::Radio
@@ -78,6 +85,7 @@ fn menu_item_element(
             let item_handler = item.on_select.clone();
             let global_handler = on_select.clone();
             let item_label = item_state.label().to_owned();
+            let shortcut = item_state.shortcut().map(str::to_owned);
             let item_path_key = item_state.path_key();
             let left_padding = metrics.item_padding_x();
             let focused = item_state.focused();
@@ -104,6 +112,17 @@ fn menu_item_element(
             let hover_value = item_state.value().to_owned();
             let hover_submenu_navigation = submenu_navigation.clone();
             let hover_runtime = runtime.clone();
+            let item_background = theme.resolve(if focused {
+                colors.item_focus_background()
+            } else {
+                colors.item_background()
+            });
+            let item_foreground = theme.resolve(if disabled {
+                colors.item_disabled_foreground()
+            } else {
+                colors.foreground()
+            });
+            let item_hover_background = theme.resolve(colors.item_hover_background());
 
             div()
                 .id(format!("{debug_prefix}-item:{item_path_key}"))
@@ -119,16 +138,8 @@ fn menu_item_element(
                 .items_center()
                 .justify_between()
                 .rounded(gpui_px_from_ui(metrics.radius()))
-                .bg(ThemeResolver::resolve(if focused {
-                    colors.item_focus_background()
-                } else {
-                    colors.item_background()
-                }))
-                .text_color(ThemeResolver::resolve(if disabled {
-                    colors.item_disabled_foreground()
-                } else {
-                    colors.foreground()
-                }))
+                .bg(item_background)
+                .text_color(item_foreground)
                 .ui_role(Role::MenuItem)
                 .aria_label(item_label.clone())
                 .aria_disabled(disabled)
@@ -139,9 +150,7 @@ fn menu_item_element(
                 .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                 .when(!disabled, |this| {
                     this.cursor_pointer()
-                        .hover(move |style| {
-                            style.bg(ThemeResolver::resolve(colors.item_hover_background()))
-                        })
+                        .hover(move |style| style.bg(item_hover_background))
                         .on_hover(move |hovered, window, cx| {
                             if hover_focusable {
                                 update_menu_hover_target(
@@ -186,7 +195,16 @@ fn menu_item_element(
                             );
                         })
                 })
-                .child(item_label)
+                .child(div().flex_1().child(item_label))
+                .when_some(shortcut, |this, shortcut| {
+                    this.child(
+                        div()
+                            .ml_4()
+                            .text_xs()
+                            .text_color(item_foreground)
+                            .child(shortcut),
+                    )
+                })
                 .when_some(toggled, |this, toggled| {
                     let marker = if toggled == Toggled::True {
                         "checked"
@@ -223,6 +241,11 @@ impl MenuItem {
             children,
             on_select: None,
         }
+    }
+
+    /// Creates an action menu item from shared app-command metadata.
+    pub fn from_command_descriptor(descriptor: &CommandDescriptor) -> Self {
+        Self::from_descriptor(MenuItemDescriptor::from_command_descriptor(descriptor))
     }
 
     /// Creates an action menu item.
@@ -299,6 +322,18 @@ impl MenuItem {
         self
     }
 
+    /// Applies a display shortcut label.
+    pub fn shortcut(mut self, shortcut: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.shortcut(shortcut);
+        self
+    }
+
+    /// Applies caller-owned availability metadata without evaluating it.
+    pub fn when(mut self, when: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.when(when);
+        self
+    }
+
     /// Adds one submenu child.
     pub fn child(mut self, child: MenuItem) -> Self {
         if self.descriptor.kind() == MenuItemKind::Submenu {
@@ -333,12 +368,19 @@ impl MenuItem {
     /// Returns a pure descriptor for this item.
     pub fn descriptor(&self) -> MenuItemDescriptor {
         if self.descriptor.kind() == MenuItemKind::Submenu {
-            return MenuItemDescriptor::submenu(
+            let mut descriptor = MenuItemDescriptor::submenu(
                 self.descriptor.value(),
                 self.descriptor.label(),
                 self.children.iter().map(MenuItem::descriptor),
             )
             .disabled(self.descriptor.disabled_state());
+            if let Some(shortcut) = self.descriptor.shortcut_ref() {
+                descriptor = descriptor.shortcut(shortcut);
+            }
+            if let Some(when) = self.descriptor.when_ref() {
+                descriptor = descriptor.when(when);
+            }
+            return descriptor;
         }
 
         self.descriptor.clone()
@@ -526,6 +568,7 @@ impl Sizable for Menu {
 
 impl RenderOnce for Menu {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let descriptors: Vec<MenuItemDescriptor> =
             self.items.iter().map(MenuItem::descriptor).collect();
         let trigger_focus = cx.focus_handle();
@@ -589,6 +632,11 @@ impl RenderOnce for Menu {
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
         let open = state.open();
+        let trigger_border = theme.resolve(colors.trigger_border());
+        let trigger_background = theme.resolve(colors.trigger_background());
+        let trigger_foreground = theme.resolve(colors.trigger_foreground());
+        let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
+        let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
         let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
@@ -638,9 +686,9 @@ impl RenderOnce for Menu {
                     .justify_center()
                     .rounded(gpui_px_from_ui(metrics.radius()))
                     .border_1()
-                    .border_color(ThemeResolver::resolve(colors.trigger_border()))
-                    .bg(ThemeResolver::resolve(colors.trigger_background()))
-                    .text_color(ThemeResolver::resolve(colors.trigger_foreground()))
+                    .border_color(trigger_border)
+                    .bg(trigger_background)
+                    .text_color(trigger_foreground)
                     .text_size(gpui_px_from_ui(metrics.text_size()))
                     .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
@@ -650,7 +698,7 @@ impl RenderOnce for Menu {
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)
                     .aria_disabled(disabled)
-                    .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                    .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                     .track_focus(&trigger_focus)
                     .when(open, |this| {
                         let runtime = runtime.clone();
@@ -676,9 +724,7 @@ impl RenderOnce for Menu {
                         let runtime = runtime.clone();
                         let on_open_change = on_open_change.clone();
                         this.cursor_pointer()
-                            .hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
-                            })
+                            .hover(move |style| style.bg(trigger_hover_background))
                             .on_click(move |_event: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 let next_open = !open;
@@ -699,31 +745,27 @@ impl RenderOnce for Menu {
                     .child(trigger_label),
             )
             .when(open, |this| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .anchor(placement.anchor())
-                            .offset(placement.offset())
-                            .snap_to_window_with_margin(placement.snap_margin())
-                            .child(menu_content_element(
-                                items,
-                                content_id.clone(),
-                                debug_id.clone(),
-                                state.clone(),
-                                runtime.clone(),
-                                trigger_focus_for_content.clone(),
-                                content_focus.clone(),
-                                scroll_handle.clone(),
-                                focus_restore_for_content.clone(),
-                                on_open_change.clone(),
-                                on_select.clone(),
-                                cx,
-                                overlay_adapter.snap_margin(),
-                                overlay_adapter.deferred_priority(),
-                            )),
-                    )
-                    .priority(overlay_adapter.deferred_priority()),
-                )
+                this.child(gpui_relative_overlay_layer(
+                    &overlay_adapter,
+                    &placement,
+                    menu_content_element(
+                        items,
+                        content_id.clone(),
+                        debug_id.clone(),
+                        state.clone(),
+                        runtime.clone(),
+                        trigger_focus_for_content.clone(),
+                        content_focus.clone(),
+                        scroll_handle.clone(),
+                        focus_restore_for_content.clone(),
+                        on_open_change.clone(),
+                        on_select.clone(),
+                        &theme,
+                        cx,
+                        overlay_adapter.snap_margin(),
+                        overlay_adapter.deferred_priority(),
+                    ),
+                ))
             })
     }
 }
@@ -740,6 +782,7 @@ fn menu_content_element(
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
+    theme: &ThemeContext,
     cx: &mut App,
     snap_margin: open_gpui::Pixels,
     deferred_priority: usize,
@@ -768,6 +811,7 @@ fn menu_content_element(
         on_open_change.clone(),
         on_select.clone(),
         Some(scroll_handle),
+        theme,
         cx,
         snap_margin,
         deferred_priority,
@@ -784,7 +828,7 @@ fn menu_content_element(
         .tab_group()
         .track_focus(&content_focus)
         .ui_role(state.content_role())
-        .text_color(ThemeResolver::resolve(colors.foreground()))
+        .text_color(theme.resolve(colors.foreground()))
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
@@ -884,6 +928,7 @@ fn menu_branch_surface(
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
     scroll_handle: Option<ScrollHandle>,
+    theme: &ThemeContext,
     cx: &mut App,
     snap_margin: open_gpui::Pixels,
     deferred_priority: usize,
@@ -941,6 +986,7 @@ fn menu_branch_surface(
             focus_restore.clone(),
             on_open_change.clone(),
             on_select.clone(),
+            theme,
         ));
     let submenu_layer = menu_submenu_layer(
         items,
@@ -952,6 +998,7 @@ fn menu_branch_surface(
         focus_restore.clone(),
         on_open_change.clone(),
         on_select.clone(),
+        theme,
         cx,
         snap_margin,
         deferred_priority,
@@ -979,8 +1026,8 @@ fn menu_branch_surface(
         .gap_1()
         .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(colors.border()))
-        .bg(ThemeResolver::resolve(colors.surface()))
+        .border_color(theme.resolve(colors.border()))
+        .bg(theme.resolve(colors.surface()))
         .shadow_lg()
         .occlude()
         .overflow_hidden()
@@ -1017,6 +1064,7 @@ fn menu_submenu_layer(
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
+    theme: &ThemeContext,
     cx: &mut App,
     snap_margin: open_gpui::Pixels,
     deferred_priority: usize,
@@ -1055,23 +1103,22 @@ fn menu_submenu_layer(
         on_open_change,
         on_select,
         None,
+        theme,
         cx,
         snap_margin,
         deferred_priority,
     );
 
-    Some(
-        deferred(
-            anchored()
-                .position(placement.position().unwrap_or_default())
-                .anchor(placement.anchor())
-                .offset(placement.offset())
-                .snap_to_window_with_margin(placement.snap_margin())
-                .child(submenu_surface),
-        )
-        .priority(deferred_priority)
-        .into_any_element(),
-    )
+    Some(gpui_positioned_overlay_layer(
+        &GpuiOverlayState::resolve(
+            state.overlay().policy().clone(),
+            deferred_priority,
+            snap_margin,
+        ),
+        &placement,
+        placement.position().unwrap_or_default(),
+        submenu_surface,
+    ))
 }
 
 fn menu_item_elements(
@@ -1085,6 +1132,7 @@ fn menu_item_elements(
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
+    theme: &ThemeContext,
 ) -> Vec<AnyElement> {
     items
         .into_iter()
@@ -1102,6 +1150,7 @@ fn menu_item_elements(
                 focus_restore.clone(),
                 on_open_change.clone(),
                 on_select.clone(),
+                theme,
             )
         })
         .collect()

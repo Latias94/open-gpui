@@ -2,13 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use open_gpui_ui_core::{
-    Role, TableColumnFacets, TableColumnId, TableColumnRegion, TableGlobalFacetSummary,
+    Role, RowWindow, TableColumnFacets, TableColumnId, TableColumnRegion, TableGlobalFacetSummary,
     TableResolvedRow, TableResolvedState, TableRowId, TableRowRegion, TableSelectionPolicy,
     TableSelectionSummary, TableStageMode, TableState, UiPx, VirtualizerItemKey,
     VirtualizerItemMeasurement, VirtualizerResolvedState,
 };
 
-use crate::row_window::RowWindow;
 use crate::table::layout::resolve_column_region_render_plans;
 
 use super::virtualization::row_render_key;

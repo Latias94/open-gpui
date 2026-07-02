@@ -118,6 +118,7 @@ fn component_contract_rows_are_split_by_responsibility() {
         "surfaces.rs",
         "api_inventory.rs",
         "source_mapping.rs",
+        "evidence.rs",
     ];
 
     for owner in expected_owners {
@@ -132,6 +133,8 @@ fn component_contract_rows_are_split_by_responsibility() {
         "ComponentContractEntry {",
         "ComponentApiInventoryEntry {",
         "PublicSurfaceOwnerEntry {",
+        "ComponentA11yEvidence {",
+        "ComponentConformanceGate {",
         "pub fn component_public_methods",
         "pub fn component_source_inputs",
     ] {
@@ -150,6 +153,9 @@ fn component_contract_rows_are_split_by_responsibility() {
     assert!(projections.contains("component_contract_gallery_status"));
     let source_mapping = read_source_file(&contract_dir.join("source_mapping.rs"));
     assert!(source_mapping.contains("component_source_inputs"));
+    let evidence = read_source_file(&contract_dir.join("evidence.rs"));
+    assert!(evidence.contains("COMPONENT_A11Y_EVIDENCE"));
+    assert!(evidence.contains("COMPONENT_CONFORMANCE_GATES"));
 }
 
 #[test]

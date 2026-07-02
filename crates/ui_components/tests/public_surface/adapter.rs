@@ -84,6 +84,7 @@ fn adapter_only_public_surfaces_match_allowlist() {
     let expected = [
         ("focus.rs", "BoxShadow"),
         ("focus.rs", "focus_ring_shadow"),
+        ("focus.rs", "focus_ring_shadow_with_theme"),
         ("overlay.rs", "GpuiOverlayState"),
         ("scroll_area.rs", "ScrollHandle"),
         ("text_input.rs", "Entity<TextInputController>"),
@@ -105,12 +106,56 @@ fn adapter_only_public_surfaces_match_allowlist() {
         "ScrollHandle",
         "TextInputController",
         "focus_ring_shadow",
+        "focus_ring_shadow_with_theme",
     ]);
     actual.sort();
 
     assert_eq!(
         actual, expected,
         "adapter-only public surfaces changed; update this inventory as U6 classifies or narrows GPUI-specific APIs"
+    );
+}
+
+#[test]
+fn production_render_paths_do_not_use_default_light_focus_ring_helper() {
+    let mut offenders = Vec::new();
+
+    for source_file in ui_component_source_files() {
+        let file_name = source_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("<unknown>");
+        if file_name == "focus.rs" {
+            continue;
+        }
+
+        let source = std::fs::read_to_string(&source_file)
+            .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
+        let source = uncommented_lines(&source);
+
+        for token in ["focus_ring_shadow(", "ThemeContext::light()"] {
+            if source.contains(token) {
+                offenders.push(format!("{file_name}: {token}"));
+            }
+        }
+    }
+
+    let gallery_shell = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/ui-foundation-gallery/src/shell.rs");
+    let source = std::fs::read_to_string(&gallery_shell)
+        .unwrap_or_else(|error| panic!("failed to read {gallery_shell:?}: {error}"));
+    let source = uncommented_lines(&source);
+    for token in ["focus_ring_shadow(", "ThemeContext::light()"] {
+        if source.contains(token) {
+            offenders.push(format!(
+                "examples/ui-foundation-gallery/src/shell.rs: {token}"
+            ));
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "production render paths must resolve focus rings from ThemeContext; offenders: {offenders:?}"
     );
 }
 
@@ -160,6 +205,14 @@ fn gpui_adapter_exports_group_runtime_specific_surfaces() {
             0x2f80ed,
         )))[0]
             .spread_radius,
+        px(2.0)
+    );
+    assert_eq!(
+        root::gpui_adapter::focus_ring_shadow_with_theme(
+            FocusRing::from_color(ColorIntent::new(semantic::FOCUS_RING, 0x2f80ed)),
+            &root::ThemeContext::light(),
+        )[0]
+        .spread_radius,
         px(2.0)
     );
 }

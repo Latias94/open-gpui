@@ -3,5 +3,6 @@
 pub use crate::primitives::UiA11yElementExt;
 pub use crate::public_api::default::*;
 pub use open_gpui_ui_core::{
-    ActiveDescendant, CollectionPosition, ControllableState, Sizable, Size, ThemeTokens,
+    ActiveDescendant, CollectionPosition, CommandDescriptor, ControllableState, Sizable, Size,
+    ThemeTokens,
 };

@@ -7,7 +7,7 @@ use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
-    Window, anchored, deferred, div,
+    Window, div,
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -17,13 +17,14 @@ use open_gpui_ui_core::{
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
     GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
     consume_overlay_event, emit_overlay_open_change, escape_open_change, gpui_overlay_state,
-    outside_press_open_change, resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
+    gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
+    restore_overlay_focus, set_overlay_open,
 };
-use crate::theme::ThemeResolver;
+use crate::theme::{ThemeContext, ThemeResolver};
 
 /// Popover open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -545,6 +546,12 @@ impl RenderOnce for Popover {
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
+        let theme = ThemeResolver::current(cx);
+        let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+        let trigger_border = theme.resolve(colors.trigger_border());
+        let trigger_background = theme.resolve(colors.trigger_background());
+        let trigger_foreground = theme.resolve(colors.trigger_foreground());
+        let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
         let disabled = state.disabled();
         let open = state.open();
         let trigger_focus = runtime.read(cx).trigger_focus.clone();
@@ -589,9 +596,9 @@ impl RenderOnce for Popover {
                     .justify_center()
                     .rounded(gpui_px_from_ui(metrics.radius()))
                     .border_1()
-                    .border_color(ThemeResolver::resolve(colors.trigger_border()))
-                    .bg(ThemeResolver::resolve(colors.trigger_background()))
-                    .text_color(ThemeResolver::resolve(colors.trigger_foreground()))
+                    .border_color(trigger_border)
+                    .bg(trigger_background)
+                    .text_color(trigger_foreground)
                     .text_size(gpui_px_from_ui(metrics.text_size()))
                     .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
@@ -602,7 +609,7 @@ impl RenderOnce for Popover {
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)
                     .aria_disabled(disabled)
-                    .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                    .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                     .when(open, |this| {
                         let runtime = runtime.clone();
                         let on_escape_close = on_escape_close.clone();
@@ -629,9 +636,7 @@ impl RenderOnce for Popover {
                         let on_open_change = on_open_change.clone();
                         let initial_focus = state.initial_focus_intent().clone();
                         this.cursor_pointer()
-                            .hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
-                            })
+                            .hover(move |style| style.bg(trigger_hover_background))
                             .on_click(move |_event: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 let next_open = !open;
@@ -655,25 +660,21 @@ impl RenderOnce for Popover {
                     .child(trigger_label),
             )
             .when(open, |this| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .anchor(placement.anchor())
-                            .offset(placement.offset())
-                            .snap_to_window_with_margin(placement.snap_margin())
-                            .child(popover_content_element(
-                                content,
-                                content_id.clone(),
-                                debug_id.clone(),
-                                state.clone(),
-                                runtime.clone(),
-                                content_focus.clone(),
-                                on_escape_close.clone(),
-                                on_open_change.clone(),
-                            )),
-                    )
-                    .priority(overlay_adapter.deferred_priority()),
-                )
+                this.child(gpui_relative_overlay_layer(
+                    &overlay_adapter,
+                    &placement,
+                    popover_content_element(
+                        content,
+                        content_id.clone(),
+                        debug_id.clone(),
+                        state.clone(),
+                        &theme,
+                        runtime.clone(),
+                        content_focus.clone(),
+                        on_escape_close.clone(),
+                        on_open_change.clone(),
+                    ),
+                ))
             })
     }
 }
@@ -683,6 +684,7 @@ fn popover_content_element(
     content_id: ElementId,
     debug_id: String,
     state: PopoverState,
+    theme: &ThemeContext,
     runtime: Entity<PopoverRuntime>,
     content_focus: FocusHandle,
     on_escape_close: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
@@ -694,6 +696,9 @@ fn popover_content_element(
     let escape_runtime = runtime.clone();
     let escape_open_change = on_escape_close.clone();
     let escape_focus_restore = state.focus_restore_intent().clone();
+    let border = theme.resolve(colors.border());
+    let background = theme.resolve(colors.background());
+    let foreground = theme.resolve(colors.foreground());
 
     div()
         .id(content_id)
@@ -706,9 +711,9 @@ fn popover_content_element(
         .gap_2()
         .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(colors.border()))
-        .bg(ThemeResolver::resolve(colors.background()))
-        .text_color(ThemeResolver::resolve(colors.foreground()))
+        .border_color(border)
+        .bg(background)
+        .text_color(foreground)
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .shadow_lg()

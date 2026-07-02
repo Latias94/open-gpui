@@ -12,7 +12,7 @@ use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
 
 use crate::a11y::UiA11yElementExt;
 use crate::button::{ButtonColors, ButtonVariant};
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::theme::ThemeResolver;
 
 /// Resolved icon button color intents.
@@ -216,13 +216,20 @@ impl Sizable for IconButton {
 }
 
 impl RenderOnce for IconButton {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let label = self.accessible_label.clone();
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
+        let theme_context = ThemeResolver::current(cx);
+        let theme = &theme_context;
+        let border_color = theme.resolve(colors.border());
+        let background = theme.resolve(colors.background());
+        let foreground = theme.resolve(colors.foreground());
+        let hover_background = theme.resolve(colors.hover_background());
+        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, theme);
 
         div()
             .id(self.id)
@@ -235,9 +242,9 @@ impl RenderOnce for IconButton {
             .justify_center()
             .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
-            .border_color(ThemeResolver::resolve(colors.border()))
-            .bg(ThemeResolver::resolve(colors.background()))
-            .text_color(ThemeResolver::resolve(colors.foreground()))
+            .border_color(border_color)
+            .bg(background)
+            .text_color(foreground)
             .text_size(gpui_px_from_ui(metrics.icon_size()))
             .line_height(gpui_px_from_ui(metrics.icon_size()))
             .focusable()
@@ -245,11 +252,11 @@ impl RenderOnce for IconButton {
             .ui_role(state.role())
             .aria_label(label)
             .aria_disabled(disabled)
-            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+            .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| {
                 this.cursor_pointer()
-                    .hover(move |style| style.bg(ThemeResolver::resolve(colors.hover_background())))
+                    .hover(move |style| style.bg(hover_background))
             })
             .when_some(self.on_click.filter(|_| !disabled), |this, on_click| {
                 this.on_click(move |event, window, cx| {

@@ -7,7 +7,7 @@ use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, Pixels, RenderOnce, SharedString, StatefulInteractiveElement,
-    Styled, Window, anchored, deferred, div, point, px,
+    Styled, Window, div, px,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -16,13 +16,14 @@ use open_gpui_ui_core::{
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
     OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
-    consume_overlay_event, emit_overlay_open_change, escape_open_change, gpui_overlay_state,
-    outside_press_open_change, resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
+    consume_overlay_event, emit_overlay_open_change, escape_open_change,
+    gpui_full_window_overlay_layer, gpui_overlay_state, outside_press_open_change,
+    resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
 };
-use crate::theme::ThemeResolver;
+use crate::theme::{ThemeContext, ThemeResolver};
 
 /// Dialog open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -574,6 +575,12 @@ impl RenderOnce for Dialog {
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
+        let theme = ThemeResolver::current(cx);
+        let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+        let trigger_border = theme.resolve(colors.trigger_border());
+        let trigger_background = theme.resolve(colors.trigger_background());
+        let trigger_foreground = theme.resolve(colors.trigger_foreground());
+        let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
         let disabled = state.disabled();
         let open = state.open();
         let trigger_focus = runtime.read(cx).trigger_focus.clone();
@@ -605,9 +612,9 @@ impl RenderOnce for Dialog {
                     .justify_center()
                     .rounded(gpui_px_from_ui(metrics.radius()))
                     .border_1()
-                    .border_color(ThemeResolver::resolve(colors.trigger_border()))
-                    .bg(ThemeResolver::resolve(colors.trigger_background()))
-                    .text_color(ThemeResolver::resolve(colors.trigger_foreground()))
+                    .border_color(trigger_border)
+                    .bg(trigger_background)
+                    .text_color(trigger_foreground)
                     .text_size(gpui_px_from_ui(metrics.text_size()))
                     .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
@@ -618,7 +625,7 @@ impl RenderOnce for Dialog {
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)
                     .aria_disabled(disabled)
-                    .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                    .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                     .when(open, |this| {
                         let runtime = runtime.clone();
                         let on_escape_close = on_escape_close.clone();
@@ -645,9 +652,7 @@ impl RenderOnce for Dialog {
                         let on_open_change = on_open_change.clone();
                         let initial_focus = state.initial_focus_intent().clone();
                         this.cursor_pointer()
-                            .hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
-                            })
+                            .hover(move |style| style.bg(trigger_hover_background))
                             .on_click(move |_event: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 let next_open = !open;
@@ -671,25 +676,21 @@ impl RenderOnce for Dialog {
                     .child(trigger_label),
             )
             .when(open, |this| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .position(point(px(0.0), px(0.0)))
-                            .snap_to_window()
-                            .child(dialog_layer_element(
-                                content,
-                                content_id.clone(),
-                                debug_id.clone(),
-                                state.clone(),
-                                viewport,
-                                runtime.clone(),
-                                surface_focus.clone(),
-                                on_escape_close.clone(),
-                                on_open_change.clone(),
-                            )),
-                    )
-                    .priority(overlay_adapter.deferred_priority()),
-                )
+                this.child(gpui_full_window_overlay_layer(
+                    &overlay_adapter,
+                    dialog_layer_element(
+                        content,
+                        content_id.clone(),
+                        debug_id.clone(),
+                        state.clone(),
+                        &theme,
+                        viewport,
+                        runtime.clone(),
+                        surface_focus.clone(),
+                        on_escape_close.clone(),
+                        on_open_change.clone(),
+                    ),
+                ))
             })
     }
 }
@@ -699,6 +700,7 @@ fn dialog_layer_element(
     content_id: ElementId,
     debug_id: String,
     state: DialogState,
+    theme: &ThemeContext,
     viewport: open_gpui::Size<Pixels>,
     runtime: Entity<DialogRuntime>,
     surface_focus: FocusHandle,
@@ -712,6 +714,14 @@ fn dialog_layer_element(
     let escape_runtime = runtime.clone();
     let escape_open_change = on_escape_close.clone();
     let escape_focus_restore = state.focus_restore_intent().clone();
+    let barrier = theme.resolve(colors.barrier());
+    let border = theme.resolve(colors.border());
+    let surface = theme.resolve(colors.surface());
+    let foreground = theme.resolve(colors.foreground());
+    let muted_foreground = theme.resolve(ColorIntent::new(
+        ThemeTokens::default().text_muted,
+        0x5a6472,
+    ));
     let x = ((viewport.width - gpui_px_from_ui(metrics.width())) / 2.0).max(px(12.0));
     let y = (viewport.height / 10.0).max(px(24.0));
 
@@ -726,7 +736,7 @@ fn dialog_layer_element(
         .top(px(0.0))
         .w(viewport.width)
         .h(viewport.height)
-        .bg(ThemeResolver::resolve(colors.barrier()))
+        .bg(barrier)
         .occlude()
         .on_any_mouse_down(|_, window, cx| {
             consume_overlay_event(window, cx);
@@ -761,9 +771,9 @@ fn dialog_layer_element(
                 .gap_3()
                 .rounded(gpui_px_from_ui(metrics.radius()))
                 .border_1()
-                .border_color(ThemeResolver::resolve(colors.border()))
-                .bg(ThemeResolver::resolve(colors.surface()))
-                .text_color(ThemeResolver::resolve(colors.foreground()))
+                .border_color(border)
+                .bg(surface)
+                .text_color(foreground)
                 .text_size(gpui_px_from_ui(metrics.text_size()))
                 .line_height(gpui_px_from_ui(metrics.text_size()))
                 .shadow_lg()
@@ -798,14 +808,7 @@ fn dialog_layer_element(
                 .when_some(
                     state.description().map(ToOwned::to_owned),
                     |this, description| {
-                        this.child(
-                            div()
-                                .text_color(ThemeResolver::resolve(ColorIntent::new(
-                                    ThemeTokens::default().text_muted,
-                                    0x5a6472,
-                                )))
-                                .child(description),
-                        )
+                        this.child(div().text_color(muted_foreground).child(description))
                     },
                 )
                 .children(children_from_content(content)),

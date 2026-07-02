@@ -7,8 +7,7 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, Entity, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, anchored,
-    deferred, div,
+    ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayAnchorInput,
@@ -18,21 +17,22 @@ use open_gpui_ui_core::{
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::listbox::{
     Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
     ListboxState,
 };
 use crate::overlay::{
     GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
-    consume_overlay_event, emit_overlay_open_change, gpui_overlay_state, outside_press_open_change,
-    resolve_overlay_open_state, set_overlay_open,
+    consume_overlay_event, emit_overlay_open_change, gpui_overlay_state,
+    gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
+    set_overlay_open,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::text_editing::TextEditingPolicy;
 use crate::text_input::adapter::TextInputController;
 use crate::text_input::{TextInput, TextInputState};
-use crate::theme::ThemeResolver;
+use crate::theme::{ThemeContext, ThemeResolver};
 
 type ComboboxOpenChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
 type ComboboxSelectionHandler = Rc<dyn Fn(ComboboxSelection, &mut Window, &mut App)>;
@@ -831,6 +831,7 @@ impl Sizable for Combobox {
 
 impl RenderOnce for Combobox {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| ComboboxRuntime {
             open: self.default_open,
             active_value: self.active_value.clone(),
@@ -898,6 +899,7 @@ impl RenderOnce for Combobox {
         let metrics = state.metrics();
         let open = state.open();
         let disabled = state.disabled();
+        let toggle_focus_shadow = focus_ring_shadow_with_theme(state.focus_ring(), &theme);
         let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
@@ -1025,13 +1027,10 @@ impl RenderOnce for Combobox {
                             .py_1()
                             .rounded(gpui_px_from_ui(state.input().metrics().radius()))
                             .border_1()
-                            .border_color(ThemeResolver::resolve(state.colors().popup_border()))
-                            .text_color(ThemeResolver::resolve(state.colors().popup_foreground()))
+                            .border_color(theme.resolve(state.colors().popup_border()))
+                            .text_color(theme.resolve(state.colors().popup_foreground()))
                             .ui_role(Role::Button)
-                            .focus_visible({
-                                let focus_ring = state.focus_ring();
-                                move |style| style.shadow(focus_ring_shadow(focus_ring))
-                            })
+                            .focus_visible(move |style| style.shadow(toggle_focus_shadow))
                             .focusable()
                             .tab_stop(!disabled)
                             .aria_label("Toggle combobox popup")
@@ -1061,28 +1060,24 @@ impl RenderOnce for Combobox {
                     ),
             )
             .when(open, |this| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .anchor(placement.anchor())
-                            .offset(placement.offset())
-                            .snap_to_window_with_margin(placement.snap_margin())
-                            .child(combobox_content_element(
-                                content_id.clone(),
-                                listbox_id.clone(),
-                                debug_id.clone(),
-                                state.clone(),
-                                self.options,
-                                self.groups,
-                                input_controller.clone(),
-                                runtime.clone(),
-                                self.on_open_change.clone(),
-                                self.on_select.clone(),
-                                self.tokens,
-                            )),
-                    )
-                    .priority(overlay_adapter.deferred_priority()),
-                )
+                this.child(gpui_relative_overlay_layer(
+                    &overlay_adapter,
+                    &placement,
+                    combobox_content_element(
+                        content_id.clone(),
+                        listbox_id.clone(),
+                        debug_id.clone(),
+                        state.clone(),
+                        self.options,
+                        self.groups,
+                        input_controller.clone(),
+                        runtime.clone(),
+                        self.on_open_change.clone(),
+                        self.on_select.clone(),
+                        self.tokens,
+                        &theme,
+                    ),
+                ))
             })
     }
 }
@@ -1136,6 +1131,7 @@ fn combobox_content_element(
     on_open_change: Option<ComboboxOpenChangeHandler>,
     on_select: Option<ComboboxSelectionHandler>,
     tokens: ThemeTokens,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
@@ -1214,9 +1210,9 @@ fn combobox_content_element(
         .flex_col()
         .rounded(gpui_px_from_ui(metrics.popup_radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(colors.popup_border()))
-        .bg(ThemeResolver::resolve(colors.popup_background()))
-        .text_color(ThemeResolver::resolve(colors.popup_foreground()))
+        .border_color(theme.resolve(colors.popup_border()))
+        .bg(theme.resolve(colors.popup_background()))
+        .text_color(theme.resolve(colors.popup_foreground()))
         .shadow_lg()
         .occlude()
         .ui_role(state.content_role())

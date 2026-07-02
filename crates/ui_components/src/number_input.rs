@@ -1,11 +1,11 @@
 //! Number input component.
 
 use crate::a11y::UiA11yElementExt;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::gpui_px_from_ui;
 use crate::slider::{normalize_bounds, normalize_numeric_value, normalize_step};
 use crate::text_input::{TextInputColors, TextInputMetrics};
-use crate::theme::ThemeResolver;
+use crate::theme::{ThemeContext, ThemeResolver};
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, KeyDownEvent, ParentElement, RenderOnce, SharedString,
@@ -395,7 +395,8 @@ impl Sizable for NumberInput {
 }
 
 impl RenderOnce for NumberInput {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -406,6 +407,7 @@ impl RenderOnce for NumberInput {
         let on_change_for_keyboard = self.on_change.clone();
         let on_change_for_increment = self.on_change.clone();
         let on_change_for_decrement = self.on_change.clone();
+        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
 
         div()
             .id(self.id)
@@ -419,9 +421,9 @@ impl RenderOnce for NumberInput {
             .gap_2()
             .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
-            .border_color(ThemeResolver::resolve(colors.border()))
-            .bg(ThemeResolver::resolve(colors.background()))
-            .text_color(ThemeResolver::resolve(colors.foreground()))
+            .border_color(theme.resolve(colors.border()))
+            .bg(theme.resolve(colors.background()))
+            .text_color(theme.resolve(colors.foreground()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
             .focusable()
@@ -431,7 +433,7 @@ impl RenderOnce for NumberInput {
             .aria_numeric_value(state.value() as f64)
             .aria_min_numeric_value(state.min() as f64)
             .aria_max_numeric_value(state.max() as f64)
-            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+            .focus_visible(move |style| style.shadow(focus_shadow))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(state.input_enabled(), |this| this.cursor_text())
             .when_some(
@@ -489,6 +491,7 @@ impl RenderOnce for NumberInput {
                         state.clone(),
                         NumberInputStepAction::Increment,
                         on_change_for_increment,
+                        &theme,
                     ))
                     .child(number_step_button(
                         "number-step-down",
@@ -496,6 +499,7 @@ impl RenderOnce for NumberInput {
                         state,
                         NumberInputStepAction::Decrement,
                         on_change_for_decrement,
+                        &theme,
                     )),
             )
     }
@@ -507,6 +511,7 @@ fn number_step_button(
     state: NumberInputState,
     action: NumberInputStepAction,
     on_change: Option<Rc<dyn Fn(NumberInputChange, &mut Window, &mut App)>>,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     div()
         .id(id)
@@ -516,7 +521,7 @@ fn number_step_button(
         .justify_center()
         .rounded(gpui_px_from_ui(state.size().control_radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(state.colors().border()))
+        .border_color(theme.resolve(state.colors().border()))
         .when(state.input_enabled(), |this| this.cursor_pointer())
         .when(!state.input_enabled(), |this| {
             this.opacity(0.56).cursor_not_allowed()

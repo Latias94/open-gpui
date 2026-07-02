@@ -39,6 +39,10 @@ pub use crate::command::{
     CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandSelectionMode,
     CommandState,
 };
+pub use crate::component_contract::{
+    COMPONENT_A11Y_EVIDENCE, COMPONENT_CONFORMANCE_GATES, ComponentA11yEvidence,
+    ComponentConformanceGate, component_a11y_evidence,
+};
 pub use crate::context_menu::{ContextMenu, ContextMenuState};
 pub use crate::dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
 pub use crate::feedback::{
@@ -134,10 +138,13 @@ pub use crate::text_input::{
 };
 pub use crate::textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
 pub use crate::theme::{
-    THEME_JSON_SCHEMA_VERSION, ThemeColor, ThemeDefinition, ThemeFileField, ThemeLoadError,
-    ThemeMode, ThemeRegistrationDiagnostics, ThemeRegistry, ThemeRegistryEntry, ThemeResolver,
-    ThemeSnapshot, ThemeValidationError, register_theme_json_file, register_theme_json_str,
-    theme_definition_from_json_file, theme_definition_from_json_str, theme_json_schema,
+    DARK_THEME_ID, DEFAULT_THEME_ID, HIGH_CONTRAST_THEME_ID, LIGHT_THEME_ID,
+    THEME_JSON_SCHEMA_VERSION, ThemeColor, ThemeContext, ThemeDefinition, ThemeFileField,
+    ThemeLoadError, ThemeMode, ThemeRegistrationDiagnostics, ThemeRegistry, ThemeRegistryEntry,
+    ThemeResolver, ThemeRuntime, ThemeRuntimeError, ThemeSnapshot, ThemeValidationError,
+    current_theme_context, init_theme_runtime, register_theme_json_file, register_theme_json_str,
+    set_active_theme, set_active_theme_mode, theme_definition_from_json_file,
+    theme_definition_from_json_str, theme_id_for_mode, theme_json_schema, try_theme_context,
 };
 pub use crate::toast::{
     Toast, ToastAction, ToastColors, ToastDismiss, ToastDismissReason, ToastIntent, ToastMetrics,
@@ -170,18 +177,18 @@ pub use crate::virtualized_list::{
     virtualized_list_scroll_target,
 };
 pub use open_gpui_ui_core::{
-    GridViewport2D, TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
-    TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind, TableAggregation,
-    TableCellEditor, TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup,
-    TableColumnGroupId, TableColumnId, TableColumnNode, TableColumnPinning, TableColumnRegion,
-    TableColumnRegions, TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState,
-    TableColumnResizeUpdate, TableColumnSizing, TableColumnVisibilityOverrides,
-    TableColumnWidthPolicy, TableExpansionMode, TableExpansionState, TableFacetRange,
-    TableFacetValueCount, TableFilter, TableFilterKind, TableGlobalFacetSummary, TableGroupRow,
-    TableNumericFilterBound, TableNumericFilterOperator, TablePagination,
-    TableResolvedColumnSizing, TableResolvedColumnSizingRegions, TableResolvedHeaderCell,
-    TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions, TableResolvedHeaderKind,
-    TableResolvedRow, TableResolvedRowKind, TableResolvedState, TableRow,
+    CommandDescriptor, GridViewport2D, TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH,
+    TABLE_MIN_COLUMN_WIDTH, TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE,
+    TableAggregateKind, TableAggregation, TableCellEditor, TableCellValue, TableColumn,
+    TableColumnFacets, TableColumnGroup, TableColumnGroupId, TableColumnId, TableColumnNode,
+    TableColumnPinning, TableColumnRegion, TableColumnRegions, TableColumnResizeDirection,
+    TableColumnResizeMode, TableColumnResizeState, TableColumnResizeUpdate, TableColumnSizing,
+    TableColumnVisibilityOverrides, TableColumnWidthPolicy, TableExpansionMode,
+    TableExpansionState, TableFacetRange, TableFacetValueCount, TableFilter, TableFilterKind,
+    TableGlobalFacetSummary, TableGroupRow, TableNumericFilterBound, TableNumericFilterOperator,
+    TablePagination, TableResolvedColumnSizing, TableResolvedColumnSizingRegions,
+    TableResolvedHeaderCell, TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions,
+    TableResolvedHeaderKind, TableResolvedRow, TableResolvedRowKind, TableResolvedState, TableRow,
     TableRowChildrenLoadState, TableRowId, TableRowModel, TableRowModelStage, TableRowPinning,
     TableRowPinningPolicy, TableRowRegion, TableRowRegions, TableSelectOption, TableSort,
     TableSortDirection, TableStageMode, TableState, TableStateCacheKey, TableTextFilterOperator,

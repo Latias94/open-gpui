@@ -254,7 +254,8 @@ impl Sizable for Avatar {
 }
 
 impl RenderOnce for Avatar {
-    fn render(self, _window: &mut open_gpui::Window, _cx: &mut open_gpui::App) -> impl IntoElement {
+    fn render(self, _window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -276,9 +277,9 @@ impl RenderOnce for Avatar {
             .overflow_hidden()
             .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
-            .border_color(ThemeResolver::resolve(colors.border()))
-            .bg(ThemeResolver::resolve(colors.background()))
-            .text_color(ThemeResolver::resolve(colors.foreground()))
+            .border_color(theme.resolve(colors.border()))
+            .bg(theme.resolve(colors.background()))
+            .text_color(theme.resolve(colors.foreground()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
             .ui_role(state.role())
@@ -537,7 +538,8 @@ impl Sizable for AvatarGroupCount {
 }
 
 impl RenderOnce for AvatarGroupCount {
-    fn render(self, _window: &mut open_gpui::Window, _cx: &mut open_gpui::App) -> impl IntoElement {
+    fn render(self, _window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -559,9 +561,9 @@ impl RenderOnce for AvatarGroupCount {
             .overflow_hidden()
             .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
-            .border_color(ThemeResolver::resolve(colors.border()))
-            .bg(ThemeResolver::resolve(colors.background()))
-            .text_color(ThemeResolver::resolve(colors.foreground()))
+            .border_color(theme.resolve(colors.border()))
+            .bg(theme.resolve(colors.background()))
+            .text_color(theme.resolve(colors.foreground()))
             .text_size(text_size)
             .line_height(text_size)
             .ui_role(state.role())

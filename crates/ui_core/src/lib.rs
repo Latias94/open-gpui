@@ -10,6 +10,7 @@ pub mod a11y;
 pub mod active_descendant;
 pub mod adaptive;
 pub mod collection;
+pub mod command;
 pub mod controllable_state;
 pub mod focus;
 pub mod geometry;
@@ -32,12 +33,13 @@ pub use adaptive::{
     device_adaptive_class, device_adaptive_snapshot, device_shell_mode, panel_adaptive_class,
 };
 pub use collection::CollectionPosition;
+pub use command::CommandDescriptor;
 pub use controllable_state::ControllableState;
 pub use focus::FocusTargetId;
 pub use geometry::{
     UiEdges, UiPoint, UiPx, UiRect, UiSize, ui_edges, ui_point, ui_px, ui_rect, ui_size,
 };
-pub use grid_viewport::{GridViewport2D, resolve_grid_viewport_2d};
+pub use grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d};
 pub use motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
 pub use motion_runtime::{
     MotionRetargetItem, MotionRetargetSet, MotionSnapshot, MotionTimeline, MotionTimelineSample,
@@ -48,10 +50,12 @@ pub use overlay::{
     FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,
     OutsidePressResolution, OverlayAnchorInput, OverlayEdges, OverlayFocusTarget, OverlayLayer,
     OverlayLayerId, OverlayLayerKind, OverlayLayerPolicy, OverlayLayerState,
-    OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, OverlayPresence,
-    OverlayResolvedState, OverlaySize, Rect, anchor_rect_from_point, inset_rect,
-    outer_bounds_with_window_margin, prefer_visual_bounds, rect, resolve_escape_key,
-    resolve_focus_restore, resolve_outside_press,
+    OverlayPlacementAlignment, OverlayPlacementFit, OverlayPlacementInput,
+    OverlayPlacementResolution, OverlayPlacementSide, OverlayPlacementTrace,
+    OverlayPlacementTraceStep, OverlayPresence, OverlayResolvedState, OverlaySize, Rect,
+    anchor_rect_from_point, inset_rect, outer_bounds_with_window_margin, prefer_visual_bounds,
+    rect, resolve_escape_key, resolve_focus_restore, resolve_outside_press,
+    resolve_overlay_placement,
 };
 pub use sizing::{Density, Sizable, Size};
 pub use split::{

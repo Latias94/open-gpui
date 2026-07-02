@@ -3,8 +3,9 @@ type: "Work Progress"
 title: "Native UI hybrid registry implementation"
 description: "Implementation progress for the Cargo-first component registry manifest, scaffold recipe metadata, artifacts, gallery evidence, and xtask scan."
 timestamp: 2026-07-02T17:02:11+08:00
-tags: ["open-gpui", "ui", "registry", "component-library", "ce-work"]
-status: "active"
+tags: ["open-gpui", "ui", "registry", "component-library", "ce-work", "superseded"]
+status: "superseded"
+superseded_by: "docs/adr/0014-remove-native-ui-hybrid-registry.md"
 related_plan: "docs/plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md"
 git_branch: "refactor/native-ui-hybrid-registry"
 verified_by:
@@ -17,6 +18,9 @@ verified_by:
 ---
 
 # Summary
+
+Superseded by ADR 0014. This note is retained as historical implementation context for the removed
+hybrid registry experiment.
 
 Implemented the first native UI hybrid registry slice from the July 2 plan.
 

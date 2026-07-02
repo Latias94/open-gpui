@@ -182,6 +182,7 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(gates[9].id, "choice-surfaces");
     assert_eq!(gates[10].id, "a11y-labels");
     assert!(gates[10].evidence.contains(&"ComponentA11yContract"));
+    assert!(gates[10].evidence.contains(&"COMPONENT_A11Y_EVIDENCE"));
     assert!(gates[10].evidence.contains(&"COMPONENT_A11Y_CLAIMS"));
     assert!(
         gates[10]
@@ -212,10 +213,10 @@ fn components_page_samples_expose_component_metadata() {
 
     let a11y_claims = pages::components::COMPONENT_A11Y_CLAIMS;
     assert_eq!(a11y_claims.len(), 11);
-    assert!(a11y_claims.iter().all(
-        |claim| claim.selector_prefix.starts_with("gallery:component-")
-            && claim.label_source.provides_name()
-    ));
+    assert!(a11y_claims.iter().all(|claim| {
+        claim.selector_prefix.starts_with("gallery:component-")
+            && claim.evidence().label_source.provides_name()
+    }));
     let claim_names = a11y_claims
         .iter()
         .map(|claim| claim.component)
@@ -239,29 +240,33 @@ fn components_page_samples_expose_component_metadata() {
         );
     }
     assert!(a11y_claims.iter().any(|claim| {
+        let evidence = claim.evidence();
         claim.component == "IconButton"
-            && claim.role == Role::Button
-            && claim.label_source == A11yLabelSource::ExplicitLabel
-            && claim.actions.contains(&AccessibleAction::Click)
+            && evidence.role == Role::Button
+            && evidence.label_source == A11yLabelSource::ExplicitLabel
+            && evidence.actions.contains(&AccessibleAction::Click)
     }));
     assert!(a11y_claims.iter().any(|claim| {
+        let evidence = claim.evidence();
         claim.component == "Slider"
-            && claim.role == Role::Slider
-            && claim.value_kind == Some(A11yValueKind::Percent)
-            && claim.orientation == Some(Orientation::Horizontal)
-            && claim.actions.contains(&AccessibleAction::SetValue)
+            && evidence.role == Role::Slider
+            && evidence.value_kind == Some(A11yValueKind::Percent)
+            && evidence.orientation == Some(Orientation::Horizontal)
+            && evidence.actions.contains(&AccessibleAction::SetValue)
     }));
     assert!(a11y_claims.iter().any(|claim| {
+        let evidence = claim.evidence();
         claim.component == "Table"
-            && claim.role == Role::Table
-            && claim.value_kind == Some(A11yValueKind::Count)
+            && evidence.role == Role::Table
+            && evidence.value_kind == Some(A11yValueKind::Count)
     }));
     assert!(a11y_claims.iter().any(|claim| {
+        let evidence = claim.evidence();
         claim.component == "Splitter handle"
-            && claim.role == Role::Splitter
-            && claim.orientation == Some(Orientation::Vertical)
-            && claim.actions.contains(&AccessibleAction::Increment)
-            && claim.actions.contains(&AccessibleAction::Decrement)
+            && evidence.role == Role::Splitter
+            && evidence.orientation == Some(Orientation::Vertical)
+            && evidence.actions.contains(&AccessibleAction::Increment)
+            && evidence.actions.contains(&AccessibleAction::Decrement)
     }));
 
     assert_eq!(buttons.len(), 6);
@@ -1234,6 +1239,8 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     let components_source = include_str!("../../src/pages/components.rs");
     let catalog_source = include_str!("../../src/pages/components/catalog.rs");
     let conformance_source = include_str!("../../src/pages/components/conformance.rs");
+    let component_evidence_source =
+        include_str!("../../../../crates/ui_components/src/component_contract/evidence.rs");
     let render_source = include_str!("../../src/pages/components/render.rs");
     let render_families_source = include_str!("../../src/pages/components/render/families.rs");
     let render_focus_source = include_str!("../../src/pages/components/render/focus.rs");
@@ -1275,7 +1282,8 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(catalog_source.contains("pub const COMPONENT_CATALOG"));
     assert!(catalog_source.contains("ComponentCatalogEntry::contract_sample("));
     assert!(catalog_source.contains("ComponentCatalogEntry::state_contract("));
-    assert!(conformance_source.contains("pub const COMPONENT_CONFORMANCE_GATES"));
+    assert!(conformance_source.contains("COMPONENT_CONFORMANCE_GATES, ComponentConformanceGate"));
+    assert!(component_evidence_source.contains("pub const COMPONENT_CONFORMANCE_GATES"));
     for module_path in [
         "#[path = \"runtime/table.rs\"]",
         "#[path = \"runtime/tree.rs\"]",
@@ -1709,6 +1717,68 @@ fn gallery_story_contracts_cover_components_state_readouts_and_overlays() {
         .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
     assert_eq!(component_story_names, expected_component_story_names);
+    assert_eq!(
+        pages::components::component_story_contracts_for_focus(
+            pages::components::ComponentFocusMode::All,
+        ),
+        component_stories,
+        "all-mode story contract helper should expose the same component contract records"
+    );
+
+    let story_sample_pairs = component_stories
+        .iter()
+        .filter_map(|story| {
+            (story.kind() == open_gpui_ui_foundation_gallery::StoryContractKind::Component)
+                .then(|| {
+                    story
+                        .selectors()
+                        .sample_selector()
+                        .map(|selector| (story.owner_name(), selector))
+                })
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    let official_sample_pairs =
+        pages::components::official_sample_selector_pairs().collect::<Vec<_>>();
+    assert_eq!(
+        official_sample_pairs, story_sample_pairs,
+        "official sample selectors should be derived from story contracts"
+    );
+
+    let story_readout_pairs = component_stories
+        .iter()
+        .filter_map(|story| {
+            (story.kind() == open_gpui_ui_foundation_gallery::StoryContractKind::StateContract)
+                .then(|| {
+                    story
+                        .selectors()
+                        .state_readout_selector()
+                        .map(|selector| (story.owner_name(), selector))
+                })
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    let state_contract_pairs =
+        pages::components::state_contract_readout_pairs().collect::<Vec<_>>();
+    assert_eq!(
+        state_contract_pairs, story_readout_pairs,
+        "state-contract readout selectors should be derived from story contracts"
+    );
+
+    for story in &component_stories {
+        if let Some(section_id) = story.section_id() {
+            let focused = pages::components::component_story_contracts_for_focus(
+                pages::components::ComponentFocusMode::Section(section_id),
+            );
+            assert!(
+                focused
+                    .iter()
+                    .any(|focused_story| focused_story.owner_name() == story.owner_name()),
+                "focused story contracts for `{section_id}` should include `{}`",
+                story.owner_name()
+            );
+        }
+    }
 
     let overlay_story_names = overlay_stories
         .iter()

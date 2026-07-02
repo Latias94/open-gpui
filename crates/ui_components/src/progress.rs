@@ -218,7 +218,8 @@ impl Sizable for Progress {
 }
 
 impl RenderOnce for Progress {
-    fn render(self, _window: &mut open_gpui::Window, _cx: &mut open_gpui::App) -> impl IntoElement {
+    fn render(self, _window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -236,7 +237,7 @@ impl RenderOnce for Progress {
             .h(gpui_px_from_ui(metrics.height()))
             .rounded(gpui_px_from_ui(metrics.radius()))
             .overflow_hidden()
-            .bg(ThemeResolver::resolve(colors.track()))
+            .bg(theme.resolve(colors.track()))
             .ui_role(state.role())
             .aria_label(label)
             .aria_min_numeric_value(0.0)
@@ -253,7 +254,7 @@ impl RenderOnce for Progress {
                     .h_full()
                     .w(relative(indicator_width))
                     .rounded(gpui_px_from_ui(metrics.radius()))
-                    .bg(ThemeResolver::resolve(colors.indicator()))
+                    .bg(theme.resolve(colors.indicator()))
                     .when(state.indeterminate(), |this| this.opacity(0.72)),
             )
     }

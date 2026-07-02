@@ -1,9 +1,10 @@
 use open_gpui::div;
 use open_gpui_ui_components::{
-    A11yContractError, A11yLabelSource, A11yValueKind, A11yValueMetadata, Button, Checkbox,
-    ComponentA11yContract, Dialog, IconButton, Listbox, ListboxOption, Menu, MenuItem, NumberInput,
-    Progress, Slider, Splitter, SplitterPanel, SplitterPanelDescriptor, Table, TableColumn,
-    TableRow, TableState, Tree, TreeItemDescriptor, VirtualizedList, VirtualizedListItemDescriptor,
+    A11yContractError, A11yLabelSource, A11yValueKind, A11yValueMetadata, Button,
+    COMPONENT_A11Y_EVIDENCE, Checkbox, ComponentA11yContract, Dialog, IconButton, Listbox,
+    ListboxOption, Menu, MenuItem, NumberInput, Progress, Slider, Splitter, SplitterPanel,
+    SplitterPanelDescriptor, Table, TableColumn, TableRow, TableState, Tree, TreeItemDescriptor,
+    VirtualizedList, VirtualizedListItemDescriptor,
 };
 use open_gpui_ui_core::{AccessibleAction, Orientation, Role, Toggled, ui_px};
 
@@ -42,6 +43,30 @@ fn a11y_contract_validation_reports_required_metadata_failures() {
         missing_action.error(),
         A11yContractError::MissingSupportedAction
     );
+}
+
+#[test]
+fn component_contract_a11y_evidence_is_valid() {
+    for evidence in COMPONENT_A11Y_EVIDENCE {
+        let mut contract = ComponentA11yContract::new(evidence.component, evidence.role)
+            .with_label_source(evidence.label_source)
+            .with_actions(evidence.actions);
+
+        if let Some(value_kind) = evidence.value_kind {
+            contract = contract.with_value_metadata(A11yValueMetadata::present(value_kind));
+        }
+        if let Some(orientation) = evidence.orientation {
+            contract = contract.with_orientation(orientation);
+        }
+
+        contract.validate().unwrap_or_else(|violation| {
+            panic!(
+                "component a11y evidence `{}` failed validation: {:?}",
+                violation.component(),
+                violation.error()
+            )
+        });
+    }
 }
 
 #[test]

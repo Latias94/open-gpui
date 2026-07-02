@@ -2,7 +2,7 @@
 
 use crate::a11y::UiA11yElementExt;
 use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
@@ -196,7 +196,8 @@ impl Sizable for Collapsible {
 }
 
 impl RenderOnce for Collapsible {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -207,6 +208,11 @@ impl RenderOnce for Collapsible {
         let label = self.label.clone();
         let content_id = format!("{}:content", self.id);
         let debug_id = self.id.to_string();
+        let border_color = theme.resolve(colors.border());
+        let background = theme.resolve(colors.background());
+        let foreground = theme.resolve(colors.foreground());
+        let hover_background = theme.resolve(colors.hover_background());
+        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
 
         div()
             .id(self.id)
@@ -226,9 +232,9 @@ impl RenderOnce for Collapsible {
                     .gap_2()
                     .rounded(gpui_px_from_ui(metrics.radius()))
                     .border_1()
-                    .border_color(ThemeResolver::resolve(colors.border()))
-                    .bg(ThemeResolver::resolve(colors.background()))
-                    .text_color(ThemeResolver::resolve(colors.foreground()))
+                    .border_color(border_color)
+                    .bg(background)
+                    .text_color(foreground)
                     .text_size(gpui_px_from_ui(metrics.text_size()))
                     .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
@@ -236,12 +242,11 @@ impl RenderOnce for Collapsible {
                     .ui_role(state.trigger_role())
                     .aria_label(label.clone())
                     .aria_expanded(open)
-                    .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                    .focus_visible(move |style| style.shadow(focus_shadow.clone()))
                     .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                     .when(!disabled, |this| {
-                        this.cursor_pointer().hover(move |style| {
-                            style.bg(ThemeResolver::resolve(colors.hover_background()))
-                        })
+                        this.cursor_pointer()
+                            .hover(move |style| style.bg(hover_background))
                     })
                     .when_some(
                         self.on_open_change.filter(|_| !disabled),
@@ -262,8 +267,8 @@ impl RenderOnce for Collapsible {
                         .ui_role(state.content_role())
                         .rounded(gpui_px_from_ui(metrics.radius()))
                         .border_1()
-                        .border_color(ThemeResolver::resolve(colors.border()))
-                        .bg(ThemeResolver::resolve(colors.background()))
+                        .border_color(border_color)
+                        .bg(background)
                         .p_3()
                         .child(content),
                 )

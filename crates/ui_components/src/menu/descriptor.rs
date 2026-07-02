@@ -1,4 +1,5 @@
 use crate::overlay::OverlayDisclosureOpenMode;
+use open_gpui_ui_core::CommandDescriptor;
 /// Menu open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MenuOpenMode {
@@ -77,6 +78,8 @@ pub struct MenuItemDescriptor {
     kind: MenuItemKind,
     disabled: bool,
     checked: bool,
+    shortcut: Option<String>,
+    when: Option<String>,
     children: Vec<MenuItemDescriptor>,
 }
 
@@ -89,8 +92,23 @@ impl MenuItemDescriptor {
             kind: MenuItemKind::Action,
             disabled: false,
             checked: false,
+            shortcut: None,
+            when: None,
             children: Vec::new(),
         }
+    }
+
+    /// Creates an action item descriptor from shared app-command metadata.
+    pub fn from_command_descriptor(descriptor: &CommandDescriptor) -> Self {
+        let mut item =
+            Self::action(descriptor.id(), descriptor.label()).disabled(descriptor.disabled_state());
+        if let Some(shortcut) = descriptor.shortcut_ref() {
+            item = item.shortcut(shortcut);
+        }
+        if let Some(when) = descriptor.when_ref() {
+            item = item.when(when);
+        }
+        item
     }
 
     /// Creates a checkbox item descriptor.
@@ -101,6 +119,8 @@ impl MenuItemDescriptor {
             kind: MenuItemKind::Checkbox,
             disabled: false,
             checked,
+            shortcut: None,
+            when: None,
             children: Vec::new(),
         }
     }
@@ -113,6 +133,8 @@ impl MenuItemDescriptor {
             kind: MenuItemKind::Radio,
             disabled: false,
             checked,
+            shortcut: None,
+            when: None,
             children: Vec::new(),
         }
     }
@@ -125,6 +147,8 @@ impl MenuItemDescriptor {
             kind: MenuItemKind::Separator,
             disabled: true,
             checked: false,
+            shortcut: None,
+            when: None,
             children: Vec::new(),
         }
     }
@@ -141,6 +165,8 @@ impl MenuItemDescriptor {
             kind: MenuItemKind::Submenu,
             disabled: false,
             checked: false,
+            shortcut: None,
+            when: None,
             children: children.into_iter().collect(),
         }
     }
@@ -157,6 +183,22 @@ impl MenuItemDescriptor {
     pub fn checked(mut self, checked: bool) -> Self {
         if matches!(self.kind, MenuItemKind::Checkbox | MenuItemKind::Radio) {
             self.checked = checked;
+        }
+        self
+    }
+
+    /// Applies a display shortcut label.
+    pub fn shortcut(mut self, shortcut: impl Into<String>) -> Self {
+        if self.kind != MenuItemKind::Separator {
+            self.shortcut = Some(shortcut.into());
+        }
+        self
+    }
+
+    /// Applies caller-owned availability metadata without evaluating it.
+    pub fn when(mut self, when: impl Into<String>) -> Self {
+        if self.kind != MenuItemKind::Separator {
+            self.when = Some(when.into());
         }
         self
     }
@@ -200,6 +242,16 @@ impl MenuItemDescriptor {
     /// Returns caller-owned checked state for checkbox and radio items.
     pub const fn checked_state(&self) -> bool {
         self.checked
+    }
+
+    /// Returns the display shortcut label.
+    pub fn shortcut_ref(&self) -> Option<&str> {
+        self.shortcut.as_deref()
+    }
+
+    /// Returns caller-owned availability metadata.
+    pub fn when_ref(&self) -> Option<&str> {
+        self.when.as_deref()
     }
 
     /// Returns submenu child descriptors.

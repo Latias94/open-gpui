@@ -1,6 +1,6 @@
 //! Overlay geometry helpers for the Open GPUI component ecosystem.
 
-use crate::geometry::{UiEdges, UiPoint, UiPx, UiRect, UiSize, ui_px, ui_size};
+use crate::geometry::{UiEdges, UiPoint, UiPx, UiRect, UiSize, ui_point, ui_px, ui_size};
 
 /// A renderer-neutral overlay rectangle.
 pub type Rect = UiRect;
@@ -765,6 +765,16 @@ impl OverlayPlacementSide {
             Self::Left => "left",
         }
     }
+
+    /// Returns the opposite side used for flip fallback.
+    pub const fn opposite(self) -> Self {
+        match self {
+            Self::Top => Self::Bottom,
+            Self::Right => Self::Left,
+            Self::Bottom => Self::Top,
+            Self::Left => Self::Right,
+        }
+    }
 }
 
 /// Preferred alignment for overlay content along the anchor edge.
@@ -873,9 +883,592 @@ impl OverlayPlacementInput {
     }
 }
 
+/// Final fit category selected by the renderer-neutral placement solver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayPlacementFit {
+    /// Preferred side and alignment fit without shifting.
+    Preferred,
+    /// Preferred side fit after changing alignment.
+    Aligned,
+    /// Preferred side fit after shifting within safe bounds.
+    Shifted,
+    /// Preferred side fit after changing alignment and shifting within safe bounds.
+    AlignedAndShifted,
+    /// A fallback side fit without shifting.
+    Flipped,
+    /// A fallback side fit after shifting within safe bounds.
+    FlippedAndShifted,
+    /// Content was constrained to safe bounds but still cannot fully fit.
+    Constrained,
+    /// No safe bounds were provided, so preferred placement was used directly.
+    Unbounded,
+}
+
+impl OverlayPlacementFit {
+    /// Returns a stable label for diagnostics and tests.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Preferred => "preferred",
+            Self::Aligned => "aligned",
+            Self::Shifted => "shifted",
+            Self::AlignedAndShifted => "aligned + shifted",
+            Self::Flipped => "flipped",
+            Self::FlippedAndShifted => "flipped + shifted",
+            Self::Constrained => "constrained",
+            Self::Unbounded => "unbounded",
+        }
+    }
+}
+
+/// One inspected candidate from overlay placement resolution.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OverlayPlacementTraceStep {
+    side: OverlayPlacementSide,
+    alignment: OverlayPlacementAlignment,
+    raw_bounds: Rect,
+    resolved_bounds: Rect,
+    main_axis_overflow: UiPx,
+    total_overflow: UiPx,
+    shifted: bool,
+    fits: bool,
+}
+
+impl OverlayPlacementTraceStep {
+    /// Returns the candidate side.
+    pub const fn side(&self) -> OverlayPlacementSide {
+        self.side
+    }
+
+    /// Returns the candidate alignment.
+    pub const fn alignment(&self) -> OverlayPlacementAlignment {
+        self.alignment
+    }
+
+    /// Returns bounds before safe-bound shifting.
+    pub const fn raw_bounds(&self) -> Rect {
+        self.raw_bounds
+    }
+
+    /// Returns bounds after safe-bound shifting.
+    pub const fn resolved_bounds(&self) -> Rect {
+        self.resolved_bounds
+    }
+
+    /// Returns overflow on the side's main axis before shifting.
+    pub const fn main_axis_overflow(&self) -> UiPx {
+        self.main_axis_overflow
+    }
+
+    /// Returns remaining overflow after shifting.
+    pub const fn total_overflow(&self) -> UiPx {
+        self.total_overflow
+    }
+
+    /// Returns whether this candidate shifted on either axis.
+    pub const fn shifted(&self) -> bool {
+        self.shifted
+    }
+
+    /// Returns whether this candidate fully fits the safe bounds.
+    pub const fn fits(&self) -> bool {
+        self.fits
+    }
+}
+
+/// Diagnostic trace emitted by overlay placement resolution.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OverlayPlacementTrace {
+    steps: Vec<OverlayPlacementTraceStep>,
+    selected_index: usize,
+}
+
+impl OverlayPlacementTrace {
+    /// Creates a trace from inspected candidates and the selected candidate index.
+    pub fn new(steps: Vec<OverlayPlacementTraceStep>, selected_index: usize) -> Self {
+        Self {
+            steps,
+            selected_index,
+        }
+    }
+
+    /// Returns all inspected candidate steps in priority order.
+    pub fn steps(&self) -> &[OverlayPlacementTraceStep] {
+        &self.steps
+    }
+
+    /// Returns the index of the selected candidate.
+    pub const fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    /// Returns the selected trace step.
+    pub fn selected(&self) -> &OverlayPlacementTraceStep {
+        &self.steps[self.selected_index]
+    }
+}
+
+/// Renderer-neutral result of overlay placement resolution.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OverlayPlacementResolution {
+    preferred_side: OverlayPlacementSide,
+    preferred_alignment: OverlayPlacementAlignment,
+    side: OverlayPlacementSide,
+    alignment: OverlayPlacementAlignment,
+    offset: UiPx,
+    anchor_bounds: Rect,
+    anchor_point: UiPoint,
+    content_bounds: Rect,
+    arrow_offset: UiPoint,
+    safe_bounds: Option<Rect>,
+    fit: OverlayPlacementFit,
+    trace: OverlayPlacementTrace,
+}
+
+impl OverlayPlacementResolution {
+    /// Returns the originally requested side.
+    pub const fn preferred_side(&self) -> OverlayPlacementSide {
+        self.preferred_side
+    }
+
+    /// Returns the originally requested alignment.
+    pub const fn preferred_alignment(&self) -> OverlayPlacementAlignment {
+        self.preferred_alignment
+    }
+
+    /// Returns the selected side after fallback evaluation.
+    pub const fn side(&self) -> OverlayPlacementSide {
+        self.side
+    }
+
+    /// Returns the selected alignment.
+    pub const fn alignment(&self) -> OverlayPlacementAlignment {
+        self.alignment
+    }
+
+    /// Returns the offset applied on the selected side.
+    pub const fn offset(&self) -> UiPx {
+        self.offset
+    }
+
+    /// Returns the anchor bounds used for placement.
+    pub const fn anchor_bounds(&self) -> Rect {
+        self.anchor_bounds
+    }
+
+    /// Returns the anchor point for renderer adapters that position by anchor.
+    pub const fn anchor_point(&self) -> UiPoint {
+        self.anchor_point
+    }
+
+    /// Returns the resolved content bounds.
+    pub const fn content_bounds(&self) -> Rect {
+        self.content_bounds
+    }
+
+    /// Returns the arrow attachment offset inside the content bounds.
+    pub const fn arrow_offset(&self) -> UiPoint {
+        self.arrow_offset
+    }
+
+    /// Returns safe placement bounds, when provided.
+    pub const fn safe_bounds(&self) -> Option<Rect> {
+        self.safe_bounds
+    }
+
+    /// Returns the selected fit category.
+    pub const fn fit(&self) -> OverlayPlacementFit {
+        self.fit
+    }
+
+    /// Returns the diagnostic trace.
+    pub const fn trace(&self) -> &OverlayPlacementTrace {
+        &self.trace
+    }
+}
+
+/// Resolves overlay content placement within optional safe bounds.
+pub fn resolve_overlay_placement(input: OverlayPlacementInput) -> OverlayPlacementResolution {
+    let anchor_bounds = input
+        .preferred_anchor_bounds()
+        .unwrap_or_else(|| anchor_rect_from_point(ui_point(UiPx::ZERO, UiPx::ZERO)));
+    let fallback_candidates = placement_fallback_candidates(input.side(), input.alignment());
+    let selected_offset = input.offset();
+
+    let (steps, selected_index) = match input.safe_bounds() {
+        Some(safe_bounds) => {
+            let mut steps = Vec::with_capacity(fallback_candidates.len());
+            let mut selected_index = None;
+            let mut best_index = 0;
+
+            for (index, candidate) in fallback_candidates.iter().copied().enumerate() {
+                let raw_bounds = content_bounds_for_placement(
+                    anchor_bounds,
+                    input.content_size(),
+                    candidate.side,
+                    candidate.alignment,
+                    input.offset(),
+                );
+                let resolved_bounds = shift_rect_into_bounds(raw_bounds, safe_bounds);
+                let main_axis_overflow =
+                    main_axis_overflow(raw_bounds, safe_bounds, candidate.side);
+                let total_overflow = total_rect_overflow(resolved_bounds, safe_bounds);
+                let step = OverlayPlacementTraceStep {
+                    side: candidate.side,
+                    alignment: candidate.alignment,
+                    raw_bounds,
+                    resolved_bounds,
+                    main_axis_overflow,
+                    total_overflow,
+                    shifted: raw_bounds.origin != resolved_bounds.origin,
+                    fits: total_overflow == UiPx::ZERO,
+                };
+
+                if step.fits() && !step.shifted() {
+                    selected_index = Some(index);
+                    steps.push(step);
+                    break;
+                }
+
+                if steps.is_empty() || placement_step_is_better(step, steps[best_index]) {
+                    best_index = index;
+                }
+
+                steps.push(step);
+            }
+
+            (steps, selected_index.unwrap_or(best_index))
+        }
+        None => {
+            let raw_bounds = content_bounds_for_placement(
+                anchor_bounds,
+                input.content_size(),
+                input.side(),
+                input.alignment(),
+                input.offset(),
+            );
+            (
+                vec![OverlayPlacementTraceStep {
+                    side: input.side(),
+                    alignment: input.alignment(),
+                    raw_bounds,
+                    resolved_bounds: raw_bounds,
+                    main_axis_overflow: UiPx::ZERO,
+                    total_overflow: UiPx::ZERO,
+                    shifted: false,
+                    fits: true,
+                }],
+                0,
+            )
+        }
+    };
+
+    let selected = steps[selected_index];
+    let flipped = selected.side() != input.side();
+    let realigned = selected.alignment() != input.alignment();
+    let fit = match (
+        input.safe_bounds().is_some(),
+        flipped,
+        realigned,
+        selected.shifted(),
+        selected.fits(),
+    ) {
+        (false, _, _, _, _) => OverlayPlacementFit::Unbounded,
+        (true, false, false, false, true) => OverlayPlacementFit::Preferred,
+        (true, false, true, false, true) => OverlayPlacementFit::Aligned,
+        (true, false, false, true, true) => OverlayPlacementFit::Shifted,
+        (true, false, true, true, true) => OverlayPlacementFit::AlignedAndShifted,
+        (true, true, _, false, true) => OverlayPlacementFit::Flipped,
+        (true, true, _, true, true) => OverlayPlacementFit::FlippedAndShifted,
+        (true, _, _, _, false) => OverlayPlacementFit::Constrained,
+    };
+    let selected_alignment = selected.alignment();
+    let anchor_point = placement_anchor_point(anchor_bounds, selected.side(), selected_alignment);
+    let arrow_offset =
+        arrow_offset_for_placement(selected.resolved_bounds(), anchor_bounds, selected.side());
+
+    OverlayPlacementResolution {
+        preferred_side: input.side(),
+        preferred_alignment: input.alignment(),
+        side: selected.side(),
+        alignment: selected_alignment,
+        offset: selected_offset,
+        anchor_bounds,
+        anchor_point,
+        content_bounds: selected.resolved_bounds(),
+        arrow_offset,
+        safe_bounds: input.safe_bounds(),
+        fit,
+        trace: OverlayPlacementTrace::new(steps, selected_index),
+    }
+}
+
 /// Returns the preferred bounds when both visual and layout rects are available.
 pub fn prefer_visual_bounds(visual: Option<Rect>, layout: Option<Rect>) -> Option<Rect> {
     visual.or(layout)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PlacementCandidate {
+    side: OverlayPlacementSide,
+    alignment: OverlayPlacementAlignment,
+}
+
+fn placement_fallback_candidates(
+    side: OverlayPlacementSide,
+    alignment: OverlayPlacementAlignment,
+) -> Vec<PlacementCandidate> {
+    let mut candidates = Vec::with_capacity(16);
+    let sides = placement_fallback_sides(side);
+
+    push_unique_placement_candidate(&mut candidates, side, alignment);
+    for candidate_alignment in placement_fallback_alignments(alignment) {
+        push_unique_placement_candidate(&mut candidates, side, candidate_alignment);
+    }
+
+    for candidate_side in sides.into_iter().skip(1) {
+        push_unique_placement_candidate(&mut candidates, candidate_side, alignment);
+        for candidate_alignment in placement_fallback_alignments(alignment) {
+            push_unique_placement_candidate(&mut candidates, candidate_side, candidate_alignment);
+        }
+    }
+
+    candidates
+}
+
+fn placement_fallback_sides(side: OverlayPlacementSide) -> [OverlayPlacementSide; 4] {
+    match side {
+        OverlayPlacementSide::Top => [
+            OverlayPlacementSide::Top,
+            OverlayPlacementSide::Bottom,
+            OverlayPlacementSide::Right,
+            OverlayPlacementSide::Left,
+        ],
+        OverlayPlacementSide::Right => [
+            OverlayPlacementSide::Right,
+            OverlayPlacementSide::Left,
+            OverlayPlacementSide::Bottom,
+            OverlayPlacementSide::Top,
+        ],
+        OverlayPlacementSide::Bottom => [
+            OverlayPlacementSide::Bottom,
+            OverlayPlacementSide::Top,
+            OverlayPlacementSide::Right,
+            OverlayPlacementSide::Left,
+        ],
+        OverlayPlacementSide::Left => [
+            OverlayPlacementSide::Left,
+            OverlayPlacementSide::Right,
+            OverlayPlacementSide::Bottom,
+            OverlayPlacementSide::Top,
+        ],
+    }
+}
+
+fn placement_fallback_alignments(
+    alignment: OverlayPlacementAlignment,
+) -> [OverlayPlacementAlignment; 3] {
+    match alignment {
+        OverlayPlacementAlignment::Start => [
+            OverlayPlacementAlignment::Center,
+            OverlayPlacementAlignment::End,
+            OverlayPlacementAlignment::Start,
+        ],
+        OverlayPlacementAlignment::Center => [
+            OverlayPlacementAlignment::Start,
+            OverlayPlacementAlignment::End,
+            OverlayPlacementAlignment::Center,
+        ],
+        OverlayPlacementAlignment::End => [
+            OverlayPlacementAlignment::Center,
+            OverlayPlacementAlignment::Start,
+            OverlayPlacementAlignment::End,
+        ],
+    }
+}
+
+fn push_unique_placement_candidate(
+    candidates: &mut Vec<PlacementCandidate>,
+    side: OverlayPlacementSide,
+    alignment: OverlayPlacementAlignment,
+) {
+    let candidate = PlacementCandidate { side, alignment };
+    if !candidates.contains(&candidate) {
+        candidates.push(candidate);
+    }
+}
+
+fn content_bounds_for_placement(
+    anchor: Rect,
+    content_size: OverlaySize,
+    side: OverlayPlacementSide,
+    alignment: OverlayPlacementAlignment,
+    offset: UiPx,
+) -> Rect {
+    let anchor_left = anchor.origin.x.as_f32();
+    let anchor_top = anchor.origin.y.as_f32();
+    let anchor_right = rect_right(anchor);
+    let anchor_bottom = rect_bottom(anchor);
+    let anchor_width = anchor.size.width.as_f32();
+    let anchor_height = anchor.size.height.as_f32();
+    let content_width = content_size.width.as_f32();
+    let content_height = content_size.height.as_f32();
+    let offset = offset.as_f32();
+
+    let aligned_x = match alignment {
+        OverlayPlacementAlignment::Start => anchor_left,
+        OverlayPlacementAlignment::Center => anchor_left + (anchor_width - content_width) / 2.0,
+        OverlayPlacementAlignment::End => anchor_right - content_width,
+    };
+    let aligned_y = match alignment {
+        OverlayPlacementAlignment::Start => anchor_top,
+        OverlayPlacementAlignment::Center => anchor_top + (anchor_height - content_height) / 2.0,
+        OverlayPlacementAlignment::End => anchor_bottom - content_height,
+    };
+
+    let (x, y) = match side {
+        OverlayPlacementSide::Top => (aligned_x, anchor_top - offset - content_height),
+        OverlayPlacementSide::Right => (anchor_right + offset, aligned_y),
+        OverlayPlacementSide::Bottom => (aligned_x, anchor_bottom + offset),
+        OverlayPlacementSide::Left => (anchor_left - offset - content_width, aligned_y),
+    };
+
+    rect(
+        ui_point(ui_px(x), ui_px(y)),
+        ui_size(ui_px(content_width), ui_px(content_height)),
+    )
+}
+
+fn shift_rect_into_bounds(bounds: Rect, safe_bounds: Rect) -> Rect {
+    let safe_left = safe_bounds.origin.x.as_f32();
+    let safe_top = safe_bounds.origin.y.as_f32();
+    let safe_width = safe_bounds.size.width.as_f32();
+    let safe_height = safe_bounds.size.height.as_f32();
+    let content_width = bounds.size.width.as_f32();
+    let content_height = bounds.size.height.as_f32();
+
+    let x = if content_width <= safe_width {
+        clamp_f32(
+            bounds.origin.x.as_f32(),
+            safe_left,
+            safe_left + safe_width - content_width,
+        )
+    } else {
+        safe_left
+    };
+    let y = if content_height <= safe_height {
+        clamp_f32(
+            bounds.origin.y.as_f32(),
+            safe_top,
+            safe_top + safe_height - content_height,
+        )
+    } else {
+        safe_top
+    };
+
+    rect(ui_point(ui_px(x), ui_px(y)), bounds.size)
+}
+
+fn main_axis_overflow(bounds: Rect, safe_bounds: Rect, side: OverlayPlacementSide) -> UiPx {
+    let overflow = match side {
+        OverlayPlacementSide::Top => safe_bounds.origin.y.as_f32() - bounds.origin.y.as_f32(),
+        OverlayPlacementSide::Right => rect_right(bounds) - rect_right(safe_bounds),
+        OverlayPlacementSide::Bottom => rect_bottom(bounds) - rect_bottom(safe_bounds),
+        OverlayPlacementSide::Left => safe_bounds.origin.x.as_f32() - bounds.origin.x.as_f32(),
+    };
+
+    ui_px(overflow.max(0.0))
+}
+
+fn total_rect_overflow(bounds: Rect, safe_bounds: Rect) -> UiPx {
+    let overflow_left = safe_bounds.origin.x.as_f32() - bounds.origin.x.as_f32();
+    let overflow_top = safe_bounds.origin.y.as_f32() - bounds.origin.y.as_f32();
+    let overflow_right = rect_right(bounds) - rect_right(safe_bounds);
+    let overflow_bottom = rect_bottom(bounds) - rect_bottom(safe_bounds);
+
+    ui_px(
+        overflow_left.max(0.0)
+            + overflow_top.max(0.0)
+            + overflow_right.max(0.0)
+            + overflow_bottom.max(0.0),
+    )
+}
+
+fn placement_step_is_better(
+    candidate: OverlayPlacementTraceStep,
+    current: OverlayPlacementTraceStep,
+) -> bool {
+    let candidate_fits_main_axis = candidate.main_axis_overflow() == UiPx::ZERO;
+    let current_fits_main_axis = current.main_axis_overflow() == UiPx::ZERO;
+
+    match (candidate_fits_main_axis, current_fits_main_axis) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => match (candidate.shifted(), current.shifted()) {
+            (false, true) => true,
+            (true, false) => false,
+            _ => {
+                let candidate_total = candidate.total_overflow().as_f32();
+                let current_total = current.total_overflow().as_f32();
+                candidate_total < current_total
+                    || (candidate_total == current_total
+                        && candidate.main_axis_overflow().as_f32()
+                            < current.main_axis_overflow().as_f32())
+            }
+        },
+    }
+}
+
+fn placement_anchor_point(
+    bounds: Rect,
+    side: OverlayPlacementSide,
+    alignment: OverlayPlacementAlignment,
+) -> UiPoint {
+    match (side, alignment) {
+        (OverlayPlacementSide::Top, OverlayPlacementAlignment::Start) => bounds.top_left(),
+        (OverlayPlacementSide::Top, OverlayPlacementAlignment::Center) => bounds.top_center(),
+        (OverlayPlacementSide::Top, OverlayPlacementAlignment::End) => bounds.top_right(),
+        (OverlayPlacementSide::Right, _) => bounds.right_center(),
+        (OverlayPlacementSide::Bottom, OverlayPlacementAlignment::Start) => bounds.bottom_left(),
+        (OverlayPlacementSide::Bottom, OverlayPlacementAlignment::Center) => bounds.bottom_center(),
+        (OverlayPlacementSide::Bottom, OverlayPlacementAlignment::End) => bounds.bottom_right(),
+        (OverlayPlacementSide::Left, _) => bounds.left_center(),
+    }
+}
+
+fn arrow_offset_for_placement(content: Rect, anchor: Rect, side: OverlayPlacementSide) -> UiPoint {
+    let anchor_center_x = anchor.origin.x.as_f32() + anchor.size.width.as_f32() / 2.0;
+    let anchor_center_y = anchor.origin.y.as_f32() + anchor.size.height.as_f32() / 2.0;
+    let content_width = content.size.width.as_f32();
+    let content_height = content.size.height.as_f32();
+    let arrow_x = clamp_f32(
+        anchor_center_x - content.origin.x.as_f32(),
+        0.0,
+        content_width,
+    );
+    let arrow_y = clamp_f32(
+        anchor_center_y - content.origin.y.as_f32(),
+        0.0,
+        content_height,
+    );
+
+    match side {
+        OverlayPlacementSide::Top => ui_point(ui_px(arrow_x), ui_px(content_height)),
+        OverlayPlacementSide::Right => ui_point(UiPx::ZERO, ui_px(arrow_y)),
+        OverlayPlacementSide::Bottom => ui_point(ui_px(arrow_x), UiPx::ZERO),
+        OverlayPlacementSide::Left => ui_point(ui_px(content_width), ui_px(arrow_y)),
+    }
+}
+
+fn rect_right(bounds: Rect) -> f32 {
+    bounds.origin.x.as_f32() + bounds.size.width.as_f32()
+}
+
+fn rect_bottom(bounds: Rect) -> f32 {
+    bounds.origin.y.as_f32() + bounds.size.height.as_f32()
+}
+
+fn clamp_f32(value: f32, min: f32, max: f32) -> f32 {
+    value.max(min).min(max)
 }
 
 /// Returns a 1x1 rectangle anchor derived from a point.
@@ -1315,5 +1908,114 @@ mod tests {
             placement.preferred_anchor_bounds(),
             Some(anchor_rect_from_point(point_anchor))
         );
+    }
+
+    #[test]
+    fn overlay_placement_flips_when_preferred_side_overflows_main_axis() {
+        let placement = OverlayPlacementInput::new(
+            OverlayAnchorInput::from_layout_bounds(rect(
+                ui_point(ui_px(40.0), ui_px(170.0)),
+                ui_size(ui_px(40.0), ui_px(20.0)),
+            )),
+            ui_size(ui_px(80.0), ui_px(50.0)),
+        )
+        .with_side(OverlayPlacementSide::Bottom)
+        .with_alignment(OverlayPlacementAlignment::Start)
+        .with_offset(ui_px(4.0))
+        .with_safe_bounds(rect(
+            ui_point(ui_px(0.0), ui_px(0.0)),
+            ui_size(ui_px(200.0), ui_px(200.0)),
+        ));
+
+        let resolved = resolve_overlay_placement(placement);
+
+        assert_eq!(resolved.preferred_side(), OverlayPlacementSide::Bottom);
+        assert_eq!(resolved.side(), OverlayPlacementSide::Top);
+        assert_eq!(resolved.alignment(), OverlayPlacementAlignment::Start);
+        assert_eq!(resolved.fit(), OverlayPlacementFit::Flipped);
+        assert_eq!(
+            resolved.content_bounds(),
+            rect(
+                ui_point(ui_px(40.0), ui_px(116.0)),
+                ui_size(ui_px(80.0), ui_px(50.0))
+            )
+        );
+        assert!(
+            resolved.trace().steps().len() > 1,
+            "trace should show rejected preferred candidates before the flip"
+        );
+        assert_eq!(
+            resolved.trace().selected().side(),
+            OverlayPlacementSide::Top
+        );
+    }
+
+    #[test]
+    fn overlay_placement_realigns_before_shifting_when_cross_axis_overflows() {
+        let placement = OverlayPlacementInput::new(
+            OverlayAnchorInput::from_layout_bounds(rect(
+                ui_point(ui_px(170.0), ui_px(40.0)),
+                ui_size(ui_px(20.0), ui_px(20.0)),
+            )),
+            ui_size(ui_px(80.0), ui_px(50.0)),
+        )
+        .with_side(OverlayPlacementSide::Bottom)
+        .with_alignment(OverlayPlacementAlignment::Start)
+        .with_offset(ui_px(4.0))
+        .with_safe_bounds(rect(
+            ui_point(ui_px(0.0), ui_px(0.0)),
+            ui_size(ui_px(240.0), ui_px(200.0)),
+        ));
+
+        let resolved = resolve_overlay_placement(placement);
+
+        assert_eq!(resolved.side(), OverlayPlacementSide::Bottom);
+        assert_eq!(resolved.alignment(), OverlayPlacementAlignment::Center);
+        assert_eq!(resolved.fit(), OverlayPlacementFit::Aligned);
+        assert_eq!(
+            resolved.content_bounds(),
+            rect(
+                ui_point(ui_px(140.0), ui_px(64.0)),
+                ui_size(ui_px(80.0), ui_px(50.0))
+            )
+        );
+        assert!(
+            resolved
+                .trace()
+                .steps()
+                .iter()
+                .any(|step| step.shifted() && step.side() == OverlayPlacementSide::Bottom),
+            "trace should include the shifted preferred candidate before realignment wins"
+        );
+    }
+
+    #[test]
+    fn overlay_placement_constrains_oversized_content_with_trace() {
+        let placement = OverlayPlacementInput::new(
+            OverlayAnchorInput::from_layout_bounds(rect(
+                ui_point(ui_px(12.0), ui_px(12.0)),
+                ui_size(ui_px(20.0), ui_px(20.0)),
+            )),
+            ui_size(ui_px(300.0), ui_px(240.0)),
+        )
+        .with_side(OverlayPlacementSide::Bottom)
+        .with_alignment(OverlayPlacementAlignment::Start)
+        .with_safe_bounds(rect(
+            ui_point(ui_px(0.0), ui_px(0.0)),
+            ui_size(ui_px(200.0), ui_px(160.0)),
+        ));
+
+        let resolved = resolve_overlay_placement(placement);
+
+        assert_eq!(resolved.fit(), OverlayPlacementFit::Constrained);
+        assert_eq!(
+            resolved.content_bounds(),
+            rect(
+                ui_point(ui_px(0.0), ui_px(0.0)),
+                ui_size(ui_px(300.0), ui_px(240.0))
+            )
+        );
+        assert_eq!(resolved.safe_bounds(), placement.safe_bounds());
+        assert!(resolved.trace().selected().total_overflow().as_f32() > 0.0);
     }
 }

@@ -9,14 +9,18 @@ use open_gpui::{
     StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
-    InitialFocusIntent, OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementSide,
-    OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
+    InitialFocusIntent, OverlayAnchorInput, OverlayLayerKind, OverlayPlacementAlignment,
+    OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role, Sizable, Size, ThemeTokens,
+    UiPx, rect, ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::overlay::{GpuiOverlayAdapterConfig, OverlayResolvedState};
-use crate::theme::ThemeResolver;
+use crate::overlay::{
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, gpui_overlay_state,
+    gpui_relative_overlay_layer,
+};
+use crate::theme::{ThemeContext, ThemeResolver};
 
 /// Open affordance for a tooltip trigger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -441,33 +445,85 @@ impl Sizable for Tooltip {
 }
 
 impl RenderOnce for Tooltip {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
-        let colors = state.colors();
         let id = self.id;
         let debug_id = id.to_string();
         let accessible_label = accessible_label_for_content(&self.content);
         let children = children_from_content(self.content);
+        let content_id: ElementId = (id.clone(), "content").into();
+        let overlay_adapter = gpui_overlay_state(state.overlay());
+        let placement = GpuiOverlayPlacement::resolve(
+            OverlayPlacementInput::new(
+                OverlayAnchorInput::from_layout_bounds(rect(
+                    ui_point(UiPx::ZERO, UiPx::ZERO),
+                    ui_size(UiPx::ONE, UiPx::ONE),
+                )),
+                ui_size(
+                    metrics.max_width(),
+                    metrics.text_size() + metrics.padding_y() * 2.0,
+                ),
+            )
+            .with_side(state.placement_side())
+            .with_alignment(state.placement_alignment())
+            .with_offset(ui_px(4.0)),
+            overlay_adapter.snap_margin(),
+        );
 
         div()
             .id(id)
-            .debug_selector(move || format!("tooltip:{debug_id}:content"))
-            .max_w(gpui_px_from_ui(metrics.max_width()))
-            .px(gpui_px_from_ui(metrics.padding_x()))
-            .py(gpui_px_from_ui(metrics.padding_y()))
-            .rounded(gpui_px_from_ui(metrics.radius()))
-            .border_1()
-            .border_color(ThemeResolver::resolve(colors.border()))
-            .bg(ThemeResolver::resolve(colors.background()))
-            .text_color(ThemeResolver::resolve(colors.foreground()))
-            .text_size(gpui_px_from_ui(metrics.text_size()))
-            .line_height(gpui_px_from_ui(metrics.text_size()))
-            .shadow_lg()
-            .ui_role(state.role())
-            .aria_label(accessible_label)
-            .children(children)
+            .debug_selector({
+                let debug_id = debug_id.clone();
+                move || format!("tooltip:{debug_id}:root")
+            })
+            .relative()
+            .when(overlay_adapter.should_render_deferred_layer(), |this| {
+                this.child(gpui_relative_overlay_layer(
+                    &overlay_adapter,
+                    &placement,
+                    tooltip_surface_element(
+                        content_id,
+                        debug_id,
+                        state,
+                        accessible_label,
+                        children,
+                        &theme,
+                    ),
+                ))
+            })
     }
+}
+
+fn tooltip_surface_element(
+    content_id: ElementId,
+    debug_id: String,
+    state: TooltipState,
+    accessible_label: SharedString,
+    children: Vec<AnyElement>,
+    theme: &ThemeContext,
+) -> impl IntoElement {
+    let metrics = state.metrics();
+    let colors = state.colors();
+
+    div()
+        .id(content_id)
+        .debug_selector(move || format!("tooltip:{debug_id}:content"))
+        .max_w(gpui_px_from_ui(metrics.max_width()))
+        .px(gpui_px_from_ui(metrics.padding_x()))
+        .py(gpui_px_from_ui(metrics.padding_y()))
+        .rounded(gpui_px_from_ui(metrics.radius()))
+        .border_1()
+        .border_color(theme.resolve(colors.border()))
+        .bg(theme.resolve(colors.background()))
+        .text_color(theme.resolve(colors.foreground()))
+        .text_size(gpui_px_from_ui(metrics.text_size()))
+        .line_height(gpui_px_from_ui(metrics.text_size()))
+        .shadow_lg()
+        .ui_role(state.role())
+        .aria_label(accessible_label)
+        .children(children)
 }
 
 fn accessible_label_for_content(content: &TooltipContent) -> SharedString {

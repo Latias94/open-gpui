@@ -224,15 +224,16 @@ impl Sizable for TableToolbar {
 }
 
 impl RenderOnce for TableToolbar {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let debug_id = state.id().to_owned();
         let primary_debug_id = debug_id.clone();
         let secondary_debug_id = debug_id.clone();
         let summary_debug_id = debug_id.clone();
         let label = state.label().to_owned();
-        let text_color = ThemeResolver::resolve(state.foreground());
-        let summary_text_color = ThemeResolver::resolve(state.muted_foreground());
+        let text_color = theme.resolve(state.foreground());
+        let summary_text_color = theme.resolve(state.muted_foreground());
         let size = state.size();
         let has_primary_controls = state.primary_control_count() > 0;
         let has_secondary_controls = state.secondary_control_count() > 0;

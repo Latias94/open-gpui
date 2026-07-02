@@ -12,7 +12,7 @@ use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled};
 
 use crate::a11y::UiA11yElementExt;
 use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::theme::ThemeResolver;
 
 /// Resolved toggle color intents.
@@ -218,7 +218,7 @@ impl Sizable for Toggle {
 }
 
 impl RenderOnce for Toggle {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let label = self.label.clone();
         let state = self.state();
         let metrics = state.metrics();
@@ -226,6 +226,13 @@ impl RenderOnce for Toggle {
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
         let next_pressed = !state.pressed();
+        let theme_context = ThemeResolver::current(cx);
+        let theme = &theme_context;
+        let border_color = theme.resolve(colors.border());
+        let background = theme.resolve(colors.background());
+        let foreground = theme.resolve(colors.foreground());
+        let hover_background = theme.resolve(colors.hover_background());
+        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, theme);
 
         div()
             .id(self.id)
@@ -238,9 +245,9 @@ impl RenderOnce for Toggle {
             .gap_2()
             .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
-            .border_color(ThemeResolver::resolve(colors.border()))
-            .bg(ThemeResolver::resolve(colors.background()))
-            .text_color(ThemeResolver::resolve(colors.foreground()))
+            .border_color(border_color)
+            .bg(background)
+            .text_color(foreground)
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
             .focusable()
@@ -248,11 +255,11 @@ impl RenderOnce for Toggle {
             .ui_role(state.role())
             .aria_label(label.clone())
             .ui_aria_toggled(state.toggled())
-            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+            .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| {
                 this.cursor_pointer()
-                    .hover(move |style| style.bg(ThemeResolver::resolve(colors.hover_background())))
+                    .hover(move |style| style.bg(hover_background))
             })
             .when_some(self.on_change.filter(|_| !disabled), |this, on_change| {
                 this.on_click(move |event, window, cx| {

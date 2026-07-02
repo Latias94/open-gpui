@@ -17,7 +17,7 @@ use crate::choice::{
     ChoiceActivationMode, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection,
 };
 use crate::color::{ColorIntent, ColorState};
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 pub use crate::roving_focus::{
     active_index_from_str_keys, first_enabled, last_enabled, next_enabled,
 };
@@ -648,6 +648,7 @@ impl Sizable for Tabs {
 
 impl RenderOnce for Tabs {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let Tabs {
             id,
             orientation,
@@ -753,6 +754,23 @@ impl RenderOnce for Tabs {
                     let is_selected = item.selected();
                     let is_tab_stop = Some(index) == tab_stop_index;
                     let focus_handle = focus_handles[index].clone();
+                    let tab_border = theme.resolve(if is_selected {
+                        colors.tab_border_selected()
+                    } else {
+                        colors.tab_border()
+                    });
+                    let tab_background = theme.resolve(if is_selected {
+                        colors.tab_background_selected()
+                    } else {
+                        colors.tab_background()
+                    });
+                    let tab_text = theme.resolve(if is_selected {
+                        colors.tab_text()
+                    } else {
+                        colors.tab_text_muted()
+                    });
+                    let tab_hover_background = theme.resolve(colors.tab_hover_background());
+                    let tab_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
 
                     div()
                         .id(tabs_trigger_id(item.value()))
@@ -781,33 +799,20 @@ impl RenderOnce for Tabs {
                         .justify_center()
                         .rounded(gpui_px_from_ui(metrics.radius()))
                         .border_1()
-                        .border_color(ThemeResolver::resolve(if is_selected {
-                            colors.tab_border_selected()
-                        } else {
-                            colors.tab_border()
-                        }))
-                        .bg(ThemeResolver::resolve(if is_selected {
-                            colors.tab_background_selected()
-                        } else {
-                            colors.tab_background()
-                        }))
+                        .border_color(tab_border)
+                        .bg(tab_background)
                         .text_size(gpui_px_from_ui(metrics.text_size()))
                         .line_height(gpui_px_from_ui(metrics.text_size()))
-                        .text_color(ThemeResolver::resolve(if is_selected {
-                            colors.tab_text()
-                        } else {
-                            colors.tab_text_muted()
-                        }))
+                        .text_color(tab_text)
                         .font_weight(if is_selected {
                             open_gpui::FontWeight::BOLD
                         } else {
                             open_gpui::FontWeight::NORMAL
                         })
-                        .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                        .focus_visible(move |style| style.shadow(tab_focus_shadow.clone()))
                         .when(!item.disabled(), |this| {
-                            this.cursor_pointer().hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.tab_hover_background()))
-                            })
+                            this.cursor_pointer()
+                                .hover(move |style| style.bg(tab_hover_background))
                         })
                         .when(item.disabled(), |this| {
                             this.opacity(0.56).cursor_not_allowed()
@@ -933,7 +938,7 @@ impl RenderOnce for Tabs {
                     .h_full()
                     .min_h(open_gpui::px(0.0))
                     .border_r_1()
-                    .border_color(ThemeResolver::resolve(colors.shell_border()))
+                    .border_color(theme.resolve(colors.shell_border()))
                     .child(
                         ScrollArea::new(
                             format!("tabs:{tabs_id}:tablist-scroll"),
@@ -961,7 +966,7 @@ impl RenderOnce for Tabs {
                     .flex_none()
                     .gap(gpui_px_from_ui(metrics.tab_gap()))
                     .p_1()
-                    .border_color(ThemeResolver::resolve(colors.shell_border()))
+                    .border_color(theme.resolve(colors.shell_border()))
                     .flex_row()
                     .flex_wrap()
                     .border_b_1()
@@ -975,8 +980,8 @@ impl RenderOnce for Tabs {
                 .flex()
                 .rounded(gpui_px_from_ui(metrics.radius()))
                 .border_1()
-                .border_color(ThemeResolver::resolve(colors.shell_border()))
-                .bg(ThemeResolver::resolve(colors.shell_background()))
+                .border_color(theme.resolve(colors.shell_border()))
+                .bg(theme.resolve(colors.shell_background()))
                 .overflow_hidden()
                 .when(is_vertical, |this| this.flex_row().h_full())
                 .when(!is_vertical, |this| this.flex_col())
@@ -988,8 +993,8 @@ impl RenderOnce for Tabs {
                         .flex()
                         .flex_1()
                         .min_w(open_gpui::px(0.0))
-                        .border_color(ThemeResolver::resolve(colors.shell_border()))
-                        .bg(ThemeResolver::resolve(colors.panel_background()))
+                        .border_color(theme.resolve(colors.shell_border()))
+                        .bg(theme.resolve(colors.panel_background()))
                         .px(gpui_px_from_ui(metrics.panel_padding()))
                         .py(gpui_px_from_ui(metrics.panel_padding()))
                         .when(is_vertical, |this| this.min_w(open_gpui::px(0.0)))

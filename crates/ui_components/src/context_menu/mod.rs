@@ -10,7 +10,7 @@ use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent, MouseButton, ParentElement,
     Pixels, Point, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
-    Window, anchored, deferred, div, px,
+    Window, div, px,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, Role, Sizable,
@@ -18,7 +18,7 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::focus::focus_ring_shadow;
+use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::{gpui_point_from_ui, ui_point_from_gpui};
 use crate::menu::{
     MenuItem, MenuItemKind, MenuKeyboardIntent, MenuSelection, MenuSubmenuNavigation,
@@ -26,10 +26,11 @@ use crate::menu::{
 };
 use crate::overlay::{
     GpuiOverlayPlacement, consume_overlay_event, emit_overlay_open_change, gpui_overlay_state,
-    outside_press_open_change, resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
+    gpui_positioned_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
+    restore_overlay_focus, set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
-use crate::theme::ThemeResolver;
+use crate::theme::{ThemeContext, ThemeResolver};
 
 pub use model::ContextMenuState;
 
@@ -187,6 +188,7 @@ impl Sizable for ContextMenu {
 
 impl RenderOnce for ContextMenu {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let content_focus = cx.focus_handle();
         let trigger_focus = cx.focus_handle();
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| {
@@ -248,6 +250,7 @@ impl RenderOnce for ContextMenu {
             GpuiOverlayPlacement::resolve(state.placement_input(), overlay_adapter.snap_margin());
         let open_runtime = runtime.clone();
         let open_change = on_open_change.clone();
+        let hotspot_focus_shadow = focus_ring_shadow_with_theme(state.menu().focus_ring(), &theme);
 
         if state.open() && !runtime_state.did_initial_focus {
             runtime.update(cx, |runtime, _| {
@@ -269,8 +272,8 @@ impl RenderOnce for ContextMenu {
             .min_w(px(220.0))
             .rounded(gpui_px_from_ui(state.metrics().radius()))
             .border_1()
-            .border_color(ThemeResolver::resolve(state.colors().border()))
-            .bg(ThemeResolver::resolve(state.colors().item_background()))
+            .border_color(theme.resolve(state.colors().border()))
+            .bg(theme.resolve(state.colors().item_background()))
             .p_3()
             .cursor_context_menu()
             .on_mouse_down(MouseButton::Right, move |event, window, cx| {
@@ -293,38 +296,29 @@ impl RenderOnce for ContextMenu {
                     .focusable()
                     .track_focus(&trigger_focus)
                     .tab_stop(true)
-                    .focus_visible({
-                        let focus_ring = state.menu().focus_ring();
-                        move |style| style.shadow(focus_ring_shadow(focus_ring))
-                    })
+                    .focus_visible(move |style| style.shadow(hotspot_focus_shadow.clone()))
                     .child(label),
             )
             .when(state.open(), |this| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .position(
-                                placement
-                                    .position()
-                                    .unwrap_or(gpui_point_from_ui(state.anchor_point())),
-                            )
-                            .snap_to_window_with_margin(placement.snap_margin())
-                            .child(context_menu_surface(
-                                items,
-                                surface_id.clone(),
-                                debug_id.clone(),
-                                state.clone(),
-                                runtime.clone(),
-                                trigger_focus.clone(),
-                                content_focus.clone(),
-                                scroll_handle.clone(),
-                                focus_restore.clone(),
-                                on_open_change.clone(),
-                                on_select.clone(),
-                            )),
-                    )
-                    .priority(overlay_adapter.deferred_priority()),
-                )
+                this.child(gpui_positioned_overlay_layer(
+                    &overlay_adapter,
+                    &placement,
+                    gpui_point_from_ui(state.anchor_point()),
+                    context_menu_surface(
+                        items,
+                        surface_id.clone(),
+                        debug_id.clone(),
+                        state.clone(),
+                        runtime.clone(),
+                        trigger_focus.clone(),
+                        content_focus.clone(),
+                        scroll_handle.clone(),
+                        focus_restore.clone(),
+                        on_open_change.clone(),
+                        on_select.clone(),
+                        &theme,
+                    ),
+                ))
             })
     }
 }
@@ -341,6 +335,7 @@ fn context_menu_surface(
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
@@ -366,6 +361,7 @@ fn context_menu_surface(
             focus_restore.clone(),
             on_open_change.clone(),
             on_select.clone(),
+            theme,
         ));
 
     div()
@@ -385,9 +381,9 @@ fn context_menu_surface(
         .gap_1()
         .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(colors.border()))
-        .bg(ThemeResolver::resolve(colors.surface()))
-        .text_color(ThemeResolver::resolve(colors.foreground()))
+        .border_color(theme.resolve(colors.border()))
+        .bg(theme.resolve(colors.surface()))
+        .text_color(theme.resolve(colors.foreground()))
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .shadow_lg()
@@ -502,6 +498,7 @@ fn context_menu_item_elements(
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
+    theme: &ThemeContext,
 ) -> Vec<open_gpui::AnyElement> {
     let metrics = state.metrics();
     let colors = state.colors();
@@ -512,17 +509,23 @@ fn context_menu_item_elements(
         .into_iter()
         .zip(states)
         .map(|(item, item_state)| match item_state.kind() {
-            MenuItemKind::Separator => div()
-                .id(format!("context-menu-separator:{}", item_state.index()))
-                .debug_selector({
-                    let separator_debug_id = debug_id.clone();
-                    let separator_index = item_state.index();
-                    move || format!("context-menu:{separator_debug_id}:separator:{separator_index}")
-                })
-                .h(gpui_px_from_ui(metrics.separator_height()))
-                .my_1()
-                .bg(ThemeResolver::resolve(colors.separator()))
-                .into_any_element(),
+            MenuItemKind::Separator => {
+                let separator_color = theme.resolve(colors.separator());
+
+                div()
+                    .id(format!("context-menu-separator:{}", item_state.index()))
+                    .debug_selector({
+                        let separator_debug_id = debug_id.clone();
+                        let separator_index = item_state.index();
+                        move || {
+                            format!("context-menu:{separator_debug_id}:separator:{separator_index}")
+                        }
+                    })
+                    .h(gpui_px_from_ui(metrics.separator_height()))
+                    .my_1()
+                    .bg(separator_color)
+                    .into_any_element()
+            }
             MenuItemKind::Action
             | MenuItemKind::Checkbox
             | MenuItemKind::Radio
@@ -536,6 +539,7 @@ fn context_menu_item_elements(
                 let focus_restore = focus_restore.clone();
                 let item_value = item_state.value().to_owned();
                 let item_label = item_state.label().to_owned();
+                let shortcut = item_state.shortcut().map(str::to_owned);
                 let item_path_key = item_state.path_key();
                 let left_padding =
                     metrics.item_padding_x() + metrics.submenu_indent() * item_state.depth() as f32;
@@ -543,6 +547,17 @@ fn context_menu_item_elements(
                 let disabled = item_state.disabled();
                 let toggled = item_state.toggled();
                 let has_submenu = item_state.has_submenu();
+                let item_background = theme.resolve(if focused {
+                    colors.item_focus_background()
+                } else {
+                    colors.item_background()
+                });
+                let item_foreground = theme.resolve(if disabled {
+                    colors.item_disabled_foreground()
+                } else {
+                    colors.foreground()
+                });
+                let item_hover_background = theme.resolve(colors.item_hover_background());
                 let submenu_navigation = if has_submenu {
                     item_state
                         .children()
@@ -572,16 +587,8 @@ fn context_menu_item_elements(
                     .items_center()
                     .justify_between()
                     .rounded(gpui_px_from_ui(metrics.radius()))
-                    .bg(ThemeResolver::resolve(if focused {
-                        colors.item_focus_background()
-                    } else {
-                        colors.item_background()
-                    }))
-                    .text_color(ThemeResolver::resolve(if disabled {
-                        colors.item_disabled_foreground()
-                    } else {
-                        colors.foreground()
-                    }))
+                    .bg(item_background)
+                    .text_color(item_foreground)
                     .ui_role(Role::MenuItem)
                     .aria_label(item_label.clone())
                     .aria_disabled(disabled)
@@ -592,9 +599,7 @@ fn context_menu_item_elements(
                     .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                     .when(!disabled, |this| {
                         this.cursor_pointer()
-                            .hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.item_hover_background()))
-                            })
+                            .hover(move |style| style.bg(item_hover_background))
                             .on_click(move |_event: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 if let Some(submenu_navigation) = submenu_navigation.clone() {
@@ -626,7 +631,16 @@ fn context_menu_item_elements(
                                 );
                             })
                     })
-                    .child(item_label)
+                    .child(div().flex_1().child(item_label))
+                    .when_some(shortcut, |this, shortcut| {
+                        this.child(
+                            div()
+                                .ml_4()
+                                .text_xs()
+                                .text_color(item_foreground)
+                                .child(shortcut),
+                        )
+                    })
                     .when_some(toggled, |this, toggled| {
                         let marker = if toggled == open_gpui_ui_core::Toggled::True {
                             "checked"

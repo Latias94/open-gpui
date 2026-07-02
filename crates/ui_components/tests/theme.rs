@@ -6,10 +6,11 @@ use open_gpui_ui_components::{
     ColorIntent, ColorState, Combobox, ComboboxOption, Command, CommandItem, EmptyState,
     FeedbackIntent, Field, HoverCard, IconButton, Kbd, Label, Listbox, ListboxOption, Menu,
     MenuItem, Progress, RadioGroup, RadioItem, Select, Separator, Sheet, Skeleton, StatusCue,
-    Switch, THEME_JSON_SCHEMA_VERSION, TableToolbar, TextInput, ThemeColor, ThemeDefinition,
-    ThemeFileField, ThemeLoadError, ThemeMode, ThemeRegistry, ThemeResolver, ThemeSnapshot,
-    ThemeValidationError, Toggle, ToggleVariant, register_theme_json_file, register_theme_json_str,
-    theme_definition_from_json_file, theme_definition_from_json_str, theme_json_schema,
+    Switch, THEME_JSON_SCHEMA_VERSION, TableToolbar, TextInput, ThemeColor, ThemeContext,
+    ThemeDefinition, ThemeFileField, ThemeLoadError, ThemeMode, ThemeRegistry, ThemeResolver,
+    ThemeRuntime, ThemeRuntimeError, ThemeSnapshot, ThemeValidationError, Toggle, ToggleVariant,
+    register_theme_json_file, register_theme_json_str, theme_definition_from_json_file,
+    theme_definition_from_json_str, theme_json_schema,
 };
 use open_gpui_ui_core::{Sizable, semantic};
 
@@ -95,6 +96,56 @@ fn theme_resolver_prefers_runtime_theme_table_for_known_tokens() {
     );
     assert_eq!(snapshot.mode(), ThemeMode::Light);
     assert_eq!(snapshot.revision(), 42);
+}
+
+#[test]
+fn theme_context_wraps_snapshot_for_render_resolution() {
+    let context = ThemeContext::new(ThemeSnapshot::dark());
+    let cloned = context.clone();
+
+    assert_eq!(context.mode(), ThemeMode::Dark);
+    assert_eq!(context.revision(), ThemeSnapshot::dark().revision());
+    assert_eq!(
+        u32::from(cloned.resolve(ColorIntent::new(semantic::SURFACE, 0xffffff))),
+        0x121417ff
+    );
+}
+
+#[open_gpui::test]
+fn theme_runtime_controls_app_resolver(cx: &mut open_gpui::TestAppContext) {
+    let mut registry = ThemeRegistry::with_builtins();
+    registry
+        .register(
+            ThemeDefinition::new("brand", "Brand", ThemeMode::Dark, 77)
+                .fallback_mode(ThemeMode::Light)
+                .color(ThemeColor::new(
+                    semantic::ACCENT,
+                    ColorState::Default,
+                    0x445566,
+                )),
+        )
+        .expect("brand theme should register");
+    cx.set_global(
+        ThemeRuntime::new(registry, "brand").expect("brand theme id should be available"),
+    );
+
+    cx.update(|app| {
+        let resolver = ThemeResolver::current(app);
+        assert_eq!(resolver.mode(), ThemeMode::Dark);
+        assert_eq!(resolver.revision(), 77);
+        assert_eq!(
+            u32::from(resolver.resolve(ColorIntent::new(semantic::ACCENT, 0x1f7a66))),
+            0x445566ff
+        );
+    });
+}
+
+#[test]
+fn theme_runtime_rejects_unknown_active_theme() {
+    assert_eq!(
+        ThemeRuntime::new(ThemeRegistry::with_builtins(), "missing").unwrap_err(),
+        ThemeRuntimeError::UnknownThemeId("missing".to_owned())
+    );
 }
 
 #[test]

@@ -339,8 +339,9 @@ query, open the filtered popup by trigger and keyboard paths, verify filtered Li
 select filtered options with ordered select/open callbacks. The focused Command tests cover
 renderer-neutral ranking, controlled and default query ownership, stable-value selection across
 descriptor reorder, multi-select selected chips, virtualized result render plans, app-owned index
-snapshots, inline and dialog command filtering, keyboard activation, shortcut payloads, non-dialog
-content persistence, and dialog Escape/outside press dismissal. Command ownership is split across
+snapshots, core `CommandDescriptor` projection into Command/Menu/ContextMenu surfaces, inline and
+dialog command filtering, keyboard activation, shortcut payloads, non-dialog content persistence,
+and dialog Escape/outside press dismissal. Command ownership is split across
 `command/descriptor.rs`, `command/model.rs`, `command/style.rs`, `command/render_plan.rs`, and
 `command/runtime.rs`, while `command/mod.rs` remains the public builder facade. Menu,
 ContextMenu, Tree, and Table behavior snapshots now follow the same source-owner discipline:
@@ -354,6 +355,10 @@ Run the focused proof with:
 
 ```powershell
 cargo nextest run -p open-gpui-ui-components command
+cargo nextest run -p open-gpui-ui-core command --no-fail-fast
+cargo nextest run -p open-gpui-ui-components command_descriptors --no-fail-fast
+cargo nextest run -p open-gpui-ui-components command menu --no-fail-fast
+cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery command
 ```
 
@@ -409,18 +414,27 @@ That gate covers `A11yLabelSource`, `A11yDescriptionSource`, `A11yValueMetadata`
 `A11yValueKind`, `A11yContractError`, and `A11yContractViolation` across representative Button,
 IconButton, Checkbox, Slider, NumberInput, Progress, Dialog, Menu, Listbox, Tree, Table,
 VirtualizedList, and Splitter contracts. The Components gallery conformance gate also exposes
-`COMPONENT_A11Y_CLAIMS` / `ComponentA11yClaim`, so sample selector metadata stays aligned with
-roles, label sources, value metadata, orientation, and supported actions.
+component-owned `COMPONENT_A11Y_EVIDENCE` plus gallery-owned `COMPONENT_A11Y_CLAIMS`
+selector bindings, so sample selector metadata stays aligned with roles, label sources, value
+metadata, orientation, and supported actions.
 
 Theme portability is guarded by the theme focused gate:
 
 ```powershell
 cargo nextest run -p open-gpui-ui-components theme --no-fail-fast
+cargo run -p xtask -- scan-theme-drift
+cargo run -p xtask -- scan-theme-schema
 ```
 
-That gate keeps code-built `ThemeDefinition` registration working while proving the JSON loader
-facade: `THEME_JSON_SCHEMA_VERSION`, `theme_json_schema`, `theme_definition_from_json_str`,
-`theme_definition_from_json_file`, `register_theme_json_str`, and `register_theme_json_file`.
+That gate keeps runtime `ThemeContext` rendering, code-built `ThemeDefinition` registration, and
+the JSON loader facade working: `THEME_JSON_SCHEMA_VERSION`, `theme_json_schema`,
+`theme_definition_from_json_str`, `theme_definition_from_json_file`, `register_theme_json_str`,
+and `register_theme_json_file`. Production component render paths should resolve color intents from
+`ThemeResolver::current(cx)` or an explicit snapshot; direct `ThemeResolver::resolve(...)` is a
+legacy default-light compatibility path and should not appear in `crates/ui_components/src`
+rendering code. Focus-ring painting follows the same rule: production render paths should use
+`focus_ring_shadow_with_theme(...)`, while `focus_ring_shadow(...)` remains a default-light
+compatibility helper guarded by the public-surface adapter tests.
 Loader failures are structured as `ThemeLoadError` / `ThemeFileField` for unsupported schema
 versions, missing identity fields, unsupported token or state names, duplicate token/state pairs,
 and invalid RGB values.
@@ -454,7 +468,10 @@ the Components page.
 gate. It requires official component samples, renderer-neutral state readouts, and overlay samples
 to expose a reusable `StoryContract` with public selectors and user-observable probe operations:
 open, dismiss, select, edit, scroll, focus, activate, and read-public-payload. Gallery smokes should
-prefer these contracts before falling back to raw debug selectors for adapter-internal details.
+prefer `component_story_contract_for(name)` and `component_story_contracts_for_focus(mode)` before
+falling back to raw debug selectors for adapter-internal details. The official sample selector
+pairs and state readout selector pairs are derived from those story contracts so focused catalog
+traversal and selector metadata stay aligned.
 `state_contract_catalog_entries_have_signals_and_readout_selectors` is the companion pre-renderer
 contract gate. Entries marked `state-contract` must declare `state_contract_selector`, must not
 declare official `sample_selector`, and must stay disjoint from `official_sample_selector_pairs`.
@@ -592,10 +609,13 @@ cargo nextest run -p open-gpui-ui-foundation-gallery overlay_gallery_smoke_rende
 
 The `open-gpui-ui-core` overlay tests are the renderer-neutral gate for shared overlay behavior.
 They should cover layer kind, presence, outside-press policy, Escape policy, focus restore intent,
-initial focus intent, and placement input without opening a GPUI window.
+initial focus intent, and `resolve_overlay_placement` side/alignment/fit/trace behavior for
+explicit neutral placement inputs without opening a GPUI window.
 The `open-gpui-ui-components` overlay helper tests should cover the GPUI adapter mapping for
-deferred priority, snap margin, anchor conversion, outside-press open-change, and Escape
-open-change without introducing a global overlay runtime.
+deferred priority, snap margin, anchor conversion, placement resolution, outside-press open-change,
+and Escape open-change without introducing a global overlay runtime. Trigger-anchored components
+that do not provide measured trigger/content bounds should not be documented as owning
+safe-bounds flip/shift at render time until a measured overlay runtime exists.
 For GPUI runtime focus assertions, `VisualTestContext::debug_selector_is_focused` and
 `VisualTestContext::focused_debug_selector` are the preferred test hooks. They use test-only
 debug-selector-to-focus-handle data and keep focus checks independent from component internals.
@@ -608,6 +628,28 @@ changes them. They cover the component contract rows, public export map, removed
 aliases, overlay runtime policy, choice/search behavior, the Command ownership split, the Table
 behavior-snapshot and internal render-plan boundary, shared row-window projection, theme registry,
 and gallery catalog/conformance/runtime/sample/render module split:
+
+For the deep UI framework module refactor, run the focused ownership gates below before the full
+workspace gate. They cover runtime theme context, typed a11y evidence, removed registry history,
+shared overlay placement, `open_gpui_ui_core::grid_viewport::RowWindow`, gallery story-contract
+projection, and `open_gpui_ui_core::CommandDescriptor` projection:
+
+```powershell
+cargo fmt --all
+cargo check -p open-gpui-ui-core --tests
+cargo check -p open-gpui-ui-components --tests
+cargo check -p open-gpui-ui-foundation-gallery --tests
+cargo nextest run -p open-gpui-ui-core overlay grid_viewport command --no-fail-fast
+cargo nextest run -p open-gpui-ui-components theme a11y menu context_menu command --no-fail-fast
+cargo nextest run -p open-gpui-ui-components command_descriptors --no-fail-fast
+cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
+cargo nextest run -p open-gpui-ui-foundation-gallery component --no-fail-fast
+cargo run -p xtask -- scan-theme-drift
+cargo run -p xtask -- scan-theme-schema
+cargo run -p xtask -- scan-ui-contract
+rg -n "ThemeResolver::resolve\(" crates/ui_components/src -g "*.rs"; if ($LASTEXITCODE -eq 0) { exit 1 } elseif ($LASTEXITCODE -ne 1) { exit $LASTEXITCODE } else { exit 0 }
+git diff --check
+```
 
 For the contract-backed family-boundary refactor, run the focused ownership gates whenever
 `component_contract` source mappings or the Menu, ContextMenu, Tree, or Table behavior owners move:
@@ -643,7 +685,8 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_exp
 
 `scan-ui-contract` checks the component contract tables, default root/prelude exports, source
 homes, docs tokens, removed primitive targets, gallery conformance evidence, representative
-`COMPONENT_A11Y_CLAIMS`, and the committed theme schema artifact. Use the narrower
+`COMPONENT_A11Y_EVIDENCE`, gallery `COMPONENT_A11Y_CLAIMS`, and the committed theme schema
+artifact. Use the narrower
 `scan-theme-schema`, `scan-theme-drift`, and focused nextest commands when investigating a specific
 failure.
 
@@ -726,10 +769,11 @@ invoking UI-core adaptive helpers. The companion strict-boundary inventory must 
 `adapter_only_public_surfaces_match_allowlist` and
 `gpui_adapter_exports_group_runtime_specific_surfaces` guard the intentionally public GPUI helper
 surface: `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow`,
-`GpuiOverlayState`, the adapter accessibility/geometry conversions, and related adapter scheduling
-helpers must stay classified under `open_gpui_ui_components::gpui_adapter` instead of drifting into
-the crate root, prelude default interface, or resolved state. `FocusRing` itself uses neutral
-`UiPx`; only `focus_ring_shadow` returns a GPUI `BoxShadow`.
+`focus_ring_shadow_with_theme`, `GpuiOverlayState`, the adapter accessibility/geometry conversions,
+and related adapter scheduling helpers must stay classified under
+`open_gpui_ui_components::gpui_adapter` instead of drifting into the crate root, prelude default
+interface, or resolved state. `FocusRing` itself uses neutral `UiPx`; only the GPUI focus-ring
+shadow helpers return `BoxShadow`, and production render paths should use the explicit-theme helper.
 
 When changing GPUI accessibility repair or component metadata that creates explicit cross-node
 relationships, also run:

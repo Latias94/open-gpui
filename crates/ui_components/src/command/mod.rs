@@ -12,17 +12,18 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, anchored, deferred, div, point, px,
+    StatefulInteractiveElement, Styled, Window, div, point, px,
 };
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, Role, Sizable,
-    Size, ThemeTokens, UiPx,
+    CommandDescriptor, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+    Role, Sizable, Size, ThemeTokens, UiPx,
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::focus::focus_ring_shadow;
+use crate::focus::focus_ring_shadow_with_theme;
 use crate::overlay::{
-    emit_overlay_open_change, gpui_overlay_state, resolve_overlay_open_state, set_overlay_open,
+    emit_overlay_open_change, gpui_full_window_overlay_layer, gpui_overlay_state,
+    resolve_overlay_open_state, set_overlay_open,
 };
 use crate::text_editing::TextEditingPolicy;
 use crate::text_input::TextInputDisplayMode;
@@ -493,6 +494,7 @@ impl Sizable for Command {
 
 impl RenderOnce for Command {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let initial_query = self
             .query
             .clone()
@@ -593,10 +595,10 @@ impl RenderOnce for Command {
         let focus_ring = state.focus_ring();
         let dialog_state = state.dialog().cloned();
         let dialog_open = dialog_state.clone().filter(|_| state.open());
-        let dialog_priority = dialog_state
+        let dialog_overlay_adapter = dialog_state
             .as_ref()
-            .map(|dialog| gpui_overlay_state(dialog.overlay()).deferred_priority())
-            .unwrap_or_else(|| gpui_overlay_state(state.overlay()).deferred_priority());
+            .map(|dialog| gpui_overlay_state(dialog.overlay()))
+            .unwrap_or_else(|| gpui_overlay_state(state.overlay()));
         let viewport = window.viewport_size();
         let dialog_enabled = self.dialog_enabled;
         let trigger_label = self.trigger_label;
@@ -605,6 +607,7 @@ impl RenderOnce for Command {
         let on_select = self.on_select;
         let on_selected_values_change = self.on_selected_values_change;
         let tokens = self.tokens;
+        let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
 
         div()
             .id(id)
@@ -633,16 +636,16 @@ impl RenderOnce for Command {
                         .py(gpui_px_from_ui(state.size().button_py()))
                         .rounded(gpui_px_from_ui(metrics.radius()))
                         .border_1()
-                        .border_color(ThemeResolver::resolve(colors.border()))
-                        .bg(ThemeResolver::resolve(colors.surface()))
-                        .text_color(ThemeResolver::resolve(colors.foreground()))
+                        .border_color(theme.resolve(colors.border()))
+                        .bg(theme.resolve(colors.surface()))
+                        .text_color(theme.resolve(colors.foreground()))
                         .focusable()
                         .tab_stop(!disabled)
                         .ui_role(Role::Button)
                         .aria_label(trigger_label.clone())
                         .aria_expanded(state.open())
                         .aria_disabled(disabled)
-                        .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                        .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                         .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                         .when(!disabled, |this| {
                             this.cursor_pointer().on_click(
@@ -680,36 +683,33 @@ impl RenderOnce for Command {
                     on_select.clone(),
                     on_selected_values_change.clone(),
                     tokens,
+                    &theme,
                 ))
             })
             .when_some(dialog_open, |this, dialog_state| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .position(point(px(0.0), px(0.0)))
-                            .snap_to_window()
-                            .child(command_dialog_layer_element(
-                                content_id,
-                                input_id,
-                                listbox_id,
-                                debug_id,
-                                state,
-                                scroll_handle,
-                                viewport_extent,
-                                scroll_offset,
-                                dialog_state,
-                                viewport,
-                                input_controller,
-                                runtime,
-                                on_open_change,
-                                on_query_change,
-                                on_select,
-                                on_selected_values_change,
-                                tokens,
-                            )),
-                    )
-                    .priority(dialog_priority),
-                )
+                this.child(gpui_full_window_overlay_layer(
+                    &dialog_overlay_adapter,
+                    command_dialog_layer_element(
+                        content_id,
+                        input_id,
+                        listbox_id,
+                        debug_id,
+                        state,
+                        scroll_handle,
+                        viewport_extent,
+                        scroll_offset,
+                        dialog_state,
+                        viewport,
+                        input_controller,
+                        runtime,
+                        on_open_change,
+                        on_query_change,
+                        on_select,
+                        on_selected_values_change,
+                        tokens,
+                        &theme,
+                    ),
+                ))
             })
     }
 }
@@ -729,6 +729,13 @@ impl CommandItem {
         }
     }
 
+    /// Creates a command item from shared app-command metadata.
+    pub fn from_command_descriptor(descriptor: &CommandDescriptor) -> Self {
+        Self {
+            descriptor: CommandItemDescriptor::from_command_descriptor(descriptor),
+        }
+    }
+
     /// Adds one filtering keyword.
     pub fn keyword(mut self, keyword: impl Into<String>) -> Self {
         self.descriptor = self.descriptor.keyword(keyword);
@@ -744,6 +751,12 @@ impl CommandItem {
     /// Marks the command as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.descriptor = self.descriptor.disabled(disabled);
+        self
+    }
+
+    /// Applies caller-owned availability metadata without evaluating it.
+    pub fn when(mut self, when: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.when(when);
         self
     }
 

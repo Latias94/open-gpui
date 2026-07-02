@@ -13,9 +13,9 @@ mod samples;
 
 pub use catalog::{
     COMPONENT_CATALOG, COMPONENT_PAGE_JUMPS, ComponentCatalogEntry, ComponentCatalogStatus,
-    ComponentFocusMode, ComponentPageJump, component_story_contracts,
-    focused_section_for_catalog_entry, focused_section_for_id, official_sample_selector_pairs,
-    state_contract_readout_pairs,
+    ComponentFocusMode, ComponentPageJump, component_story_contract_for, component_story_contracts,
+    component_story_contracts_for_focus, focused_section_for_catalog_entry, focused_section_for_id,
+    official_sample_selector_pairs, state_contract_readout_pairs,
 };
 pub use conformance::{
     COMPONENT_A11Y_CLAIMS, COMPONENT_CONFORMANCE_GATES, ComponentA11yClaim,
@@ -75,7 +75,9 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_foundation_gallery::pages::components::ComponentCatalogEntry",
     "open_gpui_ui_foundation_gallery::pages::components::ComponentCatalogStatus",
     "open_gpui_ui_foundation_gallery::pages::components::ComponentFocusMode",
+    "open_gpui_ui_foundation_gallery::pages::components::component_story_contract_for",
     "open_gpui_ui_foundation_gallery::pages::components::component_story_contracts",
+    "open_gpui_ui_foundation_gallery::pages::components::component_story_contracts_for_focus",
     "open_gpui_ui_foundation_gallery::pages::components::state_contract_readout_pairs",
     "open_gpui_ui_foundation_gallery::StoryContract",
     "open_gpui_ui_foundation_gallery::StoryProbeContract",

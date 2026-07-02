@@ -2,7 +2,7 @@
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
@@ -465,7 +465,8 @@ impl Sizable for Breadcrumb {
 }
 
 impl RenderOnce for Breadcrumb {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -487,7 +488,7 @@ impl RenderOnce for Breadcrumb {
                 if index > 0 {
                     elements.push(
                         div()
-                            .text_color(ThemeResolver::resolve(colors.separator()))
+                            .text_color(theme.resolve(colors.separator()))
                             .child("/")
                             .into_any_element(),
                     );
@@ -499,6 +500,13 @@ impl RenderOnce for Breadcrumb {
                 let label = item.label().to_owned();
                 let item_role = item.role();
                 let on_activate = on_activate.clone();
+                let item_text = theme.resolve(if current {
+                    colors.current_text()
+                } else {
+                    colors.text()
+                });
+                let item_hover_text = theme.resolve(colors.current_text());
+                let item_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
 
                 elements.push(
                     div()
@@ -511,19 +519,14 @@ impl RenderOnce for Breadcrumb {
                         .aria_disabled(disabled)
                         .tab_stop(!current && !disabled)
                         .focusable()
-                        .text_color(ThemeResolver::resolve(if current {
-                            colors.current_text()
-                        } else {
-                            colors.text()
-                        }))
-                        .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                        .text_color(item_text)
+                        .focus_visible(move |style| style.shadow(item_focus_shadow.clone()))
                         .when(current, |this| {
                             this.font_weight(open_gpui::FontWeight::BOLD)
                         })
                         .when(!current && !disabled, |this| {
-                            this.cursor_pointer().hover(move |style| {
-                                style.text_color(ThemeResolver::resolve(colors.current_text()))
-                            })
+                            this.cursor_pointer()
+                                .hover(move |style| style.text_color(item_hover_text))
                         })
                         .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                         .when_some(

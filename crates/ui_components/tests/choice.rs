@@ -1385,6 +1385,61 @@ fn command_index_snapshot_matches_equivalent_local_descriptors() {
 }
 
 #[test]
+fn command_items_project_core_command_descriptors() {
+    let descriptor = open_gpui_ui_core::CommandDescriptor::new("workspace.open", "Open Workspace")
+        .group("Workspace")
+        .keyword("project")
+        .shortcut("Ctrl+Shift+O")
+        .disabled(true)
+        .when("workspace")
+        .menu_path(["File", "Open"]);
+    let item = CommandItemDescriptor::from_command_descriptor(&descriptor);
+
+    assert_eq!(descriptor.group_ref(), Some("Workspace"));
+    assert_eq!(descriptor.menu_path_ref(), ["File", "Open"]);
+    assert_eq!(item.value(), "workspace.open");
+    assert_eq!(item.label(), "Open Workspace");
+    assert_eq!(item.keywords_ref(), ["project"]);
+    assert_eq!(item.shortcut_ref(), Some("Ctrl+Shift+O"));
+    assert_eq!(item.when_ref(), Some("workspace"));
+    assert!(item.disabled_state());
+
+    let state = Command::new("descriptor-command", "Commands")
+        .item(CommandItem::from_command_descriptor(&descriptor))
+        .state();
+    assert_eq!(state.items()[0].value(), "workspace.open");
+    assert_eq!(state.items()[0].shortcut(), Some("Ctrl+Shift+O"));
+    assert_eq!(state.items()[0].when_ref(), Some("workspace"));
+    assert!(state.items()[0].disabled());
+
+    let indexed = Command::new("descriptor-index", "Commands")
+        .index_snapshot(CommandIndexSnapshot::new("commands-v1").command_descriptor(&descriptor))
+        .state();
+    let indexed_group = indexed
+        .grouped_groups()
+        .next()
+        .expect("core command group metadata should project into command index groups");
+    assert_eq!(indexed_group.label(), "Workspace");
+    assert_eq!(
+        indexed
+            .group_items(indexed_group.index())
+            .next()
+            .map(|item| {
+                (
+                    item.value().to_owned(),
+                    item.shortcut().map(str::to_owned),
+                    item.when_ref().map(str::to_owned),
+                )
+            }),
+        Some((
+            "workspace.open".to_owned(),
+            Some("Ctrl+Shift+O".to_owned()),
+            Some("workspace".to_owned()),
+        ))
+    );
+}
+
+#[test]
 fn command_index_snapshot_revision_preserves_selection_by_value_after_reorder() {
     let first = CommandIndexSnapshot::new("commands-v1")
         .item(CommandItemDescriptor::new("other", "Other"))

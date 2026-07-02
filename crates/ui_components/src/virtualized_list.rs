@@ -3,7 +3,6 @@
 use crate::a11y::UiA11yElementExt;
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use crate::roving_focus::paged_navigation_target;
-use crate::row_window::RowWindow;
 use crate::scroll_area::ScrollArea;
 use open_gpui::prelude::*;
 use open_gpui::{
@@ -14,7 +13,7 @@ use open_gpui::{
 #[cfg(test)]
 use open_gpui_ui_core::ui_px;
 use open_gpui_ui_core::{
-    Role, Sizable, Size, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
+    Role, RowWindow, Sizable, Size, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
     VirtualizerResolvedState, VirtualizerState,
 };
 use std::collections::{BTreeMap, BTreeSet};

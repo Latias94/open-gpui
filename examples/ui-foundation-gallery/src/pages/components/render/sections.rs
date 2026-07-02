@@ -29,7 +29,8 @@ pub(super) fn render_components_section(
                 .iter()
                 .map(|entry| {
                     let catalog_selector = entry.catalog_selector();
-                    let focus = pages::components::focused_section_for_catalog_entry(entry);
+                    let story = pages::components::component_story_contract_for(entry.name);
+                    let focus = story.as_ref().and_then(|story| story.section_id());
                     let focused = snapshot.components_focus.focused_section() == focus;
                     let card = component_gallery_card_shell(
                         catalog_selector.clone(),

@@ -255,7 +255,8 @@ impl Sizable for StatusCue {
 }
 
 impl RenderOnce for StatusCue {
-    fn render(self, _window: &mut open_gpui::Window, _cx: &mut open_gpui::App) -> impl IntoElement {
+    fn render(self, _window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -272,9 +273,9 @@ impl RenderOnce for StatusCue {
             .gap(gpui_px_from_ui(metrics.gap()))
             .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
-            .border_color(ThemeResolver::resolve(colors.border()))
-            .bg(ThemeResolver::resolve(colors.background()))
-            .text_color(ThemeResolver::resolve(colors.foreground()))
+            .border_color(theme.resolve(colors.border()))
+            .bg(theme.resolve(colors.background()))
+            .text_color(theme.resolve(colors.foreground()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
             .ui_role(state.role())
@@ -284,7 +285,7 @@ impl RenderOnce for StatusCue {
                     .w(gpui_px_from_ui(metrics.marker_size()))
                     .h(gpui_px_from_ui(metrics.marker_size()))
                     .rounded(gpui_px_from_ui(ui_px(999.0)))
-                    .bg(ThemeResolver::resolve(colors.marker())),
+                    .bg(theme.resolve(colors.marker())),
             )
             .child(self.label)
     }
@@ -485,7 +486,8 @@ impl Sizable for EmptyState {
 }
 
 impl RenderOnce for EmptyState {
-    fn render(self, _window: &mut open_gpui::Window, _cx: &mut open_gpui::App) -> impl IntoElement {
+    fn render(self, _window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -503,9 +505,9 @@ impl RenderOnce for EmptyState {
             .gap(gpui_px_from_ui(metrics.gap()))
             .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
-            .border_color(ThemeResolver::resolve(colors.border()))
-            .bg(ThemeResolver::resolve(colors.background()))
-            .text_color(ThemeResolver::resolve(colors.foreground()))
+            .border_color(theme.resolve(colors.border()))
+            .bg(theme.resolve(colors.background()))
+            .text_color(theme.resolve(colors.foreground()))
             .ui_role(state.role())
             .aria_label(self.title.clone())
             .child(
@@ -519,7 +521,7 @@ impl RenderOnce for EmptyState {
                 this.child(
                     div()
                         .text_center()
-                        .text_color(ThemeResolver::resolve(colors.muted_foreground()))
+                        .text_color(theme.resolve(colors.muted_foreground()))
                         .text_size(gpui_px_from_ui(metrics.description_size()))
                         .line_height(gpui_px_from_ui(metrics.description_size()))
                         .child(description),

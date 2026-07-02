@@ -335,7 +335,8 @@ impl Sizable for Field {
 }
 
 impl RenderOnce for Field {
-    fn render(self, _window: &mut Window, _cx: &mut open_gpui::App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut open_gpui::App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -354,12 +355,12 @@ impl RenderOnce for Field {
                     .gap_1()
                     .text_size(gpui_px_from_ui(metrics.label_text_size()))
                     .line_height(gpui_px_from_ui(metrics.label_text_size()))
-                    .text_color(ThemeResolver::resolve(colors.label()))
+                    .text_color(theme.resolve(colors.label()))
                     .child(self.label)
                     .when(state.required(), |this| {
                         this.child(
                             div()
-                                .text_color(ThemeResolver::resolve(colors.required_marker()))
+                                .text_color(theme.resolve(colors.required_marker()))
                                 .child("*"),
                         )
                     }),
@@ -371,7 +372,7 @@ impl RenderOnce for Field {
                         .id(format!("{}:message", state.control_id()))
                         .text_size(gpui_px_from_ui(metrics.message_text_size()))
                         .line_height(open_gpui::px(18.0))
-                        .text_color(ThemeResolver::resolve(colors.message()))
+                        .text_color(theme.resolve(colors.message()))
                         .child(message.text().to_string()),
                 )
             })

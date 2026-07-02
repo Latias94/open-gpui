@@ -192,6 +192,7 @@ pub struct CommandItemState {
     value: String,
     label: String,
     shortcut: Option<String>,
+    when: Option<String>,
     disabled: bool,
     selected: bool,
     active: bool,
@@ -225,6 +226,11 @@ impl CommandItemState {
     /// Returns optional shortcut label.
     pub fn shortcut(&self) -> Option<&str> {
         self.shortcut.as_deref()
+    }
+
+    /// Returns caller-owned availability metadata.
+    pub fn when_ref(&self) -> Option<&str> {
+        self.when.as_deref()
     }
 
     /// Returns whether the item is disabled.
@@ -745,6 +751,7 @@ impl CommandState {
                     value: item.descriptor.value,
                     label: item.descriptor.label,
                     shortcut: item.descriptor.shortcut,
+                    when: item.descriptor.when,
                     disabled: item.descriptor.disabled,
                     selected,
                     active: option.active(),

@@ -24,6 +24,8 @@ pub struct MenuItemState {
     kind: MenuItemKind,
     disabled: bool,
     checked: bool,
+    shortcut: Option<String>,
+    when: Option<String>,
     focused: bool,
     submenu_open: bool,
     child_count: usize,
@@ -79,6 +81,16 @@ impl MenuItemState {
     /// Returns caller-owned checked state for checkbox and radio items.
     pub const fn checked(&self) -> bool {
         self.checked
+    }
+
+    /// Returns the display shortcut label.
+    pub fn shortcut(&self) -> Option<&str> {
+        self.shortcut.as_deref()
+    }
+
+    /// Returns caller-owned availability metadata.
+    pub fn when_ref(&self) -> Option<&str> {
+        self.when.as_deref()
     }
 
     /// Returns toggle metadata for checkbox and radio rows.
@@ -312,6 +324,8 @@ fn menu_item_state_from_descriptor(
         kind: descriptor.kind(),
         disabled: descriptor.disabled_state(),
         checked: descriptor.checked_state(),
+        shortcut: descriptor.shortcut_ref().map(str::to_owned),
+        when: descriptor.when_ref().map(str::to_owned),
         focused,
         submenu_open,
         child_count,

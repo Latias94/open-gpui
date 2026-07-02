@@ -41,7 +41,6 @@ pub mod progress;
 mod public_api;
 pub mod radio;
 pub mod roving_focus;
-mod row_window;
 pub mod scroll_area;
 pub mod select;
 pub mod separator;
@@ -75,7 +74,7 @@ pub mod gpui_adapter {
         UiA11yElementExt, gpui_accessible_action_from_ui, gpui_orientation_from_ui,
         gpui_role_from_ui, gpui_toggled_from_ui,
     };
-    pub use crate::focus::focus_ring_shadow;
+    pub use crate::focus::{focus_ring_shadow, focus_ring_shadow_with_theme};
     pub use crate::geometry::{gpui_point_from_ui, gpui_px_from_ui, gpui_size_from_ui};
     pub use crate::overlay::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,

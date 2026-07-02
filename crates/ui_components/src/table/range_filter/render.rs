@@ -1,6 +1,6 @@
 use crate::button::{Button, ButtonVariant};
 use crate::text_input::TextInput;
-use crate::theme::ThemeResolver;
+use crate::theme::ThemeContext;
 use open_gpui::prelude::*;
 use open_gpui::{Entity, IntoElement, ParentElement, Styled, div, px};
 use open_gpui_ui_core::{Sizable, Size, TableColumnId, ThemeTokens};
@@ -21,6 +21,7 @@ pub(in crate::table::range_filter) fn table_range_filter_content_element(
     column_id: TableColumnId,
     size: Size,
     tokens: ThemeTokens,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let disabled = state.popover().disabled();
     let min_text = state.min_text().to_owned();
@@ -52,9 +53,7 @@ pub(in crate::table::range_filter) fn table_range_filter_content_element(
         .flex()
         .flex_col()
         .gap_2()
-        .text_color(ThemeResolver::resolve(
-            state.popover().colors().foreground(),
-        ))
+        .text_color(theme.resolve(state.popover().colors().foreground()))
         .on_scroll_wheel(|_, window, cx| {
             window.prevent_default();
             cx.stop_propagation();

@@ -1,6 +1,8 @@
 //! Component contract row and classification types.
 
 use super::component_render_inputs;
+use crate::a11y::{A11yLabelSource, A11yValueKind};
+use open_gpui_ui_core::{AccessibleAction, Orientation, Role};
 
 /// Builder/runtime-value pair for a defaulted state seed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,4 +137,34 @@ pub struct ComponentContractEntry {
     pub source_inputs: &'static [&'static str],
     /// Primary source home used by public-surface manifests.
     pub source_home: &'static str,
+}
+
+/// Renderer-neutral accessibility evidence for one representative component or component part.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComponentA11yEvidence {
+    /// Component or component part covered by the evidence.
+    pub component: &'static str,
+    /// Renderer-neutral role expected for the component or part.
+    pub role: Role,
+    /// Source that provides the accessible name.
+    pub label_source: A11yLabelSource,
+    /// Optional value metadata kind exposed by the component.
+    pub value_kind: Option<A11yValueKind>,
+    /// Optional orientation metadata exposed by the component.
+    pub orientation: Option<Orientation>,
+    /// Supported accessibility actions covered by the representative contract.
+    pub actions: &'static [AccessibleAction],
+}
+
+/// One component conformance gate shown by product documentation and gallery dogfood.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComponentConformanceGate {
+    /// Stable gate id.
+    pub id: &'static str,
+    /// Visible gate title.
+    pub title: &'static str,
+    /// Behavior or contract that this gate protects.
+    pub summary: &'static str,
+    /// Durable test or document evidence for this gate.
+    pub evidence: &'static [&'static str],
 }
