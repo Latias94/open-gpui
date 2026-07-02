@@ -43,6 +43,10 @@ impl DockResolvedDropTargetAvailability {
             sides: true,
         }
     }
+
+    fn any(self) -> bool {
+        self.center || self.sides
+    }
 }
 
 impl DockResolvedDropTarget {
@@ -257,6 +261,17 @@ pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<Do
     choose_drop_candidate(candidates, input.policy, input.target_validator)
 }
 
+pub(crate) fn resolve_layout_drop_guide(
+    input: DockDropResolverInput<'_>,
+) -> Option<DockResolvedDropTarget> {
+    let target = resolve_layout_drop_guide_target(&input)?;
+    let target = match validate_resolved_drop_target(target, input.policy, input.target_validator) {
+        DockDropResolution::Valid(target) => target,
+        DockDropResolution::Rejected(rejection) => rejection.target,
+    };
+    target.availability.any().then_some(target)
+}
+
 fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCandidate> {
     let mut candidates = Vec::new();
     let mut order = 0;
@@ -411,6 +426,21 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
     candidates
 }
 
+fn resolve_layout_drop_guide_target(
+    input: &DockDropResolverInput<'_>,
+) -> Option<DockResolvedDropTarget> {
+    let leaf = best_leaf_containing(input.leaves, input.position);
+    if let Some(root) = input.root
+        && root.bounds.contains(&input.position)
+    {
+        let leaf_for_root = leaf.filter(|leaf| leaf.root == root.root);
+        if leaf_for_root.is_none_or(|leaf| leaf.is_central && leaf.root == leaf.target_tabs) {
+            return Some(root_guide_target(root, leaf_for_root));
+        }
+    }
+    leaf.map(leaf_guide_target)
+}
+
 fn push_drop_candidate(
     candidates: &mut Vec<DockDropCandidate>,
     order: &mut usize,
@@ -543,6 +573,31 @@ fn resolve_root_edge_drop(
     })
 }
 
+fn root_guide_target(
+    root: DockRootDropTarget,
+    leaf: Option<&DockLeafDropTarget>,
+) -> DockResolvedDropTarget {
+    DockResolvedDropTarget {
+        kind: DockResolvedDropTargetKind::RootEdge {
+            root: root.root,
+            leaf_tabs: leaf.map(|leaf| leaf.target_tabs),
+            zone: DropZone::Left,
+        },
+        source: DockDropResolveSource::RootEdge,
+        target_bounds: Some(root.bounds),
+        inner_target_bounds: leaf.map(|leaf| leaf.bounds),
+        availability: DockResolvedDropTargetAvailability {
+            center: false,
+            sides: true,
+        },
+        drop_box: None,
+        preview_bounds: Some(root.bounds),
+        edge_sizing: None,
+        edge_plan: None,
+        is_central_region: false,
+    }
+}
+
 fn resolve_leaf_drop(
     leaf: &DockLeafDropTarget,
     position: Point<Pixels>,
@@ -553,6 +608,24 @@ fn resolve_leaf_drop(
     let geometry =
         geometry::resolve_inner_drop_geometry_with_style(leaf.bounds, position, drop_guide_style)?;
     target_from_leaf_geometry(leaf, geometry, payload_size, edge_plan_resolver)
+}
+
+fn leaf_guide_target(leaf: &DockLeafDropTarget) -> DockResolvedDropTarget {
+    DockResolvedDropTarget {
+        kind: DockResolvedDropTargetKind::LeafCenter {
+            root: leaf.root,
+            target_tabs: leaf.target_tabs,
+        },
+        source: DockDropResolveSource::LeafBody,
+        target_bounds: Some(leaf.bounds),
+        inner_target_bounds: None,
+        availability: DockResolvedDropTargetAvailability::all(),
+        drop_box: None,
+        preview_bounds: Some(leaf.bounds),
+        edge_sizing: None,
+        edge_plan: None,
+        is_central_region: leaf.is_central,
+    }
 }
 
 pub(crate) fn validate_resolved_drop_target(
@@ -812,6 +885,29 @@ fn best_leaf_for_root_containing(
     best.map(|(leaf, _, _)| leaf)
 }
 
+fn best_leaf_containing(
+    leaves: &[DockLeafDropTarget],
+    position: Point<Pixels>,
+) -> Option<&DockLeafDropTarget> {
+    let mut best: Option<(&DockLeafDropTarget, f32, usize)> = None;
+    for (index, leaf) in leaves.iter().enumerate() {
+        if !leaf.bounds.contains(&position) {
+            continue;
+        }
+        let area = bounds_area(leaf.bounds);
+        let is_better = match best {
+            None => true,
+            Some((_, best_area, best_index)) => {
+                area < best_area || (area == best_area && index > best_index)
+            }
+        };
+        if is_better {
+            best = Some((leaf, area, index));
+        }
+    }
+    best.map(|(leaf, _, _)| leaf)
+}
+
 fn leaf_bounds_for_tabs(
     leaves: &[DockLeafDropTarget],
     target_tabs: DockNodeId,
@@ -968,6 +1064,61 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn leaf_interior_outside_drop_boxes_resolves_guide_target_only() {
+        let mut graph = DockGraph::new();
+        let root = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("root")],
+            selected: Some(DockItemId::from("root")),
+        });
+        let leaf_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("leaf")],
+            selected: Some(DockItemId::from("leaf")),
+        });
+        let position = point(px(754.9751), px(583.56213));
+        let root_bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(920.0), px(640.0)));
+        let leaf_bounds = Bounds::new(point(px(222.0), px(436.0)), size(px(697.0), px(203.0)));
+        let leaves = [DockLeafDropTarget {
+            root,
+            target_tabs: leaf_tabs,
+            bounds: leaf_bounds,
+            is_central: false,
+        }];
+        let root_target = DockRootDropTarget {
+            root,
+            bounds: root_bounds,
+        };
+
+        assert!(
+            resolve_layout_drop(DockDropResolverInput {
+                leaves: &leaves,
+                root: Some(root_target),
+                ..DockDropResolverInput::new(position, &policy())
+            })
+            .is_none(),
+            "the interior point should not mint a concrete delivery target"
+        );
+
+        let guide = resolve_layout_drop_guide(DockDropResolverInput {
+            leaves: &leaves,
+            root: Some(root_target),
+            ..DockDropResolverInput::new(position, &policy())
+        })
+        .expect("the same point should still expose the containing leaf as a guide target");
+
+        assert_eq!(
+            guide.kind,
+            DockResolvedDropTargetKind::LeafCenter {
+                root,
+                target_tabs: leaf_tabs,
+            }
+        );
+        assert_eq!(guide.drop_box, None);
+        assert_eq!(guide.preview_bounds, Some(leaf_bounds));
+        assert!(guide.availability.center);
+        assert!(guide.availability.sides);
     }
 
     #[test]

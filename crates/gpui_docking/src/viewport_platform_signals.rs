@@ -183,9 +183,20 @@ impl DockViewportPlatformSignals {
         self
     }
 
+    /// Keeps target-window arbitration facts exactly as they were sampled for this event.
+    pub(crate) fn with_frozen_target_context(mut self) -> Self {
+        self.target_context_resampling = DockViewportTargetContextResampling::FrozenSnapshot;
+        self
+    }
+
     /// Adds the GPUI event receiver window signal.
     pub(crate) fn with_event_receiver_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
         self.event_receiver_window = Some(window.into().window_id());
+        self
+    }
+
+    pub(crate) fn without_trusted_hovered_window(mut self) -> Self {
+        self.trusted_hovered_signal = DockViewportTrustedHoveredSignal::Unavailable;
         self
     }
 
@@ -245,7 +256,6 @@ impl DockViewportPlatformSignals {
         self
     }
 
-    #[cfg(test)]
     pub(crate) fn with_global_window_bounds(mut self, supported: bool) -> Self {
         self.global_window_bounds = supported;
         self
@@ -305,6 +315,27 @@ mod tests {
             ),
             DockViewportTrustedHoveredSignal::TrustedNone,
             "reliable hovered=None remains an explicit backend hovered-window signal"
+        );
+    }
+
+    #[open_gpui::test]
+    fn frozen_target_context_is_not_overwritten_by_later_app_hover(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
+        let target = handle(7);
+        let later_hover = handle(8);
+        let signals = DockViewportPlatformSignals::from_target_context(
+            DockViewportTargetContext::new().with_trusted_hovered_window(target),
+        )
+        .with_target_context_resampling_from_app()
+        .with_frozen_target_context();
+        cx.set_platform_hovered_window(Some(later_hover));
+
+        let resampled = cx.update(|app| signals.with_resampled_target_context_from_app(app));
+
+        assert_eq!(
+            resampled.target_context().trusted_hovered_window(),
+            Some(target.window_id())
         );
     }
 

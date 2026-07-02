@@ -1,7 +1,8 @@
+use crate::metal_compat as metal;
+use crate::metal_compat::Device;
 use anyhow::{Context as _, Result};
 use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
-use metal::Device;
 use open_gpui::{
     AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, Bounds, DevicePixels,
     PlatformAtlas, Point, Size,
@@ -222,7 +223,7 @@ impl MetalAtlasTexture {
     }
 
     fn upload(&self, bounds: Bounds<DevicePixels>, bytes: &[u8]) {
-        let region = metal::MTLRegion::new_2d(
+        let region = metal::region_2d(
             bounds.origin.x.into(),
             bounds.origin.y.into(),
             bounds.size.width.into(),
@@ -237,10 +238,9 @@ impl MetalAtlasTexture {
     }
 
     fn bytes_per_pixel(&self) -> u8 {
-        use metal::MTLPixelFormat::*;
         match self.metal_texture.pixel_format() {
-            A8Unorm | R8Unorm => 1,
-            RGBA8Unorm | BGRA8Unorm => 4,
+            metal::MTLPixelFormat::A8Unorm | metal::MTLPixelFormat::R8Unorm => 1,
+            metal::MTLPixelFormat::RGBA8Unorm | metal::MTLPixelFormat::BGRA8Unorm => 4,
             _ => unimplemented!(),
         }
     }

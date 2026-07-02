@@ -4,11 +4,15 @@
 //! macOS screens have a y axis that goes up from the bottom of the screen and
 //! an origin at the bottom left of the main display.
 
+extern crate self as cocoa;
+
+mod cocoa_compat;
 mod dispatcher;
 mod display;
 mod display_link;
 mod events;
 mod keyboard;
+mod metal_compat;
 mod pasteboard;
 
 #[cfg(feature = "screen-capture")]
@@ -28,6 +32,8 @@ mod text_system;
 mod platform;
 mod window;
 mod window_appearance;
+
+pub(crate) use cocoa_compat::{appkit, base, foundation};
 
 use cocoa::{
     base::{id, nil},

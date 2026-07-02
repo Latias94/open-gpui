@@ -5,6 +5,7 @@ use crate::{
     drop_runtime::DockHostDropSceneFact,
     interaction::{DockPayloadDropRelease, DockRuntimeDragSession, SplitterDragAxis},
     presentation_scene::DockPresentationScene,
+    viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
 use open_gpui_ui_core::AccessibleAction;
@@ -138,6 +139,29 @@ impl DockHost {
         self.commit_payload_drop_release(release, window, cx)
     }
 
+    pub(crate) fn drop_payload_release_from_rendered_host_scene(
+        &mut self,
+        payload: DockDragPayload,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let drag_session = self.active_payload_drag_session(&payload);
+        let event_receiver_local_scene_proof =
+            self.interaction().viewport_host_scene_frame().cloned();
+        self.drop_payload_release_from_render(
+            DockPayloadDropRelease::hovered_host_with_session(
+                payload,
+                self.space().clone(),
+                position,
+                drag_session,
+            )
+            .with_event_receiver_local_scene_proof(event_receiver_local_scene_proof),
+            window,
+            cx,
+        )
+    }
+
     pub(crate) fn commit_payload_drop_release(
         &mut self,
         release: DockPayloadDropRelease,
@@ -175,15 +199,43 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let _ = self.record_payload_drag_hovered_viewport_from_render(payload, window);
-        self.schedule_outside_release_poll_from_host(payload, window, cx);
         self.publish_viewport_host_scene_interaction(host_bounds, position, window, cx);
-        self.update_floating_drag_interaction(position, cx)
-            .merge(
-                self.update_viewport_drop_route_preview_interaction(payload, position, window, cx),
-            )
+        self.update_payload_drag_hover_state_from_render(payload, position, window, cx)
             .merge(self.ensure_host_drop_scene_interaction(payload, position, cx))
             .finish(cx)
+    }
+
+    pub(crate) fn update_payload_drag_hover_from_rendered_host_scene(
+        &mut self,
+        payload: &DockDragPayload,
+        position: Point<Pixels>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let local_preview_cleared = if self.interaction().drop_scene_position() == Some(position) {
+            false
+        } else {
+            self.clear_drop_preview_interaction()
+        };
+        let changed = self
+            .update_payload_drag_hover_state_from_render(payload, position, window, cx)
+            .merge(
+                crate::host_interaction_outcome::DockHostInteractionOutcome::from_session_changed(
+                    local_preview_cleared,
+                ),
+            )
+            .finish(cx);
+        changed
+    }
+
+    pub(crate) fn publish_rendered_viewport_host_scene_frame_from_render(
+        &mut self,
+        frame: Option<DockViewportHostSceneFrame>,
+        window: &Window,
+    ) -> bool {
+        let window_id = window.window_handle().window_id();
+        let frame = frame.filter(|frame| frame.matches_viewport(self.space(), window_id));
+        self.interaction_mut().set_viewport_host_scene_frame(frame)
     }
 
     pub(crate) fn update_local_root_drop_scene_from_render(
@@ -363,6 +415,28 @@ impl DockHost {
                 &session,
                 self.space().clone(),
                 window.window_handle().window_id(),
+            )
+    }
+
+    fn update_payload_drag_hover_state_from_render(
+        &mut self,
+        payload: &DockDragPayload,
+        position: Point<Pixels>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> crate::host_interaction_outcome::DockHostInteractionOutcome {
+        let hovered_changed =
+            self.record_payload_drag_hovered_viewport_from_render(payload, window);
+        let outside_poll_started =
+            self.schedule_outside_release_poll_from_host(payload, window, cx);
+        self.update_floating_drag_interaction(position, cx)
+            .merge(
+                self.update_viewport_drop_route_preview_interaction(payload, position, window, cx),
+            )
+            .merge(
+                crate::host_interaction_outcome::DockHostInteractionOutcome::from_session_changed(
+                    hovered_changed || outside_poll_started,
+                ),
             )
     }
 }

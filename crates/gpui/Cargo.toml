@@ -116,24 +116,14 @@ uuid = { workspace = true, features = ["js"] }
 
 
 [target.'cfg(target_os = "macos")'.dependencies]
-block = "0.1"
-cocoa.workspace = true
-cocoa-foundation.workspace = true
-core-foundation.workspace = true
-core-foundation-sys.workspace = true
 core-graphics = "0.24"
-core-video.workspace = true
 core-text = "21"
 font-kit = { package = "open-gpui-font-kit", version = "0.14.3", optional = true }
-foreign-types = "0.5"
 log.workspace = true
 open_gpui_media.workspace = true
-objc.workspace = true
 objc2 = { version = "0.6", optional = true }
-objc2-metal = { version = "0.3", optional = true }
-mach2.workspace = true
-#TODO: replace with "objc2"
-metal.workspace = true
+objc2-core-foundation.workspace = true
+objc2-core-video.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"

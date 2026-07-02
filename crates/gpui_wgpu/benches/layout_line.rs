@@ -2,10 +2,16 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use open_gpui::{FontFallbacks, FontRun, PlatformTextSystem, font, px};
 use open_gpui_wgpu::CosmicTextSystem;
 use std::borrow::Cow;
+use std::fs;
 
-const LILEX: &[u8] = include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf");
-const IBM_PLEX: &[u8] =
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
+const LILEX_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/fonts/lilex/Lilex-Regular.ttf"
+);
+const IBM_PLEX_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf"
+);
 
 // ~4 000 chars of typical ASCII code text.
 fn code_text() -> String {
@@ -41,9 +47,16 @@ fn code_text() -> String {
 }
 
 fn bench_layout_line(c: &mut Criterion) {
+    let Some(lilex) = read_font("OPEN_GPUI_LAYOUT_LINE_LILEX", LILEX_PATH) else {
+        return;
+    };
+    let Some(ibm_plex) = read_font("OPEN_GPUI_LAYOUT_LINE_IBM_PLEX", IBM_PLEX_PATH) else {
+        return;
+    };
+
     let system = CosmicTextSystem::new_without_system_fonts("Lilex");
     system
-        .add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])
+        .add_fonts(vec![Cow::Owned(lilex), Cow::Owned(ibm_plex)])
         .unwrap();
 
     let font_id_no_fallback = system.font_id(&font("Lilex")).unwrap();
@@ -76,6 +89,17 @@ fn bench_layout_line(c: &mut Criterion) {
     });
 
     group.finish();
+}
+
+fn read_font(env_var: &str, default_path: &str) -> Option<Vec<u8>> {
+    let path = std::env::var(env_var).unwrap_or_else(|_| default_path.to_string());
+    match fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(err) => {
+            eprintln!("skipping layout_line bench: could not read {path}: {err}");
+            None
+        }
+    }
 }
 
 criterion_group!(benches, bench_layout_line);

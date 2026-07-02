@@ -6,7 +6,7 @@ use crate::{
 };
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
-use block::ConcreteBlock;
+use block2::RcBlock;
 use cocoa::{
     appkit::{
         NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
@@ -1501,13 +1501,12 @@ impl PlatformWindow for MacWindow {
 
             let (done_tx, done_rx) = oneshot::channel();
             let done_tx = Cell::new(Some(done_tx));
-            let block = ConcreteBlock::new(move |answer: NSInteger| {
+            let block: RcBlock<dyn Fn(NSInteger)> = RcBlock::new(move |answer: NSInteger| {
                 let _: () = msg_send![alert, release];
                 if let Some(done_tx) = done_tx.take() {
                     let _ = done_tx.send(answer.try_into().unwrap());
                 }
             });
-            let block = block.copy();
             let lock = self.0.lock();
             let native_window = lock.native_window;
             let closed = lock.closed.clone();
@@ -1518,7 +1517,7 @@ impl PlatformWindow for MacWindow {
                         let _: () = msg_send![
                             alert,
                             beginSheetModalForWindow: native_window
-                            completionHandler: block
+                            completionHandler: &*block
                         ];
                     } else {
                         let _: () = msg_send![alert, release];
@@ -1943,7 +1942,7 @@ impl PlatformWindow for MacWindow {
     }
 
     fn play_system_bell(&self) {
-        unsafe { NSBeep() }
+        NSBeep()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2594,12 +2593,7 @@ fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
     let size = lock.content_size();
     let drawable_size = size.to_device_pixels(scale_factor);
     if let Some(layer) = lock.renderer.layer() {
-        unsafe {
-            let _: () = msg_send![
-                layer,
-                setContentsScale: scale_factor as f64
-            ];
-        }
+        layer.set_contents_scale(scale_factor as f64);
     }
 
     lock.renderer.update_drawable_size(drawable_size);

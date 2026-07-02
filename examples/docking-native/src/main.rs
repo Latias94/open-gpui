@@ -1700,6 +1700,112 @@ mod tests {
     }
 
     #[open_gpui::test]
+    fn runtime_viewports_accept_rendered_cross_window_tab_drag_into_primary_editor_left_edge(
+        cx: &mut TestAppContext,
+    ) {
+        let controller = cx.new(|_| build_controller());
+        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+        let primary = DockSpaceId::from(SPACE);
+        let secondary = DockSpaceId::from(SECONDARY_SPACE);
+        let preview = item("preview");
+        let diff = item("diff");
+        let editor = item("editor");
+        let (secondary_tabs, _) = controller.read_with(cx, |controller, _| {
+            controller
+                .graph()
+                .find_item_in_space(&secondary, &preview)
+                .expect("preview should start in secondary dogfood space")
+        });
+        let (editor_tabs, _) = controller.read_with(cx, |controller, _| {
+            controller
+                .graph()
+                .find_item_in_space(&primary, &editor)
+                .expect("editor should start in primary dogfood space")
+        });
+
+        let (_primary_host, mut primary_visual) = open_dogfood_viewport(
+            cx,
+            &runtime,
+            SPACE,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(920.0), px(640.0))),
+        );
+        let (_secondary_host, mut secondary_visual) = open_dogfood_viewport(
+            cx,
+            &runtime,
+            SECONDARY_SPACE,
+            Bounds::new(point(px(944.0), px(0.0)), size(px(460.0), px(360.0))),
+        );
+
+        let start = debug_bounds(
+            &mut secondary_visual,
+            tab_selector(SECONDARY_SPACE, secondary_tabs, "preview"),
+        )
+        .center();
+        let editor_bounds = debug_bounds(&mut primary_visual, tabs_selector(SPACE, editor_tabs));
+        let editor_hover = editor_bounds.center();
+        let threshold = point(start.x + px(24.0), start.y);
+
+        secondary_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        secondary_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+        primary_visual.simulate_mouse_move(editor_hover, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        let left_edge = debug_bounds(
+            &mut primary_visual,
+            drop_guide_selector(SPACE, editor_tabs, DropZone::Left),
+        )
+        .center();
+        primary_visual.simulate_mouse_move(left_edge, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+        assert!(
+            debug_bounds(&mut primary_visual, drop_preview_selector(SPACE))
+                .size
+                .width
+                > px(0.0),
+            "primary editor stack should render a left-edge split preview"
+        );
+
+        primary_visual.simulate_mouse_up(left_edge, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        controller.read_with(cx, |controller, _| {
+            assert!(
+                controller
+                    .graph()
+                    .find_item_in_space(&secondary, &preview)
+                    .is_none(),
+                "preview should leave the secondary viewport after left-edge drop"
+            );
+            assert!(
+                controller
+                    .graph()
+                    .find_item_in_space(&secondary, &diff)
+                    .is_some(),
+                "diff should remain in the secondary viewport after moving only preview"
+            );
+            let (preview_tabs, preview_index) = controller
+                .graph()
+                .find_item_in_space(&primary, &preview)
+                .expect("preview should dock into the primary editor area");
+            assert_ne!(
+                preview_tabs, editor_tabs,
+                "left-edge drop must split the editor stack instead of center-merging"
+            );
+            assert_eq!(preview_index, 0);
+            assert_eq!(
+                controller.graph().collect_items_in_subtree(preview_tabs),
+                vec![preview.clone()],
+                "left split child should contain only the moved preview tab"
+            );
+            assert_eq!(
+                controller.graph().collect_items_in_subtree(editor_tabs),
+                vec![editor],
+                "original editor stack should remain intact on the right"
+            );
+        });
+    }
+
+    #[open_gpui::test]
     fn runtime_viewports_accept_rendered_cross_window_tab_drag_into_primary_floating_title_bar(
         cx: &mut TestAppContext,
     ) {
