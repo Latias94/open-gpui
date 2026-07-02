@@ -12,8 +12,6 @@ use core_graphics::display::{
 };
 use ctor::ctor;
 use futures::channel::oneshot;
-use media::core_media::{CMSampleBuffer, CMSampleBufferRef};
-use metal::NSInteger;
 use objc::{
     class,
     declare::ClassDecl,
@@ -21,11 +19,13 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
+use objc2_foundation::NSInteger;
 use open_gpui::{
     DevicePixels, ForegroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
     SharedString, SourceMetadata, size,
 };
 use open_gpui_collections::HashMap;
+use open_gpui_media::core_media::{CMSampleBuffer, CMSampleBufferRef};
 use std::{cell::RefCell, ffi::c_void, mem, ptr, rc::Rc};
 
 use crate::NSStringExt;
