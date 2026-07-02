@@ -2,8 +2,8 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-02T23:58:00+08:00
-git_branch: main
+timestamp: 2026-07-03T01:42:37+08:00
+git_branch: refactor/docking-render-authority-convergence
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
   - docs/plans/2026-07-01-002-refactor-ui-public-gallery-boundaries-plan.md
@@ -59,6 +59,9 @@ verified_by:
   - cargo check -p open-gpui-docking
   - cargo check -p open-gpui-docking-native
   - git diff --check
+  - cargo nextest run -p open-gpui-docking host_render_tests host_presentation_scene_tests host_interaction_tests --no-fail-fast
+  - cargo nextest run -p open-gpui-docking render_tab_bar_bounds_match_presentation_scene_tab_bar render_floating_bounds_match_presentation_scene_container render_tiny_floating_handle_clamps_to_presentation_title_bar render_measured_tab_label_fact_overrides_scene_equal_slot_estimate runtime_nested_tab_tear_off_uses_leaf_size_not_tab_label --no-fail-fast
+  - cargo nextest run -p open-gpui-docking render_measured_tab_label_fact_overrides_scene_equal_slot_estimate rendered_host_scene_frame_seeds_deterministic_facts_from_presentation_scene --no-fail-fast
   - python native-ui-framework-design-research/generate_report.py
   - python -m py_compile native-ui-framework-design-research/generate_report.py
   - python C:\Users\Frankorz\.codex\skills\research\validate_json.py -f native-ui-framework-design-research\fields.yaml -d native-ui-framework-design-research\results
@@ -120,9 +123,13 @@ verified_by:
   programmatic Splitter interpolation remain because they represent real layout motion.
 - Done: ADR 0015 records the generalized UI motion runtime boundary after native registry ADRs
   occupied ADR 0013 and ADR 0014.
-- Planned: `docs/plans/2026-07-02-004-refactor-docking-render-authority-convergence-plan.md`
-  narrows the next docking pass to scene/render/drop-fact geometry parity and duplicate render
-  geometry deletion. This is a geometry-authority follow-up, not a new animation-framework pass.
+- Done on `refactor/docking-render-authority-convergence`: U1-U5 of
+  `docs/plans/2026-07-02-004-refactor-docking-render-authority-convergence-plan.md` now converge
+  deterministic docking geometry on shared scene/layout helpers. Render parity tests cover root,
+  nested, floating, empty-central, splitter, tab-bar, tiny floating, and zoomed bounds; deterministic
+  viewport facts are scene-seeded; split geometry uses `split_geometry`; tab/floating chrome uses
+  `chrome_geometry`; and the only remaining render-measured probe is the tab-label helper whose
+  bounds depend on GPUI text shaping and close-button layout.
 - Current docs direction: component ecosystem changes start with
   `cargo run -p xtask -- scan-ui-contract`, followed by public-surface, a11y, theme, or gallery
   focused nextest gates for behavior proof. Docking preview follow-up should start from the native
@@ -130,10 +137,11 @@ verified_by:
 - Not current roadmap work: broad splitting of every remaining 1k+ component file and
   `open-gpui-ui-headless` extraction.
 - Blocked: None.
-- Next action: for docking, start the render authority convergence plan with U1 parity tests for
-  root split, nested pane, floating container, empty central region, and zoomed scene. For broader
-  UI work, continue the fearless refactor sequence with remaining large gallery render owners,
-  especially `examples/ui-foundation-gallery/src/pages/components/render/sections.rs`.
+- Next action: for docking render authority convergence, run the final verification contract,
+  engineering wiki validation, simplification/review tail, and then merge/push per the user's
+  branch flow. For broader UI work, continue the fearless refactor sequence with remaining large
+  gallery render owners, especially
+  `examples/ui-foundation-gallery/src/pages/components/render/sections.rs`.
 
 # Citations
 

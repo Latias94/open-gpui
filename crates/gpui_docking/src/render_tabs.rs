@@ -343,9 +343,11 @@ impl DockHost {
             tab = tab_a11y.apply_to(tab);
             // Tab labels are a deliberate render-measured exception: final hit bounds depend on
             // intrinsic title and close-button layout, not the presentation scene's equal slots.
-            tab = tab.child(self.render_viewport_drop_scene_fact_probe(
+            tab = tab.child(self.render_tab_label_drop_scene_fact_probe(
                 viewport_host_scene_frame,
-                move |bounds| drop_scene_fact::tab_label(node, target_index, bounds, is_central),
+                node,
+                target_index,
+                is_central,
                 cx,
             ));
             tab = tab.child(title.clone());

@@ -7,7 +7,6 @@ use crate::{
     drop_preview::{
         DockDropPreview, DockDropRoutePreview, DockPreviewDropBox, DockPreviewTabInsertionIndex,
     },
-    drop_runtime::DockHostDropSceneFact,
     drop_scene_fact, geometry,
     host_render_session::{DockHostRenderSession, selected_index},
     interaction::{
@@ -1313,11 +1312,13 @@ impl DockHost {
         .into_any_element()
     }
 
-    /// Publishes render-measured target bounds for regions whose size depends on text shaping.
-    pub(crate) fn render_viewport_drop_scene_fact_probe(
+    /// Publishes render-measured tab-label bounds whose size depends on text shaping.
+    pub(crate) fn render_tab_label_drop_scene_fact_probe(
         &self,
         frame_slot: &DockViewportHostSceneFrameSlot,
-        fact_for_bounds: impl FnOnce(Bounds<Pixels>) -> DockHostDropSceneFact + 'static,
+        tabs: DockNodeId,
+        target_index: usize,
+        is_central: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let entity = cx.entity();
@@ -1328,8 +1329,8 @@ impl DockHost {
                 let Some(frame) = frame_slot.borrow().as_ref().cloned() else {
                     return;
                 };
-                if let Some(next_frame) =
-                    runtime.push_viewport_host_scene_frame_fact(&frame, fact_for_bounds(bounds))
+                let fact = drop_scene_fact::tab_label(tabs, target_index, bounds, is_central);
+                if let Some(next_frame) = runtime.push_viewport_host_scene_frame_fact(&frame, fact)
                 {
                     let frame = Some(next_frame.clone());
                     *frame_slot.borrow_mut() = Some(next_frame);

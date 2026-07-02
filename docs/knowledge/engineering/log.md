@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-07-03: Implemented U1-U5 of
+  `docs/plans/2026-07-02-004-refactor-docking-render-authority-convergence-plan.md` on
+  `refactor/docking-render-authority-convergence`. The branch now has scene/render parity tests,
+  scene-owned deterministic viewport facts, shared `split_geometry`, shared `chrome_geometry`, and
+  a tab-label-only `render_tab_label_drop_scene_fact_probe` for the remaining text-shaped
+  measurement exception. Characterization caught the old tab-bar policy drift: scene facts used
+  28px while the rendered tab strip measured 36px, so the shared chrome policy now uses 36px.
+  Focused gates passed for host render/presentation/interaction, tab/floating chrome, tab-label
+  probe exception, scene-seeded deterministic facts, and `cargo check -p open-gpui-docking`.
 - 2026-07-02: Merged `refactor/docking-flat-motion-runtime` into local `main`. The merge keeps the
   latest native/gallery/table productization state from `origin/main` and adds the docking motion
   runtime work. Because `main` already used ADR 0013 and ADR 0014 for the native UI hybrid registry

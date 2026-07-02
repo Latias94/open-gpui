@@ -92,6 +92,26 @@ cargo check -p open-gpui-docking-native
 git diff --check
 ```
 
+For docking render-authority convergence work, prove deterministic geometry through
+`DockPresentationScene` parity rather than screenshot or pixel-level styling parity:
+
+```sh
+cargo fmt --all -- --check
+cargo nextest run -p open-gpui-docking host_render_tests host_presentation_scene_tests --no-fail-fast
+cargo nextest run -p open-gpui-docking host_viewport_preview_tests host_viewport_preview_visual_tests host_viewport_route_tests --no-fail-fast
+cargo nextest run -p open-gpui-docking host_divider_hit_map_tests host_accessibility_tests --no-fail-fast
+cargo nextest run -p open-gpui-docking host_interaction_tests --no-fail-fast
+cargo check -p open-gpui-docking
+cargo check -p open-gpui-docking-native
+git diff --check
+```
+
+This gate locks root, leaf, tab-bar, empty-space, floating-title/content, split child, splitter,
+zoom, divider hit map, and accessibility rectangles to the same deterministic scene/layout
+authority. The remaining render-measured probe is intentionally named
+`render_tab_label_drop_scene_fact_probe` and may only publish tab-label facts whose final bounds
+depend on GPUI text shaping, intrinsic title layout, or close-button layout.
+
 Use narrower checks while iterating:
 
 ```sh

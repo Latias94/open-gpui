@@ -60,8 +60,9 @@ presentation-scene and overlay-scene samples.
   transition occlusion mask covers the base final scene behind the reveal so new/returning panes do
   not show through early.
 - `DockPresentationScene` seeds viewport drop facts for root, empty, panes, tab bars, and floating
-  title bars. The remaining `render_viewport_drop_scene_fact_probe` is intentionally limited to
-  tab-label facts whose bounds depend on GPUI text shaping.
+  title bars. The remaining render-measured helper is now
+  `render_tab_label_drop_scene_fact_probe`, intentionally limited to tab-label facts whose bounds
+  depend on GPUI text shaping.
 - Overlay preview feedback has its own adapter-owned transition executor. Local and routed previews
   schedule root-level overlay transition plans for target body, guide boxes, tab insertion slots,
   payload tabs, payload ghosts, route markers, and rejected feedback. Precise tab insertion layers
