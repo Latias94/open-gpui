@@ -64,6 +64,7 @@ pub(crate) struct DockPaneClipSample {
     pub(crate) node: DockNodeId,
     pub(crate) content_bounds: Bounds<Pixels>,
     pub(crate) visible_bounds: Bounds<Pixels>,
+    pub(crate) occlusion_bounds: Bounds<Pixels>,
     pub(crate) progress: f32,
 }
 
@@ -419,12 +420,14 @@ fn pane_clip_sample(transition: &DockPaneTransition, progress: f32) -> Option<Do
             node: transition.node,
             content_bounds: slide.final_bounds,
             visible_bounds: reveal_bounds(slide.final_bounds, slide.edge, progress),
+            occlusion_bounds: slide.occlusion_bounds,
             progress,
         }),
         DockPaneTransitionKind::Leaving => Some(DockPaneClipSample {
             node: transition.node,
             content_bounds: slide.final_bounds,
             visible_bounds: reveal_bounds(slide.final_bounds, slide.edge, 1.0 - progress),
+            occlusion_bounds: slide.occlusion_bounds,
             progress,
         }),
         DockPaneTransitionKind::Moving

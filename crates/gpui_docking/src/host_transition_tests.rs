@@ -229,6 +229,10 @@ fn transition_executor_samples_timeline_and_reveal_geometry(cx: &mut TestAppCont
             entering.content_bounds, final_bounds,
             "entering pane content must be final-size from the first frame"
         );
+        assert_eq!(
+            entering.occlusion_bounds, final_bounds,
+            "transition occlusion should be descriptor-driven and cover the final-size pane path"
+        );
         assert_eq!(entering.visible_bounds.size.width, px(0.0));
         assert_eq!(
             entering.visible_bounds.size.height,
