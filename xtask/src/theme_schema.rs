@@ -273,7 +273,8 @@ fn docs_schema_vocabulary_block(source: &str) -> Option<&str> {
     let start = source.find(DOCS_SCHEMA_VOCABULARY_MARKER)?;
     let tail = &source[start + DOCS_SCHEMA_VOCABULARY_MARKER.len()..];
     let end = tail
-        .find("\n\nTheme module ownership")
+        .find("\r\n\r\nTheme module ownership")
+        .or_else(|| tail.find("\n\nTheme module ownership"))
         .unwrap_or(tail.len());
     Some(&tail[..end])
 }
@@ -371,6 +372,17 @@ mod tests {
         format!(
             "{DOCS_SCHEMA_VOCABULARY_MARKER}\n\n- Values: {values}\n\nTheme module ownership is intentionally split:"
         )
+    }
+
+    #[test]
+    fn docs_vocabulary_block_handles_crlf_boundaries() {
+        let source = docs_with_vocabulary(&["schema_version", "colors"]).replace('\n', "\r\n");
+
+        let block =
+            docs_schema_vocabulary_block(&source).expect("docs vocabulary block should be found");
+
+        assert!(block.contains("schema_version"));
+        assert!(!block.contains("Theme module ownership"));
     }
 
     #[test]
