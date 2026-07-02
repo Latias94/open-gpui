@@ -15,7 +15,11 @@ use jellyflow::{
             },
             connection::ConnectionHandleRef,
             geometry::{HandleBounds, HandlePosition},
-            measurement::{NodeHandleMeasurementSource, NodeMeasurement, NodeMeasurementStatus},
+            measurement::{
+                NodeHandleMeasurementSource, NodeInternalsInvalidation,
+                NodeInternalsInvalidationReason, NodeMeasurement, NodeMeasurementOutcome,
+                NodeMeasurementStatus,
+            },
         },
         schema::{
             MenuSurface, NodeChromeKind, NodeKindViewDescriptor, NodeKitRegistry, NodeRegistry,
@@ -974,7 +978,12 @@ impl JellyflowCanvasView {
                     eprintln!("control edit dispatch failed: {error}");
                     return;
                 }
-                self.store.invalidate_node_internals(plan.invalidation);
+                let invalidation =
+                    apply_node_internals_invalidation(&mut self.store, plan.invalidation);
+                if invalidation.changed() {
+                    self.measured_regions.clear();
+                    self.measurement_frame_pending = true;
+                }
                 self.refresh_editor_from_store();
                 cx.notify();
             }
@@ -1489,13 +1498,27 @@ fn apply_demo_dropped_wire_insert(
         pointer,
         jellyflow::core::NodeGraphConnectionMode::Strict,
     )?;
-    store.invalidate_node_internals(
-        jellyflow::runtime::runtime::measurement::NodeInternalsInvalidation::one(
-            outcome.plan.node_id,
-            jellyflow::runtime::runtime::measurement::NodeInternalsInvalidationReason::DataChanged,
-        ),
+    request_node_internals_update(
+        store,
+        outcome.plan.node_id,
+        NodeInternalsInvalidationReason::DataChanged,
     );
     Ok(outcome)
+}
+
+fn request_node_internals_update(
+    store: &mut NodeGraphStore,
+    node_id: JellyNodeId,
+    reason: NodeInternalsInvalidationReason,
+) -> NodeMeasurementOutcome {
+    apply_node_internals_invalidation(store, NodeInternalsInvalidation::one(node_id, reason))
+}
+
+fn apply_node_internals_invalidation(
+    store: &mut NodeGraphStore,
+    invalidation: NodeInternalsInvalidation,
+) -> NodeMeasurementOutcome {
+    store.invalidate_node_internals(invalidation)
 }
 
 fn render_selected_inspector_panel(
@@ -7314,6 +7337,39 @@ mod tests {
             prompt_handle.position,
             point(px(expected.x), px(expected.y)),
             "dirty measured anchor should not override projection fallback"
+        );
+    }
+
+    #[test]
+    fn node_internals_update_request_marks_measurement_dirty_without_revision_churn() {
+        let (mut measured_store, transform, _, _) = measured_transform_store();
+        assert_eq!(
+            measured_store.node_measurement_status(transform),
+            NodeMeasurementStatus::Fresh { revision: 7 }
+        );
+
+        assert_eq!(
+            request_node_internals_update(
+                &mut measured_store,
+                transform,
+                NodeInternalsInvalidationReason::ComponentStateChanged,
+            ),
+            NodeMeasurementOutcome::Changed
+        );
+        assert_eq!(
+            measured_store.node_measurement_status(transform),
+            NodeMeasurementStatus::Dirty {
+                revision: 7,
+                reason: NodeInternalsInvalidationReason::ComponentStateChanged,
+            }
+        );
+        assert_eq!(
+            request_node_internals_update(
+                &mut measured_store,
+                transform,
+                NodeInternalsInvalidationReason::ComponentStateChanged,
+            ),
+            NodeMeasurementOutcome::Unchanged
         );
     }
 
