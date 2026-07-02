@@ -5,17 +5,18 @@ use super::style::{parse_color, positive_pixels};
 use crate::tool::RECONNECT_HANDLE_VIEW_SIZE;
 use crate::{
     CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasEdge, CanvasEdgeRoute,
-    CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryFacts, CanvasKindLabel, CanvasRecordId,
-    CanvasRecordScopeOptions, CanvasResolvedSelectionScope, CanvasRoutePath, CanvasRouteRequest,
-    CanvasRouteSegment, CanvasSelection, CanvasSnapAxis, CanvasSnapGuide, CanvasTransformHandle,
-    CanvasTransformTarget, CanvasViewport, EdgeId, HitOptions, HitTarget, canvas_transform_handles,
-    connection_hit_options, resolve_selection_scope,
+    CanvasEdgeRouteKind, CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryFacts, CanvasKindLabel,
+    CanvasRecordId, CanvasRecordScopeOptions, CanvasResolvedSelectionScope, CanvasRoutePath,
+    CanvasRouteRequest, CanvasRouteSegment, CanvasSelection, CanvasSnapAxis, CanvasSnapGuide,
+    CanvasTransformHandle, CanvasTransformTarget, CanvasViewport, EdgeId, HitOptions, HitTarget,
+    canvas_transform_handles, connection_hit_options, resolve_selection_scope,
 };
 use open_gpui::{
     Bounds, Hsla, Pixels, Point, SharedString, TextRun, Window, WrappedLine, px, size,
 };
 
 const CONNECTION_TARGET_FEEDBACK_VIEW_SIZE: Pixels = px(18.0);
+const RECONNECT_HANDLE_VISUAL_SIZE: Pixels = px(11.0);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CanvasPaintFrame {
@@ -88,6 +89,7 @@ pub struct CanvasPaintRecord {
     pub z_index: i32,
     pub hidden: bool,
     pub locked: bool,
+    pub hovered: bool,
     pub selected: bool,
     pub structurally_selected: bool,
 }
@@ -95,6 +97,18 @@ pub struct CanvasPaintRecord {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CanvasPaintEdgeGeometry {
     pub view_path: CanvasRoutePath,
+    pub visual_state: CanvasPaintWireVisualState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CanvasPaintWireVisualState {
+    Committed,
+    Hovered,
+    Selected,
+    SelectedHovered,
+    PreviewFree,
+    PreviewValidTarget,
+    PreviewInvalidTarget,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -120,6 +134,8 @@ pub struct CanvasPaintConnectionPreview {
     pub source_view_position: Point<Pixels>,
     pub target_view_position: Point<Pixels>,
     pub edge_geometry: CanvasPaintEdgeGeometry,
+    pub route_kind: CanvasEdgeRouteKind,
+    pub visual_state: CanvasPaintWireVisualState,
     pub target_feedback: CanvasPaintConnectionTargetFeedback,
 }
 
@@ -147,7 +163,16 @@ pub enum CanvasPaintReconnectEndpoint {
 pub struct CanvasPaintReconnectHandle {
     pub edge_id: EdgeId,
     pub endpoint: CanvasPaintReconnectEndpoint,
+    pub shape: CanvasPaintReconnectHandleShape,
     pub view_bounds: Bounds<Pixels>,
+    pub hit_bounds: Bounds<Pixels>,
+    pub visual_bounds: Bounds<Pixels>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CanvasPaintReconnectHandleShape {
+    SourcePlug,
+    TargetSocket,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -266,7 +291,22 @@ pub fn collect_visible_records(
         .query_with_options(visible_document_bounds, hit_options)
         .map(|record| {
             let target = record.target.clone();
-            let edge_geometry = paint_edge_geometry(model, &target);
+            let selected = options.include_interaction_feedback
+                && selection_scope.as_ref().is_some_and(|scope| {
+                    target_is_selected(&record.target, scope.normalized_selection())
+                });
+            let structurally_selected =
+                target_is_structurally_selected(&record.target, selection_scope.as_ref());
+            let hovered = options.include_interaction_feedback
+                && model
+                    .interaction
+                    .hovered_target()
+                    .is_some_and(|hovered| hovered == &target);
+            let edge_geometry = paint_edge_geometry(
+                model,
+                &target,
+                committed_wire_visual_state(selected || structurally_selected, hovered),
+            );
             CanvasPaintRecord {
                 label: paint_record_label(model, &target, record.bounds),
                 target,
@@ -276,14 +316,9 @@ pub fn collect_visible_records(
                 z_index: record.z_index,
                 hidden: record.hidden,
                 locked: record.locked,
-                selected: options.include_interaction_feedback
-                    && selection_scope.as_ref().is_some_and(|scope| {
-                        target_is_selected(&record.target, scope.normalized_selection())
-                    }),
-                structurally_selected: target_is_structurally_selected(
-                    &record.target,
-                    selection_scope.as_ref(),
-                ),
+                hovered,
+                selected,
+                structurally_selected,
             }
         })
         .collect();
@@ -492,26 +527,51 @@ fn reconnect_handles_for_model(model: &CanvasPaintModel) -> Vec<CanvasPaintRecon
             let source = facts.endpoint_position(&edge.source).ok()?;
             let target = facts.endpoint_position(&edge.target).ok()?;
             Some([
-                CanvasPaintReconnectHandle {
-                    edge_id: edge_id.clone(),
-                    endpoint: CanvasPaintReconnectEndpoint::Source,
-                    view_bounds: Bounds::centered_at(
-                        model.viewport.document_to_view(source),
-                        size(RECONNECT_HANDLE_VIEW_SIZE, RECONNECT_HANDLE_VIEW_SIZE),
-                    ),
-                },
-                CanvasPaintReconnectHandle {
-                    edge_id: edge_id.clone(),
-                    endpoint: CanvasPaintReconnectEndpoint::Target,
-                    view_bounds: Bounds::centered_at(
-                        model.viewport.document_to_view(target),
-                        size(RECONNECT_HANDLE_VIEW_SIZE, RECONNECT_HANDLE_VIEW_SIZE),
-                    ),
-                },
+                reconnect_handle(
+                    edge_id.clone(),
+                    CanvasPaintReconnectEndpoint::Source,
+                    model.viewport.document_to_view(source),
+                ),
+                reconnect_handle(
+                    edge_id.clone(),
+                    CanvasPaintReconnectEndpoint::Target,
+                    model.viewport.document_to_view(target),
+                ),
             ])
         })
         .flatten()
         .collect()
+}
+
+fn reconnect_handle(
+    edge_id: EdgeId,
+    endpoint: CanvasPaintReconnectEndpoint,
+    center: Point<Pixels>,
+) -> CanvasPaintReconnectHandle {
+    let hit_bounds = Bounds::centered_at(
+        center,
+        size(RECONNECT_HANDLE_VIEW_SIZE, RECONNECT_HANDLE_VIEW_SIZE),
+    );
+    let visual_size = RECONNECT_HANDLE_VISUAL_SIZE
+        .min(hit_bounds.size.width)
+        .min(hit_bounds.size.height);
+    CanvasPaintReconnectHandle {
+        edge_id,
+        endpoint,
+        shape: reconnect_handle_shape(endpoint),
+        view_bounds: hit_bounds,
+        hit_bounds,
+        visual_bounds: Bounds::centered_at(center, size(visual_size, visual_size)),
+    }
+}
+
+fn reconnect_handle_shape(
+    endpoint: CanvasPaintReconnectEndpoint,
+) -> CanvasPaintReconnectHandleShape {
+    match endpoint {
+        CanvasPaintReconnectEndpoint::Source => CanvasPaintReconnectHandleShape::SourcePlug,
+        CanvasPaintReconnectEndpoint::Target => CanvasPaintReconnectHandleShape::TargetSocket,
+    }
 }
 
 fn connection_preview(
@@ -584,6 +644,8 @@ fn connection_preview_frame(
     route: CanvasEdgeRoute,
     target_feedback: CanvasPaintConnectionTargetFeedback,
 ) -> CanvasPaintConnectionPreview {
+    let route_kind = route.kind.clone();
+    let visual_state = preview_wire_visual_state(target_feedback.state);
     let mut edge = CanvasEdge::new(
         "__connection_preview",
         CanvasEndpoint::new("__connection_preview_source", None::<&str>),
@@ -600,8 +662,23 @@ fn connection_preview_frame(
         target_view_position: model.viewport.document_to_view(target),
         edge_geometry: CanvasPaintEdgeGeometry {
             view_path: route_path_to_view(&path, model.viewport),
+            visual_state,
         },
+        route_kind,
+        visual_state,
         target_feedback,
+    }
+}
+
+fn preview_wire_visual_state(
+    state: CanvasPaintConnectionTargetState,
+) -> CanvasPaintWireVisualState {
+    match state {
+        CanvasPaintConnectionTargetState::Free => CanvasPaintWireVisualState::PreviewFree,
+        CanvasPaintConnectionTargetState::Valid => CanvasPaintWireVisualState::PreviewValidTarget,
+        CanvasPaintConnectionTargetState::Invalid => {
+            CanvasPaintWireVisualState::PreviewInvalidTarget
+        }
     }
 }
 
@@ -710,6 +787,15 @@ fn connection_target_feedback(
 
 fn target_is_selected(target: &HitTarget, selection: &CanvasSelection) -> bool {
     selection.contains_target(target)
+}
+
+fn committed_wire_visual_state(selected: bool, hovered: bool) -> CanvasPaintWireVisualState {
+    match (selected, hovered) {
+        (true, true) => CanvasPaintWireVisualState::SelectedHovered,
+        (true, false) => CanvasPaintWireVisualState::Selected,
+        (false, true) => CanvasPaintWireVisualState::Hovered,
+        (false, false) => CanvasPaintWireVisualState::Committed,
+    }
 }
 
 fn target_is_structurally_selected(
@@ -864,6 +950,7 @@ fn label_document_bounds(bounds: Bounds<Pixels>, inset: Pixels) -> Bounds<Pixels
 fn paint_edge_geometry(
     model: &CanvasPaintModel,
     target: &HitTarget,
+    visual_state: CanvasPaintWireVisualState,
 ) -> Option<CanvasPaintEdgeGeometry> {
     let HitTarget::Edge(id) = target else {
         return None;
@@ -871,6 +958,7 @@ fn paint_edge_geometry(
     let geometry = model.runtime.edge_geometry(id)?;
     Some(CanvasPaintEdgeGeometry {
         view_path: route_path_to_view(&geometry.path, model.viewport),
+        visual_state,
     })
 }
 

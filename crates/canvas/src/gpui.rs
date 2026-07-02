@@ -26,9 +26,9 @@ mod tests {
     };
     use crate::{
         CanvasConnectionEndpointRole, CanvasDocument, CanvasEdge, CanvasEdgeKind,
-        CanvasEdgeRenderPolicy, CanvasEdgeRouter, CanvasEditor, CanvasEndpoint, CanvasEvent,
-        CanvasHandle, CanvasKey, CanvasKeyModifiers, CanvasKindLabel, CanvasKindPaint,
-        CanvasKindRegistry, CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeKind,
+        CanvasEdgeRenderPolicy, CanvasEdgeRouteKind, CanvasEdgeRouter, CanvasEditor,
+        CanvasEndpoint, CanvasEvent, CanvasHandle, CanvasKey, CanvasKeyModifiers, CanvasKindLabel,
+        CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeKind,
         CanvasNodeRenderPolicy, CanvasRecordId, CanvasRoutePath, CanvasRouteRequest,
         CanvasSelection, CanvasSelectionMode, CanvasShape, CanvasShapeKind,
         CanvasShapeRenderPolicy, CanvasSnapAxis, CanvasSnapGuide, CanvasStyle, CanvasTransaction,
@@ -993,16 +993,126 @@ mod tests {
         );
 
         assert_eq!(frame.interaction.reconnect_handles.len(), 2);
-        assert!(frame.interaction.reconnect_handles.iter().any(|handle| {
-            handle.edge_id == crate::EdgeId::from("edge")
-                && handle.endpoint == CanvasPaintReconnectEndpoint::Source
-                && handle.view_bounds.contains(&point(px(30.0), px(20.0)))
-        }));
-        assert!(frame.interaction.reconnect_handles.iter().any(|handle| {
-            handle.edge_id == crate::EdgeId::from("edge")
-                && handle.endpoint == CanvasPaintReconnectEndpoint::Target
-                && handle.view_bounds.contains(&point(px(110.0), px(20.0)))
-        }));
+        let source_handle = frame
+            .interaction
+            .reconnect_handles
+            .iter()
+            .find(|handle| {
+                handle.edge_id == crate::EdgeId::from("edge")
+                    && handle.endpoint == CanvasPaintReconnectEndpoint::Source
+            })
+            .expect("source reconnect handle");
+        assert_eq!(
+            source_handle.shape,
+            CanvasPaintReconnectHandleShape::SourcePlug
+        );
+        assert_eq!(source_handle.view_bounds, source_handle.hit_bounds);
+        assert!(
+            source_handle
+                .hit_bounds
+                .contains(&point(px(30.0), px(20.0)))
+        );
+        assert!(
+            source_handle
+                .visual_bounds
+                .contains(&point(px(30.0), px(20.0)))
+        );
+        assert!(source_handle.visual_bounds.size.width < source_handle.hit_bounds.size.width);
+
+        let target_handle = frame
+            .interaction
+            .reconnect_handles
+            .iter()
+            .find(|handle| {
+                handle.edge_id == crate::EdgeId::from("edge")
+                    && handle.endpoint == CanvasPaintReconnectEndpoint::Target
+            })
+            .expect("target reconnect handle");
+        assert_eq!(
+            target_handle.shape,
+            CanvasPaintReconnectHandleShape::TargetSocket
+        );
+        assert_eq!(target_handle.view_bounds, target_handle.hit_bounds);
+        assert!(
+            target_handle
+                .hit_bounds
+                .contains(&point(px(110.0), px(20.0)))
+        );
+        assert!(
+            target_handle
+                .visual_bounds
+                .contains(&point(px(110.0), px(20.0)))
+        );
+        assert!(target_handle.visual_bounds.size.width < target_handle.hit_bounds.size.width);
+
+        let edge_record = frame
+            .records
+            .iter()
+            .find(|record| record.target == HitTarget::Edge(crate::EdgeId::from("edge")))
+            .expect("selected edge record");
+        assert_eq!(
+            edge_record
+                .edge_geometry
+                .as_ref()
+                .map(|geometry| geometry.visual_state),
+            Some(CanvasPaintWireVisualState::Selected)
+        );
+    }
+
+    #[test]
+    fn hovered_selected_edge_state_keeps_reconnect_geometry() {
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(10.0), px(10.0)),
+                size(px(40.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(90.0), px(10.0)),
+                size(px(40.0), px(20.0)),
+            ))
+            .edge(CanvasEdge::new(
+                "edge",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .build();
+        let edge_target = HitTarget::Edge(crate::EdgeId::from("edge"));
+        let mut selection = CanvasSelection::default();
+        selection.insert_edge(crate::EdgeId::from("edge"));
+        let model = CanvasPaintModel::new(document, CanvasViewport::default()).with_interaction(
+            CanvasPaintInteraction::new(selection).with_hovered_target(Some(edge_target.clone())),
+        );
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(100.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        let edge_record = frame
+            .records
+            .iter()
+            .find(|record| record.target == edge_target)
+            .expect("hovered selected edge record");
+        assert!(edge_record.selected);
+        assert!(edge_record.hovered);
+        assert_eq!(
+            edge_record
+                .edge_geometry
+                .as_ref()
+                .map(|geometry| geometry.visual_state),
+            Some(CanvasPaintWireVisualState::SelectedHovered)
+        );
+        assert_eq!(frame.interaction.reconnect_handles.len(), 2);
+        assert!(
+            frame
+                .interaction
+                .reconnect_handles
+                .iter()
+                .all(|handle| handle.hit_bounds.contains(&handle.visual_bounds.center()))
+        );
     }
 
     #[test]
@@ -1086,6 +1196,7 @@ mod tests {
         );
 
         assert!(frame.records.iter().all(|record| !record.selected));
+        assert!(frame.records.iter().all(|record| !record.hovered));
         assert_eq!(frame.interaction, CanvasPaintInteractionFrame::default());
     }
 
@@ -1130,12 +1241,29 @@ mod tests {
             target_view_position: target,
             edge_geometry: CanvasPaintEdgeGeometry {
                 view_path: CanvasRoutePath::polyline([source, target]),
+                visual_state: preview_visual_state(target_state),
             },
+            route_kind: CanvasEdgeRouteKind::new(CanvasEdgeRouteKind::STRAIGHT),
+            visual_state: preview_visual_state(target_state),
             target_feedback: CanvasPaintConnectionTargetFeedback {
                 role: CanvasConnectionEndpointRole::Target,
                 state: target_state,
                 view_bounds: Bounds::centered_at(feedback_center, size(px(18.0), px(18.0))),
             },
+        }
+    }
+
+    fn preview_visual_state(
+        target_state: CanvasPaintConnectionTargetState,
+    ) -> CanvasPaintWireVisualState {
+        match target_state {
+            CanvasPaintConnectionTargetState::Free => CanvasPaintWireVisualState::PreviewFree,
+            CanvasPaintConnectionTargetState::Valid => {
+                CanvasPaintWireVisualState::PreviewValidTarget
+            }
+            CanvasPaintConnectionTargetState::Invalid => {
+                CanvasPaintWireVisualState::PreviewInvalidTarget
+            }
         }
     }
 

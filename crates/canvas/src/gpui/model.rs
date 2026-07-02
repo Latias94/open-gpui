@@ -2,7 +2,7 @@ use crate::session::ToolState;
 use crate::{
     CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdgeRoute,
     CanvasEdgeRouteKind, CanvasEdgeRouter, CanvasEditor, CanvasEndpoint, CanvasKindRegistry,
-    CanvasRuntime, CanvasSelection, CanvasSnapGuide, CanvasViewport,
+    CanvasRuntime, CanvasSelection, CanvasSnapGuide, CanvasViewport, HitTarget,
 };
 use open_gpui::{Hsla, Pixels, TextAlign, px, rgb};
 use std::sync::Arc;
@@ -141,6 +141,7 @@ impl From<&CanvasEditor> for CanvasPaintModel {
 pub struct CanvasPaintInteraction {
     selection: CanvasSelection,
     state: CanvasPaintInteractionState,
+    hovered_target: Option<HitTarget>,
 }
 
 impl CanvasPaintInteraction {
@@ -148,6 +149,7 @@ impl CanvasPaintInteraction {
         Self {
             selection,
             state: CanvasPaintInteractionState::Idle,
+            hovered_target: None,
         }
     }
 
@@ -159,8 +161,17 @@ impl CanvasPaintInteraction {
         &self.state
     }
 
+    pub fn hovered_target(&self) -> Option<&HitTarget> {
+        self.hovered_target.as_ref()
+    }
+
     pub fn with_selection(mut self, selection: CanvasSelection) -> Self {
         self.selection = selection;
+        self
+    }
+
+    pub fn with_hovered_target(mut self, target: Option<HitTarget>) -> Self {
+        self.hovered_target = target;
         self
     }
 
@@ -175,6 +186,7 @@ impl Default for CanvasPaintInteraction {
         Self {
             selection: CanvasSelection::default(),
             state: CanvasPaintInteractionState::Idle,
+            hovered_target: None,
         }
     }
 }

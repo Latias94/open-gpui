@@ -62,12 +62,12 @@ pub use gpui::{
     CanvasPaintConnectionTargetState, CanvasPaintEdgeGeometry, CanvasPaintFrame,
     CanvasPaintInteraction, CanvasPaintInteractionFrame, CanvasPaintLabel, CanvasPaintModel,
     CanvasPaintOptions, CanvasPaintReconnectEndpoint, CanvasPaintReconnectHandle,
-    CanvasPaintRecord, CanvasPaintSnapGuide, CanvasPaintTheme, CanvasPaintTransformHandle,
-    CanvasPreparedPaintFrame, CanvasWidgetOverlayFrame, CanvasWidgetOverlayHitPriority,
-    CanvasWidgetOverlayOptions, CanvasWidgetOverlayPlacement, canvas_editor_view,
-    canvas_editor_view_with_frame, canvas_view, collect_visible_records,
-    collect_widget_overlay_frame, paint_canvas_frame, prepaint_canvas_frame, prepare_canvas_frame,
-    register_canvas_editor_input,
+    CanvasPaintReconnectHandleShape, CanvasPaintRecord, CanvasPaintSnapGuide, CanvasPaintTheme,
+    CanvasPaintTransformHandle, CanvasPaintWireVisualState, CanvasPreparedPaintFrame,
+    CanvasWidgetOverlayFrame, CanvasWidgetOverlayHitPriority, CanvasWidgetOverlayOptions,
+    CanvasWidgetOverlayPlacement, canvas_editor_view, canvas_editor_view_with_frame, canvas_view,
+    collect_visible_records, collect_widget_overlay_frame, paint_canvas_frame,
+    prepaint_canvas_frame, prepare_canvas_frame, register_canvas_editor_input,
 };
 pub use graph::{
     CanvasEdgeDirection, CanvasGraph, CanvasGraphEndpointIds, CanvasGraphIndex, CanvasIndexedGraph,

@@ -1,6 +1,7 @@
 use super::frame::{
     CanvasPaintConnectionTargetFeedback, CanvasPaintConnectionTargetState, CanvasPaintEdgeGeometry,
-    CanvasPaintRecord, CanvasPreparedPaintFrame, CanvasPreparedPaintLabel,
+    CanvasPaintReconnectHandle, CanvasPaintReconnectHandleShape, CanvasPaintRecord,
+    CanvasPreparedPaintFrame, CanvasPreparedPaintLabel,
 };
 use super::model::{CanvasPaintModel, CanvasPaintTheme};
 use super::style::{edge_paint_style, node_paint_style, shape_paint_style};
@@ -118,6 +119,28 @@ pub fn paint_canvas_frame(
         }
     }
 
+    for record in &frame.frame.records {
+        if !record.hovered {
+            continue;
+        }
+        let HitTarget::Edge(id) = &record.target else {
+            continue;
+        };
+        if model.document.edge(id).is_none() {
+            continue;
+        }
+        let Some(edge_geometry) = &record.edge_geometry else {
+            continue;
+        };
+        paint_edge(
+            window,
+            canvas_bounds,
+            edge_geometry,
+            theme.connection_preview_stroke,
+            theme.connection_preview_stroke_width,
+        );
+    }
+
     if let Some(bounds) = frame.frame.interaction.structural_selection_bounds {
         paint_rect(
             window,
@@ -179,7 +202,7 @@ pub fn paint_canvas_frame(
     }
 
     for handle in &frame.frame.interaction.reconnect_handles {
-        paint_endpoint_affordance(window, canvas_bounds, handle.view_bounds, theme);
+        paint_reconnect_handle(window, canvas_bounds, handle, theme);
     }
 }
 
@@ -246,6 +269,56 @@ fn paint_endpoint_affordance(
         theme.handle_stroke_width,
         visual_size * 0.5,
     );
+}
+
+fn paint_reconnect_handle(
+    window: &mut Window,
+    canvas_bounds: Bounds<Pixels>,
+    handle: &CanvasPaintReconnectHandle,
+    theme: CanvasPaintTheme,
+) {
+    let radius = handle
+        .hit_bounds
+        .size
+        .width
+        .min(handle.hit_bounds.size.height)
+        * 0.5;
+    paint_rect(
+        window,
+        canvas_bounds,
+        handle.hit_bounds,
+        theme.handle_fill.alpha(0.10),
+        theme.handle_stroke.alpha(0.75),
+        theme.handle_stroke_width,
+        radius,
+    );
+
+    let visual_radius = handle
+        .visual_bounds
+        .size
+        .width
+        .min(handle.visual_bounds.size.height)
+        * 0.5;
+    match handle.shape {
+        CanvasPaintReconnectHandleShape::SourcePlug => paint_rect(
+            window,
+            canvas_bounds,
+            handle.visual_bounds,
+            theme.handle_fill,
+            theme.handle_stroke,
+            theme.handle_stroke_width,
+            visual_radius,
+        ),
+        CanvasPaintReconnectHandleShape::TargetSocket => paint_rect(
+            window,
+            canvas_bounds,
+            handle.visual_bounds,
+            theme.handle_fill.alpha(0.04),
+            theme.handle_fill,
+            theme.handle_stroke_width,
+            visual_radius,
+        ),
+    }
 }
 
 fn paint_connection_target_feedback(
