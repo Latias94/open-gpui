@@ -11,7 +11,9 @@ use open_gpui::{Bounds, Pixels, Window, point, px, size};
 use open_gpui_ui_core::{
     MotionSnapshot, MotionSpec, MotionTimeline, MotionTimelineSample, retarget_motion_snapshots,
 };
-use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::time::Duration;
+use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockTransitionExecution {
