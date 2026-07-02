@@ -607,9 +607,10 @@ cargo nextest run -p open-gpui-ui-components theme --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts --no-fail-fast
 ```
 
-`scan-ui-registry` checks the generated component registry manifest artifact, its JSON schema
-artifact, required registry rows, scaffold recipe ids, recipe source-component references, generated
-file intents, and verification gates. Regenerate artifacts with
+`scan-ui-registry` checks `docs/registry/open-gpui-component-registry-v1.json`,
+`docs/schemas/open-gpui-component-registry-v1.schema.json`, required registry rows, scaffold recipe
+ids, recipe source-component references, generated file intents, and verification gates. Regenerate
+artifacts with
 `cargo run -p open-gpui-ui-components --example export_component_registry --quiet` and
 `cargo run -p open-gpui-ui-components --example export_component_registry_schema --quiet` before
 running this gate after component contract or recipe metadata changes.

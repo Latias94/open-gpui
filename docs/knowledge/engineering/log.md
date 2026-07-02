@@ -6,6 +6,18 @@ status: active
 
 # Log
 
+- 2026-07-02: Implemented the native UI hybrid registry MVP on
+  `refactor/native-ui-hybrid-registry`. Added the manifest projection and scaffold recipe metadata
+  under `crates/ui_components/src/component_contract/`, generated
+  `docs/registry/open-gpui-component-registry-v1.json` and
+  `docs/schemas/open-gpui-component-registry-v1.schema.json`, added export examples, introduced
+  `cargo run -p xtask -- scan-ui-registry`, and wired the scan into `xtask verify` before
+  `scan-ui-contract`. Gallery-side tests now prove manifest rows claiming gallery evidence have
+  catalog/story coverage without moving selector constants into the component crate. Focused gates
+  passed for `scan-ui-registry`, `cargo test -p xtask ui_registry`, `cargo test -p xtask commands`,
+  component registry manifest nextest, and gallery catalog/story manifest evidence nextest.
+  Recorded ADR 0013 with concrete artifact paths, export commands, alternatives, and consequences.
+  Final `cargo run -p xtask -- verify`, engineering wiki validation, and `git diff --check` passed.
 - 2026-07-02: Created
   `docs/plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md`, an
   implementation-ready plan for the native UI hybrid registry architecture MVP. The plan keeps

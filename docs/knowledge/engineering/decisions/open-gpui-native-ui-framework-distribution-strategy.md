@@ -7,7 +7,10 @@ tags: ["open-gpui", "ui", "registry", "components", "ai-native"]
 status: "active"
 git_branch: "main"
 git_commit: "22e86ce722486bbecb9edd111a8cc1cf23c0196e"
-verified_by: "python C:\\Users\\Frankorz\\.codex\\skills\\research\\validate_json.py -f native-ui-framework-design-research\\fields.yaml -d native-ui-framework-design-research\\results"
+verified_by:
+  - "python C:\\Users\\Frankorz\\.codex\\skills\\research\\validate_json.py -f native-ui-framework-design-research\\fields.yaml -d native-ui-framework-design-research\\results"
+  - "cargo run -p xtask -- scan-ui-registry"
+related_adr: "docs/adr/0013-open-gpui-native-ui-hybrid-registry.md"
 ---
 
 # Decision
@@ -25,6 +28,11 @@ model:
 
 This means Open GPUI should borrow shadcn/ui's AI-friendly documentation, registry metadata, and
 copy-to-own ergonomics, but not copy the web-specific source registry model as-is.
+
+ADR 0013 records the implementation names that proved this decision: the manifest artifact is
+`docs/registry/open-gpui-component-registry-v1.json`, the schema artifact is
+`docs/schemas/open-gpui-component-registry-v1.schema.json`, and the local drift gate is
+`cargo run -p xtask -- scan-ui-registry`.
 
 # Context
 
@@ -64,8 +72,8 @@ The hybrid model is the current preferred direction.
   source registry.
 - Official components should continue to prove behavior through tests, gallery metadata, contract
   scanners, and `xtask` checks.
-- Formal ADR should be written when the team commits to concrete public schema names, CLI commands,
-  crate boundaries, and compatibility policy.
+- ADR 0013 is now the formal decision for concrete public schema names, CLI commands, crate
+  boundaries, and compatibility policy.
 - A later implementation plan should map this strategy onto existing files such as
   `crates/ui_components/src/component_contract/`, `xtask/src/ui_contract.rs`,
   `docs/schemas/open-gpui-theme-v1.schema.json`, and `docs/ui/component-contract.md`.
@@ -76,3 +84,4 @@ The hybrid model is the current preferred direction.
 - [Research outline](../../../../native-ui-framework-design-research/outline.yaml)
 - [Research fields](../../../../native-ui-framework-design-research/fields.yaml)
 - [Research report verification](../verification/native-ui-framework-research-report-20260702.md)
+- [ADR 0013: Open GPUI Native UI Hybrid Registry](../../../adr/0013-open-gpui-native-ui-hybrid-registry.md)

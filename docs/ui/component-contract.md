@@ -15,10 +15,21 @@ homes, and verification gates without treating copied source as the canonical pa
 
 Scaffold recipes are metadata-first composition starters. `table-filters-toolbar`,
 `field-control-composition`, `themed-surface-wrapper`, and `gallery-story-sample` describe
-app-owned or gallery-owned output intent, required imports, customization boundaries, source
-components, and focused verification gates. They are not a public source-editing package manager:
-official components such as `Button`, `Table`, `Field`, and `ThemeDefinition` still ship through
-`open-gpui-ui-components`, while recipes only describe where local wrapper or sample code may begin.
+output intent, required imports, customization boundaries, source components, and focused
+verification gates. Their output ownership is explicit through `ScaffoldRecipeOutputOwnership`:
+`AppOwnedSource`, `CargoDependencySnippet`, or `GalleryStorySample`. They are not a public
+source-editing package manager: official components such as `Button`, `Table`, `Field`, and
+`ThemeDefinition` still ship through `open-gpui-ui-components`, while recipes only describe where
+local wrapper, dependency, or gallery sample code may begin.
+
+The committed registry artifact lives at
+`docs/registry/open-gpui-component-registry-v1.json`; its JSON schema lives at
+`docs/schemas/open-gpui-component-registry-v1.schema.json`. Regenerate them with
+`cargo run -p open-gpui-ui-components --example export_component_registry --quiet` and
+`cargo run -p open-gpui-ui-components --example export_component_registry_schema --quiet`, then
+run `cargo run -p xtask -- scan-ui-registry`. The scan compares generated output with the committed
+artifacts and checks recipe source-component references, generated-file intents, and verification
+gates.
 
 ## Resolved State
 
