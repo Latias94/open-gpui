@@ -1,42 +1,74 @@
 ---
 type: Current State
-title: Open GPUI main integration state
+title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-01T16:05:00+08:00
-git_branch: main
+timestamp: 2026-07-02T12:12:39+08:00
+git_branch: refactor/ui-contract-tooling-audit
 related_plan:
-  - docs/plans/2026-06-30-003-refactor-docking-split-motion-primitives-plan.md
-  - docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md
-  - docs/plans/2026-06-30-001-refactor-ui-architecture-deepening-plan.md
-  - docs/plans/2026-06-30-002-refactor-ui-deep-modules-plan.md
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
+  - docs/plans/2026-07-01-002-refactor-ui-public-gallery-boundaries-plan.md
+  - docs/plans/2026-07-01-003-refactor-ui-component-contract-registry-plan.md
+  - docs/plans/2026-07-01-004-refactor-ui-family-boundaries-plan.md
+  - docs/plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md
+  - docs/plans/2026-07-02-001-refactor-ui-contract-tooling-plan.md
 related_adr:
-  - docs/adr/0010-docking-presentation-scene-motion-model.md
-  - docs/adr/0011-docking-split-motion-primitive-boundary.md
-  - docs/adr/0012-docking-runtime-capability-alignment.md
+  - docs/adr/0006-open-gpui-ui-headless-extraction-checkpoint.md
+  - docs/adr/0008-open-gpui-ui-component-productization-roadmap.md
 verified_by:
-  - cargo fmt --all -- --check
-  - cargo nextest run -p open-gpui-ui-core split motion --no-fail-fast
-  - cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast
-  - cargo nextest run -p open-gpui-docking host_presentation_scene_tests host_viewport_preview_visual_tests host_transition_tests host_zoom_focus_tests host_divider_hit_map_tests host_accessibility_tests host_interaction_tests workspace_resize_policy_tests --no-fail-fast
-  - cargo check -p open-gpui-docking-native
+  - cargo test -p xtask
+  - cargo run -p xtask -- scan-ui-contract
+  - cargo run -p xtask -- scan-theme-schema
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --check
+  - cargo check -p open-gpui-ui-components --tests
+  - cargo check -p open-gpui-ui-foundation-gallery --tests
+  - cargo nextest run -p open-gpui-ui-components public_surface --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components menu --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components context_menu --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components tree --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components table --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery --no-fail-fast
   - git diff --check
   - python $HOME/.codex/skills/engineering-wiki-memory/scripts/wiki_memory.py validate --root docs/knowledge/engineering
 ---
 
 # Current State
 
-- Branch: `main`; resolving integration of the local docking runtime capability commits with the newer `origin/main` UI architecture/test-module refactors.
-- Done: `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` is implemented and committed locally. The docking runtime now has sampled transition execution, scene-owned tab insertion/payload preview descriptors, zoom/unzoom and focus presentation, GPUI-facing accessibility descriptors, shared split primitive consumption, visible corner drag, routed overlay cleanup, native dogfood proof, ADR 0012, and U11 cleanup.
-- Done: Public docking focus commands were corrected after `$emil-design-eng` / `$review-animations` review: `focus_pane` and `focus_neighbor_pane` use immediate focus-ring semantic feedback because they are high-frequency and keyboard reachable; explicit internal/test `MotionSpec` entry points remain available for lower-frequency focus-ring transition proofs.
-- Done: The newer UI architecture line from `origin/main` splits `ui_components` contract tests into focused modules, moves public-surface inventory helpers under `tests/support`, centralizes overlay/choice/text/table/theme seams, and keeps `components.rs` deleted. Docking splitter coverage should live in `crates/ui_components/tests/layout.rs` and public inventory coverage in `crates/ui_components/tests/support/public_surface.rs`.
-- In progress: Local `main` is being merged with `origin/main`. Conflict resolution should preserve the remote UI test-module split and explicit `ui_core` root export vocabulary while keeping the local docking `MotionSpec` and split primitive exports.
+- Branch: `main`; the UI family-boundary refactor has been merged and pushed to `origin/main`.
+- Done: Public-surface tests now consume the component contract registry instead of gallery/test
+  helper maps. The registry owns official components, state contracts, adapter-only helpers,
+  internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default
+  export intent.
+- Done: `Command`, `Menu`, `ContextMenu`, `Tree`, and Table behavior snapshots now have explicit
+  owner modules. The completed family-boundary pass keeps public behavior stable while replacing
+  stale single-file source assumptions.
+- Done: `component_contract` is split into responsibility modules; focused a11y contracts now cover
+  representative component families; the theme JSON schema and loader facade are exported through
+  root and prelude.
+- Done on `refactor/ui-contract-tooling-audit`: `xtask` is split into command/scanner modules;
+  `scan-ui-contract` audits registry rows, default exports, docs tokens, source homes, gallery
+  conformance evidence, representative a11y claims, and the committed theme schema artifact.
+- Done on `refactor/ui-contract-tooling-audit`: `docs/schemas/open-gpui-theme-v1.schema.json` is a
+  reviewable artifact generated from `theme_json_schema()` through
+  `open-gpui-ui-components --example export_theme_schema`, with `scan-theme-schema` drift coverage.
+- Done: Full focused UI verification passed before the merge to `main`: component public surface,
+  Menu, ContextMenu, Tree, Table, gallery metadata, overlay, tree, table, full
+  `open-gpui-ui-components`, and full `open-gpui-ui-foundation-gallery`.
+- Current docs direction: new registry, a11y, theme, or gallery conformance work starts with
+  `cargo run -p xtask -- scan-ui-contract`, then drops to public-surface, a11y, theme, or gallery
+  focused nextest gates for behavior proof.
+- Not current roadmap work: broad splitting of every remaining 1k+ component file and
+  `open-gpui-ui-headless` extraction.
 - Blocked: None.
-- Next action: finish the merge, run focused split/motion/docking gates plus wiki/diff checks, then push `main`.
+- Next action: finish final verification/review for
+  `docs/plans/2026-07-02-001-refactor-ui-contract-tooling-plan.md`, then merge the branch back to
+  `main`.
 
 # Citations
 
-- [Runtime capability follow-up plan](../../plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md)
-- [ADR 0012](../../adr/0012-docking-runtime-capability-alignment.md)
-- [Runtime capability verification evidence](verification/docking-runtime-capability-alignment-20260701.md)
 - [UI contract module refactor plan](../../plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md)
+- [UI public gallery boundary plan](../../plans/2026-07-01-002-refactor-ui-public-gallery-boundaries-plan.md)
+- [UI component contract registry plan](../../plans/2026-07-01-003-refactor-ui-component-contract-registry-plan.md)
+- [UI family boundary plan](../../plans/2026-07-01-004-refactor-ui-family-boundaries-plan.md)
+- [UI contract/a11y/theme plan](../../plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md)
+- [UI contract tooling plan](../../plans/2026-07-02-001-refactor-ui-contract-tooling-plan.md)

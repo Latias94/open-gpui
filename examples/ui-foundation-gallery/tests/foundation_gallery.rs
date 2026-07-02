@@ -2,24 +2,29 @@ use open_gpui::{
     Bounds, Entity, MouseButton, Pixels, ScrollDelta, ScrollWheelEvent, VisualTestContext, point,
     px, size,
 };
+use open_gpui_ui_components::component_contract::{
+    COMPONENT_API_INVENTORY, PUBLIC_SURFACE_OWNER_MAP, SurfaceGalleryStatus,
+    component_contract_family, component_contract_gallery_status,
+};
 use open_gpui_ui_components::{
-    AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant, ComboboxOpenMode,
-    CommandIndexSnapshotMode, CommandOpenMode, CommandSelectionMode, DialogOpenMode,
-    FeedbackIntent, HoverCardOpenIntent, HoverCardOpenMode, MenuItemKind, MenuOpenMode,
-    OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableCellEditor,
-    TableCellValue, TableColumnFacets, TableColumnId, TableColumnOrderChange, TableColumnRegion,
-    TableExpansionMode, TableExpansionState, TableGlobalFilterChange, TablePredicateFilterChange,
-    TablePredicateFilterOperator, TableRangeFilterChange, TableRowChildrenLoadState, TableRowId,
-    TableRowRegion, TableStageMode, TableTextFilterOperator, TextInputDisplayMode, ThemeMode,
-    ToggleVariant, TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
+    A11yLabelSource, A11yValueKind, AlertDialogIntent, AlertDialogOpenMode, BadgeVariant,
+    ButtonVariant, ComboboxOpenMode, CommandIndexSnapshotMode, CommandOpenMode,
+    CommandSelectionMode, DialogOpenMode, FeedbackIntent, HoverCardOpenIntent, HoverCardOpenMode,
+    MenuItemKind, MenuOpenMode, OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis,
+    ScrollResetPolicy, SelectOpenMode, SheetCloseAffordance, SheetModalMode, SheetOpenMode,
+    SheetSide, TableCellEditor, TableCellValue, TableColumnFacets, TableColumnId,
+    TableColumnOrderChange, TableColumnRegion, TableExpansionMode, TableExpansionState,
+    TableGlobalFilterChange, TablePredicateFilterChange, TablePredicateFilterOperator,
+    TableRangeFilterChange, TableRowChildrenLoadState, TableRowId, TableRowRegion, TableStageMode,
+    TableTextFilterOperator, TextInputDisplayMode, ThemeMode, ToggleVariant, TooltipOpenIntent,
+    TreeKeyboardAction, VirtualizedListScrollStrategy,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state, init_text_input,
     },
 };
 use open_gpui_ui_core::{
-    Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
-    InitialFocusIntent, Orientation, OutsidePressPolicy, OverlayLayerKind,
+    AccessibleAction, Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy,
+    FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy, OverlayLayerKind,
     OverlayPlacementAlignment, OverlayPlacementSide, PanelAdaptiveClass, Role, Size,
     TableColumnWidthPolicy, ThemeTokens, Toggled, semantic, ui_point, ui_px,
 };
@@ -661,7 +666,7 @@ fn productization_checkpoint_keeps_extraction_deferred_and_boundary_refs_availab
         "Do not create a standalone `open-gpui-ui-headless` crate in the active roadmap."
     ));
     assert!(productization.contains("This ADR does not invalidate either document."));
-    assert!(adr.contains("Do **not** create `open-gpui-ui-headless` yet."));
+    assert!(adr.contains("Do **not** create `open-gpui-ui-headless` yet"));
     assert!(adr.contains("The strict UI-core boundary is clean"));
     assert!(adr.contains("ListboxState"));
     assert!(adr.contains("ComboboxState"));
@@ -1496,55 +1501,22 @@ fn components_page_samples_expose_component_metadata() {
     let tables = pages::components::table_samples(tokens);
     let virtualized_lists = pages::components::virtualized_list_samples(tokens);
 
-    let official_names: Vec<_> = catalog
+    let official_names = catalog
         .iter()
         .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
         .map(|entry| entry.name)
-        .collect();
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected_official_names = COMPONENT_API_INVENTORY
+        .iter()
+        .filter(|entry| {
+            component_contract_gallery_status(entry.component)
+                == SurfaceGalleryStatus::OfficialComponent
+        })
+        .map(|entry| entry.component)
+        .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
-        official_names,
-        vec![
-            "Button",
-            "Badge",
-            "Accordion",
-            "Collapsible",
-            "Slider",
-            "NumberInput",
-            "ToggleGroup",
-            "Link",
-            "Breadcrumb",
-            "Tag",
-            "ToastStack",
-            "IconButton",
-            "Switch",
-            "Checkbox",
-            "RadioGroup",
-            "Toggle",
-            "Toolbar",
-            "Sidebar",
-            "Tree",
-            "Listbox",
-            "Select",
-            "Combobox",
-            "Command",
-            "Label",
-            "TextInput",
-            "Textarea",
-            "Field",
-            "Tabs",
-            "ScrollArea",
-            "Splitter",
-            "Table",
-            "VirtualizedList",
-            "StatusCue",
-            "EmptyState",
-            "Separator",
-            "Kbd",
-            "Progress",
-            "Skeleton",
-            "Avatar",
-            "AvatarGroup",
-        ]
+        official_names, expected_official_names,
+        "Components catalog official rows should follow the component contract registry order"
     );
     assert!(catalog.iter().all(|entry| !entry.name.trim().is_empty()));
     assert!(
@@ -1602,8 +1574,23 @@ fn components_page_samples_expose_component_metadata() {
             .all(|entry| entry.sample_selector.is_none() && entry.state_contract_selector.is_some())
     );
 
-    assert_eq!(gates.len(), 11);
+    assert_eq!(gates.len(), 12);
     assert_eq!(gates[0].id, "public-api-exports");
+    assert!(
+        gates[0]
+            .evidence
+            .contains(&"crates/ui_components/src/component_contract/rows.rs")
+    );
+    assert!(
+        gates[0]
+            .evidence
+            .contains(&"crates/ui_components/src/component_contract/projections.rs")
+    );
+    assert!(
+        gates[0]
+            .evidence
+            .contains(&"crates/ui_components/src/component_contract/api_inventory.rs")
+    );
     assert!(
         gates[0]
             .evidence
@@ -1650,6 +1637,88 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(gates[8].id, "state-contract-readouts");
     assert_eq!(gates[9].id, "choice-surfaces");
     assert_eq!(gates[10].id, "a11y-labels");
+    assert!(gates[10].evidence.contains(&"ComponentA11yContract"));
+    assert!(gates[10].evidence.contains(&"COMPONENT_A11Y_CLAIMS"));
+    assert!(
+        gates[10]
+            .evidence
+            .contains(&"crates/ui_components/tests/a11y.rs")
+    );
+    assert!(
+        gates[10]
+            .evidence
+            .contains(&"representative_component_a11y_contracts_are_valid")
+    );
+    assert_eq!(gates[11].id, "theme-schema");
+    assert!(
+        gates[11]
+            .evidence
+            .contains(&"crates/ui_components/src/theme/schema.rs")
+    );
+    assert!(
+        gates[11]
+            .evidence
+            .contains(&"crates/ui_components/tests/theme.rs")
+    );
+    assert!(
+        gates[11]
+            .evidence
+            .contains(&"cargo run -p xtask -- scan-theme-drift")
+    );
+
+    let a11y_claims = pages::components::COMPONENT_A11Y_CLAIMS;
+    assert_eq!(a11y_claims.len(), 11);
+    assert!(a11y_claims.iter().all(
+        |claim| claim.selector_prefix.starts_with("gallery:component-")
+            && claim.label_source.provides_name()
+    ));
+    let claim_names = a11y_claims
+        .iter()
+        .map(|claim| claim.component)
+        .collect::<std::collections::BTreeSet<_>>();
+    for expected in [
+        "Button",
+        "IconButton",
+        "Checkbox",
+        "Slider",
+        "NumberInput",
+        "Progress",
+        "Listbox option",
+        "Tree item",
+        "Table",
+        "VirtualizedList row",
+        "Splitter handle",
+    ] {
+        assert!(
+            claim_names.contains(expected),
+            "expected `{expected}` in component a11y claims"
+        );
+    }
+    assert!(a11y_claims.iter().any(|claim| {
+        claim.component == "IconButton"
+            && claim.role == Role::Button
+            && claim.label_source == A11yLabelSource::ExplicitLabel
+            && claim.actions.contains(&AccessibleAction::Click)
+    }));
+    assert!(a11y_claims.iter().any(|claim| {
+        claim.component == "Slider"
+            && claim.role == Role::Slider
+            && claim.value_kind == Some(A11yValueKind::Percent)
+            && claim.orientation == Some(Orientation::Horizontal)
+            && claim.actions.contains(&AccessibleAction::SetValue)
+    }));
+    assert!(a11y_claims.iter().any(|claim| {
+        claim.component == "Table"
+            && claim.role == Role::Table
+            && claim.value_kind == Some(A11yValueKind::Count)
+    }));
+    assert!(a11y_claims.iter().any(|claim| {
+        claim.component == "Splitter handle"
+            && claim.role == Role::Splitter
+            && claim.orientation == Some(Orientation::Vertical)
+            && claim.actions.contains(&AccessibleAction::Increment)
+            && claim.actions.contains(&AccessibleAction::Decrement)
+    }));
 
     assert_eq!(buttons.len(), 6);
     assert_eq!(buttons[0].id, "default");
@@ -2622,27 +2691,182 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     let catalog_source = include_str!("../src/pages/components/catalog.rs");
     let conformance_source = include_str!("../src/pages/components/conformance.rs");
     let render_source = include_str!("../src/pages/components/render.rs");
+    let render_families_source = include_str!("../src/pages/components/render/families.rs");
+    let render_focus_source = include_str!("../src/pages/components/render/focus.rs");
+    let render_readouts_source = include_str!("../src/pages/components/render/readouts.rs");
+    let render_sections_source = include_str!("../src/pages/components/render/sections.rs");
+    let render_support_source = include_str!("../src/pages/components/render/support.rs");
     let runtime_source = include_str!("../src/pages/components/runtime.rs");
+    let runtime_table_source = include_str!("../src/pages/components/runtime/table.rs");
+    let runtime_tree_source = include_str!("../src/pages/components/runtime/tree.rs");
+    let runtime_virtualized_list_source =
+        include_str!("../src/pages/components/runtime/virtualized_list.rs");
     let samples_source = include_str!("../src/pages/components/samples.rs");
+    let foundation_samples_source = include_str!("../src/pages/components/samples/foundation.rs");
+    let feedback_samples_source = include_str!("../src/pages/components/samples/feedback.rs");
+    let tree_samples_source = include_str!("../src/pages/components/samples/tree.rs");
+    let virtualized_list_samples_source =
+        include_str!("../src/pages/components/samples/virtualized_list.rs");
+    let choice_samples_source = include_str!("../src/pages/components/samples/choice.rs");
+    let text_samples_source = include_str!("../src/pages/components/samples/text.rs");
+    let navigation_samples_source = include_str!("../src/pages/components/samples/navigation.rs");
+    let table_samples_source = include_str!("../src/pages/components/samples/table.rs");
+    let layout_samples_source = include_str!("../src/pages/components/samples/layout.rs");
 
     assert!(components_source.contains("pub mod catalog;"));
     assert!(components_source.contains("pub use catalog::{"));
     assert!(components_source.contains("pub mod conformance;"));
-    assert!(components_source.contains("pub mod runtime;"));
-    assert!(components_source.contains("pub mod samples;"));
+    assert!(components_source.contains("mod runtime;"));
+    assert!(components_source.contains("mod samples;"));
+    assert!(components_source.contains("pub use runtime::{"));
+    assert!(components_source.contains("pub use samples::{"));
+    assert!(!components_source.contains("pub mod runtime;"));
+    assert!(!components_source.contains("pub mod samples;"));
+    assert!(!components_source.contains("pub use runtime::*;"));
+    assert!(!components_source.contains("pub use samples::*;"));
+    assert!(components_source.contains("TableSampleRuntimeLog"));
+    assert!(components_source.contains("table_samples"));
     assert!(catalog_source.contains("pub const COMPONENT_CATALOG"));
-    assert!(catalog_source.contains("ComponentCatalogEntry::official("));
+    assert!(catalog_source.contains("ComponentCatalogEntry::registry_sample("));
     assert!(catalog_source.contains("ComponentCatalogEntry::state_contract("));
     assert!(conformance_source.contains("pub const COMPONENT_CONFORMANCE_GATES"));
-    assert!(runtime_source.contains("pub struct TableSampleRuntimeLog"));
-    assert!(samples_source.contains("pub struct ButtonSample"));
-    assert!(!components_source.contains("ComponentCatalogEntry::official("));
+    for module_path in [
+        "#[path = \"runtime/table.rs\"]",
+        "#[path = \"runtime/tree.rs\"]",
+        "#[path = \"runtime/virtualized_list.rs\"]",
+    ] {
+        assert!(
+            runtime_source.contains(module_path),
+            "runtime facade should declare owner module `{module_path}`"
+        );
+    }
+    assert!(runtime_table_source.contains("pub struct TableSampleRuntimeLog"));
+    assert!(runtime_tree_source.contains("pub struct TreeSampleRuntimeLog"));
+    assert!(runtime_virtualized_list_source.contains("pub struct VirtualizedListSampleRuntimeLog"));
+    assert!(!runtime_source.contains("pub struct TableSampleRuntimeLog"));
+    assert!(!runtime_source.contains("pub struct TreeSampleRuntimeLog"));
+    assert!(!runtime_source.contains("pub struct VirtualizedListSampleRuntimeLog"));
+    for module_path in [
+        "#[path = \"samples/foundation.rs\"]",
+        "#[path = \"samples/feedback.rs\"]",
+        "#[path = \"samples/tree.rs\"]",
+        "#[path = \"samples/virtualized_list.rs\"]",
+        "#[path = \"samples/choice.rs\"]",
+        "#[path = \"samples/text.rs\"]",
+        "#[path = \"samples/navigation.rs\"]",
+        "#[path = \"samples/table.rs\"]",
+        "#[path = \"samples/layout.rs\"]",
+    ] {
+        assert!(
+            samples_source.contains(module_path),
+            "samples facade should declare family module `{module_path}`"
+        );
+    }
+    assert!(samples_source.contains("pub use foundation::{"));
+    assert!(samples_source.contains("pub use table::{"));
+    assert!(foundation_samples_source.contains("pub struct ButtonSample"));
+    assert!(feedback_samples_source.contains("pub struct StatusCueSample"));
+    assert!(tree_samples_source.contains("pub struct TreeSample"));
+    assert!(virtualized_list_samples_source.contains("pub struct VirtualizedListSample"));
+    assert!(choice_samples_source.contains("pub struct CheckboxSample"));
+    assert!(text_samples_source.contains("pub struct TextInputSample"));
+    assert!(navigation_samples_source.contains("pub struct TabsSample"));
+    assert!(table_samples_source.contains("pub struct TableSample"));
+    assert!(layout_samples_source.contains("pub struct ScrollAreaSample"));
+    assert!(!samples_source.contains("pub struct ButtonSample"));
+    assert!(!samples_source.contains("static TABLE_SAMPLES"));
+    for module_path in [
+        "#[path = \"render/families.rs\"]",
+        "#[path = \"render/focus.rs\"]",
+        "#[path = \"render/readouts.rs\"]",
+        "#[path = \"render/sections.rs\"]",
+        "#[path = \"render/support.rs\"]",
+    ] {
+        assert!(
+            render_source.contains(module_path),
+            "render facade should declare owner module `{module_path}`"
+        );
+    }
+    assert!(render_families_source.contains("fn component_tree_samples_section"));
+    assert!(render_focus_source.contains("fn render_component_focus_mode"));
+    assert!(render_readouts_source.contains("fn component_table_state_row"));
+    assert!(render_sections_source.contains("fn render_components_section"));
+    assert!(render_support_source.contains("fn component_gallery_card_shell"));
+    assert!(!render_source.contains("fn component_tree_samples_section"));
+    assert!(!render_source.contains("fn component_table_state_row"));
+    assert!(!render_source.contains("fn render_components_section"));
+    assert!(!render_source.contains("fn component_gallery_card_shell"));
     assert!(!components_source.contains("pub struct ButtonSample"));
     assert!(!components_source.contains("pub struct TableSampleRuntimeLog"));
     assert!(!render_source.contains("pub const COMPONENT_CATALOG"));
+    assert!(!render_sections_source.contains("pub const COMPONENT_CATALOG"));
     assert!(
-        render_source.contains("pages::components::COMPONENT_CATALOG"),
+        render_sections_source.contains("pages::components::COMPONENT_CATALOG"),
         "rendering should consume catalog metadata instead of owning it"
+    );
+}
+
+#[test]
+fn components_catalog_consumes_component_contract_registry() {
+    use std::collections::BTreeSet;
+
+    for entry in pages::components::COMPONENT_CATALOG {
+        let expected_status = pages::components::ComponentCatalogStatus::from_registry(
+            component_contract_gallery_status(entry.name),
+        );
+        assert_eq!(
+            entry.status, expected_status,
+            "catalog entry `{}` should derive status from the component contract registry",
+            entry.name
+        );
+
+        if let Some(expected_family) = component_contract_family(entry.name) {
+            assert_eq!(
+                entry.family, expected_family,
+                "catalog entry `{}` should derive family from the component contract registry",
+                entry.name
+            );
+        }
+    }
+
+    let catalog_names = pages::components::COMPONENT_CATALOG
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    let registry_official_names = COMPONENT_API_INVENTORY
+        .iter()
+        .filter(|entry| {
+            component_contract_gallery_status(entry.component)
+                == SurfaceGalleryStatus::OfficialComponent
+        })
+        .map(|entry| entry.component)
+        .collect::<BTreeSet<_>>();
+    let catalog_official_names = pages::components::COMPONENT_CATALOG
+        .iter()
+        .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        catalog_official_names, registry_official_names,
+        "Components catalog official rows should be registry-owned"
+    );
+
+    let missing_adjacent_surfaces = PUBLIC_SURFACE_OWNER_MAP
+        .iter()
+        .filter(|entry| {
+            matches!(
+                component_contract_gallery_status(entry.name),
+                SurfaceGalleryStatus::AdapterOnly
+                    | SurfaceGalleryStatus::InternalAnatomy
+                    | SurfaceGalleryStatus::StateContract
+            )
+        })
+        .filter(|entry| !catalog_names.contains(entry.name))
+        .map(|entry| entry.name)
+        .collect::<Vec<_>>();
+    assert!(
+        missing_adjacent_surfaces.is_empty(),
+        "Components catalog should include registry gallery-adjacent surfaces: {missing_adjacent_surfaces:?}"
     );
 }
 
@@ -2691,16 +2915,17 @@ fn verification_docs_list_current_ui_architecture_focused_gates() {
 #[test]
 fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
     let samples_source = include_str!("../src/pages/components/samples.rs");
-    let render_source = include_str!("../src/pages/components/render.rs");
-    let splitter_struct_start = samples_source
+    let layout_samples_source = include_str!("../src/pages/components/samples/layout.rs");
+    let render_sections_source = include_str!("../src/pages/components/render/sections.rs");
+    let splitter_struct_start = layout_samples_source
         .find("pub struct SplitterSample {")
         .expect("expected SplitterSample struct to exist");
-    let splitter_struct_end = samples_source[splitter_struct_start..]
-        .find("impl_component_sample_selectors!(SplitterSample, \"component-splitter-sample\");")
+    let splitter_struct_end = layout_samples_source[splitter_struct_start..]
+        .find("/// Returns scroll area samples backed by real component state.")
         .map(|offset| splitter_struct_start + offset)
-        .expect("expected SplitterSample selector impl to exist");
-    let splitter_struct = &samples_source[splitter_struct_start..splitter_struct_end];
-    let splitter_section = render_source
+        .expect("expected SplitterSample sample builder to follow struct declarations");
+    let splitter_struct = &layout_samples_source[splitter_struct_start..splitter_struct_end];
+    let splitter_section = render_sections_source
         .split("component_page_section(\"splitter\")")
         .nth(1)
         .and_then(|section| {
@@ -2710,6 +2935,9 @@ fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
         })
         .expect("expected Splitter section in components render source");
 
+    assert!(samples_source.contains(
+        "impl_component_sample_selectors!(SplitterSample, \"component-splitter-sample\");"
+    ));
     assert!(!splitter_struct.contains("pub orientation: Orientation,"));
     assert!(!splitter_struct.contains("pub size: Size,"));
     assert!(splitter_section.contains(".orientation(state.orientation())"));

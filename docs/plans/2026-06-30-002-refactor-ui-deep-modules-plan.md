@@ -540,7 +540,7 @@ cargo nextest run -p open-gpui-ui-components text_input textarea table_cell_edit
 
 - `crates/ui_components/src/overlay.rs`
 - `crates/ui_components/src/menu.rs`
-- `crates/ui_components/src/menu_runtime.rs`
+- `crates/ui_components/src/menu/runtime.rs`
 - `crates/ui_components/src/context_menu.rs`
 - `crates/ui_components/src/dialog.rs`
 - `crates/ui_components/src/alert_dialog.rs`
@@ -560,7 +560,7 @@ cargo nextest run -p open-gpui-ui-components text_input textarea table_cell_edit
 2. Migrate Dialog and Popover first because their behavior should be simpler than Menu.
 3. Migrate AlertDialog, Sheet, HoverCard, and ContextMenu using specialized policy values.
 4. Migrate Select, Combobox, and Command popup behavior once the runtime supports trigger/surface coordination.
-5. Migrate Menu last. Keep branch navigation and safe-hover logic in `menu_runtime.rs` or a specialized menu adapter, but make open ownership and focus restore use the shared disclosure runtime.
+5. Migrate Menu last. Keep branch navigation and safe-hover logic in `menu/runtime.rs` or a specialized menu adapter, but make open ownership and focus restore use the shared disclosure runtime.
 6. Delete duplicated default-open handling, focus-restore helpers, and debug selector plumbing that the runtime supersedes.
 
 **Patterns:**

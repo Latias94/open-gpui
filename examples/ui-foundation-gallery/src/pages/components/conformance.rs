@@ -1,5 +1,8 @@
 //! Component conformance gates for the foundation gallery.
 
+use open_gpui_ui_components::{A11yLabelSource, A11yValueKind};
+use open_gpui_ui_core::{AccessibleAction, Orientation, Role};
+
 /// One component conformance gate shown by the Components page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ComponentConformanceGate {
@@ -13,13 +16,147 @@ pub struct ComponentConformanceGate {
     pub evidence: &'static [&'static str],
 }
 
+/// One renderer-neutral accessibility claim tied to representative gallery samples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComponentA11yClaim {
+    /// Component or component part covered by the claim.
+    pub component: &'static str,
+    /// Stable sample selector prefix used by the gallery renderer.
+    pub selector_prefix: &'static str,
+    /// Renderer-neutral role expected for the component or part.
+    pub role: Role,
+    /// Source that provides the accessible name.
+    pub label_source: A11yLabelSource,
+    /// Optional value metadata kind exposed by the component.
+    pub value_kind: Option<A11yValueKind>,
+    /// Optional orientation metadata exposed by the component.
+    pub orientation: Option<Orientation>,
+    /// Supported accessibility actions covered by the representative contract.
+    pub actions: &'static [AccessibleAction],
+}
+
+/// Representative accessibility claims that keep gallery samples aligned with component contracts.
+pub const COMPONENT_A11Y_CLAIMS: &[ComponentA11yClaim] = &[
+    ComponentA11yClaim {
+        component: "Button",
+        selector_prefix: "gallery:component-button-sample",
+        role: Role::Button,
+        label_source: A11yLabelSource::VisibleText,
+        value_kind: None,
+        orientation: None,
+        actions: &[AccessibleAction::Click],
+    },
+    ComponentA11yClaim {
+        component: "IconButton",
+        selector_prefix: "gallery:component-icon-button-sample",
+        role: Role::Button,
+        label_source: A11yLabelSource::ExplicitLabel,
+        value_kind: None,
+        orientation: None,
+        actions: &[AccessibleAction::Click],
+    },
+    ComponentA11yClaim {
+        component: "Checkbox",
+        selector_prefix: "gallery:component-checkbox-sample",
+        role: Role::CheckBox,
+        label_source: A11yLabelSource::VisibleText,
+        value_kind: None,
+        orientation: None,
+        actions: &[AccessibleAction::Click],
+    },
+    ComponentA11yClaim {
+        component: "Slider",
+        selector_prefix: "gallery:component-slider-sample",
+        role: Role::Slider,
+        label_source: A11yLabelSource::VisibleText,
+        value_kind: Some(A11yValueKind::Percent),
+        orientation: Some(Orientation::Horizontal),
+        actions: &[
+            AccessibleAction::Increment,
+            AccessibleAction::Decrement,
+            AccessibleAction::SetValue,
+        ],
+    },
+    ComponentA11yClaim {
+        component: "NumberInput",
+        selector_prefix: "gallery:component-number-input-sample",
+        role: Role::SpinButton,
+        label_source: A11yLabelSource::VisibleText,
+        value_kind: Some(A11yValueKind::Number),
+        orientation: None,
+        actions: &[
+            AccessibleAction::Increment,
+            AccessibleAction::Decrement,
+            AccessibleAction::SetValue,
+        ],
+    },
+    ComponentA11yClaim {
+        component: "Progress",
+        selector_prefix: "gallery:component-progress-sample",
+        role: Role::ProgressIndicator,
+        label_source: A11yLabelSource::VisibleText,
+        value_kind: Some(A11yValueKind::Percent),
+        orientation: None,
+        actions: &[],
+    },
+    ComponentA11yClaim {
+        component: "Listbox option",
+        selector_prefix: "gallery:component-listbox-sample",
+        role: Role::ListBoxOption,
+        label_source: A11yLabelSource::VisibleText,
+        value_kind: Some(A11yValueKind::Selection),
+        orientation: None,
+        actions: &[AccessibleAction::Click],
+    },
+    ComponentA11yClaim {
+        component: "Tree item",
+        selector_prefix: "gallery:component-tree-sample",
+        role: Role::TreeItem,
+        label_source: A11yLabelSource::VisibleText,
+        value_kind: None,
+        orientation: None,
+        actions: &[AccessibleAction::Click, AccessibleAction::Focus],
+    },
+    ComponentA11yClaim {
+        component: "Table",
+        selector_prefix: "gallery:component-table-sample",
+        role: Role::Table,
+        label_source: A11yLabelSource::VisibleText,
+        value_kind: Some(A11yValueKind::Count),
+        orientation: None,
+        actions: &[],
+    },
+    ComponentA11yClaim {
+        component: "VirtualizedList row",
+        selector_prefix: "gallery:component-virtualized-list-sample",
+        role: Role::ListBoxOption,
+        label_source: A11yLabelSource::VisibleText,
+        value_kind: Some(A11yValueKind::Count),
+        orientation: None,
+        actions: &[AccessibleAction::Click, AccessibleAction::Focus],
+    },
+    ComponentA11yClaim {
+        component: "Splitter handle",
+        selector_prefix: "gallery:component-splitter-sample",
+        role: Role::Splitter,
+        label_source: A11yLabelSource::Generated,
+        value_kind: None,
+        orientation: Some(Orientation::Vertical),
+        actions: &[AccessibleAction::Increment, AccessibleAction::Decrement],
+    },
+];
+
 /// Regression-prone component behaviors that every new slice should keep covered.
 pub const COMPONENT_CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
     ComponentConformanceGate {
         id: "public-api-exports",
         title: "Public API exports",
-        summary: "Crate root and prelude exports stay explicit for every shipped component type.",
+        summary: "The component contract registry, crate root, and prelude exports stay aligned for every shipped component type.",
         evidence: &[
+            "crates/ui_components/src/component_contract/mod.rs",
+            "crates/ui_components/src/component_contract/rows.rs",
+            "crates/ui_components/src/component_contract/projections.rs",
+            "crates/ui_components/src/component_contract/api_inventory.rs",
             "crates/ui_components/src/lib.rs",
             "crates/ui_components/src/prelude.rs",
             "crates/ui_components/tests/public_surface.rs",
@@ -167,12 +304,30 @@ pub const COMPONENT_CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
     },
     ComponentConformanceGate {
         id: "a11y-labels",
-        title: "A11y labels and associations",
-        summary: "Icon-only controls and label associations remain explicit instead of relying on visual text.",
+        title: "A11y claims",
+        summary: "Representative samples keep roles, label sources, value metadata, orientation, and actions aligned with renderer-neutral component contracts.",
         evidence: &[
+            "ComponentA11yContract",
+            "COMPONENT_A11Y_CLAIMS",
+            "crates/ui_components/tests/a11y.rs",
+            "representative_component_a11y_contracts_are_valid",
             "IconButton::new",
             "Label::for_control",
             "components_page_samples_keep_explicit_a11y_metadata",
+        ],
+    },
+    ComponentConformanceGate {
+        id: "theme-schema",
+        title: "Theme schema",
+        summary: "Portable theme files, theme recipe ownership, and component color token coverage stay aligned with the component contract.",
+        evidence: &[
+            "crates/ui_components/src/theme/schema.rs",
+            "crates/ui_components/src/theme/recipes.rs",
+            "crates/ui_components/tests/theme.rs",
+            "docs/schemas/open-gpui-theme-v1.schema.json",
+            "theme_json_schema_exposes_portable_theme_contract",
+            "cargo run -p xtask -- scan-theme-drift",
+            "cargo run -p xtask -- scan-theme-schema",
         ],
     },
 ];

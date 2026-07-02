@@ -3,7 +3,8 @@
 Official Open GPUI components use an adapter-first, productized GPUI shape. A component may render
 with GPUI today, but its behavior and semantic state should stay renderer-neutral enough to test
 without rewriting the public API. ADR 0008 treats the current UI crates as the active product
-boundary; future headless extraction is a deferred option, not the current roadmap.
+boundary; future headless extraction is historical boundary evidence, not the current roadmap or
+the next implied refactor.
 
 ## Resolved State
 
@@ -271,8 +272,11 @@ reserved for caller-owned render-frame inputs. `Switch::on_change`, `Toggle::on_
 activation, modal action outcomes, close affordances, or table sort requests rather than scalar
 value changes.
 
-Keep crate-root exports explicit. Do not use wildcard public re-exports in component crates.
-GPUI-specific helpers that remain public for concrete applications must be reachable through
+Keep crate-root exports explicit. The shared default export surface lives in
+`crates/ui_components/src/public_api/default.rs`; both the crate root and prelude re-export that
+curated surface, while prelude-only additions remain local to `prelude.rs`. Do not use wildcard
+public re-exports in component crates except for that curated default-surface hop. GPUI-specific
+helpers that remain public for concrete applications must be reachable through
 `open_gpui_ui_components::gpui_adapter`; current examples include `TextInputController`,
 `init_text_input`, `focus_ring_shadow`, accessibility mapping helpers, geometry conversion helpers,
 and GPUI overlay scheduling helpers. The crate root and prelude default interface are reserved for
@@ -307,20 +311,32 @@ A component is official only when it satisfies the current-crate completion cont
   cannot prove;
 - `docs/verification.md` names any manual or automated gate added by the component.
 
-`examples/ui-foundation-gallery::pages::components::catalog::COMPONENT_CATALOG` owns the current
-metadata for this contract. The Components page re-exports that catalog through
-`examples/ui-foundation-gallery::pages::components::COMPONENT_CATALOG` so tests and rendering can
-keep their stable consumer path, but rendering code must consume catalog metadata instead of
-owning it. Entries marked `official` satisfy the checklist above. Entries marked `adapter-only`
-are public GPUI helper surfaces such as `TextInputController`, not standalone components. Entries
-marked `internal-anatomy` are public parts of a component family, such as `ToolbarItem`,
-`SidebarItem`, and `ListboxOption`, and should not be promoted to standalone components without a
-new resolved-state contract. Entries marked `state-contract` are public renderer-neutral contracts with gallery
-readouts and signal coverage, but they are not themselves rendered GPUI components. They may sit
-beside an official adapter, as `TreeState` does for `Tree`. They must use
-`state_contract_selector`, not the official `sample_selector`, and they must not satisfy the
-official rendered-component gate by accident. Entries marked `deferred` are planned components
-that must not be treated as shipped API until they satisfy the checklist.
+`open_gpui_ui_components::component_contract` owns the current product registry for this contract;
+its source home is the `crates/ui_components/src/component_contract/` module family.
+`component_contract/mod.rs` is only the facade; `component_contract/types.rs` owns row types,
+`component_contract/rows.rs` owns canonical registry rows, `component_contract/projections.rs`
+owns query APIs, `component_contract/source_mapping.rs` owns source-owner projections,
+`component_contract/surfaces.rs` owns adjacent public-surface rows, and
+`component_contract/api_inventory.rs` owns public API inventory and method baselines. That split is
+a shared fact-source cleanup, not a broad component-file-size cleanup.
+That registry classifies official components, official recipes, renderer-neutral state contracts,
+GPUI adapter helpers, public anatomy, diagnostics, and removed compatibility targets. It also
+records API inventory rows, source homes, docs tokens, gallery status, and default-export intent.
+`examples/ui-foundation-gallery::pages::components::catalog::COMPONENT_CATALOG` is a gallery view
+model over that registry. The Components page re-exports that catalog through
+`examples/ui-foundation-gallery::pages::components::COMPONENT_CATALOG` so tests and rendering keep
+their stable consumer path, but official status and family grouping are derived from the component
+crate registry. Entries with registry status `official` satisfy the checklist above. Entries with
+registry status `adapter-only` are public GPUI helper surfaces such as `TextInputController`, not
+standalone components. Entries with registry status `internal-anatomy` are public parts of a
+component family, such as `ToolbarItem`, `SidebarItem`, and `ListboxOption`, and should not be
+promoted to standalone components without a new resolved-state contract. Entries with registry
+status `state-contract` are public renderer-neutral contracts with gallery readouts and signal
+coverage, but they are not themselves rendered GPUI components. They may sit beside an official
+adapter, as `TreeState` does for `Tree`. They must use `state_contract_selector`, not the official
+`sample_selector`, and they must not satisfy the official rendered-component gate by accident.
+Entries with registry status `deferred` are planned components that must not be treated as shipped
+API until they satisfy the checklist and gain a registry entry.
 
 Public surface ownership uses a stricter source-facing vocabulary than the visible gallery status.
 `official component` names are rendered GPUI components with inventory rows and sample selectors.
@@ -391,19 +407,52 @@ revision is the cache invalidation hook for future app-level theme providers. Co
 read global theme state directly; keep the resolved component state renderer-neutral and pass theme
 snapshots at the adapter edge.
 
+`ThemeColor` entries pair semantic tokens with `ColorState` values.
+
 `ThemeRegistry` is the app-level owner for built-in and user-loaded theme snapshots. The registry
 preloads light, dark, and high-contrast entries, validates `ThemeDefinition` identity fields,
 replaces entries by stable id, and stores owned color tables behind `ThemeRegistryEntry`.
-`ThemeRegistrationDiagnostics` records which built-in mode supplied fallback colors and how many
-entries were filled from that fallback. Missing optional token/state colors are completed from a
-built-in snapshot; missing id, label, mode, or revision fail validation. The registry intentionally
+`ThemeRegistrationDiagnostics`
+records which built-in mode supplied fallback colors and how many entries were filled from that
+fallback. Missing optional token/state colors are completed from a built-in snapshot; missing id,
+label, mode, or revision fail validation with `ThemeValidationError`. The registry intentionally
 does not expose or mutate a global active theme: consumers choose an entry, take its immutable
 `ThemeSnapshot`, and pass that snapshot to `ThemeResolver::resolve_with`.
 
+Portable theme files are JSON and versioned by `THEME_JSON_SCHEMA_VERSION`. The public loader
+surface is `theme_json_schema`, `theme_definition_from_json_str`,
+`theme_definition_from_json_file`, `register_theme_json_str`, and `register_theme_json_file`.
+The reviewable schema artifact for version 1 lives at
+`docs/schemas/open-gpui-theme-v1.schema.json`; regenerate it with
+`cargo run -p open-gpui-ui-components --example export_theme_schema --quiet` when
+`theme_json_schema()` changes, then run `cargo run -p xtask -- scan-theme-schema`.
+Those facades validate schema version, identity fields, `ThemeMode`, duplicate token/state pairs,
+supported semantic token names, supported `ColorState` names, and six-digit RGB values before a
+definition reaches `ThemeRegistry::register`. Loader failures are structured as `ThemeLoadError`
+with `ThemeFileField` for missing top-level or per-color fields, so applications can show messages
+without parsing error strings. The schema covers the current resolver vocabulary: semantic surface,
+text, accent, destructive, overlay, modal overlay, and focus-ring tokens plus default, hover,
+selected, disabled, read-only, invalid, required, placeholder, message, focus-visible, overlay,
+and modal-overlay states. A pressed state is intentionally absent until the resolver grows a real
+`ColorState` for it.
+
+Schema vocabulary audit target:
+
+- Top-level fields: `schema_version`, `id`, `label`, `mode`, `revision`, `fallback_mode`, `colors`.
+- Color entry fields: `token`, `state`, `rgb`.
+- Modes: `light`, `dark`, `high-contrast`.
+- Tokens: `semantic.surface`, `semantic.surface_muted`, `semantic.border`, `semantic.text`,
+  `semantic.text_muted`, `semantic.accent`, `semantic.accent_foreground`, `semantic.focus_ring`,
+  `semantic.destructive`, `semantic.destructive_foreground`, `semantic.overlay`,
+  `semantic.modal_overlay`.
+- States: `default`, `hover`, `selected`, `disabled`, `read-only`, `invalid`, `required`,
+  `placeholder`, `message`, `focus-visible`, `overlay`, `modal-overlay`.
+
 Theme module ownership is intentionally split: `theme/snapshot.rs` owns immutable snapshot data,
 `theme/registry.rs` owns explicit registration and fallback diagnostics, `theme/resolver.rs` owns
-intent-to-color resolution, `theme/palette.rs` owns the built-in token tables, and
-`theme/recipes.rs` owns component color recipes. Component files should call
+intent-to-color resolution, `theme/schema.rs` owns the JSON schema and loader facade,
+`theme/palette.rs` owns the built-in token tables, and `theme/recipes.rs` owns component color
+recipes. Component files should call
 `ThemeResolver::*_colors` but should not add local `impl ThemeResolver` blocks. The
 `scan-theme-drift` xtask gate checks recipe catalog coverage and built-in palette token/state
 shape, so missing recipe or token additions fail before visual drift reaches gallery tests.
@@ -580,6 +629,11 @@ filter recipes, `column_visibility.rs`, `toolbar.rs`, and `metrics.rs` own the c
 surfaces. This ownership note is about review locality only; it does not add a second public Table
 contract or promise behavior beyond the exported `TableState`, `TableBehaviorSnapshot`, `Table`,
 filter recipes, callback payloads, and stable gallery/debug-selector proofs.
+`TableBehaviorSnapshot` keeps the public readout in `table/behavior/mod.rs`, while row counts and
+visible windows live in `table/behavior/counts.rs`, column regions and column snapshots in
+`table/behavior/columns.rs`, nested header summaries in `table/behavior/header.rs`, tree summaries
+in `table/behavior/tree.rs`, and rendered row/cell snapshots in `table/behavior/rows.rs`. This
+mirrors the Command split pattern without reopening the Table renderer.
 Crate-private region render plans expose summed widths to the adapter, and header/body cells read
 the same resolved column widths. For pinned tables, a crate-private center-column window virtualizes
 the shared horizontal center lane from adapter-owned horizontal scroll input. The adapter keeps
@@ -693,24 +747,44 @@ wired to the interaction model.
 
 Renderer-neutral accessibility also follows this boundary. `open_gpui_ui_core::Role::Splitter`,
 orientation, selected state, disabled state, and action descriptors are the stable vocabulary;
-`ui_components::a11y` maps that vocabulary to GPUI roles and ARIA-style element state. Docking's
-accessibility scene should describe panes, tabs, tab bars, splitters, drop targets, drag sources,
-and overlay state from the same presentation scene rather than from render-local rectangles.
+the component crate maps that vocabulary to GPUI roles and ARIA-style element state through
+`open_gpui_ui_components::gpui_adapter`. Docking's accessibility scene should describe panes,
+tabs, tab bars, splitters, drop targets, drag sources, and overlay state from the same presentation
+scene rather than from render-local rectangles.
+
+Component accessibility assertions use `ComponentA11yContract` rather than a live platform
+accessibility backend. The contract records `A11yLabelSource`, `A11yDescriptionSource`, selected,
+checked, expanded, disabled, `A11yValueMetadata`, `A11yValueKind`, orientation, and supported
+`AccessibleAction` values for a component or component part. Validation returns
+`A11yContractViolation` with `A11yContractError` when a role that requires an accessible name,
+value metadata, or action omits that fact. Focused tests in `crates/ui_components/tests/a11y.rs`
+cover representative primitives, form controls, icon-only controls, overlays, listbox choices,
+Table, Tree, VirtualizedList, and Splitter handles. GPUI adapter mapping tests remain separate, so
+the contract does not claim full platform screen-reader coverage.
 
 ## Gallery Conformance Surface
 
 `examples/ui-foundation-gallery` is the durable conformance surface for official UI components. It
-should expose stable sample ids, real resolved state, and a short gate list that names the
-regression-prone behaviors each slice must keep covered.
+consumes `open_gpui_ui_components::component_contract` for shipped status, family grouping, and
+public-contract evidence, then adds gallery-owned sample selectors, focused-section ids, runtime
+probes, and rendered dogfood. It should expose stable sample ids, real resolved state, and a short
+gate list that names the regression-prone behaviors each slice must keep covered.
 
-The Components page should keep the official component catalog visible and distinguish shipped
-components from adapter-only helpers, internal anatomy, state contracts, and deferred entries. Its
-root module is a small facade: catalog metadata lives in `components/catalog.rs`; the visible
-conformance gate list lives in `components/conformance.rs`; sample descriptors, resolved-state
-builders, and static sample data live in `components/samples.rs`; callback logs and mutable sample
-runtime state live in `components/runtime.rs`; `components/render.rs` consumes those modules and
-owns only GPUI rendering. The page has two supported inspection modes: the full all-components
-conformance page, and a focused component-family view entered from official catalog cards. Focused
+The Components page should keep the registry-backed component catalog visible and distinguish
+shipped components from adapter-only helpers, internal anatomy, state contracts, and deferred
+entries. Its root module is a small facade: catalog view-model metadata lives in
+`components/catalog.rs`; the visible conformance gate list lives in `components/conformance.rs`;
+`components/samples.rs`,
+`components/runtime.rs`, and `components/render.rs` are private parent facades over explicit
+family-owned modules. Sample descriptors and static sample data live under
+`components/samples/`; Tree, Table, and VirtualizedList runtime probes live under
+`components/runtime/`; page orchestration, section dispatch, readouts, focus controls, and shared
+card helpers live under `components/render/`. `components.rs` must not expose `runtime` or
+`samples` as public modules, and it must not use wildcard facade exports such as
+`pub use runtime::*` or `pub use samples::*`; only stable sample accessors, conformance metadata,
+and runtime probe names are re-exported explicitly. The page has two supported inspection modes:
+the full all-components conformance page, and a focused component-family view entered from
+official catalog cards. Focused
 mode may hide unrelated sections, but it must keep the section directory available, expose an
 explicit `All components` control, reset the page viewport when the family changes, and keep nested
 sample scrolling local to the sample viewport. Directory chips remain anchor jumps inside the
@@ -718,6 +792,12 @@ current page mode; they must not implicitly change the focused family. The page 
 these gates visible:
 
 - crate-root and prelude exports stay explicit;
+- registry default-export intent stays aligned through
+  `root_and_prelude_exports_match_registry_default_surface_intent`;
+- registry source ownership stays aligned through
+  `command_component_source_mapping_tracks_split_owners`;
+- gallery catalog status and family grouping stay registry-owned through
+  `components_catalog_consumes_component_contract_registry`;
 - adapter-only helper exports stay grouped under `open_gpui_ui_components::gpui_adapter`;
 - every official catalog entry keeps matching component/state signals and a rendered sample
   selector;
@@ -734,7 +814,12 @@ these gates visible:
 - Table and virtualizer samples keep long table scrolling inside the table viewport;
 - Splitter runtime fractions continue to share one constraint solver;
 - Tabs keep overflow and roving-focus behavior visible in the page;
-- icon-only affordances and labels keep their accessible metadata explicit.
+- icon-only affordances and labels keep their accessible metadata explicit;
+- `COMPONENT_A11Y_CLAIMS` and `ComponentA11yClaim` keep representative sample selectors, roles,
+  label sources, value metadata, orientation, and actions aligned with `ComponentA11yContract`.
+- `cargo run -p xtask -- scan-ui-contract` keeps registry rows, default exports, docs tokens,
+  conformance evidence, a11y claims, and the theme schema artifact aligned before gallery smoke
+  tests are needed.
 
 Large or behavior-heavy sections must use the same lazy or virtualized rendering primitives that
 the component library exposes to applications. The Components page mounts sections through a
@@ -748,6 +833,11 @@ mount, while the all-components page still remains a complete conformance surfac
 ADR 0008 makes current-crate productization the active roadmap. The boundary rules below remain
 useful hygiene for tests and future adapter work, but they are not a directive to create
 `open-gpui-ui-headless` in the current branch.
+
+The 2026-07-01 productization follow-up keeps both standalone headless extraction and broad
+remaining-1k-line component splitting out of scope. Split a large component file only when a
+specific contract, runtime, accessibility, or theme ownership problem requires it; file size alone
+is not the roadmap driver.
 
 The current component catalog has enough repeated behavior to keep a future extraction possible:
 overlay policy resolution, roving focus, listbox collection navigation, scroll viewport intent, and
@@ -777,10 +867,14 @@ Before extraction, keep these boundary rules explicit:
 
 ## Current Known Gaps
 
-The runtime theme table covers semantic component colors for light, dark, high-contrast, and
-registry-loaded snapshots. A JSON schema and file-loader facade are still follow-up work; UIs
-should construct `ThemeDefinition` values explicitly and register them before handing immutable
-snapshots to component adapters. Single-line editable text input now uses GPUI's `EntityInputHandler`/
+The active next UI productization slice is
+`docs/plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md`: split the component contract
+registry, add focused accessibility contract gates, and add a theme JSON schema plus file-loader
+facade. Broad remaining-1k-line component splitting and `open-gpui-ui-headless` extraction are not
+part of that slice. The runtime theme table now covers semantic component colors for light, dark,
+high-contrast, registry-loaded snapshots, and JSON-loaded `ThemeDefinition` values; UIs should
+load or construct definitions, register them, and pass immutable snapshots to component adapters.
+Single-line editable text input now uses GPUI's `EntityInputHandler`/
 `ElementInputHandler` path through `TextInputController`. Applications can either supply an
 adapter-owned controller directly or use the standard controlled shape
 `TextInput::value(...).on_change(...)`; the latter creates a keyed adapter controller internally,
@@ -797,8 +891,8 @@ Password reveal toggles, credential-manager affordances, textarea auto-grow/drag
 completion, validation engines, rich text, and code-editor behavior remain out of scope. `Field`
 still stays separate from the editing controller and remains composition-only. `focus_ring_shadow`
 is GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.
-ADR 0008 keeps current-crate productization as the active roadmap. ADR 0006 keeps
-`open-gpui-ui-headless` deferred after the strict boundary checkpoint, and ADR 0007 records the
+ADR 0008 keeps current-crate productization as the active roadmap. ADR 0006 keeps the strict
+boundary checkpoint as future extraction evidence, not active work, and ADR 0007 records the
 post-boundary extraction design without creating the behavior crate.
 The project now has repeated reusable behavior across overlay, roving focus, listbox navigation,
 scroll viewports, and splitter constraints, and component tests guard public resolved-state structs
@@ -910,9 +1004,23 @@ active/selected indices, page navigation, activation payloads, viewport item cou
 metrics, overscan, and semantic scroll strategy labels. Rendered range calculation remains owned
 by `open_gpui_ui_core::VirtualizerState`. `TreeBehaviorSnapshot` and `CommandBehaviorSnapshot`
 follow the same public boundary: behavior probes are stable, renderer assembly plans are internal.
-`menu_runtime.rs` owns submenu hover timing, branch switching, trigger-bound caches, and local
+`command/mod.rs` is the reference split facade: descriptor, model, style, render-plan, and runtime
+owners stay in sibling modules. `Menu`, `ContextMenu`, and `Tree` follow that shape: `menu/mod.rs`
+keeps the builder/render facade while `menu/descriptor.rs`, `menu/model.rs`,
+`menu/render_plan.rs`, `menu/runtime.rs`, and `menu/style.rs` own the public model, submenu
+placement contract, timing, and metrics; `context_menu/mod.rs` keeps the point-anchor facade while
+`context_menu/model.rs` owns the renderer-neutral context-menu state; `tree/mod.rs` keeps the
+render facade while `tree/descriptor.rs`, `tree/model.rs`, `tree/runtime.rs`, `tree/style.rs`,
+`tree/movement.rs`, and `tree/render_plan.rs` own descriptor data, state, adapter runtime, metrics,
+drag/drop movement, and virtualized behavior snapshots.
+`menu/runtime.rs` owns submenu hover timing, branch switching, trigger-bound caches, and local
 submenu scroll handles for `Menu` and `ContextMenu`, keeping render assembly thin while preserving
 safe hover and local scroll ownership.
+After these family splits, the shared UI framework contract work is enforced through
+`cargo run -p xtask -- scan-ui-contract`: `component_contract` module ownership, a11y contract
+claims, gallery conformance evidence, and theme schema/loading all have an audit entry point. The
+remaining large component files should stay intact unless one of those product contracts exposes a
+concrete ownership problem.
 `Splitter` covers panel fraction normalization, min/max constraints, collapsed-panel metadata,
 stable handle anatomy, and local pointer dragging through keyed runtime state. Keyboard resizing,
 controlled resize callbacks, persisted layouts, RTL behavior, and nested splitter arbitration

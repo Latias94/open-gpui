@@ -36,18 +36,20 @@ pub struct TreeMoveTarget {
 impl TreeMoveTarget {
     pub(super) fn from_target(target: &TreeItemState, position: TreeDropPosition) -> Self {
         let target_parent_value = match position {
-            TreeDropPosition::Inside => Some(target.value.clone()),
-            TreeDropPosition::Before | TreeDropPosition::After => target.parent_value.clone(),
+            TreeDropPosition::Inside => Some(target.value().to_owned()),
+            TreeDropPosition::Before | TreeDropPosition::After => {
+                target.parent_value().map(str::to_owned)
+            }
         };
         let sibling_anchor_value = match position {
             TreeDropPosition::Inside => None,
-            TreeDropPosition::Before | TreeDropPosition::After => Some(target.value.clone()),
+            TreeDropPosition::Before | TreeDropPosition::After => Some(target.value().to_owned()),
         };
 
         Self {
-            target_index: target.index,
-            target_value: target.value.clone(),
-            target_label: target.label.clone(),
+            target_index: target.index(),
+            target_value: target.value().to_owned(),
+            target_label: target.label().to_owned(),
             position,
             target_parent_value,
             sibling_anchor_value,
@@ -98,10 +100,10 @@ pub struct TreeMove {
 impl TreeMove {
     pub(super) fn from_items(source: &TreeItemState, target: TreeMoveTarget) -> Self {
         Self {
-            source_index: source.index,
-            value: source.value.clone(),
-            label: source.label.clone(),
-            source_parent_value: source.parent_value.clone(),
+            source_index: source.index(),
+            value: source.value().to_owned(),
+            label: source.label().to_owned(),
+            source_parent_value: source.parent_value().map(str::to_owned),
             target,
         }
     }
@@ -159,7 +161,7 @@ pub fn apply_tree_move(
         TreeDropPosition::Inside => {
             let parent_value = tree_move.target_parent_value()?;
             let parent = find_tree_descriptor_mut(&mut items, parent_value)?;
-            parent.children.push(moved);
+            parent.child_descriptors_mut().push(moved);
         }
         TreeDropPosition::Before | TreeDropPosition::After => {
             let parent_value = tree_move.target_parent_value();
@@ -189,7 +191,7 @@ fn remove_tree_descriptor(
         if items[index].value() == value {
             return Some(items.remove(index));
         }
-        if let Some(removed) = remove_tree_descriptor(&mut items[index].children, value) {
+        if let Some(removed) = remove_tree_descriptor(items[index].child_descriptors_mut(), value) {
             return Some(removed);
         }
         index += 1;
@@ -203,9 +205,8 @@ fn tree_descriptor_children_mut<'a>(
     parent_value: Option<&str>,
 ) -> Option<&'a mut Vec<TreeItemDescriptor>> {
     match parent_value {
-        Some(parent_value) => {
-            find_tree_descriptor_mut(items, parent_value).map(|item| &mut item.children)
-        }
+        Some(parent_value) => find_tree_descriptor_mut(items, parent_value)
+            .map(TreeItemDescriptor::child_descriptors_mut),
         None => Some(items),
     }
 }
@@ -218,7 +219,7 @@ fn find_tree_descriptor_mut<'a>(
         if item.value() == value {
             return Some(item);
         }
-        if let Some(found) = find_tree_descriptor_mut(&mut item.children, value) {
+        if let Some(found) = find_tree_descriptor_mut(item.child_descriptors_mut(), value) {
             return Some(found);
         }
     }

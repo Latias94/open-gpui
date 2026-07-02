@@ -267,7 +267,7 @@ The implementation must keep behavior tests stronger than compatibility tests so
 - **Files:**
   - `crates/ui_core/src/overlay.rs`
   - `crates/ui_components/src/overlay.rs`
-  - `crates/ui_components/src/menu_runtime.rs`
+  - `crates/ui_components/src/menu/runtime.rs`
   - `crates/ui_components/src/popover.rs`
   - `crates/ui_components/src/dialog.rs`
   - `crates/ui_components/src/alert_dialog.rs`
@@ -513,7 +513,7 @@ Executing ADR 0008's current-crate productization and ADR 0009's Table/virtualiz
 - `docs/ui/component-contract.md` records current public behavior and names the missing theme registry, user theme loading, and JSON schema gap.
 - `docs/verification.md` defines the UI-focused `fmt`, `check`, `nextest`, gallery, and full `xtask` gates.
 - `crates/ui_components/src/primitives/*` shows shallow pass-through primitive modules that do not yet own adapter behavior.
-- `crates/ui_components/src/overlay.rs`, overlay component files, and `crates/ui_components/src/menu_runtime.rs` show repeated GPUI overlay runtime responsibilities.
+- `crates/ui_components/src/overlay.rs`, overlay component files, and `crates/ui_components/src/menu/runtime.rs` show repeated GPUI overlay runtime responsibilities.
 - `crates/ui_components/src/choice.rs`, `listbox.rs`, `select.rs`, `combobox.rs`, and `command/*` show shared stable-value choice/search behavior with component-specific duplication.
 - `crates/ui_components/src/table/*`, `tree.rs`, `tree/render_plan.rs`, `virtualized_list.rs`, and `crates/ui_core/src/virtualizer.rs` show repeated virtualized row-window projection.
 - `examples/ui-foundation-gallery/src/pages/components.rs`, `examples/ui-foundation-gallery/src/pages/components/render.rs`, and gallery tests show the current catalog, signals, focused mode, and conformance proof surface.

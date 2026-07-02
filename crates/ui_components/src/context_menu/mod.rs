@@ -1,7 +1,9 @@
 //! Context menu component.
 
+mod model;
+
 use crate::geometry::gpui_px_from_ui;
-use crate::menu_runtime::ContextMenuRuntime;
+use crate::menu::runtime::ContextMenuRuntime;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
@@ -11,158 +13,25 @@ use open_gpui::{
     Window, anchored, deferred, div, px,
 };
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    OverlayAnchorInput, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
-    Role, Sizable, Size, ThemeTokens, UiPoint, ui_px, ui_size,
+    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, Role, Sizable,
+    Size, ThemeTokens,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::focus::focus_ring_shadow;
 use crate::geometry::{gpui_point_from_ui, ui_point_from_gpui};
 use crate::menu::{
-    MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuKeyboardIntent, MenuMetrics,
-    MenuOpenMode, MenuSelection, MenuState, MenuSubmenuNavigation, visible_menu_items,
+    MenuItem, MenuItemKind, MenuKeyboardIntent, MenuSelection, MenuSubmenuNavigation,
+    visible_menu_items,
 };
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event, emit_overlay_open_change,
-    gpui_overlay_state, outside_press_open_change, resolve_overlay_open_state,
-    restore_overlay_focus, set_overlay_open,
+    GpuiOverlayPlacement, consume_overlay_event, emit_overlay_open_change, gpui_overlay_state,
+    outside_press_open_change, resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::ThemeResolver;
 
-/// Resolved context-menu state used by tests, demos, and rendering.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ContextMenuState {
-    size: Size,
-    open: bool,
-    default_open: bool,
-    open_mode: MenuOpenMode,
-    anchor_point: UiPoint,
-    menu: MenuState,
-    placement_input: OverlayPlacementInput,
-}
-
-impl ContextMenuState {
-    /// Resolves public state for a point-anchored context menu.
-    #[allow(clippy::too_many_arguments)]
-    pub fn resolve(
-        size: Size,
-        open: Option<bool>,
-        default_open: bool,
-        anchor_point: UiPoint,
-        focused_value: Option<&str>,
-        items: impl IntoIterator<Item = MenuItemDescriptor>,
-        outside_press_policy: OutsidePressPolicy,
-        escape_key_policy: EscapeKeyPolicy,
-        initial_focus_intent: InitialFocusIntent,
-        focus_restore_intent: FocusRestoreIntent,
-        tokens: ThemeTokens,
-    ) -> Self {
-        let descriptors: Vec<MenuItemDescriptor> = items.into_iter().collect();
-        let menu = MenuState::resolve(
-            size,
-            false,
-            open,
-            default_open,
-            focused_value,
-            descriptors,
-            OverlayPlacementSide::Bottom,
-            OverlayPlacementAlignment::Start,
-            outside_press_policy,
-            escape_key_policy,
-            initial_focus_intent,
-            focus_restore_intent,
-            tokens,
-        );
-        let placement_input = context_menu_placement_input(anchor_point, &menu);
-
-        Self {
-            size,
-            open: menu.open(),
-            default_open,
-            open_mode: menu.open_mode(),
-            anchor_point,
-            menu,
-            placement_input,
-        }
-    }
-
-    /// Returns context-menu size.
-    pub const fn size(&self) -> Size {
-        self.size
-    }
-
-    /// Returns whether context-menu content is open.
-    pub const fn open(&self) -> bool {
-        self.open
-    }
-
-    /// Returns uncontrolled initial open state.
-    pub const fn default_open(&self) -> bool {
-        self.default_open
-    }
-
-    /// Returns open-state ownership.
-    pub const fn open_mode(&self) -> MenuOpenMode {
-        self.open_mode
-    }
-
-    /// Returns the point anchor.
-    pub const fn anchor_point(&self) -> UiPoint {
-        self.anchor_point
-    }
-
-    /// Returns the shared menu state.
-    pub const fn menu(&self) -> &MenuState {
-        &self.menu
-    }
-
-    /// Returns renderer-neutral placement input for the context-menu surface.
-    pub const fn placement_input(&self) -> OverlayPlacementInput {
-        self.placement_input
-    }
-
-    /// Returns renderer-neutral overlay state.
-    pub const fn overlay(&self) -> &OverlayResolvedState {
-        self.menu.overlay()
-    }
-
-    /// Returns resolved menu metrics.
-    pub const fn metrics(&self) -> MenuMetrics {
-        self.menu.metrics()
-    }
-
-    /// Returns resolved menu colors.
-    pub const fn colors(&self) -> MenuColors {
-        self.menu.colors()
-    }
-
-    /// Returns content accessibility role.
-    pub const fn content_role(&self) -> Role {
-        Role::Menu
-    }
-}
-
-fn context_menu_placement_input(anchor_point: UiPoint, menu: &MenuState) -> OverlayPlacementInput {
-    let metrics = menu.metrics();
-    let visible_count = menu.visible_items().len();
-    let row_gap = ui_px(4.0);
-    let gap_height = row_gap.as_f32() * visible_count.saturating_sub(1) as f32;
-    let content_height = ui_px(metrics.max_height().as_f32().min(
-        metrics.surface_padding().as_f32() * 2.0
-            + metrics.item_height().as_f32() * visible_count as f32
-            + gap_height,
-    ));
-
-    OverlayPlacementInput::new(
-        OverlayAnchorInput::from_point(anchor_point),
-        ui_size(metrics.min_width(), content_height),
-    )
-    .with_side(OverlayPlacementSide::Bottom)
-    .with_alignment(OverlayPlacementAlignment::Start)
-    .with_offset(ui_px(0.0))
-}
+pub use model::ContextMenuState;
 
 /// A concrete GPUI context menu component.
 #[derive(IntoElement)]
@@ -345,37 +214,21 @@ impl RenderOnce for ContextMenu {
         }
 
         let focused_value = runtime_state.resolved_focused_value(self.focused_value.as_deref());
-        let mut state = ContextMenuState::resolve(
+        let state = ContextMenuState::resolve_with_paths(
             self.size,
             Some(resolved_open),
             self.default_open,
             ui_point_from_gpui(resolved_anchor),
             focused_value,
-            self.items.iter().map(MenuItem::descriptor),
-            self.outside_press_policy,
-            self.escape_key_policy,
-            self.initial_focus_intent.clone(),
-            self.focus_restore_intent.clone(),
-            self.tokens,
-        );
-        state.menu = MenuState::resolve_with_paths(
-            self.size,
-            false,
-            Some(resolved_open),
-            self.default_open,
-            focused_value,
             runtime_state.focused_path.as_deref(),
             &runtime_state.open_path,
             self.items.iter().map(MenuItem::descriptor),
-            OverlayPlacementSide::Bottom,
-            OverlayPlacementAlignment::Start,
             self.outside_press_policy,
             self.escape_key_policy,
             self.initial_focus_intent.clone(),
             self.focus_restore_intent.clone(),
             self.tokens,
         );
-        state.placement_input = context_menu_placement_input(state.anchor_point, &state.menu);
         let id = self.id;
         let debug_id = id.to_string();
         let surface_id: ElementId = (id.clone(), "surface").into();

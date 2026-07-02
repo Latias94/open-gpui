@@ -6,12 +6,44 @@ use open_gpui_ui_components::{
     ColorIntent, ColorState, Combobox, ComboboxOption, Command, CommandItem, EmptyState,
     FeedbackIntent, Field, HoverCard, IconButton, Kbd, Label, Listbox, ListboxOption, Menu,
     MenuItem, Progress, RadioGroup, RadioItem, Select, Separator, Sheet, Skeleton, StatusCue,
-    Switch, TableToolbar, TextInput, ThemeColor, ThemeDefinition, ThemeMode, ThemeRegistry,
-    ThemeResolver, ThemeSnapshot, ThemeValidationError, Toggle, ToggleVariant,
+    Switch, THEME_JSON_SCHEMA_VERSION, TableToolbar, TextInput, ThemeColor, ThemeDefinition,
+    ThemeFileField, ThemeLoadError, ThemeMode, ThemeRegistry, ThemeResolver, ThemeSnapshot,
+    ThemeValidationError, Toggle, ToggleVariant, register_theme_json_file, register_theme_json_str,
+    theme_definition_from_json_file, theme_definition_from_json_str, theme_json_schema,
 };
 use open_gpui_ui_core::{Sizable, semantic};
 
 use support::tokens::custom_tokens;
+
+const VALID_THEME_JSON: &str = r##"{
+  "schema_version": 1,
+  "id": "forest-json",
+  "label": "Forest JSON",
+  "mode": "dark",
+  "revision": 9001,
+  "fallback_mode": "light",
+  "colors": [
+    { "token": "semantic.accent", "state": "default", "rgb": "#227755" },
+    { "token": "semantic.accent", "state": "hover", "rgb": "#1b6044" },
+    { "token": "semantic.surface_muted", "state": "selected", "rgb": "#173c32" },
+    { "token": "semantic.surface_muted", "state": "disabled", "rgb": "#102820" },
+    { "token": "semantic.destructive", "state": "invalid", "rgb": "#ff5544" },
+    { "token": "semantic.focus_ring", "state": "focus-visible", "rgb": "#77b8ff" }
+  ]
+}"##;
+
+fn portable_theme_definition(id: &str) -> ThemeDefinition {
+    ThemeDefinition::new(id, "Forest JSON", ThemeMode::Dark, 9001)
+        .fallback_mode(ThemeMode::Light)
+        .colors([
+            ThemeColor::new(semantic::ACCENT, ColorState::Default, 0x227755),
+            ThemeColor::new(semantic::ACCENT, ColorState::Hover, 0x1b6044),
+            ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Selected, 0x173c32),
+            ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Disabled, 0x102820),
+            ThemeColor::new(semantic::DESTRUCTIVE, ColorState::Invalid, 0xff5544),
+            ThemeColor::new(semantic::FOCUS_RING, ColorState::FocusVisible, 0x77b8ff),
+        ])
+}
 
 #[test]
 fn button_accepts_custom_token_bundle() {
@@ -170,6 +202,213 @@ fn theme_registry_registers_user_definition_with_fallback_diagnostics() {
 }
 
 #[test]
+fn theme_json_loader_registers_portable_definition_like_code_built_theme() {
+    let json_definition = theme_definition_from_json_str(VALID_THEME_JSON)
+        .expect("valid theme JSON should produce a ThemeDefinition");
+    let mut json_registry = ThemeRegistry::with_builtins();
+    let json_entry = json_registry
+        .register(json_definition)
+        .expect("valid loaded theme should register")
+        .clone();
+
+    let mut code_registry = ThemeRegistry::with_builtins();
+    let code_entry = code_registry
+        .register(portable_theme_definition("forest-json"))
+        .expect("equivalent code-built theme should register")
+        .clone();
+
+    assert_eq!(json_entry.id(), "forest-json");
+    assert_eq!(json_entry.label(), "Forest JSON");
+    assert_eq!(json_entry.snapshot().mode(), ThemeMode::Dark);
+    assert_eq!(json_entry.snapshot().revision(), 9001);
+    assert_eq!(json_entry.diagnostics().fallback_mode(), ThemeMode::Light);
+    assert_eq!(
+        json_entry
+            .snapshot()
+            .color_rgb(semantic::ACCENT, ColorState::Default),
+        code_entry
+            .snapshot()
+            .color_rgb(semantic::ACCENT, ColorState::Default)
+    );
+    assert_eq!(
+        json_entry
+            .snapshot()
+            .color_rgb(semantic::SURFACE_MUTED, ColorState::Disabled),
+        Some(0x102820)
+    );
+    assert_eq!(
+        json_entry
+            .snapshot()
+            .color_rgb(semantic::DESTRUCTIVE, ColorState::Invalid),
+        Some(0xff5544)
+    );
+
+    let mut direct_registry = ThemeRegistry::with_builtins();
+    let direct_entry = register_theme_json_str(&mut direct_registry, VALID_THEME_JSON)
+        .expect("string facade should parse and register")
+        .clone();
+    assert_eq!(direct_entry.id(), "forest-json");
+}
+
+#[test]
+fn theme_json_schema_exposes_portable_theme_contract() {
+    let schema =
+        serde_json::to_string(&theme_json_schema()).expect("theme JSON schema should serialize");
+
+    assert_eq!(THEME_JSON_SCHEMA_VERSION, 1);
+    for token in [
+        "schema_version",
+        "fallback_mode",
+        "colors",
+        "semantic.focus_ring",
+        "focus-visible",
+        "disabled",
+        "hover",
+        "selected",
+        "invalid",
+        "high-contrast",
+    ] {
+        assert!(
+            schema.contains(token),
+            "theme JSON schema should mention `{token}`"
+        );
+    }
+}
+
+#[test]
+fn theme_json_loader_reports_structured_errors_before_registration() {
+    assert_eq!(
+        theme_definition_from_json_str("{}").unwrap_err(),
+        ThemeLoadError::MissingField(ThemeFileField::SchemaVersion)
+    );
+    assert_eq!(
+        theme_definition_from_json_str(
+            r##"{
+                "schema_version": 2,
+                "id": "forest",
+                "label": "Forest",
+                "mode": "dark",
+                "revision": 1,
+                "colors": [{"token": "semantic.accent", "state": "default", "rgb": "#123456"}]
+            }"##
+        )
+        .unwrap_err(),
+        ThemeLoadError::UnsupportedSchemaVersion {
+            version: 2,
+            supported: THEME_JSON_SCHEMA_VERSION
+        }
+    );
+    assert_eq!(
+        theme_definition_from_json_str(
+            r##"{
+                "schema_version": 1,
+                "label": "Forest",
+                "mode": "dark",
+                "revision": 1,
+                "colors": [{"token": "semantic.accent", "state": "default", "rgb": "#123456"}]
+            }"##
+        )
+        .unwrap_err(),
+        ThemeLoadError::MissingField(ThemeFileField::Id)
+    );
+    assert_eq!(
+        theme_definition_from_json_str(
+            r##"{
+                "schema_version": 1,
+                "id": "forest",
+                "label": "Forest",
+                "mode": "dark",
+                "revision": 1,
+                "colors": [{"token": "semantic.unknown", "state": "default", "rgb": "#123456"}]
+            }"##
+        )
+        .unwrap_err(),
+        ThemeLoadError::UnsupportedToken {
+            token: "semantic.unknown".to_owned()
+        }
+    );
+    assert_eq!(
+        theme_definition_from_json_str(
+            r##"{
+                "schema_version": 1,
+                "id": "forest",
+                "label": "Forest",
+                "mode": "dark",
+                "revision": 1,
+                "colors": [{"token": "semantic.accent", "state": "pressed", "rgb": "#123456"}]
+            }"##
+        )
+        .unwrap_err(),
+        ThemeLoadError::UnsupportedColorState {
+            state: "pressed".to_owned()
+        }
+    );
+    assert_eq!(
+        theme_definition_from_json_str(
+            r##"{
+                "schema_version": 1,
+                "id": "forest",
+                "label": "Forest",
+                "mode": "dark",
+                "revision": 1,
+                "colors": [{"token": "semantic.accent", "state": "default", "rgb": "#12"}]
+            }"##
+        )
+        .unwrap_err(),
+        ThemeLoadError::InvalidRgb {
+            value: "#12".to_owned()
+        }
+    );
+    assert_eq!(
+        theme_definition_from_json_str(
+            r##"{
+                "schema_version": 1,
+                "id": "forest",
+                "label": "Forest",
+                "mode": "dark",
+                "revision": 1,
+                "colors": [
+                    {"token": "semantic.accent", "state": "default", "rgb": "#123456"},
+                    {"token": "semantic.accent", "state": "default", "rgb": "#654321"}
+                ]
+            }"##
+        )
+        .unwrap_err(),
+        ThemeLoadError::DuplicateColor {
+            token: "semantic.accent".to_owned(),
+            state: "default".to_owned()
+        }
+    );
+}
+
+#[test]
+fn theme_json_file_facade_reads_and_registers_theme_files() {
+    let path = std::env::temp_dir().join(format!(
+        "open-gpui-theme-loader-{}-{}.json",
+        std::process::id(),
+        ThemeSnapshot::light().revision()
+    ));
+    std::fs::write(&path, VALID_THEME_JSON).expect("temporary theme file should be writable");
+
+    let definition =
+        theme_definition_from_json_file(&path).expect("file facade should load theme definition");
+    let mut registry = ThemeRegistry::with_builtins();
+    let loaded_entry = registry
+        .register(definition)
+        .expect("loaded theme definition should register")
+        .clone();
+    assert_eq!(loaded_entry.id(), "forest-json");
+
+    let mut direct_registry = ThemeRegistry::with_builtins();
+    let direct_entry = register_theme_json_file(&mut direct_registry, &path)
+        .expect("file register facade should load and register")
+        .clone();
+    assert_eq!(direct_entry.snapshot().revision(), 9001);
+
+    std::fs::remove_file(&path).expect("temporary theme file should be removable");
+}
+
+#[test]
 fn theme_registry_rejects_missing_required_identity_fields() {
     let mut registry = ThemeRegistry::new();
 
@@ -253,6 +492,10 @@ fn theme_registry_types_are_exported_from_root_and_prelude() {
         .clone();
     let root_diagnostics: root::ThemeRegistrationDiagnostics = root_entry.diagnostics();
     let root_error: root::ThemeValidationError = root::ThemeValidationError::MissingId;
+    let root_load_error: root::ThemeLoadError =
+        root::theme_definition_from_json_str("{}").unwrap_err();
+    let root_file_field: root::ThemeFileField = root::ThemeFileField::SchemaVersion;
+    let _root_schema = root::theme_json_schema();
 
     let mut prelude_registry: prelude::ThemeRegistry = prelude::ThemeRegistry::with_builtins();
     let prelude_definition: prelude::ThemeDefinition = prelude::ThemeDefinition::new(
@@ -267,9 +510,15 @@ fn theme_registry_types_are_exported_from_root_and_prelude() {
         .clone();
     let prelude_diagnostics: prelude::ThemeRegistrationDiagnostics = prelude_entry.diagnostics();
     let prelude_error: prelude::ThemeValidationError = prelude::ThemeValidationError::MissingLabel;
+    let prelude_load_error: prelude::ThemeLoadError =
+        prelude::theme_definition_from_json_str("{}").unwrap_err();
+    let prelude_file_field: prelude::ThemeFileField = prelude::ThemeFileField::SchemaVersion;
+    let _prelude_schema = prelude::theme_json_schema();
 
     assert_eq!(root_entry.snapshot().revision(), 7);
     assert_eq!(prelude_entry.snapshot().revision(), 8);
+    assert_eq!(root::THEME_JSON_SCHEMA_VERSION, 1);
+    assert_eq!(prelude::THEME_JSON_SCHEMA_VERSION, 1);
     assert_eq!(root_diagnostics.fallback_mode(), root::ThemeMode::Light);
     assert!(root_diagnostics.fallback_color_count() > 0);
     assert_eq!(
@@ -278,6 +527,18 @@ fn theme_registry_types_are_exported_from_root_and_prelude() {
     );
     assert_eq!(root_error, root::ThemeValidationError::MissingId);
     assert_eq!(prelude_error, prelude::ThemeValidationError::MissingLabel);
+    assert_eq!(
+        root_load_error,
+        root::ThemeLoadError::MissingField(root_file_field)
+    );
+    assert_eq!(
+        prelude_load_error,
+        prelude::ThemeLoadError::MissingField(prelude_file_field)
+    );
+    root::register_theme_json_str(&mut root_registry, VALID_THEME_JSON)
+        .expect("root register_theme_json_str should register exported loader output");
+    prelude::register_theme_json_str(&mut prelude_registry, VALID_THEME_JSON)
+        .expect("prelude register_theme_json_str should register exported loader output");
 }
 
 #[test]

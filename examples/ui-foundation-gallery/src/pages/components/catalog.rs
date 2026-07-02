@@ -1,6 +1,9 @@
 //! Component catalog metadata for the foundation gallery.
 
 use crate::story::{StoryContract, StoryContractKind, StoryProbeContract, StoryProbeOperation::*};
+use open_gpui_ui_components::component_contract::{
+    SurfaceGalleryStatus, component_contract_family, component_contract_gallery_status,
+};
 
 /// Stable jump targets for the Components page navigator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,6 +243,19 @@ pub enum ComponentCatalogStatus {
 }
 
 impl ComponentCatalogStatus {
+    /// Maps registry-owned gallery status into the Components page status vocabulary.
+    pub const fn from_registry(status: SurfaceGalleryStatus) -> Self {
+        match status {
+            SurfaceGalleryStatus::OfficialComponent => Self::Official,
+            SurfaceGalleryStatus::AdapterOnly => Self::AdapterOnly,
+            SurfaceGalleryStatus::InternalAnatomy => Self::InternalAnatomy,
+            SurfaceGalleryStatus::StateContract => Self::StateContract,
+            SurfaceGalleryStatus::OfficialOverlay | SurfaceGalleryStatus::NotInGallery => {
+                Self::Deferred
+            }
+        }
+    }
+
     /// Stable status label used by tests and the gallery.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -283,8 +299,8 @@ pub struct ComponentCatalogEntry {
 }
 
 impl ComponentCatalogEntry {
-    /// Creates an official catalog entry with a stable sample selector.
-    pub const fn official(
+    /// Creates a rendered catalog entry with a stable sample selector.
+    pub const fn registry_sample(
         name: &'static str,
         family: &'static str,
         state: &'static str,
@@ -293,8 +309,8 @@ impl ComponentCatalogEntry {
     ) -> Self {
         Self {
             name,
-            status: ComponentCatalogStatus::Official,
-            family,
+            status: ComponentCatalogStatus::from_registry(component_contract_gallery_status(name)),
+            family: registry_family_or(name, family),
             state: Some(state),
             coverage,
             sample_selector: Some(sample_selector),
@@ -312,8 +328,8 @@ impl ComponentCatalogEntry {
     ) -> Self {
         Self {
             name,
-            status: ComponentCatalogStatus::StateContract,
-            family,
+            status: ComponentCatalogStatus::from_registry(component_contract_gallery_status(name)),
+            family: registry_family_or(name, family),
             state: Some(state),
             coverage,
             sample_selector: None,
@@ -329,8 +345,8 @@ impl ComponentCatalogEntry {
     ) -> Self {
         Self {
             name,
-            status: ComponentCatalogStatus::AdapterOnly,
-            family,
+            status: ComponentCatalogStatus::from_registry(component_contract_gallery_status(name)),
+            family: registry_family_or(name, family),
             state: None,
             coverage,
             sample_selector: None,
@@ -346,8 +362,8 @@ impl ComponentCatalogEntry {
     ) -> Self {
         Self {
             name,
-            status: ComponentCatalogStatus::InternalAnatomy,
-            family,
+            status: ComponentCatalogStatus::from_registry(component_contract_gallery_status(name)),
+            family: registry_family_or(name, family),
             state: None,
             coverage,
             sample_selector: None,
@@ -411,240 +427,247 @@ impl ComponentCatalogEntry {
     }
 }
 
+const fn registry_family_or(name: &'static str, fallback: &'static str) -> &'static str {
+    match component_contract_family(name) {
+        Some(family) => family,
+        None => fallback,
+    }
+}
+
 /// Official component catalog and adjacent public surfaces.
 pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Button",
         "action",
         "ButtonState",
         "exports / gallery / state tests",
         "gallery:component-button-sample:default",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Badge",
         "display",
         "BadgeState",
         "exports / gallery / state tests",
         "gallery:component-badge-sample:default",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Accordion",
         "disclosure",
         "AccordionState",
         "exports / gallery / state tests",
         "gallery:component-accordion-sample:shipping",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Collapsible",
         "disclosure",
         "CollapsibleState",
         "exports / gallery / state tests",
         "gallery:component-collapsible-sample:release-notes",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Slider",
         "form",
         "SliderState",
         "exports / gallery / keyboard tests",
         "gallery:component-slider-sample:volume",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "NumberInput",
         "form",
         "NumberInputState",
         "exports / gallery / stepper tests",
         "gallery:component-number-input-sample:workers",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "ToggleGroup",
         "action",
         "ToggleGroupState",
         "exports / gallery / stable value tests",
         "gallery:component-toggle-group-sample:alignment",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Link",
         "navigation",
         "LinkState",
         "exports / gallery / activation tests",
         "gallery:component-link-sample:docs",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Breadcrumb",
         "navigation",
         "BreadcrumbState",
         "exports / gallery / activation tests",
         "gallery:component-breadcrumb-sample:project",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Tag",
         "display",
         "TagState",
         "exports / gallery / remove tests",
         "gallery:component-tag-sample:ready",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "ToastStack",
         "feedback",
         "ToastStackState",
         "exports / gallery / stack tests",
         "gallery:component-toast-stack-sample:notifications",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "IconButton",
         "action",
         "IconButtonState",
         "exports / gallery / a11y metadata",
         "gallery:component-icon-button-sample:search",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Switch",
         "form",
         "SwitchState",
         "exports / gallery / state tests",
         "gallery:component-switch-sample:off",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Checkbox",
         "form",
         "CheckboxState",
         "exports / gallery / state tests",
         "gallery:component-checkbox-sample:unchecked",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "RadioGroup",
         "choice",
         "RadioGroupState",
         "exports / gallery / runtime smoke",
         "gallery:component-radio-sample:persona-radios",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Toggle",
         "action",
         "ToggleState",
         "exports / gallery / state tests",
         "gallery:component-toggle-sample:ghost-off",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Toolbar",
         "shell",
         "ToolbarState",
         "exports / gallery / runtime smoke",
         "gallery:component-toolbar-sample:editor-toolbar",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Sidebar",
         "shell",
         "SidebarState",
         "exports / gallery / scroll smoke",
         "gallery:component-sidebar-sample:workspace-sidebar",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Tree",
         "hierarchy",
         "TreeState",
         "exports / gallery / tree runtime smoke",
         "gallery:component-tree-sample:document-outline",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Listbox",
         "choice",
         "ListboxState",
         "exports / gallery / shared navigation smoke",
         "gallery:component-listbox-sample:assignee-listbox",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Select",
         "choice",
         "SelectState",
         "exports / gallery / stable value smoke",
         "gallery:component-select-sample:priority-select",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Combobox",
         "choice-search",
         "ComboboxState",
         "exports / gallery / stable value smoke",
         "gallery:component-combobox-sample:framework-combobox",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Command",
         "choice-search",
         "CommandState",
         "exports / gallery / stable value and runtime smoke",
         "gallery:component-command-sample:ranked-search",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Label",
         "form",
         "LabelState",
         "exports / gallery / a11y metadata",
         "gallery:component-label-sample:email",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "TextInput",
         "form",
         "TextInputState",
         "exports / gallery / controller tests",
         "gallery:component-text-input-sample:default",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Textarea",
         "form",
         "TextareaState",
         "exports / gallery / controlled multiline tests",
         "gallery:component-textarea-sample:default",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Field",
         "form",
         "FieldState",
         "exports / gallery / composition tests",
         "gallery:component-field-sample:email",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Tabs",
         "navigation",
         "TabsState",
         "exports / gallery / runtime smoke",
         "gallery:component-tabs-sample:overview-tabs",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "ScrollArea",
         "layout",
         "ScrollAreaState",
         "exports / gallery / redraw smoke",
         "gallery:component-scroll-area-sample:activity-log",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Splitter",
         "layout",
         "SplitterState",
         "exports / gallery / drag smoke",
         "gallery:component-splitter-sample:workspace-split",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Table",
         "data",
         "TableState",
         "exports / gallery / virtualized scroll and resize smoke",
         "gallery:component-table-sample:release-queue",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "VirtualizedList",
         "data",
         "VirtualizedListState",
         "exports / gallery / virtualized scroll smoke",
         "gallery:component-virtualized-list-sample:release-navigation",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "StatusCue",
         "feedback",
         "StatusCueState",
         "exports / gallery / token intents",
         "gallery:component-status-cue-sample:sync-warning",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "EmptyState",
         "feedback",
         "EmptyStateState",
@@ -659,42 +682,42 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
     ComponentCatalogEntry::internal_anatomy("ToolbarItem", "shell", "Toolbar anatomy"),
     ComponentCatalogEntry::internal_anatomy("SidebarItem", "shell", "Sidebar anatomy"),
     ComponentCatalogEntry::internal_anatomy("ListboxOption", "choice", "Listbox anatomy"),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Separator",
         "layout",
         "SeparatorState",
         "exports / gallery / state tests",
         "gallery:component-separator-sample:section-rule",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Kbd",
         "display",
         "KbdState",
         "exports / gallery / state tests",
         "gallery:component-kbd-sample:command-palette",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Progress",
         "status",
         "ProgressState",
         "exports / gallery / state tests",
         "gallery:component-progress-sample:sync",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Skeleton",
         "status",
         "SkeletonState",
         "exports / gallery / state tests",
         "gallery:component-skeleton-sample:body-line",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "Avatar",
         "identity",
         "AvatarState",
         "exports / gallery / state tests",
         "gallery:component-avatar-sample:ada",
     ),
-    ComponentCatalogEntry::official(
+    ComponentCatalogEntry::registry_sample(
         "AvatarGroup",
         "identity",
         "AvatarGroupState",
