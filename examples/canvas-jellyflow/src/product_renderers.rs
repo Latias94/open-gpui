@@ -1,4 +1,4 @@
-use jellyflow::core::NodeId as JellyNodeId;
+use jellyflow::core::{CanvasSize, NodeId as JellyNodeId};
 use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiBoundsCollector, OpenGpuiControlPlan, OpenGpuiDynamicPortPolicy,
     OpenGpuiMenuPlan, OpenGpuiNodeRendererContext, OpenGpuiNodeRendererHostContext,
@@ -33,25 +33,171 @@ const REPEATABLE_CHIP_HEIGHT: f32 = 36.0;
 const REPEATABLE_ROW_HEIGHT: f32 = 38.0;
 const REPEATABLE_ADD_WIDTH: f32 = 96.0;
 const SECTION_GAP: f32 = 6.0;
-const CONTROL_GROUP_GAP: f32 = 8.0;
 const BODY_TOP: f32 = CARD_PAD + HEADER_HEIGHT + SECTION_GAP;
-const TITLE_NEXT_TOP: f32 = BODY_TOP + TITLE_ROW_HEIGHT + SECTION_GAP;
-const PREVIEW_NEXT_TOP: f32 = BODY_TOP + PREVIEW_ROW_HEIGHT + CONTROL_GROUP_GAP;
-const DECISION_MODEL_ROW_TOP: f32 = PREVIEW_NEXT_TOP + PROMPT_CONTROL_ROW_HEIGHT + SECTION_GAP;
-const DECISION_CHIP_ROW_TOP: f32 = DECISION_MODEL_ROW_TOP + CONTROL_ROW_HEIGHT + CARD_PAD;
-const SHADER_INPUT_RAIL_TOP: f32 = TITLE_NEXT_TOP;
-const SHADER_INPUT_CHIPS_TOP: f32 = SHADER_INPUT_RAIL_TOP + PORT_RAIL_HEIGHT + CONTROL_GROUP_GAP;
-const SHADER_CONTROL_ROW_TOP: f32 =
-    SHADER_INPUT_CHIPS_TOP + REPEATABLE_CHIP_HEIGHT + CONTROL_GROUP_GAP;
-const SHADER_OUTPUT_RAIL_TOP: f32 = SHADER_CONTROL_ROW_TOP + CONTROL_CHIP_HEIGHT + 14.0;
-const ERD_PRIMARY_ROW_TOP: f32 = TITLE_NEXT_TOP;
-const ERD_CONTROL_CHIPS_TOP: f32 = ERD_PRIMARY_ROW_TOP + CONTROL_ROW_HEIGHT + CONTROL_GROUP_GAP;
-const ERD_COLUMNS_TOP: f32 = ERD_CONTROL_CHIPS_TOP + CONTROL_CHIP_HEIGHT + 12.0;
-const TOPIC_TITLE_CONTROL_TOP: f32 = BODY_TOP + TITLE_ROW_HEIGHT + CONTROL_GROUP_GAP;
-const TOPIC_SUMMARY_CONTROL_TOP: f32 = TOPIC_TITLE_CONTROL_TOP + CONTROL_ROW_HEIGHT + SECTION_GAP;
-const SOURCE_TITLE_CONTROL_TOP: f32 = PREVIEW_NEXT_TOP;
-const SOURCE_ASSET_CONTROL_TOP: f32 = SOURCE_TITLE_CONTROL_TOP + CONTROL_ROW_HEIGHT + SECTION_GAP;
 const ANCHOR_TOP: f32 = BODY_TOP + SECTION_GAP;
+
+#[derive(Clone, Copy)]
+struct ProductLayoutRegion {
+    top: Pixels,
+    height: Pixels,
+}
+
+impl ProductLayoutRegion {
+    fn from_adaptive(region: node_component_kit::AdaptiveNodeLayoutRegion) -> Self {
+        Self {
+            top: px(region.top),
+            height: px(region.height),
+        }
+    }
+}
+
+fn product_layout_stack(
+    node_size: CanvasSize,
+    footer_height: f32,
+) -> node_component_kit::AdaptiveNodeLayoutStack {
+    node_component_kit::AdaptiveNodeLayoutStack::new(
+        node_size,
+        CARD_PAD,
+        HEADER_HEIGHT,
+        footer_height,
+        SECTION_GAP,
+    )
+}
+
+fn reserve_product_region(
+    layout: &mut node_component_kit::AdaptiveNodeLayoutStack,
+    key: &'static str,
+    full_height: f32,
+    compact_height: f32,
+) -> ProductLayoutRegion {
+    ProductLayoutRegion::from_adaptive(layout.reserve_region(key, full_height, compact_height))
+}
+
+struct DecisionCardLayout {
+    preview: ProductLayoutRegion,
+    prompt_control: ProductLayoutRegion,
+    model_control: ProductLayoutRegion,
+    chip_row: ProductLayoutRegion,
+}
+
+fn decision_card_layout(node_size: CanvasSize) -> DecisionCardLayout {
+    let mut layout = product_layout_stack(node_size, PORT_RAIL_HEIGHT);
+    DecisionCardLayout {
+        preview: reserve_product_region(&mut layout, "preview", PREVIEW_ROW_HEIGHT, 36.0),
+        prompt_control: reserve_product_region(
+            &mut layout,
+            "prompt-control",
+            PROMPT_CONTROL_ROW_HEIGHT,
+            32.0,
+        ),
+        model_control: reserve_product_region(
+            &mut layout,
+            "model-control",
+            CONTROL_ROW_HEIGHT,
+            30.0,
+        ),
+        chip_row: reserve_product_region(&mut layout, "chip-row", CONTROL_CHIP_HEIGHT, 24.0),
+    }
+}
+
+struct ShaderCardLayout {
+    title: ProductLayoutRegion,
+    input_rail: ProductLayoutRegion,
+    input_chips: ProductLayoutRegion,
+    control_row: ProductLayoutRegion,
+    output_rail: ProductLayoutRegion,
+}
+
+fn shader_card_layout(node_size: CanvasSize) -> ShaderCardLayout {
+    let mut layout = product_layout_stack(node_size, 0.0);
+    ShaderCardLayout {
+        title: reserve_product_region(&mut layout, "title", TITLE_ROW_HEIGHT, 28.0),
+        input_rail: reserve_product_region(&mut layout, "input-rail", PORT_RAIL_HEIGHT, 20.0),
+        input_chips: reserve_product_region(
+            &mut layout,
+            "input-chips",
+            REPEATABLE_CHIP_HEIGHT,
+            24.0,
+        ),
+        control_row: reserve_product_region(&mut layout, "control-row", CONTROL_CHIP_HEIGHT, 24.0),
+        output_rail: reserve_product_region(&mut layout, "output-rail", PORT_RAIL_HEIGHT, 20.0),
+    }
+}
+
+struct TableCardLayout {
+    title: ProductLayoutRegion,
+    primary_control: ProductLayoutRegion,
+    chip_row: ProductLayoutRegion,
+    columns_top: Pixels,
+}
+
+fn table_card_layout(node_size: CanvasSize) -> TableCardLayout {
+    let mut layout = product_layout_stack(node_size, 0.0);
+    let title = reserve_product_region(&mut layout, "title", TITLE_ROW_HEIGHT, 28.0);
+    let primary_control =
+        reserve_product_region(&mut layout, "primary-control", CONTROL_ROW_HEIGHT, 30.0);
+    let chip_row = reserve_product_region(&mut layout, "chip-row", CONTROL_CHIP_HEIGHT, 24.0);
+    let columns_top = px(layout
+        .regions()
+        .last()
+        .map_or(BODY_TOP, |region| region.top + region.height + SECTION_GAP));
+    TableCardLayout {
+        title,
+        primary_control,
+        chip_row,
+        columns_top,
+    }
+}
+
+struct TopicCardLayout {
+    title: ProductLayoutRegion,
+    title_control: ProductLayoutRegion,
+    summary_control: ProductLayoutRegion,
+}
+
+fn topic_card_layout(node_size: CanvasSize) -> TopicCardLayout {
+    let mut layout = product_layout_stack(node_size, 0.0);
+    TopicCardLayout {
+        title: reserve_product_region(&mut layout, "title", TITLE_ROW_HEIGHT, 28.0),
+        title_control: reserve_product_region(
+            &mut layout,
+            "title-control",
+            CONTROL_ROW_HEIGHT,
+            30.0,
+        ),
+        summary_control: reserve_product_region(
+            &mut layout,
+            "summary-control",
+            CONTROL_ROW_HEIGHT,
+            30.0,
+        ),
+    }
+}
+
+struct SourceCardLayout {
+    preview: ProductLayoutRegion,
+    title_control: ProductLayoutRegion,
+    asset_control: ProductLayoutRegion,
+}
+
+fn source_card_layout(node_size: CanvasSize) -> SourceCardLayout {
+    let mut layout = product_layout_stack(node_size, 0.0);
+    SourceCardLayout {
+        preview: reserve_product_region(&mut layout, "preview", PREVIEW_ROW_HEIGHT, 36.0),
+        title_control: reserve_product_region(
+            &mut layout,
+            "title-control",
+            CONTROL_ROW_HEIGHT,
+            30.0,
+        ),
+        asset_control: reserve_product_region(
+            &mut layout,
+            "asset-control",
+            CONTROL_ROW_HEIGHT,
+            30.0,
+        ),
+    }
+}
 
 const PRODUCT_RENDERERS: [(&str, &str); 5] = [
     ("decision-card", "Dify workflow decision card"),
@@ -85,6 +231,7 @@ fn render_decision_card(
     let model_control = context.control("control.model");
     let temperature_control = context.control("control.temperature");
     let stream_control = context.control("control.stream");
+    let layout = decision_card_layout(context.node_size);
     let primary_action = context
         .toolbar_menu
         .actions
@@ -111,9 +258,9 @@ fn render_decision_card(
         div()
             .absolute()
             .left(px(CARD_PAD))
-            .top(px(BODY_TOP))
+            .top(layout.preview.top)
             .right(px(CARD_PAD))
-            .h(px(PREVIEW_ROW_HEIGHT))
+            .h(layout.preview.height)
             .rounded_sm()
             .bg(rgb(0xecfeff))
             .px_2()
@@ -147,17 +294,18 @@ fn render_decision_card(
         "field.prompt",
         prompt_control.as_ref(),
         0,
-        px(PREVIEW_NEXT_TOP),
-        px(PROMPT_CONTROL_ROW_HEIGHT),
+        layout.prompt_control.top,
+        layout.prompt_control.height,
         collector.clone(),
         &actions,
     ))
-    .child(render_control_row_at(
+    .child(render_control_row_with_height_at(
         context,
         "badge.model",
         model_control.as_ref(),
         1,
-        px(DECISION_MODEL_ROW_TOP),
+        layout.model_control.top,
+        layout.model_control.height,
         collector.clone(),
         &actions,
     ))
@@ -165,9 +313,9 @@ fn render_decision_card(
         div()
             .absolute()
             .left(px(CARD_PAD))
-            .top(px(DECISION_CHIP_ROW_TOP))
+            .top(layout.chip_row.top)
             .right(px(CARD_PAD))
-            .h(px(CONTROL_CHIP_HEIGHT))
+            .h(layout.chip_row.height)
             .flex()
             .items_center()
             .justify_between()
@@ -210,6 +358,7 @@ fn render_shader_card(
     let texture_control = context.control("control.texture");
     let property_control = context.control("control.property.name");
     let shader_inputs = repeatable_items_for(context, "shader.inputs");
+    let layout = shader_card_layout(context.node_size);
     let missing_ports = shader_inputs
         .iter()
         .filter(|item| {
@@ -238,9 +387,9 @@ fn render_shader_card(
         div()
             .absolute()
             .left(px(CARD_PAD))
-            .top(px(BODY_TOP))
+            .top(layout.title.top)
             .right(px(CARD_PAD))
-            .h(px(TITLE_ROW_HEIGHT))
+            .h(layout.title.height)
             .flex()
             .items_center()
             .justify_between()
@@ -260,14 +409,16 @@ fn render_shader_card(
         context,
         "rail.inputs",
         "inputs",
-        px(SHADER_INPUT_RAIL_TOP),
+        layout.input_rail.top,
+        layout.input_rail.height,
         collector.clone(),
         rgb(0x312e81),
     ))
     .child(render_shader_inputs(
         context,
         &shader_inputs,
-        px(SHADER_INPUT_CHIPS_TOP),
+        layout.input_chips.top,
+        layout.input_chips.height,
         collector.clone(),
         &actions,
     ))
@@ -275,9 +426,9 @@ fn render_shader_card(
         div()
             .absolute()
             .left(px(CARD_PAD))
-            .top(px(SHADER_CONTROL_ROW_TOP))
+            .top(layout.control_row.top)
             .right(px(CARD_PAD))
-            .h(px(CONTROL_CHIP_HEIGHT))
+            .h(layout.control_row.height)
             .flex()
             .items_center()
             .gap_1()
@@ -311,7 +462,8 @@ fn render_shader_card(
         context,
         "rail.outputs",
         "outputs",
-        px(SHADER_OUTPUT_RAIL_TOP),
+        layout.output_rail.top,
+        layout.output_rail.height,
         collector,
         rgb(0x1e293b),
     ))
@@ -329,6 +481,7 @@ fn render_table_card(
     let field_name = context.control("control.field.name");
     let field_type = context.control("control.field.type");
     let foreign_key = context.control("control.foreign_key.binding");
+    let layout = table_card_layout(context.node_size);
 
     product_card(
         context,
@@ -347,9 +500,9 @@ fn render_table_card(
         div()
             .absolute()
             .left(px(CARD_PAD))
-            .top(px(BODY_TOP))
+            .top(layout.title.top)
             .right(px(CARD_PAD))
-            .h(px(TITLE_ROW_HEIGHT))
+            .h(layout.title.height)
             .flex()
             .items_center()
             .justify_between()
@@ -365,12 +518,13 @@ fn render_table_card(
                 .with_size(Size::XSmall),
             ),
     )
-    .child(render_control_row_at(
+    .child(render_control_row_with_height_at(
         context,
         "field.primary_key",
         primary_key.as_ref(),
         0,
-        px(ERD_PRIMARY_ROW_TOP),
+        layout.primary_control.top,
+        layout.primary_control.height,
         collector.clone(),
         &actions,
     ))
@@ -378,9 +532,9 @@ fn render_table_card(
         div()
             .absolute()
             .left(px(CARD_PAD))
-            .top(px(ERD_CONTROL_CHIPS_TOP))
+            .top(layout.chip_row.top)
             .right(px(CARD_PAD))
-            .h(px(CONTROL_CHIP_HEIGHT))
+            .h(layout.chip_row.height)
             .flex()
             .items_center()
             .gap_1()
@@ -413,7 +567,7 @@ fn render_table_card(
     .child(render_table_columns(
         context,
         &columns,
-        px(ERD_COLUMNS_TOP),
+        layout.columns_top,
         collector,
         &actions,
     ))
@@ -436,6 +590,7 @@ fn render_topic_card(
     let actions = actions_for_host(host);
     let title_control = context.control("control.topic.title");
     let summary_control = context.control("control.topic.summary");
+    let layout = topic_card_layout(context.node_size);
 
     product_card(
         context,
@@ -456,9 +611,9 @@ fn render_topic_card(
         div()
             .absolute()
             .left(px(CARD_PAD))
-            .top(px(BODY_TOP))
+            .top(layout.title.top)
             .right(px(CARD_PAD))
-            .h(px(TITLE_ROW_HEIGHT))
+            .h(layout.title.height)
             .rounded_sm()
             .bg(rgb(0xffffff))
             .px_2()
@@ -467,21 +622,23 @@ fn render_topic_card(
             .overflow_hidden()
             .child(text_line(context.title.clone(), rgb(0x111827), true)),
     ))
-    .child(render_control_row_at(
+    .child(render_control_row_with_height_at(
         context,
         "header.main",
         title_control.as_ref(),
         0,
-        px(TOPIC_TITLE_CONTROL_TOP),
+        layout.title_control.top,
+        layout.title_control.height,
         collector.clone(),
         &actions,
     ))
-    .child(render_control_row_at(
+    .child(render_control_row_with_height_at(
         context,
         "body.summary",
         summary_control.as_ref(),
         1,
-        px(TOPIC_SUMMARY_CONTROL_TOP),
+        layout.summary_control.top,
+        layout.summary_control.height,
         collector.clone(),
         &actions,
     ))
@@ -497,6 +654,7 @@ fn render_source_card(
     let actions = actions_for_host(host);
     let title_control = context.control("control.source.title");
     let asset_control = context.control("control.source.asset");
+    let layout = source_card_layout(context.node_size);
 
     product_card(
         context,
@@ -517,9 +675,9 @@ fn render_source_card(
         div()
             .absolute()
             .left(px(CARD_PAD))
-            .top(px(BODY_TOP))
+            .top(layout.preview.top)
             .right(px(CARD_PAD))
-            .h(px(PREVIEW_ROW_HEIGHT))
+            .h(layout.preview.height)
             .rounded_sm()
             .bg(rgb(0xffffff))
             .px_2()
@@ -539,21 +697,23 @@ fn render_source_card(
                     ),
             ),
     ))
-    .child(render_control_row_at(
+    .child(render_control_row_with_height_at(
         context,
         "header.main",
         title_control.as_ref(),
         0,
-        px(SOURCE_TITLE_CONTROL_TOP),
+        layout.title_control.top,
+        layout.title_control.height,
         collector.clone(),
         &actions,
     ))
-    .child(render_control_row_at(
+    .child(render_control_row_with_height_at(
         context,
         "preview.main",
         asset_control.as_ref(),
         1,
-        px(SOURCE_ASSET_CONTROL_TOP),
+        layout.asset_control.top,
+        layout.asset_control.height,
         collector.clone(),
         &actions,
     ))
@@ -692,27 +852,6 @@ fn render_primary_action(
         })
 }
 
-fn render_control_row_at(
-    context: &OpenGpuiNodeRendererContext,
-    slot_key: &str,
-    control: Option<&OpenGpuiControlPlan>,
-    index: usize,
-    top: Pixels,
-    collector: OpenGpuiBoundsCollector,
-    actions: &NodeComponentKitActions,
-) -> AnyElement {
-    render_control_row_with_height_at(
-        context,
-        slot_key,
-        control,
-        index,
-        top,
-        px(CONTROL_ROW_HEIGHT),
-        collector,
-        actions,
-    )
-}
-
 fn render_control_row_with_height_at(
     context: &OpenGpuiNodeRendererContext,
     slot_key: &str,
@@ -805,6 +944,7 @@ fn render_port_rail(
     slot_key: &str,
     label: &'static str,
     top: Pixels,
+    height: Pixels,
     collector: OpenGpuiBoundsCollector,
     fill: open_gpui::Rgba,
 ) -> AnyElement {
@@ -823,7 +963,7 @@ fn render_port_rail(
             .left(px(CARD_PAD))
             .top(top)
             .right(px(CARD_PAD))
-            .h(px(PORT_RAIL_HEIGHT))
+            .h(height)
             .rounded_sm()
             .bg(fill)
             .px_2()
@@ -841,10 +981,15 @@ fn render_shader_inputs(
     context: &OpenGpuiNodeRendererContext,
     items: &[&OpenGpuiRepeatableItemLayout],
     top: Pixels,
+    height: Pixels,
     collector: OpenGpuiBoundsCollector,
     actions: &NodeComponentKitActions,
 ) -> AnyElement {
-    let visible_limit = context.surface_preset.repeatable_visible_items_or(3);
+    let visible_limit = if height.as_f32() >= REPEATABLE_CHIP_HEIGHT {
+        context.surface_preset.repeatable_visible_items_or(3)
+    } else {
+        0
+    };
     let hidden_count = items.len().saturating_sub(visible_limit);
 
     div()
@@ -852,7 +997,7 @@ fn render_shader_inputs(
         .left(px(CARD_PAD))
         .top(top)
         .right(px(CARD_PAD))
-        .h(px(REPEATABLE_CHIP_HEIGHT))
+        .h(height)
         .flex()
         .items_center()
         .gap_1()
@@ -878,7 +1023,7 @@ fn render_table_columns(
     collector: OpenGpuiBoundsCollector,
     actions: &NodeComponentKitActions,
 ) -> AnyElement {
-    let visible_limit = table_visible_repeatable_limit(context, items.len());
+    let visible_limit = table_visible_repeatable_limit(context, top, items.len());
     let hidden_count = items.len().saturating_sub(visible_limit);
 
     div()
@@ -907,18 +1052,25 @@ fn render_table_columns(
 
 fn table_visible_repeatable_limit(
     context: &OpenGpuiNodeRendererContext,
+    top: Pixels,
     item_count: usize,
 ) -> usize {
     let budget_limit = context.surface_preset.repeatable_visible_items_or(3);
-    table_visible_repeatable_limit_for_height(context.node_size.height, budget_limit, item_count)
+    table_visible_repeatable_limit_for_height(
+        context.node_size.height,
+        top.as_f32(),
+        budget_limit,
+        item_count,
+    )
 }
 
 fn table_visible_repeatable_limit_for_height(
     node_height: f32,
+    top: f32,
     budget_limit: usize,
     item_count: usize,
 ) -> usize {
-    let available_height = (node_height - ERD_COLUMNS_TOP - CARD_PAD).max(0.0);
+    let available_height = (node_height - top - CARD_PAD).max(0.0);
     node_component_kit::adaptive_repeatable_list_plan(
         "table.columns",
         available_height,
@@ -1265,41 +1417,73 @@ mod tests {
             "demo.llm",
             CanvasSize {
                 width: 320.0,
-                height: DECISION_CHIP_ROW_TOP
-                    + CONTROL_CHIP_HEIGHT
-                    + SECTION_GAP
-                    + PORT_RAIL_HEIGHT
-                    + CARD_PAD,
+                height: decision_card_required_height(),
             },
         );
         assert_preset_fits_renderer(
             "demo.shader.mix",
             CanvasSize {
                 width: 340.0,
-                height: SHADER_OUTPUT_RAIL_TOP + PORT_RAIL_HEIGHT + CARD_PAD,
+                height: shader_card_required_height(),
             },
         );
         assert_preset_fits_renderer(
             "demo.table",
             CanvasSize {
                 width: 396.0,
-                height: ERD_COLUMNS_TOP + (REPEATABLE_ROW_HEIGHT + 4.0) * 3.0 + CARD_PAD,
+                height: table_card_required_height(),
             },
         );
         assert_preset_fits_renderer(
             "demo.topic",
             CanvasSize {
                 width: 304.0,
-                height: TOPIC_SUMMARY_CONTROL_TOP + CONTROL_ROW_HEIGHT + CARD_PAD,
+                height: topic_card_required_height(),
             },
         );
         assert_preset_fits_renderer(
             "demo.source",
             CanvasSize {
                 width: 312.0,
-                height: SOURCE_ASSET_CONTROL_TOP + CONTROL_ROW_HEIGHT + CARD_PAD,
+                height: source_card_required_height(),
             },
         );
+    }
+
+    fn layout_probe_size(width: f32) -> CanvasSize {
+        CanvasSize {
+            width,
+            height: 1000.0,
+        }
+    }
+
+    fn region_bottom(region: ProductLayoutRegion) -> f32 {
+        region.top.as_f32() + region.height.as_f32()
+    }
+
+    fn decision_card_required_height() -> f32 {
+        let layout = decision_card_layout(layout_probe_size(320.0));
+        region_bottom(layout.chip_row) + SECTION_GAP + PORT_RAIL_HEIGHT + CARD_PAD
+    }
+
+    fn shader_card_required_height() -> f32 {
+        let layout = shader_card_layout(layout_probe_size(340.0));
+        region_bottom(layout.output_rail) + CARD_PAD
+    }
+
+    fn table_card_required_height() -> f32 {
+        let layout = table_card_layout(layout_probe_size(396.0));
+        layout.columns_top.as_f32() + (REPEATABLE_ROW_HEIGHT + 4.0) * 3.0 + CARD_PAD
+    }
+
+    fn topic_card_required_height() -> f32 {
+        let layout = topic_card_layout(layout_probe_size(304.0));
+        region_bottom(layout.summary_control) + CARD_PAD
+    }
+
+    fn source_card_required_height() -> f32 {
+        let layout = source_card_layout(layout_probe_size(312.0));
+        region_bottom(layout.asset_control) + CARD_PAD
     }
 
     fn assert_preset_fits_renderer(kind: &str, required: CanvasSize) {
@@ -1328,19 +1512,115 @@ mod tests {
 
     #[test]
     fn table_repeatable_limit_accounts_for_overflow_indicator_budget() {
-        let reduced_height = ERD_COLUMNS_TOP + CARD_PAD + REPEATABLE_ROW_HEIGHT * 2.0 + 4.0;
+        let columns_top = table_card_layout(layout_probe_size(396.0))
+            .columns_top
+            .as_f32();
+        let reduced_height = columns_top + CARD_PAD + REPEATABLE_ROW_HEIGHT * 2.0 + 4.0;
 
         assert_eq!(
-            table_visible_repeatable_limit_for_height(reduced_height, 4, 5),
+            table_visible_repeatable_limit_for_height(reduced_height, columns_top, 4, 5),
             1
         );
         assert_eq!(
             table_visible_repeatable_limit_for_height(
-                ERD_COLUMNS_TOP + CARD_PAD + (REPEATABLE_ROW_HEIGHT + 4.0) * 4.0,
+                columns_top + CARD_PAD + (REPEATABLE_ROW_HEIGHT + 4.0) * 4.0,
+                columns_top,
                 4,
                 4,
             ),
             4
         );
+    }
+
+    #[test]
+    fn product_card_layouts_stay_inside_reduced_nodes() {
+        let decision_size = CanvasSize {
+            width: 320.0,
+            height: 210.0,
+        };
+        assert_layout_stays_inside(
+            decision_card_layout(decision_size),
+            decision_size.height - CARD_PAD - PORT_RAIL_HEIGHT,
+        );
+        let shader_size = CanvasSize {
+            width: 340.0,
+            height: 168.0,
+        };
+        assert_layout_stays_inside(
+            shader_card_layout(shader_size),
+            shader_size.height - CARD_PAD,
+        );
+        let table_size = CanvasSize {
+            width: 396.0,
+            height: 184.0,
+        };
+        assert_layout_stays_inside(table_card_layout(table_size), table_size.height - CARD_PAD);
+        let topic_size = CanvasSize {
+            width: 304.0,
+            height: 132.0,
+        };
+        assert_layout_stays_inside(topic_card_layout(topic_size), topic_size.height - CARD_PAD);
+        let source_size = CanvasSize {
+            width: 312.0,
+            height: 144.0,
+        };
+        assert_layout_stays_inside(
+            source_card_layout(source_size),
+            source_size.height - CARD_PAD,
+        );
+    }
+
+    trait ProductLayoutRegions {
+        fn regions(&self) -> Vec<ProductLayoutRegion>;
+    }
+
+    impl ProductLayoutRegions for DecisionCardLayout {
+        fn regions(&self) -> Vec<ProductLayoutRegion> {
+            vec![
+                self.preview,
+                self.prompt_control,
+                self.model_control,
+                self.chip_row,
+            ]
+        }
+    }
+
+    impl ProductLayoutRegions for ShaderCardLayout {
+        fn regions(&self) -> Vec<ProductLayoutRegion> {
+            vec![
+                self.title,
+                self.input_rail,
+                self.input_chips,
+                self.control_row,
+                self.output_rail,
+            ]
+        }
+    }
+
+    impl ProductLayoutRegions for TopicCardLayout {
+        fn regions(&self) -> Vec<ProductLayoutRegion> {
+            vec![self.title, self.title_control, self.summary_control]
+        }
+    }
+
+    impl ProductLayoutRegions for TableCardLayout {
+        fn regions(&self) -> Vec<ProductLayoutRegion> {
+            vec![self.title, self.primary_control, self.chip_row]
+        }
+    }
+
+    impl ProductLayoutRegions for SourceCardLayout {
+        fn regions(&self) -> Vec<ProductLayoutRegion> {
+            vec![self.preview, self.title_control, self.asset_control]
+        }
+    }
+
+    fn assert_layout_stays_inside(layout: impl ProductLayoutRegions, bottom_y: f32) {
+        for region in layout.regions() {
+            assert!(region.top.as_f32() >= BODY_TOP);
+            assert!(region.height.as_f32() >= 0.0);
+            assert!(region_bottom(region).is_finite());
+            assert!(region_bottom(region) <= bottom_y + 0.01);
+        }
     }
 }
