@@ -56,12 +56,12 @@ scope:
 
 | Priority | Units | Reason |
 | --- | --- | --- |
-| P0 | U1 Theme Snapshot Context And Resolver Migration | The current schema, registry, and snapshots exist, but production render paths can still resolve through the implicit light snapshot. This is the broadest framework correctness gap. |
+| P0 | U1 Runtime Theme Authority And Resolver Migration | The current schema, registry, and snapshots exist, but production render paths can still resolve through the implicit light snapshot. This is the broadest framework correctness gap. |
 | P1 | U6 Gallery Story Catalog Contract | `docs/knowledge/engineering/current-state.md` already identifies the component render/story surface as the next high-leverage gallery action, and the test surface is mature enough for fearless refactor. |
-| P1 | U4 Overlay Adapter Runtime/Host | A general UI framework needs consistent overlay dismissal, focus restore, placement, and stack behavior. Existing neutral policy is deep; the GPUI adapter host remains too shallow. |
+| P1 | U4 Overlay Placement Solver And Adapter Runtime/Host | A general UI framework needs consistent overlay dismissal, focus restore, placement, collision solving, and stack behavior. Existing neutral policy is deep; placement and the GPUI adapter host remain too shallow. |
 | P2 | U2 Typed Component Contract And A11y Evidence Authority, U3 Hybrid Registry Remnant Cleanup | The contract direction is correct, but duplicated a11y expectations and stale registry-era wording still create drift risk. This work must stay under ADR 0014. |
 | P2 | U5 Shared Viewport Projection For Table/List/Tree | Table, Tree, and VirtualizedList already have good coverage. The right move is shared projection, not a table rewrite. |
-| P2/P3 | U7 Command/Menu App Command Seam Checkpoint | Important long-term framework capability, but it should be shipped only if the current Command/Menu code proves a small renderer-neutral seam. |
+| P2/P3 | U7 Command/Menu Descriptor Contract | Important long-term framework capability, but it should stay as a small renderer-neutral data contract and must not become an application command runtime. |
 | Final | U8 Docs, Verification, And Final Cleanup | Documentation should trail the code so it records the actual final authority boundaries and commands run. |
 
 Implementation should follow this priority when risk and dependencies allow. U2 and U3 can be pulled earlier if a theme or gallery change touches contract drift gates.
@@ -156,16 +156,17 @@ flowchart TB
 
 ## Implementation Units
 
-### U1. Theme Snapshot Context And Resolver Migration
+### U1. Runtime Theme Authority And Resolver Migration
 
 **Requirements:** R1, R2
 
-**Goal:** Make the current `ThemeSnapshot` explicit in component rendering so production UI no longer resolves semantic colors through an implicit light snapshot.
+**Goal:** Make the active `ThemeSnapshot` a runtime authority in GPUI apps and make component rendering use that explicit authority instead of an implicit light snapshot.
 
 **Files:**
 
 - `crates/ui_components/src/theme/resolver.rs`
 - `crates/ui_components/src/theme/registry.rs`
+- `crates/ui_components/src/theme/runtime.rs`
 - `crates/ui_components/src/theme/snapshot.rs`
 - `crates/ui_components/src/theme/mod.rs`
 - Representative component render paths in `crates/ui_components/src`
@@ -174,22 +175,25 @@ flowchart TB
 
 **Approach:**
 
-1. Add a small snapshot-carrying resolver/context type in the theme module.
-2. Make production render paths accept/use the explicit resolver or snapshot.
-3. Deprecate, remove, or test-only fence the default-light `ThemeResolver::resolve` helper.
-4. Migrate representative components first, then mechanically migrate the remaining production call sites.
-5. Keep `resolve_fallback` behavior for missing tokens so incomplete custom themes degrade predictably.
+1. Add a small runtime theme owner that can live in GPUI app/window context and exposes the active `ThemeSnapshot`.
+2. Add a snapshot-carrying resolver/context type in the theme module for render code and tests.
+3. Make production render paths accept/use the explicit resolver or snapshot.
+4. Deprecate, remove, or test-only fence the default-light `ThemeResolver::resolve` helper.
+5. Migrate representative components first, then mechanically migrate the remaining production call sites.
+6. Keep `resolve_fallback` behavior for missing tokens so incomplete custom themes degrade predictably.
 
 **Acceptance:**
 
 - Dark, high-contrast, and JSON-loaded custom snapshots resolve through Button, Menu/Popover, TextInput, and Table-related component paths.
 - No production render path calls the default-light resolver helper.
+- App/window test context can switch active theme and observe changed component color resolution without recreating component state.
 - Existing built-in theme snapshots and schema loading still pass.
 
 **Verification:**
 
 - `cargo nextest run -p open-gpui-ui-components theme --no-fail-fast`
 - `cargo run -p xtask -- scan-theme-drift`
+- `cargo run -p xtask -- scan-theme-schema`
 - `cargo run -p xtask -- scan-ui-contract`
 
 ### U2. Typed Component Contract And A11y Evidence Authority
@@ -260,11 +264,11 @@ flowchart TB
 - `rg "scan-ui-registry|component registry manifest|scaffold recipe|generated component registry" docs crates xtask`
 - `cargo run -p xtask -- scan-ui-contract`
 
-### U4. Overlay Adapter Runtime/Host
+### U4. Overlay Placement Solver And Adapter Runtime/Host
 
-**Requirements:** R5
+**Requirements:** R5, R6
 
-**Goal:** Centralize repeated GPUI overlay adapter mechanics while preserving component-specific state and `ui_core` policy ownership.
+**Goal:** Centralize overlay geometry and GPUI adapter mechanics while preserving component-specific state and `ui_core` renderer-neutral policy ownership.
 
 **Files:**
 
@@ -285,14 +289,17 @@ flowchart TB
 **Approach:**
 
 1. Identify repeated open-change, Escape, outside press, focus restore, and placement glue.
-2. Add an overlay adapter host/runtime helper in `ui_components`.
-3. Keep menu submenu hover timing and safe-hover follow-ups in the menu runtime.
-4. Migrate overlay family components incrementally, proving behavior after each family.
-5. Keep `ui_core` free of GPUI runtime types.
+2. Add a pure placement solver in `ui_core` that evaluates preferred side/alignment, fallback candidates, safe bounds, shift, flip, arrow offset, and diagnostic trace output.
+3. Make GPUI placement adapters consume the resolved placement instead of duplicating collision policy.
+4. Add an overlay adapter host/runtime helper in `ui_components`.
+5. Keep menu submenu hover timing and safe-hover follow-ups in the menu runtime.
+6. Migrate overlay family components incrementally, proving behavior after each family.
+7. Keep `ui_core` free of GPUI runtime types.
 
 **Acceptance:**
 
 - Popover, Dialog/AlertDialog/Sheet, Menu/ContextMenu, Select/Combobox, Tooltip/HoverCard use shared overlay host helpers for common mechanics.
+- Popover/Menu/Select placement near right, bottom, and corner safe bounds flips or shifts into view with an inspectable trace.
 - Escape and outside press behavior still follows `ui_core::overlay` policy.
 - Focus restore behavior is consistent and tested across representative overlays.
 
@@ -304,7 +311,7 @@ flowchart TB
 
 ### U5. Shared Viewport Projection For Table/List/Tree
 
-**Requirements:** R6
+**Requirements:** R7
 
 **Goal:** Move shared row/column window projection into a renderer-neutral module and make Table, VirtualizedList, and Tree use it where their behavior overlaps.
 
@@ -338,7 +345,7 @@ flowchart TB
 
 ### U6. Gallery Story Catalog Contract
 
-**Requirements:** R7
+**Requirements:** R8
 
 **Goal:** Make the gallery story contract the single gallery-owned authority for component metadata, selectors, probes, and render/sample registration.
 
@@ -370,29 +377,35 @@ flowchart TB
 - Existing focused gallery metadata/catalog/probe tests.
 - `cargo run -p xtask -- scan-ui-contract`
 
-### U7. Command/Menu App Command Seam Checkpoint
+### U7. Command/Menu Descriptor Contract
 
-**Requirements:** R8
+**Requirements:** R9
 
-**Goal:** Decide with code evidence whether a small renderer-neutral command/menu/keybinding data contract belongs now, and implement only the proven minimum.
+**Goal:** Add the proven minimum renderer-neutral command/menu descriptor contract so command palette indexing and menu rendering can share facts without creating an app command runtime.
 
 **Files:**
 
+- `crates/ui_core/src/command.rs`
+- `crates/ui_core/src/lib.rs`
+- `crates/ui_core/src/prelude.rs`
 - `crates/ui_components/src/command`
 - `crates/ui_components/src/menu`
+- `crates/ui_components/src/context_menu`
 - `crates/ui_components/src/component_contract`
 - Related command/menu tests and docs
 
 **Approach:**
 
 1. Audit `Command` palette descriptors, menu descriptors, and existing keybinding usage.
-2. If there is a real shared data seam, introduce a minimal contract that describes command id, label, grouping, enablement metadata, and optional shortcut display without owning callbacks or app runtime.
-3. Keep `Command` as a palette/search component and menu as UI component adapters.
-4. If the seam is still speculative, document the deferral and delete any partial dead code.
+2. Introduce a minimal contract that describes command id, label, grouping, enablement metadata, shortcut display, and optional menu path without owning callbacks or app runtime.
+3. Make command palette indexing and menu/context-menu items able to consume the shared descriptor where their facts overlap.
+4. Keep `Command` as a palette/search component and menu as UI component adapters.
+5. Delete or avoid any partial command registry/runtime code that would duplicate application ownership.
 
 **Acceptance:**
 
-- Either a small tested data contract exists and both Command/Menu can consume it, or the seam is explicitly deferred with no dead code left behind.
+- A small tested data contract exists and both Command/Menu can consume it where their facts overlap.
+- Disabled/when metadata and shortcut display are visible in command palette and menu projection tests.
 - No app-global command registry is introduced accidentally.
 
 **Verification:**
@@ -402,7 +415,7 @@ flowchart TB
 
 ### U8. Docs, Verification, And Final Cleanup
 
-**Requirements:** R9
+**Requirements:** R10
 
 **Goal:** Align docs and verification gates with the new module boundaries and remove obsolete compatibility leftovers.
 
@@ -453,7 +466,9 @@ cargo nextest run -p open-gpui-ui-components --test table --no-fail-fast
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery component --no-fail-fast
 cargo run -p xtask -- scan-theme-drift
+cargo run -p xtask -- scan-theme-schema
 cargo run -p xtask -- scan-ui-contract
+rg -n "ThemeResolver::resolve\(" crates/ui_components/src
 git diff --check
 ```
 
@@ -466,6 +481,7 @@ cargo run -p xtask -- verify
 ## Definition Of Done
 
 - Production component rendering no longer depends on an implicit light theme resolver.
+- `rg -n "ThemeResolver::resolve\(" crates/ui_components/src` has no production render hits except an explicitly named compatibility/test-only module if one remains.
 - Representative component/theme tests prove light, dark, high-contrast, and JSON-loaded custom theme paths.
 - Component contract/a11y evidence has one typed authority, and `scan-ui-contract` is green.
 - Generated registry/scaffold remnants are absent from active code and clearly historical in docs.
