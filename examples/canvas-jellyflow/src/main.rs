@@ -70,12 +70,12 @@ use open_gpui::{
     prelude::*, px, rgb, size,
 };
 use open_gpui_canvas::{
-    CanvasConnectionPreviewRoute, CanvasDocument, CanvasEditor, CanvasEditorInputHandler,
-    CanvasEvent, CanvasHandle, CanvasKeyModifiers, CanvasKindLabel, CanvasKindPaint,
-    CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeRenderPolicy, CanvasPaintModel,
-    CanvasPaintOptions, CanvasPaintTheme, CanvasTool, CanvasToolIntent, CanvasViewport,
-    DocumentError, HandleRole, HitTarget, NodeId, PointerButton, canvas_editor_view_with_frame,
-    connection_hit_options,
+    CanvasConnectionPreviewRoute, CanvasConnectionRelease, CanvasDocument, CanvasEditor,
+    CanvasEditorInputHandler, CanvasEvent, CanvasHandle, CanvasKeyModifiers, CanvasKindLabel,
+    CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeRenderPolicy,
+    CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasTool, CanvasToolIntent,
+    CanvasViewport, DocumentError, HandleRole, HitTarget, NodeId, PointerButton,
+    canvas_editor_view_with_frame,
 };
 #[cfg(test)]
 use open_gpui_canvas::{CanvasTransaction, DocumentCommand};
@@ -900,13 +900,17 @@ impl JellyflowCanvasView {
         };
 
         self.auto_fit_viewport = false;
-        let dropped_wire_intent =
-            dropped_wire_intent_from_canvas_event(&self.editor, &self.store, &event);
         match self.editor.handle_event(event) {
             Ok(()) => {
+                let connection_release = self.editor.take_connection_release();
                 let synced = self
                     .sync_store_from_canvas_document_with_refresh(!self.is_pointer_interacting());
-                if !synced && let Some((source, pointer)) = dropped_wire_intent {
+                if !synced
+                    && let Some((source, pointer)) = dropped_wire_intent_from_connection_release(
+                        &self.store,
+                        connection_release.as_ref(),
+                    )
+                {
                     self.dispatch_first_dropped_wire_insert(source, pointer, cx);
                 }
             }
@@ -1409,39 +1413,19 @@ fn dropped_wire_source_for_menu(
     Some((source, dropped_wire_insert_pointer(graph, source)))
 }
 
-fn dropped_wire_intent_from_canvas_event(
-    editor: &CanvasEditor,
+fn dropped_wire_intent_from_connection_release(
     store: &NodeGraphStore,
-    event: &CanvasEvent,
+    release: Option<&CanvasConnectionRelease>,
 ) -> Option<(ConnectionHandleRef, JellyPoint)> {
-    let CanvasEvent::PointerUp {
-        position,
-        button: PointerButton::Primary,
-        ..
-    } = event
-    else {
+    let CanvasConnectionRelease::Dropped(drop) = release? else {
         return None;
     };
-    let drag = editor.connection_drag_state()?;
-    let document_position = editor.viewport().view_to_document(*position);
-    if editor
-        .runtime()
-        .precise_hit_test_with_kind_registry(
-            editor.document(),
-            editor.kind_registry(),
-            document_position,
-            connection_hit_options(),
-        )
-        .any(|record| matches!(record.target, HitTarget::Handle { .. }))
-    {
-        return None;
-    }
-    let source = connection_handle_ref_from_canvas_endpoint(store.graph(), &drag.source)?;
+    let source = connection_handle_ref_from_canvas_endpoint(store.graph(), &drop.source)?;
     Some((
         source,
         JellyPoint {
-            x: document_position.x.as_f32(),
-            y: document_position.y.as_f32(),
+            x: drop.position.x.as_f32(),
+            y: drop.position.y.as_f32(),
         },
     ))
 }
@@ -3556,6 +3540,7 @@ fn project_node(
             position.x,
             position.y,
             graph.ports().get(port_id).and_then(|port| port.connectable),
+            preset.style.handle_hit_width,
         ));
     }
 
@@ -3584,6 +3569,7 @@ fn project_node(
             position.x,
             position.y,
             graph.ports().get(port_id).and_then(|port| port.connectable),
+            preset.style.handle_hit_width,
         ));
     }
 
@@ -4243,10 +4229,17 @@ fn project_handle(
     x: f32,
     y: f32,
     connectable: Option<bool>,
+    hit_width: f32,
 ) -> CanvasHandle {
     let mut handle = CanvasHandle::new(canvas_port_id(&port_id), point(px(x), px(y)));
     handle.role = role;
     handle.connectable = connectable.unwrap_or(true);
+    let hit_width = if hit_width.is_finite() {
+        hit_width.max(12.0)
+    } else {
+        12.0
+    };
+    handle.size = size(px(hit_width), px(hit_width));
     handle
 }
 
@@ -6421,15 +6414,16 @@ mod tests {
             button: PointerButton::Primary,
             modifiers: CanvasKeyModifiers::default(),
         };
+        if editor.handle_event(release).is_err() {
+            return false;
+        };
+        let connection_release = editor.take_connection_release();
         let Some((resolved_source, resolved_pointer)) =
-            dropped_wire_intent_from_canvas_event(&editor, &store, &release)
+            dropped_wire_intent_from_connection_release(&store, connection_release.as_ref())
         else {
             return false;
         };
         if resolved_source != source {
-            return false;
-        }
-        if editor.handle_event(release).is_err() {
             return false;
         }
         let source_key = PortKey::new("completion");
@@ -6474,6 +6468,11 @@ mod tests {
         let Some(node) = document.node(&NodeId::from(canvas_node_id(&transform))) else {
             return false;
         };
+        let handle_hit_width_ok = node
+            .handle(Some(&open_gpui_canvas::HandleId::from(canvas_port_id(
+                &prompt,
+            ))))
+            .is_some_and(|handle| handle.size.width >= px(22.0) && handle.size.height >= px(22.0));
         let measured_prompt_point = node.position + point(px(0.0), px(51.0));
         let hit_records = runtime
             .precise_hit_test_with_kind_registry(
@@ -6484,15 +6483,16 @@ mod tests {
             )
             .collect::<Vec<_>>();
         let facts = CanvasGeometryFacts::with_kind_registry(&document, &kind_registry);
-        facts
-            .connection_endpoint_at(hit_records, CanvasConnectionEndpointRole::Target)
-            .is_some_and(|endpoint| {
-                endpoint.node_id == NodeId::from(canvas_node_id(&transform))
-                    && endpoint
-                        .handle_id
-                        .as_ref()
-                        .is_some_and(|handle| handle.as_str() == canvas_port_id(&prompt))
-            })
+        handle_hit_width_ok
+            && facts
+                .connection_endpoint_at(hit_records, CanvasConnectionEndpointRole::Target)
+                .is_some_and(|endpoint| {
+                    endpoint.node_id == NodeId::from(canvas_node_id(&transform))
+                        && endpoint
+                            .handle_id
+                            .as_ref()
+                            .is_some_and(|handle| handle.as_str() == canvas_port_id(&prompt))
+                })
     }
 
     fn canvas_host_product_interaction_report() -> OpenGpuiHostProductInteractionReport {

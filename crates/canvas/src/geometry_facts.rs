@@ -733,6 +733,7 @@ fn record_options_match(record: &HitRecord, options: HitOptions) -> bool {
 pub fn connection_hit_options() -> HitOptions {
     HitOptions {
         include_handles: true,
+        margin: px(4.0),
         ..HitOptions::default()
     }
 }

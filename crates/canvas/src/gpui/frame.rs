@@ -2,6 +2,7 @@ use super::model::{
     CanvasPaintInteractionState, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
 };
 use super::style::{parse_color, positive_pixels};
+use crate::tool::RECONNECT_HANDLE_VIEW_SIZE;
 use crate::{
     CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasEdge, CanvasEdgeRoute,
     CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryFacts, CanvasKindLabel, CanvasRecordId,
@@ -13,6 +14,8 @@ use crate::{
 use open_gpui::{
     Bounds, Hsla, Pixels, Point, SharedString, TextRun, Window, WrappedLine, px, size,
 };
+
+const CONNECTION_TARGET_FEEDBACK_VIEW_SIZE: Pixels = px(18.0);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CanvasPaintFrame {
@@ -117,6 +120,21 @@ pub struct CanvasPaintConnectionPreview {
     pub source_view_position: Point<Pixels>,
     pub target_view_position: Point<Pixels>,
     pub edge_geometry: CanvasPaintEdgeGeometry,
+    pub target_feedback: CanvasPaintConnectionTargetFeedback,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CanvasPaintConnectionTargetState {
+    Free,
+    Valid,
+    Invalid,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasPaintConnectionTargetFeedback {
+    pub role: CanvasConnectionEndpointRole,
+    pub state: CanvasPaintConnectionTargetState,
+    pub view_bounds: Bounds<Pixels>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -479,7 +497,7 @@ fn reconnect_handles_for_model(model: &CanvasPaintModel) -> Vec<CanvasPaintRecon
                     endpoint: CanvasPaintReconnectEndpoint::Source,
                     view_bounds: Bounds::centered_at(
                         model.viewport.document_to_view(source),
-                        size(px(14.0), px(14.0)),
+                        size(RECONNECT_HANDLE_VIEW_SIZE, RECONNECT_HANDLE_VIEW_SIZE),
                     ),
                 },
                 CanvasPaintReconnectHandle {
@@ -487,7 +505,7 @@ fn reconnect_handles_for_model(model: &CanvasPaintModel) -> Vec<CanvasPaintRecon
                     endpoint: CanvasPaintReconnectEndpoint::Target,
                     view_bounds: Bounds::centered_at(
                         model.viewport.document_to_view(target),
-                        size(px(14.0), px(14.0)),
+                        size(RECONNECT_HANDLE_VIEW_SIZE, RECONNECT_HANDLE_VIEW_SIZE),
                     ),
                 },
             ])
@@ -507,14 +525,19 @@ fn connection_preview(
         model.kind_registry.as_ref(),
     );
     let source = facts.endpoint_position(source).ok()?;
-    let target = connection_preview_endpoint_position(
+    let target = connection_preview_endpoint_target(
         model,
         CanvasConnectionEndpointRole::Target,
         source,
         current,
-    )
-    .unwrap_or(current);
-    Some(connection_preview_frame(model, source, target, route))
+    );
+    Some(connection_preview_frame(
+        model,
+        source,
+        target.document_position,
+        route,
+        target.feedback,
+    ))
 }
 
 fn reconnect_preview(
@@ -530,20 +553,27 @@ fn reconnect_preview(
         model.kind_registry.as_ref(),
     );
     let fixed = facts.endpoint_position(fixed).ok()?;
-    let moving =
-        connection_preview_endpoint_position(model, endpoint, fixed, current).unwrap_or(current);
+    let moving = connection_preview_endpoint_target(model, endpoint, fixed, current);
     let route = model
         .document
         .edge(edge_id)
         .map(|edge| edge.route.clone())
         .unwrap_or(fallback_route);
     Some(match endpoint {
-        CanvasConnectionEndpointRole::Source => {
-            connection_preview_frame(model, moving, fixed, route)
-        }
-        CanvasConnectionEndpointRole::Target => {
-            connection_preview_frame(model, fixed, moving, route)
-        }
+        CanvasConnectionEndpointRole::Source => connection_preview_frame(
+            model,
+            moving.document_position,
+            fixed,
+            route,
+            moving.feedback,
+        ),
+        CanvasConnectionEndpointRole::Target => connection_preview_frame(
+            model,
+            fixed,
+            moving.document_position,
+            route,
+            moving.feedback,
+        ),
     })
 }
 
@@ -552,6 +582,7 @@ fn connection_preview_frame(
     source: Point<Pixels>,
     target: Point<Pixels>,
     route: CanvasEdgeRoute,
+    target_feedback: CanvasPaintConnectionTargetFeedback,
 ) -> CanvasPaintConnectionPreview {
     let mut edge = CanvasEdge::new(
         "__connection_preview",
@@ -570,27 +601,111 @@ fn connection_preview_frame(
         edge_geometry: CanvasPaintEdgeGeometry {
             view_path: route_path_to_view(&path, model.viewport),
         },
+        target_feedback,
     }
 }
 
-fn connection_preview_endpoint_position(
+#[derive(Clone, Debug, PartialEq)]
+struct CanvasConnectionPreviewEndpointTarget {
+    document_position: Point<Pixels>,
+    feedback: CanvasPaintConnectionTargetFeedback,
+}
+
+fn connection_preview_endpoint_target(
     model: &CanvasPaintModel,
     role: CanvasConnectionEndpointRole,
     fixed: Point<Pixels>,
     current: Point<Pixels>,
-) -> Option<Point<Pixels>> {
+) -> CanvasConnectionPreviewEndpointTarget {
     let facts = CanvasGeometryFacts::with_kind_registry(
         model.document.as_ref(),
         model.kind_registry.as_ref(),
     );
-    let endpoint = facts.connection_endpoint_at(
-        model
-            .runtime
-            .precise_hit_test_with_facts(facts, current, connection_hit_options()),
+    let records = model
+        .runtime
+        .precise_hit_test_with_facts(facts, current, connection_hit_options())
+        .collect::<Vec<_>>();
+
+    for record in records {
+        match &record.target {
+            HitTarget::Handle { node_id, handle_id } => {
+                let Some(node) = model.document.node(node_id) else {
+                    continue;
+                };
+                let Some(handle) = node.handle(Some(handle_id)) else {
+                    continue;
+                };
+                let endpoint = CanvasEndpoint {
+                    node_id: node_id.clone(),
+                    handle_id: Some(handle_id.clone()),
+                };
+                let position = facts.endpoint_position(&endpoint).unwrap_or(current);
+                let state = if handle.is_pickable_connection_endpoint(role) && position != fixed {
+                    CanvasPaintConnectionTargetState::Valid
+                } else {
+                    CanvasPaintConnectionTargetState::Invalid
+                };
+                return CanvasConnectionPreviewEndpointTarget {
+                    document_position: if state == CanvasPaintConnectionTargetState::Valid {
+                        position
+                    } else {
+                        current
+                    },
+                    feedback: connection_target_feedback(model, role, state, position),
+                };
+            }
+            HitTarget::Node(node_id) => {
+                let endpoint = CanvasEndpoint {
+                    node_id: node_id.clone(),
+                    handle_id: None,
+                };
+                let position = facts.endpoint_position(&endpoint).unwrap_or(current);
+                let state = if position != fixed {
+                    CanvasPaintConnectionTargetState::Valid
+                } else {
+                    CanvasPaintConnectionTargetState::Invalid
+                };
+                return CanvasConnectionPreviewEndpointTarget {
+                    document_position: if state == CanvasPaintConnectionTargetState::Valid {
+                        position
+                    } else {
+                        current
+                    },
+                    feedback: connection_target_feedback(model, role, state, position),
+                };
+            }
+            HitTarget::Edge(_) | HitTarget::Shape(_) => {}
+        }
+    }
+
+    CanvasConnectionPreviewEndpointTarget {
+        document_position: current,
+        feedback: connection_target_feedback(
+            model,
+            role,
+            CanvasPaintConnectionTargetState::Free,
+            current,
+        ),
+    }
+}
+
+fn connection_target_feedback(
+    model: &CanvasPaintModel,
+    role: CanvasConnectionEndpointRole,
+    state: CanvasPaintConnectionTargetState,
+    document_position: Point<Pixels>,
+) -> CanvasPaintConnectionTargetFeedback {
+    CanvasPaintConnectionTargetFeedback {
         role,
-    )?;
-    let position = facts.endpoint_position(&endpoint).ok()?;
-    (position != fixed).then_some(position)
+        state,
+        view_bounds: Bounds::centered_at(
+            model.viewport.document_to_view(document_position),
+            size(
+                CONNECTION_TARGET_FEEDBACK_VIEW_SIZE,
+                CONNECTION_TARGET_FEEDBACK_VIEW_SIZE,
+            ),
+        ),
+    }
 }
 
 fn target_is_selected(target: &HitTarget, selection: &CanvasSelection) -> bool {

@@ -2,10 +2,11 @@ use crate::gesture::CanvasPreparedGestureCommit;
 use crate::layer::CanvasZOrderCommand;
 use crate::session::{CanvasToolSession, CanvasToolSessionEffect, CanvasToolSessionSnapshot};
 use crate::{
-    CanvasClipboardPayload, CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff,
-    CanvasEdgeRouter, CanvasEndpoint, CanvasKindRegistry, CanvasPasteTransaction, CanvasRecordId,
-    CanvasRuntime, CanvasStore, CanvasStoreChange, CanvasStoreListenerId, CanvasTransaction,
-    CanvasViewport, DocumentCommand, DocumentError, EdgeId, HitTarget, NodeId, ShapeId,
+    CanvasClipboardPayload, CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument,
+    CanvasDocumentDiff, CanvasEdgeRouter, CanvasEndpoint, CanvasKindRegistry,
+    CanvasPasteTransaction, CanvasRecordId, CanvasRuntime, CanvasStore, CanvasStoreChange,
+    CanvasStoreListenerId, CanvasTransaction, CanvasViewport, DocumentCommand, DocumentError,
+    EdgeId, HitTarget, NodeId, ShapeId,
 };
 use indexmap::IndexSet;
 use open_gpui::{Bounds, Pixels, Point};
@@ -28,6 +29,7 @@ pub(crate) use action::{CanvasEditorAction, CanvasToolEffect};
 use builtin::BuiltInCanvasTool;
 pub use context::CanvasToolContext;
 pub(crate) use context::CanvasToolReducerContext;
+pub(crate) use context::RECONNECT_HANDLE_VIEW_SIZE;
 pub use history::CanvasHistory;
 pub use registry::{CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError};
 
@@ -111,6 +113,54 @@ pub enum CanvasEvent {
 pub struct CanvasConnectionDragState {
     pub source: CanvasEndpoint,
     pub current: Point<Pixels>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum CanvasConnectionRelease {
+    Connected(CanvasConnectedRelease),
+    Dropped(CanvasDroppedConnectionRelease),
+    Reconnected(CanvasReconnectedRelease),
+    Rejected(CanvasRejectedConnectionRelease),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CanvasConnectedRelease {
+    pub source: CanvasEndpoint,
+    pub target: CanvasEndpoint,
+    pub edge_id: EdgeId,
+    pub position: Point<Pixels>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CanvasDroppedConnectionRelease {
+    pub source: CanvasEndpoint,
+    pub position: Point<Pixels>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CanvasReconnectedRelease {
+    pub edge_id: EdgeId,
+    pub endpoint: CanvasConnectionEndpointRole,
+    pub fixed: CanvasEndpoint,
+    pub replacement: CanvasEndpoint,
+    pub position: Point<Pixels>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum CanvasConnectionRejectReason {
+    InvalidSource,
+    InvalidTarget,
+    NoTarget,
+    SameEndpoint,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CanvasRejectedConnectionRelease {
+    pub reason: CanvasConnectionRejectReason,
+    pub source: Option<CanvasEndpoint>,
+    pub edge_id: Option<EdgeId>,
+    pub endpoint: Option<CanvasConnectionEndpointRole>,
+    pub position: Point<Pixels>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -350,6 +400,7 @@ impl CanvasSelection {
 pub struct CanvasEditor {
     store: CanvasStore,
     session: CanvasToolSession,
+    connection_release: Option<CanvasConnectionRelease>,
 }
 
 impl Default for CanvasEditor {
@@ -370,6 +421,7 @@ impl CanvasEditor {
         Self {
             store: CanvasStore::new_with_router(document, edge_router),
             session: CanvasToolSession::default(),
+            connection_release: None,
         }
     }
 
@@ -399,6 +451,7 @@ impl CanvasEditor {
                 kind_registry,
             )?,
             session: CanvasToolSession::default(),
+            connection_release: None,
         })
     }
 
@@ -544,6 +597,9 @@ impl CanvasEditor {
             CanvasEditorAction::SetTool(tool) => {
                 self.set_tool(tool)?;
             }
+            CanvasEditorAction::SetConnectionRelease(release) => {
+                self.connection_release = release;
+            }
             CanvasEditorAction::Session(effect) => {
                 self.apply_session_effect(effect);
             }
@@ -682,6 +738,10 @@ impl CanvasEditor {
             }),
             _ => None,
         }
+    }
+
+    pub fn take_connection_release(&mut self) -> Option<CanvasConnectionRelease> {
+        self.connection_release.take()
     }
 
     pub fn tool_context(&self) -> CanvasToolContext<'_> {
@@ -3971,12 +4031,62 @@ mod tests {
 
         assert_eq!(editor.document().edge_count(), 1);
         assert_eq!(editor.history().undo_depth(), 1);
+        assert_eq!(
+            editor.take_connection_release(),
+            Some(CanvasConnectionRelease::Connected(CanvasConnectedRelease {
+                source: CanvasEndpoint::new("a", None::<&str>),
+                target: CanvasEndpoint::new("b", None::<&str>),
+                edge_id: EdgeId::from("a->b:0"),
+                position: point(px(210.0), px(10.0)),
+            }))
+        );
 
         assert!(editor.undo().unwrap());
         assert!(editor.document().edge_count() == 0);
 
         assert!(editor.redo().unwrap());
         assert_eq!(editor.document().edge_count(), 1);
+    }
+
+    #[test]
+    fn connect_tool_reports_dropped_release_for_empty_canvas() {
+        use crate::{CanvasHandle, HandleRole};
+
+        let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut source_handle = CanvasHandle::new("out", point(px(100.0), px(50.0)));
+        source_handle.role = HandleRole::Source;
+        source.handles.push(source_handle);
+        let target = CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+        let document = document_fixture().node(source).node(target).build();
+        let mut editor = CanvasEditor::new(document);
+        editor.set_tool(CanvasTool::Connect).unwrap();
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(100.0), px(50.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(320.0), px(180.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert_eq!(editor.document().edge_count(), 0);
+        assert_eq!(
+            editor.take_connection_release(),
+            Some(CanvasConnectionRelease::Dropped(
+                CanvasDroppedConnectionRelease {
+                    source: CanvasEndpoint::new("a", Some("out")),
+                    position: point(px(320.0), px(180.0)),
+                }
+            ))
+        );
+        assert_eq!(editor.take_connection_release(), None);
     }
 
     #[test]
@@ -4119,6 +4229,18 @@ mod tests {
         assert_eq!(edge.target.handle_id, Some(HandleId::from("in")));
         assert_eq!(editor.document().edge_count(), 1);
         assert_eq!(editor.history().undo_depth(), 1);
+        assert_eq!(
+            editor.take_connection_release(),
+            Some(CanvasConnectionRelease::Reconnected(
+                CanvasReconnectedRelease {
+                    edge_id: EdgeId::from("edge"),
+                    endpoint: CanvasConnectionEndpointRole::Target,
+                    fixed: CanvasEndpoint::new("a", Some("out")),
+                    replacement: CanvasEndpoint::new("c", Some("in")),
+                    position: point(px(400.0), px(50.0)),
+                }
+            ))
+        );
     }
 
     #[test]
@@ -4251,6 +4373,18 @@ mod tests {
         assert!(matches!(editor.session.state, ToolState::Idle));
         assert!(editor.document().edge_count() == 0);
         assert_eq!(editor.history().undo_depth(), 0);
+        assert_eq!(
+            editor.take_connection_release(),
+            Some(CanvasConnectionRelease::Rejected(
+                CanvasRejectedConnectionRelease {
+                    reason: CanvasConnectionRejectReason::InvalidSource,
+                    source: None,
+                    edge_id: None,
+                    endpoint: Some(CanvasConnectionEndpointRole::Source),
+                    position: point(px(100.0), px(50.0)),
+                }
+            ))
+        );
     }
 
     #[test]

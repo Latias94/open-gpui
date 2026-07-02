@@ -1,10 +1,13 @@
 use super::frame::{
-    CanvasPaintEdgeGeometry, CanvasPaintRecord, CanvasPreparedPaintFrame, CanvasPreparedPaintLabel,
+    CanvasPaintConnectionTargetFeedback, CanvasPaintConnectionTargetState, CanvasPaintEdgeGeometry,
+    CanvasPaintRecord, CanvasPreparedPaintFrame, CanvasPreparedPaintLabel,
 };
 use super::model::{CanvasPaintModel, CanvasPaintTheme};
 use super::style::{edge_paint_style, node_paint_style, shape_paint_style};
 use crate::{CanvasRouteSegment, HitTarget};
-use open_gpui::{App, Bounds, ContentMask, Hsla, PathBuilder, Pixels, Point, Window, px, quad};
+use open_gpui::{
+    App, Bounds, ContentMask, Hsla, PathBuilder, Pixels, Point, Window, px, quad, size,
+};
 
 pub fn paint_canvas_frame(
     canvas_bounds: Bounds<Pixels>,
@@ -36,15 +39,7 @@ pub fn paint_canvas_frame(
                 );
             }
             HitTarget::Handle { .. } => {
-                paint_rect(
-                    window,
-                    canvas_bounds,
-                    record.view_bounds,
-                    theme.handle_fill,
-                    theme.handle_stroke,
-                    theme.handle_stroke_width,
-                    theme.handle_corner_radius,
-                );
+                paint_endpoint_affordance(window, canvas_bounds, record.view_bounds, theme);
             }
             HitTarget::Shape(id) => {
                 let Some(shape) = model.document.shape(id) else {
@@ -148,13 +143,16 @@ pub fn paint_canvas_frame(
     }
 
     if let Some(preview) = &frame.frame.interaction.connection_preview {
+        let (preview_stroke, preview_stroke_width) =
+            connection_preview_style(&preview.target_feedback, theme);
         paint_edge(
             window,
             canvas_bounds,
             &preview.edge_geometry,
-            theme.connection_preview_stroke,
-            theme.connection_preview_stroke_width,
+            preview_stroke,
+            preview_stroke_width,
         );
+        paint_connection_target_feedback(window, canvas_bounds, &preview.target_feedback, theme);
     }
 
     for guide in &frame.frame.interaction.snap_guides {
@@ -181,15 +179,7 @@ pub fn paint_canvas_frame(
     }
 
     for handle in &frame.frame.interaction.reconnect_handles {
-        paint_rect(
-            window,
-            canvas_bounds,
-            handle.view_bounds,
-            theme.handle_fill,
-            theme.handle_stroke,
-            theme.handle_stroke_width,
-            handle.view_bounds.size.width * 0.5,
-        );
+        paint_endpoint_affordance(window, canvas_bounds, handle.view_bounds, theme);
     }
 }
 
@@ -222,6 +212,98 @@ fn paint_rect(
         stroke,
         Default::default(),
     ));
+}
+
+fn paint_endpoint_affordance(
+    window: &mut Window,
+    canvas_bounds: Bounds<Pixels>,
+    hit_bounds: Bounds<Pixels>,
+    theme: CanvasPaintTheme,
+) {
+    let radius = hit_bounds.size.width.min(hit_bounds.size.height) * 0.5;
+    paint_rect(
+        window,
+        canvas_bounds,
+        hit_bounds,
+        theme.handle_fill.alpha(0.10),
+        theme.handle_stroke.alpha(0.75),
+        theme.handle_stroke_width,
+        radius,
+    );
+
+    let visual_size = hit_bounds
+        .size
+        .width
+        .min(hit_bounds.size.height)
+        .min(px(10.0));
+    let visual_bounds = Bounds::centered_at(hit_bounds.center(), size(visual_size, visual_size));
+    paint_rect(
+        window,
+        canvas_bounds,
+        visual_bounds,
+        theme.handle_fill,
+        theme.handle_stroke,
+        theme.handle_stroke_width,
+        visual_size * 0.5,
+    );
+}
+
+fn paint_connection_target_feedback(
+    window: &mut Window,
+    canvas_bounds: Bounds<Pixels>,
+    feedback: &CanvasPaintConnectionTargetFeedback,
+    theme: CanvasPaintTheme,
+) {
+    let (fill, stroke, stroke_width) = connection_target_style(feedback, theme);
+    paint_rect(
+        window,
+        canvas_bounds,
+        feedback.view_bounds,
+        fill,
+        stroke,
+        stroke_width,
+        feedback
+            .view_bounds
+            .size
+            .width
+            .min(feedback.view_bounds.size.height)
+            * 0.5,
+    );
+}
+
+fn connection_preview_style(
+    feedback: &CanvasPaintConnectionTargetFeedback,
+    theme: CanvasPaintTheme,
+) -> (Hsla, Pixels) {
+    let stroke = match feedback.state {
+        CanvasPaintConnectionTargetState::Free => theme.connection_preview_stroke,
+        CanvasPaintConnectionTargetState::Valid => theme.connection_valid_target_stroke,
+        CanvasPaintConnectionTargetState::Invalid => theme.connection_invalid_target_stroke,
+    };
+    (stroke, theme.connection_preview_stroke_width)
+}
+
+fn connection_target_style(
+    feedback: &CanvasPaintConnectionTargetFeedback,
+    theme: CanvasPaintTheme,
+) -> (Hsla, Hsla, Pixels) {
+    match feedback.state {
+        CanvasPaintConnectionTargetState::Free => (
+            theme.connection_free_target_fill,
+            theme.connection_free_target_stroke,
+            theme.handle_stroke_width,
+        ),
+        CanvasPaintConnectionTargetState::Valid => (
+            theme.connection_valid_target_fill,
+            theme.connection_valid_target_stroke,
+            theme.handle_stroke_width,
+        ),
+        CanvasPaintConnectionTargetState::Invalid => (
+            theme.connection_invalid_target_fill,
+            theme.connection_invalid_target_stroke,
+            theme.handle_stroke_width,
+        ),
+    }
 }
 
 fn paint_line(

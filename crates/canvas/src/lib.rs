@@ -58,12 +58,14 @@ pub use geometry_facts::{
 };
 pub use gpui::{
     CanvasConnectionPreviewRoute, CanvasEditorInputHandler, CanvasEditorInputMapper,
-    CanvasInputMapper, CanvasPaintConnectionPreview, CanvasPaintEdgeGeometry, CanvasPaintFrame,
+    CanvasInputMapper, CanvasPaintConnectionPreview, CanvasPaintConnectionTargetFeedback,
+    CanvasPaintConnectionTargetState, CanvasPaintEdgeGeometry, CanvasPaintFrame,
     CanvasPaintInteraction, CanvasPaintInteractionFrame, CanvasPaintLabel, CanvasPaintModel,
-    CanvasPaintOptions, CanvasPaintRecord, CanvasPaintSnapGuide, CanvasPaintTheme,
-    CanvasPaintTransformHandle, CanvasPreparedPaintFrame, CanvasWidgetOverlayFrame,
-    CanvasWidgetOverlayHitPriority, CanvasWidgetOverlayOptions, CanvasWidgetOverlayPlacement,
-    canvas_editor_view, canvas_editor_view_with_frame, canvas_view, collect_visible_records,
+    CanvasPaintOptions, CanvasPaintReconnectEndpoint, CanvasPaintReconnectHandle,
+    CanvasPaintRecord, CanvasPaintSnapGuide, CanvasPaintTheme, CanvasPaintTransformHandle,
+    CanvasPreparedPaintFrame, CanvasWidgetOverlayFrame, CanvasWidgetOverlayHitPriority,
+    CanvasWidgetOverlayOptions, CanvasWidgetOverlayPlacement, canvas_editor_view,
+    canvas_editor_view_with_frame, canvas_view, collect_visible_records,
     collect_widget_overlay_frame, paint_canvas_frame, prepaint_canvas_frame, prepare_canvas_frame,
     register_canvas_editor_input,
 };
@@ -127,10 +129,12 @@ pub use store::{
     CanvasStoreMutationSource,
 };
 pub use tool::{
-    CanvasConnectionDragState, CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey,
-    CanvasKeyModifiers, CanvasSelection, CanvasSelectionMode, CanvasTool, CanvasToolContext,
-    CanvasToolId, CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError,
-    PointerButton,
+    CanvasConnectedRelease, CanvasConnectionDragState, CanvasConnectionRejectReason,
+    CanvasConnectionRelease, CanvasDroppedConnectionRelease, CanvasEditor, CanvasEvent,
+    CanvasHistory, CanvasKey, CanvasKeyModifiers, CanvasReconnectedRelease,
+    CanvasRejectedConnectionRelease, CanvasSelection, CanvasSelectionMode, CanvasTool,
+    CanvasToolContext, CanvasToolId, CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry,
+    CanvasToolRegistryError, PointerButton,
 };
 pub use transform::{
     CanvasResizeHandle, CanvasTransformHandle, CanvasTransformTarget, canvas_transform_handles,

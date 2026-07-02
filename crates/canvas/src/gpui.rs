@@ -25,11 +25,12 @@ mod tests {
         },
     };
     use crate::{
-        CanvasDocument, CanvasEdge, CanvasEdgeKind, CanvasEdgeRenderPolicy, CanvasEdgeRouter,
-        CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasHandle, CanvasKey, CanvasKeyModifiers,
-        CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeGeometryPolicy,
-        CanvasNodeKind, CanvasNodeRenderPolicy, CanvasRecordId, CanvasRoutePath,
-        CanvasRouteRequest, CanvasSelection, CanvasSelectionMode, CanvasShape, CanvasShapeKind,
+        CanvasConnectionEndpointRole, CanvasDocument, CanvasEdge, CanvasEdgeKind,
+        CanvasEdgeRenderPolicy, CanvasEdgeRouter, CanvasEditor, CanvasEndpoint, CanvasEvent,
+        CanvasHandle, CanvasKey, CanvasKeyModifiers, CanvasKindLabel, CanvasKindPaint,
+        CanvasKindRegistry, CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeKind,
+        CanvasNodeRenderPolicy, CanvasRecordId, CanvasRoutePath, CanvasRouteRequest,
+        CanvasSelection, CanvasSelectionMode, CanvasShape, CanvasShapeKind,
         CanvasShapeRenderPolicy, CanvasSnapAxis, CanvasSnapGuide, CanvasStyle, CanvasTransaction,
         CanvasTransformTarget, CanvasViewport, DocumentCommand, EdgeId, HandleRole, HitTarget,
         PointerButton,
@@ -1121,12 +1122,19 @@ mod tests {
     fn straight_preview(
         source: open_gpui::Point<Pixels>,
         target: open_gpui::Point<Pixels>,
+        target_state: CanvasPaintConnectionTargetState,
+        feedback_center: open_gpui::Point<Pixels>,
     ) -> CanvasPaintConnectionPreview {
         CanvasPaintConnectionPreview {
             source_view_position: source,
             target_view_position: target,
             edge_geometry: CanvasPaintEdgeGeometry {
                 view_path: CanvasRoutePath::polyline([source, target]),
+            },
+            target_feedback: CanvasPaintConnectionTargetFeedback {
+                role: CanvasConnectionEndpointRole::Target,
+                state: target_state,
+                view_bounds: Bounds::centered_at(feedback_center, size(px(18.0), px(18.0))),
             },
         }
     }
@@ -1160,6 +1168,8 @@ mod tests {
             frame.interaction.connection_preview,
             Some(straight_preview(
                 point(px(110.0), px(60.0)),
+                point(px(180.0), px(120.0)),
+                CanvasPaintConnectionTargetState::Free,
                 point(px(180.0), px(120.0)),
             ))
         );
@@ -1245,6 +1255,8 @@ mod tests {
             Some(straight_preview(
                 point(px(30.0), px(5.0)),
                 point(px(40.0), px(5.0)),
+                CanvasPaintConnectionTargetState::Valid,
+                point(px(40.0), px(5.0)),
             ))
         );
     }
@@ -1289,6 +1301,8 @@ mod tests {
             frame.interaction.connection_preview,
             Some(straight_preview(
                 point(px(110.0), px(60.0)),
+                point(px(200.0), px(60.0)),
+                CanvasPaintConnectionTargetState::Valid,
                 point(px(200.0), px(60.0)),
             ))
         );
@@ -1335,6 +1349,8 @@ mod tests {
             Some(straight_preview(
                 point(px(110.0), px(60.0)),
                 point(px(204.0), px(64.0)),
+                CanvasPaintConnectionTargetState::Invalid,
+                point(px(200.0), px(60.0)),
             ))
         );
     }

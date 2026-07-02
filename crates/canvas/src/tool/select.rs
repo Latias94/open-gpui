@@ -1,5 +1,10 @@
+use super::context::CanvasConnectionHit;
 use super::*;
-use crate::{CanvasConnectionEndpointRole, CanvasResizeHandle, CanvasViewport, HitOptions};
+use crate::{
+    CanvasConnectionEndpointRole, CanvasConnectionRejectReason, CanvasConnectionRelease,
+    CanvasReconnectedRelease, CanvasRejectedConnectionRelease, CanvasResizeHandle, CanvasViewport,
+    HitOptions,
+};
 use open_gpui::Axis;
 
 const TRANSLATION_DRAG_THRESHOLD: f32 = 3.0;
@@ -157,14 +162,19 @@ impl SelectToolStateMachine {
             }
             (
                 ToolState::Reconnecting {
-                    edge_id, endpoint, ..
+                    edge_id,
+                    endpoint,
+                    fixed,
+                    ..
                 },
                 CanvasEvent::PointerUp {
                     position,
                     button: PointerButton::Primary,
                     ..
                 },
-            ) => self.handle_reconnecting_pointer_up(context, position, edge_id, *endpoint)?,
+            ) => {
+                self.handle_reconnecting_pointer_up(context, position, edge_id, *endpoint, fixed)?
+            }
             (ToolState::Translating { .. } | ToolState::Resizing { .. }, CanvasEvent::Cancel) => {
                 vec![
                     CanvasToolEffect::CancelGesture,
@@ -457,13 +467,58 @@ impl SelectToolStateMachine {
         position: Point<Pixels>,
         edge_id: &EdgeId,
         endpoint: CanvasConnectionEndpointRole,
+        fixed: &CanvasEndpoint,
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
         let document_position = context.viewport().view_to_document(position);
         let mut effects = Vec::new();
-        if let Some(candidate) = context.node_endpoint_at(document_position, endpoint) {
-            let transaction = context.reconnect_edge_transaction(edge_id, endpoint, candidate)?;
-            if !transaction.is_empty() {
-                effects.push(CanvasToolEffect::ApplyTransaction(transaction));
+        match context.connection_hit_at(document_position, endpoint) {
+            CanvasConnectionHit::Valid(candidate) => {
+                let transaction =
+                    context.reconnect_edge_transaction(edge_id, endpoint, candidate.clone())?;
+                if !transaction.is_empty() {
+                    effects.push(CanvasToolEffect::ApplyTransaction(transaction));
+                    effects.push(CanvasToolEffect::SetConnectionRelease(Some(
+                        CanvasConnectionRelease::Reconnected(CanvasReconnectedRelease {
+                            edge_id: edge_id.clone(),
+                            endpoint,
+                            fixed: fixed.clone(),
+                            replacement: candidate,
+                            position: document_position,
+                        }),
+                    )));
+                } else {
+                    effects.push(CanvasToolEffect::SetConnectionRelease(Some(
+                        CanvasConnectionRelease::Rejected(CanvasRejectedConnectionRelease {
+                            reason: CanvasConnectionRejectReason::SameEndpoint,
+                            source: None,
+                            edge_id: Some(edge_id.clone()),
+                            endpoint: Some(endpoint),
+                            position: document_position,
+                        }),
+                    )));
+                }
+            }
+            CanvasConnectionHit::Invalid => {
+                effects.push(CanvasToolEffect::SetConnectionRelease(Some(
+                    CanvasConnectionRelease::Rejected(CanvasRejectedConnectionRelease {
+                        reason: CanvasConnectionRejectReason::InvalidTarget,
+                        source: None,
+                        edge_id: Some(edge_id.clone()),
+                        endpoint: Some(endpoint),
+                        position: document_position,
+                    }),
+                )));
+            }
+            CanvasConnectionHit::Empty => {
+                effects.push(CanvasToolEffect::SetConnectionRelease(Some(
+                    CanvasConnectionRelease::Rejected(CanvasRejectedConnectionRelease {
+                        reason: CanvasConnectionRejectReason::InvalidTarget,
+                        source: None,
+                        edge_id: Some(edge_id.clone()),
+                        endpoint: Some(endpoint),
+                        position: document_position,
+                    }),
+                )));
             }
         }
         effects.push(CanvasToolEffect::SetState(ToolState::Idle));

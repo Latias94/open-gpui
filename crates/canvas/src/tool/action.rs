@@ -1,5 +1,8 @@
 use crate::session::{CanvasToolSessionEffect, ToolState};
-use crate::{CanvasSelection, CanvasTool, CanvasTransaction, CanvasViewport, HitTarget};
+use crate::{
+    CanvasConnectionRelease, CanvasSelection, CanvasTool, CanvasTransaction, CanvasViewport,
+    HitTarget,
+};
 use open_gpui::{Pixels, Point};
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +20,7 @@ pub(crate) enum CanvasToolEffect {
     RemoveSelection(HitTarget),
     ToggleSelection(HitTarget),
     ClearSelection,
+    SetConnectionRelease(Option<CanvasConnectionRelease>),
     SetState(ToolState),
     PanViewport(Point<Pixels>),
     SetViewport(CanvasViewport),
@@ -46,6 +50,7 @@ pub(crate) enum CanvasEditorAction {
     CommitGesture,
     CancelGesture,
     SetTool(CanvasTool),
+    SetConnectionRelease(Option<CanvasConnectionRelease>),
     Session(CanvasToolSessionEffect),
 }
 
@@ -76,6 +81,7 @@ impl From<CanvasToolEffect> for CanvasEditorAction {
             CanvasToolEffect::ClearSelection => {
                 Self::Session(CanvasToolSessionEffect::ClearSelection)
             }
+            CanvasToolEffect::SetConnectionRelease(release) => Self::SetConnectionRelease(release),
             CanvasToolEffect::SetState(state) => {
                 Self::Session(CanvasToolSessionEffect::SetState(state))
             }

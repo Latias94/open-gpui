@@ -19,7 +19,7 @@ use crate::{
 use indexmap::IndexSet;
 use open_gpui::{Bounds, Pixels, Point, px, size};
 
-const RECONNECT_HANDLE_VIEW_SIZE: Pixels = px(14.0);
+pub(crate) const RECONNECT_HANDLE_VIEW_SIZE: Pixels = px(20.0);
 
 #[derive(Debug)]
 pub(crate) struct CanvasResizeSelectionScope {
@@ -34,6 +34,13 @@ pub(crate) struct CanvasReconnectTarget {
     pub(crate) edge_id: EdgeId,
     pub(crate) endpoint: CanvasConnectionEndpointRole,
     pub(crate) fixed: CanvasEndpoint,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum CanvasConnectionHit {
+    Valid(CanvasEndpoint),
+    Invalid,
+    Empty,
 }
 
 #[derive(Clone, Copy)]
@@ -435,11 +442,11 @@ impl CanvasToolReducerContext<'_> {
         )
     }
 
-    pub(crate) fn node_endpoint_at(
+    pub(crate) fn connection_hit_at(
         &self,
         point: Point<Pixels>,
         role: CanvasConnectionEndpointRole,
-    ) -> Option<CanvasEndpoint> {
+    ) -> CanvasConnectionHit {
         let facts = CanvasGeometryFacts::with_router_and_kind_registry(
             self.document,
             self.edge_router,
@@ -448,7 +455,35 @@ impl CanvasToolReducerContext<'_> {
         let records =
             self.runtime
                 .precise_hit_test_with_facts(facts, point, connection_hit_options());
-        facts.connection_endpoint_at(records, role)
+
+        for record in records {
+            match &record.target {
+                HitTarget::Handle { node_id, handle_id } => {
+                    let Some(node) = self.document.node(node_id) else {
+                        continue;
+                    };
+                    let Some(handle) = node.handle(Some(handle_id)) else {
+                        continue;
+                    };
+                    if handle.is_pickable_connection_endpoint(role) {
+                        return CanvasConnectionHit::Valid(CanvasEndpoint {
+                            node_id: node_id.clone(),
+                            handle_id: Some(handle_id.clone()),
+                        });
+                    }
+                    return CanvasConnectionHit::Invalid;
+                }
+                HitTarget::Node(node_id) => {
+                    return CanvasConnectionHit::Valid(CanvasEndpoint {
+                        node_id: node_id.clone(),
+                        handle_id: None,
+                    });
+                }
+                HitTarget::Edge(_) | HitTarget::Shape(_) => {}
+            }
+        }
+
+        CanvasConnectionHit::Empty
     }
 
     pub(crate) fn selected_reconnect_target_at(
