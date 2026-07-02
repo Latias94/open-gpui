@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-07-02: Confirmed `main` and `origin/main` at `e257d52f` after the native UI hybrid registry
+  close-out, deleted the remote feature branch `origin/refactor/native-ui-hybrid-registry`, and
+  refreshed engineering memory so it no longer points at the merged feature branch as active work.
+  Created `docs/plans/2026-07-02-003-refactor-registry-v1-real-usage-validation-plan.md` as the next
+  implementation-ready slice: validate registry manifest version 1 through a real
+  `table-filters-toolbar` recipe metadata mutation, regenerated JSON/schema artifacts,
+  `scan-ui-registry` diagnostics, gallery-side evidence tests, docs, and verification memory. Hosted
+  registry, public scaffolding CLI, third-party publishing, manifest version negotiation, and
+  `open-gpui-ui-headless` remain deferred.
 - 2026-07-02: Implemented the native UI hybrid registry MVP on
   `refactor/native-ui-hybrid-registry`. Added the manifest projection and scaffold recipe metadata
   under `crates/ui_components/src/component_contract/`, generated

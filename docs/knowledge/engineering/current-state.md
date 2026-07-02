@@ -2,8 +2,8 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-02T17:02:11+08:00
-git_branch: refactor/native-ui-hybrid-registry
+timestamp: 2026-07-02T19:15:55+08:00
+git_branch: main
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
   - docs/plans/2026-07-01-002-refactor-ui-public-gallery-boundaries-plan.md
@@ -12,6 +12,7 @@ related_plan:
   - docs/plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md
   - docs/plans/2026-07-02-001-refactor-ui-contract-tooling-plan.md
   - docs/plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md
+  - docs/plans/2026-07-02-003-refactor-registry-v1-real-usage-validation-plan.md
 related_research:
   - native-ui-framework-design-research/report.md
 related_adr:
@@ -49,7 +50,7 @@ verified_by:
 
 # Current State
 
-- Branch: `refactor/native-ui-hybrid-registry`; latest `main` has been merged into this branch.
+- Branch: `main`; `origin/main` is at `e257d52f`.
 - Done: Public-surface tests now consume the component contract registry instead of gallery/test
   helper maps. The registry owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default
@@ -73,26 +74,33 @@ verified_by:
 - Done: `docs/plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md` is
   implementation-ready. It sequences manifest model, scaffold recipe metadata, JSON/schema export,
   gallery evidence alignment, `xtask` drift checks, docs, memory, and ADR 0013.
-- Done on `refactor/native-ui-hybrid-registry`: the component registry manifest is implemented as
-  a deterministic projection of `component_contract`, scaffold recipes are recorded in
+- Done: the component registry manifest is implemented as a deterministic projection of
+  `component_contract`, scaffold recipes are recorded in
   `component_contract/recipes.rs`, and committed artifacts now live at
   `docs/registry/open-gpui-component-registry-v1.json` and
   `docs/schemas/open-gpui-component-registry-v1.schema.json`.
-- Done on `refactor/native-ui-hybrid-registry`: `cargo run -p xtask -- scan-ui-registry` compares
+- Done: `cargo run -p xtask -- scan-ui-registry` compares
   generated registry/schema output with committed artifacts, checks recipe references and generated
   file intents, and now runs before `scan-ui-contract` in `xtask verify`.
-- Done on `refactor/native-ui-hybrid-registry`: foundation gallery tests consume the manifest for
-  catalog and story evidence without moving selector constants into `open-gpui-ui-components`.
+- Done: foundation gallery tests consume the manifest for catalog and story evidence without moving
+  selector constants into `open-gpui-ui-components`.
 - Done: Full focused UI verification passed before the merge to `main`: component public surface,
   Menu, ContextMenu, Tree, Table, gallery metadata, overlay, tree, table, full
   `open-gpui-ui-components`, and full `open-gpui-ui-foundation-gallery`.
+- Done: the hybrid registry work was merged to `main` and pushed as `e257d52f`; the remote feature
+  branch `origin/refactor/native-ui-hybrid-registry` was deleted after merge. The local merged branch
+  still exists as a historical pointer and should not be deleted unless requested.
+- Done: `docs/plans/2026-07-02-003-refactor-registry-v1-real-usage-validation-plan.md` is
+  implementation-ready. It validates registry v1 through a real Table scaffold recipe metadata
+  mutation, regenerated artifacts, `scan-ui-registry`, gallery evidence tests, docs, and memory.
 - Current docs direction: component ecosystem changes start with
   `cargo run -p xtask -- scan-ui-registry` and then `cargo run -p xtask -- scan-ui-contract`,
   followed by public-surface, a11y, theme, or gallery focused nextest gates for behavior proof.
 - Not current roadmap work: broad splitting of every remaining 1k+ component file and
   `open-gpui-ui-headless` extraction.
 - Blocked: None.
-- Next action: commit the hybrid registry docs, memory, and ADR close-out.
+- Next action: execute the registry v1 real usage validation plan, or create an issue/goal from it
+  before implementation if the next session should run hands-off.
 
 # Citations
 
@@ -103,6 +111,7 @@ verified_by:
 - [UI contract/a11y/theme plan](../../plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md)
 - [UI contract tooling plan](../../plans/2026-07-02-001-refactor-ui-contract-tooling-plan.md)
 - [Native UI hybrid registry architecture plan](../../plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md)
+- [Registry v1 real usage validation plan](../../plans/2026-07-02-003-refactor-registry-v1-real-usage-validation-plan.md)
 - [Native UI framework design research report](../../../native-ui-framework-design-research/report.md)
 - [Native UI framework distribution strategy decision](decisions/open-gpui-native-ui-framework-distribution-strategy.md)
 - [Native UI framework strategy architecture page](../../architecture/native-ui-framework-strategy.md)
