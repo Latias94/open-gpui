@@ -4110,11 +4110,13 @@ mod tests {
         open_gpui_control_element_id, plan_action_dispatch, plan_dropped_wire_insert,
         project_dropped_wire_menu, projected_node_surface_component_layout,
         testing::{
-            OpenGpuiHostCapabilityGap, OpenGpuiHostRendererSource, OpenGpuiHostSurfaceReport,
-            OpenGpuiHostSurfaceReportRow, assert_authoring_interaction_regression_gates,
-            assert_host_surface_report_contract, assert_host_visual_interaction_report_gates,
-            assert_product_fixture_regression_gates, assert_product_gallery_host_report_gates,
-            product_fixture_catalog,
+            OpenGpuiHostCapabilityGap, OpenGpuiHostProductInteractionGap,
+            OpenGpuiHostProductInteractionReport, OpenGpuiHostRendererSource,
+            OpenGpuiHostSurfaceReport, OpenGpuiHostSurfaceReportRow,
+            assert_authoring_interaction_regression_gates, assert_host_surface_report_contract,
+            assert_host_visual_interaction_report_gates, assert_product_fixture_regression_gates,
+            assert_product_gallery_host_report_gates,
+            assert_product_interaction_characterization_report_contract, product_fixture_catalog,
         },
     };
     use open_gpui_canvas::{
@@ -5426,6 +5428,192 @@ mod tests {
             row.capability_gaps
                 .contains(&OpenGpuiHostCapabilityGap::AdvancedControlStub)
         }));
+    }
+
+    #[test]
+    fn canvas_example_characterizes_current_product_interaction_gaps() {
+        let report = canvas_host_product_interaction_report();
+        assert_product_interaction_characterization_report_contract(&report);
+        assert!(report.product_drag_surface_count >= 4, "{report:?}");
+        assert!(report.hidden_repeatable_overflow_count > 0, "{report:?}");
+        assert!(
+            report.gaps.contains(
+                &OpenGpuiHostProductInteractionGap::DragSurfaceMissingFullPointerSequence
+            )
+        );
+        assert!(
+            report
+                .gaps
+                .contains(&OpenGpuiHostProductInteractionGap::ToolSwitcherMissing)
+        );
+        assert!(
+            report
+                .gaps
+                .contains(&OpenGpuiHostProductInteractionGap::ConnectFlowNotStoreSynced)
+        );
+        assert!(
+            report
+                .gaps
+                .contains(&OpenGpuiHostProductInteractionGap::ReconnectAffordanceMissing)
+        );
+        assert!(
+            report
+                .gaps
+                .contains(&OpenGpuiHostProductInteractionGap::RepeatableOverflowIndicatorMissing)
+        );
+    }
+
+    #[test]
+    fn canvas_edge_edits_are_characterized_as_unsynced_to_jellyflow_store() {
+        let (store, document, _) = project_kit_fixture("shader.blueprint", "shader.material_mix")
+            .expect("shader fixture projects");
+        let mut editor = editor_for_document(document).expect("shader fixture editor");
+        let edge_id = editor
+            .document()
+            .edges()
+            .next()
+            .expect("fixture edge")
+            .id
+            .clone();
+
+        editor
+            .apply_transaction(CanvasTransaction::single(DocumentCommand::RemoveEdge(
+                edge_id,
+            )))
+            .expect("remove canvas edge");
+
+        assert_ne!(
+            editor.document().edge_count(),
+            store.graph().edges().len(),
+            "canvas edge edit should create a divergence before U5 sync is implemented"
+        );
+        let transaction = canvas_document_transform_transaction(&store, editor.document());
+        assert!(
+            transaction
+                .ops()
+                .iter()
+                .all(|op| matches!(op, GraphOp::SetNodePos { .. } | GraphOp::SetNodeSize { .. })),
+            "current canvas-to-Jellyflow sync must not claim edge synchronization yet: {transaction:?}"
+        );
+    }
+
+    fn canvas_host_product_interaction_report() -> OpenGpuiHostProductInteractionReport {
+        let catalog = product_fixture_catalog();
+        let renderer_registry = demo_node_renderer_registry();
+        let renderers = demo_custom_node_renderers();
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let mut product_drag_surfaces = 0;
+        let mut hidden_repeatable_overflow = 0;
+
+        for fixture in catalog {
+            let (store, document, _projection) =
+                project_kit_fixture(&fixture.kit_key, &fixture.fixture_key)
+                    .expect("product fixture projects into canvas document");
+            let measured_store =
+                measurement_store_with_projection_fallback(&store, &semantic_registry);
+
+            for canvas_node in document.nodes() {
+                let Some(node_id) = jelly_node_id_from_node(canvas_node) else {
+                    continue;
+                };
+                let Some(graph_node) = store.graph().nodes().get(&node_id) else {
+                    continue;
+                };
+                let Some(surface) = node_surface_summary_for_node(
+                    canvas_node,
+                    node_id,
+                    graph_node,
+                    store.graph(),
+                    1.0,
+                    false,
+                    &semantic_registry,
+                    &node_kit_registry,
+                    measured_store.node_measurement(node_id),
+                ) else {
+                    continue;
+                };
+                if host_renderer_source(&renderer_registry, &renderers, &surface.renderer_context)
+                    == OpenGpuiHostRendererSource::ProductRenderer
+                {
+                    product_drag_surfaces += 1;
+                    hidden_repeatable_overflow += hidden_repeatable_overflow_for_surface(&surface);
+                }
+            }
+        }
+        hidden_repeatable_overflow += augmented_shader_repeatable_overflow_probe();
+
+        let mut report = OpenGpuiHostProductInteractionReport::default();
+        report.mark_drag_surface_coverage(product_drag_surfaces, false);
+        report.mark_control_event_shielding_checked(true);
+        report.mark_port_hotspot_path_checked(false);
+        report.mark_tool_switcher_visible(false);
+        report.mark_connect_flow_store_synced(false);
+        report.mark_reconnect_affordance_visible(false);
+        report.mark_dropped_wire_gesture_connected(false);
+        report.mark_repeatable_overflow(hidden_repeatable_overflow, 0);
+        report
+    }
+
+    fn augmented_shader_repeatable_overflow_probe() -> usize {
+        let Ok((mut store, _document, _projection, node_id)) =
+            project_schema_node("demo.shader.mix")
+        else {
+            return 0;
+        };
+        let registry = NodeKitRegistry::builtin().node_registry();
+        if !matches!(
+            OpenGpuiAuthoringController.apply_repeatable_action_to_store(
+                &mut store,
+                &registry,
+                node_id,
+                OpenGpuiRepeatableActionPlan::Add {
+                    collection_key: "shader.inputs".to_owned(),
+                    item: serde_json::json!({
+                        "name": "Input 4",
+                        "ty": "vec4",
+                        "port": "input_4"
+                    }),
+                },
+            ),
+            Ok(Some(_))
+        ) {
+            return 0;
+        }
+
+        let Ok((document, _projection)) = project_store(&store) else {
+            return 0;
+        };
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let Some(shader_node) = document.node(&NodeId::from(canvas_node_id(&node_id))) else {
+            return 0;
+        };
+        let Some(shader_record) = store.graph().nodes().get(&node_id) else {
+            return 0;
+        };
+        let Some(surface) = node_surface_summary_for_node(
+            shader_node,
+            node_id,
+            shader_record,
+            store.graph(),
+            1.0,
+            false,
+            &semantic_registry,
+            &node_kit_registry,
+            None,
+        ) else {
+            return 0;
+        };
+
+        hidden_repeatable_overflow_for_surface(&surface)
+    }
+
+    fn hidden_repeatable_overflow_for_surface(surface: &NodeSurfaceSummary) -> usize {
+        match surface.renderer_key.as_str() {
+            "shader-card" | "table-card" => surface.repeatable_items.len().saturating_sub(3),
+            _ => 0,
+        }
     }
 
     fn canvas_host_surface_report() -> OpenGpuiHostSurfaceReport {
