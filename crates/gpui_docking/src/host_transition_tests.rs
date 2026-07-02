@@ -494,6 +494,107 @@ fn transition_plan_between_overlay_scenes_keeps_previous_bounds_for_matching_lay
 }
 
 #[test]
+fn transition_plan_keeps_tab_insertion_layers_at_current_target_bounds() {
+    let tabs = crate::DockNodeId::null();
+    let scene = single_pane_scene(tabs, host_bounds(320.0, 200.0));
+    let previous = DockOverlayScene {
+        layers: vec![
+            DockOverlayLayer {
+                kind: DockOverlayLayerKind::TabInsertion,
+                bounds: floating_bounds(12.0, 0.0, 3.0, 26.0),
+                target_node: Some(tabs),
+                zone: Some(DropZone::Center),
+                preview_layer: None,
+                active: true,
+                payload_index: None,
+                payload_title: None,
+                drop_box: None,
+                tab_insertion: None,
+            },
+            DockOverlayLayer {
+                kind: DockOverlayLayerKind::PayloadTab,
+                bounds: floating_bounds(16.0, 0.0, 80.0, 26.0),
+                target_node: Some(tabs),
+                zone: Some(DropZone::Center),
+                preview_layer: None,
+                active: true,
+                payload_index: Some(0),
+                payload_title: Some("Preview".to_string()),
+                drop_box: None,
+                tab_insertion: None,
+            },
+            DockOverlayLayer {
+                kind: DockOverlayLayerKind::PayloadGhost,
+                bounds: floating_bounds(16.0, 0.0, 80.0, 26.0),
+                target_node: Some(tabs),
+                zone: Some(DropZone::Center),
+                preview_layer: None,
+                active: true,
+                payload_index: Some(0),
+                payload_title: Some("Preview".to_string()),
+                drop_box: None,
+                tab_insertion: None,
+            },
+        ],
+    };
+    let next = DockOverlayScene {
+        layers: vec![
+            DockOverlayLayer {
+                kind: DockOverlayLayerKind::TabInsertion,
+                bounds: floating_bounds(120.0, 0.0, 3.0, 26.0),
+                target_node: Some(tabs),
+                zone: Some(DropZone::Center),
+                preview_layer: None,
+                active: true,
+                payload_index: None,
+                payload_title: None,
+                drop_box: None,
+                tab_insertion: None,
+            },
+            DockOverlayLayer {
+                kind: DockOverlayLayerKind::PayloadTab,
+                bounds: floating_bounds(124.0, 0.0, 90.0, 26.0),
+                target_node: Some(tabs),
+                zone: Some(DropZone::Center),
+                preview_layer: None,
+                active: true,
+                payload_index: Some(0),
+                payload_title: Some("Preview".to_string()),
+                drop_box: None,
+                tab_insertion: None,
+            },
+            DockOverlayLayer {
+                kind: DockOverlayLayerKind::PayloadGhost,
+                bounds: floating_bounds(124.0, 0.0, 90.0, 26.0),
+                target_node: Some(tabs),
+                zone: Some(DropZone::Center),
+                preview_layer: None,
+                active: true,
+                payload_index: Some(0),
+                payload_title: Some("Preview".to_string()),
+                drop_box: None,
+                tab_insertion: None,
+            },
+        ],
+    };
+
+    let plan = DockTransitionPlan::between_overlay_scenes(
+        &scene,
+        &previous,
+        &next,
+        DockMotionPreference::Animated,
+    );
+
+    assert_eq!(plan.overlay_transitions.len(), 3);
+    for transition in &plan.overlay_transitions {
+        assert_eq!(
+            transition.from_bounds, None,
+            "tab insertion preview layers should not lag behind the current pointer target"
+        );
+    }
+}
+
+#[test]
 fn transition_plan_from_route_overlay_describes_source_marker() {
     let tabs = crate::DockNodeId::null();
     let scene = single_pane_scene(tabs, host_bounds(320.0, 200.0));

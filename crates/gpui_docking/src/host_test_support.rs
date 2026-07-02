@@ -6,9 +6,9 @@ use crate::{
 };
 use open_gpui::{
     App, AppContext as _, Bounds, Context, Entity, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, Modifiers, MouseButton, ParentElement, Pixels, Render, Styled, TestAppContext,
-    VisualTestContext, Window, WindowBounds, WindowHandle, WindowOptions, div, point, px, rgb,
-    size,
+    IntoElement, Modifiers, MouseButton, ParentElement, Pixels, Point, Render, Styled,
+    TestAppContext, VisualTestContext, Window, WindowBounds, WindowHandle, WindowOptions, div,
+    point, px, rgb, size,
 };
 
 const SPACE: &str = "main";
@@ -220,6 +220,11 @@ pub(crate) fn assert_close(actual: f32, expected: f32) {
         (actual - expected).abs() <= 2.0,
         "expected {actual} to be within 2px of {expected}"
     );
+}
+
+pub(crate) fn assert_point_close(actual: Point<Pixels>, expected: Point<Pixels>) {
+    assert_close(f32::from(actual.x), f32::from(expected.x));
+    assert_close(f32::from(actual.y), f32::from(expected.y));
 }
 
 pub(crate) fn center_drop_position(bounds: Bounds<Pixels>) -> open_gpui::Point<Pixels> {

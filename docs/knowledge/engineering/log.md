@@ -6,6 +6,18 @@ status: active
 
 # Log
 
+- 2026-07-02: Implemented the flat motion runtime plan on
+  `refactor/docking-flat-motion-runtime` through `b7a8290`. Docking now uses shared motion sampling
+  tokens, transition retargeting from sampled pane/divider/overlay geometry, real final-size pane
+  content reveal with occlusion masks, presentation-scene-seeded viewport drop facts, independent
+  overlay preview transition execution, programmatic Splitter fraction motion, and zoom/unzoom
+  retargeting from active samples. `docs/verification.md`, `examples/docking-native`, and
+  `docs/knowledge/engineering/current-state.md` now describe the shipped capability without
+  claiming pixel-perfect or native compositor parity. Focused gates passed for UI-core motion,
+  Splitter adapter, docking transition/render/zoom/presentation, and preview/routing suites. Final
+  closeout passed `cargo nextest run -p open-gpui-docking --no-fail-fast` (860/860),
+  `cargo check -p open-gpui-docking-native`, and engineering wiki validation. Next action is the
+  closeout commit and normal branch integration.
 - 2026-07-02: Created
   `docs/plans/2026-07-02-002-refactor-docking-flat-motion-runtime-plan.md` as the next docking
   UI/UX runtime-quality plan. It supersedes the June 30 descriptor/runtime plans for the animation

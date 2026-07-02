@@ -110,6 +110,13 @@ impl DockOverlayTransitionKind {
             DockOverlayLayerKind::RejectedState => Self::RejectedNoop,
         }
     }
+
+    fn animates_from_previous_bounds(self) -> bool {
+        !matches!(
+            self,
+            Self::TabInsertion | Self::PayloadTab | Self::PayloadGhost
+        )
+    }
 }
 
 impl DockTransitionPlan {
@@ -180,7 +187,8 @@ impl DockTransitionPlan {
                                 layer.zone,
                                 layer.payload_index,
                             ))
-                            .copied(),
+                            .copied()
+                            .filter(|_| kind.animates_from_previous_bounds()),
                         bounds: layer.bounds,
                         target_node: layer.target_node,
                         zone: layer.zone,

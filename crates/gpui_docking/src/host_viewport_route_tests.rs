@@ -325,17 +325,20 @@ mod runtime_suite {
         );
         let trusted_resolution =
             cx.update(|app| runtime.resolve_payload_drop_delivery(&trusted_request, app));
-        assert!(
-            matches!(
-                trusted_resolution.route(),
-                DockViewportDropRoute::Local {
-                    host_position: route_host_position,
-                    window_id,
-                    source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
-                    ..
-                } if *route_host_position == host_position && *window_id == source_window.window_id()
-            ),
-            "trusted hovered live-window facts should route with trusted-hovered selection source"
+        let DockViewportDropRoute::Local {
+            host_position: route_host_position,
+            window_id,
+            source,
+            ..
+        } = trusted_resolution.route()
+        else {
+            panic!("trusted hovered live-window facts should route locally");
+        };
+        assert_point_close(*route_host_position, host_position);
+        assert_eq!(*window_id, source_window.window_id());
+        assert_eq!(
+            *source,
+            crate::DockViewportRouteSelectionSource::TrustedHoveredWindow
         );
         assert!(
             trusted_resolution

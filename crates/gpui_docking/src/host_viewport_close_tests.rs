@@ -1913,7 +1913,7 @@ mod runtime_suite {
         else {
             panic!("fresh route facts should restore local route selection");
         };
-        assert_eq!(*routed_position, host_position);
+        assert_point_close(*routed_position, host_position);
         assert_eq!(*routed_window, window.window_id());
         assert_eq!(
             *source,

@@ -25,7 +25,8 @@
 * [Docking presentation scene and motion model planning](progress/2026-06-30-docking-presentation-scene-motion-plan.md) - Planning note for the next docking presentation scene, overlay, motion, zoom/focus, divider, and accessibility refactor.
 * [Docking split motion primitive refactor](progress/2026-06-30-docking-split-motion-primitives.md) - Current progress note for the shared split/motion primitive boundary and U10 cleanup.
 * [Docking split motion primitive verification](verification/docking-split-motion-primitives-20260630.md) - Verification evidence for the split/motion primitive refactor gates.
-* [Docking flat motion runtime framework planning](progress/2026-07-02-docking-flat-motion-runtime-plan.md) - Planning note for the next runtime-quality flat render, real-content transition, retargeting, split motion, and zoom/focus pass.
+* [Docking flat motion runtime framework implementation](progress/2026-07-02-docking-flat-motion-runtime-plan.md) - Implementation state for flat render authority, real-content transition reveal, overlay motion, retargeting, split motion, and zoom/focus polish.
+* [Docking flat motion runtime verification](verification/docking-flat-motion-runtime-20260702.md) - Verification evidence for focused and final flat motion runtime gates.
 * [Tree renderer productization verification](verification/tree-renderer-productization-20260622.md) - Verification evidence for the official Tree renderer, gallery sample, and nested scroll smokes.
 * [Tree virtualized window verification](verification/tree-virtualized-window-20260626.md) - Verification evidence for the opt-in Tree virtualized render window, API export coverage, and gallery metadata proof.
 * [Table sticky pinned columns verification](verification/table-sticky-pinned-columns-20260623.md) - Verification evidence for sticky pinned Table center scrolling and nested vertical containment.
