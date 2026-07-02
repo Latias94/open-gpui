@@ -651,6 +651,111 @@ fn root_drop_guides_use_outer_edge_drop_box_geometry(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn root_edge_hover_keeps_target_leaf_side_guides_visible(cx: &mut TestAppContext) {
+    let (graph, root, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(500.0), px(240.0)),
+    );
+
+    start_tab_drag(&mut visual, &host, left_tabs, "a");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: left_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let source_bounds = debug_bounds(&mut visual, &source_tab);
+    let start = source_bounds.center();
+    let root_selector = selector_for(&visual, &host, DockDebugRegion::Split { node: root })
+        .expect("root split selector should be emitted");
+    let root_bounds = debug_bounds(&mut visual, &root_selector);
+    let right_stack = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("right stack selector should be emitted");
+    let right_bounds = debug_bounds(&mut visual, &right_stack);
+    let outer_boxes = crate::geometry::drop_boxes_with_style(
+        root_bounds,
+        crate::geometry::DockDropBoxSet::Outer,
+        crate::DockDropGuideStyle::default(),
+    );
+    let outer_right_hit = outer_boxes
+        .iter()
+        .find(|drop_box| drop_box.kind.zone() == crate::DropZone::Right)
+        .expect("right outer drop box should exist")
+        .hit_bounds
+        .center();
+    let payload = DockDragPayload::new_item(space(), left_tabs, item("a"), "Panel A".to_string());
+    window
+        .update(cx, |host, window, cx| {
+            host.begin_tab_item_drag_from_render(left_tabs, item("a"), &payload, cx);
+            host.update_payload_drag_tear_off_geometry_from_render(
+                &payload,
+                crate::drag::DockDragTearOffGeometry::from_source_bounds(source_bounds, start)
+                    .with_preferred_size(source_bounds.size),
+            );
+            host.begin_host_drop_scene_from_render(
+                &payload,
+                root_bounds,
+                outer_right_hit,
+                window,
+                cx,
+            );
+            host.update_local_root_drop_scene_from_render(
+                &payload,
+                root,
+                root_bounds,
+                outer_right_hit,
+                window,
+                cx,
+            );
+        })
+        .expect("host should publish root drop scene");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    let expected_inner_boxes = crate::geometry::drop_boxes_with_style(
+        right_bounds,
+        crate::geometry::DockDropBoxSet::Inner,
+        crate::DockDropGuideStyle::default(),
+    );
+
+    assert_drop_guide_not_emitted(&visual, &host, Some(right_tabs), crate::DropZone::Center);
+    for zone in [
+        crate::DropZone::Left,
+        crate::DropZone::Right,
+        crate::DropZone::Top,
+        crate::DropZone::Bottom,
+    ] {
+        assert_drop_guide_emitted(&visual, &host, None, zone);
+        let guide = selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::DropGuide {
+                node: Some(right_tabs),
+                zone,
+            },
+        )
+        .unwrap_or_else(|| panic!("{zone:?} right stack guide selector should be emitted"));
+        let guide_bounds = debug_bounds(&mut visual, &guide);
+        let expected = expected_inner_boxes
+            .iter()
+            .find(|drop_box| drop_box.kind.zone() == zone)
+            .unwrap_or_else(|| panic!("{zone:?} inner drop box should exist"));
+        assert_bounds_close(
+            guide_bounds,
+            expected.draw_bounds,
+            &format!("{zone:?} right stack guide"),
+        );
+    }
+}
+
+#[open_gpui::test]
 fn empty_host_center_guide_uses_center_drop_box_geometry(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let mut graph = DockGraph::new();
