@@ -13,6 +13,8 @@ mod choice;
 mod families;
 #[path = "render/focus.rs"]
 mod focus;
+#[path = "render/layout.rs"]
+mod layout;
 #[path = "render/metadata.rs"]
 mod metadata;
 #[path = "render/readouts.rs"]
@@ -25,6 +27,7 @@ mod support;
 use choice::*;
 use families::*;
 use focus::*;
+use layout::*;
 use metadata::*;
 use readouts::*;
 use sections::*;
