@@ -139,6 +139,7 @@ fn open_gallery_case_window(
                 focus_handle: cx.focus_handle(),
                 projection,
                 gallery,
+                adapter: OpenGpuiAdapter::default(),
                 semantic_registry,
                 node_kit_registry,
                 measured_regions: OpenGpuiBoundsCollector::new(),

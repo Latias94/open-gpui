@@ -2,8 +2,8 @@ use jellyflow::{
     NodeGraphStore,
     core::{
         CanvasPoint as JellyPoint, CanvasRect as JellyRect, CanvasSize as JellySize, Edge,
-        EdgeId as JellyEdgeId, Graph, GraphOp, GraphTransaction, Node, NodeGraphConnectionMode,
-        NodeId as JellyNodeId, NodeKindKey, PortDirection, PortId as JellyPortId, PortKey,
+        EdgeId as JellyEdgeId, Graph, GraphOp, GraphTransaction, Node, NodeId as JellyNodeId,
+        NodeKindKey, PortDirection, PortId as JellyPortId, PortKey,
     },
     runtime::{
         io::{NodeGraphEditorConfig, NodeGraphViewState},
@@ -32,7 +32,7 @@ use jellyflow::{
 #[cfg(test)]
 use jellyflow_open_gpui::OpenGpuiNodeRendererResolution;
 use jellyflow_open_gpui::{
-    OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiAuthoringController,
+    OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiAdapter, OpenGpuiAuthoringController,
     OpenGpuiAuthoringOutcome, OpenGpuiAuthoringSkipReason, OpenGpuiBlackboardPlan,
     OpenGpuiBoundsCollector, OpenGpuiConnectionSyncError, OpenGpuiConnectionSyncRequest,
     OpenGpuiControlEditPlan, OpenGpuiControlEventValue, OpenGpuiControlPlan,
@@ -43,12 +43,14 @@ use jellyflow_open_gpui::{
     OpenGpuiNodeRendererContext, OpenGpuiNodeRendererOutputSource, OpenGpuiNodeRendererRegistry,
     OpenGpuiNodeRendererState, OpenGpuiNodeRendererTable,
     OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
-    OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout, OpenGpuiProductSurfacePreset,
-    OpenGpuiRepeatableActionPlan, OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
+    OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout, OpenGpuiNodeTransformSnapshot,
+    OpenGpuiProductSurfacePreset, OpenGpuiRepeatableActionPlan,
+    OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
     OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
     OpenGpuiRepeatableSurfaceLayout as NodeRepeatableSurfaceLayout,
     OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection, OpenGpuiViewPoint,
-    apply_dropped_wire_insert, layout_pass_measurement_from_regions, measured_surface_anchors,
+    apply_dropped_wire_insert, assign_layout_pass_measurement_revision,
+    layout_pass_measurement_from_regions, measured_surface_anchors,
     open_gpui_action_summary_element_id, open_gpui_blackboard_item_element_id,
     open_gpui_blackboard_status_element_id, open_gpui_chrome_fallback_button_element_id,
     open_gpui_node_renderer_context, open_gpui_repeatable_add_action_element_id,
@@ -56,7 +58,7 @@ use jellyflow_open_gpui::{
     open_gpui_repeatable_remove_action_element_id, open_gpui_repeatable_reorder_action_element_id,
     open_gpui_slot_action_label_element_id, open_gpui_slot_badge_element_id,
     open_gpui_slot_preview_progress_element_id, open_gpui_slot_status_label_element_id,
-    open_gpui_slot_value_element_id, plan_connection_sync_transaction, project_actions_for_surface,
+    open_gpui_slot_value_element_id, project_actions_for_surface,
     project_blackboards_for_descriptor, project_dropped_wire_menu, project_inspectors_for_surface,
     project_menu, project_node_measurement, project_slot_controls,
     projected_node_surface_graph_layout, repeatable_item_projection, repeatable_surface_projection,
@@ -208,6 +210,7 @@ struct JellyflowCanvasView {
     focus_handle: FocusHandle,
     projection: ProjectionSummary,
     gallery: product_gallery::ProductGalleryState,
+    adapter: OpenGpuiAdapter,
     semantic_registry: NodeRegistry,
     node_kit_registry: NodeKitRegistry,
     measured_regions: OpenGpuiBoundsCollector,
@@ -1227,7 +1230,7 @@ impl JellyflowCanvasView {
             let (mut measurement, _coverage) =
                 layout_pass_measurement_from_regions(context, node_regions, fallback_anchors);
             let existing = self.store.node_measurement(node_id);
-            assign_layout_pass_revision(
+            assign_layout_pass_measurement_revision(
                 self.store.node_measurement_status(node_id),
                 existing.as_ref(),
                 &mut measurement,
@@ -1249,8 +1252,11 @@ impl JellyflowCanvasView {
 
     fn sync_store_from_canvas_document(&mut self) -> bool {
         let mut changed = false;
-        let transform_transaction =
-            canvas_document_transform_transaction(&self.store, self.editor.document());
+        let transform_transaction = canvas_document_transform_transaction(
+            &self.adapter,
+            &self.store,
+            self.editor.document(),
+        );
         if !transform_transaction.is_empty() {
             match self.store.dispatch_transaction(&transform_transaction) {
                 Ok(_) => changed = true,
@@ -1260,7 +1266,11 @@ impl JellyflowCanvasView {
             }
         }
 
-        match canvas_document_connection_sync_transactions(&self.store, self.editor.document()) {
+        match canvas_document_connection_sync_transactions(
+            &self.adapter,
+            &self.store,
+            self.editor.document(),
+        ) {
             Ok(transactions) => {
                 for transaction in transactions {
                     match self.store.dispatch_transaction(&transaction) {
@@ -1358,36 +1368,6 @@ impl JellyflowCanvasView {
         self.editor = editor;
         self.projection = projection;
     }
-}
-
-fn assign_layout_pass_revision(
-    status: NodeMeasurementStatus,
-    existing: Option<&NodeMeasurement>,
-    measurement: &mut NodeMeasurement,
-    next_revision: &mut u64,
-) {
-    if status.is_fresh()
-        && let Some(existing) = existing
-        && node_measurement_regions_match(existing, measurement)
-    {
-        measurement.revision = existing.revision;
-        return;
-    }
-
-    let floor = existing
-        .map(|measurement| measurement.revision)
-        .unwrap_or(0);
-    *next_revision = (*next_revision).max(floor).saturating_add(1);
-    measurement.revision = *next_revision;
-}
-
-fn node_measurement_regions_match(left: &NodeMeasurement, right: &NodeMeasurement) -> bool {
-    left.node == right.node
-        && left.density == right.density
-        && left.size == right.size
-        && left.handles == right.handles
-        && left.slots == right.slots
-        && left.anchors == right.anchors
 }
 
 fn dropped_wire_source_for_menu(
@@ -3911,54 +3891,42 @@ fn document_content_bounds(document: &CanvasDocument) -> Option<Bounds<Pixels>> 
 }
 
 fn canvas_document_transform_transaction(
+    adapter: &OpenGpuiAdapter,
     store: &NodeGraphStore,
     document: &CanvasDocument,
 ) -> GraphTransaction {
-    let mut transaction =
-        GraphTransaction::new().with_label("sync open-gpui canvas node transforms");
+    adapter.plan_transform_sync_transaction(
+        store.graph(),
+        document.nodes().filter_map(canvas_node_transform_snapshot),
+    )
+}
 
-    for canvas_node in document.nodes() {
-        let Some(node_id) = jelly_node_id_from_node(canvas_node) else {
-            continue;
-        };
-        let Some(node) = store.graph().nodes().get(&node_id) else {
-            continue;
-        };
-
-        let canvas_pos = JellyPoint {
-            x: canvas_node.position.x.as_f32(),
-            y: canvas_node.position.y.as_f32(),
-        };
-        if canvas_pos.is_finite() && node.pos != canvas_pos {
-            transaction.push(GraphOp::SetNodePos {
-                id: node_id,
-                from: node.pos,
-                to: canvas_pos,
-            });
-        }
-
-        let canvas_size = JellySize {
+fn canvas_node_transform_snapshot(
+    canvas_node: &CanvasNode,
+) -> Option<OpenGpuiNodeTransformSnapshot> {
+    let node = jelly_node_id_from_node(canvas_node)?;
+    Some(
+        OpenGpuiNodeTransformSnapshot::new(
+            node,
+            JellyPoint {
+                x: canvas_node.position.x.as_f32(),
+                y: canvas_node.position.y.as_f32(),
+            },
+        )
+        .with_size(JellySize {
             width: canvas_node.size.width.as_f32(),
             height: canvas_node.size.height.as_f32(),
-        };
-        if canvas_size.is_positive_finite() && node.size != Some(canvas_size) {
-            transaction.push(GraphOp::SetNodeSize {
-                id: node_id,
-                from: node.size,
-                to: Some(canvas_size),
-            });
-        }
-    }
-
-    transaction
+        }),
+    )
 }
 
 fn canvas_document_connection_sync_transactions(
+    adapter: &OpenGpuiAdapter,
     store: &NodeGraphStore,
     document: &CanvasDocument,
 ) -> Result<Vec<GraphTransaction>, OpenGpuiConnectionSyncError> {
     let interaction = store.resolved_interaction_state();
-    let mut transactions = Vec::new();
+    let mut requests = Vec::new();
     let mut seen_projected_edges = Vec::new();
 
     for canvas_edge in document.edges() {
@@ -3997,15 +3965,8 @@ fn canvas_document_connection_sync_transactions(
             })
         };
 
-        if let Some(request) = request
-            && let Some(transaction) = plan_connection_sync_transaction(
-                store.graph(),
-                request,
-                NodeGraphConnectionMode::Strict,
-                &interaction,
-            )?
-        {
-            transactions.push(transaction);
+        if let Some(request) = request {
+            requests.push(request);
         }
     }
 
@@ -4013,17 +3974,15 @@ fn canvas_document_connection_sync_transactions(
         if seen_projected_edges.contains(edge_id) {
             continue;
         }
-        if let Some(transaction) = plan_connection_sync_transaction(
-            store.graph(),
-            OpenGpuiConnectionSyncRequest::Delete { edge: *edge_id },
-            NodeGraphConnectionMode::Strict,
-            &interaction,
-        )? {
-            transactions.push(transaction);
-        }
+        requests.push(OpenGpuiConnectionSyncRequest::Delete { edge: *edge_id });
     }
 
-    Ok(transactions)
+    adapter.plan_connection_sync_transactions(
+        store.graph(),
+        requests,
+        jellyflow::core::NodeGraphConnectionMode::Strict,
+        &interaction,
+    )
 }
 
 fn canvas_value_from_json(value: Value) -> open_gpui_canvas::CanvasValue {
@@ -4295,6 +4254,7 @@ fn main() {
                     focus_handle: cx.focus_handle(),
                     projection,
                     gallery,
+                    adapter: OpenGpuiAdapter::default(),
                     semantic_registry,
                     node_kit_registry,
                     measured_regions: OpenGpuiBoundsCollector::new(),
@@ -4687,7 +4647,9 @@ mod tests {
                 moved.clone(),
             )))
             .unwrap();
-        let transaction = canvas_document_transform_transaction(&store, editor.document());
+        let adapter = OpenGpuiAdapter::default();
+        let transaction =
+            canvas_document_transform_transaction(&adapter, &store, editor.document());
         assert!(
             !transaction.is_empty(),
             "moved canvas node should produce a Jellyflow graph transaction"
@@ -5884,8 +5846,10 @@ mod tests {
             )))
             .expect("remove canvas edge");
 
-        let transactions = canvas_document_connection_sync_transactions(&store, editor.document())
-            .expect("edge remove should plan connection sync");
+        let adapter = OpenGpuiAdapter::default();
+        let transactions =
+            canvas_document_connection_sync_transactions(&adapter, &store, editor.document())
+                .expect("edge remove should plan connection sync");
         assert!(
             transactions
                 .iter()
@@ -5968,8 +5932,9 @@ mod tests {
         {
             return false;
         }
+        let adapter = OpenGpuiAdapter::default();
         let Ok(transactions) =
-            canvas_document_connection_sync_transactions(&store, editor.document())
+            canvas_document_connection_sync_transactions(&adapter, &store, editor.document())
         else {
             return false;
         };
@@ -6021,8 +5986,9 @@ mod tests {
         {
             return false;
         }
+        let adapter = OpenGpuiAdapter::default();
         let Ok(transactions) =
-            canvas_document_connection_sync_transactions(&store, editor.document())
+            canvas_document_connection_sync_transactions(&adapter, &store, editor.document())
         else {
             return false;
         };
@@ -6666,7 +6632,7 @@ mod tests {
             .with_port_key(PortKey::new("prompt"))]);
         let existing = measurement.clone().with_revision(7);
 
-        assign_layout_pass_revision(
+        assign_layout_pass_measurement_revision(
             NodeMeasurementStatus::Fresh { revision: 7 },
             Some(&existing),
             &mut measurement,
@@ -6676,7 +6642,7 @@ mod tests {
         assert_eq!(measurement.revision, 7);
         assert_eq!(next_revision, 7);
 
-        assign_layout_pass_revision(
+        assign_layout_pass_measurement_revision(
             NodeMeasurementStatus::Dirty {
                 revision: 7,
                 reason: NodeInternalsInvalidationReason::DataChanged,
