@@ -8,7 +8,7 @@ use crate::{
     },
 };
 use open_gpui::{Bounds, Pixels, Window, point, px, size};
-use open_gpui_ui_core::{MotionEasing, MotionSpec};
+use open_gpui_ui_core::MotionSpec;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -16,6 +16,8 @@ pub(crate) struct DockTransitionExecution {
     pub(crate) plan: DockTransitionPlan,
     pub(crate) spec: MotionSpec,
     pub(crate) state: DockTransitionExecutionState,
+    retarget_start_progress: f32,
+    last_sample: Option<DockTransitionSample>,
     started_at: Option<Instant>,
     #[cfg(test)]
     test_started_at: Option<Duration>,
@@ -89,11 +91,23 @@ impl DockTransitionExecutor {
         } else {
             DockTransitionExecutionState::Scheduled
         };
+        let retarget_start_progress = if state == DockTransitionExecutionState::Scheduled {
+            self.current
+                .as_ref()
+                .and_then(|execution| execution.last_sample.as_ref())
+                .filter(|sample| !sample.complete)
+                .map(|sample| sample.progress)
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
 
         self.current = Some(DockTransitionExecution {
             plan,
             spec,
             state,
+            retarget_start_progress,
+            last_sample: None,
             started_at: if state == DockTransitionExecutionState::Scheduled {
                 Some(Instant::now())
             } else {
@@ -140,6 +154,7 @@ impl DockTransitionExecutor {
         let execution = self.current.as_mut()?;
         let elapsed = elapsed_for(execution);
         let sample = sample_execution(execution, elapsed);
+        execution.last_sample = Some(sample.clone());
         if sample.complete {
             self.current = None;
         }
@@ -151,7 +166,12 @@ fn sample_execution(
     execution: &DockTransitionExecution,
     elapsed: Duration,
 ) -> DockTransitionSample {
-    let progress = transition_progress(execution.spec, execution.state, elapsed);
+    let progress = transition_progress(
+        execution.spec,
+        execution.state,
+        execution.retarget_start_progress,
+        elapsed,
+    );
     let complete = execution.state == DockTransitionExecutionState::Immediate || progress >= 1.0;
     DockTransitionSample {
         final_scene: execution.plan.final_scene.clone(),
@@ -182,31 +202,14 @@ fn sample_execution(
 fn transition_progress(
     spec: MotionSpec,
     state: DockTransitionExecutionState,
+    retarget_start_progress: f32,
     elapsed: Duration,
 ) -> f32 {
     if state == DockTransitionExecutionState::Immediate || spec.is_immediate() {
         return 1.0;
     }
-    let duration = spec.duration().as_duration();
-    if duration.is_zero() {
-        return 1.0;
-    }
-    let raw = (elapsed.as_secs_f32() / duration.as_secs_f32()).clamp(0.0, 1.0);
-    ease_progress(spec.easing(), raw)
-}
-
-fn ease_progress(easing: MotionEasing, progress: f32) -> f32 {
-    match easing {
-        MotionEasing::Linear => progress,
-        MotionEasing::EaseOut => 1.0 - (1.0 - progress).powi(3),
-        MotionEasing::EaseInOut => {
-            if progress < 0.5 {
-                4.0 * progress.powi(3)
-            } else {
-                1.0 - (-2.0 * progress + 2.0).powi(3) / 2.0
-            }
-        }
-    }
+    let progress = spec.progress_at(elapsed);
+    retarget_start_progress + ((1.0 - retarget_start_progress) * progress)
 }
 
 fn pane_clip_sample(transition: &DockPaneTransition, progress: f32) -> Option<DockPaneClipSample> {

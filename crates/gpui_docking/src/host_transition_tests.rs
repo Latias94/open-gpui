@@ -282,7 +282,7 @@ fn transition_executor_samples_timeline_and_reveal_geometry(cx: &mut TestAppCont
 fn transition_executor_replaces_active_execution_and_completes_reduced_motion_immediately(
     cx: &mut TestAppContext,
 ) {
-    let (graph, _root, left_tabs, _right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (graph, _root, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let (_window, host, _visual) = open_host(
         cx,
         graph,
@@ -294,24 +294,7 @@ fn transition_executor_replaces_active_execution_and_completes_reduced_motion_im
     let previous = single_pane_scene(left_tabs, bounds);
     let next = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
     let animated = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
-    let replacement = DockTransitionPlan::from_overlay_scene(
-        &next,
-        &DockOverlayScene {
-            layers: vec![DockOverlayLayer {
-                kind: DockOverlayLayerKind::PayloadGhost,
-                bounds: floating_bounds(40.0, 10.0, 90.0, 26.0),
-                target_node: Some(left_tabs),
-                zone: Some(DropZone::Center),
-                preview_layer: None,
-                active: true,
-                payload_index: Some(0),
-                payload_title: Some("Replacement".to_string()),
-                drop_box: None,
-                tab_insertion: None,
-            }],
-        },
-        DockMotionPreference::Animated,
-    );
+    let replacement = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
 
     host.update(cx, |host, cx| {
         assert_eq!(
@@ -328,9 +311,18 @@ fn transition_executor_replaces_active_execution_and_completes_reduced_motion_im
             DockTransitionExecutionState::Scheduled
         );
         assert!(
-            host.sample_transition_for_test(Duration::from_millis(100))
+            host.sample_transition_for_test(Duration::from_millis(0))
                 .is_some()
         );
+        let midpoint = host
+            .sample_transition_for_test(Duration::from_millis(100))
+            .expect("active transition should expose midpoint geometry");
+        let midpoint_clip = midpoint
+            .pane_clips
+            .iter()
+            .find(|clip| clip.node == right_tabs)
+            .expect("active transition should expose entering pane clip")
+            .clone();
 
         assert_eq!(
             host.execute_transition_plan(
@@ -347,15 +339,19 @@ fn transition_executor_replaces_active_execution_and_completes_reduced_motion_im
         );
         let sample = host
             .sample_transition_for_test(Duration::from_millis(100))
-            .expect("replacement transition should start a new timeline");
+            .expect("replacement transition should retarget from current progress");
         assert_eq!(
-            sample.progress, 0.0,
-            "replacement transition should reset the timeline"
+            sample.progress, 0.25,
+            "replacement transition should continue from the current sampled progress"
         );
-        assert_eq!(sample.overlays.len(), 1);
+        let retargeted_clip = sample
+            .pane_clips
+            .iter()
+            .find(|clip| clip.node == right_tabs)
+            .expect("replacement transition should expose entering pane clip");
         assert_eq!(
-            sample.overlays[0].kind,
-            DockOverlayTransitionKind::PayloadGhost
+            retargeted_clip.visible_bounds, midpoint_clip.visible_bounds,
+            "replacement transition should begin from sampled pane reveal geometry"
         );
 
         let reduced = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Reduced);
