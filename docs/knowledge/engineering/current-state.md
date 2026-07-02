@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-02T19:37:16+08:00
+timestamp: 2026-07-02T20:56:14+08:00
 git_branch: main
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
@@ -36,6 +36,7 @@ verified_by:
   - cargo test -p xtask
   - cargo run -p xtask -- scan-ui-contract
   - cargo run -p xtask -- scan-theme-schema
+  - cargo fmt --all --check
   - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --check
   - cargo check -p open-gpui-ui-components --tests
   - cargo check -p open-gpui-ui-foundation-gallery --tests
@@ -88,6 +89,10 @@ verified_by:
 - Done: `crates/ui_components/tests/table.rs` is now a small helper/module facade. Test ownership
   lives under `crates/ui_components/tests/table/` split by behavior rows, filters/toolbar,
   editing contracts, layout contracts, public exports, runtime interactions, and runtime layout.
+- Done: `examples/ui-foundation-gallery/src/shell.rs` now keeps the `GalleryShell` state, render
+  facade, window entry points, and public crate re-exports. Private shell implementation moved into
+  `src/shell/support.rs`, `src/shell/components.rs`, and `src/shell/overlay.rs`, so Components and
+  Overlay sample rendering no longer live in the shell facade.
 - Done: Full focused UI verification passed before the merge to `main`: component public surface,
   Menu, ContextMenu, Tree, Table, gallery metadata, overlay, tree, table, full
   `open-gpui-ui-components`, and full `open-gpui-ui-foundation-gallery`.
@@ -100,9 +105,8 @@ verified_by:
 - Not current roadmap work: broad splitting of every remaining 1k+ component file and
   `open-gpui-ui-headless` extraction.
 - Blocked: None.
-- Next action: continue the fearless refactor sequence with the remaining large gallery source
-  files. The clearest targets are `examples/ui-foundation-gallery/src/shell.rs` and
-  `examples/ui-foundation-gallery/src/pages/components/render/sections.rs`.
+- Next action: continue the fearless refactor sequence with the remaining large gallery render
+  owners, especially `examples/ui-foundation-gallery/src/pages/components/render/sections.rs`.
 
 # Citations
 

@@ -1494,8 +1494,8 @@ fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
 
 #[test]
 fn component_gallery_shell_reads_choice_active_metadata_from_resolved_state() {
-    let shell_source = include_str!("../../src/shell.rs");
-    let select_section = shell_source
+    let shell_components_source = include_str!("../../src/shell/components.rs");
+    let select_section = shell_components_source
         .split("fn component_select_samples_section(")
         .nth(1)
         .and_then(|section| {
@@ -1503,33 +1503,33 @@ fn component_gallery_shell_reads_choice_active_metadata_from_resolved_state() {
                 .split("fn component_combobox_samples_section")
                 .next()
         })
-        .expect("expected Select sample section in shell source");
-    let combobox_section = shell_source
+        .expect("expected Select sample section in shell components source");
+    let combobox_section = shell_components_source
         .split("fn component_combobox_samples_section(")
         .nth(1)
         .and_then(|section| section.split("fn component_command_samples_section").next())
-        .expect("expected Combobox sample section in shell source");
-    let command_section = shell_source
+        .expect("expected Combobox sample section in shell components source");
+    let command_section = shell_components_source
         .split("fn component_command_samples_section(")
         .nth(1)
         .and_then(|section| section.split("fn resolved_listbox_option").next())
-        .expect("expected Command sample section in shell source");
-    let listbox_readout = shell_source
+        .expect("expected Command sample section in shell components source");
+    let listbox_readout = shell_components_source
         .split("fn component_listbox_state_row(")
         .nth(1)
         .and_then(|section| section.split("fn component_select_state_row").next())
-        .expect("expected Listbox state row in shell source");
-    let select_readout = shell_source
+        .expect("expected Listbox state row in shell components source");
+    let select_readout = shell_components_source
         .split("fn component_select_state_row(")
         .nth(1)
         .and_then(|section| section.split("fn component_combobox_state_row").next())
-        .expect("expected Select state row in shell source");
-    let combobox_readout = shell_source
+        .expect("expected Select state row in shell components source");
+    let combobox_readout = shell_components_source
         .split("fn component_combobox_state_row(")
         .nth(1)
         .and_then(|section| section.split("fn component_command_state_row").next())
-        .expect("expected Combobox state row in shell source");
-    let command_readout = shell_source
+        .expect("expected Combobox state row in shell components source");
+    let command_readout = shell_components_source
         .split("fn component_command_state_row(")
         .nth(1)
         .and_then(|section| {
@@ -1537,7 +1537,7 @@ fn component_gallery_shell_reads_choice_active_metadata_from_resolved_state() {
                 .split("pub(crate) fn component_radio_state_row")
                 .next()
         })
-        .expect("expected Command state row in shell source");
+        .expect("expected Command state row in shell components source");
 
     assert!(select_section.contains("if let Some(active) = state.active_value()"));
     assert!(select_section.contains("select = select.active(active);"));

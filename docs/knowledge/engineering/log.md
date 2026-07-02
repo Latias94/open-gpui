@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-07-02: Split `examples/ui-foundation-gallery/src/shell.rs` into a shell facade plus
+  `src/shell/support.rs`, `src/shell/components.rs`, and `src/shell/overlay.rs`. `GalleryShell`,
+  snapshot derivation, navigation/content rendering, and window open entry points stay in the
+  facade; shared pills/formatting/card helpers, Components sample rendering helpers, and Overlay
+  sample rendering helpers now have local owners. Updated the source-inspection contract test that
+  validates choice active metadata to read `shell/components.rs`. Verified with `cargo fmt --all
+  --check`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, full `cargo nextest run -p
+  open-gpui-ui-foundation-gallery --test foundation_gallery --no-fail-fast`, and `git diff
+  --check`.
 - 2026-07-02: Split `crates/ui_components/tests/table.rs` into a helper facade plus
   `tests/table/` modules for behavior rows, filters/toolbar, editing contracts, layout contracts,
   public exports, runtime interactions, and runtime layout. The facade is now about 196 lines; the
