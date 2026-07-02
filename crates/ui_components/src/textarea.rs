@@ -1023,9 +1023,9 @@ impl Element for EditableTextareaElement {
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Self::PrepaintState {
-        let controller = self.controller.read(_cx);
+        let controller = self.controller.read(cx);
         let content = controller.value();
         let selected_range = controller.selected_range();
         let cursor = controller.cursor_offset();

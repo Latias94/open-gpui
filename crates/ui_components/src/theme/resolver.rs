@@ -11,11 +11,8 @@ pub struct ThemeResolver;
 
 impl ThemeResolver {
     /// Returns the current app theme context, or the default light context when no runtime exists.
-    pub fn current(cx: &App) -> ThemeContext<'_> {
-        match try_theme_context(cx) {
-            Some(context) => context,
-            None => ThemeContext::light(),
-        }
+    pub fn current(cx: &App) -> ThemeContext {
+        try_theme_context(cx).unwrap_or_default()
     }
 
     /// Resolves a color intent with the legacy default light theme snapshot.

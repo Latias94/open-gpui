@@ -17,13 +17,13 @@ use open_gpui_ui_core::{
 use crate::a11y::UiA11yElementExt;
 use crate::button::ButtonVariant;
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
     OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
     consume_overlay_event, emit_overlay_open_change, escape_open_change, gpui_overlay_state,
     outside_press_open_change, resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
 };
-use crate::theme::ThemeResolver;
+use crate::theme::{ThemeContext, ThemeResolver};
 
 const CANCEL_FOCUS_TARGET: &str = "alert-dialog.cancel";
 const ACTION_FOCUS_TARGET: &str = "alert-dialog.action";
@@ -898,6 +898,12 @@ impl RenderOnce for AlertDialog {
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
+        let theme = ThemeResolver::current(cx);
+        let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+        let trigger_border = theme.resolve(colors.trigger_border());
+        let trigger_background = theme.resolve(colors.trigger_background());
+        let trigger_foreground = theme.resolve(colors.trigger_foreground());
+        let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
         let disabled = state.disabled();
         let open = state.open();
         let overlay_adapter = gpui_overlay_state(state.overlay());
@@ -933,9 +939,9 @@ impl RenderOnce for AlertDialog {
                     .justify_center()
                     .rounded(gpui_px_from_ui(metrics.radius()))
                     .border_1()
-                    .border_color(ThemeResolver::resolve(colors.trigger_border()))
-                    .bg(ThemeResolver::resolve(colors.trigger_background()))
-                    .text_color(ThemeResolver::resolve(colors.trigger_foreground()))
+                    .border_color(trigger_border)
+                    .bg(trigger_background)
+                    .text_color(trigger_foreground)
                     .text_size(gpui_px_from_ui(metrics.text_size()))
                     .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
@@ -946,7 +952,7 @@ impl RenderOnce for AlertDialog {
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)
                     .aria_disabled(disabled)
-                    .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                    .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                     .when(open, |this| {
                         let runtime = runtime.clone();
                         let on_open_change = on_open_change.clone();
@@ -974,9 +980,7 @@ impl RenderOnce for AlertDialog {
                         let initial_focus = state.initial_focus_intent().clone();
                         let focus_state = state.clone();
                         this.cursor_pointer()
-                            .hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
-                            })
+                            .hover(move |style| style.bg(trigger_hover_background))
                             .on_click(move |_event: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 let next_open = !open;
@@ -1013,6 +1017,7 @@ impl RenderOnce for AlertDialog {
                                 content_id.clone(),
                                 debug_id.clone(),
                                 state.clone(),
+                                &theme,
                                 viewport,
                                 runtime.clone(),
                                 cancel_focus.clone(),
@@ -1032,6 +1037,7 @@ fn alert_dialog_layer_element(
     content_id: ElementId,
     debug_id: String,
     state: AlertDialogState,
+    theme: &ThemeContext,
     viewport: open_gpui::Size<Pixels>,
     runtime: Entity<AlertDialogRuntime>,
     cancel_focus: FocusHandle,
@@ -1044,6 +1050,11 @@ fn alert_dialog_layer_element(
     let colors = state.colors();
     let outside_change = outside_press_open_change(state.overlay().policy());
     let escape_change = escape_open_change(state.overlay().policy());
+    let barrier = theme.resolve(colors.barrier());
+    let border = theme.resolve(colors.border());
+    let surface = theme.resolve(colors.surface());
+    let foreground = theme.resolve(colors.foreground());
+    let muted_foreground = theme.resolve(colors.muted_foreground());
     let x = ((viewport.width - gpui_px_from_ui(metrics.width())) / 2.0).max(px(12.0));
     let y = (viewport.height / 10.0).max(px(24.0));
 
@@ -1058,7 +1069,7 @@ fn alert_dialog_layer_element(
         .top(px(0.0))
         .w(viewport.width)
         .h(viewport.height)
-        .bg(ThemeResolver::resolve(colors.barrier()))
+        .bg(barrier)
         .occlude()
         .on_any_mouse_down(|_, window, cx| {
             consume_overlay_event(window, cx);
@@ -1096,9 +1107,9 @@ fn alert_dialog_layer_element(
                 .gap_3()
                 .rounded(gpui_px_from_ui(metrics.radius()))
                 .border_1()
-                .border_color(ThemeResolver::resolve(colors.border()))
-                .bg(ThemeResolver::resolve(colors.surface()))
-                .text_color(ThemeResolver::resolve(colors.foreground()))
+                .border_color(border)
+                .bg(surface)
+                .text_color(foreground)
                 .text_size(gpui_px_from_ui(metrics.text_size()))
                 .line_height(gpui_px_from_ui(metrics.text_size()))
                 .shadow_lg()
@@ -1136,7 +1147,7 @@ fn alert_dialog_layer_element(
                 )
                 .child(
                     div()
-                        .text_color(ThemeResolver::resolve(colors.muted_foreground()))
+                        .text_color(muted_foreground)
                         .child(state.description().to_owned()),
                 )
                 .child(
@@ -1147,6 +1158,7 @@ fn alert_dialog_layer_element(
                         .gap(gpui_px_from_ui(metrics.action_gap()))
                         .child(alert_dialog_cancel_button(
                             &state,
+                            theme,
                             runtime.clone(),
                             cancel_focus.clone(),
                             debug_id.clone(),
@@ -1155,6 +1167,7 @@ fn alert_dialog_layer_element(
                         ))
                         .child(alert_dialog_action_button(
                             &state,
+                            theme,
                             runtime.clone(),
                             action_focus.clone(),
                             debug_id.clone(),
@@ -1167,6 +1180,7 @@ fn alert_dialog_layer_element(
 
 fn alert_dialog_cancel_button(
     state: &AlertDialogState,
+    theme: &ThemeContext,
     runtime: Entity<AlertDialogRuntime>,
     cancel_focus: FocusHandle,
     debug_id: String,
@@ -1176,6 +1190,11 @@ fn alert_dialog_cancel_button(
     let metrics = state.metrics();
     let colors = state.colors();
     let focus_ring = state.focus_ring();
+    let focus_shadow = focus_ring_shadow_with_theme(focus_ring, theme);
+    let cancel_border = theme.resolve(colors.cancel_border());
+    let cancel_background = theme.resolve(colors.cancel_background());
+    let cancel_foreground = theme.resolve(colors.cancel_foreground());
+    let cancel_hover_background = theme.resolve(colors.cancel_hover_background());
     let cancel = state.cancel().clone();
     let focus_restore = state.focus_restore_intent().clone();
 
@@ -1189,9 +1208,9 @@ fn alert_dialog_cancel_button(
         .justify_center()
         .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(colors.cancel_border()))
-        .bg(ThemeResolver::resolve(colors.cancel_background()))
-        .text_color(ThemeResolver::resolve(colors.cancel_foreground()))
+        .border_color(cancel_border)
+        .bg(cancel_background)
+        .text_color(cancel_foreground)
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .focusable()
@@ -1204,15 +1223,13 @@ fn alert_dialog_cancel_button(
         .ui_role(cancel.role())
         .aria_label(cancel.label().to_owned())
         .aria_disabled(cancel.disabled())
-        .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+        .focus_visible(move |style| style.shadow(focus_shadow.clone()))
         .when(cancel.disabled(), |this| {
             this.opacity(0.56).cursor_not_allowed()
         })
         .when(!cancel.disabled(), |this| {
             this.cursor_pointer()
-                .hover(move |style| {
-                    style.bg(ThemeResolver::resolve(colors.cancel_hover_background()))
-                })
+                .hover(move |style| style.bg(cancel_hover_background))
                 .on_click(move |_event: &ClickEvent, window, cx| {
                     cx.stop_propagation();
                     if let Some(on_cancel) = on_cancel.as_ref() {
@@ -1232,6 +1249,7 @@ fn alert_dialog_cancel_button(
 
 fn alert_dialog_action_button(
     state: &AlertDialogState,
+    theme: &ThemeContext,
     runtime: Entity<AlertDialogRuntime>,
     action_focus: FocusHandle,
     debug_id: String,
@@ -1241,6 +1259,11 @@ fn alert_dialog_action_button(
     let metrics = state.metrics();
     let colors = state.colors();
     let focus_ring = state.focus_ring();
+    let focus_shadow = focus_ring_shadow_with_theme(focus_ring, theme);
+    let action_border = theme.resolve(colors.action_border());
+    let action_background = theme.resolve(colors.action_background());
+    let action_foreground = theme.resolve(colors.action_foreground());
+    let action_hover_background = theme.resolve(colors.action_hover_background());
     let action = state.action().clone();
     let focus_restore = state.focus_restore_intent().clone();
 
@@ -1254,9 +1277,9 @@ fn alert_dialog_action_button(
         .justify_center()
         .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(colors.action_border()))
-        .bg(ThemeResolver::resolve(colors.action_background()))
-        .text_color(ThemeResolver::resolve(colors.action_foreground()))
+        .border_color(action_border)
+        .bg(action_background)
+        .text_color(action_foreground)
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .focusable()
@@ -1269,15 +1292,13 @@ fn alert_dialog_action_button(
         .ui_role(action.role())
         .aria_label(action.label().to_owned())
         .aria_disabled(action.disabled())
-        .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+        .focus_visible(move |style| style.shadow(focus_shadow.clone()))
         .when(action.disabled(), |this| {
             this.opacity(0.56).cursor_not_allowed()
         })
         .when(!action.disabled(), |this| {
             this.cursor_pointer()
-                .hover(move |style| {
-                    style.bg(ThemeResolver::resolve(colors.action_hover_background()))
-                })
+                .hover(move |style| style.bg(action_hover_background))
                 .on_click(move |_event: &ClickEvent, window, cx| {
                     cx.stop_propagation();
                     if let Some(on_action) = on_action.as_ref() {

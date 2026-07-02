@@ -1,9 +1,11 @@
+use std::sync::Arc;
+
 use open_gpui::{App, Global, Rgba};
 
 use crate::color::ColorIntent;
 
 use super::registry::{ThemeDefinition, ThemeRegistry, ThemeRegistryEntry, ThemeValidationError};
-use super::snapshot::{ThemeMode, ThemeSnapshot};
+use super::snapshot::{ThemeColor, ThemeMode, ThemeSnapshot};
 
 /// Stable id for the built-in light theme.
 pub const LIGHT_THEME_ID: &str = "light";
@@ -33,64 +35,79 @@ impl ThemeRuntimeError {
     }
 }
 
-/// Render-time view over an immutable theme snapshot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ThemeContext<'a> {
-    snapshot: ThemeSnapshot<'a>,
+/// Owned render-time view over an immutable theme snapshot.
+///
+/// The context owns an atomically shared color table so render code can move it into GPUI style
+/// closures without borrowing the app-global [`ThemeRuntime`] or its registry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemeContext {
+    mode: ThemeMode,
+    revision: u64,
+    colors: Arc<[ThemeColor]>,
 }
 
-impl<'a> ThemeContext<'a> {
-    /// Creates a context over an immutable theme snapshot.
-    pub const fn new(snapshot: ThemeSnapshot<'a>) -> Self {
-        Self { snapshot }
+impl ThemeContext {
+    /// Creates an owned context from an immutable theme snapshot.
+    pub fn new(snapshot: ThemeSnapshot<'_>) -> Self {
+        Self {
+            mode: snapshot.mode(),
+            revision: snapshot.revision(),
+            colors: snapshot.colors().to_vec().into(),
+        }
     }
 
     /// Creates a context over the built-in light theme.
-    pub fn light() -> ThemeContext<'static> {
-        ThemeContext::new(ThemeSnapshot::light())
+    pub fn light() -> Self {
+        Self::new(ThemeSnapshot::light())
     }
 
     /// Creates a context over the built-in dark theme.
-    pub fn dark() -> ThemeContext<'static> {
-        ThemeContext::new(ThemeSnapshot::dark())
+    pub fn dark() -> Self {
+        Self::new(ThemeSnapshot::dark())
     }
 
     /// Creates a context over the built-in high-contrast theme.
-    pub fn high_contrast() -> ThemeContext<'static> {
-        ThemeContext::new(ThemeSnapshot::high_contrast())
+    pub fn high_contrast() -> Self {
+        Self::new(ThemeSnapshot::high_contrast())
     }
 
-    /// Returns the active immutable theme snapshot.
-    pub const fn snapshot(self) -> ThemeSnapshot<'a> {
-        self.snapshot
+    /// Returns an immutable snapshot over this owned context.
+    pub fn snapshot(&self) -> ThemeSnapshot<'_> {
+        ThemeSnapshot::new(self.mode, self.revision, &self.colors)
     }
 
     /// Returns the active theme mode.
-    pub const fn mode(self) -> ThemeMode {
-        self.snapshot.mode()
+    pub const fn mode(&self) -> ThemeMode {
+        self.mode
     }
 
     /// Returns the active theme revision.
-    pub const fn revision(self) -> u64 {
-        self.snapshot.revision()
+    pub const fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Resolves a component color intent with this context.
-    pub fn resolve(self, intent: ColorIntent) -> Rgba {
-        self.snapshot.resolve(intent)
+    pub fn resolve(&self, intent: ColorIntent) -> Rgba {
+        self.snapshot().resolve(intent)
     }
 }
 
-impl<'a> From<ThemeSnapshot<'a>> for ThemeContext<'a> {
-    fn from(snapshot: ThemeSnapshot<'a>) -> Self {
+impl From<ThemeSnapshot<'_>> for ThemeContext {
+    fn from(snapshot: ThemeSnapshot<'_>) -> Self {
         Self::new(snapshot)
+    }
+}
+
+impl Default for ThemeContext {
+    fn default() -> Self {
+        Self::light()
     }
 }
 
 /// GPUI app-global owner for component theme snapshots.
 ///
-/// The runtime keeps the registry and the active theme id together so render
-/// code can borrow a short-lived [`ThemeContext`] without copying color tables.
+/// The runtime keeps the registry and the active theme id together while render code consumes
+/// cloned [`ThemeContext`] values.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThemeRuntime {
     registry: ThemeRegistry,
@@ -124,11 +141,8 @@ impl ThemeRuntime {
     }
 
     /// Returns the current app theme context, or the built-in light context when no runtime exists.
-    pub fn current_context(cx: &App) -> ThemeContext<'_> {
-        match try_theme_context(cx) {
-            Some(context) => context,
-            None => ThemeContext::light(),
-        }
+    pub fn current_context(cx: &App) -> ThemeContext {
+        try_theme_context(cx).unwrap_or_default()
     }
 
     /// Returns the owned theme registry.
@@ -162,7 +176,7 @@ impl ThemeRuntime {
     }
 
     /// Returns a render-time context for the active theme.
-    pub fn context(&self) -> ThemeContext<'_> {
+    pub fn context(&self) -> ThemeContext {
         ThemeContext::new(self.active_snapshot())
     }
 
@@ -208,13 +222,13 @@ pub fn init_theme_runtime(cx: &mut App) {
 }
 
 /// Returns the current app theme context, installing the default runtime first.
-pub fn current_theme_context(cx: &mut App) -> ThemeContext<'_> {
+pub fn current_theme_context(cx: &mut App) -> ThemeContext {
     init_theme_runtime(cx);
     cx.global::<ThemeRuntime>().context()
 }
 
 /// Returns the current app theme context if one has been installed.
-pub fn try_theme_context(cx: &App) -> Option<ThemeContext<'_>> {
+pub fn try_theme_context(cx: &App) -> Option<ThemeContext> {
     cx.try_global::<ThemeRuntime>().map(ThemeRuntime::context)
 }
 

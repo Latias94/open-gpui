@@ -15,7 +15,7 @@ use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::text_editing::{
     self, EditableTextDocument, TextDisplayPolicy, TextDisplayProjection, TextEditingPolicy,
     TextEditingProjection, TextSelection,
@@ -1226,17 +1226,18 @@ impl Sizable for TextInput {
 }
 
 impl RenderOnce for TextInput {
-    fn render(self, _window: &mut Window, _cx: &mut open_gpui::App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut open_gpui::App) -> impl IntoElement {
         let state = self.state();
         let debug_id = self.id.to_string();
         let runtime_id = format!("text-input:{debug_id}:controller");
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
+        let theme = ThemeResolver::current(cx);
         let controller = self.controller.clone().or_else(|| {
             self.on_change.as_ref().map(|_| {
                 let initial_value = self.value.clone();
-                _window.use_keyed_state(runtime_id, _cx, |_, cx| {
+                _window.use_keyed_state(runtime_id, cx, |_, cx| {
                     TextInputController::with_value(initial_value, cx)
                 })
             })
@@ -1246,7 +1247,7 @@ impl RenderOnce for TextInput {
             let controlled_value = self.on_change.as_ref().map(|_| self.value.as_ref());
             let placeholder = self.placeholder.clone();
             let on_change = self.on_change.clone();
-            controller.update(_cx, |controller, _cx| {
+            controller.update(cx, |controller, _cx| {
                 controller.sync_adapter_state(
                     controlled_value,
                     placeholder,
@@ -1257,7 +1258,7 @@ impl RenderOnce for TextInput {
                 );
             });
         }
-        let controller_text = controller.as_ref().map(|controller| controller.read(_cx));
+        let controller_text = controller.as_ref().map(|controller| controller.read(cx));
         let placeholder = controller_text
             .as_ref()
             .map(|controller| controller.placeholder().to_owned().into())
@@ -1280,7 +1281,11 @@ impl RenderOnce for TextInput {
         } else {
             colors.foreground()
         };
-        let text_color = ThemeResolver::resolve(text_color_intent);
+        let text_color = theme.resolve(text_color_intent);
+        let border_color = theme.resolve(colors.border());
+        let background = theme.resolve(colors.background());
+        let placeholder_color = theme.resolve(colors.placeholder());
+        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
         div()
             .id(self.id)
             .debug_selector(move || format!("text-input:{debug_id}:root"))
@@ -1291,8 +1296,8 @@ impl RenderOnce for TextInput {
             .items_center()
             .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
-            .border_color(ThemeResolver::resolve(colors.border()))
-            .bg(ThemeResolver::resolve(colors.background()))
+            .border_color(border_color)
+            .bg(background)
             .px(gpui_px_from_ui(metrics.padding_x()))
             .py(gpui_px_from_ui(metrics.padding_y()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
@@ -1302,7 +1307,7 @@ impl RenderOnce for TextInput {
             .tab_stop(state.tab_stop_enabled())
             .ui_role(state.role())
             .aria_label(self.label)
-            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+            .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(state.disabled(), |this| {
                 this.opacity(0.56).cursor_not_allowed()
             })
@@ -1313,7 +1318,7 @@ impl RenderOnce for TextInput {
                 this.cursor_default()
             })
             .when_some(controller.clone(), |this, controller| {
-                let focus = controller.focus_handle(_cx);
+                let focus = controller.focus_handle(cx);
                 let backspace = controller.clone();
                 let delete = controller.clone();
                 let left = controller.clone();
@@ -1418,8 +1423,7 @@ impl RenderOnce for TextInput {
                                 controller,
                                 placeholder: placeholder.clone(),
                                 text_color: text_color.into(),
-                                placeholder_color: ThemeResolver::resolve(colors.placeholder())
-                                    .into(),
+                                placeholder_color: placeholder_color.into(),
                                 selection_color: rgba(0x2f80ed33).into(),
                                 caret_color: text_color.into(),
                                 text_size: gpui_px_from_ui(metrics.text_size()).into(),
@@ -1490,9 +1494,9 @@ impl Element for EditableTextElement {
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Self::PrepaintState {
-        let controller = self.controller.read(_cx);
+        let controller = self.controller.read(cx);
         let content = controller.value();
         let selected_range = controller.selected_range();
         let cursor = controller.cursor_offset();
