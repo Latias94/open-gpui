@@ -1,4 +1,6 @@
 #[cfg(test)]
+use crate::drop_runtime::DockHostDropScene;
+#[cfg(test)]
 use crate::viewport_registry::DockViewportRouteUnavailableReason;
 #[cfg(test)]
 use crate::viewport_window_lifecycle::DockViewportReusableWindow;
@@ -27,7 +29,7 @@ use crate::{
     DockViewportWindowEffects, DockViewportWindowFacts, DockViewportWindowOwnership,
     DockViewportWindowRetirement,
     drag::{DockDragPayload, DockDragTearOffGeometry},
-    drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
+    drop_runtime::DockHostDropSceneFact,
     extend_unique_windows,
     interaction::DockRuntimeDragSession,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},

@@ -4,6 +4,7 @@ use crate::{
     host_test_support::{item, open_host, space, split_graph},
 };
 use open_gpui::{Bounds, TestAppContext, point, px, size};
+use open_gpui_ui_core::AccessibleAction;
 
 fn host_bounds(width: f32, height: f32) -> Bounds<open_gpui::Pixels> {
     Bounds::new(point(px(0.0), px(0.0)), size(px(width), px(height)))
@@ -36,6 +37,103 @@ fn divider_hit_map_resolves_single_axis_splitter(cx: &mut TestAppContext) {
         }
         DockDividerHitTarget::Corner(_) => panic!("single split should not resolve corner"),
     }
+}
+
+#[open_gpui::test]
+fn divider_hit_map_targets_match_scene_splitter_bounds(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let middle = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left, middle, right],
+        fractions: vec![0.2, 0.3, 0.5],
+    });
+    graph.set_root(space(), root);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+        size(px(1000.0), px(240.0)),
+    );
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(host_bounds(1000.0, 240.0), cx)
+    });
+    let hit_map = DockDividerHitMap::from_scene(&scene);
+
+    assert_eq!(scene.splitters.len(), 2);
+    for splitter in &scene.splitters {
+        let target = hit_map
+            .hit(splitter.bounds.center())
+            .unwrap_or_else(|| panic!("splitter {} should have hit target", splitter.index));
+        let DockDividerHitTarget::Single(handle) = target else {
+            panic!("same-axis splitters should not resolve as corners");
+        };
+        assert_eq!(handle.key.split, root);
+        assert_eq!(handle.key.index, splitter.index);
+        assert_eq!(handle.bounds, splitter.bounds);
+        assert_eq!(handle.extent, splitter.extent);
+    }
+}
+
+#[open_gpui::test]
+fn divider_hit_map_targets_match_scene_after_fraction_update(cx: &mut TestAppContext) {
+    let (graph, root, _left, _right) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+    let initial_scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(host_bounds(400.0, 240.0), cx)
+    });
+    host.update(cx, |host, _| {
+        host.set_last_presentation_scene(initial_scene)
+    });
+
+    let resized = host.update(cx, |host, cx| {
+        host.resize_splitter_from_accessibility(
+            root,
+            SplitAxis::Horizontal,
+            0,
+            AccessibleAction::Increment,
+            cx,
+        )
+    });
+    assert!(resized, "resize should update split fractions");
+
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(host_bounds(400.0, 240.0), cx)
+    });
+    let splitter = scene
+        .splitters
+        .first()
+        .expect("updated scene should keep a splitter");
+    let hit_map = DockDividerHitMap::from_scene(&scene);
+    let target = hit_map
+        .hit(splitter.bounds.center())
+        .expect("updated splitter should have hit target");
+    let DockDividerHitTarget::Single(handle) = target else {
+        panic!("single updated splitter should not resolve as corner");
+    };
+    assert_eq!(handle.key.split, root);
+    assert_eq!(handle.bounds, splitter.bounds);
+    assert_eq!(handle.extent, splitter.extent);
 }
 
 #[open_gpui::test]

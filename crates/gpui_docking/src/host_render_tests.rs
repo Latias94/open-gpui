@@ -3303,6 +3303,68 @@ fn render_splitter_handle_bounds_match_presentation_scene_splitters(cx: &mut Tes
 }
 
 #[open_gpui::test]
+fn render_three_child_split_bounds_match_presentation_scene_layout(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let left_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("left")],
+        selected: Some(item("left")),
+    });
+    let middle_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("middle")],
+        selected: Some(item("middle")),
+    });
+    let right_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("right")],
+        selected: Some(item("right")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left_tabs, middle_tabs, right_tabs],
+        fractions: vec![0.2, 0.3, 0.5],
+    });
+    graph.set_root(space(), root);
+    let (_window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[
+            ("left", "Left", "Left"),
+            ("middle", "Middle", "Middle"),
+            ("right", "Right", "Right"),
+        ],
+        size(px(1000.0), px(240.0)),
+    );
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(floating_bounds(0.0, 0.0, 1000.0, 240.0), cx)
+    });
+
+    for (index, tabs) in [left_tabs, middle_tabs, right_tabs].into_iter().enumerate() {
+        assert_scene_pane_matches_render_region(
+            &mut visual,
+            &host,
+            &scene,
+            tabs,
+            DockDebugRegion::SplitChild { split: root, index },
+            &format!("three-child split child {index}"),
+        );
+    }
+
+    for index in 0..2 {
+        let splitter = scene
+            .splitters
+            .iter()
+            .find(|splitter| splitter.split == root && splitter.index == index)
+            .unwrap_or_else(|| panic!("splitter {index} should be in presentation scene"));
+        assert_render_region_matches_bounds(
+            &mut visual,
+            &host,
+            DockDebugRegion::SplitterHandle { split: root, index },
+            splitter.bounds,
+            &format!("three-child splitter handle {index}"),
+        );
+    }
+}
+
+#[open_gpui::test]
 fn render_floating_bounds_match_presentation_scene_container(cx: &mut TestAppContext) {
     let (graph, _root, floating) = floating_overlay_graph();
     let (_window, host, mut visual) = open_host(

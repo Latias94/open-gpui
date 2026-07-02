@@ -1,6 +1,8 @@
+#[cfg(test)]
+use crate::drop_runtime::DockHostDropScene;
 use crate::{
     DockNodeId, DockSpaceId, DockViewportWindowFacts,
-    drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
+    drop_runtime::DockHostDropSceneFact,
     geometry::DockDropGuideStyle,
     viewport_drop_scene::{
         DockViewportHostSceneFrame, DockViewportHostSceneRegistration,

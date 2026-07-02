@@ -1,15 +1,10 @@
 use crate::{
     DockHost, DockItemId, DockNode, DockNodeId, DockSpaceId, SplitAxis,
-    host_render_session::DockHostRenderSession,
+    host_render_session::DockHostRenderSession, split_geometry::resolve_dock_split_layout,
 };
 #[cfg(test)]
 use open_gpui::Context;
 use open_gpui::{Bounds, Pixels, point, px, size};
-use open_gpui_ui_core::{
-    Orientation, Size, SplitterHandlePlacement, SplitterLayoutScene, SplitterMetrics,
-    SplitterPanelDescriptor, SplitterState, UiRect, resolve_split_fractions_with_fill_child,
-    ui_point, ui_px, ui_rect, ui_size,
-};
 
 const PRESENTATION_TAB_BAR_HEIGHT: f32 = 28.0;
 const PRESENTATION_FLOATING_TITLE_HEIGHT: f32 = 24.0;
@@ -209,46 +204,36 @@ impl DockPresentationScene {
             return;
         }
 
-        let shares = resolve_split_fractions_with_fill_child(
-            children.len(),
-            &fractions,
-            session.central_child_index(&children),
-        );
-        let scene = split_layout_scene(
+        let layout = resolve_dock_split_layout(
             split,
             axis,
             &children,
-            &shares,
+            &fractions,
+            session.central_child_index(&children),
             bounds,
             session.splitter_handle_size(),
         );
-        let extent = split_extent(axis, bounds);
 
-        for handle in scene.handles() {
-            let index = handle.index();
-            if let (Some(before), Some(after)) = (children.get(index), children.get(index + 1)) {
-                let handle_bounds = bounds_from_ui_rect(handle.bounds());
-                self.splitters.push(DockPresentationSplitter {
-                    split,
-                    index,
-                    axis,
-                    bounds: handle_bounds,
-                    before: *before,
-                    after: *after,
-                    extent,
-                    shares: shares.clone(),
-                });
-                self.overlay_anchors.push(DockPresentationOverlayAnchor {
-                    kind: DockPresentationOverlayAnchorKind::Splitter,
-                    node: Some(split),
-                    bounds: handle_bounds,
-                });
-            }
+        for handle in layout.handles() {
+            self.splitters.push(DockPresentationSplitter {
+                split,
+                index: handle.index,
+                axis: handle.axis,
+                bounds: handle.bounds,
+                before: handle.before,
+                after: handle.after,
+                extent: handle.extent,
+                shares: layout.shares().to_vec(),
+            });
+            self.overlay_anchors.push(DockPresentationOverlayAnchor {
+                kind: DockPresentationOverlayAnchorKind::Splitter,
+                node: Some(split),
+                bounds: handle.bounds,
+            });
         }
 
-        for (child, panel) in children.into_iter().zip(scene.panels()) {
-            let child_bounds = bounds_from_ui_rect(panel.bounds());
-            self.collect_node(session, child, child_bounds, floating);
+        for panel in layout.panels() {
+            self.collect_node(session, panel.child, panel.bounds, floating);
         }
     }
 
@@ -322,64 +307,6 @@ impl DockPresentationScene {
             node: None,
             bounds,
         });
-    }
-}
-
-fn split_layout_scene(
-    split: DockNodeId,
-    axis: SplitAxis,
-    children: &[DockNodeId],
-    shares: &[f32],
-    bounds: Bounds<Pixels>,
-    handle_size: Pixels,
-) -> SplitterLayoutScene {
-    let orientation = match axis {
-        SplitAxis::Horizontal => Orientation::Horizontal,
-        SplitAxis::Vertical => Orientation::Vertical,
-    };
-    let state = SplitterState::resolve(
-        format!("dock-split-{}", split.as_u64()),
-        orientation,
-        Size::Medium,
-        false,
-        children.iter().enumerate().map(|(index, child)| {
-            SplitterPanelDescriptor::new(
-                format!("dock-node-{}", child.as_u64()),
-                shares.get(index).copied().unwrap_or(0.0),
-            )
-            .min_fraction(0.0)
-        }),
-    );
-    let handle_size = ui_px(f32::from(handle_size).max(0.0));
-    let metrics = SplitterMetrics::new(handle_size, handle_size, ui_px(0.0))
-        .with_handle_placement(SplitterHandlePlacement::OverlayBoundary);
-    SplitterLayoutScene::from_state_with_metrics(&state, ui_rect_from_bounds(bounds), metrics)
-}
-
-fn ui_rect_from_bounds(bounds: Bounds<Pixels>) -> UiRect {
-    ui_rect(
-        ui_point(
-            ui_px(f32::from(bounds.origin.x)),
-            ui_px(f32::from(bounds.origin.y)),
-        ),
-        ui_size(
-            ui_px(f32::from(bounds.size.width)),
-            ui_px(f32::from(bounds.size.height)),
-        ),
-    )
-}
-
-fn bounds_from_ui_rect(rect: UiRect) -> Bounds<Pixels> {
-    Bounds::new(
-        point(px(rect.origin.x.as_f32()), px(rect.origin.y.as_f32())),
-        size(px(rect.size.width.as_f32()), px(rect.size.height.as_f32())),
-    )
-}
-
-fn split_extent(axis: SplitAxis, bounds: Bounds<Pixels>) -> Pixels {
-    match axis {
-        SplitAxis::Horizontal => bounds.size.width,
-        SplitAxis::Vertical => bounds.size.height,
     }
 }
 

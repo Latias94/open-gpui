@@ -4,12 +4,13 @@ use crate::{
     debug::DockDebugRegion,
     host_render_session::DockHostRenderSession,
     render::DockViewportHostSceneFrameSlot,
+    split_geometry::{dock_split_handle_center_shares, resolve_dock_split_shares},
 };
 use open_gpui::{
     AnyElement, Context, CursorStyle, InteractiveElement, IntoElement, ParentElement,
     StatefulInteractiveElement, Styled, Window, div, px, relative, rgb,
 };
-use open_gpui_ui_core::{AccessibleAction, resolve_split_fractions_with_fill_child};
+use open_gpui_ui_core::AccessibleAction;
 
 pub(crate) struct DockRenderSplitInput {
     node: DockNodeId,
@@ -58,7 +59,7 @@ impl DockHost {
             DockDebugRegion::Split { node },
             format!("{}:split:{}", session.selector_prefix(), node.as_u64()),
         );
-        let shares = resolve_split_fractions_with_fill_child(
+        let shares = resolve_dock_split_shares(
             children.len(),
             &fractions,
             session.central_child_index(&children),
@@ -103,9 +104,10 @@ impl DockHost {
         if shares.len() >= 2 {
             let handle_size = session.splitter_handle_size();
             let handle_offset = -handle_size / 2.0;
-            let mut handle_center_share = 0.0_f32;
-            for (handle_index, share) in shares.iter().take(shares.len() - 1).enumerate() {
-                handle_center_share += *share;
+            for (handle_index, handle_center_share) in dock_split_handle_center_shares(&shares)
+                .into_iter()
+                .enumerate()
+            {
                 let selector = self.record_debug_selector(
                     DockDebugRegion::SplitterHandle {
                         split: node,

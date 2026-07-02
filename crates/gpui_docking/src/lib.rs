@@ -134,6 +134,7 @@ mod render_tabs;
 mod spatial_navigation;
 #[cfg(test)]
 mod spatial_navigation_tests;
+mod split_geometry;
 mod transition_executor;
 mod transition_geometry;
 mod viewport;

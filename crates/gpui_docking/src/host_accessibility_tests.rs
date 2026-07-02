@@ -91,18 +91,18 @@ fn accessibility_scene_enumerates_splitters(cx: &mut TestAppContext) {
     });
     let accessibility = DockAccessibilityScene::from_presentation(&scene);
 
-    assert!(
-        accessibility
-            .descriptors
-            .iter()
-            .any(
-                |descriptor| descriptor.role == DockAccessibilityRole::Splitter
-                    && descriptor.node == Some(root)
-                    && descriptor.orientation == Some(Orientation::Horizontal)
-                    && descriptor.disabled == Some(false)
-                    && descriptor.actions
-                        == vec![AccessibleAction::Increment, AccessibleAction::Decrement]
-            )
+    let splitter = accessibility
+        .descriptors
+        .iter()
+        .find(|descriptor| descriptor.role == DockAccessibilityRole::Splitter)
+        .expect("splitter descriptor should be emitted");
+    assert_eq!(splitter.node, Some(root));
+    assert_eq!(splitter.bounds, scene.splitters[0].bounds);
+    assert_eq!(splitter.orientation, Some(Orientation::Horizontal));
+    assert_eq!(splitter.disabled, Some(false));
+    assert_eq!(
+        splitter.actions,
+        vec![AccessibleAction::Increment, AccessibleAction::Decrement]
     );
 }
 
