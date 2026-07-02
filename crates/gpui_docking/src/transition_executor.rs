@@ -3,12 +3,13 @@ use crate::{
     presentation_scene::DockPresentationScene,
     transition_geometry::{
         DockDividerTransition, DockDividerTransitionKind, DockOverlayTransition,
-        DockOverlayTransitionKind, DockPaneTransition, DockPaneTransitionKind, DockTransitionEdge,
-        DockTransitionPlan,
+        DockOverlayTransitionKind, DockPaneTransition, DockPaneTransitionKind, DockSlideTransition,
+        DockTransitionEdge, DockTransitionPlan,
     },
 };
 use open_gpui::{Bounds, Pixels, Window, point, px, size};
 use open_gpui_ui_core::MotionSpec;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -16,7 +17,6 @@ pub(crate) struct DockTransitionExecution {
     pub(crate) plan: DockTransitionPlan,
     pub(crate) spec: MotionSpec,
     pub(crate) state: DockTransitionExecutionState,
-    retarget_start_progress: f32,
     last_sample: Option<DockTransitionSample>,
     started_at: Option<Instant>,
     #[cfg(test)]
@@ -44,9 +44,18 @@ pub(crate) struct DockTransitionSample {
     pub(crate) progress: f32,
     pub(crate) complete: bool,
     pub(crate) needs_frame: bool,
+    pub(crate) pane_bounds: Vec<DockPaneBoundsSample>,
     pub(crate) pane_clips: Vec<DockPaneClipSample>,
     pub(crate) dividers: Vec<DockDividerSample>,
     pub(crate) overlays: Vec<DockOverlaySample>,
+}
+
+/// Sampled visual bounds for a pane at the current transition frame.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPaneBoundsSample {
+    pub(crate) node: DockNodeId,
+    pub(crate) bounds: Bounds<Pixels>,
+    pub(crate) progress: f32,
 }
 
 /// Sampled visible area for a pane whose content is laid out at final size.
@@ -91,22 +100,20 @@ impl DockTransitionExecutor {
         } else {
             DockTransitionExecutionState::Scheduled
         };
-        let retarget_start_progress = if state == DockTransitionExecutionState::Scheduled {
-            self.current
-                .as_ref()
-                .and_then(|execution| execution.last_sample.as_ref())
-                .filter(|sample| !sample.complete)
-                .map(|sample| sample.progress)
-                .unwrap_or(0.0)
+
+        let plan = if state == DockTransitionExecutionState::Scheduled {
+            match self.sample_active_for_retarget() {
+                Some(sample) => retarget_plan_from_sample(plan, &sample),
+                None => plan,
+            }
         } else {
-            0.0
+            plan
         };
 
         self.current = Some(DockTransitionExecution {
             plan,
             spec,
             state,
-            retarget_start_progress,
             last_sample: None,
             started_at: if state == DockTransitionExecutionState::Scheduled {
                 Some(Instant::now())
@@ -117,6 +124,28 @@ impl DockTransitionExecutor {
             test_started_at: None,
         });
         self.current.as_ref().expect("execution should be stored")
+    }
+
+    fn sample_active_for_retarget(&mut self) -> Option<DockTransitionSample> {
+        let execution = self.current.as_mut()?;
+        if execution.state == DockTransitionExecutionState::Immediate {
+            return None;
+        }
+        if let Some(sample) = execution
+            .last_sample
+            .as_ref()
+            .filter(|sample| !sample.complete)
+        {
+            return Some(sample.clone());
+        }
+
+        let elapsed = execution
+            .started_at
+            .map(|started_at| started_at.elapsed())
+            .unwrap_or(Duration::ZERO);
+        let sample = sample_execution(execution, elapsed);
+        execution.last_sample = Some(sample.clone());
+        (!sample.complete).then_some(sample)
     }
 
     pub(crate) fn sample(&mut self, window: Option<&Window>) -> Option<DockTransitionSample> {
@@ -166,18 +195,14 @@ fn sample_execution(
     execution: &DockTransitionExecution,
     elapsed: Duration,
 ) -> DockTransitionSample {
-    let progress = transition_progress(
-        execution.spec,
-        execution.state,
-        execution.retarget_start_progress,
-        elapsed,
-    );
+    let progress = transition_progress(execution.spec, execution.state, elapsed);
     let complete = execution.state == DockTransitionExecutionState::Immediate || progress >= 1.0;
     DockTransitionSample {
         final_scene: execution.plan.final_scene.clone(),
         progress,
         complete,
         needs_frame: !complete,
+        pane_bounds: pane_bounds_samples(&execution.plan, progress),
         pane_clips: execution
             .plan
             .pane_transitions
@@ -202,14 +227,179 @@ fn sample_execution(
 fn transition_progress(
     spec: MotionSpec,
     state: DockTransitionExecutionState,
-    retarget_start_progress: f32,
     elapsed: Duration,
 ) -> f32 {
     if state == DockTransitionExecutionState::Immediate || spec.is_immediate() {
         return 1.0;
     }
-    let progress = spec.progress_at(elapsed);
-    retarget_start_progress + ((1.0 - retarget_start_progress) * progress)
+    spec.progress_at(elapsed)
+}
+
+fn pane_bounds_samples(plan: &DockTransitionPlan, progress: f32) -> Vec<DockPaneBoundsSample> {
+    plan.pane_transitions
+        .iter()
+        .filter_map(|transition| {
+            let bounds = pane_visual_bounds(transition, progress)?;
+            Some(DockPaneBoundsSample {
+                node: transition.node,
+                bounds,
+                progress,
+            })
+        })
+        .collect()
+}
+
+fn pane_visual_bounds(transition: &DockPaneTransition, progress: f32) -> Option<Bounds<Pixels>> {
+    match transition.kind {
+        DockPaneTransitionKind::Entering => transition
+            .slide
+            .as_ref()
+            .map(|slide| reveal_bounds(slide.final_bounds, slide.edge, progress)),
+        DockPaneTransitionKind::Leaving => transition
+            .slide
+            .as_ref()
+            .map(|slide| reveal_bounds(slide.final_bounds, slide.edge, 1.0 - progress)),
+        DockPaneTransitionKind::Moving
+        | DockPaneTransitionKind::Resizing
+        | DockPaneTransitionKind::Unchanged => match (transition.from, transition.to) {
+            (Some(from), Some(to)) => Some(lerp_bounds(from, to, progress)),
+            (Some(bounds), None) | (None, Some(bounds)) => Some(bounds),
+            (None, None) => None,
+        },
+    }
+}
+
+fn retarget_plan_from_sample(
+    mut plan: DockTransitionPlan,
+    sample: &DockTransitionSample,
+) -> DockTransitionPlan {
+    let pane_bounds = sample
+        .pane_bounds
+        .iter()
+        .map(|pane| (pane.node, pane.bounds))
+        .collect::<HashMap<_, _>>();
+    let scene_bounds = plan.final_scene.bounds;
+    for transition in &mut plan.pane_transitions {
+        if let Some(bounds) = pane_bounds.get(&transition.node).copied() {
+            retarget_pane_transition(transition, bounds, scene_bounds);
+        }
+    }
+
+    let divider_bounds = sample
+        .dividers
+        .iter()
+        .map(|divider| ((divider.split, divider.index), divider.bounds))
+        .collect::<HashMap<_, _>>();
+    for transition in &mut plan.divider_transitions {
+        if let Some(bounds) = divider_bounds
+            .get(&(transition.split, transition.index))
+            .copied()
+        {
+            transition.from = Some(bounds);
+            transition.kind = if bounds == transition.to {
+                DockDividerTransitionKind::Unchanged
+            } else {
+                DockDividerTransitionKind::Moving
+            };
+        }
+    }
+
+    plan
+}
+
+fn retarget_pane_transition(
+    transition: &mut DockPaneTransition,
+    current_bounds: Bounds<Pixels>,
+    scene_bounds: Bounds<Pixels>,
+) {
+    transition.from = Some(current_bounds);
+    if matches!(transition.kind, DockPaneTransitionKind::Leaving) || transition.to.is_none() {
+        let slide = slide_transition_from_bounds(current_bounds, scene_bounds);
+        transition.to = Some(slide.source_bounds);
+        transition.slide = Some(slide);
+        transition.kind = DockPaneTransitionKind::Leaving;
+        return;
+    }
+
+    let to = transition
+        .to
+        .expect("retargeted transition should have a final bound");
+    transition.slide = None;
+    transition.kind = if current_bounds == to {
+        DockPaneTransitionKind::Unchanged
+    } else if current_bounds.size != to.size {
+        DockPaneTransitionKind::Resizing
+    } else {
+        DockPaneTransitionKind::Moving
+    };
+}
+
+fn slide_transition_from_bounds(
+    final_bounds: Bounds<Pixels>,
+    scene_bounds: Bounds<Pixels>,
+) -> DockSlideTransition {
+    let edge = preferred_retarget_edge(final_bounds, scene_bounds);
+    DockSlideTransition {
+        edge,
+        source_bounds: slide_source_bounds(edge, final_bounds, scene_bounds),
+        final_bounds,
+        occlusion_bounds: final_bounds,
+    }
+}
+
+fn preferred_retarget_edge(
+    bounds: Bounds<Pixels>,
+    scene_bounds: Bounds<Pixels>,
+) -> DockTransitionEdge {
+    let left = f32::from((bounds.origin.x - scene_bounds.origin.x).abs());
+    let right = f32::from((scene_bounds.right() - bounds.right()).abs());
+    let top = f32::from((bounds.origin.y - scene_bounds.origin.y).abs());
+    let bottom = f32::from((scene_bounds.bottom() - bounds.bottom()).abs());
+    let touching_epsilon = 0.5_f32;
+
+    if left <= touching_epsilon {
+        return DockTransitionEdge::Left;
+    }
+    if right <= touching_epsilon {
+        return DockTransitionEdge::Right;
+    }
+    if top <= touching_epsilon {
+        return DockTransitionEdge::Top;
+    }
+    if bottom <= touching_epsilon {
+        return DockTransitionEdge::Bottom;
+    }
+
+    [
+        (DockTransitionEdge::Left, left),
+        (DockTransitionEdge::Right, right),
+        (DockTransitionEdge::Top, top),
+        (DockTransitionEdge::Bottom, bottom),
+    ]
+    .into_iter()
+    .min_by(|(_, a), (_, b)| a.total_cmp(b))
+    .map(|(edge, _)| edge)
+    .unwrap_or(DockTransitionEdge::Left)
+}
+
+fn slide_source_bounds(
+    edge: DockTransitionEdge,
+    final_bounds: Bounds<Pixels>,
+    scene_bounds: Bounds<Pixels>,
+) -> Bounds<Pixels> {
+    let origin = match edge {
+        DockTransitionEdge::Left => point(
+            scene_bounds.origin.x - final_bounds.size.width,
+            final_bounds.origin.y,
+        ),
+        DockTransitionEdge::Right => point(scene_bounds.right(), final_bounds.origin.y),
+        DockTransitionEdge::Top => point(
+            final_bounds.origin.x,
+            scene_bounds.origin.y - final_bounds.size.height,
+        ),
+        DockTransitionEdge::Bottom => point(final_bounds.origin.x, scene_bounds.bottom()),
+    };
+    Bounds::new(origin, final_bounds.size)
 }
 
 fn pane_clip_sample(transition: &DockPaneTransition, progress: f32) -> Option<DockPaneClipSample> {

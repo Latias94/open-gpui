@@ -317,11 +317,11 @@ fn transition_executor_replaces_active_execution_and_completes_reduced_motion_im
         let midpoint = host
             .sample_transition_for_test(Duration::from_millis(100))
             .expect("active transition should expose midpoint geometry");
-        let midpoint_clip = midpoint
-            .pane_clips
+        let midpoint_bounds = midpoint
+            .pane_bounds
             .iter()
-            .find(|clip| clip.node == right_tabs)
-            .expect("active transition should expose entering pane clip")
+            .find(|pane| pane.node == right_tabs)
+            .expect("active transition should expose entering pane visual bounds")
             .clone();
 
         assert_eq!(
@@ -339,19 +339,19 @@ fn transition_executor_replaces_active_execution_and_completes_reduced_motion_im
         );
         let sample = host
             .sample_transition_for_test(Duration::from_millis(100))
-            .expect("replacement transition should retarget from current progress");
+            .expect("replacement transition should retarget from current geometry");
         assert_eq!(
-            sample.progress, 0.25,
-            "replacement transition should continue from the current sampled progress"
+            sample.progress, 0.0,
+            "retargeted transition starts a new timeline from sampled geometry"
         );
-        let retargeted_clip = sample
-            .pane_clips
+        let retargeted_bounds = sample
+            .pane_bounds
             .iter()
-            .find(|clip| clip.node == right_tabs)
-            .expect("replacement transition should expose entering pane clip");
+            .find(|pane| pane.node == right_tabs)
+            .expect("replacement transition should expose pane visual bounds");
         assert_eq!(
-            retargeted_clip.visible_bounds, midpoint_clip.visible_bounds,
-            "replacement transition should begin from sampled pane reveal geometry"
+            retargeted_bounds.bounds, midpoint_bounds.bounds,
+            "replacement transition should begin from sampled pane visual geometry"
         );
 
         let reduced = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Reduced);
