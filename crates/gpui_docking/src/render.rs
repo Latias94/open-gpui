@@ -216,7 +216,13 @@ impl Render for DockHost {
         }
 
         if let Some(sample) = transition_sample.as_ref() {
-            host = host.child(self.render_transition_sample_layer(&session, sample));
+            host = host.child(self.render_transition_sample_layer(
+                &session,
+                &viewport_host_scene_frame,
+                sample,
+                window,
+                cx,
+            ));
         }
 
         if let Some(preview) = self.render_host_drop_preview(&session, window, cx) {
@@ -629,7 +635,10 @@ impl DockHost {
     fn render_transition_sample_layer(
         &mut self,
         session: &DockHostRenderSession,
+        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         sample: &crate::transition_executor::DockTransitionSample,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
             DockDebugRegion::TransitionLayer,
@@ -645,7 +654,13 @@ impl DockHost {
             .overflow_hidden();
 
         for clip in &sample.pane_clips {
-            layer = layer.child(self.render_transition_pane_clip(session, clip));
+            layer = layer.child(self.render_transition_pane_clip(
+                session,
+                viewport_host_scene_frame,
+                clip,
+                window,
+                cx,
+            ));
         }
         for divider in &sample.dividers {
             layer = layer.child(self.render_transition_divider(session, divider));
@@ -660,7 +675,10 @@ impl DockHost {
     fn render_transition_pane_clip(
         &mut self,
         session: &DockHostRenderSession,
+        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         clip: &DockPaneClipSample,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
             DockDebugRegion::TransitionPaneClip { node: clip.node },
@@ -670,6 +688,21 @@ impl DockHost {
                 clip.node.as_u64()
             ),
         );
+        let content_offset = point(
+            clip.content_bounds.origin.x - clip.visible_bounds.origin.x,
+            clip.content_bounds.origin.y - clip.visible_bounds.origin.y,
+        );
+        let content_selector = self.record_debug_selector(
+            DockDebugRegion::TransitionPaneContent { node: clip.node },
+            format!(
+                "{}:transition:pane-content:{}",
+                session.selector_prefix(),
+                clip.node.as_u64()
+            ),
+        );
+        let content = self.with_debug_selector_recording_suppressed(|host| {
+            host.render_node(clip.node, session, viewport_host_scene_frame, window, cx)
+        });
         div()
             .id(selector.clone())
             .debug_selector(move || selector)
@@ -678,7 +711,18 @@ impl DockHost {
             .top(clip.visible_bounds.origin.y)
             .w(clip.visible_bounds.size.width)
             .h(clip.visible_bounds.size.height)
-            .bg(rgba(0xffffff66))
+            .overflow_hidden()
+            .child(
+                div()
+                    .id(content_selector.clone())
+                    .debug_selector(move || content_selector)
+                    .absolute()
+                    .left(content_offset.x)
+                    .top(content_offset.y)
+                    .w(clip.content_bounds.size.width)
+                    .h(clip.content_bounds.size.height)
+                    .child(content),
+            )
             .into_any_element()
     }
 

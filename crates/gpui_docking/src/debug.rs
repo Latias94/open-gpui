@@ -63,6 +63,11 @@ pub(crate) enum DockDebugRegion {
         /// Runtime tabs or pane node id.
         node: DockNodeId,
     },
+    /// Full-size pane content mounted inside a sampled transition clip.
+    TransitionPaneContent {
+        /// Runtime tabs or pane node id.
+        node: DockNodeId,
+    },
     /// A sampled divider rectangle.
     TransitionDivider {
         /// Runtime split node id.

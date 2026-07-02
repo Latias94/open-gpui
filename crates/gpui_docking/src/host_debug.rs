@@ -19,12 +19,32 @@ impl DockHost {
     ) -> String {
         #[cfg(test)]
         {
+            if self.debug_recording_suppression_depth > 0 {
+                return selector;
+            }
             self.debug_instrumentation_mut().record(region, selector)
         }
         #[cfg(not(test))]
         {
             let _ = region;
             selector
+        }
+    }
+
+    pub(crate) fn with_debug_selector_recording_suppressed<R>(
+        &mut self,
+        render: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        #[cfg(test)]
+        {
+            self.debug_recording_suppression_depth += 1;
+            let result = render(self);
+            self.debug_recording_suppression_depth -= 1;
+            result
+        }
+        #[cfg(not(test))]
+        {
+            render(self)
         }
     }
 }

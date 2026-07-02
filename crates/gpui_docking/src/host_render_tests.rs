@@ -7,15 +7,17 @@ use crate::{
     DockViewportTargetContext, DockWorkspace, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
+    drop_scene_fact,
     host_test_support::*,
     overlay_scene::{DockOverlayLayer, DockOverlayLayerKind, DockOverlayScene},
+    presentation_scene::{DockPresentationPane, DockPresentationPaneKind, DockPresentationScene},
     transition_geometry::{DockMotionPreference, DockTransitionPlan},
 };
 use open_gpui::{
     AnyWindowHandle, AppContext as _, Entity, Focusable, Modifiers, MouseButton,
     RequestFrameOptions, TestAppContext, VisualTestContext, px, size,
 };
-use open_gpui_ui_core::MotionSpec;
+use open_gpui_ui_core::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
 use slotmap::Key;
 use std::time::Duration;
 
@@ -424,6 +426,77 @@ fn transition_sample_overlay_renders_from_executor(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn transition_pane_clip_mounts_real_pane_content(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+
+    let host_bounds = floating_bounds(0.0, 0.0, 400.0, 240.0);
+    let previous = single_tabs_presentation_scene(left_tabs, host_bounds);
+    let next = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(host_bounds, cx)
+    });
+    let final_right_bounds = next
+        .panes
+        .iter()
+        .find(|pane| pane.node == Some(right_tabs))
+        .expect("final scene should contain right tabs pane")
+        .bounds;
+    let plan = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
+
+    window
+        .update(cx, |host, window, cx| {
+            assert_eq!(
+                host.execute_transition_plan(
+                    plan,
+                    MotionSpec::new(
+                        MotionPreference::Animated,
+                        MotionDuration::Custom(Duration::ZERO),
+                        MotionEasing::Linear,
+                    ),
+                    Some(window),
+                    cx,
+                ),
+                DockTransitionExecutionState::Scheduled
+            );
+        })
+        .expect("host should execute transition plan");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+
+    let clip = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TransitionPaneClip { node: right_tabs },
+    )
+    .expect("transition pane clip selector should be emitted");
+    let content = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TransitionPaneContent { node: right_tabs },
+    )
+    .expect("transition pane content selector should be emitted");
+
+    assert_bounds_close(
+        debug_bounds(&mut visual, &clip),
+        final_right_bounds,
+        "transition pane clip",
+    );
+    assert_bounds_close(
+        debug_bounds(&mut visual, &content),
+        final_right_bounds,
+        "transition pane content",
+    );
+    let panel_b = selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") })
+        .expect("primary selected panel selector should still be emitted");
+    assert!(debug_bounds(&mut visual, &panel_b).size.height > px(0.0));
+}
+
+#[open_gpui::test]
 fn drag_active_frames_do_not_schedule_background_scene_expiry(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a", "b"]);
     let (window, host, mut visual) = open_host(
@@ -711,6 +784,13 @@ fn root_edge_hover_keeps_target_leaf_side_guides_visible(cx: &mut TestAppContext
                 &payload,
                 root,
                 root_bounds,
+                outer_right_hit,
+                window,
+                cx,
+            );
+            host.update_local_drop_scene_fact_from_render(
+                &payload,
+                drop_scene_fact::leaf(root, right_tabs, right_bounds, false),
                 outer_right_hit,
                 window,
                 cx,
@@ -1414,6 +1494,30 @@ fn start_tab_drag(
         MouseButton::Left,
         Modifiers::none(),
     );
+}
+
+fn single_tabs_presentation_scene(
+    tabs: DockNodeId,
+    bounds: open_gpui::Bounds<open_gpui::Pixels>,
+) -> DockPresentationScene {
+    DockPresentationScene {
+        space: space(),
+        bounds,
+        root: Some(tabs),
+        panes: vec![DockPresentationPane {
+            node: Some(tabs),
+            kind: DockPresentationPaneKind::Tabs,
+            bounds,
+            floating: None,
+            is_central: false,
+        }],
+        tab_bars: Vec::new(),
+        tab_labels: Vec::new(),
+        splitters: Vec::new(),
+        floating_containers: Vec::new(),
+        focus_regions: Vec::new(),
+        overlay_anchors: Vec::new(),
+    }
 }
 
 fn assert_drop_guide_emitted(

@@ -63,6 +63,8 @@ pub struct DockHost {
     panel_focus_trackers: HashMap<DockItemId, DockPanelFocusTracker>,
     #[cfg(test)]
     debug: DockDebugInstrumentation,
+    #[cfg(test)]
+    pub(crate) debug_recording_suppression_depth: usize,
     interaction: DockInteractionRuntime,
     zoom: DockZoomState,
     transitions: DockTransitionExecutor,
@@ -89,6 +91,8 @@ impl DockHost {
             panel_focus_trackers: HashMap::new(),
             #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
+            #[cfg(test)]
+            debug_recording_suppression_depth: 0,
             interaction: DockInteractionRuntime::default(),
             zoom: DockZoomState::default(),
             transitions: DockTransitionExecutor::default(),
