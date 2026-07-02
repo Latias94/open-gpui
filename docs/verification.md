@@ -14,7 +14,9 @@ The gate runs:
 - `cargo nextest run -p open-gpui-ui-core`
 - `cargo nextest run -p open-gpui-ui-components`
 - `cargo nextest run -p open-gpui-ui-foundation-gallery`
+- `cargo run -p xtask -- scan-theme-drift`
 - `cargo run -p xtask -- scan-import-boundary`
+- `cargo run -p xtask -- scan-ui-contract`
 
 For focused `open-gpui-canvas` work, run:
 
@@ -589,10 +591,11 @@ cargo nextest run -p open-gpui-ui-foundation-gallery tree --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery table --no-fail-fast
 ```
 
-For the registry/a11y/theme productization follow-up, do not start from broad component file
-splitting. Keep verification focused on the shared contract owners:
+For registry, a11y, gallery conformance, and theme productization work, start from the reusable UI
+contract audit before dropping to focused behavior tests:
 
 ```powershell
+cargo run -p xtask -- scan-ui-contract
 cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --check
 cargo check -p open-gpui-ui-components --tests
 cargo check -p open-gpui-ui-foundation-gallery --tests
@@ -601,6 +604,12 @@ cargo nextest run -p open-gpui-ui-components a11y --no-fail-fast
 cargo nextest run -p open-gpui-ui-components theme --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts --no-fail-fast
 ```
+
+`scan-ui-contract` checks the component contract registry, default root/prelude exports, source
+homes, docs tokens, removed primitive targets, gallery conformance evidence, representative
+`COMPONENT_A11Y_CLAIMS`, and the committed theme schema artifact. Use the narrower
+`scan-theme-schema`, `scan-theme-drift`, and focused nextest commands when investigating a specific
+failure.
 
 Run the full component and gallery package gates only after broad registry, theme, or gallery
 changes:

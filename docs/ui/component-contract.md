@@ -422,6 +422,10 @@ does not expose or mutate a global active theme: consumers choose an entry, take
 Portable theme files are JSON and versioned by `THEME_JSON_SCHEMA_VERSION`. The public loader
 surface is `theme_json_schema`, `theme_definition_from_json_str`,
 `theme_definition_from_json_file`, `register_theme_json_str`, and `register_theme_json_file`.
+The reviewable schema artifact for version 1 lives at
+`docs/schemas/open-gpui-theme-v1.schema.json`; regenerate it with
+`cargo run -p open-gpui-ui-components --example export_theme_schema --quiet` when
+`theme_json_schema()` changes, then run `cargo run -p xtask -- scan-theme-schema`.
 Those facades validate schema version, identity fields, `ThemeMode`, duplicate token/state pairs,
 supported semantic token names, supported `ColorState` names, and six-digit RGB values before a
 definition reaches `ThemeRegistry::register`. Loader failures are structured as `ThemeLoadError`
@@ -801,6 +805,9 @@ these gates visible:
 - icon-only affordances and labels keep their accessible metadata explicit;
 - `COMPONENT_A11Y_CLAIMS` and `ComponentA11yClaim` keep representative sample selectors, roles,
   label sources, value metadata, orientation, and actions aligned with `ComponentA11yContract`.
+- `cargo run -p xtask -- scan-ui-contract` keeps registry rows, default exports, docs tokens,
+  conformance evidence, a11y claims, and the theme schema artifact aligned before gallery smoke
+  tests are needed.
 
 Large or behavior-heavy sections must use the same lazy or virtualized rendering primitives that
 the component library exposes to applications. The Components page mounts sections through a
@@ -997,10 +1004,11 @@ drag/drop movement, and virtualized behavior snapshots.
 `menu/runtime.rs` owns submenu hover timing, branch switching, trigger-bound caches, and local
 submenu scroll handles for `Menu` and `ContextMenu`, keeping render assembly thin while preserving
 safe hover and local scroll ownership.
-After these family splits, the next shared UI framework work is contract productization:
-`component_contract` module ownership, a11y contract gates, and theme schema/loading. The remaining
-large component files should stay intact unless one of those product contracts exposes a concrete
-ownership problem.
+After these family splits, the shared UI framework contract work is enforced through
+`cargo run -p xtask -- scan-ui-contract`: `component_contract` module ownership, a11y contract
+claims, gallery conformance evidence, and theme schema/loading all have an audit entry point. The
+remaining large component files should stay intact unless one of those product contracts exposes a
+concrete ownership problem.
 `Splitter` covers panel fraction normalization, min/max constraints, collapsed-panel metadata,
 stable handle anatomy, and local pointer dragging through keyed runtime state. Keyboard resizing,
 controlled resize callbacks, persisted layouts, RTL behavior, and nested splitter arbitration

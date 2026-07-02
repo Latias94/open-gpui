@@ -56,6 +56,7 @@ fn verify(root: &Path) -> Result<(), ()> {
     run_ui_component_tests(root)?;
     scan_theme_drift(root)?;
     scan_import_boundary(root)?;
+    scan_ui_contract(root)?;
     Ok(())
 }
 
