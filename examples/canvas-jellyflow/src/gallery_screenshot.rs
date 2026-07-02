@@ -146,6 +146,7 @@ fn open_gallery_case_window(
                 measurement_revision: 1,
                 measurement_frame_pending: false,
                 auto_fit_viewport: true,
+                deferred_editor_refresh: false,
                 last_canvas_view_size: None,
                 last_canvas_bounds: None,
             })

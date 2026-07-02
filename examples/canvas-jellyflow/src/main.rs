@@ -217,6 +217,7 @@ struct JellyflowCanvasView {
     measurement_revision: u64,
     measurement_frame_pending: bool,
     auto_fit_viewport: bool,
+    deferred_editor_refresh: bool,
     last_canvas_view_size: Option<open_gpui::Size<Pixels>>,
     last_canvas_bounds: Option<Bounds<Pixels>>,
 }
@@ -901,7 +902,8 @@ impl JellyflowCanvasView {
             dropped_wire_intent_from_canvas_event(&self.editor, &self.store, &event);
         match self.editor.handle_event(event) {
             Ok(()) => {
-                let synced = self.sync_store_from_canvas_document();
+                let synced = self
+                    .sync_store_from_canvas_document_with_refresh(!self.is_pointer_interacting());
                 if !synced && let Some((source, pointer)) = dropped_wire_intent {
                     self.dispatch_first_dropped_wire_insert(source, pointer, cx);
                 }
@@ -942,6 +944,7 @@ impl JellyflowCanvasView {
                 self.measurement_revision = 1;
                 self.measurement_frame_pending = false;
                 self.auto_fit_viewport = true;
+                self.deferred_editor_refresh = false;
                 self.last_canvas_view_size = None;
                 self.last_canvas_bounds = None;
                 cx.notify();
@@ -1243,7 +1246,12 @@ impl JellyflowCanvasView {
         }
 
         if changed {
-            self.refresh_editor_from_store();
+            if self.is_pointer_interacting() {
+                self.deferred_editor_refresh = true;
+            } else {
+                self.refresh_editor_from_store();
+                self.deferred_editor_refresh = false;
+            }
             LayoutPassMeasurementConsume::Changed
         } else {
             LayoutPassMeasurementConsume::Unchanged
@@ -1251,6 +1259,10 @@ impl JellyflowCanvasView {
     }
 
     fn sync_store_from_canvas_document(&mut self) -> bool {
+        self.sync_store_from_canvas_document_with_refresh(true)
+    }
+
+    fn sync_store_from_canvas_document_with_refresh(&mut self, refresh_editor: bool) -> bool {
         let mut changed = false;
         let transform_transaction = canvas_document_transform_transaction(
             &self.adapter,
@@ -1286,8 +1298,11 @@ impl JellyflowCanvasView {
             }
         }
 
-        if changed {
+        if refresh_editor && (changed || self.deferred_editor_refresh) {
             self.refresh_editor_from_store();
+            self.deferred_editor_refresh = false;
+        } else if changed {
+            self.deferred_editor_refresh = true;
         }
 
         changed
@@ -1367,6 +1382,7 @@ impl JellyflowCanvasView {
         }
         self.editor = editor;
         self.projection = projection;
+        self.deferred_editor_refresh = false;
     }
 }
 
@@ -4261,6 +4277,7 @@ fn main() {
                     measurement_revision: 1,
                     measurement_frame_pending: false,
                     auto_fit_viewport: true,
+                    deferred_editor_refresh: false,
                     last_canvas_view_size: None,
                     last_canvas_bounds: None,
                 })
@@ -4291,16 +4308,15 @@ mod tests {
         open_gpui_control_element_id, plan_action_dispatch, plan_dropped_wire_insert,
         project_dropped_wire_menu, projected_node_surface_component_layout,
         testing::{
-            OpenGpuiHostCapabilityGap, OpenGpuiHostProductInteractionGap,
-            OpenGpuiHostProductInteractionReport, OpenGpuiHostRendererSource,
-            OpenGpuiHostSurfaceReport, OpenGpuiHostSurfaceReportRow,
+            OpenGpuiHostCapabilityGap, OpenGpuiHostProductInteractionReport,
+            OpenGpuiHostRendererSource, OpenGpuiHostSurfaceReport, OpenGpuiHostSurfaceReportRow,
             assert_authoring_interaction_regression_gates, assert_host_surface_report_contract,
             assert_host_visual_interaction_report_gates, assert_product_fixture_regression_gates,
-            assert_product_gallery_host_report_gates,
-            assert_product_interaction_characterization_report_contract, product_fixture_catalog,
+            assert_product_gallery_host_report_gates, assert_product_interaction_report_gates,
+            product_fixture_catalog,
         },
     };
-    use open_gpui::{MouseMoveEvent, MouseUpEvent};
+    use open_gpui::{AppContext as _, MouseMoveEvent, MouseUpEvent};
     use open_gpui_canvas::{
         CanvasConnectionEndpointRole, CanvasEditorInputMapper, CanvasGeometryFacts, CanvasRuntime,
         connection_hit_options,
@@ -4508,6 +4524,148 @@ mod tests {
             product_surface_drag_sequence_probe(ProductSurfaceDragProbeEnd::Cancel),
             "product node overlay drag should restore the shader node when the gesture is cancelled"
         );
+    }
+
+    #[open_gpui::test]
+    fn canvas_view_keeps_drag_state_while_syncing_product_surface_moves(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
+        let (store, document, projection) =
+            project_kit_fixture("shader.blueprint", "shader.material_mix").unwrap();
+        let editor = editor_for_document(document).unwrap();
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let view = cx.new(|cx| JellyflowCanvasView {
+            editor,
+            store,
+            focus_handle: cx.focus_handle(),
+            projection,
+            gallery: product_gallery::ProductGalleryState::default(),
+            adapter: OpenGpuiAdapter::default(),
+            semantic_registry,
+            node_kit_registry,
+            measured_regions: OpenGpuiBoundsCollector::new(),
+            measurement_revision: 1,
+            measurement_frame_pending: false,
+            auto_fit_viewport: false,
+            deferred_editor_refresh: false,
+            last_canvas_view_size: None,
+            last_canvas_bounds: Some(Bounds::new(
+                point(px(24.0), px(46.0)),
+                default_canvas_view_size(),
+            )),
+        });
+
+        cx.update_entity(&view, |this, cx| {
+            let shader_node_id = this
+                .editor
+                .document()
+                .nodes()
+                .find(|node| node.kind == "shader-card")
+                .map(|node| node.id.clone())
+                .expect("shader card node exists");
+            let initial_node = this
+                .editor
+                .document()
+                .node(&shader_node_id)
+                .expect("shader card node")
+                .clone();
+            let node_view_bounds = this
+                .editor
+                .viewport()
+                .document_bounds_to_view(initial_node.bounds());
+            let down = point(
+                node_view_bounds.origin.x + node_view_bounds.size.width * 0.5,
+                node_view_bounds.origin.y + px(24.0),
+            );
+
+            this.handle_canvas_event(
+                Some(CanvasEvent::PointerDown {
+                    position: down,
+                    button: PointerButton::Primary,
+                    modifiers: CanvasKeyModifiers::default(),
+                }),
+                cx,
+            );
+            assert!(
+                !this.editor.is_tool_state_idle(),
+                "pointer down should begin a node translation"
+            );
+
+            this.handle_canvas_event(
+                Some(CanvasEvent::PointerMove {
+                    position: down + point(px(42.0), px(18.0)),
+                    modifiers: CanvasKeyModifiers::default(),
+                }),
+                cx,
+            );
+            assert!(
+                !this.editor.is_tool_state_idle(),
+                "store sync must not rebuild CanvasEditor while a drag gesture is active"
+            );
+            assert!(
+                this.deferred_editor_refresh,
+                "active drag sync should defer editor refresh until the gesture ends"
+            );
+            let first_move = this
+                .editor
+                .document()
+                .node(&shader_node_id)
+                .expect("shader card node after first move")
+                .position;
+            assert_ne!(first_move, initial_node.position);
+
+            this.handle_canvas_event(
+                Some(CanvasEvent::PointerMove {
+                    position: down + point(px(90.0), px(40.0)),
+                    modifiers: CanvasKeyModifiers::default(),
+                }),
+                cx,
+            );
+            let second_move = this
+                .editor
+                .document()
+                .node(&shader_node_id)
+                .expect("shader card node after second move")
+                .position;
+            assert_ne!(
+                second_move, first_move,
+                "subsequent pointer moves must keep translating the node"
+            );
+
+            this.handle_canvas_event(
+                Some(CanvasEvent::PointerUp {
+                    position: down + point(px(90.0), px(40.0)),
+                    button: PointerButton::Primary,
+                    modifiers: CanvasKeyModifiers::default(),
+                }),
+                cx,
+            );
+            assert!(this.editor.is_tool_state_idle());
+            assert!(
+                !this.deferred_editor_refresh,
+                "pointer up should flush any deferred editor refresh"
+            );
+            let store_node = this
+                .store
+                .graph()
+                .nodes()
+                .get(
+                    &jelly_node_id_from_node(this.editor.document().node(&shader_node_id).unwrap())
+                        .unwrap(),
+                )
+                .expect("store node remains synced");
+            assert_eq!(
+                store_node.pos.x,
+                this.editor
+                    .document()
+                    .node(&shader_node_id)
+                    .unwrap()
+                    .position
+                    .x
+                    .as_f32()
+            );
+        });
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -5777,52 +5935,7 @@ mod tests {
     #[test]
     fn canvas_example_characterizes_current_product_interaction_gaps() {
         let report = canvas_host_product_interaction_report();
-        assert_product_interaction_characterization_report_contract(&report);
-        assert!(report.product_drag_surface_count >= 4, "{report:?}");
-        assert!(report.hidden_repeatable_overflow_count > 0, "{report:?}");
-        assert!(report.repeatable_overflow_indicator_count > 0, "{report:?}");
-        assert!(
-            !report.gaps.contains(
-                &OpenGpuiHostProductInteractionGap::DragSurfaceMissingFullPointerSequence
-            ),
-            "{report:?}"
-        );
-        assert!(
-            !report
-                .gaps
-                .contains(&OpenGpuiHostProductInteractionGap::ToolSwitcherMissing),
-            "{report:?}"
-        );
-        assert!(
-            !report
-                .gaps
-                .contains(&OpenGpuiHostProductInteractionGap::ConnectFlowNotStoreSynced),
-            "{report:?}"
-        );
-        assert!(
-            !report
-                .gaps
-                .contains(&OpenGpuiHostProductInteractionGap::ReconnectAffordanceMissing),
-            "{report:?}"
-        );
-        assert!(
-            !report
-                .gaps
-                .contains(&OpenGpuiHostProductInteractionGap::PortHotspotPathMissing),
-            "{report:?}"
-        );
-        assert!(
-            !report
-                .gaps
-                .contains(&OpenGpuiHostProductInteractionGap::DroppedWireGestureDetached),
-            "{report:?}"
-        );
-        assert!(
-            !report
-                .gaps
-                .contains(&OpenGpuiHostProductInteractionGap::RepeatableOverflowIndicatorMissing),
-            "{report:?}"
-        );
+        assert_product_interaction_report_gates(&report);
     }
 
     #[test]
