@@ -217,6 +217,10 @@ pub fn focused_section_for_id(id: &'static str) -> Option<&'static str> {
 
 /// Returns the focused section represented by a catalog entry.
 pub fn focused_section_for_catalog_entry(entry: &ComponentCatalogEntry) -> Option<&'static str> {
+    entry.story_contract().and_then(|story| story.section_id())
+}
+
+fn story_section_for_catalog_entry(entry: &ComponentCatalogEntry) -> Option<&'static str> {
     match entry.status {
         ComponentCatalogStatus::Official | ComponentCatalogStatus::StateContract => {
             focused_section_for_id(entry.sample_section_id())
@@ -423,6 +427,37 @@ impl ComponentCatalogEntry {
                 "primitives"
             }
             _ => "catalog",
+        }
+    }
+
+    /// Returns the gallery story contract represented by this catalog entry, if any.
+    pub fn story_contract(self) -> Option<StoryContract> {
+        match self.status {
+            ComponentCatalogStatus::Official => Some(StoryContract::component(
+                StoryContractKind::Component,
+                self.name,
+                self.family,
+                self.state,
+                story_section_for_catalog_entry(&self),
+                self.catalog_selector(),
+                self.sample_selector,
+                None,
+                component_story_probes(&self),
+            )),
+            ComponentCatalogStatus::StateContract => Some(StoryContract::component(
+                StoryContractKind::StateContract,
+                self.name,
+                self.family,
+                self.state,
+                story_section_for_catalog_entry(&self),
+                self.catalog_selector(),
+                None,
+                self.state_contract_selector,
+                component_story_probes(&self),
+            )),
+            ComponentCatalogStatus::AdapterOnly
+            | ComponentCatalogStatus::InternalAnatomy
+            | ComponentCatalogStatus::Deferred => None,
         }
     }
 }
@@ -742,17 +777,29 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
 
 /// Returns the official catalog entries that own rendered sample selectors.
 pub fn official_sample_selector_pairs() -> impl Iterator<Item = (&'static str, &'static str)> {
-    COMPONENT_CATALOG
-        .iter()
-        .filter_map(|entry| entry.sample_selector.map(|selector| (entry.name, selector)))
+    component_story_contracts().into_iter().filter_map(|story| {
+        if story.kind() == StoryContractKind::Component {
+            story
+                .selectors()
+                .sample_selector()
+                .map(|selector| (story.owner_name(), selector))
+        } else {
+            None
+        }
+    })
 }
 
 /// Returns renderer-neutral state contracts that own visible gallery readouts.
 pub fn state_contract_readout_pairs() -> impl Iterator<Item = (&'static str, &'static str)> {
-    COMPONENT_CATALOG.iter().filter_map(|entry| {
-        entry
-            .state_contract_selector
-            .map(|selector| (entry.name, selector))
+    component_story_contracts().into_iter().filter_map(|story| {
+        if story.kind() == StoryContractKind::StateContract {
+            story
+                .selectors()
+                .state_readout_selector()
+                .map(|selector| (story.owner_name(), selector))
+        } else {
+            None
+        }
     })
 }
 
@@ -837,32 +884,25 @@ fn component_story_probes(entry: &ComponentCatalogEntry) -> &'static [StoryProbe
 pub fn component_story_contracts() -> Vec<StoryContract> {
     COMPONENT_CATALOG
         .iter()
-        .filter_map(|entry| match entry.status {
-            ComponentCatalogStatus::Official => Some(StoryContract::component(
-                StoryContractKind::Component,
-                entry.name,
-                entry.family,
-                entry.state,
-                focused_section_for_catalog_entry(entry),
-                entry.catalog_selector(),
-                entry.sample_selector,
-                None,
-                component_story_probes(entry),
-            )),
-            ComponentCatalogStatus::StateContract => Some(StoryContract::component(
-                StoryContractKind::StateContract,
-                entry.name,
-                entry.family,
-                entry.state,
-                focused_section_for_catalog_entry(entry),
-                entry.catalog_selector(),
-                None,
-                entry.state_contract_selector,
-                component_story_probes(entry),
-            )),
-            ComponentCatalogStatus::AdapterOnly
-            | ComponentCatalogStatus::InternalAnatomy
-            | ComponentCatalogStatus::Deferred => None,
-        })
+        .filter_map(|entry| entry.story_contract())
         .collect()
+}
+
+/// Returns the story contract for one official component or state readout.
+pub fn component_story_contract_for(name: &str) -> Option<StoryContract> {
+    COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == name)
+        .and_then(|entry| entry.story_contract())
+}
+
+/// Returns story contracts visible for a Components page focus mode.
+pub fn component_story_contracts_for_focus(mode: ComponentFocusMode) -> Vec<StoryContract> {
+    match mode {
+        ComponentFocusMode::All => component_story_contracts(),
+        ComponentFocusMode::Section(section_id) => component_story_contracts()
+            .into_iter()
+            .filter(|story| story.section_id() == Some(section_id))
+            .collect(),
+    }
 }

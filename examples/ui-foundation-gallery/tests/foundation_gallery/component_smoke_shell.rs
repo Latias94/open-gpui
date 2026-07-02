@@ -184,15 +184,19 @@ fn components_gallery_smoke_focuses_every_focusable_catalog_entry(
 ) {
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     let mut visited = Vec::new();
-    let expected = pages::components::COMPONENT_CATALOG
-        .iter()
-        .filter(|entry| pages::components::focused_section_for_catalog_entry(entry).is_some())
-        .count();
+    let focusable_stories = pages::components::component_story_contracts_for_focus(
+        pages::components::ComponentFocusMode::All,
+    )
+    .into_iter()
+    .filter(|story| story.section_id().is_some())
+    .collect::<Vec<_>>();
+    let expected = focusable_stories.len();
 
-    for entry in pages::components::COMPONENT_CATALOG
-        .iter()
-        .filter(|entry| pages::components::focused_section_for_catalog_entry(entry).is_some())
-    {
+    for story in focusable_stories {
+        let entry = pages::components::COMPONENT_CATALOG
+            .iter()
+            .find(|entry| entry.name == story.owner_name())
+            .unwrap_or_else(|| panic!("expected catalog entry `{}`", story.owner_name()));
         focus_components_section(&shell, cx, entry);
         visited.push(entry.name);
     }

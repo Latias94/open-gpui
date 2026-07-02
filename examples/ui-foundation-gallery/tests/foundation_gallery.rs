@@ -116,9 +116,7 @@ fn facet_total_count(facet: &TableColumnFacets) -> usize {
 }
 
 fn component_story_contract(name: &str) -> StoryContract {
-    pages::components::component_story_contracts()
-        .into_iter()
-        .find(|story| story.owner_name() == name)
+    pages::components::component_story_contract_for(name)
         .unwrap_or_else(|| panic!("expected component story contract `{name}`"))
 }
 
@@ -402,7 +400,8 @@ fn focus_components_catalog_entry(
             entry.name
         )
     });
-    let focus = pages::components::focused_section_for_catalog_entry(entry)
+    let focus = story
+        .section_id()
         .unwrap_or_else(|| panic!("expected focusable catalog entry `{}`", entry.name));
     let expected_focus = pages::components::ComponentFocusMode::Section(focus);
 
@@ -453,7 +452,8 @@ fn focus_components_section(
     entry: &pages::components::ComponentCatalogEntry,
 ) -> pages::components::ComponentFocusMode {
     let story = component_story_contract(entry.name);
-    let focus = pages::components::focused_section_for_catalog_entry(entry)
+    let focus = story
+        .section_id()
         .unwrap_or_else(|| panic!("expected focusable catalog entry `{}`", entry.name));
     let expected_focus = pages::components::ComponentFocusMode::Section(focus);
 

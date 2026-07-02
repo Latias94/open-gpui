@@ -1717,6 +1717,68 @@ fn gallery_story_contracts_cover_components_state_readouts_and_overlays() {
         .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
     assert_eq!(component_story_names, expected_component_story_names);
+    assert_eq!(
+        pages::components::component_story_contracts_for_focus(
+            pages::components::ComponentFocusMode::All,
+        ),
+        component_stories,
+        "all-mode story contract helper should expose the same component contract records"
+    );
+
+    let story_sample_pairs = component_stories
+        .iter()
+        .filter_map(|story| {
+            (story.kind() == open_gpui_ui_foundation_gallery::StoryContractKind::Component)
+                .then(|| {
+                    story
+                        .selectors()
+                        .sample_selector()
+                        .map(|selector| (story.owner_name(), selector))
+                })
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    let official_sample_pairs =
+        pages::components::official_sample_selector_pairs().collect::<Vec<_>>();
+    assert_eq!(
+        official_sample_pairs, story_sample_pairs,
+        "official sample selectors should be derived from story contracts"
+    );
+
+    let story_readout_pairs = component_stories
+        .iter()
+        .filter_map(|story| {
+            (story.kind() == open_gpui_ui_foundation_gallery::StoryContractKind::StateContract)
+                .then(|| {
+                    story
+                        .selectors()
+                        .state_readout_selector()
+                        .map(|selector| (story.owner_name(), selector))
+                })
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    let state_contract_pairs =
+        pages::components::state_contract_readout_pairs().collect::<Vec<_>>();
+    assert_eq!(
+        state_contract_pairs, story_readout_pairs,
+        "state-contract readout selectors should be derived from story contracts"
+    );
+
+    for story in &component_stories {
+        if let Some(section_id) = story.section_id() {
+            let focused = pages::components::component_story_contracts_for_focus(
+                pages::components::ComponentFocusMode::Section(section_id),
+            );
+            assert!(
+                focused
+                    .iter()
+                    .any(|focused_story| focused_story.owner_name() == story.owner_name()),
+                "focused story contracts for `{section_id}` should include `{}`",
+                story.owner_name()
+            );
+        }
+    }
 
     let overlay_story_names = overlay_stories
         .iter()
