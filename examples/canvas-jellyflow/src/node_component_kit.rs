@@ -41,6 +41,7 @@ pub struct OpenGpuiNodeComponentProps {
     pub disabled: bool,
     pub hidden: bool,
     pub connectable: bool,
+    pub size_policy: OpenGpuiNodeSizePolicy,
     pub node_size: CanvasSize,
     pub node_data: Value,
 }
@@ -60,8 +61,103 @@ impl OpenGpuiNodeComponentProps {
             disabled: context.state.disabled,
             hidden: context.state.hidden,
             connectable: !context.state.disabled && !context.state.hidden,
+            size_policy: OpenGpuiNodeSizePolicy::from_renderer_context(context),
             node_size: context.node_size,
             node_data: context.node_data.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OpenGpuiNodeSizePolicy {
+    Fixed {
+        size: CanvasSize,
+    },
+    Intrinsic {
+        min_size: Option<CanvasSize>,
+        preferred_size: Option<CanvasSize>,
+    },
+    Resizable {
+        min_size: Option<CanvasSize>,
+        preferred_size: Option<CanvasSize>,
+    },
+}
+
+impl OpenGpuiNodeSizePolicy {
+    pub fn from_renderer_context(context: &OpenGpuiNodeRendererContext) -> Self {
+        Self::from_surface_budget(
+            context.node_size,
+            context.surface_preset.min_readable_size,
+            context.surface_preset.preferred_size,
+            context.surface_preset.repeatable_visible_items,
+        )
+    }
+
+    pub fn from_surface_budget(
+        current_size: CanvasSize,
+        min_size: Option<CanvasSize>,
+        preferred_size: Option<CanvasSize>,
+        repeatable_visible_items: Option<usize>,
+    ) -> Self {
+        if repeatable_visible_items.is_some() {
+            Self::Resizable {
+                min_size,
+                preferred_size,
+            }
+        } else if min_size.is_some() || preferred_size.is_some() {
+            Self::Intrinsic {
+                min_size,
+                preferred_size,
+            }
+        } else {
+            Self::Fixed { size: current_size }
+        }
+    }
+
+    pub fn min_size(self) -> Option<CanvasSize> {
+        match self {
+            Self::Fixed { size } => Some(size),
+            Self::Intrinsic { min_size, .. } | Self::Resizable { min_size, .. } => min_size,
+        }
+    }
+
+    pub fn preferred_size(self) -> Option<CanvasSize> {
+        match self {
+            Self::Fixed { size } => Some(size),
+            Self::Intrinsic { preferred_size, .. } | Self::Resizable { preferred_size, .. } => {
+                preferred_size
+            }
+        }
+    }
+
+    pub fn projected_node_size(
+        self,
+        requested_size: Option<CanvasSize>,
+        preset: &jellyflow_open_gpui::OpenGpuiProductSurfacePreset,
+        fallback: CanvasSize,
+    ) -> CanvasSize {
+        match self {
+            Self::Fixed { size } => requested_size.unwrap_or(size),
+            Self::Intrinsic { .. } => requested_size.unwrap_or_else(|| {
+                self.preferred_size()
+                    .or_else(|| self.min_size())
+                    .or(preset.default_size)
+                    .unwrap_or(fallback)
+            }),
+            Self::Resizable { min_size, .. } => {
+                let size = requested_size.unwrap_or_else(|| {
+                    self.preferred_size()
+                        .or(min_size)
+                        .or(preset.default_size)
+                        .unwrap_or(fallback)
+                });
+                min_size
+                    .map(|minimum| CanvasSize {
+                        width: size.width.max(minimum.width),
+                        height: size.height.max(minimum.height),
+                    })
+                    .unwrap_or(size)
+            }
         }
     }
 }
@@ -141,6 +237,18 @@ impl<'a, Services> OpenGpuiNodeComponentContext<'a, Services> {
 
     pub fn anchor_measurement_id(&self, anchor_key: impl Into<String>) -> OpenGpuiMeasurementId {
         self.host.anchor_measurement_id(anchor_key)
+    }
+
+    pub fn readable_measurement_id(&self, key: impl Into<String>) -> OpenGpuiMeasurementId {
+        OpenGpuiMeasurementId::readable(self.node_id(), key)
+    }
+
+    pub fn drag_exclusion_measurement_id(&self, key: impl Into<String>) -> OpenGpuiMeasurementId {
+        OpenGpuiMeasurementId::drag_exclusion(self.node_id(), key)
+    }
+
+    pub fn overflow_measurement_id(&self, key: impl Into<String>) -> OpenGpuiMeasurementId {
+        OpenGpuiMeasurementId::overflow(self.node_id(), key)
     }
 }
 
@@ -238,6 +346,47 @@ pub fn render_measured_region(
         collector.record_id(id.clone(), gpui_view_bounds(bounds), global_id);
     })
     .into_any_element()
+}
+
+pub fn render_readable_region(
+    id: OpenGpuiMeasurementId,
+    collector: OpenGpuiBoundsCollector,
+    child: impl IntoElement,
+) -> AnyElement {
+    render_measured_region(id, collector, child)
+}
+
+pub fn render_overflow_region(
+    id: OpenGpuiMeasurementId,
+    collector: OpenGpuiBoundsCollector,
+    child: impl IntoElement,
+) -> AnyElement {
+    render_measured_region(id, collector, child)
+}
+
+pub fn render_drag_exclusion_region(
+    id: OpenGpuiMeasurementId,
+    collector: OpenGpuiBoundsCollector,
+    child: impl IntoElement,
+) -> AnyElement {
+    render_measured_region(
+        id,
+        collector,
+        render_interactive_control_region(child.into_any_element()),
+    )
+}
+
+pub fn render_measured_control_region(
+    id: OpenGpuiMeasurementId,
+    drag_exclusion_id: OpenGpuiMeasurementId,
+    collector: OpenGpuiBoundsCollector,
+    child: impl IntoElement,
+) -> AnyElement {
+    render_measured_region(
+        id,
+        collector.clone(),
+        render_drag_exclusion_region(drag_exclusion_id, collector, child),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -979,5 +1128,85 @@ mod tests {
         assert_eq!(plan.visible_items, 0);
         assert_eq!(plan.hidden_items, 3);
         assert_eq!(plan.region.mode, AdaptiveNodeLayoutMode::Shell);
+    }
+
+    #[test]
+    fn size_policy_uses_semantic_budget_not_text_fit() {
+        let current = CanvasSize {
+            width: 210.0,
+            height: 96.0,
+        };
+        let min = CanvasSize {
+            width: 320.0,
+            height: 220.0,
+        };
+        let preferred = CanvasSize {
+            width: 344.0,
+            height: 240.0,
+        };
+
+        assert_eq!(
+            OpenGpuiNodeSizePolicy::from_surface_budget(current, Some(min), Some(preferred), None),
+            OpenGpuiNodeSizePolicy::Intrinsic {
+                min_size: Some(min),
+                preferred_size: Some(preferred),
+            }
+        );
+        assert_eq!(
+            OpenGpuiNodeSizePolicy::from_surface_budget(
+                current,
+                Some(min),
+                Some(preferred),
+                Some(3),
+            ),
+            OpenGpuiNodeSizePolicy::Resizable {
+                min_size: Some(min),
+                preferred_size: Some(preferred),
+            }
+        );
+        assert_eq!(
+            OpenGpuiNodeSizePolicy::from_surface_budget(current, None, None, None),
+            OpenGpuiNodeSizePolicy::Fixed { size: current }
+        );
+
+        let preset = jellyflow_open_gpui::OpenGpuiProductSurfacePreset {
+            renderer_key: "shader-card".to_owned(),
+            default_size: Some(current),
+            min_readable_size: Some(min),
+            preferred_size: Some(preferred),
+            slot_line_budget: None,
+            control_line_budget: None,
+            repeatable_visible_items: Some(3),
+            overflow_indicator: None,
+            density_priority: Vec::new(),
+            style: jellyflow_open_gpui::OpenGpuiSurfaceStyleBudget::default(),
+            graph_affordance:
+                jellyflow_open_gpui::OpenGpuiGraphAffordanceEvidence::for_renderer_key(
+                    "shader-card",
+                    jellyflow_open_gpui::OpenGpuiSurfaceStyleBudget::default(),
+                ),
+        };
+        let resizable = OpenGpuiNodeSizePolicy::from_surface_budget(
+            current,
+            Some(min),
+            Some(preferred),
+            Some(3),
+        );
+
+        assert_eq!(
+            resizable.projected_node_size(None, &preset, current),
+            preferred
+        );
+        assert_eq!(
+            resizable.projected_node_size(
+                Some(CanvasSize {
+                    width: 300.0,
+                    height: 200.0,
+                }),
+                &preset,
+                current,
+            ),
+            min
+        );
     }
 }

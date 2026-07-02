@@ -3,13 +3,13 @@ use std::collections::BTreeMap;
 use jellyflow::core::{CanvasSize, NodeId as JellyNodeId};
 use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiBoundsCollector, OpenGpuiControlPlan, OpenGpuiDynamicPortPolicy,
-    OpenGpuiMenuPlan, OpenGpuiNodeRendererContext, OpenGpuiNodeRendererHostContext,
-    OpenGpuiNodeRendererRegistry, OpenGpuiRepeatableActionPlan, OpenGpuiRepeatableItemLayout,
-    OpenGpuiRepeatableSurfaceLayout, open_gpui_custom_action_missing_element_id,
-    open_gpui_custom_renderer_badge_element_id, open_gpui_custom_repeatables_badge_element_id,
-    open_gpui_custom_slots_badge_element_id, open_gpui_repeatable_add_action_element_id,
-    open_gpui_repeatable_item_element_id, open_gpui_repeatable_remove_action_element_id,
-    open_gpui_repeatable_reorder_action_element_id,
+    OpenGpuiMeasurementId, OpenGpuiMenuPlan, OpenGpuiNodeRendererContext,
+    OpenGpuiNodeRendererHostContext, OpenGpuiNodeRendererRegistry, OpenGpuiRepeatableActionPlan,
+    OpenGpuiRepeatableItemLayout, OpenGpuiRepeatableSurfaceLayout,
+    open_gpui_custom_action_missing_element_id, open_gpui_custom_renderer_badge_element_id,
+    open_gpui_custom_repeatables_badge_element_id, open_gpui_custom_slots_badge_element_id,
+    open_gpui_repeatable_add_action_element_id, open_gpui_repeatable_item_element_id,
+    open_gpui_repeatable_remove_action_element_id, open_gpui_repeatable_reorder_action_element_id,
 };
 use open_gpui::{AnyElement, MouseButton, Pixels, WeakEntity, div, prelude::*, px, rgb};
 use open_gpui_ui_components::prelude::Sizable;
@@ -941,8 +941,9 @@ fn render_control_row_with_height_at(
     };
     let show_shell = region_mode == node_component_kit::AdaptiveNodeLayoutMode::Shell;
 
-    node_component_kit::render_measured_region(
+    node_component_kit::render_measured_control_region(
         context.control_measurement_id(slot_key, control.key.clone()),
+        control_drag_exclusion_measurement_id(context, slot_key, &control.key),
         collector,
         div()
             .absolute()
@@ -1009,8 +1010,9 @@ fn render_control_chip(
     let Some(control) = control else {
         return div().into_any_element();
     };
-    node_component_kit::render_measured_region(
+    node_component_kit::render_measured_control_region(
         context.control_measurement_id(slot_key, control.key.clone()),
+        control_drag_exclusion_measurement_id(context, slot_key, &control.key),
         collector,
         div()
             .h(px(CONTROL_CHIP_HEIGHT))
@@ -1102,6 +1104,7 @@ fn render_shader_inputs(
             context,
             "shader.inputs",
             hidden_count,
+            collector,
         ))
         .into_any_element()
 }
@@ -1157,6 +1160,7 @@ fn render_table_columns(
             context,
             "table.columns",
             hidden_count,
+            collector,
         ))
         .into_any_element()
 }
@@ -1198,21 +1202,33 @@ fn render_repeatable_overflow_indicator(
     context: &OpenGpuiNodeRendererContext,
     collection_key: &str,
     hidden_count: usize,
+    collector: OpenGpuiBoundsCollector,
 ) -> AnyElement {
     if hidden_count == 0 {
         return div().w(px(0.0)).h(px(0.0)).into_any_element();
     }
 
-    Badge::new(
-        format!(
-            "jellyflow-repeatable-overflow:{}:{collection_key}",
-            context.node_id.0
-        ),
-        format!("+{hidden_count}"),
+    node_component_kit::render_overflow_region(
+        OpenGpuiMeasurementId::overflow(context.node_id, collection_key),
+        collector,
+        Badge::new(
+            format!(
+                "jellyflow-repeatable-overflow:{}:{collection_key}",
+                context.node_id.0
+            ),
+            format!("+{hidden_count}"),
+        )
+        .variant(BadgeVariant::Secondary)
+        .with_size(Size::XSmall),
     )
-    .variant(BadgeVariant::Secondary)
-    .with_size(Size::XSmall)
-    .into_any_element()
+}
+
+fn control_drag_exclusion_measurement_id(
+    context: &OpenGpuiNodeRendererContext,
+    slot_key: &str,
+    control_key: &str,
+) -> OpenGpuiMeasurementId {
+    OpenGpuiMeasurementId::drag_exclusion(context.node_id, format!("{slot_key}:{control_key}"))
 }
 
 fn render_repeatable_item_chip(
@@ -1334,20 +1350,6 @@ fn render_repeatable_item_row(
                     )
                     .child(text_line(label.clone(), rgb(0x334155), false)),
             )
-            .child(if repeatable_label_needs_overflow_badge(&label) {
-                Badge::new(
-                    format!(
-                        "jellyflow-repeatable-text-overflow:{}:{}",
-                        context.node_id.0, item_id
-                    ),
-                    "more",
-                )
-                .variant(BadgeVariant::Outline)
-                .with_size(Size::XSmall)
-                .into_any_element()
-            } else {
-                div().w(px(0.0)).h(px(0.0)).into_any_element()
-            })
             .child(
                 div()
                     .flex()
@@ -1396,10 +1398,6 @@ fn render_repeatable_item_row(
             )
             .child(inline_measured_anchor(context, anchor, collector)),
     )
-}
-
-fn repeatable_label_needs_overflow_badge(label: &str) -> bool {
-    label.chars().count() > 28
 }
 
 fn repeatable_port_policy_badge(

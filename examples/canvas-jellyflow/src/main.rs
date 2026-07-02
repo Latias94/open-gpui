@@ -3511,10 +3511,17 @@ fn project_node(
         .view_descriptor(&node.kind)
         .expect("demo graph should resolve a builtin node descriptor");
     let preset = OpenGpuiProductSurfacePreset::from_descriptor(&descriptor);
+    let fallback_size = preset.initial_size_or(default_adapter_node_size());
+    let size_policy = node_component_kit::OpenGpuiNodeSizePolicy::from_surface_budget(
+        node.size.unwrap_or(fallback_size),
+        preset.min_readable_size,
+        preset.preferred_size,
+        preset.repeatable_visible_items,
+    );
     let requested_size = node
         .size
-        .unwrap_or_else(|| preset.initial_size_or(default_adapter_node_size()));
-    let node_size = preset.readable_size_for_request(requested_size);
+        .filter(|size| Some(*size) != descriptor.default_size);
+    let node_size = size_policy.projected_node_size(requested_size, &preset, fallback_size);
     let mut canvas_node = CanvasNode::new(
         canvas_node_id(id),
         point(px(node.pos.x), px(node.pos.y)),
