@@ -1,7 +1,8 @@
-use open_gpui::Rgba;
+use open_gpui::{App, Rgba};
 
 use crate::color::ColorIntent;
 
+use super::runtime::{ThemeContext, try_theme_context};
 use super::snapshot::ThemeSnapshot;
 
 /// Theme resolution namespace for component color intents.
@@ -9,7 +10,17 @@ use super::snapshot::ThemeSnapshot;
 pub struct ThemeResolver;
 
 impl ThemeResolver {
-    /// Resolves a color intent with the default light theme snapshot.
+    /// Returns the current app theme context, or the default light context when no runtime exists.
+    pub fn current(cx: &App) -> ThemeContext<'_> {
+        match try_theme_context(cx) {
+            Some(context) => context,
+            None => ThemeContext::light(),
+        }
+    }
+
+    /// Resolves a color intent with the legacy default light theme snapshot.
+    ///
+    /// Production render paths should prefer [`Self::current`] or [`Self::resolve_with`].
     pub fn resolve(intent: ColorIntent) -> Rgba {
         Self::resolve_with(intent, ThemeSnapshot::light())
     }

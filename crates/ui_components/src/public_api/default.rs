@@ -132,10 +132,13 @@ pub use crate::text_input::{
 };
 pub use crate::textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
 pub use crate::theme::{
-    THEME_JSON_SCHEMA_VERSION, ThemeColor, ThemeDefinition, ThemeFileField, ThemeLoadError,
-    ThemeMode, ThemeRegistrationDiagnostics, ThemeRegistry, ThemeRegistryEntry, ThemeResolver,
-    ThemeSnapshot, ThemeValidationError, register_theme_json_file, register_theme_json_str,
-    theme_definition_from_json_file, theme_definition_from_json_str, theme_json_schema,
+    DARK_THEME_ID, DEFAULT_THEME_ID, HIGH_CONTRAST_THEME_ID, LIGHT_THEME_ID,
+    THEME_JSON_SCHEMA_VERSION, ThemeColor, ThemeContext, ThemeDefinition, ThemeFileField,
+    ThemeLoadError, ThemeMode, ThemeRegistrationDiagnostics, ThemeRegistry, ThemeRegistryEntry,
+    ThemeResolver, ThemeRuntime, ThemeRuntimeError, ThemeSnapshot, ThemeValidationError,
+    current_theme_context, init_theme_runtime, register_theme_json_file, register_theme_json_str,
+    set_active_theme, set_active_theme_mode, theme_definition_from_json_file,
+    theme_definition_from_json_str, theme_id_for_mode, theme_json_schema, try_theme_context,
 };
 pub use crate::toast::{
     Toast, ToastAction, ToastColors, ToastDismiss, ToastDismissReason, ToastIntent, ToastMetrics,
