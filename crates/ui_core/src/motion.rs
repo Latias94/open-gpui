@@ -114,6 +114,11 @@ impl MotionSpec {
         Self::new(preference, MotionDuration::Medium, MotionEasing::EaseOut)
     }
 
+    /// Creates short affordance motion for hover feedback, guides, and lightweight overlays.
+    pub const fn affordance(preference: MotionPreference) -> Self {
+        Self::new(preference, MotionDuration::Short, MotionEasing::EaseOut)
+    }
+
     /// Creates committed layout motion for insert, remove, collapse, and expand transitions.
     pub const fn committed_layout(preference: MotionPreference) -> Self {
         Self::new(
@@ -229,6 +234,10 @@ mod tests {
         assert_eq!(
             MotionSpec::layout(MotionPreference::Animated).easing(),
             MotionEasing::EaseOut
+        );
+        assert_eq!(
+            MotionSpec::affordance(MotionPreference::Animated).duration(),
+            MotionDuration::Short
         );
         assert_eq!(
             MotionSpec::committed_layout(MotionPreference::Animated).easing(),

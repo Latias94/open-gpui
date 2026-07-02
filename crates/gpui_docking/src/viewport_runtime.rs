@@ -850,6 +850,7 @@ impl DockViewportRuntime {
         .is_some_and(|registration| registration.changed)
     }
 
+    #[cfg(test)]
     pub(crate) fn begin_viewport_host_scene_frame(
         &mut self,
         space: impl Into<DockSpaceId>,

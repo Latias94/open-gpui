@@ -9,6 +9,7 @@ use crate::{
     drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
     host_test_support::*,
     interaction::DockPayloadDropRelease,
+    transition_geometry::DockOverlayTransitionKind,
 };
 use open_gpui::{
     AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, point,
@@ -308,6 +309,23 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
     let preview_bounds = debug_bounds(&mut drag_visual, &preview);
     let preview_body_bounds = debug_bounds(&mut drag_visual, &preview_body);
     let preview_tab_bounds = debug_bounds(&mut drag_visual, &preview_tab);
+    let overlay_sample = cx
+        .update_entity(&host, |host, _| {
+            host.sample_overlay_transition_for_test(Duration::from_millis(0))
+        })
+        .expect("center hover should schedule an overlay transition sample");
+    let overlay_kinds = overlay_sample
+        .overlays
+        .iter()
+        .map(|overlay| overlay.kind)
+        .collect::<Vec<_>>();
+    assert!(
+        overlay_kinds.contains(&DockOverlayTransitionKind::TargetBody)
+            && overlay_kinds.contains(&DockOverlayTransitionKind::TabInsertion)
+            && overlay_kinds.contains(&DockOverlayTransitionKind::PayloadTab)
+            && overlay_kinds.contains(&DockOverlayTransitionKind::PayloadGhost),
+        "center hover should route body, insertion slot, payload tabs, and payload ghosts through the overlay transition runtime: {overlay_kinds:?}"
+    );
     assert!(
         preview_bounds.contains(&preview_tab_bounds.center()),
         "payload tab preview should stay inside the center drop preview"

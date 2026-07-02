@@ -20,7 +20,10 @@ use crate::{
     },
     presentation_scene::DockPresentationScene,
     render_split::DockRenderSplitInput,
-    transition_executor::{DockDividerSample, DockOverlaySample, DockPaneClipSample},
+    transition_executor::{
+        DockDividerSample, DockOverlaySample, DockPaneClipSample, DockTransitionSample,
+    },
+    transition_geometry::{DockMotionPreference, DockOverlayTransitionKind, DockTransitionPlan},
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{
@@ -29,6 +32,7 @@ use open_gpui::{
     MouseUpEvent, ParentElement, Pixels, Render, Rgba, SharedString, Styled, Window, black, canvas,
     div, point, px, quad, rgb, rgba,
 };
+use open_gpui_ui_core::MotionSpec;
 use std::{cell::RefCell, rc::Rc};
 
 pub(crate) type DockViewportHostSceneFrameSlot = Rc<RefCell<Option<DockViewportHostSceneFrame>>>;
@@ -907,7 +911,12 @@ impl DockHost {
             return Some(self.render_target_drop_preview(session, routed_preview.preview, window));
         }
 
-        route_preview.map(|preview| self.render_route_drop_preview(session, preview))
+        if let Some(preview) = route_preview {
+            return Some(self.render_route_drop_preview(session, preview, window));
+        }
+
+        self.clear_overlay_transition_for_render();
+        None
     }
 
     fn render_target_drop_preview(
@@ -935,6 +944,15 @@ impl DockHost {
         if let Some(layout) = payload_tab_layout.as_ref() {
             overlay_scene.apply_payload_tab_layout(layout);
         }
+        let overlay_sample =
+            self.sync_overlay_transition_for_render(session, &overlay_scene, bounds, window);
+        if let Some(sample) = overlay_sample.as_ref() {
+            apply_overlay_transition_sample(&mut overlay_scene, sample);
+        }
+        let overlay_opacity = overlay_sample
+            .as_ref()
+            .map(|sample| preview_transition_opacity(sample.progress))
+            .unwrap_or(1.0);
         let selector = self.record_debug_selector(
             DockDebugRegion::DropPreview,
             format!("{}:drop-preview", session.selector_prefix()),
@@ -949,7 +967,8 @@ impl DockHost {
             .top(bounds.origin.y)
             .w(bounds.size.width)
             .h(bounds.size.height)
-            .overflow_hidden();
+            .overflow_hidden()
+            .opacity(overlay_opacity);
 
         if overlay_scene.has_payload_tab_preview() && payload_tab_layout.is_some() {
             let body_layer = overlay_scene
@@ -1087,13 +1106,23 @@ impl DockHost {
         &mut self,
         session: &DockHostRenderSession,
         preview: DockDropRoutePreview,
+        window: &Window,
     ) -> AnyElement {
-        let overlay_scene = DockOverlayScene::from_route_preview(&preview);
+        let mut overlay_scene = DockOverlayScene::from_route_preview(&preview);
         let bounds = overlay_scene
             .layers
             .first()
             .map(|layer| layer.bounds)
             .unwrap_or(preview.bounds);
+        let overlay_sample =
+            self.sync_overlay_transition_for_render(session, &overlay_scene, bounds, window);
+        if let Some(sample) = overlay_sample.as_ref() {
+            apply_overlay_transition_sample(&mut overlay_scene, sample);
+        }
+        let overlay_opacity = overlay_sample
+            .as_ref()
+            .map(|sample| preview_transition_opacity(sample.progress))
+            .unwrap_or(1.0);
         let selector = self.record_debug_selector(
             DockDebugRegion::DropRoutePreview { kind: preview.kind },
             format!("{}:drop-route-preview", session.selector_prefix()),
@@ -1112,7 +1141,47 @@ impl DockHost {
             .border_1()
             .border_color(palette.border)
             .bg(palette.background)
+            .opacity(overlay_opacity)
             .into_any_element()
+    }
+
+    fn sync_overlay_transition_for_render(
+        &mut self,
+        session: &DockHostRenderSession,
+        overlay_scene: &DockOverlayScene,
+        fallback_bounds: Bounds<Pixels>,
+        window: &Window,
+    ) -> Option<DockTransitionSample> {
+        if self.last_overlay_scene() != Some(overlay_scene) {
+            let final_scene = self.last_presentation_scene().cloned().unwrap_or_else(|| {
+                DockPresentationScene::from_render_session(session, fallback_bounds)
+            });
+            let plan = self
+                .last_overlay_scene()
+                .map(|previous| {
+                    DockTransitionPlan::between_overlay_scenes(
+                        &final_scene,
+                        previous,
+                        overlay_scene,
+                        DockMotionPreference::Animated,
+                    )
+                })
+                .unwrap_or_else(|| {
+                    DockTransitionPlan::from_overlay_scene(
+                        &final_scene,
+                        overlay_scene,
+                        DockMotionPreference::Animated,
+                    )
+                });
+            self.set_last_overlay_scene(overlay_scene.clone());
+            self.execute_overlay_transition_plan(
+                plan,
+                MotionSpec::affordance(DockMotionPreference::Animated),
+                Some(window),
+            );
+        }
+
+        self.sample_overlay_transition_for_render(Some(window))
     }
 
     fn render_scene_drop_guide(
@@ -1278,6 +1347,58 @@ fn payload_tab_from_overlay_layer(layer: &DockOverlayLayer) -> Option<DockDropPr
         index: layer.payload_index?,
         title: layer.payload_title.clone().unwrap_or_default(),
     })
+}
+
+fn apply_overlay_transition_sample(
+    overlay_scene: &mut DockOverlayScene,
+    sample: &DockTransitionSample,
+) {
+    for layer in &mut overlay_scene.layers {
+        let key = overlay_transition_key_for_layer(layer);
+        if let Some(overlay) = sample
+            .overlays
+            .iter()
+            .find(|overlay| key == overlay_transition_key(overlay))
+        {
+            layer.bounds = overlay.bounds;
+        }
+    }
+}
+
+fn overlay_transition_key_for_layer(
+    layer: &DockOverlayLayer,
+) -> (
+    DockOverlayTransitionKind,
+    Option<DockNodeId>,
+    Option<DropZone>,
+    Option<usize>,
+) {
+    (
+        DockOverlayTransitionKind::from_layer_kind(layer.kind),
+        layer.target_node,
+        layer.zone,
+        layer.payload_index,
+    )
+}
+
+fn overlay_transition_key(
+    overlay: &DockOverlaySample,
+) -> (
+    DockOverlayTransitionKind,
+    Option<DockNodeId>,
+    Option<DropZone>,
+    Option<usize>,
+) {
+    (
+        overlay.kind,
+        overlay.target_node,
+        overlay.zone,
+        overlay.payload_index,
+    )
+}
+
+fn preview_transition_opacity(progress: f32) -> f32 {
+    0.68 + (0.32 * progress.clamp(0.0, 1.0))
 }
 
 fn cursor_for_divider_target(target: &DockDividerHitTarget) -> CursorStyle {

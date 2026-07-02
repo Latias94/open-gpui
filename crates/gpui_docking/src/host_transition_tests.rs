@@ -374,7 +374,7 @@ fn transition_executor_replaces_active_execution_and_completes_reduced_motion_im
 }
 
 #[test]
-fn transition_plan_from_overlay_scene_describes_tab_insertion_and_payload_ghosts() {
+fn transition_plan_from_overlay_scene_describes_tab_insertion_and_payload_tabs() {
     let tabs = crate::DockNodeId::null();
     let scene = single_pane_scene(tabs, host_bounds(320.0, 200.0));
     let overlay = DockOverlayScene {
@@ -422,7 +422,7 @@ fn transition_plan_from_overlay_scene_describes_tab_insertion_and_payload_ghosts
         DockTransitionPlan::from_overlay_scene(&scene, &overlay, DockMotionPreference::Animated);
 
     assert!(plan.pane_transitions.is_empty());
-    assert_eq!(plan.overlay_transitions.len(), 2);
+    assert_eq!(plan.overlay_transitions.len(), 3);
     assert_eq!(
         plan.overlay_transitions[0].kind,
         DockOverlayTransitionKind::TabInsertion
@@ -431,9 +431,62 @@ fn transition_plan_from_overlay_scene_describes_tab_insertion_and_payload_ghosts
     assert_eq!(plan.overlay_transitions[0].zone, Some(DropZone::Center));
     assert_eq!(
         plan.overlay_transitions[1].kind,
-        DockOverlayTransitionKind::PayloadGhost
+        DockOverlayTransitionKind::PayloadTab
     );
     assert_eq!(plan.overlay_transitions[1].payload_index, Some(0));
+    assert_eq!(
+        plan.overlay_transitions[2].kind,
+        DockOverlayTransitionKind::PayloadGhost
+    );
+    assert_eq!(plan.overlay_transitions[2].payload_index, Some(0));
+}
+
+#[test]
+fn transition_plan_between_overlay_scenes_keeps_previous_bounds_for_matching_layers() {
+    let tabs = crate::DockNodeId::null();
+    let scene = single_pane_scene(tabs, host_bounds(320.0, 200.0));
+    let previous = DockOverlayScene {
+        layers: vec![DockOverlayLayer {
+            kind: DockOverlayLayerKind::GuideBox,
+            bounds: floating_bounds(12.0, 12.0, 60.0, 40.0),
+            target_node: Some(tabs),
+            zone: Some(DropZone::Left),
+            preview_layer: None,
+            active: true,
+            payload_index: None,
+            payload_title: None,
+            drop_box: None,
+            tab_insertion: None,
+        }],
+    };
+    let next = DockOverlayScene {
+        layers: vec![DockOverlayLayer {
+            kind: DockOverlayLayerKind::GuideBox,
+            bounds: floating_bounds(40.0, 20.0, 90.0, 48.0),
+            target_node: Some(tabs),
+            zone: Some(DropZone::Left),
+            preview_layer: None,
+            active: true,
+            payload_index: None,
+            payload_title: None,
+            drop_box: None,
+            tab_insertion: None,
+        }],
+    };
+
+    let plan = DockTransitionPlan::between_overlay_scenes(
+        &scene,
+        &previous,
+        &next,
+        DockMotionPreference::Animated,
+    );
+
+    assert_eq!(plan.overlay_transitions.len(), 1);
+    assert_eq!(
+        plan.overlay_transitions[0].from_bounds,
+        Some(previous.layers[0].bounds)
+    );
+    assert_eq!(plan.overlay_transitions[0].bounds, next.layers[0].bounds);
 }
 
 #[test]

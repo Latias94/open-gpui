@@ -163,7 +163,6 @@ impl DockTransitionExecutor {
         Some(sample)
     }
 
-    #[cfg(test)]
     pub(crate) fn clear(&mut self) -> Option<DockTransitionExecution> {
         self.current.take()
     }
@@ -301,6 +300,17 @@ fn retarget_plan_from_sample(
             } else {
                 DockDividerTransitionKind::Moving
             };
+        }
+    }
+
+    let overlay_bounds = sample
+        .overlays
+        .iter()
+        .map(|overlay| (overlay_key(overlay), overlay.bounds))
+        .collect::<HashMap<_, _>>();
+    for transition in &mut plan.overlay_transitions {
+        if let Some(bounds) = overlay_bounds.get(&transition_key(transition)).copied() {
+            transition.from_bounds = Some(bounds);
         }
     }
 
@@ -443,12 +453,47 @@ fn divider_sample(transition: &DockDividerTransition, progress: f32) -> DockDivi
 fn overlay_sample(transition: &DockOverlayTransition, progress: f32) -> DockOverlaySample {
     DockOverlaySample {
         kind: transition.kind,
-        bounds: transition.bounds,
+        bounds: transition
+            .from_bounds
+            .map(|from| lerp_bounds(from, transition.bounds, progress))
+            .unwrap_or(transition.bounds),
         target_node: transition.target_node,
         zone: transition.zone,
         payload_index: transition.payload_index,
         progress,
     }
+}
+
+fn transition_key(
+    transition: &DockOverlayTransition,
+) -> (
+    DockOverlayTransitionKind,
+    Option<DockNodeId>,
+    Option<DropZone>,
+    Option<usize>,
+) {
+    (
+        transition.kind,
+        transition.target_node,
+        transition.zone,
+        transition.payload_index,
+    )
+}
+
+fn overlay_key(
+    overlay: &DockOverlaySample,
+) -> (
+    DockOverlayTransitionKind,
+    Option<DockNodeId>,
+    Option<DropZone>,
+    Option<usize>,
+) {
+    (
+        overlay.kind,
+        overlay.target_node,
+        overlay.zone,
+        overlay.payload_index,
+    )
 }
 
 fn reveal_bounds(
