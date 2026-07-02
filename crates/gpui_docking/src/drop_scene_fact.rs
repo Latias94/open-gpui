@@ -5,6 +5,8 @@ use crate::{
         DockEmptySpaceDropTarget, DockFloatingTitleBarDropTarget, DockLeafDropTarget,
         DockRootDropTarget, DockTabBarDropTarget, DockTabLabelDropTarget,
     },
+    host_render_session::{DockFloatingChromeTarget, DockHostRenderSession},
+    presentation_scene::{DockPresentationPaneKind, DockPresentationScene},
 };
 use open_gpui::{Bounds, Pixels};
 
@@ -85,4 +87,70 @@ pub(crate) fn floating_title_bar(
         title_bounds,
         preview_bounds,
     })
+}
+
+pub(crate) fn presentation_scene_drop_facts(
+    scene: &DockPresentationScene,
+    session: &DockHostRenderSession,
+) -> Vec<DockHostDropSceneFact> {
+    let mut facts = Vec::new();
+
+    if let Some(root) = scene.root {
+        facts.push(self::root(root, scene.bounds));
+    } else if session.has_empty_central_region() {
+        facts.push(empty_central_space(scene.space.clone(), scene.bounds));
+    } else {
+        facts.push(empty_space(scene.space.clone(), scene.bounds));
+    }
+
+    for pane in &scene.panes {
+        if pane.kind != DockPresentationPaneKind::Tabs {
+            continue;
+        }
+        let Some(target_tabs) = pane.node else {
+            continue;
+        };
+        let Some(root) = session.drop_root_for_tabs(target_tabs) else {
+            continue;
+        };
+        facts.push(leaf(root, target_tabs, pane.bounds, pane.is_central));
+    }
+
+    for tab_bar in &scene.tab_bars {
+        let insert_index = scene
+            .tab_labels
+            .iter()
+            .filter(|label| label.tabs == tab_bar.tabs)
+            .count();
+        facts.push(self::tab_bar(
+            tab_bar.tabs,
+            insert_index,
+            tab_bar.bounds,
+            tab_bar.is_central,
+        ));
+    }
+
+    for label in &scene.tab_labels {
+        let is_central = scene
+            .tab_bars
+            .iter()
+            .find(|tab_bar| tab_bar.tabs == label.tabs)
+            .is_some_and(|tab_bar| tab_bar.is_central);
+        facts.push(tab_label(label.tabs, label.index, label.bounds, is_central));
+    }
+
+    for container in &scene.floating_containers {
+        if let Some(DockFloatingChromeTarget::SingleTabs(target_tabs)) =
+            session.floating_chrome_target(container.node)
+        {
+            facts.push(floating_title_bar(
+                container.node,
+                target_tabs,
+                container.title_bar_bounds,
+                container.bounds,
+            ));
+        }
+    }
+
+    facts
 }

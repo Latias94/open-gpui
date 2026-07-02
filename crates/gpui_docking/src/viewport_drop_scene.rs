@@ -81,6 +81,29 @@ impl DockViewportHostSceneSnapshot {
         }
     }
 
+    pub(crate) fn new_with_facts(
+        space: DockSpaceId,
+        window_id: WindowId,
+        current_bounds: DockViewportWindowBoundsFrame,
+        host_bounds: Bounds<Pixels>,
+        host_position: Point<Pixels>,
+        drop_guide_style: DockDropGuideStyle,
+        initial_facts: impl IntoIterator<Item = DockHostDropSceneFact>,
+    ) -> Self {
+        let mut snapshot = Self::new(
+            space,
+            window_id,
+            current_bounds,
+            host_bounds,
+            host_position,
+            drop_guide_style,
+        );
+        for fact in initial_facts {
+            snapshot.push_fact(fact);
+        }
+        snapshot
+    }
+
     fn same_content_as(&self, other: &Self) -> bool {
         self.space == other.space
             && self.window_id == other.window_id

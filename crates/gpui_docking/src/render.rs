@@ -7,7 +7,6 @@ use crate::{
     drop_preview::{
         DockDropPreview, DockDropRoutePreview, DockPreviewDropBox, DockPreviewTabInsertionIndex,
     },
-    drop_runtime::DockHostDropSceneFact,
     drop_scene_fact, geometry,
     host_render_session::{DockHostRenderSession, selected_index},
     interaction::{
@@ -474,11 +473,6 @@ impl DockHost {
                     );
                 },
             ));
-        root_container = root_container.child(self.render_viewport_drop_scene_fact_probe(
-            viewport_host_scene_frame,
-            move |bounds| drop_scene_fact::root(root, bounds),
-            cx,
-        ));
         root_container = root_container.child(root_child);
         root_container.into_any_element()
     }
@@ -784,7 +778,7 @@ impl DockHost {
     fn render_empty_space(
         &mut self,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        _viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -792,7 +786,6 @@ impl DockHost {
             DockDebugRegion::EmptySpace,
             format!("{}:empty", session.selector_prefix()),
         );
-        let space = session.space().clone();
         let mut empty = div()
             .id(selector.clone())
             .debug_selector(move || selector)
@@ -820,11 +813,6 @@ impl DockHost {
                     );
                 },
             ));
-        empty = empty.child(self.render_viewport_drop_scene_fact_probe(
-            viewport_host_scene_frame,
-            move |bounds| drop_scene_fact::empty_space(space, bounds),
-            cx,
-        ));
         empty = empty.child(session.empty_message().to_string());
         empty.into_any_element()
     }
@@ -832,7 +820,7 @@ impl DockHost {
     fn render_passthrough_empty_central_space(
         &mut self,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        _viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -840,8 +828,7 @@ impl DockHost {
             DockDebugRegion::EmptySpace,
             format!("{}:empty-central", session.selector_prefix()),
         );
-        let space = session.space().clone();
-        let mut empty = div()
+        let empty = div()
             .id(selector.clone())
             .debug_selector(move || selector)
             .relative()
@@ -864,11 +851,6 @@ impl DockHost {
                     );
                 },
             ));
-        empty = empty.child(self.render_viewport_drop_scene_fact_probe(
-            viewport_host_scene_frame,
-            move |bounds| drop_scene_fact::empty_central_space(space, bounds),
-            cx,
-        ));
         empty.into_any_element()
     }
 
@@ -1193,7 +1175,7 @@ impl DockHost {
         let frame_slot = frame_slot.clone();
         canvas(
             move |bounds, window, app| {
-                entity.update(app, |host, _| {
+                let initial_facts = entity.update(app, |host, _| {
                     let base = DockPresentationScene::from_render_session(&session, bounds);
                     let space = session.space().clone();
                     host.zoom_state_mut().clear_missing_target(&space, &base);
@@ -1206,6 +1188,10 @@ impl DockHost {
                         .map(|zoom| zoom.scene)
                         .unwrap_or(base);
                     host.set_last_presentation_scene(scene);
+                    let scene = host
+                        .last_presentation_scene()
+                        .expect("scene should be stored");
+                    drop_scene_fact::presentation_scene_drop_facts(scene, &session)
                 });
                 let mouse_position = window.mouse_position();
                 let host_position = point(
@@ -1220,6 +1206,7 @@ impl DockHost {
                     host_position,
                     drop_guide_style,
                     passthrough_pointer_input,
+                    initial_facts,
                 );
                 let interaction_frame_changed = entity.update(app, |host, _| {
                     host.publish_rendered_viewport_host_scene_frame_from_render(
@@ -1230,40 +1217,6 @@ impl DockHost {
                 *frame_slot.borrow_mut() = preparation.frame;
                 if preparation.changed || interaction_frame_changed {
                     window.refresh();
-                }
-            },
-            |_, _, _, _| (),
-        )
-        .absolute()
-        .top(px(0.0))
-        .left(px(0.0))
-        .size_full()
-        .into_any_element()
-    }
-
-    /// Publishes target bounds during prepaint for runtime-routed drops.
-    pub(crate) fn render_viewport_drop_scene_fact_probe(
-        &self,
-        frame_slot: &DockViewportHostSceneFrameSlot,
-        fact_for_bounds: impl FnOnce(Bounds<Pixels>) -> DockHostDropSceneFact + 'static,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let entity = cx.entity();
-        let runtime = self.viewport_runtime().clone();
-        let frame_slot = frame_slot.clone();
-        canvas(
-            move |bounds, window, app| {
-                let Some(frame) = frame_slot.borrow().as_ref().cloned() else {
-                    return;
-                };
-                if let Some(next_frame) =
-                    runtime.push_viewport_host_scene_frame_fact(&frame, fact_for_bounds(bounds))
-                {
-                    let frame = Some(next_frame.clone());
-                    *frame_slot.borrow_mut() = Some(next_frame);
-                    entity.update(app, |host, _| {
-                        host.publish_rendered_viewport_host_scene_frame_from_render(frame, window);
-                    });
                 }
             },
             |_, _, _, _| (),

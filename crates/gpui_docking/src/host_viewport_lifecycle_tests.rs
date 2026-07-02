@@ -3699,6 +3699,7 @@ mod handle_suite {
                     target_center_host_position(),
                     crate::DockDropGuideStyle::default(),
                     false,
+                    Vec::new(),
                 )
             })
             .expect("source render prepaint should run");
