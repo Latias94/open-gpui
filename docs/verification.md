@@ -16,6 +16,7 @@ The gate runs:
 - `cargo nextest run -p open-gpui-ui-foundation-gallery`
 - `cargo run -p xtask -- scan-theme-drift`
 - `cargo run -p xtask -- scan-import-boundary`
+- `cargo run -p xtask -- scan-ui-registry`
 - `cargo run -p xtask -- scan-ui-contract`
 
 For focused `open-gpui-canvas` work, run:
@@ -595,6 +596,7 @@ For registry, a11y, gallery conformance, and theme productization work, start fr
 contract audit before dropping to focused behavior tests:
 
 ```powershell
+cargo run -p xtask -- scan-ui-registry
 cargo run -p xtask -- scan-ui-contract
 cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --check
 cargo check -p open-gpui-ui-components --tests
@@ -604,6 +606,13 @@ cargo nextest run -p open-gpui-ui-components a11y --no-fail-fast
 cargo nextest run -p open-gpui-ui-components theme --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts --no-fail-fast
 ```
+
+`scan-ui-registry` checks the generated component registry manifest artifact, its JSON schema
+artifact, required registry rows, scaffold recipe ids, recipe source-component references, generated
+file intents, and verification gates. Regenerate artifacts with
+`cargo run -p open-gpui-ui-components --example export_component_registry --quiet` and
+`cargo run -p open-gpui-ui-components --example export_component_registry_schema --quiet` before
+running this gate after component contract or recipe metadata changes.
 
 `scan-ui-contract` checks the component contract registry, default root/prelude exports, source
 homes, docs tokens, removed primitive targets, gallery conformance evidence, representative
