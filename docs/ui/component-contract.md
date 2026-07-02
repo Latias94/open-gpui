@@ -31,6 +31,9 @@ run `cargo run -p xtask -- scan-ui-registry`. The scan compares generated output
 artifacts and checks recipe source-component references, generated-file intents, and verification
 gates.
 
+The architecture workflow is documented in
+[`docs/architecture/native-ui-hybrid-registry.md`](../architecture/native-ui-hybrid-registry.md).
+
 ## Resolved State
 
 Every component should expose a resolved state or descriptor type. The state type is the primary

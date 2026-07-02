@@ -615,6 +615,9 @@ artifacts with
 `cargo run -p open-gpui-ui-components --example export_component_registry_schema --quiet` before
 running this gate after component contract or recipe metadata changes.
 
+The architecture and ownership model for this workflow is documented in
+`docs/architecture/native-ui-hybrid-registry.md` and ADR 0013.
+
 `scan-ui-contract` checks the component contract registry, default root/prelude exports, source
 homes, docs tokens, removed primitive targets, gallery conformance evidence, representative
 `COMPONENT_A11Y_CLAIMS`, and the committed theme schema artifact. Use the narrower
