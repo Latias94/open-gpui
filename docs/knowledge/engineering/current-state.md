@@ -1,53 +1,51 @@
 ---
 type: Current State
-title: Open GPUI docking flat motion runtime state
-status: complete
-timestamp: 2026-07-02T20:56:30+08:00
+title: Open GPUI UI motion runtime foundation state
+status: active
+timestamp: 2026-07-02T22:46:36+08:00
 git_branch: refactor/docking-flat-motion-runtime
-related_plan: docs/plans/2026-07-02-002-refactor-docking-flat-motion-runtime-plan.md
+related_plan: docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md
 related_adr:
   - docs/adr/0010-docking-presentation-scene-motion-model.md
   - docs/adr/0011-docking-split-motion-primitive-boundary.md
   - docs/adr/0012-docking-runtime-capability-alignment.md
+  - docs/adr/0013-ui-motion-runtime-foundation.md
 verified_by:
   - cargo fmt --all -- --check
   - git diff --check
-  - cargo check -p open-gpui-docking
-  - cargo nextest run -p open-gpui-ui-core motion split --no-fail-fast
-  - cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast
-  - cargo nextest run -p open-gpui-docking host_transition_tests host_render_tests host_presentation_scene_tests host_zoom_focus_tests --no-fail-fast
-  - cargo nextest run -p open-gpui-docking host_viewport_preview_visual_tests host_viewport_preview_tests root_edge_hover_keeps_target_leaf_side_guides_visible dragging_tab_to_other_stack_center_moves_panel --no-fail-fast
-  - cargo nextest run -p open-gpui-docking host_interaction_tests::tab_bar_preview_positions_payload_tab_at_leading_and_middle_slots host_viewport_close_tests::runtime_suite::viewport_runtime_cancel_retain_should_close_restores_current_route_facts host_viewport_route_tests::runtime_suite::viewport_runtime_requires_backend_route_selection_for_drop transition_plan_between_overlay_scenes_keeps_previous_bounds_for_matching_layers host_viewport_preview_visual_tests host_viewport_preview_tests root_edge_hover_keeps_target_leaf_side_guides_visible dragging_tab_to_other_stack_center_moves_panel --no-fail-fast
-  - cargo nextest run -p open-gpui-docking --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-core motion --no-fail-fast
+  - cargo test -p open-gpui-ui-components runtime_animates_programmatic_fraction_changes --lib -- --nocapture
+  - cargo test -p open-gpui-ui-components runtime_retargets_from_sampled_fraction_and_drag_syncs_immediately --lib -- --nocapture
+  - cargo test -p open-gpui-ui-components runtime_reduced_motion_completes_without_transition --lib -- --nocapture
+  - cargo test -p open-gpui-ui-components --test public_surface component_api_inventory_tracks_public_method_surface -- --nocapture
+  - cargo nextest run -p open-gpui-docking transition_executor_samples_timeline_and_reveal_geometry transition_executor_replaces_active_execution_and_completes_reduced_motion_immediately overlay_retarget_keeps_tab_preview_layers_at_current_target_bounds host_unzoom_command_retargets_from_active_zoom_sample public_focus_command_uses_immediate_overlay_only_feedback --no-fail-fast
   - cargo nextest run -p open-gpui-docking-native runtime_status_panel_formats_platform_capabilities --no-fail-fast
-  - cargo check -p open-gpui-docking-native
   - python $HOME/.codex/skills/engineering-wiki-memory/scripts/wiki_memory.py validate --root docs/knowledge/engineering
 ---
 
 # Current State
 
 - Branch: `refactor/docking-flat-motion-runtime`.
-- Goal: completed `docs/plans/2026-07-02-002-refactor-docking-flat-motion-runtime-plan.md`.
-- Done: Shared motion sampling tokens, committed-layout/continuity/affordance specs, split
-  transition descriptors, and `ui_components::Splitter` programmatic fraction animation are in
-  place.
-- Done: Docking transition execution retargets from current sampled geometry; pane reveal renders
-  real final-size content behind a clip and an occlusion mask.
-- Done: Viewport host frames are seeded from `DockPresentationScene` facts. The remaining
-  render-measured fact probe is intentionally limited to text-shaped tab labels.
-- Done: Overlay preview feedback has an independent transition executor and schedules body,
-  guide, tab insertion, payload tab, payload ghost, route marker, and rejected descriptors without
-  changing release authority.
-- Done: Zoom/unzoom/focus use the real-content transition path; public focus commands stay
-  immediate, and interrupted unzoom retargets from the active zoom sample.
-- Done: Tab insertion preview layers keep current target bounds during hover retargets while guide
-  layers can still use affordance motion. Full docking nextest passed 860/860.
-- In progress: None for this plan.
+- Goal: finish `docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md`.
+- Done: `open_gpui_ui_core` owns `MotionTimeline`, deterministic sampled progress,
+  immediate/active/completed/cancelled timeline state, reduced-motion final semantics, and
+  stable-identity retarget helpers.
+- Done: `ui_components::Splitter` consumes `MotionTimeline` for programmatic fraction animation and
+  keeps pointer drag immediate.
+- Done: `gpui_docking::DockTransitionExecutor` consumes `MotionTimeline` and
+  `retarget_motion_snapshots` while keeping pane, divider, overlay, zoom, focus, tab, route,
+  viewport, and release semantics local.
+- Done: Native dogfood status panel exposes a separate `motion proof` line for shared runtime,
+  sampled progress, retarget identity, and reduced-motion final state.
+- Done: ADR 0013 records the generalized shared motion runtime boundary.
+- In progress: final broad verification, shipping review, and final memory closeout.
 - Blocked: None.
-- Next action: merge or push the completed branch according to the normal branch flow.
+- Next action: run final verification gates, run the ce-work shipping tail, then mark the goal
+  complete if no actionable findings remain.
 
 # Citations
 
-- [Flat motion runtime plan](../../plans/2026-07-02-002-refactor-docking-flat-motion-runtime-plan.md)
-- [Progress memory](progress/2026-07-02-docking-flat-motion-runtime-plan.md)
+- [Motion runtime foundation plan](../../plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md)
+- [ADR 0013](../../adr/0013-ui-motion-runtime-foundation.md)
+- [Progress memory](progress/2026-07-02-ui-motion-runtime-foundation.md)
 - [Verification](../../verification.md)

@@ -27,6 +27,7 @@
 * [Docking split motion primitive verification](verification/docking-split-motion-primitives-20260630.md) - Verification evidence for the split/motion primitive refactor gates.
 * [Docking flat motion runtime framework implementation](progress/2026-07-02-docking-flat-motion-runtime-plan.md) - Implementation state for flat render authority, real-content transition reveal, overlay motion, retargeting, split motion, and zoom/focus polish.
 * [Docking flat motion runtime verification](verification/docking-flat-motion-runtime-20260702.md) - Verification evidence for focused and final flat motion runtime gates.
+* [UI motion runtime foundation](progress/2026-07-02-ui-motion-runtime-foundation.md) - Progress note for the shared `ui_core` motion timeline and retarget primitive used by Splitter and docking.
 * [Tree renderer productization verification](verification/tree-renderer-productization-20260622.md) - Verification evidence for the official Tree renderer, gallery sample, and nested scroll smokes.
 * [Tree virtualized window verification](verification/tree-virtualized-window-20260626.md) - Verification evidence for the opt-in Tree virtualized render window, API export coverage, and gallery metadata proof.
 * [Table sticky pinned columns verification](verification/table-sticky-pinned-columns-20260623.md) - Verification evidence for sticky pinned Table center scrolling and nested vertical containment.

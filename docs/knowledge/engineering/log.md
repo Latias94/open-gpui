@@ -6,6 +6,16 @@ status: active
 
 # Log
 
+- 2026-07-02: Started and implemented the shared UI motion runtime foundation from
+  `docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md` on
+  `refactor/docking-flat-motion-runtime`. `open_gpui_ui_core` now owns renderer-neutral
+  `MotionTimeline` sampling and stable-identity retarget helpers. `ui_components::Splitter`
+  consumes the shared timeline for programmatic fraction animation while keeping pointer drag
+  immediate. `gpui_docking::DockTransitionExecutor` consumes the same timeline and retarget helper
+  for pane, divider, and overlay transition retargeting while keeping docking semantics local.
+  Added ADR 0013 for the new boundary and extended the native runtime panel with a `motion proof`
+  capability line. Focused verification has passed; final broad gates and wiki validation remain
+  the next action.
 - 2026-07-02: Implemented the flat motion runtime plan on
   `refactor/docking-flat-motion-runtime` through `b7a8290`. Docking now uses shared motion sampling
   tokens, transition retargeting from sampled pane/divider/overlay geometry, real final-size pane

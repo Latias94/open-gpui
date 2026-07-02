@@ -75,9 +75,11 @@ presentation-scene and overlay-scene samples.
 
 # Boundaries
 
-- No new ADR was needed. ADR 0011 and ADR 0012 still hold: UI-core describes renderer-neutral
-  primitives; adapters own scheduling and rendering; docking release authority stays in current
-  drop facts.
+- No new ADR was needed for that docking-only closeout. ADR 0011 and ADR 0012 still held at that
+  time: UI-core described renderer-neutral primitives; adapters owned scheduling and rendering;
+  docking release authority stayed in current drop facts. ADR 0013 later records the generalized
+  shared motion runtime boundary after `ui_components::Splitter` and `gpui_docking` both moved to
+  the same renderer-neutral timeline and retarget primitive.
 - This is capability parity, not pixel parity or native compositor parity. The shipped claim is
   GPUI-native real-content reveal, retargeting, overlay affordance motion, reduced-motion
   semantics, and descriptor-backed proof.
