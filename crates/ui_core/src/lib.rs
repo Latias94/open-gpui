@@ -15,6 +15,7 @@ pub mod focus;
 pub mod geometry;
 pub mod grid_viewport;
 pub mod motion;
+pub mod motion_runtime;
 pub mod overlay;
 pub mod prelude;
 pub mod sizing;
@@ -38,6 +39,10 @@ pub use geometry::{
 };
 pub use grid_viewport::{GridViewport2D, resolve_grid_viewport_2d};
 pub use motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
+pub use motion_runtime::{
+    MotionRetargetItem, MotionRetargetSet, MotionSnapshot, MotionTimeline, MotionTimelineSample,
+    MotionTimelineState, retarget_motion_snapshots,
+};
 pub use overlay::{
     DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
     FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,

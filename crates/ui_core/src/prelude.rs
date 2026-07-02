@@ -16,6 +16,10 @@ pub use crate::{
     },
     grid_viewport::{GridViewport2D, resolve_grid_viewport_2d},
     motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec},
+    motion_runtime::{
+        MotionRetargetItem, MotionRetargetSet, MotionSnapshot, MotionTimeline,
+        MotionTimelineSample, MotionTimelineState, retarget_motion_snapshots,
+    },
     overlay::{
         DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
         FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,
