@@ -122,6 +122,18 @@ impl LocalRect {
             height: max_y - min_y,
         })
     }
+
+    fn expand(self, amount: f32) -> Self {
+        if !amount.is_finite() || amount <= 0.0 {
+            return self;
+        }
+        Self {
+            x: self.x - amount,
+            y: self.y - amount,
+            width: self.width + amount * 2.0,
+            height: self.height + amount * 2.0,
+        }
+    }
 }
 
 pub(crate) fn resolve_inner_drop_geometry_with_style(
@@ -179,12 +191,15 @@ pub(crate) fn drop_boxes_with_style(
             boxes.push(drop_box(
                 bounds,
                 DockDropBoxKind::Center,
-                LocalRect::from_center(
-                    width / 2.0,
-                    height / 2.0,
-                    metrics.center_half,
-                    metrics.center_half,
-                ),
+                {
+                    let draw = LocalRect::from_center(
+                        width / 2.0,
+                        height / 2.0,
+                        metrics.center_half,
+                        metrics.center_half,
+                    );
+                    (draw, draw.expand(inner_hit_expand(metrics)))
+                },
                 preview_bounds(
                     DropZone::Center,
                     width,
@@ -353,7 +368,7 @@ fn edge_drop_box(
     let center_x = width / 2.0;
     let center_y = height / 2.0;
     let zone = kind.zone();
-    let hit = match kind {
+    let draw = match kind {
         DockDropBoxKind::Center => return None,
         DockDropBoxKind::InnerEdge(DropZone::Left) => LocalRect::from_center(
             center_x - metrics.inner_offset,
@@ -406,8 +421,13 @@ fn edge_drop_box(
         DockDropBoxKind::InnerEdge(DropZone::Center)
         | DockDropBoxKind::OuterEdge(DropZone::Center) => return None,
     };
+    let hit = if matches!(kind, DockDropBoxKind::InnerEdge(_)) {
+        draw.expand(inner_hit_expand(metrics))
+    } else {
+        draw
+    };
+    let draw_bounds = local_bounds(bounds.origin, draw.clamp_to_bounds(width, height)?);
     let hit_bounds = local_bounds(bounds.origin, hit.clamp_to_bounds(width, height)?);
-    let draw_bounds = hit_bounds;
     let preview_bounds = offset_bounds(
         bounds.origin,
         preview_bounds(zone, width, height, metrics.split_preview_extent),
@@ -427,13 +447,20 @@ fn drop_box_contains_position(
     set: DockDropBoxSet,
     style: DockDropGuideStyle,
 ) -> bool {
-    if drop_box.hit_bounds.contains(&position) {
-        return true;
-    }
-    if set != DockDropBoxSet::Inner {
-        return false;
+    if set == DockDropBoxSet::Inner
+        && let Some(kind) = inner_radial_drop_box_kind(bounds, position, style)
+    {
+        return drop_box.kind == kind;
     }
 
+    drop_box.hit_bounds.contains(&position)
+}
+
+fn inner_radial_drop_box_kind(
+    bounds: Bounds<Pixels>,
+    position: Point<Pixels>,
+    style: DockDropGuideStyle,
+) -> Option<DockDropBoxKind> {
     let width = f32::from(bounds.size.width);
     let height = f32::from(bounds.size.height);
     let metrics = drop_box_metrics(width, height, style);
@@ -447,15 +474,19 @@ fn drop_box_contains_position(
     let distance_squared = delta_x * delta_x + delta_y * delta_y;
     let center_threshold = metrics.center_half * 1.4;
     if distance_squared < center_threshold * center_threshold {
-        return drop_box.kind == DockDropBoxKind::Center;
+        return Some(DockDropBoxKind::Center);
     }
 
     let side_threshold = metrics.center_half * (1.4 + 1.2);
     if distance_squared < side_threshold * side_threshold {
-        return drop_box.kind == DockDropBoxKind::InnerEdge(quadrant_zone(delta_x, delta_y));
+        return Some(DockDropBoxKind::InnerEdge(quadrant_zone(delta_x, delta_y)));
     }
 
-    false
+    None
+}
+
+fn inner_hit_expand(metrics: DockDropBoxMetrics) -> f32 {
+    metrics.center_half * 0.30
 }
 
 fn quadrant_zone(delta_x: f32, delta_y: f32) -> DropZone {
@@ -475,20 +506,26 @@ fn quadrant_zone(delta_x: f32, delta_y: f32) -> DropZone {
 fn drop_box(
     bounds: Bounds<Pixels>,
     kind: DockDropBoxKind,
-    hit: LocalRect,
+    rects: (LocalRect, LocalRect),
     preview: Bounds<Pixels>,
 ) -> DockDropBox {
     let width = f32::from(bounds.size.width);
     let height = f32::from(bounds.size.height);
+    let (draw, hit) = rects;
     let hit_bounds = local_bounds(
         bounds.origin,
         hit.clamp_to_bounds(width, height)
             .expect("center drop box should fit inside valid bounds"),
     );
+    let draw_bounds = local_bounds(
+        bounds.origin,
+        draw.clamp_to_bounds(width, height)
+            .expect("center drop box should fit inside valid bounds"),
+    );
     DockDropBox {
         kind,
         hit_bounds,
-        draw_bounds: hit_bounds,
+        draw_bounds,
         preview_bounds: offset_bounds(bounds.origin, preview),
     }
 }
@@ -543,6 +580,10 @@ mod tests {
         Bounds::new(point(px(10.0), px(20.0)), size(px(width), px(height)))
     }
 
+    fn area(bounds: Bounds<Pixels>) -> f32 {
+        f32::from(bounds.size.width) * f32::from(bounds.size.height)
+    }
+
     #[test]
     fn drop_geometry_resolves_center_and_preview_bounds() {
         let bounds = bounds(300.0, 200.0);
@@ -561,6 +602,29 @@ mod tests {
         assert!(
             resolve_inner_drop_geometry(bounds, point(px(12.0), px(120.0))).is_none(),
             "near-edge points outside the visible guide cluster must not split"
+        );
+
+        let left_box = drop_boxes(bounds, DockDropBoxSet::Inner)
+            .into_iter()
+            .find(|drop_box| drop_box.kind == DockDropBoxKind::InnerEdge(DropZone::Left))
+            .expect("left box should exist");
+        let expanded_only_left = point(
+            left_box.draw_bounds.origin.x - px(1.0),
+            left_box.draw_bounds.center().y,
+        );
+        assert!(
+            !left_box.draw_bounds.contains(&expanded_only_left),
+            "expanded-only point should be outside the visible guide"
+        );
+        assert!(
+            left_box.hit_bounds.contains(&expanded_only_left),
+            "expanded-only point should remain inside the ImGui-style hit area"
+        );
+        let expanded_left = resolve_inner_drop_geometry(bounds, expanded_only_left)
+            .expect("expanded hit area should resolve");
+        assert_eq!(
+            expanded_left.drop_box.kind,
+            DockDropBoxKind::InnerEdge(DropZone::Left)
         );
 
         let left_hit = point(px(125.0), px(120.0));
@@ -633,14 +697,14 @@ mod tests {
         let box_set = drop_boxes(bounds, DockDropBoxSet::Inner);
 
         for drop_box in box_set {
-            assert_eq!(
-                drop_box.draw_bounds, drop_box.hit_bounds,
-                "current draw bounds default to the visible hit box for {:?}",
-                drop_box.kind
-            );
             assert!(
                 bounds.contains(&drop_box.draw_bounds.center()),
                 "draw bounds should remain inside the target container for {:?}",
+                drop_box.kind
+            );
+            assert!(
+                area(drop_box.hit_bounds) > area(drop_box.draw_bounds),
+                "inner {:?} should use an expanded hit target around the visible guide",
                 drop_box.kind
             );
         }
@@ -666,6 +730,14 @@ mod tests {
             DockDropBoxKind::OuterEdge(DropZone::Left)
         );
         assert_eq!(left.zone(), DropZone::Left);
+
+        for drop_box in drop_boxes(bounds, DockDropBoxSet::Outer) {
+            assert_eq!(
+                drop_box.hit_bounds, drop_box.draw_bounds,
+                "outer {:?} should keep exact visible hit bounds",
+                drop_box.kind
+            );
+        }
     }
 
     #[test]
