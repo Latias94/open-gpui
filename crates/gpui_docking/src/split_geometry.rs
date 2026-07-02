@@ -51,7 +51,7 @@ pub(crate) fn resolve_dock_split_shares(
     resolve_split_fractions_with_fill_child(child_count, fractions, central_child_index)
 }
 
-pub(crate) fn dock_split_handle_center_shares(shares: &[f32]) -> Vec<f32> {
+pub(crate) fn dock_split_handle_center_shares(shares: &[f32]) -> impl Iterator<Item = f32> + '_ {
     shares
         .iter()
         .take(shares.len().saturating_sub(1))
@@ -59,7 +59,6 @@ pub(crate) fn dock_split_handle_center_shares(shares: &[f32]) -> Vec<f32> {
             *center_share += *share;
             Some(*center_share)
         })
-        .collect()
 }
 
 pub(crate) fn resolve_dock_split_layout(

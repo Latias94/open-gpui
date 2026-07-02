@@ -104,9 +104,8 @@ impl DockHost {
         if shares.len() >= 2 {
             let handle_size = session.splitter_handle_size();
             let handle_offset = -handle_size / 2.0;
-            for (handle_index, handle_center_share) in dock_split_handle_center_shares(&shares)
-                .into_iter()
-                .enumerate()
+            for (handle_index, handle_center_share) in
+                dock_split_handle_center_shares(&shares).enumerate()
             {
                 let selector = self.record_debug_selector(
                     DockDebugRegion::SplitterHandle {

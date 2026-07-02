@@ -83,7 +83,7 @@ impl DockHost {
             .shadow_md()
             .child(self.render_floating_handle(
                 container,
-                chrome_bounds.title_bar_bounds,
+                chrome_bounds.title_bar_bounds.size.height,
                 title,
                 session,
                 viewport_host_scene_frame,
@@ -103,7 +103,7 @@ impl DockHost {
     fn render_floating_handle(
         &mut self,
         container: DockFloatingContainer,
-        handle_bounds: Bounds<Pixels>,
+        handle_height: Pixels,
         title: String,
         session: &DockHostRenderSession,
         _viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
@@ -131,7 +131,7 @@ impl DockHost {
             .relative()
             .flex()
             .flex_none()
-            .h(handle_bounds.size.height)
+            .h(handle_height)
             .items_center()
             .px_2()
             .bg(rgb(0xe7ebf0))

@@ -70,7 +70,8 @@ verified_by:
 
 # Current State
 
-- Branch: `main`; `origin/main` was at `f3a7de9` before the docking flat motion runtime merge.
+- Branch: `refactor/docking-render-authority-convergence`; base for this pass is
+  `origin/main` at `bc07d65`.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default
