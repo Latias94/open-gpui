@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{collections::BTreeMap, rc::Rc};
 
 use jellyflow::{
     core::{CanvasSize, NodeId as JellyNodeId},
@@ -6,11 +6,11 @@ use jellyflow::{
 };
 use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiBoundsCollector, OpenGpuiControlEventValue, OpenGpuiControlPlan,
-    OpenGpuiControlPrimitive, OpenGpuiMeasurementId, OpenGpuiMenuPlan,
-    OpenGpuiRepeatableActionPlan, OpenGpuiViewBounds, OpenGpuiViewPoint, OpenGpuiViewSize,
-    control_option_key, control_selected_option_key, open_gpui_action_button_element_id,
-    open_gpui_action_menu_element_id, open_gpui_control_element_id,
-    open_gpui_slot_action_button_element_id,
+    OpenGpuiControlPrimitive, OpenGpuiMeasurementId, OpenGpuiMenuPlan, OpenGpuiNodeRendererContext,
+    OpenGpuiNodeRendererHostContext, OpenGpuiRepeatableActionPlan, OpenGpuiViewBounds,
+    OpenGpuiViewPoint, OpenGpuiViewSize, control_option_key, control_selected_option_key,
+    open_gpui_action_button_element_id, open_gpui_action_menu_element_id,
+    open_gpui_control_element_id, open_gpui_slot_action_button_element_id,
 };
 use open_gpui::{
     AnyElement, App, Bounds, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Window, div,
@@ -23,6 +23,125 @@ use open_gpui_ui_components::{
 };
 use open_gpui_ui_core::Size;
 use serde_json::Value;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenGpuiNodeComponentProps {
+    pub node_id: JellyNodeId,
+    pub node_kind: String,
+    pub renderer_key: String,
+    pub title: String,
+    pub selected: bool,
+    pub dragging: bool,
+    pub disabled: bool,
+    pub hidden: bool,
+    pub connectable: bool,
+    pub node_size: CanvasSize,
+    pub node_data: Value,
+}
+
+impl OpenGpuiNodeComponentProps {
+    pub fn from_renderer_context(context: &OpenGpuiNodeRendererContext) -> Self {
+        Self {
+            node_id: context.node_id,
+            node_kind: context.node_kind.clone(),
+            renderer_key: context.renderer_key.clone(),
+            title: context.title.clone(),
+            selected: context.state.selected,
+            dragging: context.state.dragging,
+            disabled: context.state.disabled,
+            hidden: context.state.hidden,
+            connectable: !context.state.disabled && !context.state.hidden,
+            node_size: context.node_size,
+            node_data: context.node_data.clone(),
+        }
+    }
+}
+
+pub struct OpenGpuiNodeComponentContext<'a, Services> {
+    host: &'a OpenGpuiNodeRendererHostContext<'a, Services>,
+    props: OpenGpuiNodeComponentProps,
+}
+
+impl<'a, Services> OpenGpuiNodeComponentContext<'a, Services> {
+    pub fn from_host(host: &'a OpenGpuiNodeRendererHostContext<'a, Services>) -> Self {
+        Self {
+            props: OpenGpuiNodeComponentProps::from_renderer_context(host.semantic()),
+            host,
+        }
+    }
+
+    pub fn host(&self) -> &'a OpenGpuiNodeRendererHostContext<'a, Services> {
+        self.host
+    }
+
+    pub fn props(&self) -> &OpenGpuiNodeComponentProps {
+        &self.props
+    }
+
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenGpuiNodeComponentRegistration {
+    pub renderer_key: String,
+    pub label: String,
+}
+
+impl OpenGpuiNodeComponentRegistration {
+    pub fn new(renderer_key: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            renderer_key: renderer_key.into(),
+            label: label.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OpenGpuiNodeComponentRegistry {
+    components: BTreeMap<String, OpenGpuiNodeComponentRegistration>,
+}
+
+impl OpenGpuiNodeComponentRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register(
+        &mut self,
+        renderer_key: impl Into<String>,
+        label: impl Into<String>,
+    ) -> &mut Self {
+        let renderer_key = renderer_key.into();
+        self.components.insert(
+            renderer_key.clone(),
+            OpenGpuiNodeComponentRegistration::new(renderer_key, label),
+        );
+        self
+    }
+
+    pub fn with_components<I, K, L>(mut self, components: I) -> Self
+    where
+        I: IntoIterator<Item = (K, L)>,
+        K: Into<String>,
+        L: Into<String>,
+    {
+        for (renderer_key, label) in components {
+            self.register(renderer_key, label);
+        }
+        self
+    }
+
+    pub fn contains(&self, renderer_key: &str) -> bool {
+        self.components.contains_key(renderer_key)
+    }
+
+    pub fn registration(&self, renderer_key: &str) -> Option<&OpenGpuiNodeComponentRegistration> {
+        self.components.get(renderer_key)
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.components.keys().map(String::as_str)
+    }
+}
 
 #[derive(Clone)]
 pub struct NodeComponentKitActions {
@@ -120,25 +239,6 @@ pub struct AdaptiveRepeatableLayoutPlan {
     pub region: AdaptiveNodeLayoutRegion,
     pub visible_items: usize,
     pub hidden_items: usize,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct AdaptiveTextPlan {
-    pub mode: AdaptiveNodeLayoutMode,
-    pub estimated_lines: usize,
-    pub visible_lines: usize,
-    pub hidden_lines: usize,
-    pub overflow_indicator_required: bool,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct AdaptiveControlRowPlan {
-    pub mode: AdaptiveNodeLayoutMode,
-    pub label_width: f32,
-    pub control_width: f32,
-    pub label_overflow: bool,
-    pub value_overflow: bool,
-    pub clipped: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -286,100 +386,6 @@ pub fn adaptive_repeatable_list_plan(
             row_gap,
             overflow_indicator_height,
         )
-}
-
-pub fn adaptive_text_plan(
-    text: &str,
-    available_width: f32,
-    available_height: f32,
-    full_line_budget: usize,
-    compact_line_budget: usize,
-) -> AdaptiveTextPlan {
-    let estimated_lines = estimated_text_lines(text, available_width);
-    let height_line_capacity = (available_height / 16.0).floor().max(0.0) as usize;
-    let visible_capacity = height_line_capacity.min(full_line_budget.max(1));
-    let mode = if visible_capacity == 0 {
-        AdaptiveNodeLayoutMode::Shell
-    } else if estimated_lines <= visible_capacity && visible_capacity >= full_line_budget {
-        AdaptiveNodeLayoutMode::Full
-    } else if visible_capacity >= compact_line_budget.max(1) {
-        AdaptiveNodeLayoutMode::Compact
-    } else {
-        AdaptiveNodeLayoutMode::Shell
-    };
-    let visible_lines = match mode {
-        AdaptiveNodeLayoutMode::Full => estimated_lines.min(full_line_budget.max(1)),
-        AdaptiveNodeLayoutMode::Compact => {
-            estimated_lines.min(visible_capacity.max(1).min(compact_line_budget.max(1)))
-        }
-        AdaptiveNodeLayoutMode::Shell => {
-            usize::from(!text.trim().is_empty() && visible_capacity > 0)
-        }
-    };
-    let hidden_lines = estimated_lines.saturating_sub(visible_lines);
-
-    AdaptiveTextPlan {
-        mode,
-        estimated_lines,
-        visible_lines,
-        hidden_lines,
-        overflow_indicator_required: hidden_lines > 0,
-    }
-}
-
-pub fn adaptive_control_row_plan(
-    available_width: f32,
-    available_height: f32,
-    label: &str,
-    value: &str,
-) -> AdaptiveControlRowPlan {
-    let mode = if available_height >= 38.0 && available_width >= 260.0 {
-        AdaptiveNodeLayoutMode::Full
-    } else if available_height >= 28.0 && available_width >= 176.0 {
-        AdaptiveNodeLayoutMode::Compact
-    } else {
-        AdaptiveNodeLayoutMode::Shell
-    };
-    let (label_width, control_width) = match mode {
-        AdaptiveNodeLayoutMode::Full => {
-            let control_width = (available_width * 0.58).clamp(156.0, 210.0);
-            (
-                (available_width - control_width - 12.0).max(72.0),
-                control_width,
-            )
-        }
-        AdaptiveNodeLayoutMode::Compact => {
-            let control_width = (available_width * 0.62).clamp(112.0, 168.0);
-            (
-                (available_width - control_width - 8.0).max(48.0),
-                control_width,
-            )
-        }
-        AdaptiveNodeLayoutMode::Shell => (available_width.max(0.0), 0.0),
-    };
-    let label_overflow = text_needs_more_width(label, label_width, 7.0);
-    let value_overflow =
-        mode != AdaptiveNodeLayoutMode::Shell && text_needs_more_width(value, control_width, 7.0);
-
-    AdaptiveControlRowPlan {
-        mode,
-        label_width,
-        control_width,
-        label_overflow,
-        value_overflow,
-        clipped: matches!(mode, AdaptiveNodeLayoutMode::Shell) && available_height < 18.0,
-    }
-}
-
-fn estimated_text_lines(text: &str, available_width: f32) -> usize {
-    let chars_per_line = (available_width / 7.0).floor().max(8.0) as usize;
-    let char_count = text.chars().filter(|ch| !ch.is_control()).count().max(1);
-    char_count.div_ceil(chars_per_line).max(1)
-}
-
-fn text_needs_more_width(text: &str, available_width: f32, average_char_width: f32) -> bool {
-    let available_chars = (available_width / average_char_width).floor().max(1.0) as usize;
-    text.chars().filter(|ch| !ch.is_control()).count() > available_chars
 }
 
 fn repeatable_visible_items_for_height(
@@ -907,46 +913,5 @@ mod tests {
         assert_eq!(plan.visible_items, 0);
         assert_eq!(plan.hidden_items, 3);
         assert_eq!(plan.region.mode, AdaptiveNodeLayoutMode::Shell);
-    }
-
-    #[test]
-    fn adaptive_text_plan_clamps_long_text_with_overflow_evidence() {
-        let plan = adaptive_text_plan(
-            "A long prompt that needs more than one rendered line in a compact product node",
-            120.0,
-            32.0,
-            3,
-            1,
-        );
-
-        assert_eq!(plan.mode, AdaptiveNodeLayoutMode::Compact);
-        assert_eq!(plan.visible_lines, 1);
-        assert!(plan.hidden_lines > 0);
-        assert!(plan.overflow_indicator_required);
-    }
-
-    #[test]
-    fn adaptive_text_plan_shells_when_no_line_can_fit() {
-        let plan = adaptive_text_plan("source preview", 160.0, 8.0, 2, 1);
-
-        assert_eq!(plan.mode, AdaptiveNodeLayoutMode::Shell);
-        assert_eq!(plan.visible_lines, 0);
-        assert!(plan.overflow_indicator_required);
-    }
-
-    #[test]
-    fn adaptive_control_row_plan_allocates_compact_widths_without_clipping() {
-        let plan = adaptive_control_row_plan(
-            210.0,
-            30.0,
-            "Very long field label",
-            "very-long-selected-model-name",
-        );
-
-        assert_eq!(plan.mode, AdaptiveNodeLayoutMode::Compact);
-        assert!(plan.label_width >= 48.0);
-        assert!(plan.control_width >= 112.0);
-        assert!(!plan.clipped);
-        assert!(plan.label_overflow || plan.value_overflow);
     }
 }

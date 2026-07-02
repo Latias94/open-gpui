@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use jellyflow::core::{CanvasSize, NodeId as JellyNodeId};
 use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiBoundsCollector, OpenGpuiControlPlan, OpenGpuiDynamicPortPolicy,
@@ -50,18 +52,6 @@ impl ProductLayoutRegion {
             height: px(region.height),
             mode: region.mode,
         }
-    }
-}
-
-fn adaptive_mode_min(
-    left: node_component_kit::AdaptiveNodeLayoutMode,
-    right: node_component_kit::AdaptiveNodeLayoutMode,
-) -> node_component_kit::AdaptiveNodeLayoutMode {
-    use node_component_kit::AdaptiveNodeLayoutMode::{Compact, Full, Shell};
-    match (left, right) {
-        (Shell, _) | (_, Shell) => Shell,
-        (Compact, _) | (_, Compact) => Compact,
-        (Full, Full) => Full,
     }
 }
 
@@ -221,18 +211,102 @@ const PRODUCT_RENDERERS: [(&str, &str); 5] = [
     ("source-card", "Knowledge source card"),
 ];
 
+type GpuiNodeComponentTable = BTreeMap<
+    String,
+    Box<
+        dyn for<'a> Fn(
+            &node_component_kit::OpenGpuiNodeComponentContext<'a, GpuiNodeRendererServices>,
+        ) -> AnyElement,
+    >,
+>;
+
 pub(crate) fn demo_node_renderer_registry() -> OpenGpuiNodeRendererRegistry {
     OpenGpuiNodeRendererRegistry::new().with_renderers(PRODUCT_RENDERERS)
 }
 
+pub(crate) fn demo_node_component_registry() -> node_component_kit::OpenGpuiNodeComponentRegistry {
+    node_component_kit::OpenGpuiNodeComponentRegistry::new().with_components(PRODUCT_RENDERERS)
+}
+
 pub(crate) fn demo_custom_node_renderers() -> GpuiNodeRendererTable {
-    let mut renderers = GpuiNodeRendererTable::new();
-    renderers.insert("decision-card".to_owned(), Box::new(render_decision_card));
-    renderers.insert("shader-card".to_owned(), Box::new(render_shader_card));
-    renderers.insert("table-card".to_owned(), Box::new(render_table_card));
-    renderers.insert("topic-card".to_owned(), Box::new(render_topic_card));
-    renderers.insert("source-card".to_owned(), Box::new(render_source_card));
+    demo_node_components()
+        .into_iter()
+        .map(|(renderer_key, component)| (renderer_key, adapt_node_component(component)))
+        .collect()
+}
+
+fn demo_node_components() -> GpuiNodeComponentTable {
+    let mut renderers = GpuiNodeComponentTable::new();
+    renderers.insert(
+        "decision-card".to_owned(),
+        Box::new(render_decision_card_component),
+    );
+    renderers.insert(
+        "shader-card".to_owned(),
+        Box::new(render_shader_card_component),
+    );
+    renderers.insert(
+        "table-card".to_owned(),
+        Box::new(render_table_card_component),
+    );
+    renderers.insert(
+        "topic-card".to_owned(),
+        Box::new(render_topic_card_component),
+    );
+    renderers.insert(
+        "source-card".to_owned(),
+        Box::new(render_source_card_component),
+    );
     renderers
+}
+
+fn adapt_node_component(
+    component: Box<
+        dyn for<'a> Fn(
+            &node_component_kit::OpenGpuiNodeComponentContext<'a, GpuiNodeRendererServices>,
+        ) -> AnyElement,
+    >,
+) -> Box<dyn for<'a> Fn(&OpenGpuiNodeRendererHostContext<'a, GpuiNodeRendererServices>) -> AnyElement>
+{
+    Box::new(move |host| {
+        let component_context = node_component_kit::OpenGpuiNodeComponentContext::from_host(host);
+        component(&component_context)
+    })
+}
+
+fn render_decision_card_component(
+    component: &node_component_kit::OpenGpuiNodeComponentContext<'_, GpuiNodeRendererServices>,
+) -> AnyElement {
+    debug_assert_eq!(component.props().renderer_key, "decision-card");
+    render_decision_card(component.host())
+}
+
+fn render_shader_card_component(
+    component: &node_component_kit::OpenGpuiNodeComponentContext<'_, GpuiNodeRendererServices>,
+) -> AnyElement {
+    debug_assert_eq!(component.props().renderer_key, "shader-card");
+    render_shader_card(component.host())
+}
+
+fn render_table_card_component(
+    component: &node_component_kit::OpenGpuiNodeComponentContext<'_, GpuiNodeRendererServices>,
+) -> AnyElement {
+    debug_assert_eq!(component.props().renderer_key, "table-card");
+    render_table_card(component.host())
+}
+
+fn render_topic_card_component(
+    component: &node_component_kit::OpenGpuiNodeComponentContext<'_, GpuiNodeRendererServices>,
+) -> AnyElement {
+    debug_assert_eq!(component.props().renderer_key, "topic-card");
+    render_topic_card(component.host())
+}
+
+fn render_source_card_component(
+    component: &node_component_kit::OpenGpuiNodeComponentContext<'_, GpuiNodeRendererServices>,
+) -> AnyElement {
+    debug_assert_eq!(component.props().renderer_key, "source-card");
+    render_source_card(component.host())
 }
 
 fn render_decision_card(
@@ -247,13 +321,7 @@ fn render_decision_card(
     let stream_control = context.control("control.stream");
     let layout = decision_card_layout(context.node_size);
     let summary = context.summary.clone().unwrap_or_default();
-    let summary_lines = text_line_clamp_for_region(
-        &summary,
-        context.node_size.width - CARD_PAD * 2.0,
-        layout.preview,
-        2,
-        1,
-    );
+    let summary_lines = line_clamp_for_region(layout.preview, 2, 1);
     let primary_action = context
         .toolbar_menu
         .actions
@@ -684,13 +752,7 @@ fn render_source_card(
     let layout = source_card_layout(context.node_size);
     let preview = json_path_label(&context.node_data, &["preview"])
         .unwrap_or_else(|| "No preview".to_owned());
-    let preview_lines = text_line_clamp_for_region(
-        &preview,
-        context.node_size.width - CARD_PAD * 2.0,
-        layout.preview,
-        2,
-        1,
-    );
+    let preview_lines = line_clamp_for_region(layout.preview, 2, 1);
 
     product_card(
         context,
@@ -901,22 +963,7 @@ fn render_control_row_with_height_at(
     let Some(control) = control else {
         return div().into_any_element();
     };
-    let available_width = (context.node_size.width - CARD_PAD * 2.0).max(1.0);
-    let value = control
-        .value
-        .as_ref()
-        .map(|value| value.to_string())
-        .unwrap_or_default();
-    let row_plan = node_component_kit::adaptive_control_row_plan(
-        available_width,
-        height.as_f32(),
-        &control.label,
-        &value,
-    );
-    let row_mode = adaptive_mode_min(region_mode, row_plan.mode);
-    let show_shell = row_mode == node_component_kit::AdaptiveNodeLayoutMode::Shell;
-    let label_width = row_plan.label_width.max(0.0);
-    let control_width = row_plan.control_width.max(0.0);
+    let show_shell = region_mode == node_component_kit::AdaptiveNodeLayoutMode::Shell;
 
     node_component_kit::render_measured_region(
         context.control_measurement_id(slot_key, control.key.clone()),
@@ -939,10 +986,10 @@ fn render_control_row_with_height_at(
             .overflow_hidden()
             .child(
                 div()
-                    .w(px(label_width))
+                    .flex_1()
+                    .min_w(px(0.0))
                     .text_xs()
                     .truncate()
-                    .min_w(px(0.0))
                     .text_color(rgb(0x334155))
                     .child(control.label.clone()),
             )
@@ -952,20 +999,16 @@ fn render_control_row_with_height_at(
                         "jellyflow-control-shell:{}:{slot_key}:{index}",
                         context.node_id.0
                     ),
-                    if row_plan.label_overflow || row_plan.value_overflow {
-                        "more"
-                    } else {
-                        "set"
-                    },
+                    "set",
                 )
                 .variant(BadgeVariant::Outline)
                 .with_size(Size::XSmall)
                 .into_any_element()
             } else {
                 div()
-                    .w(px(control_width))
-                    .min_w(px(control_width.min(112.0)))
-                    .flex_shrink_0()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .max_w(px(210.0))
                     .overflow_hidden()
                     .child(node_component_kit::render_control_plan(
                         context.node_id,
@@ -1493,21 +1536,16 @@ fn text_line(label: String, color: open_gpui::Rgba, strong: bool) -> AnyElement 
         .into_any_element()
 }
 
-fn text_line_clamp_for_region(
-    text: &str,
-    available_width: f32,
+fn line_clamp_for_region(
     region: ProductLayoutRegion,
     full_line_budget: usize,
     compact_line_budget: usize,
 ) -> usize {
-    node_component_kit::adaptive_text_plan(
-        text,
-        available_width,
-        region.height.as_f32(),
-        full_line_budget,
-        compact_line_budget,
-    )
-    .visible_lines
+    match region.mode {
+        node_component_kit::AdaptiveNodeLayoutMode::Full => full_line_budget,
+        node_component_kit::AdaptiveNodeLayoutMode::Compact => compact_line_budget,
+        node_component_kit::AdaptiveNodeLayoutMode::Shell => 1,
+    }
     .max(1)
 }
 
@@ -1538,6 +1576,23 @@ mod tests {
         runtime::schema::NodeKitRegistry,
     };
     use jellyflow_open_gpui::OpenGpuiProductSurfacePreset;
+
+    #[test]
+    fn node_component_registry_covers_product_renderer_keys() {
+        let registry = demo_node_component_registry();
+        let components = demo_node_components();
+        let keys = registry.keys().collect::<Vec<_>>();
+
+        for (renderer_key, label) in PRODUCT_RENDERERS {
+            assert!(registry.contains(renderer_key));
+            assert!(keys.contains(&renderer_key));
+            let registration = registry
+                .registration(renderer_key)
+                .expect("product component registration");
+            assert_eq!(registration.label, label);
+            assert!(components.contains_key(renderer_key));
+        }
+    }
 
     #[test]
     fn product_renderer_layouts_fit_runtime_readable_budgets() {

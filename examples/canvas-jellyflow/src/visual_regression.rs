@@ -3,8 +3,9 @@ use jellyflow::runtime::runtime::measurement::MeasuredSurfaceAnchor;
 use jellyflow_open_gpui::{
     OpenGpuiSizeEvidence,
     testing::{
-        OpenGpuiComponentFitEvidence, OpenGpuiHostRendererSource,
-        OpenGpuiHostVisualInteractionReport, OpenGpuiHostVisualSurfaceRow, product_fixture_catalog,
+        OpenGpuiHostRendererSource, OpenGpuiHostVisualInteractionReport,
+        OpenGpuiHostVisualSurfaceRow, OpenGpuiMeasuredInternalsEvidence,
+        OpenGpuiMeasuredInternalsSource, product_fixture_catalog,
     },
 };
 use open_gpui_canvas::{
@@ -135,9 +136,11 @@ fn visual_surface_report_row(
     .with_stale_measured_regions(stale_regions)
     .with_repeatable_anchor_coverage(repeatable_rows, repeatable_rows_with_anchors)
     .with_repeatable_overflow(hidden_repeatable_overflow, repeatable_overflow_indicators)
-    .with_component_fit_evidence(component_fit_evidence(
+    .with_measured_internals_evidence(measured_internals_evidence(
         surface,
         canvas_node,
+        measured_store,
+        node_id,
         projected_controls,
         hidden_repeatable_overflow,
         repeatable_overflow_indicators,
@@ -171,101 +174,49 @@ fn repeatable_overflow_indicator_count(surface: &NodeSurfaceSummary, hidden_coun
     )
 }
 
-fn component_fit_evidence(
+fn measured_internals_evidence(
     surface: &NodeSurfaceSummary,
     canvas_node: &CanvasNode,
+    measured_store: &NodeGraphStore,
+    node_id: JellyNodeId,
     projected_controls: usize,
     hidden_repeatable_overflow: usize,
     repeatable_overflow_indicators: usize,
-) -> OpenGpuiComponentFitEvidence {
-    let fit_budget = surface.renderer_context.surface_preset.component_fit_budget;
-    let available_width = fit_budget.available_content_width(JellySize {
-        width: canvas_node.size.width.as_f32(),
-        height: canvas_node.size.height.as_f32(),
-    });
-    let text_values = component_fit_text_values(surface);
-    let mut compact_regions = 0;
-    let mut shell_regions = 0;
-    let mut overflow_indicators = repeatable_overflow_indicators;
-    let mut overflow_indicator_required_count = usize::from(hidden_repeatable_overflow > 0);
+) -> OpenGpuiMeasuredInternalsEvidence {
+    let node_bounds_present =
+        canvas_node.size.width.as_f32() > 0.0 && canvas_node.size.height.as_f32() > 0.0;
+    let measured_handle_count = canvas_node.handles.len();
+    let readable_region_count = usize::from(!surface.title.trim().is_empty())
+        + usize::from(!surface.summary.trim().is_empty())
+        + surface.slots.len()
+        + surface.repeatable_items.len()
+        + surface.chrome.len();
+    let stale_region_count =
+        usize::from(!measured_store.node_measurement_status(node_id).is_fresh());
+    let missing_required_overflow_count =
+        usize::from(hidden_repeatable_overflow > 0 && repeatable_overflow_indicators == 0);
 
-    for text in &text_values {
-        let plan = node_component_kit::adaptive_text_plan(
-            text,
-            available_width,
-            fit_budget.text_region_height as f32,
-            fit_budget.full_text_line_budget,
-            fit_budget.compact_text_line_budget,
-        );
-        match plan.mode {
-            node_component_kit::AdaptiveNodeLayoutMode::Full => {}
-            node_component_kit::AdaptiveNodeLayoutMode::Compact => compact_regions += 1,
-            node_component_kit::AdaptiveNodeLayoutMode::Shell => shell_regions += 1,
-        }
-        if plan.overflow_indicator_required {
-            overflow_indicator_required_count += 1;
-            overflow_indicators += 1;
-        }
+    OpenGpuiMeasuredInternalsEvidence {
+        node_bounds_source: if node_bounds_present {
+            OpenGpuiMeasuredInternalsSource::CanvasDocument
+        } else {
+            OpenGpuiMeasuredInternalsSource::Missing
+        },
+        node_bounds_present,
+        handle_bounds_present: measured_handle_count > 0,
+        measured_handle_count,
+        projected_handle_count: 0,
+        readable_region_count: readable_region_count.max(1),
+        drag_exclusion_region_count: surface
+            .renderer_context
+            .surface_preset
+            .graph_affordance
+            .drag_region_count
+            .max(usize::from(projected_controls > 0)),
+        stale_region_count,
+        component_declared_overflow_count: repeatable_overflow_indicators,
+        missing_required_overflow_count,
     }
-
-    let control_regions_checked = projected_controls.max(1);
-    let control_plan = node_component_kit::adaptive_control_row_plan(
-        available_width,
-        fit_budget.control_region_height as f32,
-        surface.title.as_str(),
-        surface.summary.as_str(),
-    );
-    match control_plan.mode {
-        node_component_kit::AdaptiveNodeLayoutMode::Full => {}
-        node_component_kit::AdaptiveNodeLayoutMode::Compact => {
-            compact_regions += projected_controls
-        }
-        node_component_kit::AdaptiveNodeLayoutMode::Shell => shell_regions += projected_controls,
-    }
-    if control_plan.mode == node_component_kit::AdaptiveNodeLayoutMode::Shell
-        && (control_plan.label_overflow || control_plan.value_overflow)
-    {
-        overflow_indicator_required_count += 1;
-        overflow_indicators += 1;
-    }
-    let overflow_indicator_missing_count =
-        overflow_indicator_required_count.saturating_sub(overflow_indicators);
-
-    OpenGpuiComponentFitEvidence {
-        text_regions_checked: text_values.len().max(1),
-        control_regions_checked,
-        repeatable_regions_checked: surface.repeatable_items.len(),
-        compact_regions,
-        shell_regions,
-        overflow_indicator_required_count,
-        overflow_indicator_count: overflow_indicators,
-        overflow_indicator_missing_count,
-        clipped_text_regions: 0,
-        clipped_control_regions: usize::from(control_plan.clipped),
-        hidden_repeatable_regions_without_indicator: usize::from(
-            hidden_repeatable_overflow > 0 && repeatable_overflow_indicators == 0,
-        ),
-    }
-}
-
-fn component_fit_text_values(surface: &NodeSurfaceSummary) -> Vec<String> {
-    let mut values = Vec::new();
-    values.push(surface.title.clone());
-    values.push(surface.summary.clone());
-    values.extend(surface.slots.iter().flat_map(|slot| {
-        [slot.label.clone(), slot.value.clone()]
-            .into_iter()
-            .filter(|value| !value.trim().is_empty())
-    }));
-    values.extend(
-        surface
-            .repeatable_items
-            .iter()
-            .map(|item| item.label.clone())
-            .filter(|value| !value.trim().is_empty()),
-    );
-    values.retain(|value| !value.trim().is_empty());
-    values
 }
 
 fn host_renderer_source(
