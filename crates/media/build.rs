@@ -16,7 +16,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/bindings.h");
     let bindings = bindgen::Builder::default()
         .header("src/bindings.h")
-        .clang_arg(format!("-isysroot{}", sdk_path))
+        .clang_args(["-isysroot", sdk_path])
         .clang_arg("-xobjective-c")
         .allowlist_type("CMItemIndex")
         .allowlist_type("CMSampleTimingInfo")
