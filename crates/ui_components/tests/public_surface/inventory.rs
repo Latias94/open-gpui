@@ -75,6 +75,54 @@ fn component_contract_registry_covers_inventory_and_adjacent_surfaces() {
 }
 
 #[test]
+fn component_registry_manifest_covers_registry_and_inventory_rows() {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let manifest = component_registry_manifest();
+    let manifest_entries = manifest
+        .entries
+        .iter()
+        .map(|entry| (entry.name.as_str(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let registry_names = COMPONENT_CONTRACT_REGISTRY
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(
+        manifest_entries.keys().copied().collect::<BTreeSet<_>>(),
+        registry_names,
+        "component registry manifest should be a projection of the typed registry rows"
+    );
+
+    for entry in COMPONENT_API_INVENTORY {
+        let manifest_entry = manifest_entries.get(entry.component).unwrap_or_else(|| {
+            panic!(
+                "manifest should include inventory row `{}`",
+                entry.component
+            )
+        });
+        assert!(
+            manifest_entry.api.is_some(),
+            "manifest inventory row `{}` should include API summary",
+            entry.component
+        );
+        assert_eq!(
+            manifest_entry.public_export.root,
+            component_contract_default_export(entry.component),
+            "manifest root export intent drifted for `{}`",
+            entry.component
+        );
+        assert_eq!(
+            manifest_entry.public_export.prelude,
+            component_contract_default_export(entry.component),
+            "manifest prelude export intent drifted for `{}`",
+            entry.component
+        );
+    }
+}
+
+#[test]
 fn component_contract_projection_functions_delegate_to_registry_rows() {
     for entry in COMPONENT_CONTRACT_REGISTRY {
         let projected = component_contract_entry(entry.name)

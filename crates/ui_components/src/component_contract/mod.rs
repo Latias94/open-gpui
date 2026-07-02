@@ -6,6 +6,7 @@
 //! do not store GPUI runtime handles, callbacks, elements, windows, or contexts.
 
 mod api_inventory;
+mod manifest;
 mod projections;
 mod rows;
 mod source_mapping;
@@ -15,6 +16,15 @@ mod types;
 pub use api_inventory::{
     COMPONENT_API_INVENTORY, component_public_methods, component_render_inputs,
     public_owner_for_component_inventory,
+};
+pub use manifest::{
+    COMPONENT_REGISTRY_MANIFEST_VERSION, ComponentRegistryApiInventory, ComponentRegistryCallback,
+    ComponentRegistryDefaultSeed, ComponentRegistryDistributionAuthority, ComponentRegistryDocs,
+    ComponentRegistryDocsStatus, ComponentRegistryEntry, ComponentRegistryGallery,
+    ComponentRegistryGalleryStatus, ComponentRegistryManifest, ComponentRegistryOwnerClass,
+    ComponentRegistryPackage, ComponentRegistryPublicExport, ComponentRegistrySource,
+    ComponentRegistryVerificationKind, ComponentRegistryVerificationOwner,
+    component_registry_manifest, component_registry_manifest_schema,
 };
 pub use projections::{
     component_contract_default_export, component_contract_docs_status,

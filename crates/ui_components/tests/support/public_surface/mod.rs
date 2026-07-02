@@ -5,7 +5,7 @@ use open_gpui_ui_components::component_contract::{
     component_contract_default_export, component_contract_docs_status,
     component_contract_docs_token, component_contract_entry, component_contract_family,
     component_contract_gallery_status, component_contract_source_home, component_public_methods,
-    component_source_inputs,
+    component_registry_manifest, component_source_inputs,
     public_owner_for_component_inventory, table_render_owner_files,
 };
 use open_gpui_ui_components::{ColorIntent, FocusRing, gpui_adapter::gpui_role_from_ui};
