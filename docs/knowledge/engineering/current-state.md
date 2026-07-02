@@ -22,6 +22,9 @@ related_adr:
 related_decision:
   - docs/knowledge/engineering/decisions/open-gpui-native-ui-framework-distribution-strategy.md
 verified_by:
+  - cargo check -p open-gpui-ui-components --test table
+  - cargo nextest run -p open-gpui-ui-components table --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components --test table --no-fail-fast
   - cargo check -p open-gpui-ui-foundation-gallery --tests
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_catalog_metadata_is_separate_from_rendering components_catalog_consumes_component_contract_rows components_page_conformance_gates_reference_core_and_gallery_contracts --no-fail-fast
   - cargo nextest run -p open-gpui-ui-foundation-gallery table --no-fail-fast
@@ -82,6 +85,9 @@ verified_by:
   Test ownership lives under `tests/foundation_gallery/` split by foundation contracts, overlay
   contracts/smoke, component catalog/sample contracts, shell/navigation smoke, Table interaction
   smoke, Table model smoke, and Tree/VirtualizedList smoke.
+- Done: `crates/ui_components/tests/table.rs` is now a small helper/module facade. Test ownership
+  lives under `crates/ui_components/tests/table/` split by behavior rows, filters/toolbar,
+  editing contracts, layout contracts, public exports, runtime interactions, and runtime layout.
 - Done: Full focused UI verification passed before the merge to `main`: component public surface,
   Menu, ContextMenu, Tree, Table, gallery metadata, overlay, tree, table, full
   `open-gpui-ui-components`, and full `open-gpui-ui-foundation-gallery`.
@@ -94,9 +100,8 @@ verified_by:
 - Not current roadmap work: broad splitting of every remaining 1k+ component file and
   `open-gpui-ui-headless` extraction.
 - Blocked: None.
-- Next action: continue the fearless refactor sequence with Table/runtime simplification or the
-  remaining large gallery runtime/source files. The clearest targets are
-  `crates/ui_components/tests/table.rs`, `examples/ui-foundation-gallery/src/shell.rs`, and
+- Next action: continue the fearless refactor sequence with the remaining large gallery source
+  files. The clearest targets are `examples/ui-foundation-gallery/src/shell.rs` and
   `examples/ui-foundation-gallery/src/pages/components/render/sections.rs`.
 
 # Citations

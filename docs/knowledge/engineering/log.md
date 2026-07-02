@@ -6,6 +6,12 @@ status: active
 
 # Log
 
+- 2026-07-02: Split `crates/ui_components/tests/table.rs` into a helper facade plus
+  `tests/table/` modules for behavior rows, filters/toolbar, editing contracts, layout contracts,
+  public exports, runtime interactions, and runtime layout. The facade is now about 196 lines; the
+  largest remaining owner is `runtime_layout.rs`. Verified with `cargo check -p
+  open-gpui-ui-components --test table`, focused Table nextest, full `--test table` nextest,
+  `cargo fmt --all --check`, and `git diff --check`.
 - 2026-07-02: Split the 8k-line foundation gallery integration test into a small helper facade plus
   `tests/foundation_gallery/` modules for foundation contracts, overlay contracts/smoke, component
   catalog/sample contracts, shell/navigation smoke, Table interaction/model smoke, and
