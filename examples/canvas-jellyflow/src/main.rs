@@ -66,7 +66,7 @@ use jellyflow_open_gpui::{
 };
 use open_gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Modifiers, MouseButton,
-    MouseDownEvent, Pixels, WeakEntity, Window, WindowBounds, WindowOptions, div, point,
+    MouseDownEvent, Pixels, QuitMode, WeakEntity, Window, WindowBounds, WindowOptions, div, point,
     prelude::*, px, rgb, size,
 };
 use open_gpui_canvas::{
@@ -1264,6 +1264,7 @@ impl JellyflowCanvasView {
 
     fn sync_store_from_canvas_document_with_refresh(&mut self, refresh_editor: bool) -> bool {
         let mut changed = false;
+        let mut requires_editor_refresh = false;
         let transform_transaction = canvas_document_transform_transaction(
             &self.adapter,
             &self.store,
@@ -1274,6 +1275,7 @@ impl JellyflowCanvasView {
                 Ok(_) => changed = true,
                 Err(error) => {
                     eprintln!("canvas transform sync failed: {error}");
+                    requires_editor_refresh = true;
                 }
             }
         }
@@ -1289,19 +1291,21 @@ impl JellyflowCanvasView {
                         Ok(_) => changed = true,
                         Err(error) => {
                             eprintln!("canvas connection sync failed: {error}");
+                            requires_editor_refresh = true;
                         }
                     }
                 }
             }
             Err(error) => {
                 eprintln!("canvas connection sync planning failed: {error}");
+                requires_editor_refresh = true;
             }
         }
 
-        if refresh_editor && (changed || self.deferred_editor_refresh) {
+        if refresh_editor && (changed || requires_editor_refresh || self.deferred_editor_refresh) {
             self.refresh_editor_from_store();
             self.deferred_editor_refresh = false;
-        } else if changed {
+        } else if changed || requires_editor_refresh {
             self.deferred_editor_refresh = true;
         }
 
@@ -4252,6 +4256,7 @@ fn port_y(index: usize, count: usize, height: f32) -> f32 {
 fn main() {
     application().run(|cx: &mut App| {
         init_canvas_jellyflow_app(cx);
+        cx.set_quit_mode(QuitMode::LastWindowClosed);
 
         let bounds = Bounds::centered(None, size(px(CANVAS_WIDTH), px(CANVAS_HEIGHT)), cx);
         let (gallery, store, editor, projection) = product_gallery_state();
@@ -6008,6 +6013,103 @@ mod tests {
             product_reconnect_gesture_sync_probe(),
             "dragging a selected canvas edge endpoint should update the edge and sync through Jellyflow reconnect rules"
         );
+    }
+
+    #[open_gpui::test]
+    fn rejected_product_edge_reconnect_refreshes_editor_from_store_projection(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
+        let mut store = make_demo_store();
+        let (document, projection) = project_store(&store).unwrap();
+        let editor = editor_for_document(document).unwrap();
+        let blocked_target = JellyPortId::from_u128(40);
+        store
+            .dispatch_transaction(&GraphTransaction::from_ops([
+                GraphOp::SetPortConnectableEnd {
+                    id: blocked_target,
+                    from: None,
+                    to: Some(false),
+                },
+            ]))
+            .unwrap();
+
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let view = cx.new(|cx| JellyflowCanvasView {
+            editor,
+            store,
+            focus_handle: cx.focus_handle(),
+            projection,
+            gallery: product_gallery::ProductGalleryState::default(),
+            adapter: OpenGpuiAdapter::default(),
+            semantic_registry,
+            node_kit_registry,
+            measured_regions: OpenGpuiBoundsCollector::new(),
+            measurement_revision: 1,
+            measurement_frame_pending: false,
+            auto_fit_viewport: false,
+            deferred_editor_refresh: false,
+            last_canvas_view_size: None,
+            last_canvas_bounds: None,
+        });
+
+        cx.update_entity(&view, |this, _cx| {
+            let edge_id = JellyEdgeId::from_u128(200);
+            let canvas_edge_id = open_gpui_canvas::EdgeId::from(canvas_edge_id(&edge_id));
+            let original_target = canvas_port_id(&JellyPortId::from_u128(30));
+            let blocked_target = canvas_port_id(&blocked_target);
+            let Some(mut canvas_edge) = this.editor.document().edge(&canvas_edge_id).cloned()
+            else {
+                panic!("product fixture edge should exist");
+            };
+
+            assert!(
+                canvas_edge
+                    .target
+                    .handle_id
+                    .as_ref()
+                    .is_some_and(|handle| handle.as_str() == original_target)
+            );
+            canvas_edge.target = open_gpui_canvas::CanvasEndpoint::new(
+                canvas_node_id(&JellyNodeId::from_u128(4)),
+                Some(blocked_target.clone()),
+            );
+            this.editor
+                .apply_transaction(CanvasTransaction::single(DocumentCommand::UpdateEdge(
+                    canvas_edge,
+                )))
+                .unwrap();
+
+            let _changed = this.sync_store_from_canvas_document_with_refresh(true);
+
+            assert!(
+                !this.deferred_editor_refresh,
+                "immediate refresh should clear the deferred editor refresh flag"
+            );
+            let Some(restored_edge) = this.editor.document().edge(&canvas_edge_id) else {
+                panic!("product fixture edge should still exist after refresh");
+            };
+            assert!(
+                restored_edge
+                    .target
+                    .handle_id
+                    .as_ref()
+                    .is_some_and(|handle| handle.as_str() == original_target),
+                "rejected reconnect should restore the projected store endpoint"
+            );
+            assert!(
+                this.store
+                    .graph()
+                    .edges()
+                    .get(&edge_id)
+                    .is_some_and(|edge| edge.to == JellyPortId::from_u128(30)),
+                "store edge should remain on the original endpoint"
+            );
+            assert!(
+                !this.sync_store_from_canvas_document_with_refresh(true),
+                "a second sync should be a no-op after the editor rollback"
+            );
+        });
     }
 
     #[test]
