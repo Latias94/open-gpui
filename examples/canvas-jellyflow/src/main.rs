@@ -88,6 +88,8 @@ use serde_json::Value;
 
 #[cfg(test)]
 mod gallery_screenshot;
+#[cfg(test)]
+mod native_smoke;
 mod node_component_kit;
 mod product_gallery;
 mod product_renderers;

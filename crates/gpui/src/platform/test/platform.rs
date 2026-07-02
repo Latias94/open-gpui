@@ -40,6 +40,7 @@ pub(crate) struct TestPlatform {
     pub opened_url: RefCell<Option<String>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
     pub expect_restart: RefCell<Option<oneshot::Sender<Option<PathBuf>>>>,
+    quit_requested: RefCell<bool>,
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
     weak: Weak<Self>,
 }
@@ -137,6 +138,7 @@ impl TestPlatform {
             hovered_window: Default::default(),
             window_stack: Default::default(),
             expect_restart: Default::default(),
+            quit_requested: Default::default(),
             current_clipboard_item: Mutex::new(None),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             current_primary_item: Mutex::new(None),
@@ -208,6 +210,10 @@ impl TestPlatform {
 
     pub(crate) fn has_pending_prompt(&self) -> bool {
         !self.prompts.borrow().multiple_choice.is_empty()
+    }
+
+    pub(crate) fn did_quit(&self) -> bool {
+        *self.quit_requested.borrow()
     }
 
     pub(crate) fn pending_prompt(&self) -> Option<(String, String)> {
@@ -354,7 +360,9 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn quit(&self) {}
+    fn quit(&self) {
+        self.quit_requested.replace(true);
+    }
 
     fn restart(&self, path: Option<PathBuf>) {
         if let Some(tx) = self.expect_restart.take() {

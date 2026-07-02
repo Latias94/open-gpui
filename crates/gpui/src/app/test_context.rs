@@ -395,6 +395,50 @@ impl TestAppContext {
         self.app.borrow().windows()
     }
 
+    /// Returns whether the test platform received an application quit request.
+    pub fn did_quit(&self) -> bool {
+        self.test_platform.did_quit()
+    }
+
+    /// Simulates the user closing a platform window.
+    ///
+    /// Returns true when the window accepted the close request and was removed
+    /// from the app. This exercises the same App-side removal path that
+    /// `QuitMode::LastWindowClosed` observes.
+    pub fn simulate_window_close(&mut self, window: AnyWindowHandle) -> bool {
+        let handler = self
+            .update_window(window, |_, window, _| {
+                window
+                    .platform_window
+                    .as_test()
+                    .unwrap()
+                    .0
+                    .lock()
+                    .should_close_handler
+                    .take()
+            })
+            .unwrap();
+
+        let should_close = if let Some(mut handler) = handler {
+            let should_close = handler();
+            self.update_window(window, |_, window, _| {
+                window.platform_window.on_should_close(handler);
+            })
+            .unwrap();
+            should_close
+        } else {
+            true
+        };
+
+        if should_close {
+            self.update_window(window, |_, window, _| window.remove_window())
+                .unwrap();
+            self.background_executor.run_until_parked();
+        }
+
+        should_close
+    }
+
     /// Run the given task on the main thread.
     #[track_caller]
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> Task<R>
@@ -1199,7 +1243,7 @@ impl AnyWindowHandle {
 mod tests {
     use crate::{
         Context, Empty, FocusHandle, InteractiveElement, IntoElement, ParentElement,
-        PathPromptOptions, PlatformHoveredWindow, Render, StatefulInteractiveElement,
+        PathPromptOptions, PlatformHoveredWindow, QuitMode, Render, StatefulInteractiveElement,
         TestAppContext, VisualContext, div, px, size,
     };
     use std::path::PathBuf;
@@ -1317,6 +1361,19 @@ mod tests {
             cx.update(|app| app.hovered_window()),
             PlatformHoveredWindow::Window(first)
         );
+    }
+
+    #[open_gpui::test]
+    fn test_simulate_window_close_honors_last_window_quit_mode(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_quit_mode(QuitMode::LastWindowClosed));
+        let window = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+
+        assert!(!cx.did_quit());
+        assert!(cx.simulate_window_close(window));
+        assert!(cx.windows().is_empty());
+        assert!(cx.did_quit());
     }
 
     #[open_gpui::test]
