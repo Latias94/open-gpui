@@ -6,6 +6,24 @@ status: active
 
 # Log
 
+- 2026-07-02: Created
+  `docs/plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md`, an
+  implementation-ready plan for the native UI hybrid registry architecture MVP. The plan keeps
+  Cargo as the official distribution authority and adds a metadata manifest, scaffold recipe
+  vocabulary, JSON/schema artifacts, gallery evidence alignment, `xtask` registry drift checks,
+  docs, memory, and ADR 0013 after implementation proof. Plan review applied three clarity fixes:
+  `docs/architecture` and `docs/registry` were added to scope, registry JSON moved to
+  `docs/registry` while schema stays in `docs/schemas`, and recipe metadata now precedes artifact
+  export so the manifest is complete before it is generated.
+- 2026-07-02: Completed the 28-item native UI framework design research report in
+  `native-ui-framework-design-research/report.md`. The research compared shadcn/ui, Radix,
+  Floating UI, React Aria, Zag, Ark, Base UI, fret, gpui-component, Zed UI / GPUI, native UI
+  frameworks, Cargo tooling, design tokens, AccessKit, Storybook-style gallery tooling, TanStack,
+  and AI-era component distribution. The durable conclusion is to prefer Cargo/crates.io for core
+  distribution plus a machine-readable metadata registry for component contracts, theme tokens,
+  a11y claims, gallery samples, scaffold recipes, and verification commands. Added decision,
+  handoff, and verification memory entries. Verification passed for the generated report script,
+  report shape, and 28/28 JSON files with 36/36 required fields covered.
 - 2026-07-01: Completed U11 from
   `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
   tree. Added ADR 0012 for the docking runtime capability boundary, deleted the unused overlay

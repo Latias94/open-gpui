@@ -4,6 +4,10 @@
 
 * [Current State](current-state.md) - Short durable summary of the active engineering state.
 * [Update Log](log.md) - Chronological history of meaningful memory updates.
+* [Open GPUI native UI framework distribution strategy](decisions/open-gpui-native-ui-framework-distribution-strategy.md) - Decision memory for Cargo-first distribution plus metadata registry, scaffold recipes, gallery, theme, a11y, and verification.
+* [Native UI framework design research handoff](sessions/2026-07-02-native-ui-framework-design-research-handoff.md) - Handoff for the 28-item native UI framework design research report and next architecture step.
+* [Native UI framework research report verification](verification/native-ui-framework-research-report-20260702.md) - Verification evidence for the generated research report and JSON field coverage.
+* [Native UI hybrid registry architecture planning](progress/2026-07-02-native-ui-hybrid-registry-architecture-plan.md) - Work progress note for the implementation-ready hybrid registry MVP plan.
 * [Open GPUI UI foundation first](decisions/open-gpui-ui-foundation-first.md) - Decision to prioritize accessibility, focus, overlay, tokens, sizing, density, and adaptive layout before broad component rollout.
 * [Open GPUI UI component productization roadmap](decisions/open-gpui-ui-productization-roadmap.md) - Decision to treat current UI crates as the active product boundary and defer standalone headless extraction.
 * [Open GPUI UI component depth roadmap](decisions/open-gpui-ui-component-depth-roadmap.md) - Decision to deepen Command, Menu, Table, and Tree before adding more shallow primitives.
