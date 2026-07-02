@@ -42,19 +42,18 @@ use jellyflow_open_gpui::{
     OpenGpuiConnectionSyncRequest, OpenGpuiControlEditPlan, OpenGpuiControlEventValue,
     OpenGpuiControlPlan, OpenGpuiDroppedWireInsertError, OpenGpuiDynamicPortPolicy,
     OpenGpuiGraphAffordanceEvidence, OpenGpuiInspectorPlan, OpenGpuiInspectorSurface,
-    OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource, OpenGpuiMeasurementContext,
-    OpenGpuiMeasurementId, OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
-    OpenGpuiMenuPlan, OpenGpuiNodeRendererContext, OpenGpuiNodeRendererOutputSource,
-    OpenGpuiNodeRendererRegistry, OpenGpuiNodeRendererState, OpenGpuiNodeRendererTable,
+    OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource, OpenGpuiMeasurementId,
+    OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource, OpenGpuiMenuPlan,
+    OpenGpuiNodeRendererContext, OpenGpuiNodeRendererOutputSource, OpenGpuiNodeRendererRegistry,
+    OpenGpuiNodeRendererState, OpenGpuiNodeRendererTable,
     OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout, OpenGpuiNodeTransformSnapshot,
     OpenGpuiProductSurfacePreset, OpenGpuiRepeatableActionPlan,
     OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
     OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
     OpenGpuiRepeatableSurfaceLayout as NodeRepeatableSurfaceLayout,
-    OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection, OpenGpuiViewPoint,
+    OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection,
     OpenGpuiWireRouteEvidence, apply_dropped_wire_insert, assign_layout_pass_measurement_revision,
-    layout_pass_measurement_from_regions, measured_surface_anchors,
     open_gpui_action_summary_element_id, open_gpui_blackboard_item_element_id,
     open_gpui_blackboard_status_element_id, open_gpui_chrome_fallback_button_element_id,
     open_gpui_node_renderer_context, open_gpui_repeatable_add_action_element_id,
@@ -64,9 +63,8 @@ use jellyflow_open_gpui::{
     open_gpui_slot_preview_progress_element_id, open_gpui_slot_status_label_element_id,
     open_gpui_slot_value_element_id, project_actions_for_surface,
     project_blackboards_for_descriptor, project_dropped_wire_menu, project_inspectors_for_surface,
-    project_menu, project_node_measurement, project_slot_controls,
-    projected_node_surface_graph_layout, repeatable_item_projection, repeatable_surface_projection,
-    resolve_inspector_target_bounds,
+    project_menu, project_node_measurement, project_slot_controls, repeatable_item_projection,
+    repeatable_surface_projection, resolve_inspector_target_bounds,
 };
 use open_gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Modifiers, MouseButton,
@@ -92,6 +90,7 @@ use serde_json::Value;
 
 #[cfg(test)]
 mod gallery_screenshot;
+mod measurement_bridge;
 #[cfg(test)]
 mod native_smoke;
 mod node_component_kit;
@@ -1224,35 +1223,23 @@ impl JellyflowCanvasView {
                 width: canvas_node.size.width.as_f32(),
                 height: canvas_node.size.height.as_f32(),
             });
-            let fallback_layout = projected_node_surface_graph_layout(
-                &descriptor,
-                &node,
-                self.store.graph(),
-                &node_id,
-                node_size,
-            );
-            let fallback_anchors = measured_surface_anchors(
-                &descriptor,
-                self.store.graph(),
-                &node_id,
-                &fallback_layout,
-            );
             let node_view_bounds = self
                 .editor
                 .viewport()
                 .document_bounds_to_view(canvas_node.bounds());
-            let context = OpenGpuiMeasurementContext::new(
+            let (mut measurement, _coverage) = measurement_bridge::layout_pass_measurement_for_node(
                 node_id,
-                OpenGpuiViewPoint::new(
+                &node,
+                self.store.graph(),
+                &descriptor,
+                node_size,
+                jellyflow_open_gpui::OpenGpuiViewPoint::new(
                     node_view_bounds.origin.x.as_f32(),
                     node_view_bounds.origin.y.as_f32(),
                 ),
                 1.0 / self.editor.viewport().zoom.max(f32::EPSILON),
-                node_size,
-            )
-            .with_revision(0);
-            let (mut measurement, _coverage) =
-                layout_pass_measurement_from_regions(context, node_regions, fallback_anchors);
+                node_regions,
+            );
             let existing = self.store.node_measurement(node_id);
             assign_layout_pass_measurement_revision(
                 self.store.node_measurement_status(node_id),
@@ -3647,53 +3634,11 @@ fn measurement_store_with_projection_fallback(
     store: &NodeGraphStore,
     semantic_registry: &NodeRegistry,
 ) -> NodeGraphStore {
-    let mut measured_store = NodeGraphStore::new(
-        store.graph().clone(),
-        store.view_state().clone(),
-        NodeGraphEditorConfig::default(),
-    );
-
-    let existing_measurements = store
-        .graph()
-        .nodes()
-        .keys()
-        .filter_map(|id| match store.node_measurement_status(*id) {
-            NodeMeasurementStatus::Fresh { .. } => store.node_measurement(*id),
-            NodeMeasurementStatus::Missing | NodeMeasurementStatus::Dirty { .. } => None,
-        })
-        .collect::<Vec<_>>();
-
-    for measurement in existing_measurements {
-        measured_store
-            .report_node_measurement(measurement)
-            .expect("live GPUI measurement should match the graph");
-    }
-
-    let measurements = measured_store
-        .graph()
-        .nodes()
-        .iter()
-        .filter_map(|(id, node)| {
-            if measured_store.node_measurement(*id).is_some() {
-                return None;
-            }
-            let descriptor = semantic_registry.view_descriptor(&node.kind)?;
-            Some(project_node_measurement(
-                id,
-                node,
-                measured_store.graph(),
-                &descriptor,
-            ))
-        })
-        .collect::<Vec<_>>();
-
-    for measurement in measurements {
-        measured_store
-            .report_node_measurement(measurement)
-            .expect("projected GPUI measurement should match the graph");
-    }
-
-    measured_store
+    measurement_bridge::measurement_store_with_explicit_projection_fallback(
+        store,
+        semantic_registry,
+    )
+    .into_store()
 }
 
 fn measured_handle_position(
@@ -5990,6 +5935,16 @@ mod tests {
                         && style.edge_hit_width >= style.edge_stroke_width)),
             "{report:?}"
         );
+        assert!(
+            report
+                .rows
+                .iter()
+                .filter(|row| row.source == OpenGpuiHostRendererSource::ProductRenderer)
+                .all(|row| row
+                    .capability_gaps
+                    .contains(&OpenGpuiHostCapabilityGap::MissingMeasuredRegion)),
+            "projection fallback rows must stay visible as degraded measurement evidence: {report:?}"
+        );
     }
 
     #[test]
@@ -6881,8 +6836,12 @@ mod tests {
             let (store, document, _projection) =
                 project_kit_fixture(&fixture.kit_key, &fixture.fixture_key)
                     .expect("product fixture projects into canvas document");
-            let measured_store =
-                measurement_store_with_projection_fallback(&store, &semantic_registry);
+            let measurement_projection =
+                measurement_bridge::measurement_store_with_explicit_projection_fallback(
+                    &store,
+                    &semantic_registry,
+                );
+            let measured_store = measurement_projection.store();
 
             for canvas_node in document.nodes() {
                 let Some(node_id) = jelly_node_id_from_node(canvas_node) else {
@@ -7091,8 +7050,12 @@ mod tests {
             let (store, document, _projection) =
                 project_kit_fixture(&fixture.kit_key, &fixture.fixture_key)
                     .expect("product fixture projects into canvas document");
-            let measured_store =
-                measurement_store_with_projection_fallback(&store, &semantic_registry);
+            let measurement_projection =
+                measurement_bridge::measurement_store_with_explicit_projection_fallback(
+                    &store,
+                    &semantic_registry,
+                );
+            let measured_store = measurement_projection.store();
 
             for canvas_node in document.nodes() {
                 let Some(node_id) = jelly_node_id_from_node(canvas_node) else {
@@ -7120,6 +7083,9 @@ mod tests {
                     &renderer_registry,
                     &renderers,
                     &surface,
+                    measurement_projection
+                        .evidence()
+                        .node_uses_projection_fallback(node_id),
                 ));
             }
         }
@@ -7132,6 +7098,7 @@ mod tests {
         registry: &OpenGpuiNodeRendererRegistry,
         renderers: &GpuiNodeRendererTable,
         surface: &NodeSurfaceSummary,
+        node_uses_projection_fallback: bool,
     ) -> OpenGpuiHostSurfaceReportRow {
         let measurement = surface.measurement.as_ref();
         let mut row = OpenGpuiHostSurfaceReportRow::new(
@@ -7171,6 +7138,10 @@ mod tests {
         {
             row.capability_gaps
                 .insert(OpenGpuiHostCapabilityGap::PartialOrHiddenRegion);
+        }
+        if node_uses_projection_fallback {
+            row.capability_gaps
+                .insert(OpenGpuiHostCapabilityGap::MissingMeasuredRegion);
         }
 
         row
