@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-01T23:59:00+08:00
+timestamp: 2026-07-02T07:57:02+08:00
 git_branch: main
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
@@ -10,6 +10,7 @@ related_plan:
   - docs/plans/2026-07-01-003-refactor-ui-component-contract-registry-plan.md
   - docs/plans/2026-07-01-004-refactor-ui-family-boundaries-plan.md
   - docs/plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md
+  - docs/plans/2026-07-02-001-refactor-ui-contract-tooling-plan.md
 related_adr:
   - docs/adr/0006-open-gpui-ui-headless-extraction-checkpoint.md
   - docs/adr/0008-open-gpui-ui-component-productization-roadmap.md
@@ -38,16 +39,20 @@ verified_by:
 - Done: `Command`, `Menu`, `ContextMenu`, `Tree`, and Table behavior snapshots now have explicit
   owner modules. The completed family-boundary pass keeps public behavior stable while replacing
   stale single-file source assumptions.
+- Done: `component_contract` is split into responsibility modules; focused a11y contracts now cover
+  representative component families; the theme JSON schema and loader facade are exported through
+  root and prelude.
 - Done: Full focused UI verification passed before the merge to `main`: component public surface,
   Menu, ContextMenu, Tree, Table, gallery metadata, overlay, tree, table, full
   `open-gpui-ui-components`, and full `open-gpui-ui-foundation-gallery`.
 - Current docs direction: the next UI productization slice is
-  `docs/plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md`: split
-  `component_contract`, add accessibility contract gates, and add theme JSON schema/loading.
+  `docs/plans/2026-07-02-001-refactor-ui-contract-tooling-plan.md`: turn the registry, a11y, theme,
+  and gallery contract facts into a reusable `xtask` audit/reporting surface.
 - Not current roadmap work: broad splitting of every remaining 1k+ component file and
   `open-gpui-ui-headless` extraction.
 - Blocked: None.
-- Next action: implement plan 005 with focused registry, a11y, theme, and gallery verification.
+- Next action: implement the UI contract tooling plan with focused `xtask`, schema artifact, docs,
+  and verification updates.
 
 # Citations
 
@@ -56,3 +61,4 @@ verified_by:
 - [UI component contract registry plan](../../plans/2026-07-01-003-refactor-ui-component-contract-registry-plan.md)
 - [UI family boundary plan](../../plans/2026-07-01-004-refactor-ui-family-boundaries-plan.md)
 - [UI contract/a11y/theme plan](../../plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md)
+- [UI contract tooling plan](../../plans/2026-07-02-001-refactor-ui-contract-tooling-plan.md)
