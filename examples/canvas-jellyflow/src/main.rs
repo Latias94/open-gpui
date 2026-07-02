@@ -41,8 +41,8 @@ use jellyflow_open_gpui::{
     OpenGpuiNodeRendererContext, OpenGpuiNodeRendererOutputSource, OpenGpuiNodeRendererRegistry,
     OpenGpuiNodeRendererState, OpenGpuiNodeRendererTable,
     OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
-    OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout, OpenGpuiRepeatableActionPlan,
-    OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
+    OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout, OpenGpuiProductSurfacePreset,
+    OpenGpuiRepeatableActionPlan, OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
     OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
     OpenGpuiRepeatableSurfaceLayout as NodeRepeatableSurfaceLayout,
     OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection, OpenGpuiViewPoint,
@@ -3281,10 +3281,11 @@ fn project_node(
     let descriptor = semantic_registry
         .view_descriptor(&node.kind)
         .expect("demo graph should resolve a builtin node descriptor");
+    let preset = OpenGpuiProductSurfacePreset::from_descriptor(&descriptor);
     let requested_size = node
         .size
-        .unwrap_or_else(|| default_node_size_for_renderer(&descriptor.renderer_key));
-    let node_size = readable_node_size(&node.kind, &descriptor.renderer_key, requested_size);
+        .unwrap_or_else(|| preset.initial_size_or(default_adapter_node_size()));
+    let node_size = preset.readable_size_for_request(requested_size);
     let mut canvas_node = CanvasNode::new(
         canvas_node_id(id),
         point(px(node.pos.x), px(node.pos.y)),
@@ -3397,77 +3398,10 @@ fn project_node(
     canvas_node
 }
 
-fn default_node_size_for_renderer(renderer_key: &str) -> JellySize {
-    match renderer_key {
-        "decision-card" => JellySize {
-            width: 292.0,
-            height: 246.0,
-        },
-        "shader-card" => JellySize {
-            width: 324.0,
-            height: 244.0,
-        },
-        "table-card" => JellySize {
-            width: 372.0,
-            height: 292.0,
-        },
-        "topic-card" => JellySize {
-            width: 278.0,
-            height: 190.0,
-        },
-        "source-card" => JellySize {
-            width: 286.0,
-            height: 190.0,
-        },
-        _ => JellySize {
-            width: 236.0,
-            height: 188.0,
-        },
-    }
-}
-
-fn readable_node_size(
-    kind: &NodeKindKey,
-    renderer_key: &str,
-    requested_size: JellySize,
-) -> JellySize {
-    let minimum = minimum_readable_node_size(kind, renderer_key);
+fn default_adapter_node_size() -> JellySize {
     JellySize {
-        width: requested_size.width.max(minimum.width),
-        height: requested_size.height.max(minimum.height),
-    }
-}
-
-fn minimum_readable_node_size(kind: &NodeKindKey, renderer_key: &str) -> JellySize {
-    match (kind.0.as_str(), renderer_key) {
-        ("demo.llm", "decision-card") => JellySize {
-            width: 292.0,
-            height: 246.0,
-        },
-        (_, "decision-card") => JellySize {
-            width: 240.0,
-            height: 150.0,
-        },
-        (_, "shader-card") => JellySize {
-            width: 324.0,
-            height: 244.0,
-        },
-        (_, "table-card") => JellySize {
-            width: 372.0,
-            height: 292.0,
-        },
-        (_, "topic-card") => JellySize {
-            width: 278.0,
-            height: 190.0,
-        },
-        (_, "source-card") => JellySize {
-            width: 286.0,
-            height: 190.0,
-        },
-        _ => JellySize {
-            width: 0.0,
-            height: 0.0,
-        },
+        width: 236.0,
+        height: 188.0,
     }
 }
 
@@ -5428,6 +5362,17 @@ mod tests {
             row.capability_gaps
                 .contains(&OpenGpuiHostCapabilityGap::AdvancedControlStub)
         }));
+        assert!(
+            report
+                .rows
+                .iter()
+                .filter(|row| row.source == OpenGpuiHostRendererSource::ProductRenderer)
+                .all(|row| row
+                    .style_budget
+                    .is_some_and(|style| style.handle_hit_width >= 22
+                        && style.edge_hit_width >= style.edge_stroke_width)),
+            "{report:?}"
+        );
     }
 
     #[test]
@@ -5436,6 +5381,7 @@ mod tests {
         assert_product_interaction_characterization_report_contract(&report);
         assert!(report.product_drag_surface_count >= 4, "{report:?}");
         assert!(report.hidden_repeatable_overflow_count > 0, "{report:?}");
+        assert!(report.repeatable_overflow_indicator_count > 0, "{report:?}");
         assert!(
             report.gaps.contains(
                 &OpenGpuiHostProductInteractionGap::DragSurfaceMissingFullPointerSequence
@@ -5457,9 +5403,10 @@ mod tests {
                 .contains(&OpenGpuiHostProductInteractionGap::ReconnectAffordanceMissing)
         );
         assert!(
-            report
+            !report
                 .gaps
-                .contains(&OpenGpuiHostProductInteractionGap::RepeatableOverflowIndicatorMissing)
+                .contains(&OpenGpuiHostProductInteractionGap::RepeatableOverflowIndicatorMissing),
+            "{report:?}"
         );
     }
 
@@ -5505,6 +5452,7 @@ mod tests {
         let semantic_registry = node_kit_registry.node_registry();
         let mut product_drag_surfaces = 0;
         let mut hidden_repeatable_overflow = 0;
+        let mut repeatable_overflow_indicators = 0;
 
         for fixture in catalog {
             let (store, document, _projection) =
@@ -5538,10 +5486,14 @@ mod tests {
                 {
                     product_drag_surfaces += 1;
                     hidden_repeatable_overflow += hidden_repeatable_overflow_for_surface(&surface);
+                    repeatable_overflow_indicators +=
+                        repeatable_overflow_indicator_count_for_surface(&surface);
                 }
             }
         }
-        hidden_repeatable_overflow += augmented_shader_repeatable_overflow_probe();
+        let augmented_hidden_repeatables = augmented_shader_repeatable_overflow_probe();
+        hidden_repeatable_overflow += augmented_hidden_repeatables;
+        repeatable_overflow_indicators += usize::from(augmented_hidden_repeatables > 0);
 
         let mut report = OpenGpuiHostProductInteractionReport::default();
         report.mark_drag_surface_coverage(product_drag_surfaces, false);
@@ -5551,7 +5503,7 @@ mod tests {
         report.mark_connect_flow_store_synced(false);
         report.mark_reconnect_affordance_visible(false);
         report.mark_dropped_wire_gesture_connected(false);
-        report.mark_repeatable_overflow(hidden_repeatable_overflow, 0);
+        report.mark_repeatable_overflow(hidden_repeatable_overflow, repeatable_overflow_indicators);
         report
     }
 
@@ -5610,10 +5562,22 @@ mod tests {
     }
 
     fn hidden_repeatable_overflow_for_surface(surface: &NodeSurfaceSummary) -> usize {
-        match surface.renderer_key.as_str() {
-            "shader-card" | "table-card" => surface.repeatable_items.len().saturating_sub(3),
-            _ => 0,
-        }
+        let visible_items = surface
+            .renderer_context
+            .surface_preset
+            .repeatable_visible_items_or(usize::MAX);
+        surface.repeatable_items.len().saturating_sub(visible_items)
+    }
+
+    fn repeatable_overflow_indicator_count_for_surface(surface: &NodeSurfaceSummary) -> usize {
+        usize::from(
+            hidden_repeatable_overflow_for_surface(surface) > 0
+                && surface
+                    .renderer_context
+                    .surface_preset
+                    .overflow_indicator
+                    .is_some(),
+        )
     }
 
     fn canvas_host_surface_report() -> OpenGpuiHostSurfaceReport {
@@ -5684,7 +5648,8 @@ mod tests {
             measurement
                 .map(|measurement| measurement.anchors.len())
                 .unwrap_or(0),
-        );
+        )
+        .with_style_budget(surface.renderer_context.surface_preset.style.evidence());
 
         for slot in &surface.slot_descriptors {
             for control in project_slot_controls(&surface.node_data, slot) {

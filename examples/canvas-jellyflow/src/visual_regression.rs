@@ -1,8 +1,11 @@
 use super::*;
 use jellyflow::runtime::runtime::measurement::MeasuredSurfaceAnchor;
-use jellyflow_open_gpui::testing::{
-    OpenGpuiHostRendererSource, OpenGpuiHostVisualInteractionReport, OpenGpuiHostVisualSurfaceRow,
-    product_fixture_catalog,
+use jellyflow_open_gpui::{
+    OpenGpuiSizeEvidence,
+    testing::{
+        OpenGpuiHostRendererSource, OpenGpuiHostVisualInteractionReport,
+        OpenGpuiHostVisualSurfaceRow, product_fixture_catalog,
+    },
 };
 use open_gpui_canvas::{
     CanvasConnectionEndpointRole, CanvasGeometryFacts, CanvasRuntime, connection_hit_options,
@@ -82,17 +85,35 @@ fn visual_surface_report_row(
         && surface.document_bounds.size.height <= canvas_node.size.height.as_f32()
         && surface.document_bounds.size.width > 0.0
         && surface.document_bounds.size.height > 0.0;
-    let content_readable = renderer_min_readable_size(&surface.node_kind, &surface.renderer_key)
-        .is_none_or(|(min_width, min_height)| {
-            canvas_node.size.width.as_f32() >= min_width
-                && canvas_node.size.height.as_f32() >= min_height
-        });
+    let actual_size = OpenGpuiSizeEvidence::from_canvas_size(JellySize {
+        width: canvas_node.size.width.as_f32(),
+        height: canvas_node.size.height.as_f32(),
+    });
+    let min_readable_size = surface
+        .renderer_context
+        .surface_preset
+        .min_readable_size_evidence();
+    let content_readable = min_readable_size.is_none_or(|minimum| actual_size.contains(minimum));
+    let projected_controls = projected_control_count(surface);
+    let text_overflow_count = if content_readable {
+        0
+    } else {
+        surface.slots.len().max(1)
+    };
+    let clipped_control_count = if content_readable {
+        0
+    } else {
+        projected_controls
+    };
     let stale_regions = if measured_store.node_measurement_status(node_id).is_fresh() {
         0
     } else {
         1
     };
     let repeatable_rows = surface.repeatable_items.len();
+    let hidden_repeatable_overflow = hidden_repeatable_overflow_count(surface);
+    let repeatable_overflow_indicators =
+        repeatable_overflow_indicator_count(surface, hidden_repeatable_overflow);
     let repeatable_rows_with_anchors = surface
         .repeatable_items
         .iter()
@@ -107,21 +128,40 @@ fn visual_surface_report_row(
     )
     .with_selection(surface.selected)
     .with_content_bounds(content_visible, content_readable, within_node_bounds)
+    .with_readability_budget(actual_size, min_readable_size)
+    .with_text_overflow_count(text_overflow_count)
+    .with_control_clipping_count(clipped_control_count)
     .with_handle_overlap_count(handle_overlap_count(canvas_node))
     .with_stale_measured_regions(stale_regions)
     .with_repeatable_anchor_coverage(repeatable_rows, repeatable_rows_with_anchors)
+    .with_repeatable_overflow(hidden_repeatable_overflow, repeatable_overflow_indicators)
 }
 
-fn renderer_min_readable_size(node_kind: &str, renderer_key: &str) -> Option<(f32, f32)> {
-    match (node_kind, renderer_key) {
-        ("demo.llm", "decision-card") => Some((292.0, 246.0)),
-        (_, "decision-card") => Some((240.0, 150.0)),
-        (_, "shader-card") => Some((324.0, 244.0)),
-        (_, "table-card") => Some((372.0, 292.0)),
-        (_, "topic-card") => Some((278.0, 190.0)),
-        (_, "source-card") => Some((286.0, 190.0)),
-        _ => None,
-    }
+fn projected_control_count(surface: &NodeSurfaceSummary) -> usize {
+    surface
+        .slot_descriptors
+        .iter()
+        .map(|slot| project_slot_controls(&surface.node_data, slot).len())
+        .sum()
+}
+
+fn hidden_repeatable_overflow_count(surface: &NodeSurfaceSummary) -> usize {
+    let visible_items = surface
+        .renderer_context
+        .surface_preset
+        .repeatable_visible_items_or(usize::MAX);
+    surface.repeatable_items.len().saturating_sub(visible_items)
+}
+
+fn repeatable_overflow_indicator_count(surface: &NodeSurfaceSummary, hidden_count: usize) -> usize {
+    usize::from(
+        hidden_count > 0
+            && surface
+                .renderer_context
+                .surface_preset
+                .overflow_indicator
+                .is_some(),
+    )
 }
 
 fn host_renderer_source(

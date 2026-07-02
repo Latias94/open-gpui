@@ -811,6 +811,9 @@ fn render_shader_inputs(
     collector: OpenGpuiBoundsCollector,
     actions: &NodeComponentKitActions,
 ) -> AnyElement {
+    let visible_limit = context.surface_preset.repeatable_visible_items_or(3);
+    let hidden_count = items.len().saturating_sub(visible_limit);
+
     div()
         .absolute()
         .left(px(CARD_PAD))
@@ -824,9 +827,14 @@ fn render_shader_inputs(
         .children(
             items
                 .iter()
-                .take(3)
+                .take(visible_limit)
                 .map(|item| render_repeatable_item_chip(context, item, collector.clone(), actions)),
         )
+        .child(render_repeatable_overflow_indicator(
+            context,
+            "shader.inputs",
+            hidden_count,
+        ))
         .into_any_element()
 }
 
@@ -837,6 +845,9 @@ fn render_table_columns(
     collector: OpenGpuiBoundsCollector,
     actions: &NodeComponentKitActions,
 ) -> AnyElement {
+    let visible_limit = table_visible_repeatable_limit(context);
+    let hidden_count = items.len().saturating_sub(visible_limit);
+
     div()
         .absolute()
         .left(px(CARD_PAD))
@@ -850,10 +861,44 @@ fn render_table_columns(
         .children(
             items
                 .iter()
-                .take(3)
+                .take(visible_limit)
                 .map(|item| render_repeatable_item_row(context, item, collector.clone(), actions)),
         )
+        .child(render_repeatable_overflow_indicator(
+            context,
+            "table.columns",
+            hidden_count,
+        ))
         .into_any_element()
+}
+
+fn table_visible_repeatable_limit(context: &OpenGpuiNodeRendererContext) -> usize {
+    let budget_limit = context.surface_preset.repeatable_visible_items_or(3);
+    let available_height = (context.node_size.height - ERD_COLUMNS_TOP - CARD_PAD).max(0.0);
+    let row_stride = REPEATABLE_ROW_HEIGHT + 4.0;
+    let fitting_rows = (available_height / row_stride).floor().max(1.0) as usize;
+    budget_limit.min(fitting_rows)
+}
+
+fn render_repeatable_overflow_indicator(
+    context: &OpenGpuiNodeRendererContext,
+    collection_key: &str,
+    hidden_count: usize,
+) -> AnyElement {
+    if hidden_count == 0 {
+        return div().w(px(0.0)).h(px(0.0)).into_any_element();
+    }
+
+    Badge::new(
+        format!(
+            "jellyflow-repeatable-overflow:{}:{collection_key}",
+            context.node_id.0
+        ),
+        format!("+{hidden_count}"),
+    )
+    .variant(BadgeVariant::Secondary)
+    .with_size(Size::XSmall)
+    .into_any_element()
 }
 
 fn render_repeatable_item_chip(
