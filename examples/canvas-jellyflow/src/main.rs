@@ -5369,14 +5369,15 @@ mod tests {
         let mut store = make_demo_store();
         let transform = JellyNodeId::from_u128(3);
         let before_size = store.graph().nodes().get(&transform).unwrap().size;
+        let requested_size = JellySize {
+            width: 328.0,
+            height: 268.0,
+        };
         store
             .dispatch_transaction(&GraphTransaction::from_ops([GraphOp::SetNodeSize {
                 id: transform,
                 from: before_size,
-                to: Some(JellySize {
-                    width: 328.0,
-                    height: 268.0,
-                }),
+                to: Some(requested_size),
             }]))
             .expect("resize transform node");
 
@@ -5398,11 +5399,10 @@ mod tests {
         let semantic_registry = NodeKitRegistry::builtin().node_registry();
         let jelly_node = store.graph().nodes().get(&transform).unwrap();
         let descriptor = semantic_registry.view_descriptor(&jelly_node.kind).unwrap();
-        let layout = projected_node_surface_component_layout(
-            &descriptor,
-            jelly_node,
-            jelly_node.size.unwrap(),
-        );
+        let readable_size = OpenGpuiProductSurfacePreset::from_descriptor(&descriptor)
+            .readable_size_for_request(requested_size);
+        let layout =
+            projected_node_surface_component_layout(&descriptor, jelly_node, readable_size);
         let prompt_anchor = layout
             .anchor_rect("field.prompt")
             .expect("prompt component anchor");
@@ -5410,10 +5410,10 @@ mod tests {
             .anchor_rect("field.completion")
             .expect("completion component anchor");
 
-        assert_eq!(node.size.width, px(328.0));
-        assert_eq!(node.size.height, px(268.0));
+        assert_eq!(node.size.width, px(readable_size.width));
+        assert_eq!(node.size.height, px(readable_size.height));
         assert_eq!(prompt.position.x, px(0.0));
-        assert_eq!(completion.position.x, px(328.0));
+        assert_eq!(completion.position.x, px(readable_size.width));
         assert_eq!(
             prompt.position.y,
             px(prompt_anchor.origin.y + prompt_anchor.size.height * 0.5)

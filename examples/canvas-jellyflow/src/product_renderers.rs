@@ -23,21 +23,22 @@ use crate::{
 
 const CARD_PAD: f32 = 10.0;
 const HEADER_HEIGHT: f32 = 24.0;
-const TITLE_ROW_HEIGHT: f32 = 34.0;
-const PREVIEW_ROW_HEIGHT: f32 = 46.0;
-const PORT_RAIL_HEIGHT: f32 = 24.0;
-const CONTROL_ROW_HEIGHT: f32 = 34.0;
-const CONTROL_CHIP_HEIGHT: f32 = 30.0;
-const REPEATABLE_CHIP_HEIGHT: f32 = 34.0;
-const REPEATABLE_ROW_HEIGHT: f32 = 34.0;
+const TITLE_ROW_HEIGHT: f32 = 36.0;
+const PREVIEW_ROW_HEIGHT: f32 = 54.0;
+const PORT_RAIL_HEIGHT: f32 = 26.0;
+const CONTROL_ROW_HEIGHT: f32 = 40.0;
+const PROMPT_CONTROL_ROW_HEIGHT: f32 = 48.0;
+const CONTROL_CHIP_HEIGHT: f32 = 34.0;
+const REPEATABLE_CHIP_HEIGHT: f32 = 36.0;
+const REPEATABLE_ROW_HEIGHT: f32 = 38.0;
 const REPEATABLE_ADD_WIDTH: f32 = 96.0;
 const SECTION_GAP: f32 = 6.0;
 const CONTROL_GROUP_GAP: f32 = 8.0;
 const BODY_TOP: f32 = CARD_PAD + HEADER_HEIGHT + SECTION_GAP;
 const TITLE_NEXT_TOP: f32 = BODY_TOP + TITLE_ROW_HEIGHT + SECTION_GAP;
 const PREVIEW_NEXT_TOP: f32 = BODY_TOP + PREVIEW_ROW_HEIGHT + CONTROL_GROUP_GAP;
-const SECOND_CONTROL_ROW_TOP: f32 = PREVIEW_NEXT_TOP + CONTROL_ROW_HEIGHT + SECTION_GAP;
-const DECISION_CHIP_ROW_TOP: f32 = SECOND_CONTROL_ROW_TOP + CONTROL_ROW_HEIGHT + CARD_PAD;
+const DECISION_MODEL_ROW_TOP: f32 = PREVIEW_NEXT_TOP + PROMPT_CONTROL_ROW_HEIGHT + SECTION_GAP;
+const DECISION_CHIP_ROW_TOP: f32 = DECISION_MODEL_ROW_TOP + CONTROL_ROW_HEIGHT + CARD_PAD;
 const SHADER_INPUT_RAIL_TOP: f32 = TITLE_NEXT_TOP;
 const SHADER_INPUT_CHIPS_TOP: f32 = SHADER_INPUT_RAIL_TOP + PORT_RAIL_HEIGHT + CONTROL_GROUP_GAP;
 const SHADER_CONTROL_ROW_TOP: f32 =
@@ -123,7 +124,8 @@ fn render_decision_card(
                 div()
                     .text_xs()
                     .line_height(px(14.0))
-                    .truncate()
+                    .line_clamp(2)
+                    .overflow_hidden()
                     .text_color(rgb(0x475569))
                     .child(context.summary.clone().unwrap_or_default()),
             ),
@@ -140,12 +142,13 @@ fn render_decision_card(
         collector.clone(),
         false,
     ))
-    .child(render_control_row_at(
+    .child(render_control_row_with_height_at(
         context,
         "field.prompt",
         prompt_control.as_ref(),
         0,
         px(PREVIEW_NEXT_TOP),
+        px(PROMPT_CONTROL_ROW_HEIGHT),
         collector.clone(),
         &actions,
     ))
@@ -154,7 +157,7 @@ fn render_decision_card(
         "badge.model",
         model_control.as_ref(),
         1,
-        px(SECOND_CONTROL_ROW_TOP),
+        px(DECISION_MODEL_ROW_TOP),
         collector.clone(),
         &actions,
     ))
@@ -527,7 +530,8 @@ fn render_source_card(
                 div()
                     .text_xs()
                     .line_height(px(14.0))
-                    .truncate()
+                    .line_clamp(2)
+                    .overflow_hidden()
                     .text_color(rgb(0x475569))
                     .child(
                         json_path_label(&context.node_data, &["preview"])
@@ -697,6 +701,28 @@ fn render_control_row_at(
     collector: OpenGpuiBoundsCollector,
     actions: &NodeComponentKitActions,
 ) -> AnyElement {
+    render_control_row_with_height_at(
+        context,
+        slot_key,
+        control,
+        index,
+        top,
+        px(CONTROL_ROW_HEIGHT),
+        collector,
+        actions,
+    )
+}
+
+fn render_control_row_with_height_at(
+    context: &OpenGpuiNodeRendererContext,
+    slot_key: &str,
+    control: Option<&OpenGpuiControlPlan>,
+    index: usize,
+    top: Pixels,
+    height: Pixels,
+    collector: OpenGpuiBoundsCollector,
+    actions: &NodeComponentKitActions,
+) -> AnyElement {
     let Some(control) = control else {
         return div().into_any_element();
     };
@@ -708,7 +734,7 @@ fn render_control_row_at(
             .left(px(CARD_PAD))
             .top(top)
             .right(px(CARD_PAD))
-            .h(px(CONTROL_ROW_HEIGHT))
+            .h(height)
             .flex()
             .items_center()
             .justify_between()
@@ -727,15 +753,20 @@ fn render_control_row_at(
                     .text_color(rgb(0x334155))
                     .child(control.label.clone()),
             )
-            .child(div().max_w(px(176.0)).overflow_hidden().child(
-                node_component_kit::render_control_plan(
-                    context.node_id,
-                    "product-row",
-                    control,
-                    index,
-                    actions,
-                ),
-            )),
+            .child(
+                div()
+                    .w(px(190.0))
+                    .min_w(px(156.0))
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .child(node_component_kit::render_control_plan(
+                        context.node_id,
+                        "product-row",
+                        control,
+                        index,
+                        actions,
+                    )),
+            ),
     )
 }
 
@@ -755,7 +786,9 @@ fn render_control_chip(
         collector,
         div()
             .h(px(CONTROL_CHIP_HEIGHT))
-            .max_w(px(144.0))
+            .flex_1()
+            .min_w(px(0.0))
+            .max_w(px(168.0))
             .overflow_hidden()
             .child(node_component_kit::render_control_plan(
                 context.node_id,
@@ -927,7 +960,8 @@ fn render_repeatable_item_chip(
         div()
             .h(px(REPEATABLE_CHIP_HEIGHT))
             .min_w(px(84.0))
-            .max_w(px(118.0))
+            .flex_1()
+            .max_w(px(132.0))
             .flex()
             .items_center()
             .gap_1()
@@ -1000,8 +1034,10 @@ fn render_repeatable_item_row(
             .child(
                 div()
                     .flex()
+                    .flex_1()
                     .items_center()
                     .gap_1()
+                    .min_w(px(0.0))
                     .overflow_hidden()
                     .child(
                         Badge::new(
@@ -1020,6 +1056,7 @@ fn render_repeatable_item_row(
             .child(
                 div()
                     .flex()
+                    .flex_shrink_0()
                     .items_center()
                     .gap_1()
                     .child(repeatable_port_policy_badge(
@@ -1192,5 +1229,82 @@ fn json_path_label(value: &Value, path: &[&str]) -> Option<String> {
         Value::Number(number) => Some(number.to_string()),
         Value::Bool(value) => Some(value.to_string()),
         Value::Null | Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jellyflow::{
+        core::{CanvasSize, NodeKindKey},
+        runtime::schema::NodeKitRegistry,
+    };
+    use jellyflow_open_gpui::OpenGpuiProductSurfacePreset;
+
+    #[test]
+    fn product_renderer_layouts_fit_runtime_readable_budgets() {
+        assert_preset_fits_renderer(
+            "demo.llm",
+            CanvasSize {
+                width: 320.0,
+                height: DECISION_CHIP_ROW_TOP
+                    + CONTROL_CHIP_HEIGHT
+                    + SECTION_GAP
+                    + PORT_RAIL_HEIGHT
+                    + CARD_PAD,
+            },
+        );
+        assert_preset_fits_renderer(
+            "demo.shader.mix",
+            CanvasSize {
+                width: 340.0,
+                height: SHADER_OUTPUT_RAIL_TOP + PORT_RAIL_HEIGHT + CARD_PAD,
+            },
+        );
+        assert_preset_fits_renderer(
+            "demo.table",
+            CanvasSize {
+                width: 396.0,
+                height: ERD_COLUMNS_TOP + (REPEATABLE_ROW_HEIGHT + 4.0) * 3.0 + CARD_PAD,
+            },
+        );
+        assert_preset_fits_renderer(
+            "demo.topic",
+            CanvasSize {
+                width: 304.0,
+                height: TOPIC_SUMMARY_CONTROL_TOP + CONTROL_ROW_HEIGHT + CARD_PAD,
+            },
+        );
+        assert_preset_fits_renderer(
+            "demo.source",
+            CanvasSize {
+                width: 312.0,
+                height: SOURCE_ASSET_CONTROL_TOP + CONTROL_ROW_HEIGHT + CARD_PAD,
+            },
+        );
+    }
+
+    fn assert_preset_fits_renderer(kind: &str, required: CanvasSize) {
+        let registry = NodeKitRegistry::builtin().node_registry();
+        let descriptor = registry
+            .view_descriptor(&NodeKindKey::new(kind))
+            .expect("builtin product descriptor");
+        let preset = OpenGpuiProductSurfacePreset::from_descriptor(&descriptor);
+        let minimum = preset
+            .min_readable_size
+            .expect("product renderer should publish min readable size");
+
+        assert!(
+            minimum.width >= required.width,
+            "{kind} min width {} must fit renderer requirement {}",
+            minimum.width,
+            required.width
+        );
+        assert!(
+            minimum.height >= required.height,
+            "{kind} min height {} must fit renderer requirement {}",
+            minimum.height,
+            required.height
+        );
     }
 }
