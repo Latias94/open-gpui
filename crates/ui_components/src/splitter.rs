@@ -16,11 +16,10 @@ use std::time::{Duration, Instant};
 const EPSILON: f32 = 0.000_1;
 
 pub use open_gpui_ui_core::{
-    SplitterHandleLayout, SplitterHandleState, SplitterHandleTransition,
-    SplitterHandleTransitionKind, SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion,
-    SplitterLayoutScene, SplitterLayoutTransition, SplitterMetrics, SplitterPanelDescriptor,
-    SplitterPanelLayout, SplitterPanelState, SplitterPanelTransition, SplitterPanelTransitionKind,
-    SplitterResizeOutcome, SplitterResizeResult, SplitterState, SplitterTransitionIntent,
+    SplitterHandleLayout, SplitterHandleState, SplitterHitMap, SplitterHitTarget,
+    SplitterJunctionHitRegion, SplitterLayoutScene, SplitterMetrics, SplitterPanelDescriptor,
+    SplitterPanelLayout, SplitterPanelState, SplitterResizeOutcome, SplitterResizeResult,
+    SplitterState,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -33,10 +32,7 @@ struct SplitterRuntime {
 }
 
 impl SplitterRuntime {
-    fn sync(&mut self, state: &SplitterState) -> bool {
-        self.sync_at(state, Instant::now())
-    }
-
+    #[cfg(test)]
     fn sync_at(&mut self, state: &SplitterState, now: Instant) -> bool {
         self.sync_at_with_model(
             state,
@@ -280,6 +276,7 @@ pub struct Splitter {
     orientation: Orientation,
     size: Size,
     disabled: bool,
+    motion_preference: MotionPreference,
     panels: Vec<SplitterPanel>,
 }
 
@@ -294,6 +291,7 @@ impl Splitter {
             orientation: Orientation::Horizontal,
             size: Size::Medium,
             disabled: false,
+            motion_preference: MotionPreference::Animated,
             panels: Vec::new(),
         }
     }
@@ -317,6 +315,12 @@ impl Splitter {
     /// Disables resize handles.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Applies the motion preference for programmatic layout changes.
+    pub fn motion_preference(mut self, motion_preference: MotionPreference) -> Self {
+        self.motion_preference = motion_preference;
         self
     }
 
@@ -348,9 +352,12 @@ impl Sizable for Splitter {
 impl RenderOnce for Splitter {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let base_state = self.state();
+        let motion_model = MotionPreset::committed_layout(self.motion_preference).resolve_model();
         let runtime =
             window.use_keyed_state(self.id.clone(), cx, |_, _| SplitterRuntime::default());
-        let needs_frame = runtime.update(cx, |runtime, _| runtime.sync(&base_state));
+        let needs_frame = runtime.update(cx, |runtime, _| {
+            runtime.sync_at_with_model(&base_state, Instant::now(), motion_model)
+        });
         if needs_frame {
             window.request_animation_frame();
         }
@@ -628,6 +635,38 @@ mod tests {
 
         assert!(fractions_equal(&runtime.state_fractions, &[0.6, 0.4]));
         assert!(fractions_equal(&runtime.panel_fractions, &[0.6, 0.4]));
+        assert!(runtime.transition.is_none());
+    }
+
+    #[test]
+    fn runtime_panel_identity_changes_sync_immediately() {
+        let start = Instant::now();
+        let from = state(0.3, 0.7);
+        let replaced = SplitterState::resolve(
+            "runtime-motion",
+            Orientation::Horizontal,
+            Size::Medium,
+            false,
+            [
+                SplitterPanelDescriptor::new("left", 0.2),
+                SplitterPanelDescriptor::new("center", 0.3),
+                SplitterPanelDescriptor::new("right", 0.5),
+            ],
+        );
+        let mut runtime = SplitterRuntime::default();
+
+        runtime.sync_at(&from, start);
+        assert!(!runtime.sync_at(&replaced, start + Duration::from_millis(16)));
+
+        assert_eq!(
+            runtime.panel_ids,
+            [
+                "left".to_string(),
+                "center".to_string(),
+                "right".to_string()
+            ]
+        );
+        assert!(fractions_equal(&runtime.panel_fractions, &[0.2, 0.3, 0.5]));
         assert!(runtime.transition.is_none());
     }
 

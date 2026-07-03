@@ -106,10 +106,8 @@ pub use crate::sidebar::{
 pub use crate::skeleton::{Skeleton, SkeletonColors, SkeletonMetrics, SkeletonState};
 pub use crate::slider::{Slider, SliderChange, SliderColors, SliderMetrics, SliderState};
 pub use crate::splitter::{
-    Splitter, SplitterHandleState, SplitterHandleTransition, SplitterHandleTransitionKind,
-    SplitterLayoutTransition, SplitterMetrics, SplitterPanel, SplitterPanelDescriptor,
-    SplitterPanelState, SplitterPanelTransition, SplitterPanelTransitionKind, SplitterState,
-    SplitterTransitionIntent,
+    Splitter, SplitterHandleState, SplitterMetrics, SplitterPanel, SplitterPanelDescriptor,
+    SplitterPanelState, SplitterState,
 };
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use crate::table::{
