@@ -146,6 +146,12 @@ verified_by:
   `CommandCenter` provider, refreshes provider results for `alpha`, records provider status, and
   renders the dynamic provider source through a `CommandIndexSnapshot` without moving provider
   ownership into the UI component state model.
+- Done on `feat/command-provider-lifecycle`: provider requests can now carry center-issued
+  `CommandProviderRequestId` values, provider responses can bind to those requests, and
+  `CommandCenter` reports `CommandProviderApplyOutcome::Stale` without mutating the registry when
+  an old async response arrives after a newer query. Request ids are not reused across
+  unregister/re-register cycles. Provider status now carries the producing request id and query for
+  gallery/readout contracts.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default

@@ -381,7 +381,9 @@ verifies selected chips, stable selected values, and snapshot metadata are inspe
 confirms wheel input on the virtualized sample does not move the surrounding card.
 The Components-page command contracts also cover the `registry-dispatch` sample for
 `CommandCenter` shortcut/dispatch projection and the `provider-search` sample for
-`CommandProviderSource` refresh into a rendered `CommandIndexSnapshot`.
+`CommandProviderSource` refresh into a rendered `CommandIndexSnapshot`, including provider request
+id and query metadata. The command crate provider lifecycle tests cover center-issued request ids,
+bound responses, and stale async responses being ignored without mutating registry sources.
 Run the focused proof with:
 
 ```powershell

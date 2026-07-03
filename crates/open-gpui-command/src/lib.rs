@@ -27,8 +27,9 @@ pub use gpui::{
 pub use history::{CommandHistoryEntry, CommandUsageHistory, MemoryCommandHistory};
 pub use menu::{CommandMenuCommand, CommandMenuEntry, CommandMenuSubmenu, CommandMenuTree};
 pub use provider::{
-    CommandProvider, CommandProviderId, CommandProviderRequest, CommandProviderResponse,
-    CommandProviderSource, CommandProviderState, CommandProviderStatus,
+    CommandProvider, CommandProviderApplyOutcome, CommandProviderId, CommandProviderRequest,
+    CommandProviderRequestId, CommandProviderResponse, CommandProviderSource,
+    CommandProviderStaleResponse, CommandProviderState, CommandProviderStatus,
 };
 pub use registry::{
     CommandContribution, CommandDescriptor, CommandRegistry, CommandRegistryError,

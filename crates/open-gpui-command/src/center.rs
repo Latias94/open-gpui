@@ -7,10 +7,12 @@ use open_gpui::{Action, App, Keymap, Window};
 
 use crate::{
     CommandAvailabilityMap, CommandContribution, CommandDispatchOutcome, CommandMenuTree,
-    CommandProjectionDiagnostic, CommandProvider, CommandProviderId, CommandProviderRequest,
-    CommandProviderResponse, CommandProviderSource, CommandProviderStatus, CommandRegistryError,
-    CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection, CommandSourceId,
-    CommandUsageHistory, GpuiCommandActionMap, MemoryCommandHistory, ScopedCommandRegistry,
+    CommandProjectionDiagnostic, CommandProvider, CommandProviderApplyOutcome, CommandProviderId,
+    CommandProviderRequest, CommandProviderRequestId, CommandProviderResponse,
+    CommandProviderSource, CommandProviderStaleResponse, CommandProviderStatus,
+    CommandRegistryError, CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection,
+    CommandSourceId, CommandUsageHistory, GpuiCommandActionMap, MemoryCommandHistory,
+    ScopedCommandRegistry,
 };
 
 /// A registered command source within one command scope.
@@ -89,6 +91,8 @@ pub struct CommandCenter {
     providers: Vec<CommandProviderEntry>,
     provider_sources: BTreeMap<CommandProviderId, Vec<CommandSourceId>>,
     provider_statuses: BTreeMap<CommandProviderId, CommandProviderStatus>,
+    provider_request_counters: BTreeMap<CommandProviderId, u64>,
+    provider_latest_requests: BTreeMap<CommandProviderId, CommandProviderRequest>,
 }
 
 impl CommandCenter {
@@ -103,6 +107,8 @@ impl CommandCenter {
             providers: Vec::new(),
             provider_sources: BTreeMap::new(),
             provider_statuses: BTreeMap::new(),
+            provider_request_counters: BTreeMap::new(),
+            provider_latest_requests: BTreeMap::new(),
         }
     }
 
@@ -220,6 +226,7 @@ impl CommandCenter {
         self.providers
             .retain(|entry| entry.provider_id != provider_id);
         self.provider_statuses.remove(&provider_id);
+        self.provider_latest_requests.remove(&provider_id);
         self.unregister_provider_sources(&provider_id)
     }
 
@@ -242,6 +249,24 @@ impl CommandCenter {
         self.providers.len()
     }
 
+    /// Starts a lifecycle-tracked provider request for app-owned async work.
+    ///
+    /// Bind the eventual response with [`CommandProviderResponse::for_request`] before applying it.
+    /// If a newer request has started for the same provider, the old response is reported as stale
+    /// and does not replace the current provider sources.
+    pub fn begin_provider_request(
+        &mut self,
+        provider_id: impl Into<CommandProviderId>,
+        query: &str,
+    ) -> CommandProviderRequest {
+        let provider_id = provider_id.into();
+        let request_id = self.next_provider_request_id(provider_id.clone());
+        let request = self.provider_request(query).request_id(request_id);
+        self.provider_latest_requests
+            .insert(provider_id, request.clone());
+        request
+    }
+
     /// Refreshes one registered provider for a query and applies its response.
     pub fn refresh_provider(
         &mut self,
@@ -254,9 +279,9 @@ impl CommandCenter {
             .iter()
             .find(|entry| entry.provider_id == provider_id)
             .map(|entry| Arc::clone(&entry.provider))?;
-        let request = self.provider_request(query);
-        let response = provider.provide_commands(&request);
-        Some(self.apply_provider_response(provider_id, response))
+        let request = self.begin_provider_request(provider_id.clone(), query);
+        let response = provider.provide_commands(&request).for_request(&request);
+        Some(self.apply_current_provider_response(provider_id, response))
     }
 
     /// Refreshes all registered providers for a query and applies their responses in order.
@@ -269,11 +294,13 @@ impl CommandCenter {
             .iter()
             .map(|entry| (entry.provider_id.clone(), Arc::clone(&entry.provider)))
             .collect::<Vec<_>>();
-        let request = self.provider_request(query);
         let mut statuses = Vec::with_capacity(providers.len());
         for (provider_id, provider) in providers {
+            let request = self.begin_provider_request(provider_id.clone(), query);
             let response = provider.provide_commands(&request);
-            statuses.push(self.apply_provider_response(provider_id, response)?);
+            statuses.push(
+                self.apply_current_provider_response(provider_id, response.for_request(&request))?,
+            );
         }
         Ok(statuses)
     }
@@ -281,13 +308,46 @@ impl CommandCenter {
     /// Applies an externally produced provider response.
     ///
     /// This is the runtime-neutral async boundary: applications can compute provider results in
-    /// their own task system and apply the latest response when it completes.
+    /// their own task system and apply the latest response when it completes. Responses bound to a
+    /// provider request id are ignored as stale when a newer request has started.
     pub fn apply_provider_response(
         &mut self,
         provider_id: impl Into<CommandProviderId>,
         response: CommandProviderResponse,
-    ) -> Result<CommandProviderStatus, CommandRegistryError> {
+    ) -> Result<CommandProviderApplyOutcome, CommandRegistryError> {
         let provider_id = provider_id.into();
+        if let Some(stale) = self.stale_provider_response(&provider_id, response.request_id_ref()) {
+            return Ok(CommandProviderApplyOutcome::Stale(stale));
+        }
+        self.apply_provider_response_unchecked(provider_id, response)
+            .map(CommandProviderApplyOutcome::Applied)
+    }
+
+    /// Applies an externally produced response for a specific provider request.
+    pub fn apply_provider_response_for_request(
+        &mut self,
+        provider_id: impl Into<CommandProviderId>,
+        request: &CommandProviderRequest,
+        response: CommandProviderResponse,
+    ) -> Result<CommandProviderApplyOutcome, CommandRegistryError> {
+        self.apply_provider_response(provider_id, response.for_request(request))
+    }
+
+    fn apply_current_provider_response(
+        &mut self,
+        provider_id: CommandProviderId,
+        response: CommandProviderResponse,
+    ) -> Result<CommandProviderStatus, CommandRegistryError> {
+        self.apply_provider_response_unchecked(provider_id, response)
+    }
+
+    fn apply_provider_response_unchecked(
+        &mut self,
+        provider_id: CommandProviderId,
+        response: CommandProviderResponse,
+    ) -> Result<CommandProviderStatus, CommandRegistryError> {
+        let request_id = response.request_id_ref();
+        let query = self.provider_response_query(&provider_id, request_id);
         let state = response.state();
         let message = response.message().map(str::to_owned);
         let sources = response.sources_ref().to_vec();
@@ -311,6 +371,8 @@ impl CommandCenter {
             .sum::<usize>();
         let status = CommandProviderStatus::new(
             provider_id.clone(),
+            request_id,
+            query,
             state,
             message,
             sources.len(),
@@ -551,6 +613,49 @@ impl CommandCenter {
         CommandProviderRequest::new(query).active_scopes(self.active_scopes.iter().cloned())
     }
 
+    fn next_provider_request_id(
+        &mut self,
+        provider_id: CommandProviderId,
+    ) -> CommandProviderRequestId {
+        let counter = self
+            .provider_request_counters
+            .entry(provider_id)
+            .or_default();
+        *counter = counter.saturating_add(1);
+        CommandProviderRequestId::new(*counter)
+    }
+
+    fn stale_provider_response(
+        &self,
+        provider_id: &CommandProviderId,
+        response_request_id: Option<CommandProviderRequestId>,
+    ) -> Option<CommandProviderStaleResponse> {
+        let response_request_id = response_request_id?;
+        let current_request_id = self
+            .provider_latest_requests
+            .get(provider_id)
+            .and_then(CommandProviderRequest::request_id_ref);
+        (current_request_id != Some(response_request_id)).then(|| {
+            CommandProviderStaleResponse::new(
+                provider_id.clone(),
+                response_request_id,
+                current_request_id,
+            )
+        })
+    }
+
+    fn provider_response_query(
+        &self,
+        provider_id: &CommandProviderId,
+        response_request_id: Option<CommandProviderRequestId>,
+    ) -> Option<String> {
+        let response_request_id = response_request_id?;
+        self.provider_latest_requests
+            .get(provider_id)
+            .filter(|request| request.request_id_ref() == Some(response_request_id))
+            .map(|request| request.query().to_owned())
+    }
+
     fn unregister_provider_sources(&mut self, provider_id: &CommandProviderId) -> usize {
         let source_ids = self
             .provider_sources
@@ -669,8 +774,8 @@ mod tests {
     use crate::{
         CommandAvailabilityMap, CommandCenter, CommandContribution, CommandDescriptor,
         CommandDispatchOutcome, CommandMenuEntry, CommandProjectionDiagnosticKind,
-        CommandProviderResponse, CommandProviderSource, CommandProviderState,
-        CommandProviderStatus, CommandUsageHistory,
+        CommandProviderApplyOutcome, CommandProviderResponse, CommandProviderSource,
+        CommandProviderState, CommandProviderStatus, CommandUsageHistory,
     };
 
     actions!(center_test_only, [OpenWorkspace, SaveWorkspace]);
@@ -858,6 +963,7 @@ mod tests {
         let mut center = CommandCenter::new("center-v1");
         center.set_active_scopes(["global"]);
         center.register_provider("recent-files", |request: &crate::CommandProviderRequest| {
+            assert!(request.request_id_ref().is_some());
             assert_eq!(request.active_scopes_ref()[0].as_str(), "global");
             CommandProviderResponse::ready().source(CommandProviderSource::new(
                 "global",
@@ -876,6 +982,9 @@ mod tests {
             .refresh_provider("recent-files", "alpha")
             .expect("provider should be registered")
             .unwrap();
+        let first_request_id = status.request_id().expect("refreshes are tracked");
+        assert_eq!(first_request_id.get(), 1);
+        assert_eq!(status.query(), Some("alpha"));
         assert_eq!(status.state(), CommandProviderState::Ready);
         assert_eq!(status.source_count(), 1);
         assert_eq!(status.command_count(), 1);
@@ -887,10 +996,15 @@ mod tests {
         );
         assert!(center.snapshot().descriptor("recent.alpha").is_some());
 
-        center
+        let status = center
             .refresh_provider("recent-files", "beta")
             .expect("provider should still be registered")
             .unwrap();
+        assert_eq!(
+            status.request_id().map(|request_id| request_id.get()),
+            Some(2)
+        );
+        assert_eq!(status.query(), Some("beta"));
         let snapshot = center.snapshot();
         assert!(snapshot.descriptor("recent.alpha").is_none());
         assert_eq!(
@@ -905,7 +1019,7 @@ mod tests {
     fn center_applies_external_provider_response_for_async_boundaries() {
         let mut center = CommandCenter::new("center-v1");
 
-        let status = center
+        let outcome = center
             .apply_provider_response(
                 "async-search",
                 CommandProviderResponse::loading("Searching").source(CommandProviderSource::new(
@@ -917,7 +1031,11 @@ mod tests {
                 )),
             )
             .unwrap();
+        let status = outcome.status().expect("unbound response should apply");
 
+        assert!(outcome.applied());
+        assert_eq!(status.request_id(), None);
+        assert_eq!(status.query(), None);
         assert_eq!(status.state(), CommandProviderState::Loading);
         assert_eq!(status.message(), Some("Searching"));
         assert_eq!(
@@ -928,6 +1046,113 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["async.open"]
         );
+    }
+
+    #[test]
+    fn center_ignores_stale_provider_response_for_old_request() {
+        let mut center = CommandCenter::new("center-v1");
+        let alpha_request = center.begin_provider_request("async-search", "alpha");
+        let alpha_outcome = center
+            .apply_provider_response_for_request(
+                "async-search",
+                &alpha_request,
+                CommandProviderResponse::ready().source(CommandProviderSource::new(
+                    "global",
+                    "async-search-source",
+                    [CommandContribution::new(CommandDescriptor::new(
+                        "async.alpha",
+                        "Async Alpha",
+                    ))],
+                )),
+            )
+            .unwrap();
+        assert!(alpha_outcome.applied());
+        assert!(center.snapshot().descriptor("async.alpha").is_some());
+
+        let beta_request = center.begin_provider_request("async-search", "beta");
+        let stale_outcome = center
+            .apply_provider_response_for_request(
+                "async-search",
+                &alpha_request,
+                CommandProviderResponse::ready().source(CommandProviderSource::new(
+                    "global",
+                    "async-search-source",
+                    [CommandContribution::new(CommandDescriptor::new(
+                        "async.alpha.late",
+                        "Late Async Alpha",
+                    ))],
+                )),
+            )
+            .unwrap();
+
+        let CommandProviderApplyOutcome::Stale(stale) = stale_outcome else {
+            panic!("expected stale response");
+        };
+        assert_eq!(stale.provider_id().as_str(), "async-search");
+        assert_eq!(
+            stale.response_request_id(),
+            alpha_request.request_id_ref().unwrap()
+        );
+        assert_eq!(stale.current_request_id(), beta_request.request_id_ref());
+        assert!(center.snapshot().descriptor("async.alpha").is_some());
+        assert!(center.snapshot().descriptor("async.alpha.late").is_none());
+
+        let beta_outcome = center
+            .apply_provider_response_for_request(
+                "async-search",
+                &beta_request,
+                CommandProviderResponse::ready().source(CommandProviderSource::new(
+                    "global",
+                    "async-search-source",
+                    [CommandContribution::new(CommandDescriptor::new(
+                        "async.beta",
+                        "Async Beta",
+                    ))],
+                )),
+            )
+            .unwrap();
+        let beta_status = beta_outcome
+            .status()
+            .expect("current response should apply");
+        assert_eq!(beta_status.request_id(), beta_request.request_id_ref());
+        assert_eq!(beta_status.query(), Some("beta"));
+        assert!(center.snapshot().descriptor("async.alpha").is_none());
+        assert!(center.snapshot().descriptor("async.beta").is_some());
+    }
+
+    #[test]
+    fn center_provider_request_ids_do_not_reuse_after_unregister() {
+        let mut center = CommandCenter::new("center-v1");
+        let first_request = center.begin_provider_request("dynamic", "alpha");
+
+        center.unregister_provider_id("dynamic");
+        let second_request = center.begin_provider_request("dynamic", "beta");
+
+        assert_eq!(
+            second_request
+                .request_id_ref()
+                .map(|request_id| request_id.get()),
+            first_request
+                .request_id_ref()
+                .map(|request_id| request_id.get() + 1)
+        );
+        let stale_outcome = center
+            .apply_provider_response_for_request(
+                "dynamic",
+                &first_request,
+                CommandProviderResponse::ready().source(CommandProviderSource::new(
+                    "global",
+                    "dynamic-source",
+                    [CommandContribution::new(CommandDescriptor::new(
+                        "dynamic.old",
+                        "Old Dynamic",
+                    ))],
+                )),
+            )
+            .unwrap();
+
+        assert!(stale_outcome.stale());
+        assert!(center.snapshot().descriptor("dynamic.old").is_none());
     }
 
     #[test]
@@ -973,6 +1198,8 @@ mod tests {
                     ))],
                 )),
             )
+            .unwrap()
+            .into_status()
             .unwrap();
 
         let error = center
