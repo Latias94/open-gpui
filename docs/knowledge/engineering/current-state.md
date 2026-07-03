@@ -187,6 +187,12 @@ verified_by:
   provider requests, and app-level keymap shortcut projection consume the same stack, while
   focused-window projection remains delegated to GPUI window precedence. The gallery `context-stack`
   command sample proves focused scope descriptor override plus context-aware shortcut projection.
+- Done on `feat/command-source-handles`: `open_gpui_command` now exposes
+  `CommandSourceHandle` and `CommandProviderHandle` as the recommended explicit lifecycle tokens
+  for plugin-like registrations. The older `CommandSourceRegistration` and
+  `CommandProviderRegistration` names remain compatibility aliases. Handles can unregister
+  themselves against an app-owned `CommandCenter`, while center methods still expose borrowed
+  unregister entry points for hosts that keep handles in registries.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default
