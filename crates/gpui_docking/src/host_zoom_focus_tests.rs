@@ -300,10 +300,7 @@ fn host_zoom_command_samples_egress_and_focus_ring_transition(cx: &mut TestAppCo
             .pane_for_node(left_tabs)
             .expect("left pane should be in the previous scene")
             .bounds;
-        assert_eq!(
-            leaving.content_bounds,
-            previous_left_bounds
-        );
+        assert_eq!(leaving.content_bounds, previous_left_bounds);
         assert!(
             leaving.visible_bounds.size.width > px(0.0)
                 && leaving.visible_bounds.size.width < previous_left_bounds.size.width,

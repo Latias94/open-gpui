@@ -1,7 +1,7 @@
 ---
 type: Work Progress
 title: UI motion spring foundation planning
-status: active
+status: completed
 timestamp: 2026-07-03T23:40:00+08:00
 git_branch: feat/ui-motion-spring-foundation
 related_plan: docs/plans/2026-07-03-004-refactor-ui-motion-spring-foundation-plan.md
@@ -19,9 +19,10 @@ tags:
 
 # Summary
 
-`docs/plans/2026-07-03-004-refactor-ui-motion-spring-foundation-plan.md` is the active
-implementation plan for the next Open GPUI motion layer. The plan extends the ADR 0015 timeline
-runtime with a narrow renderer-neutral spring/projection/controller/policy foundation.
+`docs/plans/2026-07-03-004-refactor-ui-motion-spring-foundation-plan.md` was the implementation
+plan for the next Open GPUI motion layer. The plan extended the ADR 0015 timeline runtime with a
+narrow renderer-neutral spring/projection/controller/policy foundation and has now shipped on
+`feat/ui-motion-spring-foundation`.
 
 # Boundary
 
@@ -37,7 +38,7 @@ runtime with a narrow renderer-neutral spring/projection/controller/policy found
 
 # Implementation Notes
 
-The work should land in dependency order:
+The work landed in dependency order:
 
 1. Record the ADR 0016 boundary.
 2. Add deterministic spring sampling and a shared motion contract in `ui_core`.
@@ -51,6 +52,11 @@ The work should land in dependency order:
 
 This plan still does not introduce native compositor backends, public animation builders, keyframes,
 decorative motion, DOM measurement, CSS strings, or pixel-perfect reference matching.
+
+# Completion
+
+See [implementation progress](2026-07-03-ui-motion-spring-foundation.md) and
+[verification evidence](../verification/ui-motion-spring-foundation-20260703.md).
 
 # Citations
 

@@ -6,6 +6,12 @@ status: active
 
 # Log
 
+- 2026-07-03: Implemented the UI motion spring foundation on
+  `feat/ui-motion-spring-foundation`. `open_gpui_ui_core` now owns deterministic spring sampling,
+  layout projection data, scalar motion controllers, and motion policy validation; Splitter uses
+  shared scalar motion for programmatic changes while pointer drag stays direct; docking transition
+  progress uses a scalar motion track and projection-derived pane/divider bounds while current
+  facts remain release authority.
 - 2026-07-03: Started the UI motion spring foundation on
   `feat/ui-motion-spring-foundation`. ADR 0016 accepts a narrow renderer-neutral spring,
   projection, grouped-controller, and motion policy primitive in `open_gpui_ui_core` while keeping
