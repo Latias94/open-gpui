@@ -17,8 +17,8 @@ pub use crate::{
     grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d},
     motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec},
     motion_controller::{
-        MotionFrameDemand, MotionScalarController, MotionScalarControllerSample, MotionScalarTrack,
-        MotionScalarTrackSample,
+        MotionFrameDemand, MotionFrameReason, MotionScalarController, MotionScalarControllerSample,
+        MotionScalarTrack, MotionScalarTrackSample,
     },
     motion_policy::{
         MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
@@ -34,7 +34,6 @@ pub use crate::{
         MotionModel, MotionPreset, MotionSpring, MotionSpringPhysics, MotionSpringPreset,
         MotionSpringSample, MotionSpringSpec,
     },
-    motion_value::{MotionValue, MotionValueRunOwner, MotionValueRunReplacement},
     overlay::{
         DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
         FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,

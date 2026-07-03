@@ -226,6 +226,7 @@ fn transition_executor_reduces_or_schedules_without_changing_final_scene(cx: &mu
         .update(cx, |host, _| host.clear_transition_execution_for_test())
         .expect("animated transition should be stored");
     assert_eq!(stored.plan.final_scene, next);
+    assert!(stored.policy_report.is_ok());
     assert!(matches!(
         stored.model,
         MotionModel::Spring(spec)

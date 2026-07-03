@@ -25,12 +25,14 @@ impl MotionValueRunOwner {
 pub enum MotionValueRunReplacement {
     /// No previous run owner existed.
     Started,
+    /// The same run owner was already active.
+    AlreadyActive,
     /// A previous run owner was replaced and should be treated as cancelled.
     Replaced(MotionValueRunOwner),
 }
 
 /// Renderer-neutral scalar value with deterministic previous-frame velocity.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MotionValue {
     current: f32,
     previous: f32,
@@ -57,27 +59,27 @@ impl MotionValue {
     }
 
     /// Returns the current scalar value.
-    pub const fn current(self) -> f32 {
+    pub const fn current(&self) -> f32 {
         self.current
     }
 
     /// Returns the value before the latest set or jump.
-    pub const fn previous(self) -> f32 {
+    pub const fn previous(&self) -> f32 {
         self.previous
     }
 
     /// Returns the value captured at the last explicit frame boundary.
-    pub const fn previous_frame(self) -> f32 {
+    pub const fn previous_frame(&self) -> f32 {
         self.previous_frame
     }
 
     /// Returns the controller time of the latest value update.
-    pub const fn updated_at(self) -> Duration {
+    pub const fn updated_at(&self) -> Duration {
         self.updated_at
     }
 
     /// Returns the active run owner, if one exists.
-    pub const fn active_owner(self) -> Option<MotionValueRunOwner> {
+    pub const fn active_owner(&self) -> Option<MotionValueRunOwner> {
         self.active_owner
     }
 
@@ -115,6 +117,7 @@ impl MotionValue {
     /// Starts or replaces the active run owner.
     pub fn start_run(&mut self, owner: MotionValueRunOwner) -> MotionValueRunReplacement {
         match self.active_owner.replace(owner) {
+            Some(previous) if previous == owner => MotionValueRunReplacement::AlreadyActive,
             Some(previous) if previous != owner => MotionValueRunReplacement::Replaced(previous),
             _ => MotionValueRunReplacement::Started,
         }
@@ -136,7 +139,7 @@ impl MotionValue {
     }
 
     /// Returns deterministic previous-frame velocity at the provided controller time.
-    pub fn velocity_at(self, now: Duration) -> f32 {
+    pub fn velocity_at(&self, now: Duration) -> f32 {
         let elapsed = now.saturating_sub(self.previous_frame_at);
         if elapsed.is_zero() || elapsed > self.velocity_stale_after {
             return 0.0;
@@ -200,6 +203,10 @@ mod tests {
         let second = MotionValueRunOwner::new(2);
 
         assert_eq!(value.start_run(first), MotionValueRunReplacement::Started);
+        assert_eq!(
+            value.start_run(first),
+            MotionValueRunReplacement::AlreadyActive
+        );
         assert_eq!(
             value.start_run(second),
             MotionValueRunReplacement::Replaced(first)

@@ -11,9 +11,10 @@ use crate::{
 };
 use open_gpui::{Bounds, Pixels, Window, point, size};
 use open_gpui_ui_core::{
-    MotionModel, MotionProjection, MotionScalarTrack, MotionSnapshot, MotionSpec,
-    MotionSpringSample, motion_source_rect, preferred_motion_edge, retarget_motion_snapshots,
-    reveal_rect_from_edge, ui_point, ui_rect, ui_size,
+    MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPolicyReport, MotionProjection,
+    MotionScalarTrack, MotionSnapshot, MotionSpec, MotionSpringSample, motion_source_rect,
+    preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge, ui_point, ui_rect,
+    ui_size, validate_motion_policy,
 };
 use std::time::{Duration, Instant};
 
@@ -21,6 +22,7 @@ use std::time::{Duration, Instant};
 pub(crate) struct DockTransitionExecution {
     pub(crate) plan: DockTransitionPlan,
     pub(crate) model: MotionModel,
+    pub(crate) policy_report: MotionPolicyReport,
     pub(crate) state: DockTransitionExecutionState,
     track: MotionScalarTrack,
     started_at: Instant,
@@ -116,6 +118,16 @@ impl DockTransitionExecutor {
         model: MotionModel,
         _window: Option<&Window>,
     ) -> &DockTransitionExecution {
+        let policy_report = validate_motion_policy(
+            MotionPolicyInput::new(MotionPolicyContext::Continuity, model)
+                .with_spatial_motion(!plan.is_immediate() && !model.is_immediate())
+                .with_reduced_motion_final_state(true),
+        );
+        let model = if policy_report.is_ok() {
+            model
+        } else {
+            MotionModel::timeline(MotionSpec::immediate())
+        };
         let state = if plan.is_immediate() || model.is_immediate() {
             DockTransitionExecutionState::Immediate
         } else {
@@ -134,6 +146,7 @@ impl DockTransitionExecutor {
         self.current = Some(DockTransitionExecution {
             plan,
             model,
+            policy_report,
             state,
             track: MotionScalarTrack::start(model, 0.0, 1.0, 0.0, Duration::ZERO),
             started_at: Instant::now(),

@@ -45,8 +45,8 @@ pub use geometry::{
 pub use grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d};
 pub use motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
 pub use motion_controller::{
-    MotionFrameDemand, MotionScalarController, MotionScalarControllerSample, MotionScalarTrack,
-    MotionScalarTrackSample,
+    MotionFrameDemand, MotionFrameReason, MotionScalarController, MotionScalarControllerSample,
+    MotionScalarTrack, MotionScalarTrackSample,
 };
 pub use motion_policy::{
     MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
@@ -62,7 +62,6 @@ pub use motion_spring::{
     MotionModel, MotionPreset, MotionSpring, MotionSpringPhysics, MotionSpringPreset,
     MotionSpringSample, MotionSpringSpec,
 };
-pub use motion_value::{MotionValue, MotionValueRunOwner, MotionValueRunReplacement};
 pub use overlay::{
     DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
     FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,

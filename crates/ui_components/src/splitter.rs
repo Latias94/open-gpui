@@ -8,7 +8,8 @@ use open_gpui::{
     relative, rgb,
 };
 use open_gpui_ui_core::{
-    MotionModel, MotionPreference, MotionPreset, MotionScalarController, Orientation, Sizable, Size,
+    MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPreference, MotionPreset,
+    MotionScalarController, Orientation, Sizable, Size, validate_motion_policy,
 };
 use std::time::{Duration, Instant};
 
@@ -93,7 +94,12 @@ impl SplitterRuntime {
             self.transition = None;
             return false;
         }
-        if model.is_immediate() {
+        let policy_report = validate_motion_policy(
+            MotionPolicyInput::new(MotionPolicyContext::CommittedLayout, model)
+                .with_spatial_motion(!model.is_immediate())
+                .with_reduced_motion_final_state(true),
+        );
+        if model.is_immediate() || !policy_report.is_ok() {
             self.state_fractions = target_fractions.clone();
             self.panel_fractions = target_fractions;
             self.transition = None;
@@ -652,6 +658,26 @@ mod tests {
             transition.controller.tracks()[0].1.model(),
             MotionModel::Timeline(model_spec) if model_spec == spec
         ));
+    }
+
+    #[test]
+    fn runtime_policy_rejects_over_budget_programmatic_timeline() {
+        let start = Instant::now();
+        let from = state(0.3, 0.7);
+        let to = state(0.6, 0.4);
+        let model = MotionModel::timeline(MotionSpec::new(
+            MotionPreference::Animated,
+            MotionDuration::Custom(Duration::from_millis(420)),
+            MotionEasing::Linear,
+        ));
+        let mut runtime = SplitterRuntime::default();
+
+        runtime.sync_at(&from, start);
+        assert!(!runtime.sync_at_with_model(&to, start, model));
+
+        assert!(fractions_equal(&runtime.state_fractions, &[0.6, 0.4]));
+        assert!(fractions_equal(&runtime.panel_fractions, &[0.6, 0.4]));
+        assert!(runtime.transition.is_none());
     }
 
     #[test]
