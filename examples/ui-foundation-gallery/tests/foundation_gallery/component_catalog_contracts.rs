@@ -680,6 +680,13 @@ fn components_page_samples_expose_component_metadata() {
         .as_ref()
         .expect("provider sample records provider status");
     assert_eq!(provider_status.provider_id().as_str(), "recent-provider");
+    assert_eq!(
+        provider_status
+            .request_id()
+            .map(|request_id| request_id.get()),
+        Some(1)
+    );
+    assert_eq!(provider_status.query(), Some("alpha"));
     assert_eq!(provider_status.state(), CommandProviderState::Ready);
     assert_eq!(provider_status.source_count(), 1);
     assert_eq!(provider_status.command_count(), 2);

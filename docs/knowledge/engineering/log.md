@@ -6,6 +6,13 @@ status: active
 
 # Log
 
+- 2026-07-03: Added provider lifecycle request tracking on
+  `feat/command-provider-lifecycle`. `CommandCenter` now issues per-provider
+  `CommandProviderRequestId` values through `begin_provider_request` and synchronous
+  `refresh_provider`; responses can bind to a request with `for_request`; applying an old bound
+  response after a newer request returns `CommandProviderApplyOutcome::Stale` without replacing
+  registry sources. Provider status now records request id and query, and the gallery
+  `provider-search` sample/readout/tests expose that metadata.
 - 2026-07-03: Added the provider-backed command gallery proof on
   `feat/command-provider-gallery`. The Components page now has a sixth command sample,
   `provider-search`, which registers a query-dependent `CommandCenter` provider, refreshes it for

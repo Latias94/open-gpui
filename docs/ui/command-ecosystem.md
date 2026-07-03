@@ -96,7 +96,8 @@ their own async task system.
 
 ```rust
 use open_gpui_command::{
-    CommandContribution, CommandDescriptor, CommandProviderResponse, CommandProviderSource,
+    CommandContribution, CommandDescriptor, CommandProviderApplyOutcome, CommandProviderResponse,
+    CommandProviderSource,
 };
 
 let registration = center.register_provider("recent-files", |request| {
@@ -120,17 +121,27 @@ For asynchronous providers, run the work in application code and apply the lates
 finishes:
 
 ```rust
+let request = center.begin_provider_request("search-index", "readme");
 let response = CommandProviderResponse::loading("Searching").source(CommandProviderSource::new(
     "workspace",
     "search-index-source",
     search_results,
-));
-center.apply_provider_response("search-index", response)?;
+)).for_request(&request);
+
+match center.apply_provider_response_for_request("search-index", &request, response)? {
+    CommandProviderApplyOutcome::Applied(status) => {
+        // Render the status or project the updated snapshot.
+    }
+    CommandProviderApplyOutcome::Stale(_) => {
+        // A newer query started first; ignore this response.
+    }
+}
 ```
 
 Applying a provider response atomically replaces that provider's previous dynamic sources. If a new
 response has duplicate command ids for a scope, the existing registry state is preserved and the
-error is returned.
+error is returned. Responses bound to a center-issued request id are ignored as stale when a newer
+request has already started for the same provider.
 
 ## Plugin-Like Contributions
 

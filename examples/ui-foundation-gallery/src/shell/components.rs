@@ -1256,9 +1256,16 @@ pub(crate) fn component_command_samples_section(
 
                     let title = label.clone();
                     let provider_status_summary = sample.provider_status.as_ref().map(|status| {
+                        let request_id = status
+                            .request_id()
+                            .map(|request_id| request_id.to_string())
+                            .unwrap_or_else(|| "untracked".to_string());
+                        let query = status.query().unwrap_or("none");
                         format!(
-                            "provider {} / {:?} / {} sources / {} commands",
+                            "provider {} / request {} / query {} / {:?} / {} sources / {} commands",
                             status.provider_id().as_str(),
+                            request_id,
+                            query,
                             status.state(),
                             status.source_count(),
                             status.command_count()
