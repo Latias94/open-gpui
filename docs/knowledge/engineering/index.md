@@ -8,6 +8,8 @@
 * [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](../../adr/0014-remove-native-ui-hybrid-registry.md) - Current decision removing the generated registry manifest, scaffold recipes, artifacts, and scan command.
 * [ADR 0013: Open GPUI Native UI Hybrid Registry](../../adr/0013-open-gpui-native-ui-hybrid-registry.md) - Superseded decision for the removed hybrid registry experiment.
 * [ADR 0015: UI Motion Runtime Foundation](../../adr/0015-ui-motion-runtime-foundation.md) - Current renderer-neutral motion timeline and retarget boundary for Splitter and docking.
+* [ADR 0016: UI Motion Spring Foundation](../../adr/0016-ui-motion-spring-foundation.md) - Accepted renderer-neutral spring, projection, controller, and motion policy boundary.
+* [UI motion spring foundation planning](progress/2026-07-03-ui-motion-spring-foundation-plan.md) - Active implementation boundary for adding spring/projection primitives without compositor or public animation APIs.
 * [Native UI framework design research handoff](sessions/2026-07-02-native-ui-framework-design-research-handoff.md) - Handoff for the 28-item native UI framework design research report and next architecture step.
 * [Native UI framework research report verification](verification/native-ui-framework-research-report-20260702.md) - Verification evidence for the generated research report and JSON field coverage.
 * [Open GPUI command ecosystem U1/U2](progress/2026-07-03-open-gpui-command-ecosystem-u1-u2.md) - Initial command registry and command palette snapshot projection slice.

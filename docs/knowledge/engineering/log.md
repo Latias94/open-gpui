@@ -6,6 +6,11 @@ status: active
 
 # Log
 
+- 2026-07-03: Started the UI motion spring foundation on
+  `feat/ui-motion-spring-foundation`. ADR 0016 accepts a narrow renderer-neutral spring,
+  projection, grouped-controller, and motion policy primitive in `open_gpui_ui_core` while keeping
+  GPUI frame requests, compositor backends, public animation builders, docking release authority,
+  and pointer-coupled interactions out of the shared core.
 - 2026-07-03: Added the command keybinding registry on `feat/command-keybinding-registry`.
   `CommandKeyBindingRegistry` lets apps/plugins register command-id keyed shortcut dictionaries and
   project valid entries into GPUI `KeyBinding` values through `CommandCenter`. Invalid entries now
