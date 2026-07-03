@@ -751,6 +751,7 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     let virtualized = &commands[2].state;
     let indexed = &commands[3].state;
     let registry = &commands[4].state;
+    let provider = &commands[5].state;
 
     assert_eq!(framework.open_mode(), ComboboxOpenMode::Controlled);
     assert!(framework.open());
@@ -830,6 +831,44 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     assert_eq!(registry.groups()[0].label(), "Workspace");
     assert_eq!(registry.items()[0].shortcut(), Some("ctrl-shift-P"));
     assert_eq!(registry.items()[1].shortcut(), Some("ctrl-S"));
+
+    let provider_status = commands[5]
+        .provider_status
+        .as_ref()
+        .expect("provider sample records provider status");
+    assert_eq!(provider_status.provider_id().as_str(), "recent-provider");
+    assert_eq!(provider_status.state(), CommandProviderState::Ready);
+    assert_eq!(provider_status.source_count(), 1);
+    assert_eq!(provider_status.command_count(), 2);
+    assert_eq!(
+        provider.index_revision(),
+        Some("gallery-provider-center-v1")
+    );
+    assert_eq!(
+        provider.index_mode(),
+        CommandIndexSnapshotMode::PreRankedFilter
+    );
+    assert_eq!(provider.query(), "alpha");
+    assert_eq!(provider.selected_value(), Some("provider.open.alpha"));
+    assert_eq!(provider.active_value(), Some("provider.open.alpha"));
+    assert_eq!(provider.filtered_item_count(), 2);
+    assert_eq!(provider.groups()[0].label(), "Provider");
+    assert_eq!(
+        provider
+            .group_items(0)
+            .map(|item| (item.value().to_owned(), item.label().to_owned()))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "provider.open.alpha".to_string(),
+                "Open alpha from provider".to_string()
+            ),
+            (
+                "provider.reveal.alpha".to_string(),
+                "Reveal alpha provider result".to_string()
+            ),
+        ]
+    );
 }
 
 #[test]

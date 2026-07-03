@@ -379,6 +379,9 @@ boundaries, and `table/behavior/` owns counts, columns, header, rows, and tree s
 The focused gallery Command smoke renders ranked, multi-select, virtualized, and indexed/loading samples in focused family mode,
 verifies selected chips, stable selected values, and snapshot metadata are inspectable, and
 confirms wheel input on the virtualized sample does not move the surrounding card.
+The Components-page command contracts also cover the `registry-dispatch` sample for
+`CommandCenter` shortcut/dispatch projection and the `provider-search` sample for
+`CommandProviderSource` refresh into a rendered `CommandIndexSnapshot`.
 Run the focused proof with:
 
 ```powershell

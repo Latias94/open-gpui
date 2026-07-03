@@ -607,7 +607,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(comboboxes[2].state.disabled());
     assert!(!comboboxes[2].state.open());
 
-    assert_eq!(commands.len(), 5);
+    assert_eq!(commands.len(), 6);
     assert_eq!(commands[0].id, "ranked-search");
     assert_eq!(commands[0].state.open_mode(), CommandOpenMode::Controlled);
     assert!(commands[0].state.loading().is_none());
@@ -665,6 +665,34 @@ fn components_page_samples_expose_component_metadata() {
             .next()
             .and_then(|item| item.shortcut()),
         Some("ctrl-shift-P")
+    );
+    assert_eq!(commands[5].id, "provider-search");
+    assert_eq!(
+        commands[5].state.index_revision(),
+        Some("gallery-provider-center-v1")
+    );
+    assert_eq!(
+        commands[5].state.index_mode(),
+        CommandIndexSnapshotMode::PreRankedFilter
+    );
+    let provider_status = commands[5]
+        .provider_status
+        .as_ref()
+        .expect("provider sample records provider status");
+    assert_eq!(provider_status.provider_id().as_str(), "recent-provider");
+    assert_eq!(provider_status.state(), CommandProviderState::Ready);
+    assert_eq!(provider_status.source_count(), 1);
+    assert_eq!(provider_status.command_count(), 2);
+    assert_eq!(commands[5].state.query(), "alpha");
+    assert_eq!(commands[5].state.filtered_item_count(), 2);
+    assert_eq!(commands[5].state.groups()[0].label(), "Provider");
+    assert_eq!(
+        commands[5]
+            .state
+            .group_items(0)
+            .next()
+            .map(|item| item.value()),
+        Some("provider.open.alpha")
     );
 
     assert_eq!(labels.len(), 4);

@@ -141,6 +141,11 @@ verified_by:
   callbacks, refresh providers by query, apply externally produced async responses, atomically
   replace provider-owned dynamic sources, and unregister provider sources without affecting static
   command registrations.
+- Done on `feat/command-provider-gallery`: the foundation gallery now has a `provider-search`
+  command sample appended after `registry-dispatch`. It registers a query-dependent
+  `CommandCenter` provider, refreshes provider results for `alpha`, records provider status, and
+  renders the dynamic provider source through a `CommandIndexSnapshot` without moving provider
+  ownership into the UI component state model.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default
