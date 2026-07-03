@@ -55,10 +55,11 @@ and plugin-like command metadata contribution.
 - `CommandIndexSnapshot::from_registry_snapshot` turns registry metadata into searchable palette
   rows.
 - `CommandPaletteProjection` adapts a `CommandCenter` query projection into a UI-ready command
-  snapshot, provider statuses, and shortcut diagnostics.
+  snapshot, provider statuses, shortcut diagnostics, and `CommandStatusItem` rows. Failed
+  providers become error status rows; shortcut/action/keymap drift becomes warning rows.
 - `CommandProviderPaletteProjection` adapts a provider refresh projection into a UI-ready command
-  snapshot, loading state, and provider-status readout without moving UI semantics into
-  `open_gpui_command`.
+  snapshot, loading state, provider-status readout, and failed-provider status rows without moving
+  UI semantics into `open_gpui_command`.
 
 The split is intentional: `open_gpui_command` owns reusable command domain contracts, GPUI remains
 the runtime authority, and UI components only render projections.
@@ -296,6 +297,10 @@ let update = palette_controller.set_query_for_keymap(&mut center, "readme", &key
 let command = Command::new("workspace-palette", "Workspace commands")
     .palette_projection(update.palette_projection());
 ```
+
+`Command::palette_projection` and `Command::provider_refresh_projection` copy status rows into the
+component state, so app shells do not need to rebuild provider-error or shortcut-diagnostic UI for
+the common palette case. Apps can still add their own rows with `status_item` or `status_items`.
 
 Palette query history stays in `CommandCenter`, but the controller owns the per-surface navigation
 prefix. Record accepted queries through the center, seed the controller with the user's current

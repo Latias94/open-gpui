@@ -8,7 +8,7 @@ use open_gpui_command::{
     CommandCenter, CommandDescriptor, CommandProviderId, CommandProviderRefreshController,
     CommandProviderRefreshProjection, CommandProviderRequest, CommandProviderResponse,
     CommandProviderState, CommandProviderStatus, CommandRegistryError, CommandRegistrySnapshot,
-    CommandShortcutDiagnostic,
+    CommandShortcutDiagnostic, CommandShortcutDiagnosticKind,
 };
 use open_gpui_ui_core::Role;
 
@@ -111,6 +111,69 @@ impl CommandLoadingState {
     }
 }
 
+/// Semantic intent for a command palette status item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandStatusIntent {
+    /// Informational command-palette metadata.
+    Info,
+    /// Recoverable warning or diagnostic metadata.
+    Warning,
+    /// Provider or projection error metadata.
+    Error,
+}
+
+/// UI-ready command palette status item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandStatusItem {
+    intent: CommandStatusIntent,
+    message: String,
+}
+
+impl CommandStatusItem {
+    /// Creates a command status item.
+    pub fn new(intent: CommandStatusIntent, message: impl Into<String>) -> Self {
+        Self {
+            intent,
+            message: message.into(),
+        }
+    }
+
+    /// Creates an informational status item.
+    pub fn info(message: impl Into<String>) -> Self {
+        Self::new(CommandStatusIntent::Info, message)
+    }
+
+    /// Creates a warning status item.
+    pub fn warning(message: impl Into<String>) -> Self {
+        Self::new(CommandStatusIntent::Warning, message)
+    }
+
+    /// Creates an error status item.
+    pub fn error(message: impl Into<String>) -> Self {
+        Self::new(CommandStatusIntent::Error, message)
+    }
+
+    /// Returns the item intent.
+    pub const fn intent(&self) -> CommandStatusIntent {
+        self.intent
+    }
+
+    /// Returns display message text.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Returns whether this item carries an empty message.
+    pub fn is_empty(&self) -> bool {
+        self.message.trim().is_empty()
+    }
+
+    /// Returns status item accessibility role.
+    pub const fn role(&self) -> Role {
+        Role::Label
+    }
+}
+
 const DEFAULT_PROVIDER_LOADING_MESSAGE: &str = "Loading commands";
 
 /// UI-ready projection for an app-owned [`CommandCenter`] command palette.
@@ -123,6 +186,7 @@ pub struct CommandPaletteProjection {
     query: String,
     provider_statuses: Vec<CommandProviderStatus>,
     shortcut_diagnostics: Vec<CommandShortcutDiagnostic>,
+    status_items: Vec<CommandStatusItem>,
     index_snapshot: CommandIndexSnapshot,
 }
 
@@ -164,6 +228,9 @@ impl CommandPaletteProjection {
         shortcut_diagnostics: impl IntoIterator<Item = CommandShortcutDiagnostic>,
     ) -> Self {
         let provider_statuses = provider_statuses.into_iter().collect::<Vec<_>>();
+        let shortcut_diagnostics = shortcut_diagnostics.into_iter().collect::<Vec<_>>();
+        let status_items =
+            command_status_items_from_projection(&provider_statuses, &shortcut_diagnostics);
         let mut index_snapshot = CommandIndexSnapshot::from_registry_snapshot(&snapshot)
             .mode(CommandIndexSnapshotMode::PreFiltered);
 
@@ -177,7 +244,8 @@ impl CommandPaletteProjection {
         Self {
             query,
             provider_statuses,
-            shortcut_diagnostics: shortcut_diagnostics.into_iter().collect(),
+            shortcut_diagnostics,
+            status_items,
             index_snapshot,
         }
     }
@@ -200,6 +268,26 @@ impl CommandPaletteProjection {
     /// Returns shortcut/action/keymap diagnostics for the projected command center.
     pub fn shortcut_diagnostics(&self) -> &[CommandShortcutDiagnostic] {
         &self.shortcut_diagnostics
+    }
+
+    /// Returns UI-ready provider and shortcut diagnostic status items.
+    pub fn status_items(&self) -> &[CommandStatusItem] {
+        &self.status_items
+    }
+
+    /// Returns whether provider or shortcut diagnostics should be displayed.
+    pub fn has_status_items(&self) -> bool {
+        !self.status_items.is_empty()
+    }
+
+    /// Returns the number of warning status items.
+    pub fn status_warning_count(&self) -> usize {
+        count_command_status_items(&self.status_items, CommandStatusIntent::Warning)
+    }
+
+    /// Returns the number of error status items.
+    pub fn status_error_count(&self) -> usize {
+        count_command_status_items(&self.status_items, CommandStatusIntent::Error)
     }
 
     /// Returns the UI command index snapshot.
@@ -703,6 +791,7 @@ impl CommandPaletteControllerUpdate {
 pub struct CommandProviderPaletteProjection {
     query: String,
     provider_status: Option<CommandProviderStatus>,
+    status_items: Vec<CommandStatusItem>,
     index_snapshot: CommandIndexSnapshot,
 }
 
@@ -710,6 +799,11 @@ impl CommandProviderPaletteProjection {
     /// Creates a UI command palette projection from a runtime-neutral provider refresh projection.
     pub fn from_refresh_projection(projection: &CommandProviderRefreshProjection) -> Self {
         let provider_status = projection.provider_status().cloned();
+        let status_items = provider_status
+            .as_ref()
+            .into_iter()
+            .filter_map(command_status_item_from_provider_status)
+            .collect::<Vec<_>>();
         let mut index_snapshot =
             CommandIndexSnapshot::from_registry_snapshot(projection.snapshot())
                 .mode(CommandIndexSnapshotMode::PreFiltered);
@@ -724,6 +818,7 @@ impl CommandProviderPaletteProjection {
         Self {
             query: projection.query().to_owned(),
             provider_status,
+            status_items,
             index_snapshot,
         }
     }
@@ -748,6 +843,21 @@ impl CommandProviderPaletteProjection {
         self.index_snapshot.loading_state()
     }
 
+    /// Returns UI-ready provider status items.
+    pub fn status_items(&self) -> &[CommandStatusItem] {
+        &self.status_items
+    }
+
+    /// Returns whether provider status should be displayed.
+    pub fn has_status_items(&self) -> bool {
+        !self.status_items.is_empty()
+    }
+
+    /// Returns the number of error status items.
+    pub fn status_error_count(&self) -> usize {
+        count_command_status_items(&self.status_items, CommandStatusIntent::Error)
+    }
+
     /// Consumes the projection and returns the UI command index snapshot.
     pub fn into_index_snapshot(self) -> CommandIndexSnapshot {
         self.index_snapshot
@@ -763,6 +873,78 @@ impl From<&CommandProviderRefreshProjection> for CommandProviderPaletteProjectio
     fn from(projection: &CommandProviderRefreshProjection) -> Self {
         Self::from_refresh_projection(projection)
     }
+}
+
+fn command_status_items_from_projection(
+    provider_statuses: &[CommandProviderStatus],
+    shortcut_diagnostics: &[CommandShortcutDiagnostic],
+) -> Vec<CommandStatusItem> {
+    provider_statuses
+        .iter()
+        .filter_map(command_status_item_from_provider_status)
+        .chain(
+            shortcut_diagnostics
+                .iter()
+                .map(command_status_item_from_shortcut_diagnostic),
+        )
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn command_status_item_from_provider_status(
+    status: &CommandProviderStatus,
+) -> Option<CommandStatusItem> {
+    (status.state() == CommandProviderState::Failed).then(|| {
+        let message = status
+            .message()
+            .unwrap_or("Provider failed to load commands");
+        CommandStatusItem::error(format!(
+            "Provider {} failed: {}",
+            status.provider_id().as_str(),
+            message
+        ))
+    })
+}
+
+fn command_status_item_from_shortcut_diagnostic(
+    diagnostic: &CommandShortcutDiagnostic,
+) -> CommandStatusItem {
+    let message = match diagnostic.kind() {
+        CommandShortcutDiagnosticKind::MissingAction => {
+            format!(
+                "Command {} has no registered action",
+                diagnostic.command_id().unwrap_or("unknown")
+            )
+        }
+        CommandShortcutDiagnosticKind::OrphanAction => {
+            format!(
+                "Command {} is not present for registered action {}",
+                diagnostic.command_id().unwrap_or("unknown"),
+                diagnostic.action_name().unwrap_or("unknown")
+            )
+        }
+        CommandShortcutDiagnosticKind::MissingShortcut => {
+            format!(
+                "Command {} has no projected shortcut",
+                diagnostic.command_id().unwrap_or("unknown")
+            )
+        }
+        CommandShortcutDiagnosticKind::DuplicateShortcut => {
+            format!(
+                "Shortcut {} is shared by {}",
+                diagnostic.shortcut().unwrap_or("unknown"),
+                diagnostic.command_ids().join(", ")
+            )
+        }
+    };
+    CommandStatusItem::warning(message)
+}
+
+pub(super) fn count_command_status_items(
+    items: &[CommandStatusItem],
+    intent: CommandStatusIntent,
+) -> usize {
+    items.iter().filter(|item| item.intent() == intent).count()
 }
 
 fn provider_status_loading_state(status: &CommandProviderStatus) -> Option<CommandLoadingState> {

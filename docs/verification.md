@@ -397,7 +397,8 @@ app shells append projected bindings into a GPUI keymap. Conflict coverage inclu
 no-context bindings that overlap concrete context bindings under GPUI runtime precedence rules.
 The UI component command tests now also cover `CommandPaletteProjection`, which adapts a
 `CommandCenter` query/keymap projection into a `PreFiltered` `CommandIndexSnapshot`, provider
-statuses, and shortcut diagnostics; `CommandPaletteController`, which coordinates palette query
+statuses, shortcut diagnostics, and UI-ready status rows for failed providers plus shortcut drift;
+`CommandPaletteController`, which coordinates palette query
 changes across provider refresh controllers, refreshes registered synchronous providers, exposes
 missing-provider ids for app-owned async tasks, ignores stale async responses through the existing
 provider request guard, and wraps command-center query-history navigation so up/down history keys
@@ -405,11 +406,13 @@ can reuse the current query as a prefix and restore the draft query at the newes
 `CommandProviderPaletteProjection`, which adapts a provider refresh projection into a `PreFiltered`
 `CommandIndexSnapshot`, carries loading provider status into `CommandLoadingState`, and lets
 `Command::provider_refresh_projection` bind query and snapshot metadata without app-owned snapshot
-glue.
+glue. The Command gallery includes a diagnostics/empty sample that renders provider failure,
+shortcut/action drift, and an empty list inside the component-owned command surface.
 Run the focused proof with:
 
 ```powershell
 cargo nextest run -p open-gpui-ui-components command
+cargo nextest run -p open-gpui-ui-components command_palette_projection_builds_status_items_from_provider_failures_and_diagnostics command_state_accepts_explicit_status_items --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command_palette_controller --no-fail-fast
 cargo nextest run -p open-gpui-command --no-fail-fast
 cargo nextest run -p open-gpui-command center_reports_command_key_binding_conflicts_and_install_report center_reports_global_key_binding_context_conflicts --no-fail-fast
@@ -421,6 +424,7 @@ cargo nextest run -p open-gpui-ui-components command_descriptors --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command menu --no-fail-fast
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery command
+cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focused_command_samples_cover_depth_behaviors --no-fail-fast
 ```
 
 For the reusable command ecosystem, also keep `docs/ui/command-ecosystem.md` current. It records

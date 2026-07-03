@@ -6,6 +6,11 @@ status: active
 
 # Log
 
+- 2026-07-04: Added command palette status rows on `feat/command-palette-polish`.
+  `CommandPaletteProjection` now adapts failed provider statuses and shortcut diagnostics into
+  `CommandStatusItem` rows, `CommandState` / `Command` expose status counters and builder hooks,
+  and the gallery has a `diagnostics-empty` sample that renders provider failure, warning rows, and
+  the empty list state inside the component surface.
 - 2026-07-04: Added command keybinding conflict reporting on
   `feat/command-keybinding-conflicts`. `CommandKeyBindingProjection` now reports conservative
   same-context shortcut conflicts, and `CommandKeyBindingInstallReport` summarizes append-only

@@ -80,6 +80,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_select_option = root::TableSelectOption::new("ready", "Ready");
     let root_combobox = root::Combobox::new("combobox", "Search");
     let root_command = root::Command::new("command", "Commands");
+    let root_command_status_item: root::CommandStatusItem =
+        root::CommandStatusItem::warning("Shortcut diagnostics");
+    let _root_command_status_intent: root::CommandStatusIntent = root_command_status_item.intent();
     let root_core_command = root::CommandDescriptor::new("root.open", "Open").shortcut("Ctrl+O");
     let mut root_command_registry = root::CommandRegistry::new("root-registry-v1");
     root_command_registry
@@ -200,6 +203,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         );
     let _root_palette_projection_diagnostics: &[root::CommandShortcutDiagnostic] =
         root_palette_projection.shortcut_diagnostics();
+    let _root_palette_projection_status_items: &[root::CommandStatusItem] =
+        root_palette_projection.status_items();
     let mut root_palette_controller: root::CommandPaletteController =
         root::CommandPaletteController::new()
             .with_query("open")
@@ -240,6 +245,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         .state();
     let _root_palette_command_state = root::Command::new("root-palette-plan", "Palette")
         .palette_projection(&root_palette_projection)
+        .state();
+    let _root_status_command_state = root::Command::new("root-status-plan", "Status")
+        .status_item(root_command_status_item)
         .state();
     let _root_command_row: Option<&root::CommandRowBehaviorSnapshot> =
         root_command_snapshot.rows().first();
@@ -319,6 +327,10 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_select_option = prelude::TableSelectOption::new("blocked", "Blocked");
     let prelude_combobox = prelude::Combobox::new("combobox", "Search");
     let prelude_command = prelude::Command::new("command", "Commands");
+    let prelude_command_status_item: prelude::CommandStatusItem =
+        prelude::CommandStatusItem::error("Provider failed");
+    let _prelude_command_status_intent: prelude::CommandStatusIntent =
+        prelude_command_status_item.intent();
     let prelude_core_command =
         prelude::CommandDescriptor::new("prelude.open", "Open").shortcut("Ctrl+O");
     let prelude_registry_snapshot = prelude::CommandRegistrySnapshot::new(
@@ -457,6 +469,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         );
     let _prelude_palette_projection_diagnostics: &[prelude::CommandShortcutDiagnostic] =
         prelude_palette_projection.shortcut_diagnostics();
+    let _prelude_palette_projection_status_items: &[prelude::CommandStatusItem] =
+        prelude_palette_projection.status_items();
     let mut prelude_palette_controller: prelude::CommandPaletteController =
         prelude::CommandPaletteController::new()
             .with_query("open")
@@ -500,6 +514,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             .state();
     let _prelude_palette_command_state = prelude::Command::new("prelude-palette-plan", "Palette")
         .palette_projection(&prelude_palette_projection)
+        .state();
+    let _prelude_status_command_state = prelude::Command::new("prelude-status-plan", "Status")
+        .status_item(prelude_command_status_item)
         .state();
     let _prelude_command_row: Option<&prelude::CommandRowBehaviorSnapshot> =
         prelude_command_snapshot.rows().first();

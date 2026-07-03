@@ -752,7 +752,8 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     let indexed = &commands[3].state;
     let registry = &commands[4].state;
     let provider = &commands[5].state;
-    let context = &commands[6].state;
+    let diagnostics = &commands[6].state;
+    let context = &commands[7].state;
 
     assert_eq!(framework.open_mode(), ComboboxOpenMode::Controlled);
     assert!(framework.open());
@@ -850,6 +851,7 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     assert_eq!(provider_status.source_count(), 1);
     assert_eq!(provider_status.command_count(), 2);
     assert!(commands[5].shortcut_diagnostics.is_empty());
+    assert!(provider.status_items().is_empty());
     assert_eq!(
         provider.index_revision(),
         Some("gallery-provider-center-v1")
@@ -884,12 +886,47 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
         Some("ctrl-alt-O")
     );
 
-    assert_eq!(commands[6].id, "context-stack");
+    assert_eq!(commands[6].id, "diagnostics-empty");
+    assert_eq!(commands[6].dispatched_command_id.as_deref(), None);
     assert_eq!(
-        commands[6].dispatched_command_id.as_deref(),
+        diagnostics.index_revision(),
+        Some("gallery-diagnostics-center-v1")
+    );
+    assert_eq!(diagnostics.query(), "offline");
+    assert_eq!(diagnostics.filtered_item_count(), 0);
+    assert!(diagnostics.empty());
+    assert_eq!(diagnostics.status_error_count(), 1);
+    assert_eq!(diagnostics.status_warning_count(), 2);
+    assert_eq!(
+        diagnostics.status_items()[0].intent(),
+        CommandStatusIntent::Error
+    );
+    assert!(
+        diagnostics
+            .status_items()
+            .iter()
+            .any(|item| item.message().contains("diagnostics-provider"))
+    );
+    assert_eq!(commands[6].shortcut_diagnostics.len(), 2);
+    let diagnostics_provider_status = commands[6]
+        .provider_status
+        .as_ref()
+        .expect("diagnostics sample records failed provider status");
+    assert_eq!(
+        diagnostics_provider_status.provider_id().as_str(),
+        "diagnostics-provider"
+    );
+    assert_eq!(
+        diagnostics_provider_status.state(),
+        CommandProviderState::Failed
+    );
+
+    assert_eq!(commands[7].id, "context-stack");
+    assert_eq!(
+        commands[7].dispatched_command_id.as_deref(),
         Some("workspace.open")
     );
-    assert!(commands[6].shortcut_diagnostics.is_empty());
+    assert!(commands[7].shortcut_diagnostics.is_empty());
     assert_eq!(context.index_revision(), Some("gallery-context-center-v1"));
     assert_eq!(
         context.index_mode(),

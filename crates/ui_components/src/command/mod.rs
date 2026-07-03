@@ -34,7 +34,7 @@ pub use descriptor::{
     CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
     CommandLoadingState, CommandMatchSource, CommandOpenMode, CommandPaletteController,
     CommandPaletteControllerUpdate, CommandPaletteProjection, CommandProviderPaletteProjection,
-    CommandQueryMode, CommandSelectionMode,
+    CommandQueryMode, CommandSelectionMode, CommandStatusIntent, CommandStatusItem,
 };
 pub use model::{
     CommandDialogState, CommandGroupState, CommandItemState, CommandSelectedChipState,
@@ -74,6 +74,7 @@ pub struct Command {
     viewport_item_count: usize,
     metrics: CommandMetrics,
     loading_state: Option<CommandLoadingState>,
+    status_items: Vec<CommandStatusItem>,
     empty_label: SharedString,
     dialog_title: Option<String>,
     dialog_description: Option<String>,
@@ -114,6 +115,7 @@ impl Command {
             viewport_item_count: DEFAULT_COMMAND_VIEWPORT_ITEM_COUNT,
             metrics: CommandMetrics::from_size(size),
             loading_state: None,
+            status_items: Vec::new(),
             empty_label: "No commands".into(),
             dialog_title: None,
             dialog_description: None,
@@ -180,6 +182,7 @@ impl Command {
             CommandProviderPaletteProjection::from_refresh_projection(projection);
         self.query =
             Some(TextEditingPolicy::single_line().normalize_text(palette_projection.query()));
+        self.status_items = palette_projection.status_items().to_vec();
         self.index_snapshot = Some(palette_projection.into_index_snapshot());
         self
     }
@@ -188,6 +191,7 @@ impl Command {
     pub fn palette_projection(mut self, projection: &CommandPaletteProjection) -> Self {
         self.query = Some(TextEditingPolicy::single_line().normalize_text(projection.query()));
         self.index_snapshot = Some(projection.index_snapshot().clone());
+        self.status_items = projection.status_items().to_vec();
         self
     }
 
@@ -308,6 +312,27 @@ impl Command {
     /// Clears loading metadata.
     pub fn idle(mut self) -> Self {
         self.loading_state = None;
+        self
+    }
+
+    /// Adds one command palette status item.
+    pub fn status_item(mut self, item: CommandStatusItem) -> Self {
+        if !item.is_empty() {
+            self.status_items.push(item);
+        }
+        self
+    }
+
+    /// Adds many command palette status items.
+    pub fn status_items(mut self, items: impl IntoIterator<Item = CommandStatusItem>) -> Self {
+        self.status_items
+            .extend(items.into_iter().filter(|item| !item.is_empty()));
+        self
+    }
+
+    /// Clears command palette status items.
+    pub fn clear_status_items(mut self) -> Self {
+        self.status_items.clear();
         self
     }
 
@@ -502,7 +527,9 @@ impl Command {
             )
         };
 
-        state.with_metrics(self.metrics)
+        state
+            .with_metrics(self.metrics)
+            .with_status_items(self.status_items.clone())
     }
 }
 

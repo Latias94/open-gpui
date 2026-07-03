@@ -607,7 +607,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(comboboxes[2].state.disabled());
     assert!(!comboboxes[2].state.open());
 
-    assert_eq!(commands.len(), 7);
+    assert_eq!(commands.len(), 8);
     assert_eq!(commands[0].id, "ranked-search");
     assert_eq!(commands[0].state.open_mode(), CommandOpenMode::Controlled);
     assert!(commands[0].state.loading().is_none());
@@ -692,6 +692,7 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(provider_status.source_count(), 1);
     assert_eq!(provider_status.command_count(), 2);
     assert!(commands[5].shortcut_diagnostics.is_empty());
+    assert!(commands[5].state.status_items().is_empty());
     assert_eq!(commands[5].state.query(), "alpha");
     assert_eq!(commands[5].state.filtered_item_count(), 2);
     assert_eq!(commands[5].state.groups()[0].label(), "Provider");
@@ -711,24 +712,50 @@ fn components_page_samples_expose_component_metadata() {
             .and_then(|item| item.shortcut()),
         Some("ctrl-alt-O")
     );
-    assert_eq!(commands[6].id, "context-stack");
+    assert_eq!(commands[6].id, "diagnostics-empty");
     assert_eq!(
         commands[6].state.index_revision(),
+        Some("gallery-diagnostics-center-v1")
+    );
+    assert_eq!(commands[6].state.query(), "offline");
+    assert_eq!(commands[6].state.filtered_item_count(), 0);
+    assert_eq!(commands[6].state.status_error_count(), 1);
+    assert_eq!(commands[6].state.status_warning_count(), 2);
+    assert_eq!(
+        commands[6].state.status_items()[0].intent(),
+        CommandStatusIntent::Error
+    );
+    assert_eq!(commands[6].shortcut_diagnostics.len(), 2);
+    let diagnostics_provider_status = commands[6]
+        .provider_status
+        .as_ref()
+        .expect("diagnostics sample records failed provider status");
+    assert_eq!(
+        diagnostics_provider_status.provider_id().as_str(),
+        "diagnostics-provider"
+    );
+    assert_eq!(
+        diagnostics_provider_status.state(),
+        CommandProviderState::Failed
+    );
+    assert_eq!(commands[7].id, "context-stack");
+    assert_eq!(
+        commands[7].state.index_revision(),
         Some("gallery-context-center-v1")
     );
     assert_eq!(
-        commands[6].state.index_mode(),
+        commands[7].state.index_mode(),
         CommandIndexSnapshotMode::PreRankedFilter
     );
-    assert_eq!(commands[6].state.query(), "focused");
-    assert_eq!(commands[6].state.filtered_item_count(), 2);
+    assert_eq!(commands[7].state.query(), "focused");
+    assert_eq!(commands[7].state.filtered_item_count(), 2);
     assert_eq!(
-        commands[6].dispatched_command_id.as_deref(),
+        commands[7].dispatched_command_id.as_deref(),
         Some("workspace.open")
     );
-    assert!(commands[6].shortcut_diagnostics.is_empty());
+    assert!(commands[7].shortcut_diagnostics.is_empty());
     assert_eq!(
-        commands[6]
+        commands[7]
             .state
             .items()
             .iter()
@@ -737,7 +764,7 @@ fn components_page_samples_expose_component_metadata() {
         Some("ctrl-E")
     );
     assert_eq!(
-        commands[6]
+        commands[7]
             .state
             .items()
             .iter()
@@ -1681,11 +1708,13 @@ fn component_gallery_shell_reads_choice_active_metadata_from_resolved_state() {
     assert!(combobox_section.contains("combobox = combobox.active(active);"));
     assert!(command_section.contains("if let Some(active) = state.active_value()"));
     assert!(command_section.contains("command = command.active(active);"));
+    assert!(command_section.contains("command.status_items(state.status_items().iter().cloned())"));
     assert!(listbox_readout.contains("typeahead_label"));
     assert!(listbox_readout.contains("first_typeahead_target"));
     assert!(select_readout.contains("listbox selected"));
     assert!(combobox_readout.contains("visible {} of {} / typeahead"));
     assert!(command_readout.contains("selected_values {:?}"));
+    assert!(command_readout.contains("{} status / {} warnings / {} errors"));
 }
 
 #[test]

@@ -3,8 +3,9 @@
 use super::descriptor::{
     CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
     CommandLoadingState, CommandMatchRank, CommandMatchSource, CommandOpenMode, CommandQueryMode,
-    CommandSelectionMode, command_choice_items, command_choice_selection_mode,
-    command_item_rank_for_source, command_open_mode_from_disclosure,
+    CommandSelectionMode, CommandStatusIntent, CommandStatusItem, command_choice_items,
+    command_choice_selection_mode, command_item_rank_for_source, command_open_mode_from_disclosure,
+    count_command_status_items,
 };
 use super::style::{CommandColors, CommandMetrics};
 use crate::choice::{self, ChoiceCollection, ChoiceInteractionPolicy};
@@ -399,6 +400,7 @@ pub struct CommandState {
     overlay: OverlayResolvedState,
     dialog: Option<CommandDialogState>,
     loading_state: Option<CommandLoadingState>,
+    status_items: Vec<CommandStatusItem>,
     index_revision: Option<String>,
     index_mode: CommandIndexSnapshotMode,
     empty_label: String,
@@ -847,6 +849,7 @@ impl CommandState {
             overlay,
             dialog,
             loading_state,
+            status_items: Vec::new(),
             index_revision,
             index_mode,
             empty_label,
@@ -945,6 +948,26 @@ impl CommandState {
     /// Returns optional loading metadata.
     pub const fn loading(&self) -> Option<&CommandLoadingState> {
         self.loading_state.as_ref()
+    }
+
+    /// Returns UI-ready command palette status items.
+    pub fn status_items(&self) -> &[CommandStatusItem] {
+        &self.status_items
+    }
+
+    /// Returns whether provider or shortcut status should be displayed.
+    pub fn has_status_items(&self) -> bool {
+        !self.status_items.is_empty()
+    }
+
+    /// Returns the number of warning status items.
+    pub fn status_warning_count(&self) -> usize {
+        count_command_status_items(&self.status_items, CommandStatusIntent::Warning)
+    }
+
+    /// Returns the number of error status items.
+    pub fn status_error_count(&self) -> usize {
+        count_command_status_items(&self.status_items, CommandStatusIntent::Error)
     }
 
     /// Returns caller-owned command index revision metadata.
@@ -1088,6 +1111,12 @@ impl CommandState {
     /// Returns the same state with an adjusted metric bundle.
     pub const fn with_metrics(mut self, metrics: CommandMetrics) -> Self {
         self.metrics = metrics;
+        self
+    }
+
+    /// Returns the same state with UI-ready status items.
+    pub fn with_status_items(mut self, items: impl IntoIterator<Item = CommandStatusItem>) -> Self {
+        self.status_items = items.into_iter().filter(|item| !item.is_empty()).collect();
         self
     }
 
