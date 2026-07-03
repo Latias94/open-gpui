@@ -1,6 +1,9 @@
 use super::*;
 use open_gpui::{KeyBinding, Keymap, actions};
-use open_gpui_command::{CommandCenter, CommandContribution, CommandDescriptor};
+use open_gpui_command::{
+    CommandCenter, CommandContribution, CommandDescriptor, CommandProviderResponse,
+    CommandProviderSource, CommandProviderStatus,
+};
 
 /// One switch sample in the gallery.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -129,6 +132,8 @@ pub struct CommandSample {
     pub index_snapshot: Option<CommandIndexSnapshot>,
     /// Command id that the sample dispatch adapter resolves from the active selection.
     pub dispatched_command_id: Option<String>,
+    /// Latest dynamic provider status retained by the backing command center.
+    pub provider_status: Option<CommandProviderStatus>,
     /// Persistent selected values for multi-select samples.
     pub selected_values: Arc<[String]>,
     /// Estimated visible row count for the result viewport.
@@ -696,7 +701,7 @@ actions!(
 );
 
 /// Returns command palette samples backed by real component state.
-pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 5] {
+pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 6] {
     let ranked_items: Arc<[CommandItemDescriptor]> = vec![
         CommandItemDescriptor::new("archive", "Archive").keyword("file"),
         CommandItemDescriptor::new("open-file", "Open File").shortcut("Ctrl+O"),
@@ -768,6 +773,45 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 5] {
     let command_center_snapshot =
         CommandIndexSnapshot::from_registry_snapshot(&command_center.snapshot_for_keymap(&keymap))
             .mode(CommandIndexSnapshotMode::PreRankedFilter);
+    let provider_query = "alpha";
+    let mut provider_center = CommandCenter::new("gallery-provider-center-v1");
+    let _provider_registration = provider_center.register_provider(
+        "recent-provider",
+        |request: &open_gpui_command::CommandProviderRequest| {
+            let query = request.query().trim();
+            let query = if query.is_empty() { "recent" } else { query };
+            CommandProviderResponse::ready().source(CommandProviderSource::new(
+                "workspace",
+                "recent-provider-results",
+                [
+                    CommandContribution::new(
+                        CommandDescriptor::new(
+                            format!("provider.open.{query}"),
+                            format!("Open {query} from provider"),
+                        )
+                        .group("Provider")
+                        .keyword("recent"),
+                    ),
+                    CommandContribution::new(
+                        CommandDescriptor::new(
+                            format!("provider.reveal.{query}"),
+                            format!("Reveal {query} provider result"),
+                        )
+                        .group("Provider")
+                        .keyword("dynamic"),
+                    ),
+                ],
+            ))
+        },
+    );
+    let provider_status = provider_center
+        .refresh_provider("recent-provider", provider_query)
+        .expect("gallery provider is registered")
+        .expect("gallery provider response is valid");
+    let provider_snapshot = CommandIndexSnapshot::from_registry_snapshot(
+        &provider_center.search_snapshot(provider_query),
+    )
+    .mode(CommandIndexSnapshotMode::PreRankedFilter);
 
     [
         command_sample_from_local(
@@ -878,6 +922,30 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 5] {
                 Some("workspace.open"),
                 command_center_snapshot,
                 true,
+                6,
+                None,
+                4,
+                tokens,
+            )
+        },
+        CommandSample {
+            provider_status: Some(provider_status),
+            ..command_sample_from_snapshot(
+                "provider-search",
+                "CommandCenter provider refresh projects query-specific dynamic commands into the palette snapshot.",
+                Size::Small,
+                false,
+                Some(true),
+                false,
+                "Provider commands",
+                "Search provider commands",
+                provider_query,
+                CommandSelectionMode::Single,
+                Some("provider.open.alpha"),
+                Vec::<String>::new(),
+                Some("provider.open.alpha"),
+                provider_snapshot,
+                false,
                 6,
                 None,
                 4,
@@ -1040,6 +1108,7 @@ fn command_sample_from_local(
         groups,
         index_snapshot: None,
         dispatched_command_id: None,
+        provider_status: None,
         selected_values: selected_values.into(),
         viewport_item_count,
         row_height,
@@ -1102,6 +1171,7 @@ fn command_sample_from_snapshot(
         groups: Arc::from([]),
         index_snapshot: Some(snapshot),
         dispatched_command_id: None,
+        provider_status: None,
         selected_values: selected_values.into(),
         viewport_item_count,
         row_height,

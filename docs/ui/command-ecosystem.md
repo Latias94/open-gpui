@@ -225,8 +225,14 @@ cargo nextest run -p open-gpui-ui-components command::runtime::tests --no-fail-f
 cargo nextest run -p open-gpui-ui-components menu context_menu --no-fail-fast
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery components_page_search_samples_expose_combobox_and_command_contracts --no-fail-fast
+cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata --no-fail-fast
 ```
 
 The gallery's `registry-dispatch` command sample uses `CommandCenter` to prove that the
 recommended facade can project current keymap shortcut labels and preserve the command id used for
 dispatch.
+
+The gallery's `provider-search` command sample uses a `CommandCenter` provider refresh to prove
+that query-specific `CommandProviderSource` results can be applied to the center, converted into a
+`CommandIndexSnapshot`, and rendered by the existing `Command` component without making
+`open_gpui_command` depend on UI component types.

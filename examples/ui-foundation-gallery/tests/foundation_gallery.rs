@@ -2,6 +2,7 @@ use open_gpui::{
     Bounds, Entity, MouseButton, Pixels, ScrollDelta, ScrollWheelEvent, VisualTestContext, point,
     px, size,
 };
+use open_gpui_command::CommandProviderState;
 use open_gpui_ui_components::component_contract::{
     COMPONENT_API_INVENTORY, COMPONENT_CONTRACT_ROWS, PUBLIC_SURFACE_OWNER_MAP,
     SurfaceGalleryStatus, component_contract_family, component_contract_gallery_status,

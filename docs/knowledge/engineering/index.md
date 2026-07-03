@@ -15,6 +15,10 @@
 * [Open GPUI command ecosystem U3-U5](progress/2026-07-03-open-gpui-command-ecosystem-u3-u5.md) - GPUI action/keymap adapter, registry-backed gallery proof, and command ecosystem docs.
 * [Open GPUI command ecosystem U3-U5 verification](verification/open-gpui-command-ecosystem-u3-u5-20260703.md) - Verification evidence for shortcut projection, adapter dispatch, and gallery registry sample gates.
 * [Open GPUI command crate extraction](progress/2026-07-03-open-gpui-command-crate-extraction.md) - Current extraction of command metadata, scoped registry, availability, menu projection, history, and GPUI command-id dispatch into `open_gpui_command`.
+* [Open GPUI CommandCenter runtime facade](progress/2026-07-03-open-gpui-command-center-runtime.md) - Recommended app-owned command facade over scoped registration, availability, shortcut projection, menu/search, dispatch, and history.
+* [Open GPUI command provider runtime](progress/2026-07-03-open-gpui-command-provider-runtime.md) - Runtime-neutral dynamic provider request/response/source layer in `open_gpui_command`.
+* [Open GPUI command provider gallery proof](progress/2026-07-03-open-gpui-command-provider-gallery.md) - Foundation gallery `provider-search` sample that refreshes a provider and renders a dynamic `CommandIndexSnapshot`.
+* [Open GPUI command provider gallery verification](verification/open-gpui-command-provider-gallery-20260703.md) - Verification evidence for provider-backed command gallery contracts.
 * [Native UI hybrid registry architecture planning](progress/2026-07-02-native-ui-hybrid-registry-architecture-plan.md) - Superseded historical plan for the removed hybrid registry MVP.
 * [Native UI hybrid registry implementation](progress/2026-07-02-native-ui-hybrid-registry-implementation.md) - Superseded implementation history for the removed registry manifest, recipes, artifacts, and scan.
 * [Native UI hybrid registry implementation verification](verification/native-ui-hybrid-registry-implementation-20260702.md) - Superseded verification evidence for the removed hybrid registry work.

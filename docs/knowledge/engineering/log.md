@@ -6,6 +6,13 @@ status: active
 
 # Log
 
+- 2026-07-03: Added the provider-backed command gallery proof on
+  `feat/command-provider-gallery`. The Components page now has a sixth command sample,
+  `provider-search`, which registers a query-dependent `CommandCenter` provider, refreshes it for
+  `alpha`, records provider status, projects the dynamic provider source into
+  `CommandIndexSnapshot`, and renders it through the existing `Command` component. The existing
+  `registry-dispatch` sample remains at index 4; provider contracts live in the appended index 5
+  sample.
 - 2026-07-03: Implemented
   `docs/plans/2026-07-03-002-refactor-docking-affordance-authority-cleanup-plan.md` on
   `refactor/docking-visual-affordance-runtime`. Target preview rendering now consumes

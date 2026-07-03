@@ -1226,7 +1226,7 @@ pub(crate) fn component_combobox_samples_section(
 }
 
 pub(crate) fn component_command_samples_section(
-    samples: [pages::components::CommandSample; 5],
+    samples: [pages::components::CommandSample; 6],
 
     tokens: ThemeTokens,
 ) -> impl IntoElement {
@@ -1255,6 +1255,15 @@ pub(crate) fn component_command_samples_section(
                     let label = state.label().to_owned();
 
                     let title = label.clone();
+                    let provider_status_summary = sample.provider_status.as_ref().map(|status| {
+                        format!(
+                            "provider {} / {:?} / {} sources / {} commands",
+                            status.provider_id().as_str(),
+                            status.state(),
+                            status.source_count(),
+                            status.command_count()
+                        )
+                    });
 
                     // Keep the gallery sample closed on mount so the page stays scrollable.
 
@@ -1355,6 +1364,9 @@ pub(crate) fn component_command_samples_section(
                         )
                         .child(command)
                         .child(component_command_state_row(&state))
+                        .when_some(provider_status_summary, |this, summary| {
+                            this.child(div().text_xs().text_color(rgb(0x5a6472)).child(summary))
+                        })
                 })),
         )
 }
