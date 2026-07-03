@@ -24,3 +24,4 @@ platform strategy, or ecosystem compatibility.
 - [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](0014-remove-native-ui-hybrid-registry.md)
 - [ADR 0015: UI Motion Runtime Foundation](0015-ui-motion-runtime-foundation.md)
 - [ADR 0016: UI Motion Spring Foundation](0016-ui-motion-spring-foundation.md)
+- [ADR 0017: UI Motion Value Foundation](0017-ui-motion-value-foundation.md)
