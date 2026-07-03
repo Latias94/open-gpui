@@ -7,12 +7,14 @@ use open_gpui::{Action, App, KeyContext, Keymap, Window};
 
 use crate::{
     CommandAvailabilityMap, CommandContextStack, CommandContribution, CommandDispatchOutcome,
-    CommandMenuTree, CommandProjectionDiagnostic, CommandProvider, CommandProviderApplyOutcome,
-    CommandProviderId, CommandProviderRequest, CommandProviderRequestId, CommandProviderResponse,
-    CommandProviderSource, CommandProviderStaleResponse, CommandProviderStatus,
-    CommandRegistryError, CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection,
-    CommandShortcutDiagnostic, CommandShortcutDiagnosticKind, CommandSourceId, CommandUsageHistory,
-    GpuiCommandActionMap, MemoryCommandHistory, ScopedCommandRegistry,
+    CommandKeyBinding, CommandKeyBindingHandle, CommandKeyBindingProjection,
+    CommandKeyBindingRegistry, CommandMenuTree, CommandProjectionDiagnostic, CommandProvider,
+    CommandProviderApplyOutcome, CommandProviderId, CommandProviderRequest,
+    CommandProviderRequestId, CommandProviderResponse, CommandProviderSource,
+    CommandProviderStaleResponse, CommandProviderStatus, CommandRegistryError,
+    CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection, CommandShortcutDiagnostic,
+    CommandShortcutDiagnosticKind, CommandSourceId, CommandUsageHistory, GpuiCommandActionMap,
+    MemoryCommandHistory, ScopedCommandRegistry,
 };
 
 /// Handle for a registered command source within one command scope.
@@ -114,6 +116,7 @@ impl std::fmt::Debug for CommandProviderEntry {
 pub struct CommandCenter {
     registry: ScopedCommandRegistry,
     actions: GpuiCommandActionMap,
+    key_bindings: CommandKeyBindingRegistry,
     availability: CommandAvailabilityMap,
     context_stack: CommandContextStack,
     history: MemoryCommandHistory,
@@ -130,6 +133,7 @@ impl CommandCenter {
         Self {
             registry: ScopedCommandRegistry::new(revision),
             actions: GpuiCommandActionMap::new(),
+            key_bindings: CommandKeyBindingRegistry::new(),
             availability: CommandAvailabilityMap::new(),
             context_stack: CommandContextStack::new(),
             history: MemoryCommandHistory::default(),
@@ -159,6 +163,25 @@ impl CommandCenter {
     /// Returns mutable access to the command action map.
     pub fn actions_mut(&mut self) -> &mut GpuiCommandActionMap {
         &mut self.actions
+    }
+
+    /// Returns the command-id key binding registry.
+    pub const fn key_binding_registry(&self) -> &CommandKeyBindingRegistry {
+        &self.key_bindings
+    }
+
+    /// Returns mutable access to the command-id key binding registry.
+    pub fn key_binding_registry_mut(&mut self) -> &mut CommandKeyBindingRegistry {
+        &mut self.key_bindings
+    }
+
+    /// Replaces the command-id key binding registry.
+    pub fn set_key_binding_registry(
+        &mut self,
+        key_bindings: CommandKeyBindingRegistry,
+    ) -> &mut Self {
+        self.key_bindings = key_bindings;
+        self
     }
 
     /// Returns the availability map.
@@ -552,6 +575,43 @@ impl CommandCenter {
         self
     }
 
+    /// Registers or replaces a source of command-id keyed GPUI key bindings.
+    pub fn register_key_bindings(
+        &mut self,
+        source_id: impl Into<CommandSourceId>,
+        bindings: impl IntoIterator<Item = CommandKeyBinding>,
+    ) -> CommandKeyBindingHandle {
+        self.key_bindings.register(source_id, bindings)
+    }
+
+    /// Unregisters command key bindings by handle.
+    pub fn unregister_key_binding_handle(&mut self, handle: &CommandKeyBindingHandle) -> usize {
+        self.unregister_key_binding_source(handle.source_id().clone())
+    }
+
+    /// Unregisters command key bindings by handle.
+    pub fn unregister_key_bindings(&mut self, handle: &CommandKeyBindingHandle) -> usize {
+        self.unregister_key_binding_handle(handle)
+    }
+
+    /// Unregisters every command key binding from one source id.
+    pub fn unregister_key_binding_source(
+        &mut self,
+        source_id: impl Into<CommandSourceId>,
+    ) -> usize {
+        self.key_bindings.unregister_source(source_id)
+    }
+
+    /// Projects command-id key bindings into concrete GPUI key bindings.
+    pub fn key_binding_projection(&self) -> CommandKeyBindingProjection {
+        self.key_bindings.project(&self.actions)
+    }
+
+    /// Adds valid command-id key bindings to a GPUI keymap and returns projection diagnostics.
+    pub fn add_key_bindings_to_keymap(&self, keymap: &mut Keymap) -> CommandKeyBindingProjection {
+        self.key_bindings.add_to_keymap(&self.actions, keymap)
+    }
+
     /// Projects active scopes before availability, shortcut, or history ranking.
     pub fn scope_projection(&self) -> CommandScopeProjection {
         if self.context_stack.scope_ids().is_empty() {
@@ -940,14 +1000,14 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use open_gpui::{Action, KeyBinding, KeyContext, Keymap, actions};
+    use open_gpui::{Action, KeyBinding, KeyContext, Keymap, Keystroke, actions};
 
     use crate::{
         CommandAvailabilityMap, CommandCenter, CommandContextStack, CommandContribution,
-        CommandDescriptor, CommandDispatchOutcome, CommandMenuEntry,
-        CommandProjectionDiagnosticKind, CommandProviderApplyOutcome, CommandProviderRequest,
-        CommandProviderResponse, CommandProviderSource, CommandProviderState,
-        CommandProviderStatus, CommandUsageHistory,
+        CommandDescriptor, CommandDispatchOutcome, CommandKeyBinding,
+        CommandKeyBindingDiagnosticKind, CommandMenuEntry, CommandProjectionDiagnosticKind,
+        CommandProviderApplyOutcome, CommandProviderRequest, CommandProviderResponse,
+        CommandProviderSource, CommandProviderState, CommandProviderStatus, CommandUsageHistory,
     };
 
     actions!(center_test_only, [OpenWorkspace, SaveWorkspace]);
@@ -1312,6 +1372,101 @@ mod tests {
 
         center.reset_query_navigation();
         assert_eq!(center.previous_query("save"), Some("save file".into()));
+    }
+
+    #[test]
+    fn center_projects_command_key_bindings_into_gpui_keymap() {
+        let mut center = CommandCenter::new("center-v1");
+        center
+            .register_action("workspace.open", OpenWorkspace)
+            .register_action("workspace.save", SaveWorkspace);
+        let handle = center.register_key_bindings(
+            "workspace-shortcuts",
+            [
+                CommandKeyBinding::new("workspace.open", "ctrl-k ctrl-o").context("Workspace"),
+                CommandKeyBinding::new("workspace.save", "ctrl-s")
+                    .context("Workspace && mode == normal"),
+            ],
+        );
+
+        let mut keymap = Keymap::default();
+        let projection = center.add_key_bindings_to_keymap(&mut keymap);
+
+        assert!(
+            projection.diagnostics().is_empty(),
+            "{:?}",
+            projection.diagnostics()
+        );
+        assert_eq!(projection.key_bindings().len(), 2);
+        assert_eq!(
+            crate::command_shortcut_label_from_keymap_in_context(
+                &keymap,
+                &OpenWorkspace,
+                &[KeyContext::parse("Workspace mode=normal").unwrap()],
+            ),
+            Some("ctrl-K ctrl-O".into())
+        );
+
+        let (bindings, pending) = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-k").unwrap()],
+            &[KeyContext::parse("Workspace mode=normal").unwrap()],
+        );
+        assert!(bindings.is_empty());
+        assert!(pending);
+
+        let (bindings, pending) = keymap.bindings_for_input(
+            &[
+                Keystroke::parse("ctrl-k").unwrap(),
+                Keystroke::parse("ctrl-o").unwrap(),
+            ],
+            &[KeyContext::parse("Workspace mode=normal").unwrap()],
+        );
+        assert!(!pending);
+        assert_eq!(bindings.len(), 1);
+        assert!(bindings[0].action().partial_eq(&OpenWorkspace));
+
+        assert_eq!(handle.unregister(&mut center), 2);
+        let projection = center.key_binding_projection();
+        assert!(projection.key_bindings().is_empty());
+        assert!(projection.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn center_reports_command_key_binding_projection_diagnostics() {
+        let mut center = CommandCenter::new("center-v1");
+        center.register_action("workspace.open", OpenWorkspace);
+        center.register_key_bindings(
+            "workspace-shortcuts",
+            [
+                CommandKeyBinding::new("workspace.open", "ctrl-o").context("Workspace &&"),
+                CommandKeyBinding::new("workspace.missing", "ctrl-m"),
+            ],
+        );
+
+        let projection = center.key_binding_projection();
+
+        assert!(projection.key_bindings().is_empty());
+        assert_eq!(
+            projection
+                .diagnostics()
+                .iter()
+                .map(|diagnostic| diagnostic.kind())
+                .collect::<Vec<_>>(),
+            [
+                CommandKeyBindingDiagnosticKind::InvalidContext,
+                CommandKeyBindingDiagnosticKind::MissingAction,
+            ]
+        );
+        assert_eq!(projection.diagnostics()[0].command_id(), "workspace.open");
+        assert_eq!(
+            projection.diagnostics()[0].source_id().as_str(),
+            "workspace-shortcuts"
+        );
+        assert!(projection.diagnostics()[0].message().is_some());
+        assert_eq!(
+            projection.diagnostics()[1].command_id(),
+            "workspace.missing"
+        );
     }
 
     #[test]

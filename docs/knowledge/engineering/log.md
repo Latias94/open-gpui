@@ -6,6 +6,12 @@ status: active
 
 # Log
 
+- 2026-07-03: Added the command keybinding registry on `feat/command-keybinding-registry`.
+  `CommandKeyBindingRegistry` lets apps/plugins register command-id keyed shortcut dictionaries and
+  project valid entries into GPUI `KeyBinding` values through `CommandCenter`. Invalid entries now
+  report missing-action or parse diagnostics instead of panicking, while GPUI remains the authority
+  for chords, key context predicates, and focused-window precedence. Focused `open-gpui-command`,
+  public surface, and full command crate nextest gates passed.
 - 2026-07-03: Added command query-history ergonomics on `feat/command-query-history`.
   `CommandCenter` now exposes app-facing query record/list/previous/next/reset methods, duplicate
   query recording promotes the newest occurrence, and `CommandPaletteController` wraps

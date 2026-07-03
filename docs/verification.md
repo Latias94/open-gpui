@@ -388,7 +388,11 @@ sample proves that `CommandContextStack` scopes command descriptors and projects
 binding active for the focused key context. The command crate provider lifecycle tests cover
 center-issued request ids, bound responses, stale async responses being ignored without mutating
 registry sources, explicit `CommandSourceHandle`/`CommandProviderHandle` unregister behavior, and
-the `CommandProviderRefreshController` query/loading/response/snapshot pipeline.
+the `CommandProviderRefreshController` query/loading/response/snapshot pipeline. The command crate
+also covers `CommandKeyBindingRegistry`, which lets app/plugin sources contribute command-id keyed
+shortcut dictionaries, projects valid entries into concrete GPUI `KeyBinding` values, preserves
+GPUI chord and key-context predicate semantics, and reports missing-action or parse diagnostics
+without panicking.
 The UI component command tests now also cover `CommandPaletteProjection`, which adapts a
 `CommandCenter` query/keymap projection into a `PreFiltered` `CommandIndexSnapshot`, provider
 statuses, and shortcut diagnostics; `CommandPaletteController`, which coordinates palette query
@@ -406,6 +410,7 @@ Run the focused proof with:
 cargo nextest run -p open-gpui-ui-components command
 cargo nextest run -p open-gpui-ui-components command_palette_controller --no-fail-fast
 cargo nextest run -p open-gpui-command --no-fail-fast
+cargo nextest run -p open-gpui-command center_projects_command_key_bindings_into_gpui_keymap center_reports_command_key_binding_projection_diagnostics --no-fail-fast
 cargo nextest run -p open-gpui-command center_exposes_query_history_navigation memory_history_promotes_duplicate_queries memory_history_navigates_recent_queries_with_prefix --no-fail-fast
 cargo nextest run -p open-gpui-command context_stack keymap_shortcut_projection_can_respect_context_stack center_context_stack_drives_scopes_keymap_and_provider_requests --no-fail-fast
 cargo nextest run -p open-gpui-command source_and_provider_handles_unregister_their_runtime_state --no-fail-fast

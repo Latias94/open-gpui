@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-03T22:58:55+08:00
+timestamp: 2026-07-03T23:26:02+08:00
 git_branch: main
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
@@ -83,6 +83,7 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-components command_palette_controller_navigates_query_history_with_prefix --no-fail-fast
   - cargo nextest run -p open-gpui-ui-components command_palette_controller --no-fail-fast
   - cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
+  - cargo nextest run -p open-gpui-command center_projects_command_key_bindings_into_gpui_keymap center_reports_command_key_binding_projection_diagnostics --no-fail-fast
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_choice_samples_expose_listbox_and_select_contracts --no-fail-fast
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_search_samples_expose_combobox_and_command_contracts --no-fail-fast
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata --no-fail-fast
@@ -202,6 +203,11 @@ verified_by:
   promotes duplicate queries to the newest position. `CommandPaletteController` now wraps history
   navigation for keymap/window projections, captures the current query as the navigation prefix, and
   restores that draft query after moving past the newest matching history entry.
+- Done on `feat/command-keybinding-registry`: `open_gpui_command` now has
+  `CommandKeyBindingRegistry` and `CommandCenter` keybinding projection APIs. Apps/plugins can
+  register command-id keyed shortcut dictionaries, project valid entries into GPUI `KeyBinding`
+  values, and receive diagnostics for missing actions or invalid GPUI keystroke/context syntax.
+  GPUI remains the chord, mode predicate, and focused-window precedence authority.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default

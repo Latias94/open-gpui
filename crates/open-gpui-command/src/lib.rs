@@ -11,6 +11,7 @@ mod center;
 mod context;
 pub mod gpui;
 mod history;
+mod keybinding;
 mod menu;
 mod provider;
 mod refresh;
@@ -32,6 +33,11 @@ pub use gpui::{
     command_shortcut_label_from_keymap, command_shortcut_label_from_keymap_in_context,
 };
 pub use history::{CommandHistoryEntry, CommandUsageHistory, MemoryCommandHistory};
+pub use keybinding::{
+    CommandKeyBinding, CommandKeyBindingDiagnostic, CommandKeyBindingDiagnosticKind,
+    CommandKeyBindingEntry, CommandKeyBindingHandle, CommandKeyBindingProjection,
+    CommandKeyBindingRegistry,
+};
 pub use menu::{CommandMenuCommand, CommandMenuEntry, CommandMenuSubmenu, CommandMenuTree};
 pub use provider::{
     CommandProvider, CommandProviderApplyOutcome, CommandProviderId, CommandProviderRequest,
