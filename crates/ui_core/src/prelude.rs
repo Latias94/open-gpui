@@ -21,6 +21,10 @@ pub use crate::{
         MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
         preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
     },
+    motion_spring::{
+        MotionModel, MotionSpring, MotionSpringPhysics, MotionSpringPreset, MotionSpringSample,
+        MotionSpringSpec,
+    },
     overlay::{
         DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
         FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,
