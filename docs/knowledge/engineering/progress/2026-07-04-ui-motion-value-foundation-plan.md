@@ -11,6 +11,8 @@ git_commits:
   - 6d89aac docs(ui): plan motion value foundation
   - 9a6e119 docs(ui): record motion value boundary
   - 1e52b12 refactor(ui): make motion model resolution explicit
+  - f64c6b2 docs(ui): record motion model checkpoint
+  - bda8321 feat(ui-core): add scalar motion value state
 tags:
   - ui-core
   - motion
@@ -49,11 +51,18 @@ Started the UI motion value foundation implementation on `feat/ui-motion-value-f
   open-gpui-ui-components -p open-gpui-docking` passed. Wider nextest filters for
   `open-gpui-ui-components splitter` and `open-gpui-docking host_transition_tests` were interrupted
   after hanging without failure output and should be retried later or replaced with narrower gates.
+- U3 is implemented: `MotionValue` tracks current, previous, previous-frame value, deterministic
+  velocity, jump/cancel, and a single active owner. `MotionScalarTrack` now stores its source state
+  as a `MotionValue`, so the existing Splitter/Docking scalar controller path consumes the value
+  primitive instead of leaving it as an unused public API.
+- U3 verification: `cargo nextest run -p open-gpui-ui-core motion_value motion_controller
+  --no-fail-fast` passed 8 tests; `cargo check -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-docking` passed.
 
 # Next Action
 
-Implement U3 from the plan: add proof-gated scalar value/run state only if Splitter or docking has a
-real consumer path; otherwise keep it private or delete it.
+Implement U4 from the plan: add minimal frame-demand reasons and make production Splitter/Docking
+paths call policy helpers on their resolved models.
 
 # Citations
 
