@@ -607,7 +607,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(comboboxes[2].state.disabled());
     assert!(!comboboxes[2].state.open());
 
-    assert_eq!(commands.len(), 6);
+    assert_eq!(commands.len(), 7);
     assert_eq!(commands[0].id, "ranked-search");
     assert_eq!(commands[0].state.open_mode(), CommandOpenMode::Controlled);
     assert!(commands[0].state.loading().is_none());
@@ -710,6 +710,40 @@ fn components_page_samples_expose_component_metadata() {
             .next()
             .and_then(|item| item.shortcut()),
         Some("ctrl-alt-O")
+    );
+    assert_eq!(commands[6].id, "context-stack");
+    assert_eq!(
+        commands[6].state.index_revision(),
+        Some("gallery-context-center-v1")
+    );
+    assert_eq!(
+        commands[6].state.index_mode(),
+        CommandIndexSnapshotMode::PreRankedFilter
+    );
+    assert_eq!(commands[6].state.query(), "focused");
+    assert_eq!(commands[6].state.filtered_item_count(), 2);
+    assert_eq!(
+        commands[6].dispatched_command_id.as_deref(),
+        Some("workspace.open")
+    );
+    assert!(commands[6].shortcut_diagnostics.is_empty());
+    assert_eq!(
+        commands[6]
+            .state
+            .items()
+            .iter()
+            .find(|item| item.value() == "workspace.open")
+            .and_then(|item| item.shortcut()),
+        Some("ctrl-E")
+    );
+    assert_eq!(
+        commands[6]
+            .state
+            .items()
+            .iter()
+            .find(|item| item.value() == "editor.format")
+            .and_then(|item| item.shortcut()),
+        Some("ctrl-shift-F")
     );
 
     assert_eq!(labels.len(), 4);

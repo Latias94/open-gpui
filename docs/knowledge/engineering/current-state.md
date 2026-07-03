@@ -182,6 +182,11 @@ verified_by:
   external async responses through the existing request-id stale guard, and returns complete
   `CommandPaletteProjection` updates for `Command`. The gallery `provider-search` sample now uses
   this controller instead of directly owning a provider refresh controller.
+- Done on `feat/command-context-keymap`: `open_gpui_command::CommandContextStack` now carries
+  command scopes and GPUI key contexts together. `CommandCenter` snapshots, menus, diagnostics,
+  provider requests, and app-level keymap shortcut projection consume the same stack, while
+  focused-window projection remains delegated to GPUI window precedence. The gallery `context-stack`
+  command sample proves focused scope descriptor override plus context-aware shortcut projection.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default

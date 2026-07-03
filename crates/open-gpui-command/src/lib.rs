@@ -8,6 +8,7 @@
 
 mod availability;
 mod center;
+mod context;
 pub mod gpui;
 mod history;
 mod menu;
@@ -21,10 +22,11 @@ pub use availability::{
     command_effective_availability,
 };
 pub use center::{CommandCenter, CommandProviderRegistration, CommandSourceRegistration};
+pub use context::CommandContextStack;
 pub use gpui::{
     CommandDispatchOutcome, CommandShortcutDiagnostic, CommandShortcutDiagnosticKind,
     GpuiCommandAction, GpuiCommandActionMap, command_shortcut_label,
-    command_shortcut_label_from_keymap,
+    command_shortcut_label_from_keymap, command_shortcut_label_from_keymap_in_context,
 };
 pub use history::{CommandHistoryEntry, CommandUsageHistory, MemoryCommandHistory};
 pub use menu::{CommandMenuCommand, CommandMenuEntry, CommandMenuSubmenu, CommandMenuTree};

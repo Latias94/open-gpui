@@ -94,6 +94,17 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         .register(root_core_command.clone())
         .unwrap_err();
     let mut root_command_center = root::CommandCenter::new("root-center-v1");
+    let root_context_stack: root::CommandContextStack = root::CommandContextStack::new()
+        .scope("root")
+        .key_context(open_gpui::KeyContext::parse("Root").unwrap());
+    root_command_center.set_context_stack(root_context_stack);
+    assert_eq!(root_command_center.active_scopes()[0].as_str(), "root");
+    assert_eq!(
+        root_command_center.key_contexts()[0]
+            .primary()
+            .map(|entry| entry.key.as_ref()),
+        Some("Root")
+    );
     let _root_command_source: root::CommandSourceRegistration = root_command_center
         .register_source(
             "root",
@@ -280,6 +291,20 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let _prelude_shortcut_diagnostic_kind: prelude::CommandShortcutDiagnosticKind =
         prelude_shortcut_diagnostics[0].kind();
     let mut prelude_command_center = prelude::CommandCenter::new("prelude-center-v1");
+    let prelude_context_stack: prelude::CommandContextStack = prelude::CommandContextStack::new()
+        .scope("prelude")
+        .key_context(open_gpui::KeyContext::parse("Prelude").unwrap());
+    prelude_command_center.set_context_stack(prelude_context_stack);
+    assert_eq!(
+        prelude_command_center.active_scopes()[0].as_str(),
+        "prelude"
+    );
+    assert_eq!(
+        prelude_command_center.key_contexts()[0]
+            .primary()
+            .map(|entry| entry.key.as_ref()),
+        Some("Prelude")
+    );
     let _prelude_command_source: prelude::CommandSourceRegistration = prelude_command_center
         .register_source(
             "prelude",

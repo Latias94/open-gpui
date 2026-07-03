@@ -3,12 +3,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use open_gpui::{Action, App, Keymap, Window};
+use open_gpui::{Action, App, KeyContext, Keymap, Window};
 
 use crate::{
-    CommandAvailabilityMap, CommandContribution, CommandDispatchOutcome, CommandMenuTree,
-    CommandProjectionDiagnostic, CommandProvider, CommandProviderApplyOutcome, CommandProviderId,
-    CommandProviderRequest, CommandProviderRequestId, CommandProviderResponse,
+    CommandAvailabilityMap, CommandContextStack, CommandContribution, CommandDispatchOutcome,
+    CommandMenuTree, CommandProjectionDiagnostic, CommandProvider, CommandProviderApplyOutcome,
+    CommandProviderId, CommandProviderRequest, CommandProviderRequestId, CommandProviderResponse,
     CommandProviderSource, CommandProviderStaleResponse, CommandProviderStatus,
     CommandRegistryError, CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection,
     CommandShortcutDiagnostic, CommandShortcutDiagnosticKind, CommandSourceId, CommandUsageHistory,
@@ -86,7 +86,7 @@ pub struct CommandCenter {
     registry: ScopedCommandRegistry,
     actions: GpuiCommandActionMap,
     availability: CommandAvailabilityMap,
-    active_scopes: Vec<CommandScopeId>,
+    context_stack: CommandContextStack,
     history: MemoryCommandHistory,
     providers: Vec<CommandProviderEntry>,
     provider_sources: BTreeMap<CommandProviderId, Vec<CommandSourceId>>,
@@ -102,7 +102,7 @@ impl CommandCenter {
             registry: ScopedCommandRegistry::new(revision),
             actions: GpuiCommandActionMap::new(),
             availability: CommandAvailabilityMap::new(),
-            active_scopes: Vec::new(),
+            context_stack: CommandContextStack::new(),
             history: MemoryCommandHistory::default(),
             providers: Vec::new(),
             provider_sources: BTreeMap::new(),
@@ -164,6 +164,22 @@ impl CommandCenter {
         self
     }
 
+    /// Returns the active command context stack.
+    pub const fn context_stack(&self) -> &CommandContextStack {
+        &self.context_stack
+    }
+
+    /// Returns mutable access to the active command context stack.
+    pub fn context_stack_mut(&mut self) -> &mut CommandContextStack {
+        &mut self.context_stack
+    }
+
+    /// Replaces the active command context stack.
+    pub fn set_context_stack(&mut self, context_stack: CommandContextStack) -> &mut Self {
+        self.context_stack = context_stack;
+        self
+    }
+
     /// Sets active command scopes.
     ///
     /// When no active scopes are set, snapshots project all registered scopes in registration order.
@@ -171,19 +187,39 @@ impl CommandCenter {
         &mut self,
         scopes: impl IntoIterator<Item = impl Into<CommandScopeId>>,
     ) -> &mut Self {
-        self.active_scopes = scopes.into_iter().map(Into::into).collect();
+        self.context_stack.set_scopes(scopes);
         self
     }
 
     /// Clears explicit active scopes and returns to projecting all registered scopes.
     pub fn clear_active_scopes(&mut self) -> &mut Self {
-        self.active_scopes.clear();
+        self.context_stack.clear_scopes();
         self
     }
 
     /// Returns active command scopes.
     pub fn active_scopes(&self) -> &[CommandScopeId] {
-        &self.active_scopes
+        self.context_stack.scope_ids()
+    }
+
+    /// Sets the GPUI key context stack used for app-level keymap projection.
+    pub fn set_key_contexts(
+        &mut self,
+        contexts: impl IntoIterator<Item = KeyContext>,
+    ) -> &mut Self {
+        self.context_stack.set_key_contexts(contexts);
+        self
+    }
+
+    /// Clears the GPUI key context stack while keeping command scopes.
+    pub fn clear_key_contexts(&mut self) -> &mut Self {
+        self.context_stack.clear_key_contexts();
+        self
+    }
+
+    /// Returns the GPUI key context stack used for app-level keymap projection.
+    pub fn key_contexts(&self) -> &[KeyContext] {
+        self.context_stack.key_contexts()
     }
 
     /// Registers or replaces a dynamic command provider.
@@ -452,11 +488,11 @@ impl CommandCenter {
 
     /// Projects active scopes before availability, shortcut, or history ranking.
     pub fn scope_projection(&self) -> CommandScopeProjection {
-        if self.active_scopes.is_empty() {
+        if self.context_stack.scope_ids().is_empty() {
             self.registry.project_all_scopes()
         } else {
             self.registry
-                .project_active_scopes(self.active_scopes.iter().cloned())
+                .project_active_scopes(self.context_stack.scope_ids().iter().cloned())
         }
     }
 
@@ -477,7 +513,11 @@ impl CommandCenter {
         let available = scoped.with_availability(&self.availability);
         let with_shortcuts = self
             .actions
-            .registry_snapshot_with_keymap_shortcuts(&available, keymap);
+            .registry_snapshot_with_keymap_shortcuts_in_context(
+                &available,
+                keymap,
+                self.context_stack.key_contexts(),
+            );
         self.rank_snapshot(with_shortcuts)
     }
 
@@ -499,8 +539,11 @@ impl CommandCenter {
         let scoped = self.scope_projection().into_snapshot();
         let visible = self.rank_snapshot(scoped.with_availability(&self.availability));
         self.filter_hidden_orphan_shortcut_diagnostics(
-            self.actions
-                .shortcut_diagnostics_for_keymap(&visible, keymap),
+            self.actions.shortcut_diagnostics_for_keymap_in_context(
+                &visible,
+                keymap,
+                self.context_stack.key_contexts(),
+            ),
         )
     }
 
@@ -671,7 +714,8 @@ impl CommandCenter {
     }
 
     fn provider_request(&self, query: &str) -> CommandProviderRequest {
-        CommandProviderRequest::new(query).active_scopes(self.active_scopes.iter().cloned())
+        CommandProviderRequest::new(query)
+            .active_scopes(self.context_stack.scope_ids().iter().cloned())
     }
 
     fn next_provider_request_id(
@@ -830,13 +874,14 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use open_gpui::{Action, KeyBinding, Keymap, actions};
+    use open_gpui::{Action, KeyBinding, KeyContext, Keymap, actions};
 
     use crate::{
-        CommandAvailabilityMap, CommandCenter, CommandContribution, CommandDescriptor,
-        CommandDispatchOutcome, CommandMenuEntry, CommandProjectionDiagnosticKind,
-        CommandProviderApplyOutcome, CommandProviderResponse, CommandProviderSource,
-        CommandProviderState, CommandProviderStatus, CommandUsageHistory,
+        CommandAvailabilityMap, CommandCenter, CommandContextStack, CommandContribution,
+        CommandDescriptor, CommandDispatchOutcome, CommandMenuEntry,
+        CommandProjectionDiagnosticKind, CommandProviderApplyOutcome, CommandProviderRequest,
+        CommandProviderResponse, CommandProviderSource, CommandProviderState,
+        CommandProviderStatus, CommandUsageHistory,
     };
 
     actions!(center_test_only, [OpenWorkspace, SaveWorkspace]);
@@ -917,6 +962,125 @@ mod tests {
                     .is_none_or(|command| command.command_id() != "workspace.save")
             }),
             "hidden command should not be present in the center menu"
+        );
+    }
+
+    #[test]
+    fn center_context_stack_drives_scopes_keymap_and_provider_requests() {
+        let mut center = CommandCenter::new("center-v1");
+        center
+            .register_source(
+                "global",
+                "core",
+                [CommandContribution::new(CommandDescriptor::new(
+                    "workspace.open",
+                    "Open Workspace",
+                ))],
+            )
+            .unwrap();
+        center
+            .register_source(
+                "workspace",
+                "workspace",
+                [CommandContribution::new(CommandDescriptor::new(
+                    "workspace.save",
+                    "Save Workspace",
+                ))],
+            )
+            .unwrap();
+        center
+            .register_source(
+                "editor",
+                "editor",
+                [
+                    CommandContribution::new(CommandDescriptor::new(
+                        "workspace.open",
+                        "Open Focused Editor",
+                    )),
+                    CommandContribution::new(CommandDescriptor::new(
+                        "editor.format",
+                        "Format Editor",
+                    )),
+                ],
+            )
+            .unwrap();
+        center
+            .set_context_stack(
+                CommandContextStack::new()
+                    .scope("global")
+                    .scope("workspace")
+                    .scope("editor")
+                    .key_context(KeyContext::parse("Workspace").unwrap())
+                    .key_context(KeyContext::parse("Editor vim_mode=normal").unwrap()),
+            )
+            .register_action("workspace.open", OpenWorkspace)
+            .register_action("workspace.save", SaveWorkspace);
+        center.register_provider("context-provider", |request: &CommandProviderRequest| {
+            assert_eq!(
+                request
+                    .active_scopes_ref()
+                    .iter()
+                    .map(|scope| scope.as_str())
+                    .collect::<Vec<_>>(),
+                ["global", "workspace", "editor"]
+            );
+            CommandProviderResponse::ready().source(CommandProviderSource::new(
+                "editor",
+                "context-provider-source",
+                [CommandContribution::new(CommandDescriptor::new(
+                    "editor.from-provider",
+                    "Editor Provider Result",
+                ))],
+            ))
+        });
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings([
+            KeyBinding::new("ctrl-p", OpenWorkspace, Some("Workspace")),
+            KeyBinding::new("ctrl-e", OpenWorkspace, Some("Editor")),
+            KeyBinding::new("ctrl-s", SaveWorkspace, Some("Workspace")),
+        ]);
+        let snapshot = center.snapshot_for_keymap(&keymap);
+
+        assert_eq!(
+            center
+                .active_scopes()
+                .iter()
+                .map(|scope| scope.as_str())
+                .collect::<Vec<_>>(),
+            ["global", "workspace", "editor"]
+        );
+        assert_eq!(
+            snapshot
+                .descriptor("workspace.open")
+                .map(CommandDescriptor::label),
+            Some("Open Focused Editor")
+        );
+        assert_eq!(
+            snapshot
+                .descriptor("workspace.open")
+                .and_then(CommandDescriptor::shortcut_ref),
+            Some("ctrl-E")
+        );
+        assert_eq!(
+            snapshot
+                .descriptor("workspace.save")
+                .and_then(CommandDescriptor::shortcut_ref),
+            Some("ctrl-S")
+        );
+        assert_eq!(
+            center
+                .refresh_provider("context-provider", "editor")
+                .expect("provider is registered")
+                .unwrap()
+                .command_count(),
+            1
+        );
+        assert!(
+            center
+                .snapshot()
+                .descriptor("editor.from-provider")
+                .is_some()
         );
     }
 

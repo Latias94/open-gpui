@@ -18,6 +18,8 @@ and plugin-like command metadata contribution.
 - `CommandCenter` is the recommended app-owned facade. It composes scoped metadata registration,
   source unregistration, availability projection, GPUI action mapping, shortcut projection,
   dispatch, menu projection, fuzzy search, and in-memory usage/query history.
+- `CommandContextStack` carries the current command scope stack and GPUI key context stack from
+  broad app/workspace context to focused surface context.
 - `CommandProvider*` types model dynamic command providers and async-friendly provider responses
   without owning a task runtime.
 - `CommandDescriptor` stores id, label, group, keywords, shortcut display text, disabled state,
@@ -53,8 +55,10 @@ the runtime authority, and UI components only render projections.
 ## Command Center Registration
 
 ```rust
-use open_gpui::{actions, KeyBinding, Keymap};
-use open_gpui_command::{CommandCenter, CommandContribution, CommandDescriptor};
+use open_gpui::{actions, KeyBinding, KeyContext, Keymap};
+use open_gpui_command::{
+    CommandCenter, CommandContextStack, CommandContribution, CommandDescriptor,
+};
 use open_gpui_ui_components::CommandIndexSnapshot;
 
 actions!(workspace_actions, [OpenWorkspace, SaveWorkspace]);
@@ -81,12 +85,18 @@ center.register_source(
 center
     .register_action("workspace.open", OpenWorkspace)
     .register_action("workspace.save", SaveWorkspace);
+center.set_context_stack(
+    CommandContextStack::new()
+        .scope("global")
+        .scope("workspace")
+        .key_context(KeyContext::parse("Workspace")?),
+);
 
 let mut keymap = Keymap::default();
 keymap.add_bindings([
-    KeyBinding::new("ctrl-p", OpenWorkspace, None),
-    KeyBinding::new("ctrl-shift-p", OpenWorkspace, None),
-    KeyBinding::new("ctrl-s", SaveWorkspace, None),
+    KeyBinding::new("ctrl-p", OpenWorkspace, Some("Workspace")),
+    KeyBinding::new("ctrl-shift-p", OpenWorkspace, Some("Workspace")),
+    KeyBinding::new("ctrl-s", SaveWorkspace, Some("Workspace")),
 ]);
 
 let command_index =
@@ -95,6 +105,44 @@ let command_index =
 
 Applications can keep one center per app, workspace, plugin host, window, or surface. A center is
 deliberately app-owned state, not a global singleton.
+
+## Context Stack And Shortcuts
+
+`CommandContextStack` keeps command scopes and GPUI key contexts adjacent but distinct:
+
+- command scopes select the registry sources visible to `CommandCenter` snapshots, menus,
+  diagnostics, dispatch, and provider requests;
+- GPUI key contexts select the keymap bindings used when projecting shortcut labels or shortcut
+  diagnostics from an app-level `Keymap`;
+- focused-window projections still use `Window::highest_precedence_binding_for_action`, which is
+  the runtime authority for the live rendered focus tree.
+
+```rust
+use open_gpui::{KeyBinding, KeyContext, Keymap};
+use open_gpui_command::{CommandCenter, CommandContextStack};
+
+center.set_context_stack(
+    CommandContextStack::new()
+        .scope("workspace")
+        .scope("editor")
+        .key_context(KeyContext::parse("Workspace")?)
+        .key_context(KeyContext::parse("Editor vim_mode=normal")?),
+);
+
+let mut keymap = Keymap::default();
+keymap.add_bindings([
+    KeyBinding::new("ctrl-p", OpenWorkspace, Some("Workspace")),
+    KeyBinding::new("ctrl-e", OpenWorkspace, Some("Editor")),
+]);
+
+let snapshot = center.snapshot_for_keymap(&keymap);
+```
+
+In the example above, an `editor` contribution can override a `workspace` command descriptor, and
+the displayed shortcut for `OpenWorkspace` becomes the `Editor` binding. The lower-level
+`GpuiCommandActionMap` exposes the same behavior through
+`registry_snapshot_with_keymap_shortcuts_in_context` and
+`shortcut_diagnostics_for_keymap_in_context` for callers that manage snapshots directly.
 
 ## Dynamic Providers
 
@@ -363,3 +411,7 @@ The gallery's `provider-search` command sample uses `CommandPaletteController` a
 applied to the center, bound to GPUI actions and shortcuts, checked for empty shortcut diagnostics,
 converted into a `CommandIndexSnapshot`, and rendered by the existing `Command` component without
 making `open_gpui_command` depend on UI component types.
+
+The gallery's `context-stack` command sample uses `CommandContextStack` to prove that focused
+command scopes can override broader scope descriptors while GPUI key contexts project the shortcut
+active for the focused editor surface.

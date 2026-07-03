@@ -6,6 +6,11 @@ status: active
 
 # Log
 
+- 2026-07-03: Added `CommandContextStack` on `feat/command-context-keymap`. The stack carries
+  command scopes and GPUI key contexts separately, so `CommandCenter` can project focused command
+  scopes while app-level keymap shortcut display and diagnostics respect the same GPUI key context
+  stack. The gallery now has a `context-stack` command sample proving focused descriptor override
+  and context-aware shortcut labels.
 - 2026-07-03: Added `CommandPaletteController` on `feat/command-palette-controller`. The UI-side
   controller owns palette query/provider refresh lifecycle, refreshes registered synchronous
   providers, reports configured providers that need app-owned async work, accepts external async

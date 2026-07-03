@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use open_gpui::{Action, App, KeyBinding, Keymap, Window};
+use open_gpui::{Action, App, KeyBinding, KeyContext, Keymap, Window};
 
 use crate::{
     CommandAvailability, CommandAvailabilityResolver, CommandRegistrySnapshot, CommandUsageHistory,
@@ -255,6 +255,18 @@ impl GpuiCommandActionMap {
         })
     }
 
+    /// Diagnoses command/action/keymap drift for a GPUI key context stack.
+    pub fn shortcut_diagnostics_for_keymap_in_context(
+        &self,
+        registry: &CommandRegistrySnapshot,
+        keymap: &Keymap,
+        context_stack: &[KeyContext],
+    ) -> Vec<CommandShortcutDiagnostic> {
+        self.shortcut_diagnostics_with(registry, |action| {
+            command_shortcut_label_from_keymap_in_context(keymap, action, context_stack)
+        })
+    }
+
     /// Diagnoses command/action/keymap drift for focused-window shortcut projection.
     pub fn shortcut_diagnostics_for_window(
         &self,
@@ -283,6 +295,29 @@ impl GpuiCommandActionMap {
             .filter_map(|command_action| {
                 command_shortcut_label_from_keymap(keymap, command_action.action())
                     .map(|label| (command_action.command_id().to_owned(), label))
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        registry_snapshot_with_shortcuts(registry, &shortcuts)
+    }
+
+    /// Projects GPUI keymap shortcuts for a context stack onto a command registry snapshot.
+    pub fn registry_snapshot_with_keymap_shortcuts_in_context(
+        &self,
+        registry: &CommandRegistrySnapshot,
+        keymap: &Keymap,
+        context_stack: &[KeyContext],
+    ) -> CommandRegistrySnapshot {
+        let shortcuts = self
+            .actions
+            .iter()
+            .filter_map(|command_action| {
+                command_shortcut_label_from_keymap_in_context(
+                    keymap,
+                    command_action.action(),
+                    context_stack,
+                )
+                .map(|label| (command_action.command_id().to_owned(), label))
             })
             .collect::<BTreeMap<_, _>>();
 
@@ -474,6 +509,39 @@ pub fn command_shortcut_label_from_keymap(keymap: &Keymap, action: &dyn Action) 
         .map(command_shortcut_label)
 }
 
+/// Returns the display shortcut label for an action in a GPUI key context stack.
+pub fn command_shortcut_label_from_keymap_in_context(
+    keymap: &Keymap,
+    action: &dyn Action,
+    context_stack: &[KeyContext],
+) -> Option<String> {
+    highest_precedence_binding_for_action_in_key_contexts(keymap, action, context_stack)
+        .map(|binding| command_shortcut_label(&binding))
+}
+
+fn highest_precedence_binding_for_action_in_key_contexts(
+    keymap: &Keymap,
+    action: &dyn Action,
+    context_stack: &[KeyContext],
+) -> Option<KeyBinding> {
+    keymap
+        .bindings_for_action(action)
+        .rev()
+        .find(|binding| binding_matches_predicate_and_not_shadowed(keymap, binding, context_stack))
+        .cloned()
+}
+
+fn binding_matches_predicate_and_not_shadowed(
+    keymap: &Keymap,
+    binding: &KeyBinding,
+    context_stack: &[KeyContext],
+) -> bool {
+    let (bindings, _) = keymap.bindings_for_input(binding.keystrokes(), context_stack);
+    bindings
+        .first()
+        .is_some_and(|found| found.action().partial_eq(binding.action()))
+}
+
 fn registry_snapshot_with_shortcuts(
     registry: &CommandRegistrySnapshot,
     shortcuts: &BTreeMap<String, String>,
@@ -499,7 +567,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use open_gpui::{KeyBinding, Keymap, actions};
+    use open_gpui::{KeyBinding, KeyContext, Keymap, actions};
 
     use crate::{
         CommandAvailabilityMap, CommandContribution, CommandDescriptor, CommandDispatchOutcome,
@@ -550,6 +618,60 @@ mod tests {
                 ("workspace.open".to_owned(), Some("ctrl-shift-O".to_owned())),
                 ("workspace.save".to_owned(), Some("Ctrl+S".to_owned())),
             ]
+        );
+    }
+
+    #[test]
+    fn keymap_shortcut_projection_can_respect_context_stack() {
+        let mut keymap = Keymap::default();
+        keymap.add_bindings([
+            KeyBinding::new("ctrl-p", OpenWorkspace, Some("Workspace")),
+            KeyBinding::new("ctrl-e", OpenWorkspace, Some("Editor")),
+            KeyBinding::new("ctrl-s", SaveWorkspace, Some("Workspace")),
+        ]);
+        let registry = command_registry_snapshot();
+        let action_map = GpuiCommandActionMap::new()
+            .action("workspace.open", OpenWorkspace)
+            .action("workspace.save", SaveWorkspace);
+        let workspace_context = [KeyContext::parse("Workspace").unwrap()];
+        let editor_context = [
+            KeyContext::parse("Workspace").unwrap(),
+            KeyContext::parse("Editor").unwrap(),
+        ];
+
+        let workspace_projected = action_map.registry_snapshot_with_keymap_shortcuts_in_context(
+            &registry,
+            &keymap,
+            &workspace_context,
+        );
+        let editor_projected = action_map.registry_snapshot_with_keymap_shortcuts_in_context(
+            &registry,
+            &keymap,
+            &editor_context,
+        );
+
+        assert_eq!(
+            workspace_projected
+                .descriptor("workspace.open")
+                .and_then(CommandDescriptor::shortcut_ref),
+            Some("ctrl-P")
+        );
+        assert_eq!(
+            editor_projected
+                .descriptor("workspace.open")
+                .and_then(CommandDescriptor::shortcut_ref),
+            Some("ctrl-E")
+        );
+        assert_eq!(
+            editor_projected
+                .descriptor("workspace.save")
+                .and_then(CommandDescriptor::shortcut_ref),
+            Some("ctrl-S")
+        );
+        assert!(
+            action_map
+                .shortcut_diagnostics_for_keymap_in_context(&registry, &keymap, &editor_context)
+                .is_empty()
         );
     }
 
