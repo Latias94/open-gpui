@@ -693,6 +693,88 @@ fn transition_pane_clip_mounts_real_pane_content(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn transition_projection_clip_mounts_final_size_pane_content(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, _right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+
+    let host_bounds = floating_bounds(0.0, 0.0, 400.0, 240.0);
+    let previous = single_tabs_presentation_scene(left_tabs, host_bounds);
+    let previous_left_bounds = previous
+        .pane_for_node(left_tabs)
+        .expect("previous scene should contain left tabs pane")
+        .bounds;
+    let next = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(host_bounds, cx)
+    });
+    let final_left_bounds = next
+        .pane_for_node(left_tabs)
+        .expect("final scene should contain left tabs pane")
+        .bounds;
+    let plan = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
+
+    window
+        .update(cx, |host, window, cx| {
+            assert_eq!(
+                host.execute_transition_plan(
+                    plan,
+                    MotionSpec::new(
+                        MotionPreference::Animated,
+                        MotionDuration::Custom(Duration::from_secs(60)),
+                        MotionEasing::Linear,
+                    ),
+                    Some(window),
+                    cx,
+                ),
+                DockTransitionExecutionState::Scheduled
+            );
+        })
+        .expect("host should execute transition plan");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+
+    let clip = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TransitionPaneClip { node: left_tabs },
+    )
+    .expect("resizing pane projection clip selector should be emitted");
+    let content = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TransitionPaneContent { node: left_tabs },
+    )
+    .expect("resizing pane projected content selector should be emitted");
+    let occlusion = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TransitionPaneOcclusion { node: left_tabs },
+    )
+    .expect("resizing pane projection occlusion selector should be emitted");
+
+    let clip_bounds = debug_bounds(&mut visual, &clip);
+    assert!(
+        clip_bounds.size.width > final_left_bounds.size.width
+            && clip_bounds.size.width <= previous_left_bounds.size.width,
+        "projection clip should start from previous width and move toward final width"
+    );
+    assert_bounds_close(
+        debug_bounds(&mut visual, &content),
+        final_left_bounds,
+        "resizing pane projected content",
+    );
+    assert_bounds_close(
+        debug_bounds(&mut visual, &occlusion),
+        final_left_bounds,
+        "resizing pane projection occlusion",
+    );
+}
+
+#[open_gpui::test]
 fn drag_active_frames_do_not_schedule_background_scene_expiry(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a", "b"]);
     let (window, host, mut visual) = open_host(

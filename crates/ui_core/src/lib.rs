@@ -59,8 +59,8 @@ pub use motion_runtime::{
     preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
 };
 pub use motion_spring::{
-    MotionModel, MotionPreset, MotionSpring, MotionSpringPhysics, MotionSpringPreset,
-    MotionSpringSample, MotionSpringSpec,
+    MotionModel, MotionPreset, MotionScalarSample, MotionSpring, MotionSpringPhysics,
+    MotionSpringPreset, MotionSpringSpec,
 };
 pub use overlay::{
     DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,

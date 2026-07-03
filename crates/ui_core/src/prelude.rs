@@ -31,8 +31,8 @@ pub use crate::{
         preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
     },
     motion_spring::{
-        MotionModel, MotionPreset, MotionSpring, MotionSpringPhysics, MotionSpringPreset,
-        MotionSpringSample, MotionSpringSpec,
+        MotionModel, MotionPreset, MotionScalarSample, MotionSpring, MotionSpringPhysics,
+        MotionSpringPreset, MotionSpringSpec,
     },
     overlay::{
         DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,

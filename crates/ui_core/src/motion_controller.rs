@@ -1,6 +1,6 @@
 //! Renderer-neutral motion controller contracts.
 
-use crate::motion_spring::{MotionModel, MotionSpringSample};
+use crate::motion_spring::{MotionModel, MotionScalarSample};
 use crate::motion_value::MotionValue;
 use crate::{MotionRunState, MotionSpec};
 use std::time::Duration;
@@ -136,7 +136,7 @@ impl MotionScalarTrack {
     }
 
     /// Samples the track at the provided controller time.
-    pub fn sample_at(&self, now: Duration) -> MotionSpringSample {
+    pub fn sample_at(&self, now: Duration) -> MotionScalarSample {
         let effective_now = self.cancelled_at.unwrap_or(now);
         let elapsed = effective_now.saturating_sub(self.started_at);
         let mut sample = self.model.sample_scalar_elapsed(
@@ -146,7 +146,7 @@ impl MotionScalarTrack {
             elapsed,
         );
         if self.cancelled_at.is_some() && sample.state().is_active() {
-            sample = MotionSpringSample::new(
+            sample = MotionScalarSample::new(
                 MotionRunState::Cancelled,
                 sample.elapsed(),
                 sample.value(),
@@ -167,12 +167,12 @@ impl MotionScalarTrack {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MotionScalarTrackSample<K> {
     key: K,
-    sample: MotionSpringSample,
+    sample: MotionScalarSample,
 }
 
 impl<K> MotionScalarTrackSample<K> {
     /// Creates a keyed track sample.
-    pub const fn new(key: K, sample: MotionSpringSample) -> Self {
+    pub const fn new(key: K, sample: MotionScalarSample) -> Self {
         Self { key, sample }
     }
 
@@ -182,7 +182,7 @@ impl<K> MotionScalarTrackSample<K> {
     }
 
     /// Returns the scalar motion sample.
-    pub const fn sample(&self) -> MotionSpringSample {
+    pub const fn sample(&self) -> MotionScalarSample {
         self.sample
     }
 }

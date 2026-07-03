@@ -323,10 +323,35 @@ fn transition_executor_samples_timeline_and_reveal_geometry(cx: &mut TestAppCont
             .iter()
             .find(|clip| clip.node == right_tabs)
             .expect("entering pane should expose reveal clip");
+        let resizing = start
+            .pane_clips
+            .iter()
+            .find(|clip| clip.node == left_tabs)
+            .expect("resizing pane should expose projection clip");
+        let previous_left_bounds = previous
+            .pane_for_node(left_tabs)
+            .expect("left pane should be in previous scene")
+            .bounds;
+        let final_left_bounds = next
+            .pane_for_node(left_tabs)
+            .expect("left pane should be in final scene")
+            .bounds;
         let final_bounds = next
             .pane_for_node(right_tabs)
             .expect("right pane should be in final scene")
             .bounds;
+        assert_eq!(
+            resizing.content_bounds, final_left_bounds,
+            "resizing pane content must be laid out at final size"
+        );
+        assert_eq!(
+            resizing.visible_bounds, previous_left_bounds,
+            "resizing pane visual clip should begin at the previous geometry"
+        );
+        assert_eq!(
+            resizing.occlusion_bounds, final_left_bounds,
+            "resizing pane should occlude the snapped final scene underneath"
+        );
         assert_eq!(
             entering.content_bounds, final_bounds,
             "entering pane content must be final-size from the first frame"
@@ -364,6 +389,18 @@ fn transition_executor_samples_timeline_and_reveal_geometry(cx: &mut TestAppCont
         assert_eq!(
             midpoint_clip.visible_bounds.size.height,
             final_bounds.size.height
+        );
+        let midpoint_resize_clip = midpoint
+            .pane_clips
+            .iter()
+            .find(|clip| clip.node == left_tabs)
+            .expect("resizing pane should still expose projection clip");
+        assert_eq!(midpoint_resize_clip.content_bounds, final_left_bounds);
+        assert_eq!(midpoint_resize_clip.occlusion_bounds, final_left_bounds);
+        assert!(
+            midpoint_resize_clip.visible_bounds.size.width > final_left_bounds.size.width
+                && midpoint_resize_clip.visible_bounds.size.width < previous_left_bounds.size.width,
+            "resizing pane should visually interpolate between previous and final widths"
         );
         assert!(
             midpoint

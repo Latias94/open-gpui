@@ -272,9 +272,9 @@ impl MotionPreset {
     }
 }
 
-/// A sampled point on a spring transition.
+/// A sampled point on a scalar motion model.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MotionSpringSample {
+pub struct MotionScalarSample {
     state: MotionRunState,
     elapsed: Duration,
     value: f32,
@@ -282,8 +282,8 @@ pub struct MotionSpringSample {
     target: f32,
 }
 
-impl MotionSpringSample {
-    /// Creates a spring sample from explicit values.
+impl MotionScalarSample {
+    /// Creates a scalar motion sample from explicit values.
     pub const fn new(
         state: MotionRunState,
         elapsed: Duration,
@@ -370,7 +370,7 @@ impl MotionSpring {
     /// Creates a new spring whose source and velocity come from an interrupted sample.
     pub fn retarget_from_sample(
         spec: MotionSpringSpec,
-        sample: MotionSpringSample,
+        sample: MotionScalarSample,
         target: f32,
         started_at: Instant,
     ) -> Self {
@@ -413,7 +413,7 @@ impl MotionSpring {
     }
 
     /// Samples the spring at the provided instant.
-    pub fn sample(self, now: Instant) -> MotionSpringSample {
+    pub fn sample(self, now: Instant) -> MotionScalarSample {
         let effective_now = self.cancelled_at.unwrap_or(now);
         let elapsed = effective_now.saturating_duration_since(self.started_at);
         let mut sample = Self::sample_elapsed(
@@ -436,13 +436,13 @@ impl MotionSpring {
         target: f32,
         initial_velocity: f32,
         elapsed: Duration,
-    ) -> MotionSpringSample {
+    ) -> MotionScalarSample {
         let from = sanitize_number(from, 0.0);
         let target = sanitize_number(target, from);
         let initial_velocity = sanitize_number(initial_velocity, 0.0);
 
         if spec.is_immediate() {
-            return MotionSpringSample::new(
+            return MotionScalarSample::new(
                 MotionRunState::Immediate,
                 elapsed,
                 target,
@@ -468,15 +468,15 @@ impl MotionSpring {
             } else {
                 initial_velocity
             };
-            return MotionSpringSample::new(state, elapsed, value, velocity, target);
+            return MotionScalarSample::new(state, elapsed, value, velocity, target);
         }
 
         let (value, velocity) =
             sample_spring_value(physics, from, target, initial_velocity, elapsed);
         if at_rest(value, target, velocity, physics) {
-            MotionSpringSample::new(MotionRunState::Completed, elapsed, target, 0.0, target)
+            MotionScalarSample::new(MotionRunState::Completed, elapsed, target, 0.0, target)
         } else {
-            MotionSpringSample::new(MotionRunState::Active, elapsed, value, velocity, target)
+            MotionScalarSample::new(MotionRunState::Active, elapsed, value, velocity, target)
         }
     }
 }
@@ -524,7 +524,7 @@ impl MotionModel {
         target: f32,
         initial_velocity: f32,
         elapsed: Duration,
-    ) -> MotionSpringSample {
+    ) -> MotionScalarSample {
         match self {
             Self::Timeline(spec) => {
                 let sample = MotionTimeline::sample_elapsed(spec, elapsed);
@@ -537,7 +537,7 @@ impl MotionModel {
                 } else {
                     (target - from) / duration
                 };
-                MotionSpringSample::new(sample.state(), sample.elapsed(), value, velocity, target)
+                MotionScalarSample::new(sample.state(), sample.elapsed(), value, velocity, target)
             }
             Self::Spring(spec) => {
                 MotionSpring::sample_elapsed(spec, from, target, initial_velocity, elapsed)
