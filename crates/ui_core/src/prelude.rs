@@ -20,6 +20,10 @@ pub use crate::{
         MotionFrameDemand, MotionScalarController, MotionScalarControllerSample, MotionScalarTrack,
         MotionScalarTrackSample,
     },
+    motion_policy::{
+        MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
+        MotionPolicyReport, MotionPreviewTargetPolicy, validate_motion_policy,
+    },
     motion_projection::{MotionProjection, MotionProjectionSample, MotionProjectionScale},
     motion_runtime::{
         MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionSnapshot, MotionTimeline,

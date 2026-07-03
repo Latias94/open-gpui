@@ -527,6 +527,9 @@ fn render_handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use open_gpui_ui_core::{
+        MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue, validate_motion_policy,
+    };
     use std::time::Duration;
 
     fn state(left: f32, right: f32) -> SplitterState {
@@ -614,5 +617,27 @@ mod tests {
         assert!(fractions_equal(&runtime.state_fractions, &[0.6, 0.4]));
         assert!(fractions_equal(&runtime.panel_fractions, &[0.6, 0.4]));
         assert!(runtime.transition.is_none());
+    }
+
+    #[test]
+    fn splitter_motion_policy_preserves_programmatic_motion_and_drag_bypass() {
+        let programmatic = MotionPolicyInput::new(
+            MotionPolicyContext::CommittedLayout,
+            MotionModel::timeline(MotionSpec::committed_layout(MotionPreference::Animated)),
+        )
+        .with_spatial_motion(true)
+        .with_reduced_motion_final_state(true);
+        assert!(validate_motion_policy(programmatic).is_ok());
+
+        let pointer_drag = MotionPolicyInput::new(
+            MotionPolicyContext::PointerDrag,
+            MotionModel::timeline(MotionSpec::committed_layout(MotionPreference::Animated)),
+        )
+        .with_spatial_motion(true)
+        .with_reduced_motion_final_state(true);
+        assert!(
+            validate_motion_policy(pointer_drag)
+                .has_issue(MotionPolicyIssue::SpatialMotionForbidden)
+        );
     }
 }
