@@ -1,4 +1,7 @@
-//! Renderer-neutral command descriptor contracts.
+//! Renderer-neutral command descriptor and registry contracts.
+
+use std::collections::BTreeSet;
+use std::fmt;
 
 /// Pure app-command metadata shared by command palettes and menu projections.
 ///
@@ -15,6 +18,191 @@ pub struct CommandDescriptor {
     disabled: bool,
     when: Option<String>,
     menu_path: Vec<String>,
+}
+
+/// One command contribution registered by an app or plugin-like module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandContribution {
+    descriptor: CommandDescriptor,
+    source: Option<String>,
+}
+
+impl CommandContribution {
+    /// Creates a command contribution from command metadata.
+    pub fn new(descriptor: CommandDescriptor) -> Self {
+        Self {
+            descriptor,
+            source: None,
+        }
+    }
+
+    /// Applies optional source metadata such as a crate, plugin, or module id.
+    pub fn source(mut self, source: impl Into<String>) -> Self {
+        let source = source.into();
+        if !source.is_empty() {
+            self.source = Some(source);
+        }
+        self
+    }
+
+    /// Returns the command descriptor.
+    pub const fn descriptor(&self) -> &CommandDescriptor {
+        &self.descriptor
+    }
+
+    /// Returns optional source metadata.
+    pub fn source_ref(&self) -> Option<&str> {
+        self.source.as_deref()
+    }
+}
+
+/// Immutable command registry projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandRegistrySnapshot {
+    revision: String,
+    contributions: Vec<CommandContribution>,
+}
+
+impl CommandRegistrySnapshot {
+    /// Creates an immutable registry snapshot.
+    pub fn new(
+        revision: impl Into<String>,
+        contributions: impl IntoIterator<Item = CommandContribution>,
+    ) -> Self {
+        Self {
+            revision: revision.into(),
+            contributions: contributions.into_iter().collect(),
+        }
+    }
+
+    /// Returns the caller-owned revision label.
+    pub fn revision(&self) -> &str {
+        &self.revision
+    }
+
+    /// Returns registered command contributions in deterministic order.
+    pub fn contributions(&self) -> &[CommandContribution] {
+        &self.contributions
+    }
+
+    /// Iterates over command descriptors in deterministic order.
+    pub fn descriptors(&self) -> impl Iterator<Item = &CommandDescriptor> {
+        self.contributions
+            .iter()
+            .map(CommandContribution::descriptor)
+    }
+
+    /// Returns whether the snapshot contains no commands.
+    pub const fn is_empty(&self) -> bool {
+        self.contributions.is_empty()
+    }
+
+    /// Returns the number of commands in the snapshot.
+    pub const fn len(&self) -> usize {
+        self.contributions.len()
+    }
+}
+
+/// Duplicate command id registration error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandRegistryError {
+    id: String,
+}
+
+impl CommandRegistryError {
+    /// Returns the duplicated command id.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+impl fmt::Display for CommandRegistryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "duplicate command id `{}`", self.id)
+    }
+}
+
+impl std::error::Error for CommandRegistryError {}
+
+/// Deterministic command registry for app and plugin-like command contributions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandRegistry {
+    revision: String,
+    contributions: Vec<CommandContribution>,
+    ids: BTreeSet<String>,
+}
+
+impl CommandRegistry {
+    /// Creates an empty command registry for the given revision label.
+    pub fn new(revision: impl Into<String>) -> Self {
+        Self {
+            revision: revision.into(),
+            contributions: Vec::new(),
+            ids: BTreeSet::new(),
+        }
+    }
+
+    /// Returns the caller-owned revision label.
+    pub fn revision(&self) -> &str {
+        &self.revision
+    }
+
+    /// Registers one command descriptor.
+    pub fn register(&mut self, descriptor: CommandDescriptor) -> Result<(), CommandRegistryError> {
+        self.register_contribution(CommandContribution::new(descriptor))
+    }
+
+    /// Registers one command contribution.
+    pub fn register_contribution(
+        &mut self,
+        contribution: CommandContribution,
+    ) -> Result<(), CommandRegistryError> {
+        let id = contribution.descriptor().id().to_owned();
+        if !self.ids.insert(id.clone()) {
+            return Err(CommandRegistryError { id });
+        }
+        self.contributions.push(contribution);
+        Ok(())
+    }
+
+    /// Registers many command contributions.
+    pub fn register_all(
+        &mut self,
+        contributions: impl IntoIterator<Item = CommandContribution>,
+    ) -> Result<(), CommandRegistryError> {
+        let contributions = contributions.into_iter().collect::<Vec<_>>();
+        let mut next_ids = self.ids.clone();
+        for contribution in &contributions {
+            let id = contribution.descriptor().id().to_owned();
+            if !next_ids.insert(id.clone()) {
+                return Err(CommandRegistryError { id });
+            }
+        }
+
+        self.ids = next_ids;
+        self.contributions.extend(contributions);
+        Ok(())
+    }
+
+    /// Returns registered command contributions in insertion order.
+    pub fn contributions(&self) -> &[CommandContribution] {
+        &self.contributions
+    }
+
+    /// Captures an immutable snapshot of the current registry.
+    pub fn snapshot(&self) -> CommandRegistrySnapshot {
+        CommandRegistrySnapshot::new(self.revision.clone(), self.contributions.clone())
+    }
+
+    /// Returns whether the registry contains no commands.
+    pub const fn is_empty(&self) -> bool {
+        self.contributions.is_empty()
+    }
+
+    /// Returns the number of registered commands.
+    pub const fn len(&self) -> usize {
+        self.contributions.len()
+    }
 }
 
 impl CommandDescriptor {
@@ -121,7 +309,10 @@ impl CommandDescriptor {
 
 #[cfg(test)]
 mod tests {
-    use super::CommandDescriptor;
+    use super::{
+        CommandContribution, CommandDescriptor, CommandRegistry, CommandRegistryError,
+        CommandRegistrySnapshot,
+    };
 
     #[test]
     fn command_descriptor_records_projection_metadata_without_runtime() {
@@ -141,5 +332,100 @@ mod tests {
         assert!(descriptor.disabled_state());
         assert_eq!(descriptor.when_ref(), Some("workspace"));
         assert_eq!(descriptor.menu_path_ref(), ["File", "Open"]);
+    }
+
+    #[test]
+    fn command_registry_preserves_deterministic_contribution_order() {
+        let mut registry = CommandRegistry::new("commands:1");
+        registry
+            .register_contribution(
+                CommandContribution::new(
+                    CommandDescriptor::new("workspace.open", "Open Workspace")
+                        .group("Workspace")
+                        .keyword("project")
+                        .shortcut("Ctrl+O"),
+                )
+                .source("workspace"),
+            )
+            .unwrap();
+        registry
+            .register(CommandDescriptor::new("file.save", "Save File").group("File"))
+            .unwrap();
+
+        let snapshot = registry.snapshot();
+        let ids = snapshot
+            .descriptors()
+            .map(CommandDescriptor::id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(registry.revision(), "commands:1");
+        assert_eq!(snapshot.revision(), "commands:1");
+        assert_eq!(ids, ["workspace.open", "file.save"]);
+        assert_eq!(snapshot.contributions()[0].source_ref(), Some("workspace"));
+        assert_eq!(
+            snapshot.contributions()[0].descriptor().keywords_ref(),
+            ["project"]
+        );
+        assert_eq!(
+            snapshot.contributions()[0].descriptor().shortcut_ref(),
+            Some("Ctrl+O")
+        );
+    }
+
+    #[test]
+    fn command_registry_rejects_duplicate_ids() {
+        let mut registry = CommandRegistry::new("commands:1");
+        registry
+            .register(CommandDescriptor::new("file.save", "Save File"))
+            .unwrap();
+
+        let error = registry
+            .register(CommandDescriptor::new("file.save", "Save Again"))
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            CommandRegistryError {
+                id: "file.save".into()
+            }
+        );
+        assert_eq!(error.id(), "file.save");
+        assert_eq!(error.to_string(), "duplicate command id `file.save`");
+        assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn command_registry_register_all_stops_at_first_duplicate() {
+        let mut registry = CommandRegistry::new("commands:1");
+        let result = registry.register_all([
+            CommandContribution::new(CommandDescriptor::new("file.open", "Open File")),
+            CommandContribution::new(CommandDescriptor::new("file.open", "Open Again")),
+            CommandContribution::new(CommandDescriptor::new("file.save", "Save File")),
+        ]);
+
+        assert_eq!(result.unwrap_err().id(), "file.open");
+        assert!(registry.is_empty());
+    }
+
+    #[test]
+    fn command_registry_snapshot_can_be_built_directly() {
+        let snapshot = CommandRegistrySnapshot::new(
+            "commands:manual",
+            [CommandContribution::new(
+                CommandDescriptor::new("workspace.close", "Close Workspace")
+                    .disabled(true)
+                    .when("workspace")
+                    .menu_path(["File", "Close Workspace"]),
+            )
+            .source("workspace")],
+        );
+
+        assert!(!snapshot.is_empty());
+        assert_eq!(snapshot.len(), 1);
+        let descriptor = snapshot.contributions()[0].descriptor();
+        assert_eq!(descriptor.id(), "workspace.close");
+        assert!(descriptor.disabled_state());
+        assert_eq!(descriptor.when_ref(), Some("workspace"));
+        assert_eq!(descriptor.menu_path_ref(), ["File", "Close Workspace"]);
     }
 }

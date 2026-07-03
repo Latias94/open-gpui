@@ -3,7 +3,7 @@
 use crate::choice::{self, ChoiceItemProjection, ChoiceSelectionMode};
 use crate::listbox::ListboxOptionDescriptor;
 use crate::overlay::OverlayDisclosureOpenMode;
-use open_gpui_ui_core::{CommandDescriptor, Role};
+use open_gpui_ui_core::{CommandDescriptor, CommandRegistrySnapshot, Role};
 
 /// Command dialog open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -404,6 +404,11 @@ impl CommandIndexSnapshot {
             groups: Vec::new(),
             items: Vec::new(),
         }
+    }
+
+    /// Creates a command index snapshot from a renderer-neutral command registry snapshot.
+    pub fn from_registry_snapshot(registry: &CommandRegistrySnapshot) -> Self {
+        Self::new(registry.revision()).command_descriptors(registry.descriptors())
     }
 
     /// Applies snapshot ordering/filtering semantics.

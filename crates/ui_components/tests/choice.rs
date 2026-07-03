@@ -1440,6 +1440,68 @@ fn command_items_project_core_command_descriptors() {
 }
 
 #[test]
+fn command_index_snapshot_projects_core_command_registry_snapshot() {
+    let mut registry = open_gpui_ui_core::CommandRegistry::new("registry-v1");
+    registry
+        .register_contribution(
+            open_gpui_ui_core::CommandContribution::new(
+                open_gpui_ui_core::CommandDescriptor::new("workspace.open", "Open Workspace")
+                    .group("Workspace")
+                    .keyword("project")
+                    .shortcut("Ctrl+Shift+O")
+                    .when("workspace"),
+            )
+            .source("workspace"),
+        )
+        .unwrap();
+    registry
+        .register(
+            open_gpui_ui_core::CommandDescriptor::new("file.save", "Save File")
+                .group("File")
+                .disabled(true),
+        )
+        .unwrap();
+
+    let snapshot = CommandIndexSnapshot::from_registry_snapshot(&registry.snapshot());
+    let state = Command::new("registry-index-command", "Commands")
+        .index_snapshot(snapshot)
+        .state();
+
+    assert_eq!(state.index_revision(), Some("registry-v1"));
+    assert_eq!(
+        state
+            .groups()
+            .iter()
+            .map(|group| group.label().to_owned())
+            .collect::<Vec<_>>(),
+        ["Workspace", "File"]
+    );
+    assert_eq!(
+        state
+            .items()
+            .iter()
+            .map(|item| {
+                (
+                    item.value().to_owned(),
+                    item.shortcut().map(str::to_owned),
+                    item.when_ref().map(str::to_owned),
+                    item.disabled(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        [
+            (
+                "workspace.open".to_owned(),
+                Some("Ctrl+Shift+O".to_owned()),
+                Some("workspace".to_owned()),
+                false,
+            ),
+            ("file.save".to_owned(), None, None, true),
+        ]
+    );
+}
+
+#[test]
 fn command_index_snapshot_revision_preserves_selection_by_value_after_reorder() {
     let first = CommandIndexSnapshot::new("commands-v1")
         .item(CommandItemDescriptor::new("other", "Other"))

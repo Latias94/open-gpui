@@ -76,12 +76,23 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_combobox = root::Combobox::new("combobox", "Search");
     let root_command = root::Command::new("command", "Commands");
     let root_core_command = root::CommandDescriptor::new("root.open", "Open").shortcut("Ctrl+O");
+    let mut root_command_registry = root::CommandRegistry::new("root-registry-v1");
+    root_command_registry
+        .register_contribution(
+            root::CommandContribution::new(root_core_command.clone()).source("root-workspace"),
+        )
+        .unwrap();
+    let root_registry_snapshot: root::CommandRegistrySnapshot = root_command_registry.snapshot();
+    let _root_registry_duplicate: root::CommandRegistryError = root_command_registry
+        .register(root_core_command.clone())
+        .unwrap_err();
     let root_command_items = vec![root::CommandItem::new("open", "Open")];
     let root_command_snapshot = root::CommandIndexSnapshot::new("root-v1")
         .mode(root::CommandIndexSnapshotMode::PreRankedFilter)
         .item(root::CommandItemDescriptor::from_command_descriptor(
             &root_core_command,
-        ));
+        ))
+        .command_descriptors(root_registry_snapshot.descriptors());
     let root_command_snapshot: root::CommandBehaviorSnapshot =
         root::Command::new("root-command-plan", "Commands")
             .items(root_command_items)
@@ -167,12 +178,20 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_command = prelude::Command::new("command", "Commands");
     let prelude_core_command =
         prelude::CommandDescriptor::new("prelude.open", "Open").shortcut("Ctrl+O");
+    let prelude_registry_snapshot = prelude::CommandRegistrySnapshot::new(
+        "prelude-registry-v1",
+        [
+            prelude::CommandContribution::new(prelude_core_command.clone())
+                .source("prelude-workspace"),
+        ],
+    );
     let prelude_command_items = vec![prelude::CommandItem::new("open", "Open")];
-    let prelude_command_snapshot = prelude::CommandIndexSnapshot::new("prelude-v1")
-        .mode(prelude::CommandIndexSnapshotMode::PreFiltered)
-        .item(prelude::CommandItemDescriptor::from_command_descriptor(
-            &prelude_core_command,
-        ));
+    let prelude_command_snapshot =
+        prelude::CommandIndexSnapshot::from_registry_snapshot(&prelude_registry_snapshot)
+            .mode(prelude::CommandIndexSnapshotMode::PreFiltered)
+            .item(prelude::CommandItemDescriptor::from_command_descriptor(
+                &prelude_core_command,
+            ));
     let prelude_command_snapshot: prelude::CommandBehaviorSnapshot =
         prelude::Command::new("prelude-command-plan", "Commands")
             .items(prelude_command_items)

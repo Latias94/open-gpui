@@ -6,6 +6,13 @@ status: active
 
 # Log
 
+- 2026-07-03: Implemented the first `open-gpui-command` ecosystem slice on
+  `feat/open-gpui-command-ecosystem`. `open_gpui_ui_core` now owns a deterministic
+  `CommandRegistry`, `CommandContribution`, `CommandRegistrySnapshot`, and duplicate-id
+  `CommandRegistryError`; `open_gpui_ui_components::CommandIndexSnapshot` can project a registry
+  snapshot into the existing command palette state; and the component root/prelude default surface
+  exports the new command registry types explicitly. Focused verification passed for ui-core command
+  tests, ui-components command tests, and the public-surface suite.
 - 2026-07-03: Closed the `refactor/docking-render-authority-convergence` review tail after
   U1-U5. Code review found and fixed three runtime/maintainability follow-ups: tab-label render
   probes no longer churn viewport host-scene generations for identical measured facts; divider
