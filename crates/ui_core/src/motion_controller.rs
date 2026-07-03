@@ -1,7 +1,7 @@
 //! Renderer-neutral motion controller contracts.
 
 use crate::motion_spring::{MotionModel, MotionSpringSample};
-use crate::{MotionSpec, MotionTimelineState};
+use crate::{MotionRunState, MotionSpec};
 use std::time::Duration;
 
 /// Renderer-neutral frame demand returned by motion controllers.
@@ -126,7 +126,7 @@ impl MotionScalarTrack {
         );
         if self.cancelled_at.is_some() && sample.state().is_active() {
             sample = MotionSpringSample::new(
-                MotionTimelineState::Cancelled,
+                MotionRunState::Cancelled,
                 sample.elapsed(),
                 sample.value(),
                 sample.velocity(),
@@ -314,8 +314,8 @@ impl<K: Clone> MotionScalarController<K> {
 mod tests {
     use super::*;
     use crate::{
-        MotionDuration, MotionEasing, MotionModel, MotionPreference, MotionSpec, MotionSpringSpec,
-        MotionTimelineState,
+        MotionDuration, MotionEasing, MotionModel, MotionPreference, MotionRunState, MotionSpec,
+        MotionSpringSpec,
     };
     use std::time::Duration;
 
@@ -387,7 +387,7 @@ mod tests {
         track.cancel_at(Duration::from_millis(40));
         let sample = track.sample_at(Duration::from_millis(100));
 
-        assert_eq!(sample.state(), MotionTimelineState::Cancelled);
+        assert_eq!(sample.state(), MotionRunState::Cancelled);
         assert!(!sample.reached_final_state());
         assert!(
             !track
@@ -401,7 +401,7 @@ mod tests {
         let track = MotionScalarTrack::immediate(0.75, Duration::from_millis(10));
 
         let sample = track.sample_at(Duration::from_millis(10));
-        assert_eq!(sample.state(), MotionTimelineState::Immediate);
+        assert_eq!(sample.state(), MotionRunState::Immediate);
         assert_eq!(sample.value(), 0.75);
         assert!(
             !track

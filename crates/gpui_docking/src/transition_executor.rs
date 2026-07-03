@@ -11,16 +11,16 @@ use crate::{
 };
 use open_gpui::{Bounds, Pixels, Window, point, size};
 use open_gpui_ui_core::{
-    MotionDuration, MotionModel, MotionProjection, MotionScalarTrack, MotionSnapshot, MotionSpec,
-    MotionSpringSample, MotionSpringSpec, motion_source_rect, preferred_motion_edge,
-    retarget_motion_snapshots, reveal_rect_from_edge, ui_point, ui_rect, ui_size,
+    MotionModel, MotionProjection, MotionScalarTrack, MotionSnapshot, MotionSpec,
+    MotionSpringSample, motion_source_rect, preferred_motion_edge, retarget_motion_snapshots,
+    reveal_rect_from_edge, ui_point, ui_rect, ui_size,
 };
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockTransitionExecution {
     pub(crate) plan: DockTransitionPlan,
-    pub(crate) spec: MotionSpec,
+    pub(crate) model: MotionModel,
     pub(crate) state: DockTransitionExecutionState,
     track: MotionScalarTrack,
     started_at: Instant,
@@ -105,9 +105,18 @@ impl DockTransitionExecutor {
         &mut self,
         plan: DockTransitionPlan,
         spec: MotionSpec,
+        window: Option<&Window>,
+    ) -> &DockTransitionExecution {
+        self.execute_model(plan, MotionModel::timeline(spec), window)
+    }
+
+    pub(crate) fn execute_model(
+        &mut self,
+        plan: DockTransitionPlan,
+        model: MotionModel,
         _window: Option<&Window>,
     ) -> &DockTransitionExecution {
-        let state = if plan.is_immediate() || spec.is_immediate() {
+        let state = if plan.is_immediate() || model.is_immediate() {
             DockTransitionExecutionState::Immediate
         } else {
             DockTransitionExecutionState::Scheduled
@@ -124,15 +133,9 @@ impl DockTransitionExecutor {
 
         self.current = Some(DockTransitionExecution {
             plan,
-            spec,
+            model,
             state,
-            track: MotionScalarTrack::start(
-                docking_motion_model(spec, state),
-                0.0,
-                1.0,
-                0.0,
-                Duration::ZERO,
-            ),
+            track: MotionScalarTrack::start(model, 0.0, 1.0, 0.0, Duration::ZERO),
             started_at: Instant::now(),
             last_sample: None,
             #[cfg(test)]
@@ -236,16 +239,6 @@ fn sample_execution(
             .iter()
             .map(|transition| visual_affordance_sample(transition, progress))
             .collect(),
-    }
-}
-
-fn docking_motion_model(spec: MotionSpec, state: DockTransitionExecutionState) -> MotionModel {
-    if state == DockTransitionExecutionState::Immediate || spec.is_immediate() {
-        MotionModel::timeline(MotionSpec::immediate())
-    } else if matches!(spec.duration(), MotionDuration::Custom(_)) {
-        MotionModel::timeline(spec)
-    } else {
-        MotionModel::spring(MotionSpringSpec::continuity(spec.preference()))
     }
 }
 

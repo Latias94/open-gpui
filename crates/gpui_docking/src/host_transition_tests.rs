@@ -18,7 +18,10 @@ use crate::{
     },
 };
 use open_gpui::{Bounds, TestAppContext, point, px, size};
-use open_gpui_ui_core::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
+use open_gpui_ui_core::{
+    MotionDuration, MotionEasing, MotionModel, MotionPreference, MotionPreset, MotionSpec,
+    MotionSpringPreset,
+};
 use slotmap::Key;
 use std::time::Duration;
 
@@ -211,9 +214,9 @@ fn transition_executor_reduces_or_schedules_without_changing_final_scene(cx: &mu
     let next = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
     let animated = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
     let animated_state = host.update(cx, |host, cx| {
-        host.execute_transition_plan(
+        host.execute_transition_plan_with_preset(
             animated,
-            MotionSpec::layout(DockMotionPreference::Animated),
+            MotionPreset::continuity(DockMotionPreference::Animated),
             None,
             cx,
         )
@@ -223,12 +226,17 @@ fn transition_executor_reduces_or_schedules_without_changing_final_scene(cx: &mu
         .update(cx, |host, _| host.clear_transition_execution_for_test())
         .expect("animated transition should be stored");
     assert_eq!(stored.plan.final_scene, next);
+    assert!(matches!(
+        stored.model,
+        MotionModel::Spring(spec)
+            if spec.preset() == Some(MotionSpringPreset::Continuity)
+    ));
 
     let reduced = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Reduced);
     let reduced_sample = host.update(cx, |host, cx| {
-        let reduced_state = host.execute_transition_plan(
+        let reduced_state = host.execute_transition_plan_with_preset(
             reduced,
-            MotionSpec::layout(DockMotionPreference::Reduced),
+            MotionPreset::continuity(DockMotionPreference::Reduced),
             None,
             cx,
         );
@@ -239,6 +247,41 @@ fn transition_executor_reduces_or_schedules_without_changing_final_scene(cx: &mu
     assert_eq!(reduced_sample.final_scene, next);
     assert_eq!(reduced_sample.progress, 1.0);
     assert!(reduced_sample.complete);
+}
+
+#[open_gpui::test]
+fn transition_executor_keeps_custom_spec_timeline_backed(cx: &mut TestAppContext) {
+    let (graph, _root, left_tabs, _right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+
+    let bounds = host_bounds(400.0, 240.0);
+    let previous = single_pane_scene(left_tabs, bounds);
+    let next = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
+    let plan = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
+    let spec = MotionSpec::new(
+        MotionPreference::Animated,
+        MotionDuration::Custom(Duration::from_millis(240)),
+        MotionEasing::Linear,
+    );
+
+    let stored = host.update(cx, |host, cx| {
+        assert_eq!(
+            host.execute_transition_plan(plan, spec, None, cx),
+            DockTransitionExecutionState::Scheduled
+        );
+        host.clear_transition_execution_for_test()
+            .expect("custom timeline execution should be stored")
+    });
+
+    assert!(matches!(
+        stored.model,
+        MotionModel::Timeline(model_spec) if model_spec == spec
+    ));
 }
 
 #[open_gpui::test]

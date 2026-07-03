@@ -26,13 +26,13 @@ pub use crate::{
     },
     motion_projection::{MotionProjection, MotionProjectionSample, MotionProjectionScale},
     motion_runtime::{
-        MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionSnapshot, MotionTimeline,
-        MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
+        MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionRunState, MotionSnapshot,
+        MotionTimeline, MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
         preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
     },
     motion_spring::{
-        MotionModel, MotionSpring, MotionSpringPhysics, MotionSpringPreset, MotionSpringSample,
-        MotionSpringSpec,
+        MotionModel, MotionPreset, MotionSpring, MotionSpringPhysics, MotionSpringPreset,
+        MotionSpringSample, MotionSpringSpec,
     },
     overlay::{
         DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,

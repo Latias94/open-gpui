@@ -8,8 +8,7 @@ use open_gpui::{
     relative, rgb,
 };
 use open_gpui_ui_core::{
-    MotionDuration, MotionModel, MotionPreference, MotionScalarController, MotionSpec,
-    MotionSpringSpec, Orientation, Sizable, Size,
+    MotionModel, MotionPreference, MotionPreset, MotionScalarController, Orientation, Sizable, Size,
 };
 use std::time::{Duration, Instant};
 
@@ -38,14 +37,19 @@ impl SplitterRuntime {
     }
 
     fn sync_at(&mut self, state: &SplitterState, now: Instant) -> bool {
-        self.sync_at_with_spec(
+        self.sync_at_with_model(
             state,
             now,
-            MotionSpec::committed_layout(MotionPreference::Animated),
+            MotionPreset::committed_layout(MotionPreference::Animated).resolve_model(),
         )
     }
 
-    fn sync_at_with_spec(&mut self, state: &SplitterState, now: Instant, spec: MotionSpec) -> bool {
+    fn sync_at_with_model(
+        &mut self,
+        state: &SplitterState,
+        now: Instant,
+        model: MotionModel,
+    ) -> bool {
         let panel_ids = state
             .panels()
             .iter()
@@ -89,7 +93,7 @@ impl SplitterRuntime {
             self.transition = None;
             return false;
         }
-        if spec.is_immediate() {
+        if model.is_immediate() {
             self.state_fractions = target_fractions.clone();
             self.panel_fractions = target_fractions;
             self.transition = None;
@@ -105,7 +109,7 @@ impl SplitterRuntime {
                 panel_ids,
                 from_fractions,
                 target_fractions,
-                splitter_motion_model(spec),
+                model,
             ),
         });
         true
@@ -193,14 +197,6 @@ fn scalar_controller_for_fractions(
         controller.start(panel_id, model, from, to, 0.0, Duration::ZERO);
     }
     controller
-}
-
-fn splitter_motion_model(spec: MotionSpec) -> MotionModel {
-    if spec.is_immediate() || matches!(spec.duration(), MotionDuration::Custom(_)) {
-        MotionModel::timeline(spec)
-    } else {
-        MotionModel::spring(MotionSpringSpec::layout(spec.preference()))
-    }
 }
 
 fn fraction_samples_for_transition(
@@ -537,7 +533,8 @@ fn render_handle(
 mod tests {
     use super::*;
     use open_gpui_ui_core::{
-        MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue, validate_motion_policy,
+        MotionDuration, MotionEasing, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
+        MotionSpec, validate_motion_policy,
     };
     use std::time::Duration;
 
@@ -617,10 +614,10 @@ mod tests {
         let mut runtime = SplitterRuntime::default();
 
         runtime.sync_at(&from, start);
-        assert!(!runtime.sync_at_with_spec(
+        assert!(!runtime.sync_at_with_model(
             &to,
             start,
-            MotionSpec::committed_layout(MotionPreference::Reduced)
+            MotionPreset::committed_layout(MotionPreference::Reduced).resolve_model()
         ));
 
         assert!(fractions_equal(&runtime.state_fractions, &[0.6, 0.4]));
@@ -629,10 +626,39 @@ mod tests {
     }
 
     #[test]
+    fn runtime_custom_timeline_model_remains_timeline_backed() {
+        let start = Instant::now();
+        let from = state(0.3, 0.7);
+        let to = state(0.6, 0.4);
+        let spec = MotionSpec::new(
+            MotionPreference::Animated,
+            MotionDuration::Custom(Duration::from_millis(240)),
+            MotionEasing::Linear,
+        );
+        let mut runtime = SplitterRuntime::default();
+
+        runtime.sync_at(&from, start);
+        assert!(runtime.sync_at_with_model(
+            &to,
+            start,
+            MotionPreset::timeline(spec).resolve_model()
+        ));
+
+        let transition = runtime
+            .transition
+            .as_ref()
+            .expect("custom timeline should create a transition");
+        assert!(matches!(
+            transition.controller.tracks()[0].1.model(),
+            MotionModel::Timeline(model_spec) if model_spec == spec
+        ));
+    }
+
+    #[test]
     fn splitter_motion_policy_preserves_programmatic_motion_and_drag_bypass() {
         let programmatic = MotionPolicyInput::new(
             MotionPolicyContext::CommittedLayout,
-            MotionModel::timeline(MotionSpec::committed_layout(MotionPreference::Animated)),
+            MotionPreset::committed_layout(MotionPreference::Animated).resolve_model(),
         )
         .with_spatial_motion(true)
         .with_reduced_motion_final_state(true);
