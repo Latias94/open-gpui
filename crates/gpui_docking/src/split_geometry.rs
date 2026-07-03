@@ -1,9 +1,12 @@
-use crate::{DockNodeId, SplitAxis};
-use open_gpui::{Bounds, Pixels, point, px, size};
+use crate::{
+    DockNodeId, SplitAxis,
+    geometry::{bounds_from_ui_rect, ui_rect_from_bounds},
+};
+use open_gpui::{Bounds, Pixels};
 use open_gpui_ui_core::{
     Orientation, Size as SplitterSize, SplitterHandlePlacement, SplitterLayoutScene,
-    SplitterMetrics, SplitterPanelDescriptor, SplitterState, UiRect,
-    resolve_split_fractions_with_fill_child, ui_point, ui_px, ui_rect, ui_size,
+    SplitterMetrics, SplitterPanelDescriptor, SplitterState,
+    resolve_split_fractions_with_fill_child, ui_px,
 };
 
 #[derive(Debug, PartialEq)]
@@ -131,26 +134,6 @@ fn split_layout_scene(
     let metrics = SplitterMetrics::new(handle_size, handle_size, ui_px(0.0))
         .with_handle_placement(SplitterHandlePlacement::OverlayBoundary);
     SplitterLayoutScene::from_state_with_metrics(&state, ui_rect_from_bounds(bounds), metrics)
-}
-
-fn ui_rect_from_bounds(bounds: Bounds<Pixels>) -> UiRect {
-    ui_rect(
-        ui_point(
-            ui_px(f32::from(bounds.origin.x)),
-            ui_px(f32::from(bounds.origin.y)),
-        ),
-        ui_size(
-            ui_px(f32::from(bounds.size.width)),
-            ui_px(f32::from(bounds.size.height)),
-        ),
-    )
-}
-
-fn bounds_from_ui_rect(rect: UiRect) -> Bounds<Pixels> {
-    Bounds::new(
-        point(px(rect.origin.x.as_f32()), px(rect.origin.y.as_f32())),
-        size(px(rect.size.width.as_f32()), px(rect.size.height.as_f32())),
-    )
 }
 
 fn split_extent(axis: SplitAxis, bounds: Bounds<Pixels>) -> Pixels {

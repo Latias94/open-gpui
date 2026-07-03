@@ -42,8 +42,9 @@ pub use geometry::{
 pub use grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d};
 pub use motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
 pub use motion_runtime::{
-    MotionRetargetItem, MotionRetargetSet, MotionSnapshot, MotionTimeline, MotionTimelineSample,
-    MotionTimelineState, retarget_motion_snapshots,
+    MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionSnapshot, MotionTimeline,
+    MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
+    preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
 };
 pub use overlay::{
     DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,

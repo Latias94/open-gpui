@@ -1,5 +1,6 @@
 use crate::{
     DockNodeId, DropZone, SplitAxis,
+    geometry::{bounds_from_ui_rect, ui_rect_from_bounds},
     presentation_scene::{
         DockPresentationFocusRegion, DockPresentationPane, DockPresentationScene,
     },
@@ -9,8 +10,8 @@ use crate::{
     },
     zoom_state::DockZoomScene,
 };
-use open_gpui::{Bounds, Pixels, point};
-use open_gpui_ui_core::MotionPreference;
+use open_gpui::{Bounds, Pixels};
+use open_gpui_ui_core::{MotionEdge, MotionPreference, motion_source_rect, preferred_motion_edge};
 use std::collections::{HashMap, HashSet};
 
 /// Descriptor plan for docking presentation, divider, and visual affordance transitions.
@@ -24,6 +25,7 @@ pub struct DockTransitionPlan {
 }
 
 pub(crate) type DockMotionPreference = MotionPreference;
+pub(crate) type DockTransitionEdge = MotionEdge;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockPaneTransition {
@@ -50,14 +52,6 @@ pub(crate) struct DockSlideTransition {
     pub(crate) source_bounds: Bounds<Pixels>,
     pub(crate) final_bounds: Bounds<Pixels>,
     pub(crate) occlusion_bounds: Bounds<Pixels>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DockTransitionEdge {
-    Left,
-    Right,
-    Top,
-    Bottom,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -164,7 +158,8 @@ impl DockTransitionPlan {
                 .iter_mut()
                 .find(|transition| transition.node == egress.node)
             {
-                let source_bounds = egress.edge.source_bounds(egress.from, previous.bounds);
+                let source_bounds =
+                    source_bounds_for_edge(egress.edge, egress.from, previous.bounds);
                 transition.from = Some(egress.from);
                 transition.to = Some(source_bounds);
                 transition.slide = Some(DockSlideTransition {
@@ -369,8 +364,8 @@ fn slide_transition(
 ) -> DockSlideTransition {
     let edge = preferred_transition_edge(final_bounds, scene_bounds);
     DockSlideTransition {
+        source_bounds: source_bounds_for_edge(edge, final_bounds, scene_bounds),
         edge,
-        source_bounds: edge.source_bounds(final_bounds, scene_bounds),
         final_bounds,
         occlusion_bounds: final_bounds,
     }
@@ -380,55 +375,20 @@ pub(crate) fn preferred_transition_edge(
     bounds: Bounds<Pixels>,
     scene_bounds: Bounds<Pixels>,
 ) -> DockTransitionEdge {
-    let left = f32::from((bounds.origin.x - scene_bounds.origin.x).abs());
-    let right = f32::from((scene_bounds.right() - bounds.right()).abs());
-    let top = f32::from((bounds.origin.y - scene_bounds.origin.y).abs());
-    let bottom = f32::from((scene_bounds.bottom() - bounds.bottom()).abs());
-    let touching_epsilon = 0.5_f32;
-
-    if left <= touching_epsilon {
-        return DockTransitionEdge::Left;
-    }
-    if right <= touching_epsilon {
-        return DockTransitionEdge::Right;
-    }
-    if top <= touching_epsilon {
-        return DockTransitionEdge::Top;
-    }
-    if bottom <= touching_epsilon {
-        return DockTransitionEdge::Bottom;
-    }
-
-    [
-        (DockTransitionEdge::Left, left),
-        (DockTransitionEdge::Right, right),
-        (DockTransitionEdge::Top, top),
-        (DockTransitionEdge::Bottom, bottom),
-    ]
-    .into_iter()
-    .min_by(|(_, a), (_, b)| a.total_cmp(b))
-    .map(|(edge, _)| edge)
-    .unwrap_or(DockTransitionEdge::Left)
+    preferred_motion_edge(
+        ui_rect_from_bounds(bounds),
+        ui_rect_from_bounds(scene_bounds),
+    )
 }
 
-impl DockTransitionEdge {
-    fn source_bounds(
-        self,
-        final_bounds: Bounds<Pixels>,
-        scene_bounds: Bounds<Pixels>,
-    ) -> Bounds<Pixels> {
-        let origin = match self {
-            Self::Left => point(
-                scene_bounds.origin.x - final_bounds.size.width,
-                final_bounds.origin.y,
-            ),
-            Self::Right => point(scene_bounds.right(), final_bounds.origin.y),
-            Self::Top => point(
-                final_bounds.origin.x,
-                scene_bounds.origin.y - final_bounds.size.height,
-            ),
-            Self::Bottom => point(final_bounds.origin.x, scene_bounds.bottom()),
-        };
-        Bounds::new(origin, final_bounds.size)
-    }
+fn source_bounds_for_edge(
+    edge: DockTransitionEdge,
+    final_bounds: Bounds<Pixels>,
+    scene_bounds: Bounds<Pixels>,
+) -> Bounds<Pixels> {
+    bounds_from_ui_rect(motion_source_rect(
+        edge,
+        ui_rect_from_bounds(final_bounds),
+        ui_rect_from_bounds(scene_bounds),
+    ))
 }

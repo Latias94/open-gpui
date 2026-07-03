@@ -1,6 +1,6 @@
 //! Renderer-neutral runtime helpers for deterministic UI motion.
 
-use crate::MotionSpec;
+use crate::{MotionSpec, UiPx, UiRect, ui_point, ui_rect, ui_size};
 use std::{
     collections::HashMap,
     hash::Hash,
@@ -299,6 +299,140 @@ where
     MotionRetargetSet::new(targets, leaving)
 }
 
+/// Logical edge used by renderer-neutral rect motion helpers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MotionEdge {
+    /// The left edge.
+    Left,
+    /// The right edge.
+    Right,
+    /// The top edge.
+    Top,
+    /// The bottom edge.
+    Bottom,
+}
+
+/// Chooses the best edge to move a rect out of a containing rect.
+///
+/// A rect touching an edge prefers that edge before distance comparisons. This keeps retargeted
+/// split and zoom panes moving toward the window edge they visually belong to.
+pub fn preferred_motion_edge(bounds: UiRect, container: UiRect) -> MotionEdge {
+    let left = (bounds.origin.x - container.origin.x).as_f32().abs();
+    let right = (rect_right(container) - rect_right(bounds)).abs();
+    let top = (bounds.origin.y - container.origin.y).as_f32().abs();
+    let bottom = (rect_bottom(container) - rect_bottom(bounds)).abs();
+    let touching_epsilon = 0.5_f32;
+
+    if left <= touching_epsilon {
+        return MotionEdge::Left;
+    }
+    if right <= touching_epsilon {
+        return MotionEdge::Right;
+    }
+    if top <= touching_epsilon {
+        return MotionEdge::Top;
+    }
+    if bottom <= touching_epsilon {
+        return MotionEdge::Bottom;
+    }
+
+    [
+        (MotionEdge::Left, left),
+        (MotionEdge::Right, right),
+        (MotionEdge::Top, top),
+        (MotionEdge::Bottom, bottom),
+    ]
+    .into_iter()
+    .min_by(|(_, a), (_, b)| a.total_cmp(b))
+    .map(|(edge, _)| edge)
+    .unwrap_or(MotionEdge::Left)
+}
+
+/// Returns bounds for the rect just outside the container on the chosen edge.
+pub fn motion_source_rect(edge: MotionEdge, final_bounds: UiRect, container: UiRect) -> UiRect {
+    let origin = match edge {
+        MotionEdge::Left => ui_point(
+            container.origin.x - final_bounds.size.width,
+            final_bounds.origin.y,
+        ),
+        MotionEdge::Right => ui_point(UiPx::new(rect_right(container)), final_bounds.origin.y),
+        MotionEdge::Top => ui_point(
+            final_bounds.origin.x,
+            container.origin.y - final_bounds.size.height,
+        ),
+        MotionEdge::Bottom => ui_point(final_bounds.origin.x, UiPx::new(rect_bottom(container))),
+    };
+    ui_rect(origin, final_bounds.size)
+}
+
+/// Samples the visible sub-rect revealed from an edge at unit progress.
+pub fn reveal_rect_from_edge(final_bounds: UiRect, edge: MotionEdge, progress: f32) -> UiRect {
+    let progress = progress.clamp(0.0, 1.0);
+    match edge {
+        MotionEdge::Left => {
+            let width = final_bounds.size.width * progress;
+            ui_rect(
+                final_bounds.origin,
+                ui_size(width, final_bounds.size.height),
+            )
+        }
+        MotionEdge::Right => {
+            let width = final_bounds.size.width * progress;
+            ui_rect(
+                ui_point(
+                    UiPx::new(rect_right(final_bounds)) - width,
+                    final_bounds.origin.y,
+                ),
+                ui_size(width, final_bounds.size.height),
+            )
+        }
+        MotionEdge::Top => {
+            let height = final_bounds.size.height * progress;
+            ui_rect(
+                final_bounds.origin,
+                ui_size(final_bounds.size.width, height),
+            )
+        }
+        MotionEdge::Bottom => {
+            let height = final_bounds.size.height * progress;
+            ui_rect(
+                ui_point(
+                    final_bounds.origin.x,
+                    UiPx::new(rect_bottom(final_bounds)) - height,
+                ),
+                ui_size(final_bounds.size.width, height),
+            )
+        }
+    }
+}
+
+/// Samples a rect between two rects at unit progress.
+pub fn lerp_rect(from: UiRect, to: UiRect, progress: f32) -> UiRect {
+    let progress = progress.clamp(0.0, 1.0);
+    ui_rect(
+        ui_point(
+            lerp_px(from.origin.x, to.origin.x, progress),
+            lerp_px(from.origin.y, to.origin.y, progress),
+        ),
+        ui_size(
+            lerp_px(from.size.width, to.size.width, progress),
+            lerp_px(from.size.height, to.size.height, progress),
+        ),
+    )
+}
+
+fn lerp_px(from: UiPx, to: UiPx, progress: f32) -> UiPx {
+    UiPx::new(from.as_f32() + (to.as_f32() - from.as_f32()) * progress)
+}
+
+fn rect_right(bounds: UiRect) -> f32 {
+    bounds.origin.x.as_f32() + bounds.size.width.as_f32()
+}
+
+fn rect_bottom(bounds: UiRect) -> f32 {
+    bounds.origin.y.as_f32() + bounds.size.height.as_f32()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,5 +527,66 @@ mod tests {
             .copied()
             .collect::<Vec<_>>();
         assert_eq!(leaving_ids, ["left", "right"]);
+    }
+
+    #[test]
+    fn preferred_motion_edge_prefers_touching_edge_before_distance() {
+        let container = ui_rect(
+            ui_point(UiPx::ZERO, UiPx::ZERO),
+            ui_size(UiPx::new(400.0), UiPx::new(240.0)),
+        );
+        let touching_top_but_closer_left = ui_rect(
+            ui_point(UiPx::new(20.0), UiPx::ZERO),
+            ui_size(UiPx::new(80.0), UiPx::new(80.0)),
+        );
+
+        assert_eq!(
+            preferred_motion_edge(touching_top_but_closer_left, container),
+            MotionEdge::Top
+        );
+    }
+
+    #[test]
+    fn motion_source_rect_places_rect_outside_container_edge() {
+        let container = ui_rect(
+            ui_point(UiPx::ZERO, UiPx::ZERO),
+            ui_size(UiPx::new(400.0), UiPx::new(240.0)),
+        );
+        let final_bounds = ui_rect(
+            ui_point(UiPx::new(40.0), UiPx::new(20.0)),
+            ui_size(UiPx::new(80.0), UiPx::new(60.0)),
+        );
+
+        assert_eq!(
+            motion_source_rect(MotionEdge::Left, final_bounds, container),
+            ui_rect(
+                ui_point(UiPx::new(-80.0), UiPx::new(20.0)),
+                final_bounds.size
+            )
+        );
+        assert_eq!(
+            motion_source_rect(MotionEdge::Bottom, final_bounds, container),
+            ui_rect(
+                ui_point(UiPx::new(40.0), UiPx::new(240.0)),
+                final_bounds.size
+            )
+        );
+    }
+
+    #[test]
+    fn reveal_and_lerp_rect_clamp_progress() {
+        let rect = ui_rect(
+            ui_point(UiPx::new(10.0), UiPx::new(20.0)),
+            ui_size(UiPx::new(100.0), UiPx::new(80.0)),
+        );
+
+        assert_eq!(
+            reveal_rect_from_edge(rect, MotionEdge::Right, 0.25),
+            ui_rect(
+                ui_point(UiPx::new(85.0), UiPx::new(20.0)),
+                ui_size(UiPx::new(25.0), UiPx::new(80.0))
+            )
+        );
+        assert_eq!(lerp_rect(rect, rect, 2.0), rect);
     }
 }
