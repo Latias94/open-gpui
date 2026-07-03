@@ -13,14 +13,10 @@ use crate::{
         DockResolvedDropTargetAvailability, DockResolvedDropTargetKind,
     },
     geometry::{DockDropBox, DockDropBoxKind, DockDropGuideStyle},
-    overlay_scene::{
-        DockOverlayLayerKind, DockOverlayPayloadTabLayout, DockOverlayPayloadTabPlacement,
-        DockOverlayScene,
-    },
     viewport_test_support::{handle, space},
     visual_affordance_scene::{
-        DockVisualAffordanceKind, DockVisualAffordanceScene, DockVisualAffordanceState,
-        DockVisualLayerScope,
+        DockPayloadTabPreviewLayout, DockPayloadTabPreviewPlacement, DockVisualAffordanceKind,
+        DockVisualAffordanceScene, DockVisualAffordanceState, DockVisualLayerScope,
     },
 };
 use open_gpui::{Bounds, Pixels, point, px, size};
@@ -202,7 +198,7 @@ fn rejected_preview_descriptor_suppresses_payload_tabs() {
 }
 
 #[test]
-fn overlay_scene_orders_center_tab_insertion_after_guides_before_payload_tabs() {
+fn visual_affordance_scene_describes_center_tab_insertion_and_payload_tabs() {
     let tabs = DockNodeId::null();
     let mut preview = DockDropPreview::from_resolved_target(
         &resolved_target(
@@ -219,47 +215,72 @@ fn overlay_scene_orders_center_tab_insertion_after_guides_before_payload_tabs() 
         .with_preview_tabs(["Preview".to_string(), "Diff".to_string()]);
     preview.populate_payload_tabs(&payload);
 
-    let overlay = DockOverlayScene::from_preview(&preview.scene);
-    let kinds = overlay
+    let scene = DockVisualAffordanceScene::from_preview(&preview.scene);
+    let kinds = scene
         .layers
         .iter()
         .map(|layer| layer.kind)
         .collect::<Vec<_>>();
 
-    assert_eq!(kinds[0], DockOverlayLayerKind::TargetBody);
     assert_eq!(
         kinds
             .iter()
-            .filter(|kind| **kind == DockOverlayLayerKind::GuideBox)
+            .filter(|kind| **kind == DockVisualAffordanceKind::DropTargetBody)
+            .count(),
+        1
+    );
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| **kind == DockVisualAffordanceKind::GuideBox)
             .count(),
         5
     );
-    assert_eq!(kinds[6], DockOverlayLayerKind::TabInsertion);
-    assert_eq!(kinds[7], DockOverlayLayerKind::PayloadTab);
-    assert_eq!(kinds[8], DockOverlayLayerKind::PayloadTab);
-    assert_eq!(kinds[9], DockOverlayLayerKind::PayloadGhost);
-    assert_eq!(kinds[10], DockOverlayLayerKind::PayloadGhost);
-    assert_eq!(overlay.layers[6].target_node, Some(tabs));
-    assert_eq!(overlay.layers[6].zone, Some(DropZone::Center));
     assert_eq!(
-        overlay
+        kinds
+            .iter()
+            .filter(|kind| **kind == DockVisualAffordanceKind::TabInsertionSlot)
+            .count(),
+        1
+    );
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| **kind == DockVisualAffordanceKind::PayloadTab)
+            .count(),
+        2
+    );
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| **kind == DockVisualAffordanceKind::PayloadGhost)
+            .count(),
+        2
+    );
+    let insertion = scene
+        .tab_insertion()
+        .expect("center preview should expose active tab insertion affordance");
+    assert_eq!(insertion.target_node, Some(tabs));
+    assert_eq!(insertion.zone, Some(DropZone::Center));
+    assert_eq!(
+        scene
             .payload_tabs()
             .map(|layer| (layer.payload_index, layer.payload_title.as_deref()))
             .collect::<Vec<_>>(),
         vec![(Some(0), Some("Preview")), (Some(1), Some("Diff"))]
     );
     assert_eq!(
-        overlay
+        scene
             .payload_ghosts()
             .map(|layer| (layer.payload_index, layer.payload_title.as_deref()))
             .collect::<Vec<_>>(),
         vec![(Some(0), Some("Preview")), (Some(1), Some("Diff"))]
     );
-    assert!(overlay.has_payload_tab_preview());
+    assert!(scene.has_payload_tab_preview());
 }
 
 #[test]
-fn overlay_scene_applies_precise_tab_layout_to_payload_tabs_and_ghosts() {
+fn visual_affordance_scene_applies_precise_tab_layout_to_payload_tabs_and_ghosts() {
     let tabs = DockNodeId::null();
     let mut preview = DockDropPreview::from_resolved_target(
         &resolved_target(
@@ -275,25 +296,25 @@ fn overlay_scene_applies_precise_tab_layout_to_payload_tabs_and_ghosts() {
     let payload = DockDragPayload::new_tabs(space("source"), tabs, "Preview / Diff".to_string())
         .with_preview_tabs(["Preview".to_string(), "Diff".to_string()]);
     preview.populate_payload_tabs(&payload);
-    let mut overlay = DockOverlayScene::from_preview(&preview.scene);
-    let layout = DockOverlayPayloadTabLayout {
+    let mut scene = DockVisualAffordanceScene::from_preview(&preview.scene);
+    let layout = DockPayloadTabPreviewLayout {
         body_bounds: bounds(0.0, 26.0, 320.0, 174.0),
         insertion_bounds: bounds(96.0, 0.0, 3.0, 26.0),
         payload_tabs: vec![
-            DockOverlayPayloadTabPlacement {
+            DockPayloadTabPreviewPlacement {
                 payload_index: 0,
                 bounds: bounds(98.0, 0.0, 88.0, 26.0),
             },
-            DockOverlayPayloadTabPlacement {
+            DockPayloadTabPreviewPlacement {
                 payload_index: 1,
                 bounds: bounds(192.0, 0.0, 72.0, 26.0),
             },
         ],
     };
 
-    overlay.apply_payload_tab_layout(&layout);
+    scene.apply_payload_tab_layout(&layout);
 
-    let insertion = overlay
+    let insertion = scene
         .tab_insertion()
         .expect("precise layout should keep insertion layer active");
     assert_eq!(insertion.bounds, layout.insertion_bounds);
@@ -306,7 +327,7 @@ fn overlay_scene_applies_precise_tab_layout_to_payload_tabs_and_ghosts() {
         "insertion descriptor should carry precise slot bounds for transitions and tests"
     );
     assert_eq!(
-        overlay
+        scene
             .payload_tabs()
             .map(|layer| (layer.payload_index, layer.bounds))
             .collect::<Vec<_>>(),
@@ -316,7 +337,7 @@ fn overlay_scene_applies_precise_tab_layout_to_payload_tabs_and_ghosts() {
         ]
     );
     assert_eq!(
-        overlay
+        scene
             .payload_ghosts()
             .map(|layer| (layer.payload_index, layer.bounds))
             .collect::<Vec<_>>(),
@@ -329,7 +350,7 @@ fn overlay_scene_applies_precise_tab_layout_to_payload_tabs_and_ghosts() {
 }
 
 #[test]
-fn overlay_scene_suppresses_tab_insertion_for_edge_and_adds_rejected_state() {
+fn visual_affordance_scene_suppresses_tab_insertion_for_edge_and_adds_rejected_state() {
     let tabs = DockNodeId::null();
     let edge_preview = DockDropPreview::from_resolved_target(
         &resolved_target(
@@ -343,21 +364,17 @@ fn overlay_scene_suppresses_tab_insertion_for_edge_and_adds_rejected_state() {
         DockDropGuideStyle::default(),
     )
     .expect("edge target should produce preview");
-    let edge_overlay = DockOverlayScene::from_preview(&edge_preview.scene);
+    let edge_scene = DockVisualAffordanceScene::from_preview(&edge_preview.scene);
 
+    assert!(edge_scene.layers.iter().all(|layer| layer.kind
+        != DockVisualAffordanceKind::TabInsertionSlot
+        && layer.kind != DockVisualAffordanceKind::PayloadTab));
     assert!(
-        edge_overlay
+        edge_scene
             .layers
             .iter()
-            .all(|layer| layer.kind != DockOverlayLayerKind::TabInsertion
-                && layer.kind != DockOverlayLayerKind::PayloadTab)
-    );
-    assert!(
-        edge_overlay
-            .layers
-            .iter()
-            .any(|layer| layer.kind == DockOverlayLayerKind::GuideBox
-                && layer.active
+            .any(|layer| layer.kind == DockVisualAffordanceKind::GuideBox
+                && layer.state == DockVisualAffordanceState::Active
                 && layer.zone == Some(DropZone::Left))
     );
 
@@ -376,24 +393,24 @@ fn overlay_scene_suppresses_tab_insertion_for_edge_and_adds_rejected_state() {
         DockDropGuideStyle::default(),
     )
     .expect("rejected target should still produce preview");
-    let rejected_overlay = DockOverlayScene::from_preview(&rejected.scene);
+    let rejected_scene = DockVisualAffordanceScene::from_preview(&rejected.scene);
 
     assert!(
-        rejected_overlay
+        rejected_scene
             .layers
             .iter()
-            .any(|layer| layer.kind == DockOverlayLayerKind::RejectedState)
+            .any(|layer| layer.kind == DockVisualAffordanceKind::RejectedTarget)
     );
     assert!(
-        rejected_overlay
+        rejected_scene
             .layers
             .iter()
-            .all(|layer| layer.kind != DockOverlayLayerKind::TabInsertion)
+            .all(|layer| layer.kind != DockVisualAffordanceKind::TabInsertionSlot)
     );
 }
 
 #[test]
-fn overlay_scene_preserves_passive_inner_guides_when_outer_root_edge_is_active() {
+fn visual_affordance_scene_preserves_passive_inner_guides_when_outer_root_edge_is_active() {
     let root = DockNodeId::null();
     let leaf_tabs = DockNodeId::null();
     let preview = DockDropPreview::from_resolved_target(
@@ -409,8 +426,8 @@ fn overlay_scene_preserves_passive_inner_guides_when_outer_root_edge_is_active()
     )
     .expect("root edge target should produce preview");
 
-    let overlay = DockOverlayScene::from_preview(&preview.scene);
-    let guide_boxes = overlay.guide_drop_boxes().collect::<Vec<_>>();
+    let scene = DockVisualAffordanceScene::from_preview(&preview.scene);
+    let guide_boxes = scene.guide_drop_boxes().collect::<Vec<_>>();
     let inner_guides = guide_boxes
         .iter()
         .filter(|drop_box| drop_box.layer == DockPreviewLayerKind::Inner)
@@ -444,14 +461,14 @@ fn overlay_scene_preserves_passive_inner_guides_when_outer_root_edge_is_active()
         "outer layer should own the active release affordance"
     );
     assert!(
-        overlay
+        scene
             .layers
             .iter()
-            .any(|layer| layer.kind == DockOverlayLayerKind::GuideBox
-                && layer.preview_layer == Some(DockPreviewLayerKind::Inner)
-                && !layer.active
+            .any(|layer| layer.kind == DockVisualAffordanceKind::GuideBox
+                && layer.layer_scope == DockVisualLayerScope::Inner
+                && layer.state == DockVisualAffordanceState::Passive
                 && layer.target_node == Some(leaf_tabs)),
-        "overlay layers should preserve passive inner guide metadata for the future affordance scene"
+        "affordance layers should preserve passive inner guide metadata for render and accessibility"
     );
 }
 

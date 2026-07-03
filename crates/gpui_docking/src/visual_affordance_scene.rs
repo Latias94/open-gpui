@@ -1,13 +1,17 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
+#[cfg(test)]
+use crate::overlay_scene::{DockOverlayLayer, DockOverlayLayerKind, DockOverlayScene};
 use crate::{
     DockNodeId, DockSpaceId, DropZone,
     divider_hit_map::{
         DockDividerAffordanceState, DockDividerHandleHitTarget, DockDividerHitMap,
         DockDividerHitTarget,
     },
-    drop_preview::{DockDropRoutePreview, DockPreviewScene},
-    overlay_scene::{DockOverlayLayer, DockOverlayLayerKind, DockOverlayScene},
+    drop_preview::{
+        DockDropRoutePreview, DockPreviewDecision, DockPreviewDropBox, DockPreviewLayerKind,
+        DockPreviewScene, DockPreviewTabInsertion,
+    },
     presentation_scene::{DockPresentationFocusRegion, DockPresentationScene},
     zoom_state::DockZoomScene,
 };
@@ -35,6 +39,21 @@ pub(crate) struct DockVisualAffordanceLayer {
     pub(crate) payload_title: Option<String>,
     pub(crate) motion_key: DockVisualAffordanceId,
     pub(crate) accessibility_label: Option<String>,
+    pub(crate) drop_box: Option<DockPreviewDropBox>,
+    pub(crate) tab_insertion: Option<DockPreviewTabInsertion>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPayloadTabPreviewLayout {
+    pub(crate) body_bounds: Bounds<Pixels>,
+    pub(crate) insertion_bounds: Bounds<Pixels>,
+    pub(crate) payload_tabs: Vec<DockPayloadTabPreviewPlacement>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DockPayloadTabPreviewPlacement {
+    pub(crate) payload_index: usize,
+    pub(crate) bounds: Bounds<Pixels>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -94,7 +113,151 @@ impl DockVisualAffordanceScene {
     }
 
     pub(crate) fn from_preview(preview: &DockPreviewScene) -> Self {
-        Self::from_overlay_scene(&DockOverlayScene::from_preview(preview))
+        let mut scene = Self::empty(None);
+
+        if preview.body.body_bounds.size.width > open_gpui::px(0.0)
+            && preview.body.body_bounds.size.height > open_gpui::px(0.0)
+        {
+            scene.layers.push(DockVisualAffordanceLayer::new(
+                DockVisualAffordanceKind::DropTargetBody,
+                preview.body.body_bounds,
+                preview.body.body_bounds,
+                preview.body.body_bounds,
+                preview
+                    .payload_tabs
+                    .as_ref()
+                    .and_then(|tabs| tabs.target_tabs),
+                None,
+                DockVisualLayerScope::Local,
+                DockVisualAffordanceState::from_active(preview.decision.is_allowed()),
+                None,
+                None,
+                Some(0),
+                Some("Dock target".to_string()),
+            ));
+        }
+
+        let mut serial = scene.layers.len();
+        for layer in &preview.layers {
+            for drop_box in &layer.drop_boxes {
+                let scope = match drop_box.layer {
+                    DockPreviewLayerKind::Inner => DockVisualLayerScope::Inner,
+                    DockPreviewLayerKind::Outer => DockVisualLayerScope::Outer,
+                };
+                scene.layers.push(
+                    DockVisualAffordanceLayer::new(
+                        DockVisualAffordanceKind::GuideBox,
+                        drop_box.draw_bounds,
+                        drop_box.draw_bounds,
+                        drop_box.hit_bounds,
+                        drop_box.debug_node,
+                        Some(drop_box.zone),
+                        scope,
+                        DockVisualAffordanceState::from_active(drop_box.active),
+                        None,
+                        None,
+                        Some(serial),
+                        Some(format!("Dock {:?}", drop_box.zone)),
+                    )
+                    .with_drop_box(*drop_box),
+                );
+                serial += 1;
+            }
+        }
+
+        if preview.active_split().is_none()
+            && let Some(payload_tabs) = preview.payload_tabs.as_ref()
+        {
+            if let Some(insertion) = payload_tabs.insertion.clone() {
+                let bounds = insertion.slot_bounds.unwrap_or(insertion.clipping_bounds);
+                scene.layers.push(
+                    DockVisualAffordanceLayer::new(
+                        DockVisualAffordanceKind::TabInsertionSlot,
+                        bounds,
+                        bounds,
+                        bounds,
+                        insertion.target_tabs,
+                        Some(DropZone::Center),
+                        DockVisualLayerScope::Local,
+                        DockVisualAffordanceState::from_active(preview.decision.is_allowed()),
+                        None,
+                        None,
+                        Some(serial),
+                        Some("Insert tab".to_string()),
+                    )
+                    .with_tab_insertion(insertion),
+                );
+                serial += 1;
+            }
+
+            for (index, tab) in payload_tabs.tabs.iter().enumerate() {
+                let bounds = payload_tabs
+                    .insertion
+                    .as_ref()
+                    .map(|insertion| insertion.clipping_bounds)
+                    .unwrap_or(preview.body.body_bounds);
+                scene.layers.push(DockVisualAffordanceLayer::new(
+                    DockVisualAffordanceKind::PayloadTab,
+                    bounds,
+                    bounds,
+                    bounds,
+                    payload_tabs.target_tabs,
+                    Some(DropZone::Center),
+                    DockVisualLayerScope::Local,
+                    DockVisualAffordanceState::from_active(preview.decision.is_allowed()),
+                    Some(index),
+                    Some(tab.title.clone()),
+                    Some(serial),
+                    Some(tab.title.clone()),
+                ));
+                serial += 1;
+            }
+
+            for (index, tab) in payload_tabs.tabs.iter().enumerate() {
+                let bounds = payload_tabs
+                    .insertion
+                    .as_ref()
+                    .map(|insertion| insertion.clipping_bounds)
+                    .unwrap_or(preview.body.body_bounds);
+                scene.layers.push(DockVisualAffordanceLayer::new(
+                    DockVisualAffordanceKind::PayloadGhost,
+                    bounds,
+                    bounds,
+                    bounds,
+                    payload_tabs.target_tabs,
+                    Some(DropZone::Center),
+                    DockVisualLayerScope::Local,
+                    DockVisualAffordanceState::from_active(preview.decision.is_allowed()),
+                    Some(index),
+                    Some(tab.title.clone()),
+                    Some(serial),
+                    Some(format!("Preview {}", tab.title)),
+                ));
+                serial += 1;
+            }
+        }
+
+        if matches!(preview.decision, DockPreviewDecision::Rejected { .. }) {
+            scene.layers.push(DockVisualAffordanceLayer::new(
+                DockVisualAffordanceKind::RejectedTarget,
+                preview.body.future_bounds,
+                preview.body.future_bounds,
+                preview.body.future_bounds,
+                preview
+                    .payload_tabs
+                    .as_ref()
+                    .and_then(|tabs| tabs.target_tabs),
+                None,
+                DockVisualLayerScope::Local,
+                DockVisualAffordanceState::Rejected,
+                None,
+                None,
+                Some(serial),
+                Some("Drop target unavailable".to_string()),
+            ));
+        }
+
+        scene
     }
 
     pub(crate) fn from_route_preview(preview: &DockDropRoutePreview) -> Self {
@@ -122,6 +285,7 @@ impl DockVisualAffordanceScene {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn from_overlay_scene(overlay: &DockOverlayScene) -> Self {
         let layers = overlay
             .layers
@@ -239,6 +403,85 @@ impl DockVisualAffordanceScene {
         }
     }
 
+    pub(crate) fn apply_payload_tab_layout(&mut self, layout: &DockPayloadTabPreviewLayout) {
+        for layer in &mut self.layers {
+            match layer.kind {
+                DockVisualAffordanceKind::DropTargetBody => {
+                    layer.bounds = layout.body_bounds;
+                    layer.draw_bounds = layout.body_bounds;
+                    layer.hit_bounds = layout.body_bounds;
+                }
+                DockVisualAffordanceKind::TabInsertionSlot => {
+                    layer.bounds = layout.insertion_bounds;
+                    layer.draw_bounds = layout.insertion_bounds;
+                    layer.hit_bounds = layout.insertion_bounds;
+                    if let Some(insertion) = layer.tab_insertion.as_mut() {
+                        insertion.slot_bounds = Some(layout.insertion_bounds);
+                    }
+                }
+                DockVisualAffordanceKind::PayloadTab | DockVisualAffordanceKind::PayloadGhost => {
+                    if let Some(bounds) = layer.payload_index.and_then(|index| {
+                        layout
+                            .payload_tabs
+                            .iter()
+                            .find(|placement| placement.payload_index == index)
+                            .map(|placement| placement.bounds)
+                    }) {
+                        layer.bounds = bounds;
+                        layer.draw_bounds = bounds;
+                        layer.hit_bounds = bounds;
+                    }
+                }
+                DockVisualAffordanceKind::GuideBox
+                | DockVisualAffordanceKind::RouteMarker
+                | DockVisualAffordanceKind::RejectedTarget
+                | DockVisualAffordanceKind::DividerHandle
+                | DockVisualAffordanceKind::DividerCorner
+                | DockVisualAffordanceKind::FocusRing
+                | DockVisualAffordanceKind::ZoomEgress => {}
+            }
+        }
+    }
+
+    pub(crate) fn target_body(&self) -> Option<&DockVisualAffordanceLayer> {
+        self.layers
+            .iter()
+            .find(|layer| layer.kind == DockVisualAffordanceKind::DropTargetBody)
+    }
+
+    pub(crate) fn guide_drop_boxes(&self) -> impl Iterator<Item = DockPreviewDropBox> + '_ {
+        self.layers
+            .iter()
+            .filter(|layer| layer.kind == DockVisualAffordanceKind::GuideBox)
+            .filter_map(|layer| layer.drop_box)
+    }
+
+    pub(crate) fn tab_insertion(&self) -> Option<&DockVisualAffordanceLayer> {
+        self.layers.iter().find(|layer| {
+            layer.kind == DockVisualAffordanceKind::TabInsertionSlot
+                && layer.state == DockVisualAffordanceState::Active
+        })
+    }
+
+    pub(crate) fn payload_tabs(&self) -> impl Iterator<Item = &DockVisualAffordanceLayer> + '_ {
+        self.layers.iter().filter(|layer| {
+            layer.kind == DockVisualAffordanceKind::PayloadTab
+                && layer.state == DockVisualAffordanceState::Active
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn payload_ghosts(&self) -> impl Iterator<Item = &DockVisualAffordanceLayer> + '_ {
+        self.layers.iter().filter(|layer| {
+            layer.kind == DockVisualAffordanceKind::PayloadGhost
+                && layer.state == DockVisualAffordanceState::Active
+        })
+    }
+
+    pub(crate) fn has_payload_tab_preview(&self) -> bool {
+        self.tab_insertion().is_some() && self.payload_tabs().next().is_some()
+    }
+
     fn push_divider_handle(
         &mut self,
         handle: DockDividerHandleHitTarget,
@@ -316,7 +559,19 @@ impl DockVisualAffordanceLayer {
             payload_title,
             motion_key: id,
             accessibility_label,
+            drop_box: None,
+            tab_insertion: None,
         }
+    }
+
+    fn with_drop_box(mut self, drop_box: DockPreviewDropBox) -> Self {
+        self.drop_box = Some(drop_box);
+        self
+    }
+
+    fn with_tab_insertion(mut self, insertion: DockPreviewTabInsertion) -> Self {
+        self.tab_insertion = Some(insertion);
+        self
     }
 }
 
@@ -335,6 +590,7 @@ impl DockVisualAffordanceState {
     }
 }
 
+#[cfg(test)]
 fn visual_layer_from_overlay_layer(
     serial: usize,
     layer: &DockOverlayLayer,
@@ -376,7 +632,7 @@ fn visual_layer_from_overlay_layer(
         .as_ref()
         .map(|drop_box| drop_box.hit_bounds)
         .unwrap_or(layer.bounds);
-    DockVisualAffordanceLayer::new(
+    let mut visual_layer = DockVisualAffordanceLayer::new(
         kind,
         layer.bounds,
         layer.bounds,
@@ -389,9 +645,17 @@ fn visual_layer_from_overlay_layer(
         layer.payload_title.clone(),
         Some(serial),
         accessibility_label_for_overlay_layer(layer),
-    )
+    );
+    if let Some(drop_box) = layer.drop_box {
+        visual_layer = visual_layer.with_drop_box(drop_box);
+    }
+    if let Some(insertion) = layer.tab_insertion.clone() {
+        visual_layer = visual_layer.with_tab_insertion(insertion);
+    }
+    visual_layer
 }
 
+#[cfg(test)]
 fn preview_scope(layer: &DockOverlayLayer) -> DockVisualLayerScope {
     match layer.preview_layer {
         Some(crate::drop_preview::DockPreviewLayerKind::Inner) => DockVisualLayerScope::Inner,
@@ -400,6 +664,7 @@ fn preview_scope(layer: &DockOverlayLayer) -> DockVisualLayerScope {
     }
 }
 
+#[cfg(test)]
 fn accessibility_label_for_overlay_layer(layer: &DockOverlayLayer) -> Option<String> {
     match layer.kind {
         DockOverlayLayerKind::TargetBody => Some("Dock target".to_string()),
