@@ -16,6 +16,7 @@ pub use crate::{
     },
     grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d},
     motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec},
+    motion_projection::{MotionProjection, MotionProjectionSample, MotionProjectionScale},
     motion_runtime::{
         MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionSnapshot, MotionTimeline,
         MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
