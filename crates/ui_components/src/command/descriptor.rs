@@ -3,7 +3,10 @@
 use crate::choice::{self, ChoiceItemProjection, ChoiceSelectionMode};
 use crate::listbox::ListboxOptionDescriptor;
 use crate::overlay::OverlayDisclosureOpenMode;
-use open_gpui_command::{CommandDescriptor, CommandRegistrySnapshot};
+use open_gpui_command::{
+    CommandDescriptor, CommandProviderRefreshProjection, CommandProviderState,
+    CommandProviderStatus, CommandRegistrySnapshot,
+};
 use open_gpui_ui_core::Role;
 
 /// Command dialog open-state ownership.
@@ -103,6 +106,84 @@ impl CommandLoadingState {
     pub const fn role(&self) -> Role {
         Role::ProgressIndicator
     }
+}
+
+const DEFAULT_PROVIDER_LOADING_MESSAGE: &str = "Loading commands";
+
+/// UI-ready projection for a provider-backed command palette refresh.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandProviderPaletteProjection {
+    query: String,
+    provider_status: Option<CommandProviderStatus>,
+    index_snapshot: CommandIndexSnapshot,
+}
+
+impl CommandProviderPaletteProjection {
+    /// Creates a UI command palette projection from a runtime-neutral provider refresh projection.
+    pub fn from_refresh_projection(projection: &CommandProviderRefreshProjection) -> Self {
+        let provider_status = projection.provider_status().cloned();
+        let mut index_snapshot =
+            CommandIndexSnapshot::from_registry_snapshot(projection.snapshot())
+                .mode(CommandIndexSnapshotMode::PreFiltered);
+
+        if let Some(loading_state) = provider_status
+            .as_ref()
+            .and_then(provider_status_loading_state)
+        {
+            index_snapshot = index_snapshot.loading(loading_state);
+        }
+
+        Self {
+            query: projection.query().to_owned(),
+            provider_status,
+            index_snapshot,
+        }
+    }
+
+    /// Returns the command query used for the provider refresh.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// Returns the latest provider status retained by the command center.
+    pub const fn provider_status(&self) -> Option<&CommandProviderStatus> {
+        self.provider_status.as_ref()
+    }
+
+    /// Returns the UI command index snapshot.
+    pub const fn index_snapshot(&self) -> &CommandIndexSnapshot {
+        &self.index_snapshot
+    }
+
+    /// Returns loading metadata projected from the provider status, when still loading.
+    pub const fn loading_state(&self) -> Option<&CommandLoadingState> {
+        self.index_snapshot.loading_state()
+    }
+
+    /// Consumes the projection and returns the UI command index snapshot.
+    pub fn into_index_snapshot(self) -> CommandIndexSnapshot {
+        self.index_snapshot
+    }
+
+    /// Consumes the projection and returns all UI-facing parts.
+    pub fn into_parts(self) -> (String, Option<CommandProviderStatus>, CommandIndexSnapshot) {
+        (self.query, self.provider_status, self.index_snapshot)
+    }
+}
+
+impl From<&CommandProviderRefreshProjection> for CommandProviderPaletteProjection {
+    fn from(projection: &CommandProviderRefreshProjection) -> Self {
+        Self::from_refresh_projection(projection)
+    }
+}
+
+fn provider_status_loading_state(status: &CommandProviderStatus) -> Option<CommandLoadingState> {
+    (status.state() == CommandProviderState::Loading).then(|| {
+        CommandLoadingState::new(
+            status.message().unwrap_or(DEFAULT_PROVIDER_LOADING_MESSAGE),
+            None,
+        )
+    })
 }
 
 /// Command descriptor field that produced the strongest search match.

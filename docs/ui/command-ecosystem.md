@@ -37,6 +37,9 @@ and plugin-like command metadata contribution.
 - `Command` renders inline or dialog command palettes.
 - `CommandIndexSnapshot::from_registry_snapshot` turns registry metadata into searchable palette
   rows.
+- `CommandProviderPaletteProjection` adapts a provider refresh projection into a UI-ready command
+  snapshot, loading state, and provider-status readout without moving UI semantics into
+  `open_gpui_command`.
 
 The split is intentional: `open_gpui_command` owns reusable command domain contracts, GPUI remains
 the runtime authority, and UI components only render projections.
@@ -152,6 +155,24 @@ let projection = controller
 let registry_snapshot = projection.snapshot();
 let status = projection.provider_status();
 ```
+
+UI crates should use the presentation adapter instead of hand-stitching registry snapshots and
+loading metadata:
+
+```rust
+use open_gpui_ui_components::{Command, CommandProviderPaletteProjection};
+
+let palette_projection = CommandProviderPaletteProjection::from_refresh_projection(&projection);
+let status = palette_projection.provider_status();
+let command = Command::new("recent-files", "Recent files")
+    .provider_refresh_projection(&projection);
+```
+
+The adapter treats provider refresh snapshots as `PreFiltered`: the command center has already
+searched the registry for the provider query, so the component preserves the provider result set
+instead of applying a second local filter. Loading provider status is projected into
+`CommandLoadingState`, while ready and failed provider status remains available through
+`provider_status()`.
 
 Applying a provider response atomically replaces that provider's previous dynamic sources. If a new
 response has duplicate command ids for a scope, the existing registry state is preserved and the

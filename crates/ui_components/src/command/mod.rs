@@ -32,8 +32,8 @@ use crate::text_input::adapter::TextInputController;
 use crate::theme::ThemeResolver;
 pub use descriptor::{
     CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
-    CommandLoadingState, CommandMatchSource, CommandOpenMode, CommandQueryMode,
-    CommandSelectionMode,
+    CommandLoadingState, CommandMatchSource, CommandOpenMode, CommandProviderPaletteProjection,
+    CommandQueryMode, CommandSelectionMode,
 };
 pub use model::{
     CommandDialogState, CommandGroupState, CommandItemState, CommandSelectedChipState,
@@ -167,6 +167,19 @@ impl Command {
     /// Applies a caller-owned command index snapshot.
     pub fn index_snapshot(mut self, snapshot: CommandIndexSnapshot) -> Self {
         self.index_snapshot = Some(snapshot);
+        self
+    }
+
+    /// Applies a provider-backed refresh projection to the command query and index snapshot.
+    pub fn provider_refresh_projection(
+        mut self,
+        projection: &open_gpui_command::CommandProviderRefreshProjection,
+    ) -> Self {
+        let palette_projection =
+            CommandProviderPaletteProjection::from_refresh_projection(projection);
+        self.query =
+            Some(TextEditingPolicy::single_line().normalize_text(palette_projection.query()));
+        self.index_snapshot = Some(palette_projection.into_index_snapshot());
         self
     }
 

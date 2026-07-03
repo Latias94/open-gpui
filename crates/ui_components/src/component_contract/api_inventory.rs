@@ -382,6 +382,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             "selected_values",
             "active",
             "index_snapshot",
+            "provider_refresh_projection",
         ],
         default_seeds: &[
             DefaultSeedApi {
@@ -1121,6 +1122,7 @@ pub fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "group",
             "groups",
             "index_snapshot",
+            "provider_refresh_projection",
             "disabled",
             "dialog_description",
             "loading",
@@ -1536,6 +1538,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "group",
             "groups",
             "index_snapshot",
+            "provider_refresh_projection",
             "disabled",
             "open",
             "default_open",

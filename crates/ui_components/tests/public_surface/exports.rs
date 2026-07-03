@@ -124,8 +124,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_provider_outcome.status().unwrap();
     let root_provider_controller = root::CommandProviderRefreshController::new("root-provider")
         .with_loading_message("Loading");
-    let _root_provider_projection: root::CommandProviderRefreshProjection =
+    let root_provider_projection: root::CommandProviderRefreshProjection =
         root_provider_controller.snapshot(&root_command_center);
+    let root_provider_palette_projection: root::CommandProviderPaletteProjection =
+        root::CommandProviderPaletteProjection::from_refresh_projection(&root_provider_projection);
+    let _root_provider_palette_query = root_provider_palette_projection.query();
+    let _root_provider_palette_snapshot: root::CommandIndexSnapshot =
+        root_provider_palette_projection.into_index_snapshot();
     let _root_provider_state = root::CommandProviderState::Ready;
     assert_root_provider(
         &(root_provider_fn as fn(&root::CommandProviderRequest) -> root::CommandProviderResponse),
@@ -146,6 +151,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             .items(root_command_items)
             .index_snapshot(root_command_snapshot)
             .behavior_snapshot();
+    let _root_provider_command_state = root::Command::new("root-provider-plan", "Provider")
+        .provider_refresh_projection(&root_provider_projection)
+        .state();
     let _root_command_row: Option<&root::CommandRowBehaviorSnapshot> =
         root_command_snapshot.rows().first();
     let root_menu_state = root::Menu::new("root-menu", "Menu")
@@ -278,8 +286,15 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_provider_controller =
         prelude::CommandProviderRefreshController::new("prelude-provider")
             .with_loading_message("Loading");
-    let _prelude_provider_projection: prelude::CommandProviderRefreshProjection =
+    let prelude_provider_projection: prelude::CommandProviderRefreshProjection =
         prelude_provider_controller.snapshot(&prelude_command_center);
+    let prelude_provider_palette_projection: prelude::CommandProviderPaletteProjection =
+        prelude::CommandProviderPaletteProjection::from_refresh_projection(
+            &prelude_provider_projection,
+        );
+    let _prelude_provider_palette_query = prelude_provider_palette_projection.query();
+    let _prelude_provider_palette_snapshot: prelude::CommandIndexSnapshot =
+        prelude_provider_palette_projection.into_index_snapshot();
     let _prelude_provider_state = prelude::CommandProviderState::Loading;
     assert_prelude_provider(
         &(prelude_provider_fn
@@ -301,6 +316,10 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             .items(prelude_command_items)
             .index_snapshot(prelude_command_snapshot)
             .behavior_snapshot();
+    let _prelude_provider_command_state =
+        prelude::Command::new("prelude-provider-plan", "Provider")
+            .provider_refresh_projection(&prelude_provider_projection)
+            .state();
     let _prelude_command_row: Option<&prelude::CommandRowBehaviorSnapshot> =
         prelude_command_snapshot.rows().first();
     let prelude_menu_state = prelude::Menu::new("prelude-menu", "Menu")

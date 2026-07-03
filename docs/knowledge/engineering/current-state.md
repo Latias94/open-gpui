@@ -157,6 +157,12 @@ verified_by:
   loading status, registered-provider refresh, async response application, stale-response handling,
   provider status capture, and `CommandRegistrySnapshot` projection. The gallery `provider-search`
   sample now uses this controller instead of hand-writing begin/apply/search calls.
+- Done on `feat/command-refresh-ui-bridge`: `open_gpui_ui_components` now owns the UI bridge from
+  `CommandProviderRefreshProjection` to command palette state. `CommandProviderPaletteProjection`
+  projects provider snapshots as `PreFiltered`, carries loading provider status into
+  `CommandLoadingState`, preserves `CommandProviderStatus` for readouts, and
+  `Command::provider_refresh_projection` binds query/snapshot metadata without app-owned
+  `CommandIndexSnapshot::from_registry_snapshot(...)` glue.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default

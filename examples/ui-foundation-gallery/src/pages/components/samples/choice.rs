@@ -810,13 +810,13 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 6] {
         .refresh_provider(&mut provider_center, provider_query)
         .expect("gallery provider is registered")
         .expect("gallery provider response is valid");
-    let provider_status = provider_projection
+    let provider_palette =
+        CommandProviderPaletteProjection::from_refresh_projection(&provider_projection);
+    let provider_status = provider_palette
         .provider_status()
         .expect("gallery provider status is projected")
         .clone();
-    let provider_snapshot =
-        CommandIndexSnapshot::from_registry_snapshot(provider_projection.snapshot())
-            .mode(CommandIndexSnapshotMode::PreRankedFilter);
+    let provider_snapshot = provider_palette.into_index_snapshot();
 
     [
         command_sample_from_local(
