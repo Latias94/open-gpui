@@ -7,14 +7,14 @@ use open_gpui::{Action, App, KeyContext, Keymap, Window};
 
 use crate::{
     CommandAvailabilityMap, CommandContextStack, CommandContribution, CommandDispatchOutcome,
-    CommandKeyBinding, CommandKeyBindingHandle, CommandKeyBindingProjection,
-    CommandKeyBindingRegistry, CommandMenuTree, CommandProjectionDiagnostic, CommandProvider,
-    CommandProviderApplyOutcome, CommandProviderId, CommandProviderRequest,
-    CommandProviderRequestId, CommandProviderResponse, CommandProviderSource,
-    CommandProviderStaleResponse, CommandProviderStatus, CommandRegistryError,
-    CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection, CommandShortcutDiagnostic,
-    CommandShortcutDiagnosticKind, CommandSourceId, CommandUsageHistory, GpuiCommandActionMap,
-    MemoryCommandHistory, ScopedCommandRegistry,
+    CommandKeyBinding, CommandKeyBindingHandle, CommandKeyBindingInstallReport,
+    CommandKeyBindingProjection, CommandKeyBindingRegistry, CommandMenuTree,
+    CommandProjectionDiagnostic, CommandProvider, CommandProviderApplyOutcome, CommandProviderId,
+    CommandProviderRequest, CommandProviderRequestId, CommandProviderResponse,
+    CommandProviderSource, CommandProviderStaleResponse, CommandProviderStatus,
+    CommandRegistryError, CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection,
+    CommandShortcutDiagnostic, CommandShortcutDiagnosticKind, CommandSourceId, CommandUsageHistory,
+    GpuiCommandActionMap, MemoryCommandHistory, ScopedCommandRegistry,
 };
 
 /// Handle for a registered command source within one command scope.
@@ -612,6 +612,16 @@ impl CommandCenter {
         self.key_bindings.add_to_keymap(&self.actions, keymap)
     }
 
+    /// Installs valid command-id key bindings into a GPUI keymap and returns a report.
+    pub fn install_key_bindings(&self, keymap: &mut Keymap) -> CommandKeyBindingInstallReport {
+        self.key_bindings.install_into_keymap(&self.actions, keymap)
+    }
+
+    /// Installs valid command-id key bindings into the app-level GPUI keymap.
+    pub fn install_key_bindings_in_app(&self, cx: &mut App) -> CommandKeyBindingInstallReport {
+        self.key_bindings.install_in_app(&self.actions, cx)
+    }
+
     /// Projects active scopes before availability, shortcut, or history ranking.
     pub fn scope_projection(&self) -> CommandScopeProjection {
         if self.context_stack.scope_ids().is_empty() {
@@ -1010,7 +1020,10 @@ mod tests {
         CommandProviderSource, CommandProviderState, CommandProviderStatus, CommandUsageHistory,
     };
 
-    actions!(center_test_only, [OpenWorkspace, SaveWorkspace]);
+    actions!(
+        center_test_only,
+        [OpenWorkspace, SaveWorkspace, CloseWorkspace]
+    );
 
     #[derive(Clone, PartialEq, Default, Debug, Action)]
     #[action(no_json)]
@@ -1467,6 +1480,115 @@ mod tests {
             projection.diagnostics()[1].command_id(),
             "workspace.missing"
         );
+    }
+
+    #[test]
+    fn center_reports_command_key_binding_conflicts_and_install_report() {
+        let mut center = CommandCenter::new("center-v1");
+        center
+            .register_action("workspace.open", OpenWorkspace)
+            .register_action("workspace.save", SaveWorkspace)
+            .register_action("workspace.close", CloseWorkspace);
+        center.register_key_bindings(
+            "workspace-defaults",
+            [
+                CommandKeyBinding::new("workspace.open", "ctrl-p").context("Workspace"),
+                CommandKeyBinding::new("workspace.close", "ctrl-shift-p").context("Workspace"),
+            ],
+        );
+        center.register_key_bindings(
+            "workspace-plugin",
+            [CommandKeyBinding::new("workspace.save", "ctrl-p").context("Workspace")],
+        );
+
+        let projection = center.key_binding_projection();
+
+        assert!(projection.diagnostics().is_empty());
+        assert_eq!(projection.key_bindings().len(), 3);
+        assert_eq!(projection.conflicts().len(), 1);
+        assert!(projection.is_clean());
+        assert!(!projection.is_strictly_clean());
+        assert!(projection.has_conflicts());
+        let conflict = &projection.conflicts()[0];
+        assert_eq!(conflict.keystrokes(), "ctrl-P");
+        assert_eq!(conflict.context_ref(), Some("Workspace"));
+        assert_eq!(
+            conflict
+                .entries()
+                .iter()
+                .map(|entry| (entry.source_id().as_str(), entry.command_id()))
+                .collect::<Vec<_>>(),
+            [
+                ("workspace-defaults", "workspace.open"),
+                ("workspace-plugin", "workspace.save"),
+            ]
+        );
+
+        let mut keymap = Keymap::default();
+        let report = center.install_key_bindings(&mut keymap);
+
+        assert_eq!(report.installed_count(), 3);
+        assert_eq!(report.conflicts(), projection.conflicts());
+        assert_eq!(report.diagnostics(), projection.diagnostics());
+        assert!(!report.is_clean());
+        let (bindings, pending) = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-p").unwrap()],
+            &[KeyContext::parse("Workspace").unwrap()],
+        );
+        assert!(!pending);
+        assert_eq!(bindings.len(), 2);
+        assert!(bindings[0].action().partial_eq(&SaveWorkspace));
+        assert!(bindings[1].action().partial_eq(&OpenWorkspace));
+    }
+
+    #[test]
+    fn center_reports_global_key_binding_context_conflicts() {
+        let mut center = CommandCenter::new("center-v1");
+        center
+            .register_action("workspace.open", OpenWorkspace)
+            .register_action("workspace.save", SaveWorkspace);
+        center.register_key_bindings(
+            "global-shortcuts",
+            [CommandKeyBinding::new("workspace.open", "ctrl-g")],
+        );
+        center.register_key_bindings(
+            "workspace-shortcuts",
+            [CommandKeyBinding::new("workspace.save", "ctrl-g").context("Workspace")],
+        );
+
+        let projection = center.key_binding_projection();
+
+        assert!(projection.diagnostics().is_empty());
+        assert!(projection.is_clean());
+        assert!(!projection.is_strictly_clean());
+        assert_eq!(projection.conflicts().len(), 1);
+        assert_eq!(projection.conflicts()[0].keystrokes(), "ctrl-G");
+        assert_eq!(projection.conflicts()[0].context_ref(), Some("Workspace"));
+        assert_eq!(
+            projection.conflicts()[0]
+                .entries()
+                .iter()
+                .map(|entry| (entry.source_id().as_str(), entry.command_id()))
+                .collect::<Vec<_>>(),
+            [
+                ("global-shortcuts", "workspace.open"),
+                ("workspace-shortcuts", "workspace.save"),
+            ]
+        );
+
+        let mut keymap = Keymap::default();
+        let report = center.install_key_bindings(&mut keymap);
+        assert_eq!(report.installed_count(), 2);
+        assert!(report.has_conflicts());
+
+        let (bindings, pending) = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-g").unwrap()],
+            &[KeyContext::parse("Workspace").unwrap()],
+        );
+        assert!(!pending);
+        assert_eq!(bindings.len(), 2);
+        assert!(bindings[0].action().partial_eq(&SaveWorkspace));
+        assert!(bindings[1].action().partial_eq(&OpenWorkspace));
     }
 
     #[test]

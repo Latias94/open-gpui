@@ -34,8 +34,9 @@ pub use gpui::{
 };
 pub use history::{CommandHistoryEntry, CommandUsageHistory, MemoryCommandHistory};
 pub use keybinding::{
-    CommandKeyBinding, CommandKeyBindingDiagnostic, CommandKeyBindingDiagnosticKind,
-    CommandKeyBindingEntry, CommandKeyBindingHandle, CommandKeyBindingProjection,
+    CommandKeyBinding, CommandKeyBindingConflict, CommandKeyBindingConflictEntry,
+    CommandKeyBindingDiagnostic, CommandKeyBindingDiagnosticKind, CommandKeyBindingEntry,
+    CommandKeyBindingHandle, CommandKeyBindingInstallReport, CommandKeyBindingProjection,
     CommandKeyBindingRegistry,
 };
 pub use menu::{CommandMenuCommand, CommandMenuEntry, CommandMenuSubmenu, CommandMenuTree};

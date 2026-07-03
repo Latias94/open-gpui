@@ -180,8 +180,9 @@ pub use crate::virtualized_list::{
 pub use open_gpui_command::{
     CommandAvailability, CommandAvailabilityMap, CommandAvailabilityResolver, CommandCenter,
     CommandContextStack, CommandContribution, CommandDescriptor, CommandDispatchOutcome,
-    CommandHistoryEntry, CommandKeyBinding, CommandKeyBindingDiagnostic,
-    CommandKeyBindingDiagnosticKind, CommandKeyBindingEntry, CommandKeyBindingHandle,
+    CommandHistoryEntry, CommandKeyBinding, CommandKeyBindingConflict,
+    CommandKeyBindingConflictEntry, CommandKeyBindingDiagnostic, CommandKeyBindingDiagnosticKind,
+    CommandKeyBindingEntry, CommandKeyBindingHandle, CommandKeyBindingInstallReport,
     CommandKeyBindingProjection, CommandKeyBindingRegistry, CommandMenuCommand, CommandMenuEntry,
     CommandMenuSubmenu, CommandMenuTree, CommandProjectionDiagnostic,
     CommandProjectionDiagnosticKind, CommandProvider, CommandProviderApplyOutcome,
