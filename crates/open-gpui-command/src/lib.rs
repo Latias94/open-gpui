@@ -21,7 +21,10 @@ pub use availability::{
     CommandAvailability, CommandAvailabilityMap, CommandAvailabilityResolver,
     command_effective_availability,
 };
-pub use center::{CommandCenter, CommandProviderRegistration, CommandSourceRegistration};
+pub use center::{
+    CommandCenter, CommandProviderHandle, CommandProviderRegistration, CommandSourceHandle,
+    CommandSourceRegistration,
+};
 pub use context::CommandContextStack;
 pub use gpui::{
     CommandDispatchOutcome, CommandShortcutDiagnostic, CommandShortcutDiagnosticKind,

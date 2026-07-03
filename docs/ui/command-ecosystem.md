@@ -157,7 +157,7 @@ use open_gpui_command::{
     CommandProviderRefreshController, CommandProviderResponse, CommandProviderSource,
 };
 
-let registration = center.register_provider("recent-files", |request| {
+let provider = center.register_provider("recent-files", |request| {
     CommandProviderResponse::ready().source(CommandProviderSource::new(
         "workspace",
         "recent-files-source",
@@ -171,7 +171,7 @@ let registration = center.register_provider("recent-files", |request| {
     ))
 });
 
-center.refresh_provider(registration.provider_id().clone(), "readme");
+center.refresh_provider(provider.provider_id().clone(), "readme");
 ```
 
 For asynchronous providers, run the work in application code and apply the latest response when it
@@ -281,7 +281,7 @@ Plugins should register metadata and action bindings through the same command id
 the only join key shared between metadata, shortcut projection, palette selection, and dispatch.
 
 ```rust
-let registration = center.register_source(
+let source = center.register_source(
     "workspace",
     "spellcheck-plugin",
     [CommandContribution::new(
@@ -291,8 +291,15 @@ let registration = center.register_source(
     )],
 )?;
 
-center.unregister(&registration);
+source.unregister(&mut center);
 ```
+
+`CommandSourceHandle` and `CommandProviderHandle` are explicit lifecycle handles. They are
+intentionally not `Drop`-driven RAII guards because `CommandCenter` is app-owned rather than a
+global singleton; plugin hosts decide when they have mutable access to the center and call
+`handle.unregister(&mut center)` or `center.unregister_source_handle(&handle)`. The older
+`CommandSourceRegistration` and `CommandProviderRegistration` names remain aliases for existing
+callers.
 
 If two contributions use the same command id, `CommandRegistry::register` rejects the duplicate.
 If an action map contains repeated ids, the last binding wins so apps can layer plugin overrides
