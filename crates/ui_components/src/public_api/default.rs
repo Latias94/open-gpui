@@ -177,12 +177,13 @@ pub use crate::virtualized_list::{
     virtualized_list_scroll_target,
 };
 pub use open_gpui_command::{
-    CommandAvailability, CommandAvailabilityMap, CommandAvailabilityResolver, CommandContribution,
-    CommandDescriptor, CommandHistoryEntry, CommandMenuCommand, CommandMenuEntry,
-    CommandMenuSubmenu, CommandMenuTree, CommandProjectionDiagnostic,
-    CommandProjectionDiagnosticKind, CommandRegistry, CommandRegistryError,
-    CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection, CommandSourceId,
-    CommandUsageHistory, MemoryCommandHistory, ScopedCommandRegistry,
+    CommandAvailability, CommandAvailabilityMap, CommandAvailabilityResolver, CommandCenter,
+    CommandContribution, CommandDescriptor, CommandDispatchOutcome, CommandHistoryEntry,
+    CommandMenuCommand, CommandMenuEntry, CommandMenuSubmenu, CommandMenuTree,
+    CommandProjectionDiagnostic, CommandProjectionDiagnosticKind, CommandRegistry,
+    CommandRegistryError, CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection,
+    CommandSourceId, CommandSourceRegistration, CommandUsageHistory, GpuiCommandAction,
+    GpuiCommandActionMap, MemoryCommandHistory, ScopedCommandRegistry,
     command_effective_availability,
 };
 pub use open_gpui_ui_core::{

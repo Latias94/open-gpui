@@ -363,9 +363,10 @@ cargo nextest run -p open-gpui-ui-foundation-gallery command
 ```
 
 For the reusable command ecosystem, also keep `docs/ui/command-ecosystem.md` current. It records
-the split between GPUI `Action`/`Keymap` execution, `open_gpui_command::CommandRegistry`
-metadata snapshots, `GpuiCommandActionMap` shortcut projection, availability guards, and
-command-id dispatch.
+the split between GPUI `Action`/`Keymap` execution, the app-owned
+`open_gpui_command::CommandCenter` facade, scoped source registration/unregistration, availability
+guards, shortcut projection, fuzzy search/history ranking, menu projection, and command-id
+dispatch.
 
 The focused Tabs test renders real tabs,
 preserves the `default_selected` seed on the first frame, rejects disabled tab clicks, keeps manual
