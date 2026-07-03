@@ -69,7 +69,7 @@ pub struct DockHost {
     interaction: DockInteractionRuntime,
     zoom: DockZoomState,
     transitions: DockTransitionExecutor,
-    overlay_transitions: DockTransitionExecutor,
+    visual_affordance_transitions: DockTransitionExecutor,
     last_visual_affordance_scene: Option<DockVisualAffordanceScene>,
     last_presentation_scene: Option<DockPresentationScene>,
 }
@@ -99,7 +99,7 @@ impl DockHost {
             interaction: DockInteractionRuntime::default(),
             zoom: DockZoomState::default(),
             transitions: DockTransitionExecutor::default(),
-            overlay_transitions: DockTransitionExecutor::default(),
+            visual_affordance_transitions: DockTransitionExecutor::default(),
             last_visual_affordance_scene: None,
             last_presentation_scene: None,
         }
@@ -172,12 +172,16 @@ impl DockHost {
         &mut self.transitions
     }
 
-    pub(crate) fn overlay_transition_executor_mut(&mut self) -> &mut DockTransitionExecutor {
-        &mut self.overlay_transitions
+    pub(crate) fn visual_affordance_transition_executor_mut(
+        &mut self,
+    ) -> &mut DockTransitionExecutor {
+        &mut self.visual_affordance_transitions
     }
 
-    pub(crate) fn overlay_transition_executor_for_debug(&self) -> &DockTransitionExecutor {
-        &self.overlay_transitions
+    pub(crate) fn visual_affordance_transition_executor_for_debug(
+        &self,
+    ) -> &DockTransitionExecutor {
+        &self.visual_affordance_transitions
     }
 
     pub(crate) fn last_visual_affordance_scene(&self) -> Option<&DockVisualAffordanceScene> {

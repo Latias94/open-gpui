@@ -9,10 +9,12 @@ use crate::{
     drag::DockDragPayload,
     drop_scene_fact,
     host_test_support::*,
-    overlay_scene::{DockOverlayLayer, DockOverlayLayerKind, DockOverlayScene},
     presentation_scene::{DockPresentationPane, DockPresentationPaneKind, DockPresentationScene},
     transition_geometry::{DockMotionPreference, DockTransitionPlan},
-    visual_affordance_scene::DockVisualAffordanceScene,
+    visual_affordance_scene::{
+        DockVisualAffordanceKind, DockVisualAffordanceLayer, DockVisualAffordanceScene,
+        DockVisualAffordanceState, DockVisualLayerScope,
+    },
 };
 use open_gpui::{
     AnyWindowHandle, AppContext as _, Entity, Focusable, Modifiers, MouseButton,
@@ -545,7 +547,7 @@ fn host_scene_expiry_watch_survives_manual_frame_callbacks(cx: &mut TestAppConte
 }
 
 #[open_gpui::test]
-fn transition_sample_overlay_renders_from_executor(cx: &mut TestAppContext) {
+fn transition_sample_visual_affordance_renders_from_executor(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a"]);
     let (window, host, _visual) = open_host(
         cx,
@@ -556,22 +558,20 @@ fn transition_sample_overlay_renders_from_executor(cx: &mut TestAppContext) {
     let scene = host.update(cx, |host, cx| {
         host.presentation_scene_for_test(floating_bounds(0.0, 0.0, 400.0, 240.0), cx)
     });
-    let overlay_bounds = floating_bounds(32.0, 16.0, 90.0, 26.0);
-    let overlay = DockOverlayScene {
-        layers: vec![DockOverlayLayer {
-            kind: DockOverlayLayerKind::PayloadGhost,
-            bounds: overlay_bounds,
-            target_node: Some(root),
-            zone: Some(crate::DropZone::Center),
-            preview_layer: None,
-            active: true,
-            payload_index: Some(0),
-            payload_title: Some("Panel A".to_string()),
-            drop_box: None,
-            tab_insertion: None,
-        }],
-    };
-    let affordance_scene = DockVisualAffordanceScene::from_overlay_scene(&overlay);
+    let affordance_bounds = floating_bounds(32.0, 16.0, 90.0, 26.0);
+    let affordance_scene =
+        DockVisualAffordanceScene::from_test_layers(vec![DockVisualAffordanceLayer::test_layer(
+            DockVisualAffordanceKind::PayloadGhost,
+            affordance_bounds,
+            Some(root),
+            Some(crate::DropZone::Center),
+            DockVisualLayerScope::Local,
+            DockVisualAffordanceState::Active,
+            Some(0),
+            Some("Panel A".to_string()),
+            None,
+            Some("Preview Panel A".to_string()),
+        )]);
     let plan = DockTransitionPlan::from_visual_affordance_scene(
         &scene,
         &affordance_scene,
@@ -600,13 +600,13 @@ fn transition_sample_overlay_renders_from_executor(cx: &mut TestAppContext) {
     let transition_overlay = selector_for(
         &visual,
         &host,
-        DockDebugRegion::TransitionOverlay { index: 0 },
+        DockDebugRegion::TransitionVisualAffordance { index: 0 },
     )
-    .expect("sampled overlay selector should be emitted");
+    .expect("sampled visual affordance selector should be emitted");
     assert_bounds_close(
         debug_bounds(&mut visual, &transition_overlay),
-        overlay_bounds,
-        "sampled transition overlay",
+        affordance_bounds,
+        "sampled transition visual affordance",
     );
 }
 
@@ -3008,7 +3008,7 @@ fn empty_central_passthrough_with_floating_content_keeps_window_pointer_input(
     );
     assert!(
         selector_for(&visual, &host, DockDebugRegion::Floating { node: floating }).is_some(),
-        "floating overlay should still render above the empty central region"
+        "floating visual affordance should still render above the empty central region"
     );
     let runtime = host.update(cx, |host, _| host.viewport_runtime().clone());
     assert_eq!(
@@ -3053,7 +3053,7 @@ fn ordinary_render_does_not_restore_externally_owned_pointer_passthrough(cx: &mu
 }
 
 #[open_gpui::test]
-fn floating_container_renders_panel_inside_overlay_bounds(cx: &mut TestAppContext) {
+fn floating_container_renders_panel_inside_affordance_bounds(cx: &mut TestAppContext) {
     let (graph, _root, floating) = floating_overlay_graph();
     let (_window, host, mut visual) = open_host(
         cx,

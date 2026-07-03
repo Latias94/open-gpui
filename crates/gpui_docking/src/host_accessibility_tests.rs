@@ -3,16 +3,47 @@ use crate::{
     accessibility_scene::{DockAccessibilityLayer, DockAccessibilityRole, DockAccessibilityScene},
     divider_hit_map::DockDividerHitMap,
     host_test_support::{floating_bounds, floating_overlay_graph, item, open_host, space},
-    overlay_scene::{DockOverlayLayer, DockOverlayLayerKind, DockOverlayScene},
     transition_geometry::DockMotionPreference,
     visual_affordance_scene::{
-        DockVisualAffordanceKind, DockVisualAffordanceScene, DockVisualAffordanceState,
+        DockVisualAffordanceKind, DockVisualAffordanceLayer, DockVisualAffordanceScene,
+        DockVisualAffordanceState, DockVisualLayerScope,
     },
     zoom_state::DockZoomScene,
 };
 use open_gpui::{TestAppContext, point, px, size};
 use open_gpui_ui_core::{AccessibleAction, Orientation, Role};
 use slotmap::Key;
+
+fn test_affordance_layer(
+    tabs: crate::DockNodeId,
+    kind: DockVisualAffordanceKind,
+    bounds: open_gpui::Bounds<open_gpui::Pixels>,
+    zone: Option<DropZone>,
+    payload_index: Option<usize>,
+    payload_title: Option<String>,
+) -> DockVisualAffordanceLayer {
+    DockVisualAffordanceLayer::test_layer(
+        kind,
+        bounds,
+        Some(tabs),
+        zone,
+        DockVisualLayerScope::Local,
+        if kind == DockVisualAffordanceKind::RejectedTarget {
+            DockVisualAffordanceState::Rejected
+        } else {
+            DockVisualAffordanceState::Active
+        },
+        payload_index,
+        payload_title,
+        None,
+        match kind {
+            DockVisualAffordanceKind::TabInsertionSlot => Some("Insert tab".to_string()),
+            DockVisualAffordanceKind::GuideBox => zone.map(|zone| format!("Dock {zone:?}")),
+            DockVisualAffordanceKind::RejectedTarget => Some("Drop target unavailable".to_string()),
+            _ => None,
+        },
+    )
+}
 
 #[open_gpui::test]
 fn accessibility_scene_enumerates_presentation_roles(cx: &mut TestAppContext) {
@@ -337,35 +368,24 @@ fn accessibility_scene_marks_selected_tab_from_focus_region(cx: &mut TestAppCont
 #[test]
 fn accessibility_scene_adds_visual_affordance_drop_and_rejected_descriptors() {
     let tabs = crate::DockNodeId::null();
-    let overlay = DockOverlayScene {
-        layers: vec![
-            DockOverlayLayer {
-                kind: DockOverlayLayerKind::TabInsertion,
-                bounds: floating_bounds(8.0, 0.0, 3.0, 26.0),
-                target_node: Some(tabs),
-                zone: Some(DropZone::Center),
-                preview_layer: None,
-                active: true,
-                payload_index: None,
-                payload_title: None,
-                drop_box: None,
-                tab_insertion: None,
-            },
-            DockOverlayLayer {
-                kind: DockOverlayLayerKind::RejectedState,
-                bounds: floating_bounds(0.0, 0.0, 320.0, 200.0),
-                target_node: Some(tabs),
-                zone: None,
-                preview_layer: None,
-                active: true,
-                payload_index: None,
-                payload_title: None,
-                drop_box: None,
-                tab_insertion: None,
-            },
-        ],
-    };
-    let scene = DockVisualAffordanceScene::from_overlay_scene(&overlay);
+    let scene = DockVisualAffordanceScene::from_test_layers(vec![
+        test_affordance_layer(
+            tabs,
+            DockVisualAffordanceKind::TabInsertionSlot,
+            floating_bounds(8.0, 0.0, 3.0, 26.0),
+            Some(DropZone::Center),
+            None,
+            None,
+        ),
+        test_affordance_layer(
+            tabs,
+            DockVisualAffordanceKind::RejectedTarget,
+            floating_bounds(0.0, 0.0, 320.0, 200.0),
+            None,
+            None,
+            None,
+        ),
+    ]);
     let accessibility = DockAccessibilityScene {
         descriptors: Vec::new(),
     }
@@ -399,47 +419,32 @@ fn accessibility_scene_adds_visual_affordance_drop_and_rejected_descriptors() {
 #[test]
 fn accessibility_gpui_mapping_keeps_visual_drop_affordances_short_lived_and_non_committing() {
     let tabs = crate::DockNodeId::null();
-    let overlay = DockOverlayScene {
-        layers: vec![
-            DockOverlayLayer {
-                kind: DockOverlayLayerKind::GuideBox,
-                bounds: floating_bounds(0.0, 0.0, 120.0, 80.0),
-                target_node: Some(tabs),
-                zone: Some(DropZone::Left),
-                preview_layer: None,
-                active: true,
-                payload_index: None,
-                payload_title: None,
-                drop_box: None,
-                tab_insertion: None,
-            },
-            DockOverlayLayer {
-                kind: DockOverlayLayerKind::PayloadGhost,
-                bounds: floating_bounds(2.0, 2.0, 90.0, 24.0),
-                target_node: Some(tabs),
-                zone: Some(DropZone::Center),
-                preview_layer: None,
-                active: true,
-                payload_index: Some(0),
-                payload_title: Some("Panel A".to_string()),
-                drop_box: None,
-                tab_insertion: None,
-            },
-            DockOverlayLayer {
-                kind: DockOverlayLayerKind::RejectedState,
-                bounds: floating_bounds(0.0, 0.0, 120.0, 80.0),
-                target_node: Some(tabs),
-                zone: Some(DropZone::Right),
-                preview_layer: None,
-                active: true,
-                payload_index: None,
-                payload_title: None,
-                drop_box: None,
-                tab_insertion: None,
-            },
-        ],
-    };
-    let affordance_scene = DockVisualAffordanceScene::from_overlay_scene(&overlay);
+    let affordance_scene = DockVisualAffordanceScene::from_test_layers(vec![
+        test_affordance_layer(
+            tabs,
+            DockVisualAffordanceKind::GuideBox,
+            floating_bounds(0.0, 0.0, 120.0, 80.0),
+            Some(DropZone::Left),
+            None,
+            None,
+        ),
+        test_affordance_layer(
+            tabs,
+            DockVisualAffordanceKind::PayloadGhost,
+            floating_bounds(2.0, 2.0, 90.0, 24.0),
+            Some(DropZone::Center),
+            Some(0),
+            Some("Panel A".to_string()),
+        ),
+        test_affordance_layer(
+            tabs,
+            DockVisualAffordanceKind::RejectedTarget,
+            floating_bounds(0.0, 0.0, 120.0, 80.0),
+            Some(DropZone::Right),
+            None,
+            None,
+        ),
+    ]);
     let elements = DockAccessibilityScene::visual_affordance_elements_for_render(&affordance_scene);
 
     let drop_destination = elements
@@ -449,7 +454,7 @@ fn accessibility_gpui_mapping_keeps_visual_drop_affordances_short_lived_and_non_
                 .id_str()
                 .starts_with("dock-a11y:overlay:drop-destination:")
         })
-        .expect("active overlay should expose a drop destination descriptor");
+        .expect("active visual affordance should expose a drop destination descriptor");
     assert_eq!(drop_destination.role, Role::Group);
     assert_eq!(drop_destination.gpui_role, open_gpui::Role::Group);
     assert_eq!(drop_destination.zone, Some(DropZone::Left));
@@ -482,7 +487,7 @@ fn accessibility_gpui_mapping_keeps_visual_drop_affordances_short_lived_and_non_
                 .id_str()
                 .starts_with("dock-a11y:overlay:rejected-drop-target:")
         })
-        .expect("rejected overlay should expose disabled descriptor");
+        .expect("rejected visual affordance should expose disabled descriptor");
     assert_eq!(rejected.disabled, true);
     assert_eq!(
         rejected.hint.as_deref(),

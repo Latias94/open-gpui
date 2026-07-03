@@ -7,7 +7,7 @@ impl DockHost {
     /// Returns a compact summary of the last rendered visual affordance scene.
     pub fn visual_affordance_debug_summary(&self) -> DockVisualAffordanceDebugSummary {
         let motion_state = self
-            .overlay_transition_executor_for_debug()
+            .visual_affordance_transition_executor_for_debug()
             .current_state_for_debug()
             .map(|state| format!("{state:?}"));
         DockVisualAffordanceDebugSummary::from_scene(

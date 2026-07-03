@@ -16,7 +16,7 @@ use crate::{
     presentation_scene::DockPresentationScene,
     render_split::DockRenderSplitInput,
     transition_executor::{
-        DockDividerSample, DockOverlaySample, DockPaneClipSample, DockTransitionSample,
+        DockDividerSample, DockPaneClipSample, DockTransitionSample, DockVisualAffordanceSample,
     },
     transition_geometry::{DockMotionPreference, DockTransitionPlan},
     viewport_drop_scene::DockViewportHostSceneFrame,
@@ -692,8 +692,9 @@ impl DockHost {
         for divider in &sample.dividers {
             layer = layer.child(self.render_transition_divider(session, divider));
         }
-        for (index, overlay) in sample.overlays.iter().enumerate() {
-            layer = layer.child(self.render_transition_overlay(session, index, overlay));
+        for (index, affordance) in sample.visual_affordances.iter().enumerate() {
+            layer =
+                layer.child(self.render_transition_visual_affordance(session, index, affordance));
         }
 
         layer.into_any_element()
@@ -813,24 +814,27 @@ impl DockHost {
             .into_any_element()
     }
 
-    fn render_transition_overlay(
+    fn render_transition_visual_affordance(
         &mut self,
         session: &DockHostRenderSession,
         index: usize,
-        overlay: &DockOverlaySample,
+        affordance: &DockVisualAffordanceSample,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
-            DockDebugRegion::TransitionOverlay { index },
-            format!("{}:transition:overlay:{index}", session.selector_prefix()),
+            DockDebugRegion::TransitionVisualAffordance { index },
+            format!(
+                "{}:transition:visual-affordance:{index}",
+                session.selector_prefix()
+            ),
         );
         div()
             .id(selector.clone())
             .debug_selector(move || selector)
             .absolute()
-            .left(overlay.bounds.origin.x)
-            .top(overlay.bounds.origin.y)
-            .w(overlay.bounds.size.width)
-            .h(overlay.bounds.size.height)
+            .left(affordance.bounds.origin.x)
+            .top(affordance.bounds.origin.y)
+            .w(affordance.bounds.size.width)
+            .h(affordance.bounds.size.height)
             .rounded_sm()
             .border_1()
             .border_color(rgb(0x2563eb))
@@ -973,7 +977,7 @@ impl DockHost {
             return Some(self.render_route_drop_preview(session, preview, window));
         }
 
-        self.clear_overlay_transition_for_render();
+        self.clear_visual_affordance_transition_for_render();
         None
     }
 
@@ -1002,9 +1006,13 @@ impl DockHost {
         if let Some(layout) = payload_tab_layout.as_ref() {
             affordance_scene.apply_payload_tab_layout(layout);
         }
-        let overlay_sample =
-            self.sync_overlay_transition_for_render(session, &affordance_scene, bounds, window);
-        let overlay_opacity = overlay_sample
+        let visual_affordance_sample = self.sync_visual_affordance_transition_for_render(
+            session,
+            &affordance_scene,
+            bounds,
+            window,
+        );
+        let affordance_opacity = visual_affordance_sample
             .as_ref()
             .map(|sample| preview_transition_opacity(sample.progress))
             .unwrap_or(1.0);
@@ -1023,7 +1031,7 @@ impl DockHost {
             .w(bounds.size.width)
             .h(bounds.size.height)
             .overflow_hidden()
-            .opacity(overlay_opacity);
+            .opacity(affordance_opacity);
 
         if affordance_scene.has_payload_tab_preview() && payload_tab_layout.is_some() {
             let body_layer = affordance_scene.target_body();
@@ -1168,9 +1176,13 @@ impl DockHost {
             .first()
             .map(|layer| layer.bounds)
             .unwrap_or(preview.bounds);
-        let overlay_sample =
-            self.sync_overlay_transition_for_render(session, &affordance_scene, bounds, window);
-        let overlay_opacity = overlay_sample
+        let visual_affordance_sample = self.sync_visual_affordance_transition_for_render(
+            session,
+            &affordance_scene,
+            bounds,
+            window,
+        );
+        let affordance_opacity = visual_affordance_sample
             .as_ref()
             .map(|sample| preview_transition_opacity(sample.progress))
             .unwrap_or(1.0);
@@ -1192,11 +1204,11 @@ impl DockHost {
             .border_1()
             .border_color(palette.border)
             .bg(palette.background)
-            .opacity(overlay_opacity)
+            .opacity(affordance_opacity)
             .into_any_element()
     }
 
-    fn sync_overlay_transition_for_render(
+    fn sync_visual_affordance_transition_for_render(
         &mut self,
         session: &DockHostRenderSession,
         affordance_scene: &DockVisualAffordanceScene,
@@ -1213,14 +1225,14 @@ impl DockHost {
                 DockMotionPreference::Animated,
             );
             self.set_last_visual_affordance_scene(affordance_scene.clone());
-            self.execute_overlay_transition_plan(
+            self.execute_visual_affordance_transition_plan(
                 plan,
                 MotionSpec::affordance(DockMotionPreference::Animated),
                 Some(window),
             );
         }
 
-        self.sample_overlay_transition_for_render(Some(window))
+        self.sample_visual_affordance_transition_for_render(Some(window))
     }
 
     fn render_scene_drop_guide(

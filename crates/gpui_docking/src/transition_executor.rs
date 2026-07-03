@@ -2,9 +2,9 @@ use crate::{
     DockNodeId, DropZone, SplitAxis,
     presentation_scene::DockPresentationScene,
     transition_geometry::{
-        DockDividerTransition, DockDividerTransitionKind, DockOverlayTransition,
-        DockOverlayTransitionKind, DockPaneTransition, DockPaneTransitionKind, DockSlideTransition,
-        DockTransitionEdge, DockTransitionPlan,
+        DockDividerTransition, DockDividerTransitionKind, DockPaneTransition,
+        DockPaneTransitionKind, DockSlideTransition, DockTransitionEdge, DockTransitionPlan,
+        DockVisualAffordanceTransition, DockVisualAffordanceTransitionKind,
     },
     visual_affordance_scene::DockVisualAffordanceId,
 };
@@ -51,7 +51,7 @@ pub(crate) struct DockTransitionSample {
     pub(crate) pane_bounds: Vec<DockPaneBoundsSample>,
     pub(crate) pane_clips: Vec<DockPaneClipSample>,
     pub(crate) dividers: Vec<DockDividerSample>,
-    pub(crate) overlays: Vec<DockOverlaySample>,
+    pub(crate) visual_affordances: Vec<DockVisualAffordanceSample>,
 }
 
 /// Sampled visual bounds for a pane at the current transition frame.
@@ -82,11 +82,11 @@ pub(crate) struct DockDividerSample {
     pub(crate) progress: f32,
 }
 
-/// Sampled overlay transition geometry.
+/// Sampled visual affordance transition geometry.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockOverlaySample {
+pub(crate) struct DockVisualAffordanceSample {
     pub(crate) motion_key: DockVisualAffordanceId,
-    pub(crate) kind: DockOverlayTransitionKind,
+    pub(crate) kind: DockVisualAffordanceTransitionKind,
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) target_node: Option<DockNodeId>,
     pub(crate) zone: Option<DropZone>,
@@ -222,11 +222,11 @@ fn sample_execution(
             .iter()
             .map(|transition| divider_sample(transition, progress))
             .collect(),
-        overlays: execution
+        visual_affordances: execution
             .plan
-            .overlay_transitions
+            .visual_affordance_transitions
             .iter()
-            .map(|transition| overlay_sample(transition, progress))
+            .map(|transition| visual_affordance_sample(transition, progress))
             .collect(),
     }
 }
@@ -452,8 +452,11 @@ fn divider_sample(transition: &DockDividerTransition, progress: f32) -> DockDivi
     }
 }
 
-fn overlay_sample(transition: &DockOverlayTransition, progress: f32) -> DockOverlaySample {
-    DockOverlaySample {
+fn visual_affordance_sample(
+    transition: &DockVisualAffordanceTransition,
+    progress: f32,
+) -> DockVisualAffordanceSample {
+    DockVisualAffordanceSample {
         motion_key: transition.motion_key.clone(),
         kind: transition.kind,
         bounds: transition.bounds,

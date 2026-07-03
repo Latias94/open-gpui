@@ -13,14 +13,14 @@ use open_gpui::{Bounds, Pixels, point};
 use open_gpui_ui_core::MotionPreference;
 use std::collections::{HashMap, HashSet};
 
-/// Descriptor plan for docking presentation, divider, and overlay transitions.
+/// Descriptor plan for docking presentation, divider, and visual affordance transitions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DockTransitionPlan {
     pub(crate) preference: DockMotionPreference,
     pub(crate) final_scene: DockPresentationScene,
     pub(crate) pane_transitions: Vec<DockPaneTransition>,
     pub(crate) divider_transitions: Vec<DockDividerTransition>,
-    pub(crate) overlay_transitions: Vec<DockOverlayTransition>,
+    pub(crate) visual_affordance_transitions: Vec<DockVisualAffordanceTransition>,
 }
 
 pub(crate) type DockMotionPreference = MotionPreference;
@@ -79,9 +79,9 @@ pub(crate) enum DockDividerTransitionKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockOverlayTransition {
+pub(crate) struct DockVisualAffordanceTransition {
     pub(crate) motion_key: DockVisualAffordanceId,
-    pub(crate) kind: DockOverlayTransitionKind,
+    pub(crate) kind: DockVisualAffordanceTransitionKind,
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) target_node: Option<DockNodeId>,
     pub(crate) zone: Option<DropZone>,
@@ -90,7 +90,7 @@ pub(crate) struct DockOverlayTransition {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum DockOverlayTransitionKind {
+pub(crate) enum DockVisualAffordanceTransitionKind {
     RouteMarker,
     TargetBody,
     GuideBox,
@@ -101,7 +101,7 @@ pub(crate) enum DockOverlayTransitionKind {
     RejectedNoop,
 }
 
-impl DockOverlayTransitionKind {
+impl DockVisualAffordanceTransitionKind {
     pub(crate) fn from_affordance_kind(kind: DockVisualAffordanceKind) -> Self {
         match kind {
             DockVisualAffordanceKind::RouteMarker => Self::RouteMarker,
@@ -130,7 +130,7 @@ impl DockTransitionPlan {
             final_scene: next.clone(),
             pane_transitions: pane_transitions(previous, next, preference),
             divider_transitions: divider_transitions(previous, next, preference),
-            overlay_transitions: Vec::new(),
+            visual_affordance_transitions: Vec::new(),
         }
     }
 
@@ -144,10 +144,10 @@ impl DockTransitionPlan {
             final_scene: final_scene.clone(),
             pane_transitions: Vec::new(),
             divider_transitions: Vec::new(),
-            overlay_transitions: affordance_scene
+            visual_affordance_transitions: affordance_scene
                 .layers
                 .iter()
-                .map(|layer| overlay_transition_from_affordance(layer, preference))
+                .map(|layer| visual_affordance_transition_from_layer(layer, preference))
                 .collect(),
         }
     }
@@ -176,7 +176,7 @@ impl DockTransitionPlan {
             }
         }
         if let Some(focus) = zoom.focus.as_ref() {
-            plan.overlay_transitions
+            plan.visual_affordance_transitions
                 .push(focus_ring_transition(focus, preference));
         }
         plan
@@ -192,7 +192,7 @@ impl DockTransitionPlan {
             final_scene: final_scene.clone(),
             pane_transitions: Vec::new(),
             divider_transitions: Vec::new(),
-            overlay_transitions: vec![focus_ring_transition(focus, preference)],
+            visual_affordance_transitions: vec![focus_ring_transition(focus, preference)],
         }
     }
 
@@ -200,14 +200,17 @@ impl DockTransitionPlan {
         self.preference.is_immediate()
             && self.pane_transitions.iter().all(|item| item.immediate)
             && self.divider_transitions.iter().all(|item| item.immediate)
-            && self.overlay_transitions.iter().all(|item| item.immediate)
+            && self
+                .visual_affordance_transitions
+                .iter()
+                .all(|item| item.immediate)
     }
 }
 
 fn focus_ring_transition(
     focus: &DockPresentationFocusRegion,
     preference: DockMotionPreference,
-) -> DockOverlayTransition {
+) -> DockVisualAffordanceTransition {
     let motion_key = DockVisualAffordanceId {
         kind: DockVisualAffordanceKind::FocusRing,
         target_node: Some(focus.tabs),
@@ -216,9 +219,9 @@ fn focus_ring_transition(
         payload_index: None,
         serial: None,
     };
-    DockOverlayTransition {
+    DockVisualAffordanceTransition {
         motion_key,
-        kind: DockOverlayTransitionKind::FocusRing,
+        kind: DockVisualAffordanceTransitionKind::FocusRing,
         bounds: focus.bounds,
         target_node: Some(focus.tabs),
         zone: None,
@@ -227,13 +230,13 @@ fn focus_ring_transition(
     }
 }
 
-fn overlay_transition_from_affordance(
+fn visual_affordance_transition_from_layer(
     layer: &DockVisualAffordanceLayer,
     preference: DockMotionPreference,
-) -> DockOverlayTransition {
-    DockOverlayTransition {
+) -> DockVisualAffordanceTransition {
+    DockVisualAffordanceTransition {
         motion_key: layer.motion_key.clone(),
-        kind: DockOverlayTransitionKind::from_affordance_kind(layer.kind),
+        kind: DockVisualAffordanceTransitionKind::from_affordance_kind(layer.kind),
         bounds: layer.bounds,
         target_node: layer.target_node,
         zone: layer.zone,

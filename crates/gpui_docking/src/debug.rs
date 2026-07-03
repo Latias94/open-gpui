@@ -92,9 +92,9 @@ pub(crate) enum DockDebugRegion {
         /// Handle index between child `index` and child `index + 1`.
         index: usize,
     },
-    /// A sampled overlay rectangle.
-    TransitionOverlay {
-        /// Overlay sample index in the sampled transition.
+    /// A sampled visual affordance rectangle.
+    TransitionVisualAffordance {
+        /// Visual affordance sample index in the sampled transition.
         index: usize,
     },
     /// A tab label for one dock item.
@@ -151,7 +151,7 @@ pub struct DockVisualAffordanceDebugSummary {
     pub active_count: usize,
     /// First active layer, useful for compact inspectors.
     pub active: Option<DockVisualAffordanceDebugLayer>,
-    /// Current overlay motion executor state, if an overlay transition is active.
+    /// Current visual affordance motion executor state, if an visual affordance transition is active.
     pub motion_state: Option<String>,
     /// Stable signature used to spot retarget churn without logging every frame.
     pub churn_signature: String,
@@ -282,9 +282,9 @@ pub(crate) struct DockDebugInstrumentation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        overlay_scene::{DockOverlayLayer, DockOverlayLayerKind, DockOverlayScene},
-        visual_affordance_scene::DockVisualAffordanceScene,
+    use crate::visual_affordance_scene::{
+        DockVisualAffordanceKind, DockVisualAffordanceLayer, DockVisualAffordanceScene,
+        DockVisualAffordanceState, DockVisualLayerScope,
     };
     use open_gpui::{Bounds, point, px, size};
     use slotmap::Key;
@@ -293,20 +293,20 @@ mod tests {
     fn host_debug_affordance_summary_changes_on_retarget_but_not_steady_hover() {
         let tabs = DockNodeId::null();
         let scene_for_zone = |zone| {
-            DockVisualAffordanceScene::from_overlay_scene(&DockOverlayScene {
-                layers: vec![DockOverlayLayer {
-                    kind: DockOverlayLayerKind::GuideBox,
-                    bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(80.0), px(40.0))),
-                    target_node: Some(tabs),
-                    zone: Some(zone),
-                    preview_layer: None,
-                    active: true,
-                    payload_index: None,
-                    payload_title: None,
-                    drop_box: None,
-                    tab_insertion: None,
-                }],
-            })
+            DockVisualAffordanceScene::from_test_layers(vec![
+                DockVisualAffordanceLayer::test_layer(
+                    DockVisualAffordanceKind::GuideBox,
+                    Bounds::new(point(px(0.0), px(0.0)), size(px(80.0), px(40.0))),
+                    Some(tabs),
+                    Some(zone),
+                    DockVisualLayerScope::Local,
+                    DockVisualAffordanceState::Active,
+                    None,
+                    None,
+                    None,
+                    Some(format!("Dock {zone:?}")),
+                ),
+            ])
         };
         let left = scene_for_zone(DropZone::Left);
         let left_again = scene_for_zone(DropZone::Left);

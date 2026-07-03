@@ -225,27 +225,31 @@ impl DockHost {
         self.transition_executor_mut().sample(window)
     }
 
-    pub(crate) fn execute_overlay_transition_plan(
+    pub(crate) fn execute_visual_affordance_transition_plan(
         &mut self,
         plan: DockTransitionPlan,
         spec: MotionSpec,
         window: Option<&Window>,
     ) -> DockTransitionExecutionState {
-        self.overlay_transition_executor_mut()
+        self.visual_affordance_transition_executor_mut()
             .execute(plan, spec, window)
             .state
     }
 
-    pub(crate) fn sample_overlay_transition_for_render(
+    pub(crate) fn sample_visual_affordance_transition_for_render(
         &mut self,
         window: Option<&Window>,
     ) -> Option<DockTransitionSample> {
-        self.overlay_transition_executor_mut().sample(window)
+        self.visual_affordance_transition_executor_mut()
+            .sample(window)
     }
 
-    pub(crate) fn clear_overlay_transition_for_render(&mut self) -> bool {
+    pub(crate) fn clear_visual_affordance_transition_for_render(&mut self) -> bool {
         let scene_cleared = self.clear_last_visual_affordance_scene();
-        let execution_cleared = self.overlay_transition_executor_mut().clear().is_some();
+        let execution_cleared = self
+            .visual_affordance_transition_executor_mut()
+            .clear()
+            .is_some();
         scene_cleared || execution_cleared
     }
 
@@ -265,11 +269,12 @@ impl DockHost {
     }
 
     #[cfg(test)]
-    pub(crate) fn sample_overlay_transition_for_test(
+    pub(crate) fn sample_visual_affordance_transition_for_test(
         &mut self,
         now: std::time::Duration,
     ) -> Option<DockTransitionSample> {
-        self.overlay_transition_executor_mut().sample_for_test(now)
+        self.visual_affordance_transition_executor_mut()
+            .sample_for_test(now)
     }
 
     #[cfg(test)]

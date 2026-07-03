@@ -1,7 +1,5 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
-#[cfg(test)]
-use crate::overlay_scene::{DockOverlayLayer, DockOverlayLayerKind, DockOverlayScene};
 use crate::{
     DockNodeId, DockSpaceId, DropZone,
     divider_hit_map::{
@@ -285,21 +283,6 @@ impl DockVisualAffordanceScene {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_overlay_scene(overlay: &DockOverlayScene) -> Self {
-        let layers = overlay
-            .layers
-            .iter()
-            .enumerate()
-            .map(|(serial, layer)| visual_layer_from_overlay_layer(serial, layer))
-            .collect();
-        Self {
-            space: None,
-            frame_generation: None,
-            layers,
-        }
-    }
-
     pub(crate) fn from_focus_scene(scene: &DockPresentationScene) -> Self {
         let mut affordances = Self::empty(Some(scene.space.clone()));
         affordances.extend_focus_regions(&scene.focus_regions);
@@ -482,6 +465,15 @@ impl DockVisualAffordanceScene {
         self.tab_insertion().is_some() && self.payload_tabs().next().is_some()
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_test_layers(layers: Vec<DockVisualAffordanceLayer>) -> Self {
+        Self {
+            space: None,
+            frame_generation: None,
+            layers,
+        }
+    }
+
     fn push_divider_handle(
         &mut self,
         handle: DockDividerHandleHitTarget,
@@ -573,6 +565,35 @@ impl DockVisualAffordanceLayer {
         self.tab_insertion = Some(insertion);
         self
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_layer(
+        kind: DockVisualAffordanceKind,
+        bounds: Bounds<Pixels>,
+        target_node: Option<DockNodeId>,
+        zone: Option<DropZone>,
+        layer_scope: DockVisualLayerScope,
+        state: DockVisualAffordanceState,
+        payload_index: Option<usize>,
+        payload_title: Option<String>,
+        serial: Option<usize>,
+        accessibility_label: Option<String>,
+    ) -> Self {
+        Self::new(
+            kind,
+            bounds,
+            bounds,
+            bounds,
+            target_node,
+            zone,
+            layer_scope,
+            state,
+            payload_index,
+            payload_title,
+            serial,
+            accessibility_label,
+        )
+    }
 }
 
 impl DockVisualAffordanceState {
@@ -587,95 +608,6 @@ impl DockVisualAffordanceState {
             DockDividerAffordanceState::Active => Self::Active,
             DockDividerAffordanceState::Disabled => Self::Disabled,
         }
-    }
-}
-
-#[cfg(test)]
-fn visual_layer_from_overlay_layer(
-    serial: usize,
-    layer: &DockOverlayLayer,
-) -> DockVisualAffordanceLayer {
-    let (kind, scope, state) = match layer.kind {
-        DockOverlayLayerKind::TargetBody => (
-            DockVisualAffordanceKind::DropTargetBody,
-            DockVisualLayerScope::Local,
-            DockVisualAffordanceState::from_active(layer.active),
-        ),
-        DockOverlayLayerKind::GuideBox => (
-            DockVisualAffordanceKind::GuideBox,
-            preview_scope(layer),
-            DockVisualAffordanceState::from_active(layer.active),
-        ),
-        DockOverlayLayerKind::TabInsertion => (
-            DockVisualAffordanceKind::TabInsertionSlot,
-            DockVisualLayerScope::Local,
-            DockVisualAffordanceState::from_active(layer.active),
-        ),
-        DockOverlayLayerKind::PayloadTab => (
-            DockVisualAffordanceKind::PayloadTab,
-            DockVisualLayerScope::Local,
-            DockVisualAffordanceState::from_active(layer.active),
-        ),
-        DockOverlayLayerKind::PayloadGhost => (
-            DockVisualAffordanceKind::PayloadGhost,
-            DockVisualLayerScope::Local,
-            DockVisualAffordanceState::from_active(layer.active),
-        ),
-        DockOverlayLayerKind::RejectedState => (
-            DockVisualAffordanceKind::RejectedTarget,
-            DockVisualLayerScope::Local,
-            DockVisualAffordanceState::Rejected,
-        ),
-    };
-    let hit_bounds = layer
-        .drop_box
-        .as_ref()
-        .map(|drop_box| drop_box.hit_bounds)
-        .unwrap_or(layer.bounds);
-    let mut visual_layer = DockVisualAffordanceLayer::new(
-        kind,
-        layer.bounds,
-        layer.bounds,
-        hit_bounds,
-        layer.target_node,
-        layer.zone,
-        scope,
-        state,
-        layer.payload_index,
-        layer.payload_title.clone(),
-        Some(serial),
-        accessibility_label_for_overlay_layer(layer),
-    );
-    if let Some(drop_box) = layer.drop_box {
-        visual_layer = visual_layer.with_drop_box(drop_box);
-    }
-    if let Some(insertion) = layer.tab_insertion.clone() {
-        visual_layer = visual_layer.with_tab_insertion(insertion);
-    }
-    visual_layer
-}
-
-#[cfg(test)]
-fn preview_scope(layer: &DockOverlayLayer) -> DockVisualLayerScope {
-    match layer.preview_layer {
-        Some(crate::drop_preview::DockPreviewLayerKind::Inner) => DockVisualLayerScope::Inner,
-        Some(crate::drop_preview::DockPreviewLayerKind::Outer) => DockVisualLayerScope::Outer,
-        None => DockVisualLayerScope::Local,
-    }
-}
-
-#[cfg(test)]
-fn accessibility_label_for_overlay_layer(layer: &DockOverlayLayer) -> Option<String> {
-    match layer.kind {
-        DockOverlayLayerKind::TargetBody => Some("Dock target".to_string()),
-        DockOverlayLayerKind::GuideBox => layer.zone.map(|zone| format!("Dock {zone:?}")),
-        DockOverlayLayerKind::TabInsertion => Some("Insert tab".to_string()),
-        DockOverlayLayerKind::PayloadTab => layer.payload_title.clone(),
-        DockOverlayLayerKind::PayloadGhost => layer
-            .payload_title
-            .as_ref()
-            .map(|title| format!("Preview {title}")),
-        DockOverlayLayerKind::RejectedState => Some("Drop target unavailable".to_string()),
     }
 }
 

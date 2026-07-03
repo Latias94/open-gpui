@@ -120,8 +120,6 @@ mod ids;
 mod interaction;
 mod layout;
 mod op;
-#[cfg(test)]
-mod overlay_scene;
 mod panel;
 mod panel_catalog;
 mod panel_registry;
