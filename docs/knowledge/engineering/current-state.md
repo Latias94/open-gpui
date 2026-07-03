@@ -169,6 +169,13 @@ verified_by:
   same app-owned check while filtering orphan diagnostics for hidden commands that remain
   registered in active scopes. The gallery `registry-dispatch` sample now proves a healthy empty
   shortcut diagnostic set.
+- Done on `feat/command-palette-session`: `open_gpui_ui_components::CommandPaletteProjection` is
+  the UI-side app integration projection for command palettes. It turns a `CommandCenter` query plus
+  keymap/window shortcut precedence into a `PreFiltered` `CommandIndexSnapshot`, retained provider
+  statuses, and shortcut diagnostics. `Command::palette_projection` consumes it directly. The
+  gallery `provider-search` sample now binds provider-generated command ids to GPUI actions and
+  shortcuts before projection, keeping the provider-backed sample dispatch-ready and
+  diagnostic-clean.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default

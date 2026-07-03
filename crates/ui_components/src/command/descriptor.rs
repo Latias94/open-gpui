@@ -3,9 +3,10 @@
 use crate::choice::{self, ChoiceItemProjection, ChoiceSelectionMode};
 use crate::listbox::ListboxOptionDescriptor;
 use crate::overlay::OverlayDisclosureOpenMode;
+use open_gpui::{Keymap, Window};
 use open_gpui_command::{
-    CommandDescriptor, CommandProviderRefreshProjection, CommandProviderState,
-    CommandProviderStatus, CommandRegistrySnapshot,
+    CommandCenter, CommandDescriptor, CommandProviderRefreshProjection, CommandProviderState,
+    CommandProviderStatus, CommandRegistrySnapshot, CommandShortcutDiagnostic,
 };
 use open_gpui_ui_core::Role;
 
@@ -109,6 +110,128 @@ impl CommandLoadingState {
 }
 
 const DEFAULT_PROVIDER_LOADING_MESSAGE: &str = "Loading commands";
+
+/// UI-ready projection for an app-owned [`CommandCenter`] command palette.
+///
+/// This is the copyable bridge most applications should feed into [`crate::Command`]. It keeps
+/// `open_gpui_command` renderer-neutral while carrying the UI snapshot, current query, provider
+/// statuses, and shortcut diagnostics together.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPaletteProjection {
+    query: String,
+    provider_statuses: Vec<CommandProviderStatus>,
+    shortcut_diagnostics: Vec<CommandShortcutDiagnostic>,
+    index_snapshot: CommandIndexSnapshot,
+}
+
+impl CommandPaletteProjection {
+    /// Projects a command center for an app-level keymap and query.
+    pub fn from_center_for_keymap(
+        center: &CommandCenter,
+        query: impl Into<String>,
+        keymap: &Keymap,
+    ) -> Self {
+        let query = query.into();
+        Self::from_parts(
+            query.clone(),
+            center.search_snapshot_for_keymap(query.as_str(), keymap),
+            center.provider_statuses().cloned(),
+            center.shortcut_diagnostics_for_keymap(keymap),
+        )
+    }
+
+    /// Projects a command center for focused-window shortcut precedence and query.
+    pub fn from_center_for_window(
+        center: &CommandCenter,
+        query: impl Into<String>,
+        window: &Window,
+    ) -> Self {
+        let query = query.into();
+        Self::from_parts(
+            query.clone(),
+            center.search_snapshot_for_window(query.as_str(), window),
+            center.provider_statuses().cloned(),
+            center.shortcut_diagnostics_for_window(window),
+        )
+    }
+
+    fn from_parts(
+        query: String,
+        snapshot: CommandRegistrySnapshot,
+        provider_statuses: impl IntoIterator<Item = CommandProviderStatus>,
+        shortcut_diagnostics: impl IntoIterator<Item = CommandShortcutDiagnostic>,
+    ) -> Self {
+        let provider_statuses = provider_statuses.into_iter().collect::<Vec<_>>();
+        let mut index_snapshot = CommandIndexSnapshot::from_registry_snapshot(&snapshot)
+            .mode(CommandIndexSnapshotMode::PreFiltered);
+
+        if let Some(loading_state) = provider_statuses
+            .iter()
+            .find_map(provider_status_loading_state)
+        {
+            index_snapshot = index_snapshot.loading(loading_state);
+        }
+
+        Self {
+            query,
+            provider_statuses,
+            shortcut_diagnostics: shortcut_diagnostics.into_iter().collect(),
+            index_snapshot,
+        }
+    }
+
+    /// Returns the query used to create this projection.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// Returns provider statuses retained by the command center.
+    pub fn provider_statuses(&self) -> &[CommandProviderStatus] {
+        &self.provider_statuses
+    }
+
+    /// Returns the first provider status, useful for single-provider palettes.
+    pub fn provider_status(&self) -> Option<&CommandProviderStatus> {
+        self.provider_statuses.first()
+    }
+
+    /// Returns shortcut/action/keymap diagnostics for the projected command center.
+    pub fn shortcut_diagnostics(&self) -> &[CommandShortcutDiagnostic] {
+        &self.shortcut_diagnostics
+    }
+
+    /// Returns the UI command index snapshot.
+    pub const fn index_snapshot(&self) -> &CommandIndexSnapshot {
+        &self.index_snapshot
+    }
+
+    /// Returns loading metadata projected from any loading provider status.
+    pub const fn loading_state(&self) -> Option<&CommandLoadingState> {
+        self.index_snapshot.loading_state()
+    }
+
+    /// Consumes the projection and returns the UI command index snapshot.
+    pub fn into_index_snapshot(self) -> CommandIndexSnapshot {
+        self.index_snapshot
+    }
+
+    /// Consumes the projection and returns all UI-facing parts.
+    pub fn into_parts(
+        self,
+    ) -> (
+        String,
+        Vec<CommandProviderStatus>,
+        Vec<CommandShortcutDiagnostic>,
+        CommandIndexSnapshot,
+    ) {
+        (
+            self.query,
+            self.provider_statuses,
+            self.shortcut_diagnostics,
+            self.index_snapshot,
+        )
+    }
+}
 
 /// UI-ready projection for a provider-backed command palette refresh.
 #[derive(Debug, Clone, PartialEq, Eq)]

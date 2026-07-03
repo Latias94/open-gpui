@@ -32,8 +32,8 @@ use crate::text_input::adapter::TextInputController;
 use crate::theme::ThemeResolver;
 pub use descriptor::{
     CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
-    CommandLoadingState, CommandMatchSource, CommandOpenMode, CommandProviderPaletteProjection,
-    CommandQueryMode, CommandSelectionMode,
+    CommandLoadingState, CommandMatchSource, CommandOpenMode, CommandPaletteProjection,
+    CommandProviderPaletteProjection, CommandQueryMode, CommandSelectionMode,
 };
 pub use model::{
     CommandDialogState, CommandGroupState, CommandItemState, CommandSelectedChipState,
@@ -180,6 +180,13 @@ impl Command {
         self.query =
             Some(TextEditingPolicy::single_line().normalize_text(palette_projection.query()));
         self.index_snapshot = Some(palette_projection.into_index_snapshot());
+        self
+    }
+
+    /// Applies an app-owned command-center palette projection to the command query and snapshot.
+    pub fn palette_projection(mut self, projection: &CommandPaletteProjection) -> Self {
+        self.query = Some(TextEditingPolicy::single_line().normalize_text(projection.query()));
+        self.index_snapshot = Some(projection.index_snapshot().clone());
         self
     }
 

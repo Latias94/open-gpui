@@ -6,6 +6,12 @@ status: active
 
 # Log
 
+- 2026-07-03: Added `CommandPaletteProjection` on `feat/command-palette-session`. The UI-side
+  projection now adapts a `CommandCenter` query plus keymap/window shortcut precedence into a
+  `PreFiltered` `CommandIndexSnapshot`, provider statuses, and shortcut diagnostics.
+  `Command::palette_projection` consumes it directly. The gallery `provider-search` sample now
+  binds dynamic provider command ids to GPUI actions and shortcuts before projecting the palette,
+  so provider results are dispatch-ready and diagnostic-clean.
 - 2026-07-03: Added command shortcut diagnostics on
   `feat/command-app-integration-diagnostics`. `GpuiCommandActionMap` now reports strict
   command/action/keymap drift for missing actions, orphan actions, missing shortcuts, and duplicated

@@ -138,6 +138,14 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let _root_provider_palette_query = root_provider_palette_projection.query();
     let _root_provider_palette_snapshot: root::CommandIndexSnapshot =
         root_provider_palette_projection.into_index_snapshot();
+    let root_palette_projection: root::CommandPaletteProjection =
+        root::CommandPaletteProjection::from_center_for_keymap(
+            &root_command_center,
+            "open",
+            &open_gpui::Keymap::default(),
+        );
+    let _root_palette_projection_diagnostics: &[root::CommandShortcutDiagnostic] =
+        root_palette_projection.shortcut_diagnostics();
     let _root_provider_state = root::CommandProviderState::Ready;
     assert_root_provider(
         &(root_provider_fn as fn(&root::CommandProviderRequest) -> root::CommandProviderResponse),
@@ -160,6 +168,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             .behavior_snapshot();
     let _root_provider_command_state = root::Command::new("root-provider-plan", "Provider")
         .provider_refresh_projection(&root_provider_projection)
+        .state();
+    let _root_palette_command_state = root::Command::new("root-palette-plan", "Palette")
+        .palette_projection(&root_palette_projection)
         .state();
     let _root_command_row: Option<&root::CommandRowBehaviorSnapshot> =
         root_command_snapshot.rows().first();
@@ -309,6 +320,14 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let _prelude_provider_palette_query = prelude_provider_palette_projection.query();
     let _prelude_provider_palette_snapshot: prelude::CommandIndexSnapshot =
         prelude_provider_palette_projection.into_index_snapshot();
+    let prelude_palette_projection: prelude::CommandPaletteProjection =
+        prelude::CommandPaletteProjection::from_center_for_keymap(
+            &prelude_command_center,
+            "open",
+            &open_gpui::Keymap::default(),
+        );
+    let _prelude_palette_projection_diagnostics: &[prelude::CommandShortcutDiagnostic] =
+        prelude_palette_projection.shortcut_diagnostics();
     let _prelude_provider_state = prelude::CommandProviderState::Loading;
     assert_prelude_provider(
         &(prelude_provider_fn
@@ -334,6 +353,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude::Command::new("prelude-provider-plan", "Provider")
             .provider_refresh_projection(&prelude_provider_projection)
             .state();
+    let _prelude_palette_command_state = prelude::Command::new("prelude-palette-plan", "Palette")
+        .palette_projection(&prelude_palette_projection)
+        .state();
     let _prelude_command_row: Option<&prelude::CommandRowBehaviorSnapshot> =
         prelude_command_snapshot.rows().first();
     let prelude_menu_state = prelude::Menu::new("prelude-menu", "Menu")
