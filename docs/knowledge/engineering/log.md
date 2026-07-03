@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-07-03: Implemented U1-U6 of
+  `docs/plans/2026-07-03-001-refactor-docking-visual-affordance-runtime-plan.md` on
+  `refactor/docking-visual-affordance-runtime`. The branch now has `DockVisualAffordanceScene` as
+  the visual feedback authority for preview layers, route markers, divider/corner affordances,
+  focus/zoom indicators, accessibility overlay descriptors, overlay motion identity, and native
+  runtime diagnostics. The old route-marker overlay adapter was removed; `DockOverlayScene` remains
+  only as a render adapter for drop-preview drawing and measured payload-tab layout. Focused
+  preview/render/transition/accessibility/debug gates and native checks passed; broad final docking
+  verification remains the next closeout step before merge.
 - 2026-07-03: Closed the `refactor/docking-render-authority-convergence` review tail after
   U1-U5. Code review found and fixed three runtime/maintainability follow-ups: tab-label render
   probes no longer churn viewport host-scene generations for identical measured facts; divider

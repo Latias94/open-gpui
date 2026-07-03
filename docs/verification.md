@@ -119,7 +119,7 @@ cargo nextest run -p open-gpui-ui-core split --no-fail-fast
 cargo nextest run -p open-gpui-ui-components splitter gpui_adapter_maps_splitter_role --no-fail-fast
 cargo nextest run -p open-gpui-docking geometry host_accessibility_tests host_divider_hit_map_tests workspace_resize_policy_tests graph_split_tests interaction --no-fail-fast
 cargo nextest run -p open-gpui-docking spatial_navigation_tests host_zoom_focus_tests::host_focus_neighbor_command_uses_spatial_navigation host_accessibility_tests::accessibility_splitter_actions_resize_through_transaction_path host_accessibility_tests::accessibility_vertical_splitter_actions_target_vertical_axis host_divider_hit_map_tests host_interaction_tests::horizontal_splitter_drag_updates_width_fractions host_interaction_tests::vertical_splitter_drag_updates_height_fractions host_interaction_tests::splitter_drag_clamps_to_minimum_pane_size host_interaction_tests::corner_splitter_drag_updates_both_axes_through_rendered_events interaction::tests::corner_splitter_drag_produces_two_axis_resize_request interaction::tests::corner_splitter_drag_clamps_one_axis_without_corrupting_other_axis render::tests::divider_affordance_states_have_distinct_feedback_colors --no-fail-fast
-cargo nextest run -p open-gpui-docking transition_plan_from_route_overlay_describes_source_marker source_hover_over_known_viewport_renders_target_drop_preview routed_preview_replacement_clears_old_target_overlay_without_stale_payload escape_clears_routed_marker_target_overlay_and_active_drag viewport_runtime_begin_payload_drag_clears_previous_routed_preview viewport_runtime_revalidates_routed_preview_release_against_current_policy --no-fail-fast
+cargo nextest run -p open-gpui-docking transition_plan_from_route_affordance_describes_source_marker source_hover_over_known_viewport_renders_target_drop_preview routed_preview_replacement_clears_old_target_overlay_without_stale_payload escape_clears_routed_marker_target_overlay_and_active_drag viewport_runtime_begin_payload_drag_clears_previous_routed_preview viewport_runtime_revalidates_routed_preview_release_against_current_policy --no-fail-fast
 cargo nextest run -p open-gpui-docking transition_pane_clip_mounts_real_pane_content host_unzoom_command_retargets_from_active_zoom_sample dragging_tab_to_other_stack_center_moves_panel transition_plan_from_overlay_scene_uses_current_bounds_for_matching_layers transition_plan_keeps_preview_layers_at_current_target_bounds overlay_replacement_keeps_preview_layers_at_current_target_bounds --no-fail-fast
 ```
 
@@ -171,6 +171,34 @@ element API for an accessibility hint/description field or a platform drop actio
 drop, drag-source, and rejected-target overlay nodes are therefore exposed as labeled group
 descriptors without inventing unsupported platform actions, and focused tests assert that those
 nodes disappear when the overlay scene is empty.
+
+Docking visual affordance runtime work should use `DockVisualAffordanceScene` as the visual
+feedback authority for drop guides, tab insertion, route markers, divider/corner affordances,
+focus rings, zoom egress, accessibility, overlay motion identity, and native diagnostics. The
+remaining `DockOverlayScene` is a render adapter for concrete overlay drawing and measured
+payload-tab layout, not a semantic authority. Route markers now bypass the overlay adapter and are
+created directly as visual affordances. The native docking runtime panel shows one compact
+affordance line per viewport with layer count, active layer, scope/state, target node, zone,
+payload index, frame generation, and overlay motion state.
+
+Focused visual affordance runtime gates:
+
+```sh
+cargo fmt --all -- --check
+cargo nextest run -p open-gpui-docking host_viewport_preview_tests host_viewport_preview_visual_tests host_viewport_route_tests --no-fail-fast
+cargo nextest run -p open-gpui-docking host_render_tests host_transition_tests host_render_geometry_parity_tests --no-fail-fast
+cargo nextest run -p open-gpui-docking host_accessibility_tests host_divider_hit_map_tests host_debug --no-fail-fast
+cargo nextest run -p open-gpui-docking host_interaction_tests host_outside_release host_viewport_drop --no-fail-fast
+cargo check -p open-gpui-docking
+cargo check -p open-gpui-docking-native
+git diff --check
+```
+
+Native dogfood command:
+
+```sh
+RUST_LOG=info,open_gpui_docking=debug,open_gpui=info RUST_BACKTRACE=1 cargo run -p open-gpui-docking-native --bin open-gpui-docking-native 2>&1 | tee /tmp/open-gpui-docking-native.log
+```
 
 Table gallery gates now follow the same split: `open-gpui-ui-core` tests prove row-model,
 manual row-model stages, manual expansion, child-load metadata, virtualizer, column sizing,
