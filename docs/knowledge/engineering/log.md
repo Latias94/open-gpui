@@ -29,6 +29,11 @@ status: active
   committed-layout motion policy, panel identity/count changes are explicitly immediate, and
   Splitter transition descriptors were removed from component default exports until the GPUI adapter
   executes insert/remove/collapse/expand transitions.
+- 2026-07-04: Rendered Docking projection clips on `feat/ui-motion-value-foundation`.
+  `MotionProjectionSample::visual_bounds()` is now the core visual-bounds helper, Docking
+  moving/resizing pane transitions mount final-size pane content through projection clip/occlusion
+  layers, and the scalar sample type was renamed from `MotionSpringSample` to
+  `MotionScalarSample`.
 - 2026-07-04: Added command keybinding conflict reporting on
   `feat/command-keybinding-conflicts`. `CommandKeyBindingProjection` now reports conservative
   same-context shortcut conflicts, and `CommandKeyBindingInstallReport` summarizes append-only

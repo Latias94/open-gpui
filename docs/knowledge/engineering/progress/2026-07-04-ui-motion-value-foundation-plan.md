@@ -16,6 +16,8 @@ git_commits:
   - 21639e0 docs(ui): record motion value checkpoint
   - c840f2f refactor(ui): gate motion frames and policy
   - 95db32f refactor(ui): narrow splitter motion surface
+  - ecdc00f docs(ui): record splitter motion checkpoint
+  - f39f296 refactor(ui): render docking projection clips
 tags:
   - ui-core
   - motion
@@ -81,12 +83,23 @@ Started the UI motion value foundation implementation on `feat/ui-motion-value-f
   open-gpui-ui-components splitter::tests::runtime --lib` passed 6 tests; focused public surface
   method/export/docs tests passed; `cargo check -p open-gpui-ui-core -p open-gpui-ui-components -p
   open-gpui-docking` passed without warnings.
+- U6 is implemented: `MotionProjectionSample::visual_bounds()` now exposes projection visual bounds
+  from core without asking adapters to reconstruct target+translation+scale locally; Docking moving
+  and resizing pane transitions now render through the same final-size content clip/occlusion path
+  as entering/leaving panes, while the final presentation scene remains the semantic authority.
+  `MotionSpringSample` was removed in favor of the model-neutral `MotionScalarSample` name because
+  scalar tracks can be backed by either timelines or springs.
+- U6 verification: `cargo nextest run -p open-gpui-ui-core motion_projection motion_controller
+  --no-fail-fast` passed 9 tests; focused Docking render and transition tests passed; `cargo
+  nextest run -p open-gpui-docking host_transition_tests host_render_tests
+  host_zoom_focus_tests host_viewport_preview_visual_tests host_accessibility_tests
+  --no-fail-fast` passed 105 tests; `cargo check -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-docking` passed without warnings.
 
 # Next Action
 
-Implement U6 from the plan: align Docking transitions with the explicit model/policy/projection
-boundary and remove any remaining path that treats projection-only geometry or old bounds
-interpolation as the release authority.
+Implement U7 from the plan: update proof and verification docs, native status/debug surface, run the
+final verification contract, then merge the feature branch back to local `main` and push.
 
 # Citations
 
