@@ -5,8 +5,10 @@ use crate::listbox::ListboxOptionDescriptor;
 use crate::overlay::OverlayDisclosureOpenMode;
 use open_gpui::{Keymap, Window};
 use open_gpui_command::{
-    CommandCenter, CommandDescriptor, CommandProviderRefreshProjection, CommandProviderState,
-    CommandProviderStatus, CommandRegistrySnapshot, CommandShortcutDiagnostic,
+    CommandCenter, CommandDescriptor, CommandProviderId, CommandProviderRefreshController,
+    CommandProviderRefreshProjection, CommandProviderRequest, CommandProviderResponse,
+    CommandProviderState, CommandProviderStatus, CommandRegistryError, CommandRegistrySnapshot,
+    CommandShortcutDiagnostic,
 };
 use open_gpui_ui_core::Role;
 
@@ -230,6 +232,317 @@ impl CommandPaletteProjection {
             self.shortcut_diagnostics,
             self.index_snapshot,
         )
+    }
+}
+
+/// UI-side controller for a command-center-backed command palette.
+///
+/// The controller owns query and provider-refresh lifecycle state, but not the command center
+/// itself. Applications keep owning `CommandCenter`, async tasks, and dispatch policy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPaletteController {
+    query: String,
+    providers: Vec<CommandProviderRefreshController>,
+}
+
+impl Default for CommandPaletteController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CommandPaletteController {
+    /// Creates an empty command palette controller.
+    pub fn new() -> Self {
+        Self {
+            query: String::new(),
+            providers: Vec::new(),
+        }
+    }
+
+    /// Seeds the controller query.
+    pub fn with_query(mut self, query: impl Into<String>) -> Self {
+        self.query = query.into();
+        self
+    }
+
+    /// Registers a provider refresh controller without a loading message.
+    pub fn provider(mut self, provider_id: impl Into<CommandProviderId>) -> Self {
+        self.add_provider(provider_id);
+        self
+    }
+
+    /// Registers a provider refresh controller with loading metadata.
+    pub fn provider_with_loading(
+        mut self,
+        provider_id: impl Into<CommandProviderId>,
+        loading_message: impl Into<String>,
+    ) -> Self {
+        self.add_provider_with_loading(provider_id, loading_message);
+        self
+    }
+
+    /// Adds or replaces a provider refresh controller without a loading message.
+    pub fn add_provider(&mut self, provider_id: impl Into<CommandProviderId>) -> &mut Self {
+        self.replace_provider_controller(CommandProviderRefreshController::new(provider_id));
+        self
+    }
+
+    /// Adds or replaces a provider refresh controller with loading metadata.
+    pub fn add_provider_with_loading(
+        &mut self,
+        provider_id: impl Into<CommandProviderId>,
+        loading_message: impl Into<String>,
+    ) -> &mut Self {
+        self.replace_provider_controller(
+            CommandProviderRefreshController::new(provider_id)
+                .with_loading_message(loading_message),
+        );
+        self
+    }
+
+    /// Returns the current controller query.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// Returns provider refresh controllers owned by this palette controller.
+    pub fn provider_controllers(&self) -> &[CommandProviderRefreshController] {
+        &self.providers
+    }
+
+    /// Projects current state without changing query or refreshing providers.
+    pub fn projection_for_keymap(
+        &self,
+        center: &CommandCenter,
+        keymap: &Keymap,
+    ) -> CommandPaletteProjection {
+        CommandPaletteProjection::from_center_for_keymap(center, self.query.as_str(), keymap)
+    }
+
+    /// Projects current state for focused-window shortcut precedence without refreshing providers.
+    pub fn projection_for_window(
+        &self,
+        center: &CommandCenter,
+        window: &Window,
+    ) -> CommandPaletteProjection {
+        CommandPaletteProjection::from_center_for_window(center, self.query.as_str(), window)
+    }
+
+    /// Sets query, refreshes configured providers, and projects app-level keymap state.
+    pub fn set_query_for_keymap(
+        &mut self,
+        center: &mut CommandCenter,
+        query: impl Into<String>,
+        keymap: &Keymap,
+    ) -> Result<CommandPaletteControllerUpdate, CommandRegistryError> {
+        let query = query.into();
+        let query_changed = self.query != query;
+        self.query = query;
+        let (provider_projections, missing_provider_ids) =
+            self.refresh_provider_controllers(center)?;
+        Ok(CommandPaletteControllerUpdate::new(
+            self.query.clone(),
+            query_changed,
+            provider_projections,
+            missing_provider_ids,
+            self.projection_for_keymap(center, keymap),
+        ))
+    }
+
+    /// Sets query, refreshes configured providers, and projects focused-window shortcut state.
+    pub fn set_query_for_window(
+        &mut self,
+        center: &mut CommandCenter,
+        query: impl Into<String>,
+        window: &Window,
+    ) -> Result<CommandPaletteControllerUpdate, CommandRegistryError> {
+        let query = query.into();
+        let query_changed = self.query != query;
+        self.query = query;
+        let (provider_projections, missing_provider_ids) =
+            self.refresh_provider_controllers(center)?;
+        Ok(CommandPaletteControllerUpdate::new(
+            self.query.clone(),
+            query_changed,
+            provider_projections,
+            missing_provider_ids,
+            self.projection_for_window(center, window),
+        ))
+    }
+
+    /// Applies an async provider response and projects app-level keymap state.
+    pub fn apply_provider_response_for_keymap(
+        &mut self,
+        center: &mut CommandCenter,
+        provider_id: impl Into<CommandProviderId>,
+        request: &CommandProviderRequest,
+        response: CommandProviderResponse,
+        keymap: &Keymap,
+    ) -> Option<Result<CommandPaletteControllerUpdate, CommandRegistryError>> {
+        let provider_projection =
+            self.apply_provider_response(center, provider_id, request, response)?;
+        Some(provider_projection.map(|provider_projection| {
+            CommandPaletteControllerUpdate::new(
+                self.query.clone(),
+                false,
+                [provider_projection],
+                [],
+                self.projection_for_keymap(center, keymap),
+            )
+        }))
+    }
+
+    /// Applies an async provider response and projects focused-window shortcut state.
+    pub fn apply_provider_response_for_window(
+        &mut self,
+        center: &mut CommandCenter,
+        provider_id: impl Into<CommandProviderId>,
+        request: &CommandProviderRequest,
+        response: CommandProviderResponse,
+        window: &Window,
+    ) -> Option<Result<CommandPaletteControllerUpdate, CommandRegistryError>> {
+        let provider_projection =
+            self.apply_provider_response(center, provider_id, request, response)?;
+        Some(provider_projection.map(|provider_projection| {
+            CommandPaletteControllerUpdate::new(
+                self.query.clone(),
+                false,
+                [provider_projection],
+                [],
+                self.projection_for_window(center, window),
+            )
+        }))
+    }
+
+    fn replace_provider_controller(&mut self, controller: CommandProviderRefreshController) {
+        let provider_id = controller.provider_id().clone();
+        self.providers
+            .retain(|candidate| candidate.provider_id() != &provider_id);
+        if !provider_id.is_empty() {
+            self.providers.push(controller);
+        }
+    }
+
+    fn refresh_provider_controllers(
+        &mut self,
+        center: &mut CommandCenter,
+    ) -> Result<
+        (
+            Vec<CommandProviderRefreshProjection>,
+            Vec<CommandProviderId>,
+        ),
+        CommandRegistryError,
+    > {
+        let mut provider_projections = Vec::with_capacity(self.providers.len());
+        let mut missing_provider_ids = Vec::new();
+
+        for controller in &mut self.providers {
+            let projection = controller.set_query(center, self.query.clone())?;
+            if !projection.query_changed() {
+                provider_projections.push(projection);
+                continue;
+            }
+
+            let Some(request) = projection.request().cloned() else {
+                provider_projections.push(projection);
+                continue;
+            };
+            let Some(response) =
+                center.provider_response_for_request(controller.provider_id().clone(), &request)
+            else {
+                missing_provider_ids.push(controller.provider_id().clone());
+                provider_projections.push(projection);
+                continue;
+            };
+
+            provider_projections.push(controller.apply_response(center, &request, response)?);
+        }
+
+        Ok((provider_projections, missing_provider_ids))
+    }
+
+    fn apply_provider_response(
+        &mut self,
+        center: &mut CommandCenter,
+        provider_id: impl Into<CommandProviderId>,
+        request: &CommandProviderRequest,
+        response: CommandProviderResponse,
+    ) -> Option<Result<CommandProviderRefreshProjection, CommandRegistryError>> {
+        let provider_id = provider_id.into();
+        let controller = self
+            .providers
+            .iter_mut()
+            .find(|candidate| candidate.provider_id() == &provider_id)?;
+        Some(controller.apply_response(center, request, response))
+    }
+}
+
+/// Result of a command palette controller query or async response step.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPaletteControllerUpdate {
+    query: String,
+    query_changed: bool,
+    provider_projections: Vec<CommandProviderRefreshProjection>,
+    missing_provider_ids: Vec<CommandProviderId>,
+    palette_projection: CommandPaletteProjection,
+}
+
+impl CommandPaletteControllerUpdate {
+    fn new(
+        query: String,
+        query_changed: bool,
+        provider_projections: impl IntoIterator<Item = CommandProviderRefreshProjection>,
+        missing_provider_ids: impl IntoIterator<Item = CommandProviderId>,
+        palette_projection: CommandPaletteProjection,
+    ) -> Self {
+        Self {
+            query,
+            query_changed,
+            provider_projections: provider_projections.into_iter().collect(),
+            missing_provider_ids: missing_provider_ids.into_iter().collect(),
+            palette_projection,
+        }
+    }
+
+    /// Returns the query used for this controller step.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// Returns whether the controller query changed in this step.
+    pub const fn query_changed(&self) -> bool {
+        self.query_changed
+    }
+
+    /// Returns provider refresh projections produced by this step.
+    pub fn provider_projections(&self) -> &[CommandProviderRefreshProjection] {
+        &self.provider_projections
+    }
+
+    /// Returns the projection for one provider id.
+    pub fn provider_projection(
+        &self,
+        provider_id: &str,
+    ) -> Option<&CommandProviderRefreshProjection> {
+        self.provider_projections
+            .iter()
+            .find(|projection| projection.provider_id().as_str() == provider_id)
+    }
+
+    /// Returns configured provider ids that had no registered synchronous callback.
+    pub fn missing_provider_ids(&self) -> &[CommandProviderId] {
+        &self.missing_provider_ids
+    }
+
+    /// Returns the UI-ready palette projection for this step.
+    pub const fn palette_projection(&self) -> &CommandPaletteProjection {
+        &self.palette_projection
+    }
+
+    /// Consumes the update and returns the UI-ready palette projection.
+    pub fn into_palette_projection(self) -> CommandPaletteProjection {
+        self.palette_projection
     }
 }
 

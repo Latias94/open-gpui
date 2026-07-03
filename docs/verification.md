@@ -389,7 +389,10 @@ ignored without mutating registry sources, and the `CommandProviderRefreshContro
 query/loading/response/snapshot pipeline.
 The UI component command tests now also cover `CommandPaletteProjection`, which adapts a
 `CommandCenter` query/keymap projection into a `PreFiltered` `CommandIndexSnapshot`, provider
-statuses, and shortcut diagnostics, plus `CommandProviderPaletteProjection`, which adapts a provider
+statuses, and shortcut diagnostics; `CommandPaletteController`, which coordinates palette query
+changes across provider refresh controllers, refreshes registered synchronous providers, exposes
+missing-provider ids for app-owned async tasks, and ignores stale async responses through the
+existing provider request guard; plus `CommandProviderPaletteProjection`, which adapts a provider
 refresh projection into a `PreFiltered` `CommandIndexSnapshot`, carries loading provider status
 into `CommandLoadingState`, and lets `Command::provider_refresh_projection` bind query and snapshot
 metadata without app-owned snapshot glue.
@@ -397,6 +400,7 @@ Run the focused proof with:
 
 ```powershell
 cargo nextest run -p open-gpui-ui-components command
+cargo nextest run -p open-gpui-ui-components command_palette_controller --no-fail-fast
 cargo nextest run -p open-gpui-command --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command_descriptors --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command menu --no-fail-fast

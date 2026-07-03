@@ -32,8 +32,9 @@ use crate::text_input::adapter::TextInputController;
 use crate::theme::ThemeResolver;
 pub use descriptor::{
     CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
-    CommandLoadingState, CommandMatchSource, CommandOpenMode, CommandPaletteProjection,
-    CommandProviderPaletteProjection, CommandQueryMode, CommandSelectionMode,
+    CommandLoadingState, CommandMatchSource, CommandOpenMode, CommandPaletteController,
+    CommandPaletteControllerUpdate, CommandPaletteProjection, CommandProviderPaletteProjection,
+    CommandQueryMode, CommandSelectionMode,
 };
 pub use model::{
     CommandDialogState, CommandGroupState, CommandItemState, CommandSelectedChipState,

@@ -8,11 +8,12 @@ use open_gpui_ui_components::{
     Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command,
     CommandGroup, CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode,
     CommandItem, CommandItemDescriptor, CommandLoadingState, CommandMatchSource, CommandOpenMode,
-    CommandPaletteProjection, CommandProviderPaletteProjection, CommandQueryMode, CommandSelection,
-    CommandSelectionChange, CommandSelectionMode, Listbox, ListboxGroup, ListboxGroupDescriptor,
-    ListboxOption, ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState,
-    ScrollArea, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, VirtualizerRange,
-    gpui_adapter::init_text_input, listbox_navigation_target,
+    CommandPaletteController, CommandPaletteProjection, CommandProviderPaletteProjection,
+    CommandQueryMode, CommandSelection, CommandSelectionChange, CommandSelectionMode, Listbox,
+    ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
+    ListboxOptionKind, ListboxSelection, ListboxState, ScrollArea, ScrollResetPolicy, Select,
+    SelectOpenMode, SelectSelection, VirtualizerRange, gpui_adapter::init_text_input,
+    listbox_navigation_target,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -1751,6 +1752,215 @@ fn command_palette_projection_adapts_center_query_shortcuts_providers_and_diagno
             "provider.open.alpha".to_string(),
             Some("ctrl-alt-O".to_string())
         )]
+    );
+}
+
+#[test]
+fn command_palette_controller_refreshes_registered_provider_into_command_projection() {
+    let mut center = open_gpui_command::CommandCenter::new("controller-center-v1");
+    center.register_provider(
+        "recent-provider",
+        |request: &open_gpui_command::CommandProviderRequest| {
+            open_gpui_command::CommandProviderResponse::ready().source(
+                open_gpui_command::CommandProviderSource::new(
+                    "workspace",
+                    "recent-provider-results",
+                    [open_gpui_command::CommandContribution::new(
+                        open_gpui_command::CommandDescriptor::new(
+                            format!("provider.open.{}", request.query()),
+                            format!("Open {}", request.query()),
+                        )
+                        .group("Provider"),
+                    )],
+                ),
+            )
+        },
+    );
+    center.register_action("provider.open.alpha", RevealPaletteCommand);
+    let mut keymap = open_gpui::Keymap::default();
+    keymap.add_bindings([open_gpui::KeyBinding::new(
+        "ctrl-alt-o",
+        RevealPaletteCommand,
+        None,
+    )]);
+    let mut controller = CommandPaletteController::new()
+        .provider_with_loading("recent-provider", "Searching provider commands");
+
+    let update = controller
+        .set_query_for_keymap(&mut center, "alpha", &keymap)
+        .unwrap();
+
+    assert!(update.query_changed());
+    assert_eq!(update.query(), "alpha");
+    assert!(update.missing_provider_ids().is_empty());
+    assert_eq!(update.provider_projections().len(), 1);
+    assert!(
+        update
+            .provider_projection("recent-provider")
+            .is_some_and(|projection| projection
+                .outcome()
+                .is_some_and(open_gpui_command::CommandProviderApplyOutcome::applied))
+    );
+    assert_eq!(
+        update
+            .palette_projection()
+            .provider_status()
+            .map(|status| (status.query(), status.command_count())),
+        Some((Some("alpha"), 1))
+    );
+    assert!(
+        update
+            .palette_projection()
+            .shortcut_diagnostics()
+            .is_empty()
+    );
+
+    let state = Command::new("controller-command", "Controller commands")
+        .palette_projection(update.palette_projection())
+        .selected("provider.open.alpha")
+        .active("provider.open.alpha")
+        .state();
+
+    assert_eq!(state.query(), "alpha");
+    assert_eq!(state.index_revision(), Some("controller-center-v1"));
+    assert_eq!(state.index_mode(), CommandIndexSnapshotMode::PreFiltered);
+    assert_eq!(state.filtered_item_count(), 1);
+    assert_eq!(
+        state.group_items(0).next().and_then(|item| item.shortcut()),
+        Some("ctrl-alt-O")
+    );
+}
+
+#[test]
+fn command_palette_controller_tracks_async_provider_requests_and_stale_responses() {
+    let mut center = open_gpui_command::CommandCenter::new("async-controller-v1");
+    let mut keymap = open_gpui::Keymap::default();
+    keymap.add_bindings([open_gpui::KeyBinding::new(
+        "ctrl-alt-b",
+        RevealPaletteCommand,
+        None,
+    )]);
+    let mut controller =
+        CommandPaletteController::new().provider_with_loading("async-provider", "Searching async");
+
+    let alpha = controller
+        .set_query_for_keymap(&mut center, "alpha", &keymap)
+        .unwrap();
+    let alpha_request = alpha
+        .provider_projection("async-provider")
+        .and_then(open_gpui_command::CommandProviderRefreshProjection::request)
+        .expect("alpha request")
+        .clone();
+
+    assert_eq!(
+        alpha
+            .missing_provider_ids()
+            .iter()
+            .map(|provider_id| provider_id.as_str())
+            .collect::<Vec<_>>(),
+        ["async-provider"]
+    );
+    assert_eq!(
+        alpha
+            .palette_projection()
+            .loading_state()
+            .map(CommandLoadingState::message),
+        Some("Searching async")
+    );
+
+    let beta = controller
+        .set_query_for_keymap(&mut center, "beta", &keymap)
+        .unwrap();
+    let beta_request = beta
+        .provider_projection("async-provider")
+        .and_then(open_gpui_command::CommandProviderRefreshProjection::request)
+        .expect("beta request")
+        .clone();
+
+    let stale = controller
+        .apply_provider_response_for_keymap(
+            &mut center,
+            "async-provider",
+            &alpha_request,
+            open_gpui_command::CommandProviderResponse::ready().source(
+                open_gpui_command::CommandProviderSource::new(
+                    "workspace",
+                    "async-provider-results",
+                    [open_gpui_command::CommandContribution::new(
+                        open_gpui_command::CommandDescriptor::new(
+                            "provider.open.alpha",
+                            "Open Alpha",
+                        )
+                        .group("Provider"),
+                    )],
+                ),
+            ),
+            &keymap,
+        )
+        .expect("async provider is controlled")
+        .unwrap();
+
+    assert!(
+        stale
+            .provider_projection("async-provider")
+            .is_some_and(|projection| projection
+                .outcome()
+                .is_some_and(open_gpui_command::CommandProviderApplyOutcome::stale))
+    );
+    assert_eq!(stale.palette_projection().query(), "beta");
+    assert_eq!(
+        stale
+            .palette_projection()
+            .loading_state()
+            .map(CommandLoadingState::message),
+        Some("Searching async")
+    );
+
+    center.register_action("provider.open.beta", RevealPaletteCommand);
+    let ready = controller
+        .apply_provider_response_for_keymap(
+            &mut center,
+            "async-provider",
+            &beta_request,
+            open_gpui_command::CommandProviderResponse::ready().source(
+                open_gpui_command::CommandProviderSource::new(
+                    "workspace",
+                    "async-provider-results",
+                    [open_gpui_command::CommandContribution::new(
+                        open_gpui_command::CommandDescriptor::new(
+                            "provider.open.beta",
+                            "Open Beta",
+                        )
+                        .group("Provider"),
+                    )],
+                ),
+            ),
+            &keymap,
+        )
+        .expect("async provider is controlled")
+        .unwrap();
+
+    assert!(
+        ready
+            .provider_projection("async-provider")
+            .is_some_and(|projection| projection
+                .outcome()
+                .is_some_and(open_gpui_command::CommandProviderApplyOutcome::applied))
+    );
+    assert_eq!(ready.palette_projection().loading_state(), None);
+    assert!(ready.palette_projection().shortcut_diagnostics().is_empty());
+
+    let state = Command::new("async-controller-command", "Async commands")
+        .palette_projection(ready.palette_projection())
+        .selected("provider.open.beta")
+        .active("provider.open.beta")
+        .state();
+
+    assert_eq!(state.query(), "beta");
+    assert_eq!(state.filtered_item_count(), 1);
+    assert_eq!(
+        state.group_items(0).next().and_then(|item| item.shortcut()),
+        Some("ctrl-alt-B")
     );
 }
 

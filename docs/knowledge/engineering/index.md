@@ -29,6 +29,8 @@
 * [Open GPUI command shortcut diagnostics verification](verification/open-gpui-command-shortcut-diagnostics-20260703.md) - Verification evidence for strict adapter diagnostics, CommandCenter facade filtering, exports, and gallery proof.
 * [Open GPUI command palette projection](progress/2026-07-03-open-gpui-command-palette-projection.md) - UI-side CommandCenter palette projection that joins query, shortcuts, provider statuses, diagnostics, and Command snapshots.
 * [Open GPUI command palette projection verification](verification/open-gpui-command-palette-projection-20260703.md) - Verification evidence for `CommandPaletteProjection`, public exports, and gallery provider/dispatch proof.
+* [Open GPUI command palette controller](progress/2026-07-03-open-gpui-command-palette-controller.md) - UI-side palette query/provider lifecycle controller over `CommandCenter` projections.
+* [Open GPUI command palette controller verification](verification/open-gpui-command-palette-controller-20260703.md) - Verification evidence for `CommandPaletteController`, public exports, async stale-response handling, and gallery migration.
 * [Native UI hybrid registry architecture planning](progress/2026-07-02-native-ui-hybrid-registry-architecture-plan.md) - Superseded historical plan for the removed hybrid registry MVP.
 * [Native UI hybrid registry implementation](progress/2026-07-02-native-ui-hybrid-registry-implementation.md) - Superseded implementation history for the removed registry manifest, recipes, artifacts, and scan.
 * [Native UI hybrid registry implementation verification](verification/native-ui-hybrid-registry-implementation-20260702.md) - Superseded verification evidence for the removed hybrid registry work.

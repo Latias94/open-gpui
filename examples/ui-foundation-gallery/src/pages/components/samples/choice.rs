@@ -1,9 +1,8 @@
 use super::*;
 use open_gpui::{KeyBinding, Keymap, actions};
 use open_gpui_command::{
-    CommandCenter, CommandContribution, CommandDescriptor, CommandProviderRefreshController,
-    CommandProviderResponse, CommandProviderSource, CommandProviderStatus,
-    CommandShortcutDiagnostic,
+    CommandCenter, CommandContribution, CommandDescriptor, CommandProviderResponse,
+    CommandProviderSource, CommandProviderStatus, CommandShortcutDiagnostic,
 };
 
 /// One switch sample in the gallery.
@@ -812,12 +811,6 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 6] {
             ))
         },
     );
-    let mut provider_controller = CommandProviderRefreshController::new("recent-provider")
-        .with_loading_message("Searching provider commands");
-    let provider_projection = provider_controller
-        .refresh_provider(&mut provider_center, provider_query)
-        .expect("gallery provider is registered")
-        .expect("gallery provider response is valid");
     let mut provider_keymap = Keymap::default();
     provider_keymap.add_bindings([
         KeyBinding::new("ctrl-alt-o", OpenRegistryCommand, None),
@@ -826,11 +819,12 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 6] {
     provider_center
         .register_action("provider.open.alpha", OpenRegistryCommand)
         .register_action("provider.reveal.alpha", SaveRegistryCommand);
-    let provider_palette = CommandPaletteProjection::from_center_for_keymap(
-        &provider_center,
-        provider_projection.query(),
-        &provider_keymap,
-    );
+    let mut provider_controller = CommandPaletteController::new()
+        .provider_with_loading("recent-provider", "Searching provider commands");
+    let provider_update = provider_controller
+        .set_query_for_keymap(&mut provider_center, provider_query, &provider_keymap)
+        .expect("gallery provider response is valid");
+    let provider_palette = provider_update.into_palette_projection();
     let provider_status = provider_palette
         .provider_status()
         .expect("gallery provider status is projected")
