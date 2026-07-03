@@ -244,7 +244,7 @@ impl DockHost {
     }
 
     pub(crate) fn clear_overlay_transition_for_render(&mut self) -> bool {
-        let scene_cleared = self.clear_last_overlay_scene();
+        let scene_cleared = self.clear_last_visual_affordance_scene();
         let execution_cleared = self.overlay_transition_executor_mut().clear().is_some();
         scene_cleared || execution_cleared
     }

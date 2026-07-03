@@ -24,6 +24,7 @@ use crate::{
     },
     transition_geometry::{DockMotionPreference, DockTransitionPlan},
     viewport_drop_scene::DockViewportHostSceneFrame,
+    visual_affordance_scene::DockVisualAffordanceScene,
 };
 use open_gpui::{
     AnyElement, BorderStyle, Bounds, Context, CursorStyle, DispatchPhase, DragMoveEvent,
@@ -1002,8 +1003,9 @@ impl DockHost {
         if let Some(layout) = payload_tab_layout.as_ref() {
             overlay_scene.apply_payload_tab_layout(layout);
         }
+        let affordance_scene = DockVisualAffordanceScene::from_overlay_scene(&overlay_scene);
         let overlay_sample =
-            self.sync_overlay_transition_for_render(session, &overlay_scene, bounds, window);
+            self.sync_overlay_transition_for_render(session, &affordance_scene, bounds, window);
         let overlay_opacity = overlay_sample
             .as_ref()
             .map(|sample| preview_transition_opacity(sample.progress))
@@ -1169,8 +1171,9 @@ impl DockHost {
             .first()
             .map(|layer| layer.bounds)
             .unwrap_or(preview.bounds);
+        let affordance_scene = DockVisualAffordanceScene::from_overlay_scene(&overlay_scene);
         let overlay_sample =
-            self.sync_overlay_transition_for_render(session, &overlay_scene, bounds, window);
+            self.sync_overlay_transition_for_render(session, &affordance_scene, bounds, window);
         let overlay_opacity = overlay_sample
             .as_ref()
             .map(|sample| preview_transition_opacity(sample.progress))
@@ -1200,20 +1203,20 @@ impl DockHost {
     fn sync_overlay_transition_for_render(
         &mut self,
         session: &DockHostRenderSession,
-        overlay_scene: &DockOverlayScene,
+        affordance_scene: &DockVisualAffordanceScene,
         fallback_bounds: Bounds<Pixels>,
         window: &Window,
     ) -> Option<DockTransitionSample> {
-        if self.last_overlay_scene() != Some(overlay_scene) {
+        if self.last_visual_affordance_scene() != Some(affordance_scene) {
             let final_scene = self.last_presentation_scene().cloned().unwrap_or_else(|| {
                 DockPresentationScene::from_render_session(session, fallback_bounds)
             });
-            let plan = DockTransitionPlan::from_overlay_scene(
+            let plan = DockTransitionPlan::from_visual_affordance_scene(
                 &final_scene,
-                overlay_scene,
+                affordance_scene,
                 DockMotionPreference::Animated,
             );
-            self.set_last_overlay_scene(overlay_scene.clone());
+            self.set_last_visual_affordance_scene(affordance_scene.clone());
             self.execute_overlay_transition_plan(
                 plan,
                 MotionSpec::affordance(DockMotionPreference::Animated),

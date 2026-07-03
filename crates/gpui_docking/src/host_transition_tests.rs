@@ -13,6 +13,7 @@ use crate::{
         DockPaneTransitionKind, DockTransitionEdge, DockTransitionPlan,
     },
     viewport_test_support::handle,
+    visual_affordance_scene::DockVisualAffordanceScene,
 };
 use open_gpui::{Bounds, TestAppContext, point, px, size};
 use open_gpui_ui_core::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
@@ -70,6 +71,15 @@ fn tab_preview_overlay_layer(
         drop_box: None,
         tab_insertion: None,
     }
+}
+
+fn transition_plan_from_overlay_scene(
+    scene: &DockPresentationScene,
+    overlay: &DockOverlayScene,
+    preference: DockMotionPreference,
+) -> DockTransitionPlan {
+    let affordance_scene = DockVisualAffordanceScene::from_overlay_scene(overlay);
+    DockTransitionPlan::from_visual_affordance_scene(scene, &affordance_scene, preference)
 }
 
 #[open_gpui::test]
@@ -443,8 +453,12 @@ fn transition_plan_from_overlay_scene_describes_tab_insertion_and_payload_tabs()
         ],
     };
 
-    let plan =
-        DockTransitionPlan::from_overlay_scene(&scene, &overlay, DockMotionPreference::Animated);
+    let affordance_scene = DockVisualAffordanceScene::from_overlay_scene(&overlay);
+    let plan = DockTransitionPlan::from_visual_affordance_scene(
+        &scene,
+        &affordance_scene,
+        DockMotionPreference::Animated,
+    );
 
     assert!(plan.pane_transitions.is_empty());
     assert_eq!(plan.overlay_transitions.len(), 3);
@@ -464,6 +478,16 @@ fn transition_plan_from_overlay_scene_describes_tab_insertion_and_payload_tabs()
         DockOverlayTransitionKind::PayloadGhost
     );
     assert_eq!(plan.overlay_transitions[2].payload_index, Some(0));
+    for (transition, layer) in plan
+        .overlay_transitions
+        .iter()
+        .zip(affordance_scene.layers.iter())
+    {
+        assert_eq!(
+            transition.motion_key, layer.motion_key,
+            "overlay motion should use visual affordance identity"
+        );
+    }
 }
 
 #[test]
@@ -485,8 +509,7 @@ fn transition_plan_from_overlay_scene_uses_current_bounds_for_matching_layers() 
         }],
     };
 
-    let plan =
-        DockTransitionPlan::from_overlay_scene(&scene, &next, DockMotionPreference::Animated);
+    let plan = transition_plan_from_overlay_scene(&scene, &next, DockMotionPreference::Animated);
 
     assert_eq!(plan.overlay_transitions.len(), 1);
     assert_eq!(plan.overlay_transitions[0].bounds, next.layers[0].bounds);
@@ -549,8 +572,7 @@ fn transition_plan_keeps_preview_layers_at_current_target_bounds() {
         ],
     };
 
-    let plan =
-        DockTransitionPlan::from_overlay_scene(&scene, &next, DockMotionPreference::Animated);
+    let plan = transition_plan_from_overlay_scene(&scene, &next, DockMotionPreference::Animated);
 
     assert_eq!(plan.overlay_transitions.len(), next.layers.len());
     for (transition, layer) in plan.overlay_transitions.iter().zip(&next.layers) {
@@ -603,9 +625,9 @@ fn overlay_replacement_keeps_preview_layers_at_current_target_bounds(cx: &mut Te
     let previous = tab_preview_scene(previous_body, previous_insertion, previous_payload);
     let next = tab_preview_scene(next_body, next_insertion, next_payload);
     let first_plan =
-        DockTransitionPlan::from_overlay_scene(&scene, &previous, DockMotionPreference::Animated);
+        transition_plan_from_overlay_scene(&scene, &previous, DockMotionPreference::Animated);
     let replacement_plan =
-        DockTransitionPlan::from_overlay_scene(&scene, &next, DockMotionPreference::Animated);
+        transition_plan_from_overlay_scene(&scene, &next, DockMotionPreference::Animated);
     let spec = MotionSpec::new(
         MotionPreference::Animated,
         MotionDuration::Custom(Duration::from_millis(400)),
@@ -684,8 +706,7 @@ fn transition_plan_from_route_overlay_describes_source_marker() {
     .expect("known cross-window route should produce a source marker");
     let overlay = DockOverlayScene::from_route_preview(&route_preview);
 
-    let plan =
-        DockTransitionPlan::from_overlay_scene(&scene, &overlay, DockMotionPreference::Animated);
+    let plan = transition_plan_from_overlay_scene(&scene, &overlay, DockMotionPreference::Animated);
 
     assert!(plan.pane_transitions.is_empty());
     assert_eq!(plan.overlay_transitions.len(), 1);
@@ -716,8 +737,7 @@ fn transition_plan_from_rejected_overlay_is_rejected_noop() {
         }],
     };
 
-    let plan =
-        DockTransitionPlan::from_overlay_scene(&scene, &overlay, DockMotionPreference::Reduced);
+    let plan = transition_plan_from_overlay_scene(&scene, &overlay, DockMotionPreference::Reduced);
 
     assert!(plan.pane_transitions.is_empty());
     assert_eq!(plan.overlay_transitions.len(), 1);

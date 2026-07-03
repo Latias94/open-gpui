@@ -6,6 +6,7 @@ use crate::{
         DockOverlayTransitionKind, DockPaneTransition, DockPaneTransitionKind, DockSlideTransition,
         DockTransitionEdge, DockTransitionPlan,
     },
+    visual_affordance_scene::DockVisualAffordanceId,
 };
 use open_gpui::{Bounds, Pixels, Window, point, px, size};
 use open_gpui_ui_core::{
@@ -84,6 +85,7 @@ pub(crate) struct DockDividerSample {
 /// Sampled overlay transition geometry.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockOverlaySample {
+    pub(crate) motion_key: DockVisualAffordanceId,
     pub(crate) kind: DockOverlayTransitionKind,
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) target_node: Option<DockNodeId>,
@@ -448,6 +450,7 @@ fn divider_sample(transition: &DockDividerTransition, progress: f32) -> DockDivi
 
 fn overlay_sample(transition: &DockOverlayTransition, progress: f32) -> DockOverlaySample {
     DockOverlaySample {
+        motion_key: transition.motion_key.clone(),
         kind: transition.kind,
         bounds: transition.bounds,
         target_node: transition.target_node,

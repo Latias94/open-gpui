@@ -12,6 +12,7 @@ use crate::{
     overlay_scene::{DockOverlayLayer, DockOverlayLayerKind, DockOverlayScene},
     presentation_scene::{DockPresentationPane, DockPresentationPaneKind, DockPresentationScene},
     transition_geometry::{DockMotionPreference, DockTransitionPlan},
+    visual_affordance_scene::DockVisualAffordanceScene,
 };
 use open_gpui::{
     AnyWindowHandle, AppContext as _, Entity, Focusable, Modifiers, MouseButton,
@@ -570,8 +571,12 @@ fn transition_sample_overlay_renders_from_executor(cx: &mut TestAppContext) {
             tab_insertion: None,
         }],
     };
-    let plan =
-        DockTransitionPlan::from_overlay_scene(&scene, &overlay, DockMotionPreference::Animated);
+    let affordance_scene = DockVisualAffordanceScene::from_overlay_scene(&overlay);
+    let plan = DockTransitionPlan::from_visual_affordance_scene(
+        &scene,
+        &affordance_scene,
+        DockMotionPreference::Animated,
+    );
 
     window
         .update(cx, |host, window, cx| {

@@ -5,8 +5,8 @@ use crate::{
     DockViewportFocusCommand, DockViewportFocusRequest, DockViewportPlatformFocusRestoreGate,
     DockViewportRuntimeHandle, geometry::DockDropGuideStyle,
     host_render_session::DockHostRenderSession, interaction::DockInteractionRuntime,
-    overlay_scene::DockOverlayScene, presentation_scene::DockPresentationScene,
-    transition_executor::DockTransitionExecutor, workspace::DockWorkspace,
+    presentation_scene::DockPresentationScene, transition_executor::DockTransitionExecutor,
+    visual_affordance_scene::DockVisualAffordanceScene, workspace::DockWorkspace,
     zoom_state::DockZoomState,
 };
 use open_gpui::{
@@ -70,7 +70,7 @@ pub struct DockHost {
     zoom: DockZoomState,
     transitions: DockTransitionExecutor,
     overlay_transitions: DockTransitionExecutor,
-    last_overlay_scene: Option<DockOverlayScene>,
+    last_visual_affordance_scene: Option<DockVisualAffordanceScene>,
     last_presentation_scene: Option<DockPresentationScene>,
 }
 
@@ -100,7 +100,7 @@ impl DockHost {
             zoom: DockZoomState::default(),
             transitions: DockTransitionExecutor::default(),
             overlay_transitions: DockTransitionExecutor::default(),
-            last_overlay_scene: None,
+            last_visual_affordance_scene: None,
             last_presentation_scene: None,
         }
     }
@@ -176,16 +176,16 @@ impl DockHost {
         &mut self.overlay_transitions
     }
 
-    pub(crate) fn last_overlay_scene(&self) -> Option<&DockOverlayScene> {
-        self.last_overlay_scene.as_ref()
+    pub(crate) fn last_visual_affordance_scene(&self) -> Option<&DockVisualAffordanceScene> {
+        self.last_visual_affordance_scene.as_ref()
     }
 
-    pub(crate) fn set_last_overlay_scene(&mut self, scene: DockOverlayScene) {
-        self.last_overlay_scene = Some(scene);
+    pub(crate) fn set_last_visual_affordance_scene(&mut self, scene: DockVisualAffordanceScene) {
+        self.last_visual_affordance_scene = Some(scene);
     }
 
-    pub(crate) fn clear_last_overlay_scene(&mut self) -> bool {
-        self.last_overlay_scene.take().is_some()
+    pub(crate) fn clear_last_visual_affordance_scene(&mut self) -> bool {
+        self.last_visual_affordance_scene.take().is_some()
     }
 
     pub(crate) fn last_presentation_scene(&self) -> Option<&DockPresentationScene> {
