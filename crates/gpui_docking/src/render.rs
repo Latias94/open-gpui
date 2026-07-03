@@ -1143,7 +1143,9 @@ impl DockHost {
             element = element.child(self.render_scene_drop_guide(session, bounds, drop_box));
         }
 
-        for accessible in DockAccessibilityScene::overlay_elements_for_render(&overlay_scene) {
+        for accessible in
+            DockAccessibilityScene::visual_affordance_elements_for_render(&affordance_scene)
+        {
             let local_bounds = localize_bounds(accessible.bounds, bounds.origin);
             let marker = div()
                 .id(accessible.id_str().to_string())

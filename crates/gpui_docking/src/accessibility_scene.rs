@@ -1,7 +1,10 @@
 use crate::{
     DockItemId, DockNodeId, DropZone, SplitAxis,
-    overlay_scene::{DockOverlayLayerKind, DockOverlayScene},
     presentation_scene::{DockPresentationPaneKind, DockPresentationScene},
+    visual_affordance_scene::{
+        DockVisualAffordanceKind, DockVisualAffordanceLayer, DockVisualAffordanceScene,
+        DockVisualAffordanceState,
+    },
 };
 use open_gpui::{
     AccessibleAction as GpuiAccessibleAction, Bounds, Orientation as GpuiOrientation, Pixels,
@@ -231,69 +234,13 @@ impl DockAccessibilityScene {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn with_overlay(mut self, overlay: &DockOverlayScene) -> Self {
-        for layer in &overlay.layers {
-            match layer.kind {
-                DockOverlayLayerKind::GuideBox | DockOverlayLayerKind::TabInsertion => {
-                    self.descriptors.push(DockAccessibilityDescriptor {
-                        role: DockAccessibilityRole::DropTarget,
-                        node: layer.target_node,
-                        item: None,
-                        bounds: layer.bounds,
-                        label: Some(drop_target_label(layer.zone, layer.target_node)),
-                        zone: layer.zone,
-                        active: layer.active,
-                        orientation: None,
-                        selected: None,
-                        disabled: Some(!layer.active),
-                        actions: vec![AccessibleAction::CustomAction],
-                    });
-                    self.descriptors.push(DockAccessibilityDescriptor {
-                        role: DockAccessibilityRole::DropDestination,
-                        node: layer.target_node,
-                        item: None,
-                        bounds: layer.bounds,
-                        label: Some(drop_destination_label(layer.zone, layer.target_node)),
-                        zone: layer.zone,
-                        active: layer.active,
-                        orientation: None,
-                        selected: None,
-                        disabled: Some(!layer.active),
-                        actions: vec![AccessibleAction::CustomAction],
-                    });
-                }
-                DockOverlayLayerKind::PayloadTab | DockOverlayLayerKind::PayloadGhost => {
-                    self.descriptors.push(DockAccessibilityDescriptor {
-                        role: DockAccessibilityRole::DragSource,
-                        node: layer.target_node,
-                        item: None,
-                        bounds: layer.bounds,
-                        label: Some(drag_payload_label(layer.payload_title.as_deref())),
-                        zone: layer.zone,
-                        active: layer.active,
-                        orientation: None,
-                        selected: None,
-                        disabled: Some(!layer.active),
-                        actions: vec![AccessibleAction::CustomAction],
-                    });
-                }
-                DockOverlayLayerKind::RejectedState => {
-                    self.descriptors.push(DockAccessibilityDescriptor {
-                        role: DockAccessibilityRole::RejectedDropTarget,
-                        node: layer.target_node,
-                        item: None,
-                        bounds: layer.bounds,
-                        label: Some("Dock target unavailable".to_string()),
-                        zone: layer.zone,
-                        active: true,
-                        orientation: None,
-                        selected: None,
-                        disabled: Some(true),
-                        actions: Vec::new(),
-                    });
-                }
-                DockOverlayLayerKind::RouteMarker | DockOverlayLayerKind::TargetBody => {}
-            }
+    pub(crate) fn with_visual_affordances(
+        mut self,
+        affordances: &DockVisualAffordanceScene,
+    ) -> Self {
+        for layer in &affordances.layers {
+            self.descriptors
+                .extend(accessibility_descriptors_for_affordance(layer));
         }
         self
     }
@@ -405,15 +352,170 @@ impl DockAccessibilityScene {
         element
     }
 
-    pub(crate) fn overlay_elements_for_render(
-        overlay: &DockOverlayScene,
+    pub(crate) fn visual_affordance_elements_for_render(
+        affordances: &DockVisualAffordanceScene,
     ) -> Vec<DockAccessibleElement> {
         DockAccessibilityScene {
             descriptors: Vec::new(),
         }
-        .with_overlay(overlay)
+        .with_visual_affordances(affordances)
         .gpui_elements(DockAccessibilityLayer::Overlay)
     }
+}
+
+fn accessibility_descriptors_for_affordance(
+    layer: &DockVisualAffordanceLayer,
+) -> Vec<DockAccessibilityDescriptor> {
+    let active = visual_affordance_is_active(layer.state);
+    let disabled = visual_affordance_is_disabled(layer.state);
+    match layer.kind {
+        DockVisualAffordanceKind::GuideBox | DockVisualAffordanceKind::TabInsertionSlot => vec![
+            DockAccessibilityDescriptor {
+                role: DockAccessibilityRole::DropTarget,
+                node: layer.target_node,
+                item: None,
+                bounds: layer.hit_bounds,
+                label: Some(
+                    layer
+                        .accessibility_label
+                        .clone()
+                        .unwrap_or_else(|| drop_target_label(layer.zone, layer.target_node)),
+                ),
+                zone: layer.zone,
+                active,
+                orientation: None,
+                selected: None,
+                disabled: Some(disabled),
+                actions: vec![AccessibleAction::CustomAction],
+            },
+            DockAccessibilityDescriptor {
+                role: DockAccessibilityRole::DropDestination,
+                node: layer.target_node,
+                item: None,
+                bounds: layer.hit_bounds,
+                label: Some(drop_destination_label(layer.zone, layer.target_node)),
+                zone: layer.zone,
+                active,
+                orientation: None,
+                selected: None,
+                disabled: Some(disabled),
+                actions: vec![AccessibleAction::CustomAction],
+            },
+        ],
+        DockVisualAffordanceKind::PayloadTab | DockVisualAffordanceKind::PayloadGhost => {
+            vec![DockAccessibilityDescriptor {
+                role: DockAccessibilityRole::DragSource,
+                node: layer.target_node,
+                item: None,
+                bounds: layer.hit_bounds,
+                label: Some(drag_payload_label(
+                    layer
+                        .payload_title
+                        .as_deref()
+                        .or(layer.accessibility_label.as_deref()),
+                )),
+                zone: layer.zone,
+                active,
+                orientation: None,
+                selected: None,
+                disabled: Some(disabled),
+                actions: vec![AccessibleAction::CustomAction],
+            }]
+        }
+        DockVisualAffordanceKind::RejectedTarget => vec![DockAccessibilityDescriptor {
+            role: DockAccessibilityRole::RejectedDropTarget,
+            node: layer.target_node,
+            item: None,
+            bounds: layer.hit_bounds,
+            label: Some(
+                layer
+                    .accessibility_label
+                    .clone()
+                    .unwrap_or_else(|| "Dock target unavailable".to_string()),
+            ),
+            zone: layer.zone,
+            active: true,
+            orientation: None,
+            selected: None,
+            disabled: Some(true),
+            actions: Vec::new(),
+        }],
+        DockVisualAffordanceKind::DividerHandle | DockVisualAffordanceKind::DividerCorner => {
+            vec![DockAccessibilityDescriptor {
+                role: DockAccessibilityRole::Splitter,
+                node: layer.target_node,
+                item: None,
+                bounds: layer.hit_bounds,
+                label: layer.accessibility_label.clone().or_else(|| {
+                    Some(match layer.kind {
+                        DockVisualAffordanceKind::DividerCorner => {
+                            "Resize split corner".to_string()
+                        }
+                        _ => "Resize split".to_string(),
+                    })
+                }),
+                zone: None,
+                active,
+                orientation: None,
+                selected: None,
+                disabled: Some(disabled),
+                actions: vec![AccessibleAction::Increment, AccessibleAction::Decrement],
+            }]
+        }
+        DockVisualAffordanceKind::FocusRing => vec![DockAccessibilityDescriptor {
+            role: DockAccessibilityRole::FocusRegion,
+            node: layer.target_node,
+            item: None,
+            bounds: layer.hit_bounds,
+            label: layer
+                .accessibility_label
+                .clone()
+                .or_else(|| Some("Focused pane".to_string())),
+            zone: None,
+            active,
+            orientation: None,
+            selected: Some(true),
+            disabled: Some(disabled),
+            actions: vec![AccessibleAction::Focus],
+        }],
+        DockVisualAffordanceKind::ZoomEgress => vec![DockAccessibilityDescriptor {
+            role: DockAccessibilityRole::FocusRegion,
+            node: layer.target_node,
+            item: None,
+            bounds: layer.hit_bounds,
+            label: layer
+                .accessibility_label
+                .clone()
+                .or_else(|| Some("Zoom transition".to_string())),
+            zone: None,
+            active,
+            orientation: None,
+            selected: None,
+            disabled: Some(disabled),
+            actions: Vec::new(),
+        }],
+        DockVisualAffordanceKind::DropTargetBody | DockVisualAffordanceKind::RouteMarker => {
+            Vec::new()
+        }
+    }
+}
+
+fn visual_affordance_is_active(state: DockVisualAffordanceState) -> bool {
+    matches!(
+        state,
+        DockVisualAffordanceState::Hover
+            | DockVisualAffordanceState::Active
+            | DockVisualAffordanceState::CommittedPreview
+    )
+}
+
+fn visual_affordance_is_disabled(state: DockVisualAffordanceState) -> bool {
+    matches!(
+        state,
+        DockVisualAffordanceState::Passive
+            | DockVisualAffordanceState::Rejected
+            | DockVisualAffordanceState::Disabled
+    )
 }
 
 #[cfg_attr(not(test), allow(dead_code))]

@@ -245,6 +245,7 @@ mod workspace_selection_tests;
 pub use action::*;
 pub use builder::*;
 pub use controller::*;
+pub use debug::{DockVisualAffordanceDebugLayer, DockVisualAffordanceDebugSummary};
 pub use geometry::DockDropGuideStyle;
 pub use graph::*;
 pub use host::*;

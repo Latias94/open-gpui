@@ -95,6 +95,10 @@ pub(crate) struct DockOverlaySample {
 }
 
 impl DockTransitionExecutor {
+    pub(crate) fn current_state_for_debug(&self) -> Option<DockTransitionExecutionState> {
+        self.current.as_ref().map(|execution| execution.state)
+    }
+
     pub(crate) fn execute(
         &mut self,
         plan: DockTransitionPlan,

@@ -10,7 +10,8 @@ use open_gpui_docking::{
     DockViewportPlatformCapabilityRecord, DockViewportPlatformFlagCapabilityRecord,
     DockViewportPlatformSyncRecord, DockViewportReleaseUnavailableRecord,
     DockViewportRestoreReadinessRecord, DockViewportRuntimeHandle,
-    DockViewportTearOffPlacementRecord, DockViewportWindowBounds, EditorDockLayoutSpec,
+    DockViewportTearOffPlacementRecord, DockViewportWindowBounds, DockVisualAffordanceDebugSummary,
+    EditorDockLayoutSpec,
 };
 use open_gpui_platform::application;
 
@@ -36,6 +37,10 @@ struct RuntimeStatusPanel {
     primary_bounds: Bounds<Pixels>,
     secondary_bounds: Bounds<Pixels>,
     central_bounds: Bounds<Pixels>,
+    hosts: Vec<(
+        DockSpaceId,
+        open_gpui::WindowHandle<open_gpui_docking::DockHost>,
+    )>,
     last_operation: Option<String>,
 }
 
@@ -55,8 +60,23 @@ impl RuntimeStatusPanel {
             primary_bounds,
             secondary_bounds,
             central_bounds,
+            hosts: Vec::new(),
             last_operation: None,
         }
+    }
+
+    fn register_host(
+        &mut self,
+        space: DockSpaceId,
+        host: open_gpui::WindowHandle<open_gpui_docking::DockHost>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((_, existing)) = self.hosts.iter_mut().find(|(known, _)| known == &space) {
+            *existing = host;
+        } else {
+            self.hosts.push((space, host));
+        }
+        cx.notify();
     }
 
     fn set_operation_log(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
@@ -153,7 +173,7 @@ impl Render for RuntimeStatusPanel {
                 })
                 .collect::<Vec<_>>();
             let placement = self.runtime.export_placement();
-            vec![
+            let mut lines = vec![
                 format!("close policy: {:?}", self.runtime.close_policy()),
                 format!("registered viewports: {}", spaces.len()),
                 format!("placement snapshots: {}", placement.viewports.len()),
@@ -232,7 +252,15 @@ impl Render for RuntimeStatusPanel {
                             .and_then(|record| record.placement_source.as_ref())
                     )
                 ),
-            ]
+            ];
+            lines.extend(self.hosts.iter().map(|(space, host)| {
+                let summary = host
+                    .update(cx, |host, _, _| host.visual_affordance_debug_summary())
+                    .map(|summary| affordance_debug_summary(&summary))
+                    .unwrap_or_else(|error| format!("unavailable: {error}"));
+                format!("affordance {}: {}", space.as_str(), summary)
+            }));
+            lines
         };
         let last_operation = self.last_operation.clone();
 
@@ -518,6 +546,45 @@ fn debug_option<T: std::fmt::Debug>(value: Option<T>) -> String {
     value
         .map(|value| format!("{value:?}"))
         .unwrap_or_else(|| "none".to_string())
+}
+
+fn affordance_debug_summary(summary: &DockVisualAffordanceDebugSummary) -> String {
+    let active = summary
+        .active
+        .as_ref()
+        .map(|layer| {
+            format!(
+                "{} {} state={} node={} zone={} payload={} label={}",
+                layer.kind,
+                layer.scope,
+                layer.state,
+                layer
+                    .target_node
+                    .map(|node| node.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                layer
+                    .zone
+                    .map(|zone| format!("{zone:?}"))
+                    .unwrap_or_else(|| "none".to_string()),
+                layer
+                    .payload_index
+                    .map(|index| index.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                layer.label.as_deref().unwrap_or("none"),
+            )
+        })
+        .unwrap_or_else(|| "none".to_string());
+    format!(
+        "layers={} active={} motion={} frame={} active={}",
+        summary.layer_count,
+        summary.active_count,
+        summary.motion_state.as_deref().unwrap_or("none"),
+        summary
+            .frame_generation
+            .map(|generation| generation.to_string())
+            .unwrap_or_else(|| "none".to_string()),
+        active,
+    )
 }
 
 fn capability_flag(value: bool) -> &'static str {
@@ -1111,7 +1178,7 @@ fn main() {
         });
         controller.update(cx, |controller, _| {
             controller
-                .attach_panel_view("runtime", runtime_panel)
+                .attach_panel_view("runtime", runtime_panel.clone())
                 .expect("runtime panel descriptor should exist");
         });
         log::info!("{DOCKING_DEBUG_PREFIX} opened runtime panel and attached dock layout");
@@ -1120,6 +1187,13 @@ fn main() {
         let primary_opened = runtime
             .open_viewport(SPACE, primary_options, cx)
             .expect("failed to open primary docking viewport");
+        let primary_host = primary_opened
+            .window()
+            .downcast::<open_gpui_docking::DockHost>()
+            .expect("primary viewport should render DockHost");
+        runtime_panel.update(cx, |panel, cx| {
+            panel.register_host(SPACE.into(), primary_host, cx);
+        });
         log::info!(
             "{DOCKING_DEBUG_PREFIX} opened primary viewport space={} window_id={:?}",
             SPACE,
@@ -1139,15 +1213,29 @@ fn main() {
 
         let secondary_options =
             restored_viewport_options(&placement, SECONDARY_SPACE, secondary_bounds);
-        runtime
+        let secondary_opened = runtime
             .open_viewport(SECONDARY_SPACE, secondary_options, cx)
             .expect("failed to open secondary docking viewport");
+        let secondary_host = secondary_opened
+            .window()
+            .downcast::<open_gpui_docking::DockHost>()
+            .expect("secondary viewport should render DockHost");
+        runtime_panel.update(cx, |panel, cx| {
+            panel.register_host(SECONDARY_SPACE.into(), secondary_host, cx);
+        });
         log::info!("{DOCKING_DEBUG_PREFIX} opened secondary viewport space={SECONDARY_SPACE}");
 
         let central_options = restored_viewport_options(&placement, CENTRAL_SPACE, central_bounds);
-        runtime
+        let central_opened = runtime
             .open_viewport(CENTRAL_SPACE, central_options, cx)
             .expect("failed to open empty central docking viewport");
+        let central_host = central_opened
+            .window()
+            .downcast::<open_gpui_docking::DockHost>()
+            .expect("central viewport should render DockHost");
+        runtime_panel.update(cx, |panel, cx| {
+            panel.register_host(CENTRAL_SPACE.into(), central_host, cx);
+        });
         log::info!("{DOCKING_DEBUG_PREFIX} opened central viewport space={CENTRAL_SPACE}");
 
         cx.activate(true);

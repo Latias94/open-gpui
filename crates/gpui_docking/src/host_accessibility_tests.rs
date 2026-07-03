@@ -1,12 +1,16 @@
 use crate::{
-    DropZone, SplitAxis,
+    DockGraph, DockNode, DropZone, SplitAxis,
     accessibility_scene::{DockAccessibilityLayer, DockAccessibilityRole, DockAccessibilityScene},
-    host_test_support::{floating_bounds, floating_overlay_graph, open_host},
+    divider_hit_map::DockDividerHitMap,
+    host_test_support::{floating_bounds, floating_overlay_graph, item, open_host, space},
     overlay_scene::{DockOverlayLayer, DockOverlayLayerKind, DockOverlayScene},
     transition_geometry::DockMotionPreference,
+    visual_affordance_scene::{
+        DockVisualAffordanceKind, DockVisualAffordanceScene, DockVisualAffordanceState,
+    },
     zoom_state::DockZoomScene,
 };
-use open_gpui::{TestAppContext, px, size};
+use open_gpui::{TestAppContext, point, px, size};
 use open_gpui_ui_core::{AccessibleAction, Orientation, Role};
 use slotmap::Key;
 
@@ -200,6 +204,76 @@ fn accessibility_gpui_mapping_exposes_splitter_state_and_actions(cx: &mut TestAp
 }
 
 #[open_gpui::test]
+fn accessibility_gpui_mapping_exposes_divider_corner_affordance(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let top_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let bottom_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let vertical = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![top_right, bottom_right],
+        fractions: vec![0.5, 0.5],
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left, vertical],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+        size(px(400.0), px(240.0)),
+    );
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(floating_bounds(0.0, 0.0, 400.0, 240.0), cx)
+    });
+    let hit_map = DockDividerHitMap::from_scene(&scene);
+    let affordance_scene = DockVisualAffordanceScene::from_divider_hit_map(
+        &scene,
+        &hit_map,
+        Some(point(px(200.0), px(120.0))),
+        true,
+        true,
+    );
+    assert!(
+        affordance_scene.layers.iter().any(|layer| {
+            layer.kind == DockVisualAffordanceKind::DividerCorner
+                && layer.state == DockVisualAffordanceState::Active
+        }),
+        "visual scene should expose the active two-axis corner affordance"
+    );
+
+    let elements = DockAccessibilityScene::visual_affordance_elements_for_render(&affordance_scene);
+    let corner = elements
+        .iter()
+        .find(|element| element.label == "Resize split corner")
+        .expect("corner affordance should map to a GPUI splitter element");
+
+    assert_eq!(corner.role, Role::Splitter);
+    assert_eq!(corner.gpui_role, open_gpui::Role::Splitter);
+    assert_eq!(corner.node, Some(root));
+    assert_eq!(corner.orientation, None);
+    assert_eq!(corner.disabled, false);
+    assert!(corner.has_action(AccessibleAction::Increment));
+    assert!(corner.has_action(AccessibleAction::Decrement));
+}
+
+#[open_gpui::test]
 fn accessibility_final_semantics_match_reduced_and_animated_zoom(cx: &mut TestAppContext) {
     let (graph, _root, left, _right) =
         crate::host_test_support::split_graph(SplitAxis::Horizontal, 0.5, 0.5);
@@ -261,9 +335,9 @@ fn accessibility_scene_marks_selected_tab_from_focus_region(cx: &mut TestAppCont
 }
 
 #[test]
-fn accessibility_scene_adds_overlay_drop_and_rejected_descriptors() {
+fn accessibility_scene_adds_visual_affordance_drop_and_rejected_descriptors() {
     let tabs = crate::DockNodeId::null();
-    let scene = DockOverlayScene {
+    let overlay = DockOverlayScene {
         layers: vec![
             DockOverlayLayer {
                 kind: DockOverlayLayerKind::TabInsertion,
@@ -291,10 +365,11 @@ fn accessibility_scene_adds_overlay_drop_and_rejected_descriptors() {
             },
         ],
     };
+    let scene = DockVisualAffordanceScene::from_overlay_scene(&overlay);
     let accessibility = DockAccessibilityScene {
         descriptors: Vec::new(),
     }
-    .with_overlay(&scene);
+    .with_visual_affordances(&scene);
 
     assert!(
         accessibility
@@ -322,7 +397,7 @@ fn accessibility_scene_adds_overlay_drop_and_rejected_descriptors() {
 }
 
 #[test]
-fn accessibility_gpui_mapping_keeps_overlay_drop_affordances_short_lived_and_non_committing() {
+fn accessibility_gpui_mapping_keeps_visual_drop_affordances_short_lived_and_non_committing() {
     let tabs = crate::DockNodeId::null();
     let overlay = DockOverlayScene {
         layers: vec![
@@ -364,7 +439,8 @@ fn accessibility_gpui_mapping_keeps_overlay_drop_affordances_short_lived_and_non
             },
         ],
     };
-    let elements = DockAccessibilityScene::overlay_elements_for_render(&overlay);
+    let affordance_scene = DockVisualAffordanceScene::from_overlay_scene(&overlay);
+    let elements = DockAccessibilityScene::visual_affordance_elements_for_render(&affordance_scene);
 
     let drop_destination = elements
         .iter()
@@ -414,9 +490,12 @@ fn accessibility_gpui_mapping_keeps_overlay_drop_affordances_short_lived_and_non
     );
     assert!(rejected.actions.is_empty());
 
-    let cleaned = DockAccessibilityScene::overlay_elements_for_render(&DockOverlayScene {
-        layers: Vec::new(),
-    });
+    let cleaned =
+        DockAccessibilityScene::visual_affordance_elements_for_render(&DockVisualAffordanceScene {
+            space: None,
+            frame_generation: None,
+            layers: Vec::new(),
+        });
     assert!(cleaned.is_empty());
 }
 

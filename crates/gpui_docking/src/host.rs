@@ -176,6 +176,10 @@ impl DockHost {
         &mut self.overlay_transitions
     }
 
+    pub(crate) fn overlay_transition_executor_for_debug(&self) -> &DockTransitionExecutor {
+        &self.overlay_transitions
+    }
+
     pub(crate) fn last_visual_affordance_scene(&self) -> Option<&DockVisualAffordanceScene> {
         self.last_visual_affordance_scene.as_ref()
     }

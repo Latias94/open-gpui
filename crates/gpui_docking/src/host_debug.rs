@@ -1,6 +1,21 @@
-use crate::{DockHost, debug::DockDebugRegion};
+use crate::{
+    DockHost,
+    debug::{DockDebugRegion, DockVisualAffordanceDebugSummary},
+};
 
 impl DockHost {
+    /// Returns a compact summary of the last rendered visual affordance scene.
+    pub fn visual_affordance_debug_summary(&self) -> DockVisualAffordanceDebugSummary {
+        let motion_state = self
+            .overlay_transition_executor_for_debug()
+            .current_state_for_debug()
+            .map(|state| format!("{state:?}"));
+        DockVisualAffordanceDebugSummary::from_scene(
+            self.last_visual_affordance_scene(),
+            motion_state,
+        )
+    }
+
     /// Returns a debug selector emitted for a test region during the most recent render.
     #[cfg(test)]
     pub(crate) fn debug_selector(&self, region: &DockDebugRegion) -> Option<&str> {
