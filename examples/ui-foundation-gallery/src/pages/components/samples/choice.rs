@@ -1,5 +1,5 @@
 use super::*;
-use open_gpui::{KeyBinding, Keymap, actions};
+use open_gpui::{KeyBinding, KeyContext, Keymap, actions};
 use open_gpui_command::{
     CommandCenter, CommandContribution, CommandDescriptor, CommandProviderResponse,
     CommandProviderSource, CommandProviderStatus, CommandShortcutDiagnostic,
@@ -699,11 +699,15 @@ static VIRTUALIZED_COMMAND_ITEMS: LazyLock<Arc<[CommandItemDescriptor]>> = LazyL
 
 actions!(
     gallery_registry_command,
-    [OpenRegistryCommand, SaveRegistryCommand,]
+    [
+        OpenRegistryCommand,
+        SaveRegistryCommand,
+        FormatRegistryCommand,
+    ]
 );
 
 /// Returns command palette samples backed by real component state.
-pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 6] {
+pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 7] {
     let ranked_items: Arc<[CommandItemDescriptor]> = vec![
         CommandItemDescriptor::new("archive", "Archive").keyword("file"),
         CommandItemDescriptor::new("open-file", "Open File").shortcut("Ctrl+O"),
@@ -831,6 +835,70 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 6] {
         .clone();
     let provider_shortcut_diagnostics = Arc::from(provider_palette.shortcut_diagnostics().to_vec());
     let provider_snapshot = provider_palette.into_index_snapshot();
+    let mut context_center = CommandCenter::new("gallery-context-center-v1");
+    context_center
+        .register_source(
+            "workspace",
+            "workspace-context",
+            [
+                CommandContribution::new(
+                    CommandDescriptor::new("workspace.open", "Open Workspace")
+                        .group("Workspace")
+                        .keyword("project"),
+                ),
+                CommandContribution::new(
+                    CommandDescriptor::new("workspace.save", "Save Workspace")
+                        .group("Workspace")
+                        .keyword("persist"),
+                ),
+            ],
+        )
+        .unwrap();
+    context_center
+        .register_source(
+            "editor",
+            "editor-context",
+            [
+                CommandContribution::new(
+                    CommandDescriptor::new("workspace.open", "Open Focused Editor")
+                        .group("Workspace")
+                        .keyword("focused"),
+                ),
+                CommandContribution::new(
+                    CommandDescriptor::new("editor.format", "Format Focused Editor")
+                        .group("Editor")
+                        .keyword("format"),
+                ),
+            ],
+        )
+        .unwrap();
+    context_center
+        .set_context_stack(
+            CommandContextStack::new()
+                .scope("workspace")
+                .scope("editor")
+                .key_context(KeyContext::parse("Workspace").unwrap())
+                .key_context(KeyContext::parse("Editor vim_mode=normal").unwrap()),
+        )
+        .register_action("workspace.open", OpenRegistryCommand)
+        .register_action("workspace.save", SaveRegistryCommand)
+        .register_action("editor.format", FormatRegistryCommand);
+    let mut context_keymap = Keymap::default();
+    context_keymap.add_bindings([
+        KeyBinding::new("ctrl-p", OpenRegistryCommand, Some("Workspace")),
+        KeyBinding::new("ctrl-e", OpenRegistryCommand, Some("Editor")),
+        KeyBinding::new("ctrl-s", SaveRegistryCommand, Some("Workspace")),
+        KeyBinding::new("ctrl-shift-f", FormatRegistryCommand, Some("Editor")),
+    ]);
+    let context_palette = CommandPaletteProjection::from_center_for_keymap(
+        &context_center,
+        "focused",
+        &context_keymap,
+    );
+    let context_shortcut_diagnostics = Arc::from(context_palette.shortcut_diagnostics().to_vec());
+    let context_snapshot = context_palette
+        .into_index_snapshot()
+        .mode(CommandIndexSnapshotMode::PreRankedFilter);
 
     [
         command_sample_from_local(
@@ -967,6 +1035,31 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 6] {
                 Some("provider.open.alpha"),
                 provider_snapshot,
                 false,
+                6,
+                None,
+                4,
+                tokens,
+            )
+        },
+        CommandSample {
+            dispatched_command_id: Some("workspace.open".to_string()),
+            shortcut_diagnostics: context_shortcut_diagnostics,
+            ..command_sample_from_snapshot(
+                "context-stack",
+                "Focused context stack scopes commands and projects the keymap shortcut active for the editor surface.",
+                Size::Small,
+                false,
+                Some(true),
+                false,
+                "Context commands",
+                "Search context commands",
+                "focused",
+                CommandSelectionMode::Single,
+                Some("workspace.open"),
+                Vec::<String>::new(),
+                Some("workspace.open"),
+                context_snapshot,
+                true,
                 6,
                 None,
                 4,

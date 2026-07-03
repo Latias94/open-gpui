@@ -383,10 +383,12 @@ The Components-page command contracts also cover the `registry-dispatch` sample 
 `CommandCenter` shortcut/dispatch projection plus empty shortcut diagnostics, and the
 `provider-search` sample for
 `CommandProviderSource` refresh into a rendered `CommandIndexSnapshot`, including provider request
-id, query metadata, projected shortcuts, and empty shortcut diagnostics. The command crate provider
-lifecycle tests cover center-issued request ids, bound responses, stale async responses being
-ignored without mutating registry sources, and the `CommandProviderRefreshController`
-query/loading/response/snapshot pipeline.
+id, query metadata, projected shortcuts, and empty shortcut diagnostics. The `context-stack`
+sample proves that `CommandContextStack` scopes command descriptors and projects the GPUI keymap
+binding active for the focused key context. The command crate provider lifecycle tests cover
+center-issued request ids, bound responses, stale async responses being ignored without mutating
+registry sources, and the `CommandProviderRefreshController` query/loading/response/snapshot
+pipeline.
 The UI component command tests now also cover `CommandPaletteProjection`, which adapts a
 `CommandCenter` query/keymap projection into a `PreFiltered` `CommandIndexSnapshot`, provider
 statuses, and shortcut diagnostics; `CommandPaletteController`, which coordinates palette query
@@ -402,6 +404,7 @@ Run the focused proof with:
 cargo nextest run -p open-gpui-ui-components command
 cargo nextest run -p open-gpui-ui-components command_palette_controller --no-fail-fast
 cargo nextest run -p open-gpui-command --no-fail-fast
+cargo nextest run -p open-gpui-command context_stack keymap_shortcut_projection_can_respect_context_stack center_context_stack_drives_scopes_keymap_and_provider_requests --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command_descriptors --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command menu --no-fail-fast
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast

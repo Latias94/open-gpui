@@ -179,8 +179,8 @@ pub use crate::virtualized_list::{
 };
 pub use open_gpui_command::{
     CommandAvailability, CommandAvailabilityMap, CommandAvailabilityResolver, CommandCenter,
-    CommandContribution, CommandDescriptor, CommandDispatchOutcome, CommandHistoryEntry,
-    CommandMenuCommand, CommandMenuEntry, CommandMenuSubmenu, CommandMenuTree,
+    CommandContextStack, CommandContribution, CommandDescriptor, CommandDispatchOutcome,
+    CommandHistoryEntry, CommandMenuCommand, CommandMenuEntry, CommandMenuSubmenu, CommandMenuTree,
     CommandProjectionDiagnostic, CommandProjectionDiagnosticKind, CommandProvider,
     CommandProviderApplyOutcome, CommandProviderId, CommandProviderRefreshController,
     CommandProviderRefreshProjection, CommandProviderRegistration, CommandProviderRequest,

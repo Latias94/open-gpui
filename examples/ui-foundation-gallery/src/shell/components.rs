@@ -1226,7 +1226,7 @@ pub(crate) fn component_combobox_samples_section(
 }
 
 pub(crate) fn component_command_samples_section(
-    samples: [pages::components::CommandSample; 6],
+    samples: [pages::components::CommandSample; 7],
 
     tokens: ThemeTokens,
 ) -> impl IntoElement {

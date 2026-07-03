@@ -752,6 +752,7 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     let indexed = &commands[3].state;
     let registry = &commands[4].state;
     let provider = &commands[5].state;
+    let context = &commands[6].state;
 
     assert_eq!(framework.open_mode(), ComboboxOpenMode::Controlled);
     assert!(framework.open());
@@ -881,6 +882,44 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
             .next()
             .and_then(|item| item.shortcut()),
         Some("ctrl-alt-O")
+    );
+
+    assert_eq!(commands[6].id, "context-stack");
+    assert_eq!(
+        commands[6].dispatched_command_id.as_deref(),
+        Some("workspace.open")
+    );
+    assert!(commands[6].shortcut_diagnostics.is_empty());
+    assert_eq!(context.index_revision(), Some("gallery-context-center-v1"));
+    assert_eq!(
+        context.index_mode(),
+        CommandIndexSnapshotMode::PreRankedFilter
+    );
+    assert_eq!(context.query(), "focused");
+    assert_eq!(context.selected_value(), Some("workspace.open"));
+    assert_eq!(context.active_value(), Some("workspace.open"));
+    assert_eq!(context.filtered_item_count(), 2);
+    assert_eq!(
+        context
+            .items()
+            .iter()
+            .find(|item| item.value() == "workspace.open")
+            .map(|item| (item.label().to_owned(), item.shortcut().map(str::to_owned))),
+        Some((
+            "Open Focused Editor".to_string(),
+            Some("ctrl-E".to_string())
+        ))
+    );
+    assert_eq!(
+        context
+            .items()
+            .iter()
+            .find(|item| item.value() == "editor.format")
+            .map(|item| (item.label().to_owned(), item.shortcut().map(str::to_owned))),
+        Some((
+            "Format Focused Editor".to_string(),
+            Some("ctrl-shift-F".to_string())
+        ))
     );
 }
 
