@@ -509,6 +509,25 @@ fn context_menu_item_elements(
         .into_iter()
         .zip(states)
         .map(|(item, item_state)| match item_state.kind() {
+            MenuItemKind::Header => div()
+                .id(format!("context-menu-header:{}", item_state.value()))
+                .debug_selector({
+                    let header_debug_id = debug_id.clone();
+                    let header_value = item_state.value().to_owned();
+                    move || format!("context-menu:{header_debug_id}:header:{header_value}")
+                })
+                .pl(gpui_px_from_ui(
+                    metrics.item_padding_x() + metrics.submenu_indent() * item_state.depth() as f32,
+                ))
+                .pr(gpui_px_from_ui(metrics.item_padding_x()))
+                .pt_2()
+                .pb_1()
+                .text_xs()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .text_color(theme.resolve(colors.header_foreground()))
+                .aria_label(item_state.label().to_owned())
+                .child(item_state.label().to_owned())
+                .into_any_element(),
             MenuItemKind::Separator => {
                 let separator_color = theme.resolve(colors.separator());
 

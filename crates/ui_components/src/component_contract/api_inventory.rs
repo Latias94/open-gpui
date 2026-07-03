@@ -1062,9 +1062,9 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
 /// Returns render/input builder methods that shape the component output.
 pub fn component_render_inputs(component: &str) -> &'static [&'static str] {
     match component {
-        "Button" => &["variant", "disabled", "selected"],
+        "Button" => &["variant", "disabled", "selected", "tooltip"],
         "Badge" => &["variant"],
-        "IconButton" => &["variant", "disabled"],
+        "IconButton" => &["variant", "disabled", "selected", "tooltip"],
         "Switch" => &["label", "disabled"],
         "Checkbox" => &[
             "label",
@@ -1240,7 +1240,7 @@ pub fn component_render_inputs(component: &str) -> &'static [&'static str] {
         "Skeleton" => &["subtle"],
         "Avatar" => &["source", "fallback", "accessible_label"],
         "AvatarGroup" => &["avatars", "avatar", "max_visible"],
-        "Tooltip" => &["disabled"],
+        "Tooltip" => &["text", "for_action", "for_action_in_context", "disabled"],
         "HoverCard" => &["disabled"],
         "Popover" => &["disabled"],
         "Dialog" => &["description", "disabled"],
@@ -1252,7 +1252,13 @@ pub fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "action_disabled",
         ],
         "Sheet" => &["description", "disabled"],
-        "Menu" => &["item", "items", "disabled"],
+        "Menu" => &[
+            "trigger_icon",
+            "item",
+            "items",
+            "disabled",
+            "trigger_tooltip",
+        ],
         "ContextMenu" => &["item", "items"],
         _ => &[],
     }
@@ -1273,7 +1279,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "state",
         ],
         "Button" => &[
-            "new", "variant", "disabled", "selected", "tokens", "on_click", "state",
+            "new", "variant", "disabled", "selected", "tokens", "on_click", "tooltip", "state",
         ],
         "Badge" => &["new", "variant", "tokens", "state"],
         "Collapsible" => &[
@@ -1326,8 +1332,10 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "new",
             "variant",
             "disabled",
+            "selected",
             "tokens",
             "on_click",
+            "tooltip",
             "accessible_label",
             "state",
         ],
@@ -1804,6 +1812,9 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
         "Tooltip" => &[
             "new",
             "element",
+            "text",
+            "for_action",
+            "for_action_in_context",
             "disabled",
             "open",
             "open_intent",
@@ -1900,6 +1911,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
         ],
         "Menu" => &[
             "new",
+            "trigger_icon",
             "item",
             "items",
             "disabled",
@@ -1914,6 +1926,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "tokens",
             "on_open_change",
             "on_select",
+            "trigger_tooltip",
             "state",
         ],
         "ContextMenu" => &[

@@ -663,6 +663,9 @@ fn default_theme_resolves_all_current_component_color_intents() {
         IconButton::new("danger-icon", "!", "Delete")
             .variant(ButtonVariant::Destructive)
             .state(),
+        IconButton::new("selected-icon", "?", "Selected")
+            .selected(true)
+            .state(),
     ];
     let switches = [
         Switch::new("off").state(),
@@ -1013,6 +1016,7 @@ fn default_theme_resolves_all_current_component_color_intents() {
             colors.item_hover_background(),
             colors.item_focus_background(),
             colors.item_disabled_foreground(),
+            colors.header_foreground(),
             colors.separator(),
             colors.trigger_background(),
             colors.trigger_hover_background(),

@@ -34,6 +34,8 @@ pub(crate) const fn menu_open_mode_from_disclosure(
 pub enum MenuItemKind {
     /// Activatable command item.
     Action,
+    /// Static section label. Headers are not focusable or activatable.
+    Header,
     /// Checkable menu item. Checked state is caller-owned.
     Checkbox,
     /// Radio-style menu item. Checked state is caller-owned.
@@ -49,6 +51,7 @@ impl MenuItemKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Action => "action",
+            Self::Header => "header",
             Self::Checkbox => "checkbox",
             Self::Radio => "radio",
             Self::Separator => "separator",
@@ -109,6 +112,20 @@ impl MenuItemDescriptor {
             item = item.when(when);
         }
         item
+    }
+
+    /// Creates a static section header descriptor.
+    pub fn header(value: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            label: label.into(),
+            kind: MenuItemKind::Header,
+            disabled: false,
+            checked: false,
+            shortcut: None,
+            when: None,
+            children: Vec::new(),
+        }
     }
 
     /// Creates a checkbox item descriptor.
@@ -173,7 +190,7 @@ impl MenuItemDescriptor {
 
     /// Marks an activatable or submenu item as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
-        if self.kind != MenuItemKind::Separator {
+        if !matches!(self.kind, MenuItemKind::Header | MenuItemKind::Separator) {
             self.disabled = disabled;
         }
         self
@@ -189,7 +206,7 @@ impl MenuItemDescriptor {
 
     /// Applies a display shortcut label.
     pub fn shortcut(mut self, shortcut: impl Into<String>) -> Self {
-        if self.kind != MenuItemKind::Separator {
+        if !matches!(self.kind, MenuItemKind::Header | MenuItemKind::Separator) {
             self.shortcut = Some(shortcut.into());
         }
         self
@@ -197,7 +214,7 @@ impl MenuItemDescriptor {
 
     /// Applies caller-owned availability metadata without evaluating it.
     pub fn when(mut self, when: impl Into<String>) -> Self {
-        if self.kind != MenuItemKind::Separator {
+        if !matches!(self.kind, MenuItemKind::Header | MenuItemKind::Separator) {
             self.when = Some(when.into());
         }
         self

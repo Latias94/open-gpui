@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
+    AnyView, App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
@@ -220,6 +220,7 @@ pub struct Button {
     selected: bool,
     tokens: ThemeTokens,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    tooltip: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
 }
 
 impl Button {
@@ -234,6 +235,7 @@ impl Button {
             selected: false,
             tokens: ThemeTokens::default(),
             on_click: None,
+            tooltip: None,
         }
     }
 
@@ -267,6 +269,12 @@ impl Button {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_click = Some(Rc::new(handler));
+        self
+    }
+
+    /// Adds a hover/focus tooltip to the button.
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip = Some(Rc::new(tooltip));
         self
     }
 
@@ -337,6 +345,9 @@ impl RenderOnce for Button {
                     cx.stop_propagation();
                     on_click(event, window, cx);
                 })
+            })
+            .when_some(self.tooltip, |this, tooltip| {
+                this.tooltip(move |window, cx| tooltip(window, cx))
             })
             .child(label)
     }
