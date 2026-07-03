@@ -120,7 +120,7 @@ impl DockDividerHitMap {
             .collect()
     }
 
-    #[cfg(test)]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn targets(&self) -> &[DockDividerHitTarget] {
         &self.targets
     }

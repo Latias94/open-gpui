@@ -7,6 +7,11 @@ use crate::{
         space, split_graph, tabs_graph_with_selected, workspace_with_panels,
     },
     presentation_scene::{DockPresentationOverlayAnchorKind, DockPresentationPaneKind},
+    transition_geometry::DockMotionPreference,
+    visual_affordance_scene::{
+        DockVisualAffordanceKind, DockVisualAffordanceScene, DockVisualAffordanceState,
+    },
+    zoom_state::DockZoomScene,
 };
 use open_gpui::{Bounds, TestAppContext, point, px, size};
 
@@ -112,6 +117,52 @@ fn presentation_scene_resolves_tab_labels_focus_and_does_not_mutate_selection(
         .expect("root tab bar should be resolved");
     assert_eq!(tab_bar.tabs, root);
     assert_close(f32::from(tab_bar.bounds.size.width), 360.0);
+}
+
+#[open_gpui::test]
+fn visual_affordance_scene_maps_focus_and_zoom_egress(cx: &mut TestAppContext) {
+    let (graph, _root, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.25, 0.75);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(host_bounds(400.0, 240.0), cx)
+    });
+
+    let focus_visual = DockVisualAffordanceScene::from_focus_scene(&scene);
+
+    assert!(
+        focus_visual.layers.iter().any(|layer| {
+            layer.kind == DockVisualAffordanceKind::FocusRing
+                && layer.target_node == Some(left_tabs)
+                && layer.state == DockVisualAffordanceState::Active
+        }),
+        "focus regions should become focus-ring affordances"
+    );
+
+    let zoom = DockZoomScene::from_scene(&scene, left_tabs, DockMotionPreference::Reduced)
+        .expect("left pane should produce a zoom scene");
+    let zoom_visual = DockVisualAffordanceScene::from_zoom_scene(&zoom);
+
+    assert!(
+        zoom_visual.layers.iter().any(|layer| {
+            layer.kind == DockVisualAffordanceKind::ZoomEgress
+                && layer.target_node == Some(right_tabs)
+                && layer.state == DockVisualAffordanceState::CommittedPreview
+        }),
+        "reduced-motion zoom should still expose final egress descriptors"
+    );
+    assert!(
+        zoom_visual.layers.iter().any(|layer| {
+            layer.kind == DockVisualAffordanceKind::FocusRing
+                && layer.target_node == Some(left_tabs)
+                && layer.state == DockVisualAffordanceState::Active
+        }),
+        "zoom focus should share the same focus-ring affordance contract"
+    );
 }
 
 #[open_gpui::test]

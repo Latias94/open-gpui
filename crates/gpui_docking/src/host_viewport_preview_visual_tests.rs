@@ -18,6 +18,10 @@ use crate::{
         DockOverlayScene,
     },
     viewport_test_support::{handle, space},
+    visual_affordance_scene::{
+        DockVisualAffordanceKind, DockVisualAffordanceScene, DockVisualAffordanceState,
+        DockVisualLayerScope,
+    },
 };
 use open_gpui::{Bounds, Pixels, point, px, size};
 use slotmap::Key;
@@ -559,5 +563,100 @@ fn route_overlay_scene_marks_known_and_rejected_marker_state() {
     assert!(
         !rejected_overlay.layers[0].active,
         "rejected route markers should remain visible but inactive for diagnostics and accessibility"
+    );
+}
+
+#[test]
+fn visual_affordance_scene_preserves_overlay_layer_scope_state_and_motion_identity() {
+    let root = DockNodeId::null();
+    let leaf_tabs = DockNodeId::null();
+    let preview = DockDropPreview::from_resolved_target(
+        &resolved_target(
+            DockResolvedDropTargetKind::RootEdge {
+                root,
+                leaf_tabs: Some(leaf_tabs),
+                zone: DropZone::Right,
+            },
+            Some(drop_box(DockDropBoxKind::OuterEdge(DropZone::Right))),
+        ),
+        DockDropGuideStyle::default(),
+    )
+    .expect("root edge target should produce preview");
+
+    let visual = DockVisualAffordanceScene::from_preview(&preview.scene);
+
+    assert!(
+        visual
+            .layers
+            .iter()
+            .all(|layer| layer.id == layer.motion_key),
+        "motion identity should be stable and derived from the affordance descriptor"
+    );
+    assert!(
+        visual
+            .layers
+            .iter()
+            .any(|layer| layer.kind == DockVisualAffordanceKind::GuideBox
+                && layer.layer_scope == DockVisualLayerScope::Inner
+                && layer.target_node == Some(leaf_tabs)
+                && layer.state == DockVisualAffordanceState::Passive),
+        "inner guide affordances should remain passive while outer root-edge owns release"
+    );
+    assert!(
+        visual
+            .layers
+            .iter()
+            .any(|layer| layer.kind == DockVisualAffordanceKind::GuideBox
+                && layer.layer_scope == DockVisualLayerScope::Outer
+                && layer.zone == Some(DropZone::Right)
+                && layer.state == DockVisualAffordanceState::Active),
+        "outer guide affordance should carry the active release state"
+    );
+}
+
+#[test]
+fn visual_affordance_scene_marks_route_marker_state() {
+    let known = DockDropRoutePreview::from_route(
+        &DockViewportDropRoute::KnownViewport {
+            target: DockViewportTargetHit::new(
+                space("target"),
+                handle(7),
+                point(px(300.0), px(20.0)),
+            ),
+            source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
+        },
+        point(px(40.0), px(50.0)),
+    )
+    .expect("known viewport route should produce a marker");
+    let rejected = DockDropRoutePreview::from_route(
+        &DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled),
+        point(px(12.0), px(34.0)),
+    )
+    .expect("rejected route should produce a marker");
+
+    let known_visual = DockVisualAffordanceScene::from_route_preview(&known);
+    let rejected_visual = DockVisualAffordanceScene::from_route_preview(&rejected);
+
+    assert_eq!(known_visual.layers.len(), 1);
+    assert_eq!(
+        known_visual.layers[0].kind,
+        DockVisualAffordanceKind::RouteMarker
+    );
+    assert_eq!(
+        known_visual.layers[0].state,
+        DockVisualAffordanceState::Active
+    );
+    assert_eq!(
+        known_visual.layers[0].layer_scope,
+        DockVisualLayerScope::RouteSource
+    );
+    assert_eq!(rejected_visual.layers.len(), 1);
+    assert_eq!(
+        rejected_visual.layers[0].kind,
+        DockVisualAffordanceKind::RouteMarker
+    );
+    assert_eq!(
+        rejected_visual.layers[0].state,
+        DockVisualAffordanceState::Passive
     );
 }
