@@ -1386,7 +1386,7 @@ fn command_index_snapshot_matches_equivalent_local_descriptors() {
 
 #[test]
 fn command_items_project_core_command_descriptors() {
-    let descriptor = open_gpui_ui_core::CommandDescriptor::new("workspace.open", "Open Workspace")
+    let descriptor = open_gpui_command::CommandDescriptor::new("workspace.open", "Open Workspace")
         .group("Workspace")
         .keyword("project")
         .shortcut("Ctrl+Shift+O")
@@ -1441,11 +1441,11 @@ fn command_items_project_core_command_descriptors() {
 
 #[test]
 fn command_index_snapshot_projects_core_command_registry_snapshot() {
-    let mut registry = open_gpui_ui_core::CommandRegistry::new("registry-v1");
+    let mut registry = open_gpui_command::CommandRegistry::new("registry-v1");
     registry
         .register_contribution(
-            open_gpui_ui_core::CommandContribution::new(
-                open_gpui_ui_core::CommandDescriptor::new("workspace.open", "Open Workspace")
+            open_gpui_command::CommandContribution::new(
+                open_gpui_command::CommandDescriptor::new("workspace.open", "Open Workspace")
                     .group("Workspace")
                     .keyword("project")
                     .shortcut("Ctrl+Shift+O")
@@ -1456,7 +1456,7 @@ fn command_index_snapshot_projects_core_command_registry_snapshot() {
         .unwrap();
     registry
         .register(
-            open_gpui_ui_core::CommandDescriptor::new("file.save", "Save File")
+            open_gpui_command::CommandDescriptor::new("file.save", "Save File")
                 .group("File")
                 .disabled(true),
         )

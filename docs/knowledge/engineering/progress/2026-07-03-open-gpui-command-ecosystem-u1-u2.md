@@ -1,7 +1,7 @@
 ---
 type: Work Progress
 title: Open GPUI command ecosystem U1/U2
-status: verified
+status: superseded
 timestamp: 2026-07-03T09:50:17+08:00
 git_branch: feat/open-gpui-command-ecosystem
 related_plan: docs/plans/2026-07-03-001-feat-open-gpui-command-ecosystem-plan.md
@@ -24,9 +24,14 @@ Implemented the first `open-gpui-command` ecosystem slice from
 `docs/plans/2026-07-03-001-feat-open-gpui-command-ecosystem-plan.md` on
 `feat/open-gpui-command-ecosystem`.
 
+This historical slice was superseded by
+`progress/2026-07-03-open-gpui-command-crate-extraction.md`, where `open_gpui_command` became the
+canonical owner and `open_gpui_ui_core::command` was deleted.
+
 # Shipped Capability
 
-- `open_gpui_ui_core::CommandRegistry` owns deterministic command contribution registration.
+- At this point in history, `open_gpui_ui_core::CommandRegistry` owned deterministic command
+  contribution registration. Current ownership has moved to `open_gpui_command::CommandRegistry`.
 - `CommandRegistry` rejects duplicate stable command ids and preserves contribution insertion order.
 - Batch registration is atomic: duplicate ids reject the full batch without leaving partial
   contributions in the registry.

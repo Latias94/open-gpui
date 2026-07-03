@@ -3,9 +3,36 @@
 use std::collections::BTreeMap;
 
 use open_gpui::{Action, App, KeyBinding, Keymap, Window};
-use open_gpui_ui_core::{CommandContribution, CommandRegistrySnapshot};
 
-use super::{CommandIndexSnapshot, CommandSelection};
+use crate::{
+    CommandAvailability, CommandAvailabilityResolver, CommandRegistrySnapshot, CommandUsageHistory,
+    command_effective_availability,
+};
+
+/// Result of attempting to dispatch a command id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandDispatchOutcome {
+    /// The command id exists in the registry and a matching GPUI action was dispatched.
+    Dispatched,
+    /// No descriptor exists for the command id in the checked registry snapshot.
+    MissingCommand,
+    /// No GPUI action binding exists for the command id.
+    MissingAction,
+    /// The command is visible but disabled.
+    Disabled {
+        /// Optional disabled reason.
+        reason: Option<String>,
+    },
+    /// The command is hidden in the current availability projection.
+    Hidden,
+}
+
+impl CommandDispatchOutcome {
+    /// Returns whether dispatch succeeded.
+    pub const fn dispatched(&self) -> bool {
+        matches!(self, Self::Dispatched)
+    }
+}
 
 /// One command id mapped to a concrete GPUI action.
 pub struct GpuiCommandAction {
@@ -58,7 +85,7 @@ impl GpuiCommandAction {
         self.action.as_ref()
     }
 
-    /// Clones the GPUI action for dispatch.
+    /// Clones the GPUI action for window dispatch.
     pub fn boxed_action(&self) -> Box<dyn Action> {
         self.action.boxed_clone()
     }
@@ -155,51 +182,89 @@ impl GpuiCommandActionMap {
         registry_snapshot_with_shortcuts(registry, &shortcuts)
     }
 
-    /// Builds a command index snapshot with app-level keymap shortcut labels applied.
-    pub fn command_index_snapshot_with_keymap_shortcuts(
+    /// Dispatches a command id through the current GPUI window.
+    pub fn dispatch_command_in_window(
         &self,
-        registry: &CommandRegistrySnapshot,
-        keymap: &Keymap,
-    ) -> CommandIndexSnapshot {
-        CommandIndexSnapshot::from_registry_snapshot(
-            &self.registry_snapshot_with_keymap_shortcuts(registry, keymap),
-        )
-    }
-
-    /// Builds a command index snapshot with focused-window shortcut labels applied.
-    pub fn command_index_snapshot_with_window_shortcuts(
-        &self,
-        registry: &CommandRegistrySnapshot,
-        window: &Window,
-    ) -> CommandIndexSnapshot {
-        CommandIndexSnapshot::from_registry_snapshot(
-            &self.registry_snapshot_with_window_shortcuts(registry, window),
-        )
-    }
-
-    /// Dispatches a command selection through the current GPUI window.
-    pub fn dispatch_selection_in_window(
-        &self,
-        selection: &CommandSelection,
+        command_id: &str,
         window: &mut Window,
         cx: &mut App,
-    ) -> bool {
-        let Some(command_action) = self.action_for_command(selection.value()) else {
-            return false;
+    ) -> CommandDispatchOutcome {
+        let Some(command_action) = self.action_for_command(command_id) else {
+            return CommandDispatchOutcome::MissingAction;
         };
 
         window.dispatch_action(command_action.boxed_action(), cx);
-        true
+        CommandDispatchOutcome::Dispatched
     }
 
-    /// Dispatches a command selection through the app's focused action window or global handlers.
-    pub fn dispatch_selection_in_app(&self, selection: &CommandSelection, cx: &mut App) -> bool {
-        let Some(command_action) = self.action_for_command(selection.value()) else {
-            return false;
+    /// Dispatches a command id through the app's focused action window or global handlers.
+    pub fn dispatch_command_in_app(
+        &self,
+        command_id: &str,
+        cx: &mut App,
+    ) -> CommandDispatchOutcome {
+        let Some(command_action) = self.action_for_command(command_id) else {
+            return CommandDispatchOutcome::MissingAction;
         };
 
         cx.dispatch_action(command_action.action());
-        true
+        CommandDispatchOutcome::Dispatched
+    }
+
+    /// Dispatches a command id after checking a registry snapshot and availability resolver.
+    pub fn dispatch_available_command_in_app(
+        &self,
+        command_id: &str,
+        registry: &CommandRegistrySnapshot,
+        resolver: &impl CommandAvailabilityResolver,
+        cx: &mut App,
+    ) -> CommandDispatchOutcome {
+        let Some(descriptor) = registry.descriptor(command_id) else {
+            return CommandDispatchOutcome::MissingCommand;
+        };
+        match command_effective_availability(descriptor, resolver) {
+            CommandAvailability::Available => self.dispatch_command_in_app(command_id, cx),
+            CommandAvailability::Disabled { reason } => CommandDispatchOutcome::Disabled { reason },
+            CommandAvailability::Hidden => CommandDispatchOutcome::Hidden,
+        }
+    }
+
+    /// Dispatches a command id in a window after checking registry availability.
+    pub fn dispatch_available_command_in_window(
+        &self,
+        command_id: &str,
+        registry: &CommandRegistrySnapshot,
+        resolver: &impl CommandAvailabilityResolver,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> CommandDispatchOutcome {
+        let Some(descriptor) = registry.descriptor(command_id) else {
+            return CommandDispatchOutcome::MissingCommand;
+        };
+        match command_effective_availability(descriptor, resolver) {
+            CommandAvailability::Available => {
+                self.dispatch_command_in_window(command_id, window, cx)
+            }
+            CommandAvailability::Disabled { reason } => CommandDispatchOutcome::Disabled { reason },
+            CommandAvailability::Hidden => CommandDispatchOutcome::Hidden,
+        }
+    }
+
+    /// Dispatches an available app command and records successful usage in memory or custom history.
+    pub fn dispatch_available_command_in_app_with_history(
+        &self,
+        command_id: &str,
+        query: &str,
+        registry: &CommandRegistrySnapshot,
+        resolver: &impl CommandAvailabilityResolver,
+        history: &mut impl CommandUsageHistory,
+        cx: &mut App,
+    ) -> CommandDispatchOutcome {
+        let outcome = self.dispatch_available_command_in_app(command_id, registry, resolver, cx);
+        if outcome.dispatched() {
+            history.record_usage(command_id, query);
+        }
+        outcome
     }
 }
 
@@ -234,11 +299,7 @@ fn registry_snapshot_with_shortcuts(
             } else {
                 contribution.descriptor().clone()
             };
-            let mut next = CommandContribution::new(descriptor);
-            if let Some(source) = contribution.source_ref() {
-                next = next.source(source);
-            }
-            next
+            contribution.with_descriptor(descriptor)
         })
         .collect::<Vec<_>>();
 
@@ -251,7 +312,11 @@ mod tests {
     use std::rc::Rc;
 
     use open_gpui::{KeyBinding, Keymap, actions};
-    use open_gpui_ui_core::{CommandDescriptor, CommandRegistry};
+
+    use crate::{
+        CommandAvailabilityMap, CommandDescriptor, CommandDispatchOutcome, CommandRegistry,
+        CommandUsageHistory, MemoryCommandHistory,
+    };
 
     use super::*;
 
@@ -301,34 +366,15 @@ mod tests {
     }
 
     #[test]
-    fn keymap_shortcut_projection_preserves_palette_grouping() {
-        let mut keymap = Keymap::default();
-        keymap.add_bindings([KeyBinding::new("ctrl-shift-o", OpenWorkspace, None)]);
-        let registry = command_registry_snapshot();
+    fn dispatch_command_reports_missing_action_without_dispatching() {
         let action_map = GpuiCommandActionMap::new().action("workspace.open", OpenWorkspace);
-
-        let snapshot = action_map.command_index_snapshot_with_keymap_shortcuts(&registry, &keymap);
-        let state = crate::command::Command::new("registry-command", "Commands")
-            .index_snapshot(snapshot)
-            .state();
-
-        assert_eq!(state.index_revision(), Some("workspace-v1"));
-        assert_eq!(state.groups()[0].label(), "Workspace");
-        assert_eq!(state.items()[0].shortcut(), Some("ctrl-shift-O"));
-        assert_eq!(state.items()[1].shortcut(), Some("Ctrl+S"));
-    }
-
-    #[test]
-    fn dispatch_selection_reports_missing_command_without_dispatching() {
-        let action_map = GpuiCommandActionMap::new().action("workspace.open", OpenWorkspace);
-        let selection = CommandSelection::new(0, "workspace.missing", "Missing", None);
 
         assert!(action_map.action_for_command("workspace.open").is_some());
-        assert!(action_map.action_for_command(selection.value()).is_none());
+        assert!(action_map.action_for_command("workspace.missing").is_none());
     }
 
     #[open_gpui::test]
-    fn dispatch_selection_in_app_routes_registered_gpui_action(cx: &mut open_gpui::TestAppContext) {
+    fn dispatch_command_in_app_routes_registered_gpui_action(cx: &mut open_gpui::TestAppContext) {
         let dispatched = Rc::new(RefCell::new(Vec::new()));
         cx.update(|cx| {
             let dispatched = dispatched.clone();
@@ -337,14 +383,62 @@ mod tests {
             });
         });
 
-        let selection = CommandSelection::new(0, "workspace.open", "Open Workspace", None);
         let action_map = GpuiCommandActionMap::new().action("workspace.open", DispatchProbe);
 
         cx.update(|cx| {
-            assert!(action_map.dispatch_selection_in_app(&selection, cx));
+            assert_eq!(
+                action_map.dispatch_command_in_app("workspace.open", cx),
+                CommandDispatchOutcome::Dispatched
+            );
         });
 
         assert_eq!(dispatched.borrow().as_slice(), ["workspace.open"]);
+    }
+
+    #[open_gpui::test]
+    fn dispatch_available_command_blocks_hidden_commands(cx: &mut open_gpui::TestAppContext) {
+        let action_map = GpuiCommandActionMap::new().action("workspace.open", DispatchProbe);
+        let registry = command_registry_snapshot();
+        let availability = CommandAvailabilityMap::new().hidden("workspace.open");
+
+        cx.update(|cx| {
+            assert_eq!(
+                action_map.dispatch_available_command_in_app(
+                    "workspace.open",
+                    &registry,
+                    &availability,
+                    cx,
+                ),
+                CommandDispatchOutcome::Hidden
+            );
+        });
+    }
+
+    #[open_gpui::test]
+    fn dispatch_available_command_records_usage_on_success(cx: &mut open_gpui::TestAppContext) {
+        cx.update(|cx| {
+            cx.on_action(|_: &DispatchProbe, _| {});
+        });
+        let action_map = GpuiCommandActionMap::new().action("workspace.open", DispatchProbe);
+        let registry = command_registry_snapshot();
+        let availability = CommandAvailabilityMap::new();
+        let mut history = MemoryCommandHistory::default();
+
+        cx.update(|cx| {
+            assert_eq!(
+                action_map.dispatch_available_command_in_app_with_history(
+                    "workspace.open",
+                    "open",
+                    &registry,
+                    &availability,
+                    &mut history,
+                    cx,
+                ),
+                CommandDispatchOutcome::Dispatched
+            );
+        });
+
+        assert_eq!(history.usage_count("workspace.open"), 1);
     }
 
     fn command_registry_snapshot() -> CommandRegistrySnapshot {

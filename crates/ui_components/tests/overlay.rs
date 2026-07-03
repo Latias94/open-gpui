@@ -701,7 +701,7 @@ fn menu_state_records_items_roving_focus_and_overlay_policy() {
 
 #[test]
 fn menu_items_project_core_command_descriptors() {
-    let descriptor = open_gpui_ui_core::CommandDescriptor::new("workspace.open", "Open Workspace")
+    let descriptor = open_gpui_command::CommandDescriptor::new("workspace.open", "Open Workspace")
         .shortcut("Ctrl+Shift+O")
         .when("workspace")
         .menu_path(["File", "Open"]);

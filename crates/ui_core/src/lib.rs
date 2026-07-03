@@ -10,7 +10,6 @@ pub mod a11y;
 pub mod active_descendant;
 pub mod adaptive;
 pub mod collection;
-pub mod command;
 pub mod controllable_state;
 pub mod focus;
 pub mod geometry;
@@ -33,10 +32,6 @@ pub use adaptive::{
     device_adaptive_class, device_adaptive_snapshot, device_shell_mode, panel_adaptive_class,
 };
 pub use collection::CollectionPosition;
-pub use command::{
-    CommandContribution, CommandDescriptor, CommandRegistry, CommandRegistryError,
-    CommandRegistrySnapshot,
-};
 pub use controllable_state::ControllableState;
 pub use focus::FocusTargetId;
 pub use geometry::{

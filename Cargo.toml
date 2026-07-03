@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/canvas",
     "crates/collections",
+    "crates/open-gpui-command",
     "crates/gpui",
     "crates/gpui_docking",
     "crates/gpui_linux",
@@ -53,6 +54,7 @@ publish = false
 open_gpui = { package = "open-gpui", version = "0.1.0", path = "crates/gpui", default-features = false }
 open_gpui_canvas = { package = "open-gpui-canvas", version = "0.1.0", path = "crates/canvas" }
 open_gpui_collections = { package = "open-gpui-collections", version = "0.1.0", path = "crates/collections" }
+open_gpui_command = { package = "open-gpui-command", version = "0.1.0", path = "crates/open-gpui-command" }
 open_gpui_docking = { package = "open-gpui-docking", version = "0.1.0", path = "crates/gpui_docking" }
 open_gpui_core_util = { package = "open-gpui-core-util", version = "0.1.0", path = "crates/gpui_util" }
 open_gpui_ui_components = { package = "open-gpui-ui-components", version = "0.1.0", path = "crates/ui_components" }

@@ -15,8 +15,9 @@ use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent, ParentElement,
     RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
+use open_gpui_command::CommandDescriptor;
 use open_gpui_ui_core::{
-    CommandDescriptor, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
     OverlayAnchorInput, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
     Rect, Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_point, ui_px, ui_size,
 };

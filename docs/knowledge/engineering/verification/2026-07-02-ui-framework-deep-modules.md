@@ -45,8 +45,9 @@ related_plan: docs/plans/2026-07-02-003-refactor-ui-framework-deep-modules-plan.
 - Gallery contract: component focus, selector, sample, and state-readout traversal derives from
   `StoryContract` through `component_story_contract_for(name)` and
   `component_story_contracts_for_focus(mode)`.
-- Command contract: `open_gpui_ui_core::CommandDescriptor` projects one-item app-command metadata
-  into Command, Menu, and ContextMenu without adding a global command registry or dispatch runtime.
+- Historical command contract: `open_gpui_ui_core::CommandDescriptor` projected one-item
+  app-command metadata into Command, Menu, and ContextMenu without adding a global command registry
+  or dispatch runtime. Current ownership has moved to `open_gpui_command::CommandDescriptor`.
   Its `menu_path` remains app-owned grouping metadata, not an automatic submenu builder.
 
 # Notes

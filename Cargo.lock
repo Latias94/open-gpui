@@ -4193,6 +4193,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-command"
+version = "0.1.0"
+dependencies = [
+ "open-gpui",
+]
+
+[[package]]
 name = "open-gpui-core-util"
 version = "0.1.0"
 dependencies = [
@@ -4518,6 +4525,7 @@ name = "open-gpui-ui-components"
 version = "0.1.0"
 dependencies = [
  "open-gpui",
+ "open-gpui-command",
  "open-gpui-ui-core",
  "schemars",
  "serde",
@@ -4534,6 +4542,7 @@ name = "open-gpui-ui-foundation-gallery"
 version = "0.1.0"
 dependencies = [
  "open-gpui",
+ "open-gpui-command",
  "open-gpui-platform",
  "open-gpui-ui-components",
  "open-gpui-ui-core",

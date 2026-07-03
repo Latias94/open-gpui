@@ -11,6 +11,10 @@ related_plan: docs/plans/2026-07-03-001-feat-open-gpui-command-ecosystem-plan.md
 
 Focused checks passed for the command adapter and registry-backed gallery proof:
 
+This historical verification predates the command crate extraction. Current command ownership and
+dispatch verification lives in
+`../progress/2026-07-03-open-gpui-command-crate-extraction.md`.
+
 ```powershell
 cargo check -p open-gpui-ui-components --tests
 cargo check -p open-gpui-ui-foundation-gallery --tests
@@ -30,7 +34,8 @@ The component adapter run covered:
 - app `Keymap` precedence projection;
 - registry-to-`CommandIndexSnapshot` projection with grouping preserved;
 - missing command selection reporting;
-- real `App::dispatch_action` routing through `dispatch_selection_in_app`.
+- real `App::dispatch_action` routing through the then-current selection dispatch adapter. Current
+  code dispatches stable command ids through `open_gpui_command::GpuiCommandActionMap`.
 
 The gallery contract run covered:
 

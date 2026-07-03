@@ -25,26 +25,6 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
         home: "gpui_adapter",
     },
     PublicSurfaceOwnerEntry {
-        name: "GpuiCommandAction",
-        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
-        home: "gpui_adapter",
-    },
-    PublicSurfaceOwnerEntry {
-        name: "GpuiCommandActionMap",
-        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
-        home: "gpui_adapter",
-    },
-    PublicSurfaceOwnerEntry {
-        name: "command_shortcut_label",
-        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
-        home: "gpui_adapter",
-    },
-    PublicSurfaceOwnerEntry {
-        name: "command_shortcut_label_from_keymap",
-        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
-        home: "gpui_adapter",
-    },
-    PublicSurfaceOwnerEntry {
         name: "TextInputController",
         owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
         home: "gpui_adapter",

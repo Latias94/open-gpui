@@ -1,7 +1,6 @@
 //! Command palette component built from search input, grouped command items, and listbox state.
 
 mod descriptor;
-pub(crate) mod gpui_adapter;
 mod model;
 mod render_plan;
 mod runtime;
@@ -15,9 +14,10 @@ use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div, point, px,
 };
+use open_gpui_command::CommandDescriptor;
 use open_gpui_ui_core::{
-    CommandDescriptor, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    Role, Sizable, Size, ThemeTokens, UiPx,
+    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, Role, Sizable,
+    Size, ThemeTokens, UiPx,
 };
 
 use crate::a11y::UiA11yElementExt;

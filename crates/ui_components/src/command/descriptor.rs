@@ -3,7 +3,8 @@
 use crate::choice::{self, ChoiceItemProjection, ChoiceSelectionMode};
 use crate::listbox::ListboxOptionDescriptor;
 use crate::overlay::OverlayDisclosureOpenMode;
-use open_gpui_ui_core::{CommandDescriptor, CommandRegistrySnapshot, Role};
+use open_gpui_command::{CommandDescriptor, CommandRegistrySnapshot};
+use open_gpui_ui_core::Role;
 
 /// Command dialog open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

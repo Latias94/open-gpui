@@ -355,18 +355,17 @@ Run the focused proof with:
 
 ```powershell
 cargo nextest run -p open-gpui-ui-components command
-cargo nextest run -p open-gpui-ui-core command --no-fail-fast
+cargo nextest run -p open-gpui-command --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command_descriptors --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command menu --no-fail-fast
-cargo nextest run -p open-gpui-ui-components gpui_adapter --no-fail-fast
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery command
 ```
 
 For the reusable command ecosystem, also keep `docs/ui/command-ecosystem.md` current. It records
-the split between GPUI `Action`/`Keymap` execution, `open_gpui_ui_core::CommandRegistry`
-metadata snapshots, and `open_gpui_ui_components::gpui_adapter::GpuiCommandActionMap` shortcut
-projection plus `CommandSelection` dispatch.
+the split between GPUI `Action`/`Keymap` execution, `open_gpui_command::CommandRegistry`
+metadata snapshots, `GpuiCommandActionMap` shortcut projection, availability guards, and
+command-id dispatch.
 
 The focused Tabs test renders real tabs,
 preserves the `default_selected` seed on the first frame, rejects disabled tab clicks, keeps manual
@@ -638,14 +637,15 @@ and gallery catalog/conformance/runtime/sample/render module split:
 For the deep UI framework module refactor, run the focused ownership gates below before the full
 workspace gate. They cover runtime theme context, typed a11y evidence, removed registry history,
 shared overlay placement, `open_gpui_ui_core::grid_viewport::RowWindow`, gallery story-contract
-projection, and `open_gpui_ui_core::CommandDescriptor` projection:
+projection, and `open_gpui_command::CommandDescriptor` projection:
 
 ```powershell
 cargo fmt --all
 cargo check -p open-gpui-ui-core --tests
 cargo check -p open-gpui-ui-components --tests
 cargo check -p open-gpui-ui-foundation-gallery --tests
-cargo nextest run -p open-gpui-ui-core overlay grid_viewport command --no-fail-fast
+cargo nextest run -p open-gpui-ui-core overlay grid_viewport --no-fail-fast
+cargo nextest run -p open-gpui-command --no-fail-fast
 cargo nextest run -p open-gpui-ui-components theme a11y menu context_menu command --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command_descriptors --no-fail-fast
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast

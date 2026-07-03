@@ -105,10 +105,11 @@ verified_by:
 - Done on `refactor/ui-framework-deepening`: gallery selector/readout/focus traversal now derives
   from `StoryContract` through `component_story_contract_for(name)` and
   `component_story_contracts_for_focus(mode)`.
-- Done on `refactor/ui-framework-deepening`: `open_gpui_ui_core::CommandDescriptor` is the
-  app-command metadata contract projected by Command, Menu, and ContextMenu without owning a global
-  command registry, dispatch, callbacks, or keybinding resolution. Its `menu_path` remains
-  app-owned grouping metadata; one-item projections do not auto-build submenu hierarchy.
+- Done on `refactor/open-gpui-command-crate`: `open_gpui_command` is the command ecosystem owner.
+  It owns `CommandDescriptor`, deterministic registries, scoped registration, availability
+  projection, neutral menu trees, memory history, and GPUI command-id dispatch adapters.
+  `open_gpui_ui_core::command` was deleted; Command, Menu, ContextMenu, and gallery samples now
+  consume command metadata from `open_gpui_command`.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default

@@ -1,5 +1,5 @@
 use crate::overlay::OverlayDisclosureOpenMode;
-use open_gpui_ui_core::CommandDescriptor;
+use open_gpui_command::CommandDescriptor;
 /// Menu open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MenuOpenMode {

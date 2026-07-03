@@ -26,7 +26,7 @@ fn component_contract_docs_match_current_public_surface_vocabulary() {
         "focus_ring_shadow_with_theme",
         "open_gpui_ui_core::grid_viewport::RowWindow",
         "open_gpui_ui_core::overlay::resolve_overlay_placement",
-        "open_gpui_ui_core::CommandDescriptor",
+        "open_gpui_command::CommandDescriptor",
         "component_story_contracts_for_focus(mode)",
         "`open_gpui_ui_components::choice`",
         "`open_gpui_ui_components::gpui_adapter`",

@@ -1,7 +1,6 @@
 use super::*;
 use open_gpui::{KeyBinding, Keymap, actions};
-use open_gpui_ui_components::gpui_adapter::GpuiCommandActionMap;
-use open_gpui_ui_core::{CommandDescriptor, CommandRegistry};
+use open_gpui_command::{CommandDescriptor, CommandRegistry, GpuiCommandActionMap};
 
 /// One switch sample in the gallery.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -761,9 +760,10 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 5] {
         .action_for_command("workspace.open")
         .map(|action| action.command_id().to_owned())
         .unwrap();
-    let registry_snapshot = action_map
-        .command_index_snapshot_with_keymap_shortcuts(&command_registry.snapshot(), &keymap)
-        .mode(CommandIndexSnapshotMode::PreRankedFilter);
+    let registry_snapshot = CommandIndexSnapshot::from_registry_snapshot(
+        &action_map.registry_snapshot_with_keymap_shortcuts(&command_registry.snapshot(), &keymap),
+    )
+    .mode(CommandIndexSnapshotMode::PreRankedFilter);
 
     [
         command_sample_from_local(

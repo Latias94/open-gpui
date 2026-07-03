@@ -225,18 +225,17 @@ handles; the renderer-neutral state owns ranking, selection projection, snapshot
 virtualized result render plan.
 The reusable command ecosystem boundary is documented in
 [`docs/ui/command-ecosystem.md`](command-ecosystem.md): `open_gpui` owns action/keymap execution,
-`open_gpui_ui_core` owns command metadata and deterministic registry snapshots, and
-`open_gpui_ui_components::gpui_adapter` owns shortcut projection and `CommandSelection` dispatch
-adapters for GPUI `App` and `Window`.
-`open_gpui_ui_core::CommandDescriptor` is the shared app-command metadata contract for component
-projection. It carries id, label, group, keywords, shortcut, disabled state, caller-owned `when`
-metadata, and app-owned menu path without storing callbacks, dispatch, keybinding resolution, or a
-global registry. `CommandItem::from_command_descriptor`, `CommandIndexSnapshot::command_descriptor`,
+`open_gpui_command` owns command metadata, deterministic registry snapshots, scoped registration,
+availability projection, neutral menu trees, usage history, and GPUI command-id dispatch adapters.
+`open_gpui_ui_components` owns rendering only. `open_gpui_command::CommandDescriptor` is the shared
+app-command metadata contract for component projection. It carries id, label, group, keywords,
+shortcut, disabled state, optional disabled reason, caller-owned `when` metadata, and app-owned menu
+path without storing callbacks, keybinding resolution, or a global runtime singleton.
+`CommandItem::from_command_descriptor`, `CommandIndexSnapshot::command_descriptor`,
 `MenuItem::from_command_descriptor`, and `ContextMenu`'s shared menu state consume the one-item
 presentation fields so Command, Menu, and ContextMenu can present the same metadata while
-applications remain the execution authority. `menu_path` is retained on the core descriptor as
-caller grouping metadata; applications that want submenu hierarchy should group descriptors before
-building `MenuItem::submenu` trees rather than expecting one-item projection to create hierarchy.
+applications remain the execution authority. `CommandMenuTree` is the command-crate hierarchy
+projection for callers that want submenu trees from `menu_path`.
 
 `SeparatorState`, `KbdState`, `ProgressState`, and `SkeletonState` are low-state primitives. They
 still expose resolved state, metrics, token intents, and stable rendered debug selectors rather
@@ -1069,7 +1068,7 @@ metrics, overscan, and semantic scroll strategy labels. Rendered range calculati
 by `open_gpui_ui_core::VirtualizerState`. `TreeBehaviorSnapshot` and `CommandBehaviorSnapshot`
 follow the same public boundary: behavior probes are stable, renderer assembly plans are internal.
 `command/mod.rs` is the reference split facade: descriptor, model, style, render-plan, and runtime
-owners stay in sibling modules, while `open_gpui_ui_core::CommandDescriptor` is the cross-surface
+owners stay in sibling modules, while `open_gpui_command::CommandDescriptor` is the cross-surface
 app-command descriptor consumed by Command, Menu, and ContextMenu projections. `Menu`,
 `ContextMenu`, and `Tree` follow that shape: `menu/mod.rs` keeps the builder/render facade while
 `menu/descriptor.rs`, `menu/model.rs`, `menu/render_plan.rs`, `menu/runtime.rs`, and

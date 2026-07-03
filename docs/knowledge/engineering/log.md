@@ -6,6 +6,13 @@ status: active
 
 # Log
 
+- 2026-07-03: Extracted the command ecosystem into `open_gpui_command` on
+  `refactor/open-gpui-command-crate`. `open_gpui_ui_core::command` was deleted; first-party code now
+  imports command metadata and registry types from `open_gpui_command` or the intentional
+  `ui_components` default re-export. `GpuiCommandActionMap` moved out of `ui_components`; GPUI
+  command dispatch now works on stable command ids and can share availability projection and
+  in-memory usage recording. Verification so far passed for command crate tests, UI component
+  command/menu/public-surface tests, and gallery check.
 - 2026-07-03: Continued the `open-gpui-command` ecosystem on
   `feat/open-gpui-command-ecosystem` through U3-U5. `open_gpui_ui_components::gpui_adapter` now
   exposes `GpuiCommandAction`, `GpuiCommandActionMap`, keymap/window shortcut projection, and
@@ -43,8 +50,10 @@ status: active
   `open_gpui_ui_core::overlay::resolve_overlay_placement`, shares
   `open_gpui_ui_core::grid_viewport::RowWindow` across Table / VirtualizedList / Tree, derives
   gallery focus and selector traversal from `StoryContract`, and adds
-  `open_gpui_ui_core::CommandDescriptor` as the minimal app-command metadata projection for
-  Command, Menu, and ContextMenu. Focused checks passed for UI-core, UI-components, foundation
+  `open_gpui_ui_core::CommandDescriptor` as the then-current minimal app-command metadata
+  projection for Command, Menu, and ContextMenu. That owner note was superseded later on
+  2026-07-03 by the `open_gpui_command` crate extraction. Focused checks passed for UI-core,
+  UI-components, foundation
   gallery, theme drift/schema scans, `scan-ui-contract`, and the no-production-hit
   `ThemeResolver::resolve` search; `origin/main` was fetched during closeout and had no new commits
   relative to this branch.

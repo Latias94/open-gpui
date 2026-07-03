@@ -14,6 +14,7 @@
 * [Open GPUI command ecosystem U1/U2 verification](verification/open-gpui-command-ecosystem-u1-u2-20260703.md) - Verification evidence for registry, projection, and public-surface gates.
 * [Open GPUI command ecosystem U3-U5](progress/2026-07-03-open-gpui-command-ecosystem-u3-u5.md) - GPUI action/keymap adapter, registry-backed gallery proof, and command ecosystem docs.
 * [Open GPUI command ecosystem U3-U5 verification](verification/open-gpui-command-ecosystem-u3-u5-20260703.md) - Verification evidence for shortcut projection, adapter dispatch, and gallery registry sample gates.
+* [Open GPUI command crate extraction](progress/2026-07-03-open-gpui-command-crate-extraction.md) - Current extraction of command metadata, scoped registry, availability, menu projection, history, and GPUI command-id dispatch into `open_gpui_command`.
 * [Native UI hybrid registry architecture planning](progress/2026-07-02-native-ui-hybrid-registry-architecture-plan.md) - Superseded historical plan for the removed hybrid registry MVP.
 * [Native UI hybrid registry implementation](progress/2026-07-02-native-ui-hybrid-registry-implementation.md) - Superseded implementation history for the removed registry manifest, recipes, artifacts, and scan.
 * [Native UI hybrid registry implementation verification](verification/native-ui-hybrid-registry-implementation-20260702.md) - Superseded verification evidence for the removed hybrid registry work.

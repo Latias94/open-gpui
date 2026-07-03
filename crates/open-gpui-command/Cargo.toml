@@ -1,5 +1,5 @@
 [package]
-name = "open-gpui-ui-components"
+name = "open-gpui-command"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -8,19 +8,13 @@ repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
 readme.workspace = true
-description = "Concrete UI components for the Open GPUI component ecosystem."
+description = "Command registry, projection, and GPUI action adapters for Open GPUI applications."
 
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
 open_gpui.workspace = true
-open_gpui_command.workspace = true
-open_gpui_ui_core.workspace = true
-schemars.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-unicode-segmentation.workspace = true
 
 [dev-dependencies]
 open_gpui = { workspace = true, features = ["test-support"] }

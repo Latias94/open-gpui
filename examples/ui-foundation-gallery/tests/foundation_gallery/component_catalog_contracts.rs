@@ -607,7 +607,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(comboboxes[2].state.disabled());
     assert!(!comboboxes[2].state.open());
 
-    assert_eq!(commands.len(), 4);
+    assert_eq!(commands.len(), 5);
     assert_eq!(commands[0].id, "ranked-search");
     assert_eq!(commands[0].state.open_mode(), CommandOpenMode::Controlled);
     assert!(commands[0].state.loading().is_none());
@@ -644,6 +644,27 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(
         commands[3].state.index_mode(),
         CommandIndexSnapshotMode::PreRankedFilter
+    );
+    assert_eq!(commands[4].id, "registry-dispatch");
+    assert_eq!(
+        commands[4].state.index_revision(),
+        Some("gallery-registry-v1")
+    );
+    assert_eq!(
+        commands[4].state.index_mode(),
+        CommandIndexSnapshotMode::PreRankedFilter
+    );
+    assert_eq!(
+        commands[4].dispatched_command_id.as_deref(),
+        Some("workspace.open")
+    );
+    assert_eq!(
+        commands[4]
+            .state
+            .group_items(0)
+            .next()
+            .and_then(|item| item.shortcut()),
+        Some("ctrl-shift-P")
     );
 
     assert_eq!(labels.len(), 4);
