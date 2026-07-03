@@ -83,6 +83,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         )
         .unwrap();
     let root_registry_snapshot: root::CommandRegistrySnapshot = root_command_registry.snapshot();
+    let root_shortcut_diagnostics: Vec<root::CommandShortcutDiagnostic> =
+        root::GpuiCommandActionMap::new().shortcut_diagnostics_for_keymap(
+            &root_registry_snapshot,
+            &open_gpui::Keymap::default(),
+        );
+    let _root_shortcut_diagnostic_kind: root::CommandShortcutDiagnosticKind =
+        root_shortcut_diagnostics[0].kind();
     let _root_registry_duplicate: root::CommandRegistryError = root_command_registry
         .register(root_core_command.clone())
         .unwrap_err();
@@ -241,6 +248,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
                 .source("prelude-workspace"),
         ],
     );
+    let prelude_shortcut_diagnostics: Vec<prelude::CommandShortcutDiagnostic> =
+        prelude::GpuiCommandActionMap::new().shortcut_diagnostics_for_keymap(
+            &prelude_registry_snapshot,
+            &open_gpui::Keymap::default(),
+        );
+    let _prelude_shortcut_diagnostic_kind: prelude::CommandShortcutDiagnosticKind =
+        prelude_shortcut_diagnostics[0].kind();
     let mut prelude_command_center = prelude::CommandCenter::new("prelude-center-v1");
     let _prelude_command_source: prelude::CommandSourceRegistration = prelude_command_center
         .register_source(

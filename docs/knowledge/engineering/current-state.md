@@ -163,6 +163,12 @@ verified_by:
   `CommandLoadingState`, preserves `CommandProviderStatus` for readouts, and
   `Command::provider_refresh_projection` binds query/snapshot metadata without app-owned
   `CommandIndexSnapshot::from_registry_snapshot(...)` glue.
+- Done on `feat/command-app-integration-diagnostics`: `open_gpui_command` now exposes
+  `CommandShortcutDiagnostic` and `CommandShortcutDiagnosticKind` plus strict
+  `GpuiCommandActionMap` diagnostics for command/action/keymap drift. `CommandCenter` exposes the
+  same app-owned check while filtering orphan diagnostics for hidden commands that remain
+  registered in active scopes. The gallery `registry-dispatch` sample now proves a healthy empty
+  shortcut diagnostic set.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default

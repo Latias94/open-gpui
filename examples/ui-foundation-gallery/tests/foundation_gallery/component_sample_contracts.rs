@@ -821,6 +821,7 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
         commands[4].dispatched_command_id.as_deref(),
         Some("workspace.open")
     );
+    assert!(commands[4].shortcut_diagnostics.is_empty());
     assert_eq!(registry.index_revision(), Some("gallery-command-center-v1"));
     assert_eq!(
         registry.index_mode(),

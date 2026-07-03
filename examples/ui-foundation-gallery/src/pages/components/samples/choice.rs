@@ -3,6 +3,7 @@ use open_gpui::{KeyBinding, Keymap, actions};
 use open_gpui_command::{
     CommandCenter, CommandContribution, CommandDescriptor, CommandProviderRefreshController,
     CommandProviderResponse, CommandProviderSource, CommandProviderStatus,
+    CommandShortcutDiagnostic,
 };
 
 /// One switch sample in the gallery.
@@ -132,6 +133,8 @@ pub struct CommandSample {
     pub index_snapshot: Option<CommandIndexSnapshot>,
     /// Command id that the sample dispatch adapter resolves from the active selection.
     pub dispatched_command_id: Option<String>,
+    /// Shortcut/action/keymap diagnostics for command-center-backed samples.
+    pub shortcut_diagnostics: Arc<[CommandShortcutDiagnostic]>,
     /// Latest dynamic provider status retained by the backing command center.
     pub provider_status: Option<CommandProviderStatus>,
     /// Persistent selected values for multi-select samples.
@@ -773,6 +776,8 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 6] {
     let command_center_snapshot =
         CommandIndexSnapshot::from_registry_snapshot(&command_center.snapshot_for_keymap(&keymap))
             .mode(CommandIndexSnapshotMode::PreRankedFilter);
+    let command_shortcut_diagnostics =
+        Arc::from(command_center.shortcut_diagnostics_for_keymap(&keymap));
     let provider_query = "alpha";
     let mut provider_center = CommandCenter::new("gallery-provider-center-v1");
     let _provider_registration = provider_center.register_provider(
@@ -911,6 +916,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 6] {
         ),
         CommandSample {
             dispatched_command_id: Some(dispatched_command_id),
+            shortcut_diagnostics: command_shortcut_diagnostics,
             ..command_sample_from_snapshot(
                 "registry-dispatch",
                 "CommandCenter-backed palette projects keymap shortcuts and records the dispatched command id.",
@@ -1113,6 +1119,7 @@ fn command_sample_from_local(
         groups,
         index_snapshot: None,
         dispatched_command_id: None,
+        shortcut_diagnostics: Arc::from([]),
         provider_status: None,
         selected_values: selected_values.into(),
         viewport_item_count,
@@ -1176,6 +1183,7 @@ fn command_sample_from_snapshot(
         groups: Arc::from([]),
         index_snapshot: Some(snapshot),
         dispatched_command_id: None,
+        shortcut_diagnostics: Arc::from([]),
         provider_status: None,
         selected_values: selected_values.into(),
         viewport_item_count,
