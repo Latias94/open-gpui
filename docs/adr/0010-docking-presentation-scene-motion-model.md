@@ -115,6 +115,13 @@ new preview guide rendering through the overlay scene. It does not promise per-f
 fidelity or platform VoiceOver/UIAutomation mapping yet; those adapters should consume the same
 descriptors rather than add another geometry authority.
 
+2026-07-03 supersession note: later docking affordance cleanup kept the descriptor-first model but
+promoted `DockVisualAffordanceScene` over `DockOverlayScene` as the semantic visual feedback
+authority. Target preview rendering, accessibility, motion, runtime diagnostics, route markers,
+focus, and zoom affordances now consume visual affordance descriptors directly. `open_gpui_ui_core`
+also owns generic rect motion helpers for edge selection, offscreen source rects, reveal rects, and
+rect interpolation; docking keeps graph, tab, route, viewport, and policy semantics local.
+
 ## Related Documents
 
 - `docs/plans/2026-06-30-002-refactor-docking-presentation-scene-motion-plan.md`

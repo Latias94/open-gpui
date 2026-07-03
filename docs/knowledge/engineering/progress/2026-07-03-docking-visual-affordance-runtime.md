@@ -30,12 +30,12 @@ diagnostic helpers.
   affordance layers and stable `motion_key` values.
 - Migrated overlay accessibility descriptors to `DockVisualAffordanceScene` and deleted the old
   overlay-only accessibility mapping.
-- Added public debug summary types and `DockHost::visual_affordance_debug_summary()` so the native
-  runtime panel can show active affordance id, kind, scope, state, target node, zone, payload index,
-  frame generation, and overlay motion state without log spam.
-- Removed the route-marker overlay adapter. Route markers now go directly from route preview to
-  `DockVisualAffordanceScene`; `DockOverlayScene` remains only as a render adapter for concrete
-  drop-preview drawing and measured payload-tab layout.
+- Added public debug summary types. The native runtime panel now reads runtime-owned visual
+  affordance status, so it can show active affordance id, kind, scope, state, target node, zone,
+  payload index, frame generation, and visual-affordance motion state without retaining `DockHost`
+  handles.
+- Removed the route-marker overlay adapter and the former `DockOverlayScene` bridge. Route
+  markers and target previews now go directly through `DockVisualAffordanceScene`.
 
 # Commits
 
@@ -47,14 +47,11 @@ diagnostic helpers.
 
 # Notes
 
-- The remaining `DockOverlayScene` is intentionally not a semantic authority. New accessibility,
-  motion, diagnostics, route marker, divider, focus, or zoom behavior should go through
-  `DockVisualAffordanceScene`.
-- Native runtime panel reads compact summaries from opened `DockHost` windows. If dogfood exposes a
-  same-window render borrowing issue, change the flow so `DockHost` publishes summaries into
-  runtime status rather than having the panel read host windows during render.
-- A few broad tests still use overlay fixtures because they exercise measured payload-tab drawing
-  and the remaining render adapter boundary.
+- `DockVisualAffordanceScene` is the semantic visual feedback authority. New accessibility,
+  motion, diagnostics, route marker, divider, focus, zoom, or payload preview behavior should go
+  through it.
+- Native runtime panel diagnostics come from `DockViewportRuntimeStatus`; do not reintroduce
+  status-panel reads from opened `DockHost` windows.
 
 # Citations
 

@@ -17,6 +17,7 @@ related_plan:
   - docs/plans/2026-07-02-003-refactor-ui-framework-deep-modules-plan.md
   - docs/plans/2026-07-02-004-refactor-docking-render-authority-convergence-plan.md
   - docs/plans/2026-07-03-001-refactor-docking-visual-affordance-runtime-plan.md
+  - docs/plans/2026-07-03-002-refactor-docking-affordance-authority-cleanup-plan.md
 related_research:
   - native-ui-framework-design-research/report.md
 related_adr:
@@ -183,11 +184,15 @@ verified_by:
 - Done on `refactor/docking-visual-affordance-runtime`: docking visual feedback now has a
   crate-private `DockVisualAffordanceScene` that describes drop target bodies, guide boxes, tab
   insertion slots, payload tab/ghost previews, route markers, rejected targets, divider handles and
-  corners, focus rings, and zoom egress. Render overlay motion, accessibility overlay descriptors,
-  divider/focus/zoom diagnostics, and the native runtime panel consume affordance summaries instead
-  of rebuilding local overlay semantics. `DockOverlayScene` remains only as the concrete render
-  adapter for drop-preview drawing and measured payload-tab layout; route markers now bypass it and
-  enter the affordance scene directly.
+  corners, focus rings, and zoom egress. Target preview rendering, visual-affordance motion,
+  accessibility descriptors, divider/focus/zoom diagnostics, and the native runtime panel consume
+  affordance summaries directly; the old `DockOverlayScene` bridge was deleted. Runtime visual
+  diagnostics are published through `DockViewportRuntimeStatus`, so the native panel reads
+  runtime-owned status instead of opening hosts for diagnostics.
+- Done on `refactor/docking-visual-affordance-runtime`: `open_gpui_ui_core` now owns renderer-neutral
+  rect motion helpers (`MotionEdge`, preferred edge selection, offscreen source rects, reveal rects,
+  and rect interpolation). Docking transition sampling consumes those primitives, graph layout
+  reuses `resolve_dock_split_layout`, and split/divider conversions to `UiRect` are centralized.
 - Current docs direction: component ecosystem changes start with
   `cargo run -p xtask -- scan-ui-contract`, followed by public-surface, a11y, theme, or gallery
   focused nextest gates for behavior proof. Docking preview follow-up should start from the native
@@ -215,6 +220,7 @@ verified_by:
 - [Docking render authority convergence plan](../../plans/2026-07-02-004-refactor-docking-render-authority-convergence-plan.md)
 - [Docking visual affordance runtime plan](../../plans/2026-07-03-001-refactor-docking-visual-affordance-runtime-plan.md)
 - [Docking visual affordance runtime progress](progress/2026-07-03-docking-visual-affordance-runtime.md)
+- [Docking affordance authority cleanup plan](../../plans/2026-07-03-002-refactor-docking-affordance-authority-cleanup-plan.md)
 - [Native UI framework design research report](../../../native-ui-framework-design-research/report.md)
 - [Native UI framework distribution strategy decision](decisions/open-gpui-native-ui-framework-distribution-strategy.md)
 - [Native UI framework strategy architecture page](../../architecture/native-ui-framework-strategy.md)

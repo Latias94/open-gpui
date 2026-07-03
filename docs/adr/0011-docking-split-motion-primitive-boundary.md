@@ -60,9 +60,9 @@ descriptors stay stable.
 
 Decision: rejected.
 Private pane/handle geometry was easy to add quickly, but it created two hit-map authorities: one
-inside docking and one inside the shared splitter primitive. Docking now keeps only the graph
-layout pane bounds it still needs and routes handle/junction hit testing through the presentation
-scene plus `SplitterHitMap`.
+inside docking and one inside the shared splitter primitive. Docking now resolves graph,
+presentation, and render split panel bounds through `SplitterLayoutScene`, routes handle/junction
+hit testing through `SplitterHitMap`, and keeps only docking graph mutation semantics local.
 
 ### Move DockGraph Into UI Core
 

@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-07-03: Implemented
+  `docs/plans/2026-07-03-002-refactor-docking-affordance-authority-cleanup-plan.md` on
+  `refactor/docking-visual-affordance-runtime`. Target preview rendering now consumes
+  `DockVisualAffordanceScene` directly, overlay motion APIs were renamed to visual-affordance
+  motion APIs, the old `DockOverlayScene` bridge was deleted, native visual diagnostics are
+  published through `DockViewportRuntimeStatus`, and `ui_core` owns reusable rect motion helpers for
+  preferred edge selection, offscreen source rects, reveal rects, and interpolation. Docking graph
+  layout now reuses the shared split layout scene path. Focused docking/native/ui-core checks
+  passed; final broad verification is the closeout gate.
 - 2026-07-03: Implemented U1-U6 of
   `docs/plans/2026-07-03-001-refactor-docking-visual-affordance-runtime-plan.md` on
   `refactor/docking-visual-affordance-runtime`. The branch now has `DockVisualAffordanceScene` as

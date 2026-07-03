@@ -168,18 +168,18 @@ stable IDs, roles, labels, selected/disabled state, orientation, numeric splitte
 focus/select actions, and splitter increment/decrement actions. Docking keeps hint strings and
 drop affordance descriptors in its renderer-neutral scene, but GPUI currently has no generic
 element API for an accessibility hint/description field or a platform drop action callback. Active
-drop, drag-source, and rejected-target overlay nodes are therefore exposed as labeled group
+drop, drag-source, and rejected-target affordance nodes are therefore exposed as labeled group
 descriptors without inventing unsupported platform actions, and focused tests assert that those
-nodes disappear when the overlay scene is empty.
+nodes disappear when the visual affordance scene is empty.
 
 Docking visual affordance runtime work should use `DockVisualAffordanceScene` as the visual
 feedback authority for drop guides, tab insertion, route markers, divider/corner affordances,
-focus rings, zoom egress, accessibility, overlay motion identity, and native diagnostics. The
-remaining `DockOverlayScene` is a render adapter for concrete overlay drawing and measured
-payload-tab layout, not a semantic authority. Route markers now bypass the overlay adapter and are
-created directly as visual affordances. The native docking runtime panel shows one compact
-affordance line per viewport with layer count, active layer, scope/state, target node, zone,
-payload index, frame generation, and overlay motion state.
+focus rings, zoom egress, accessibility, visual-affordance motion identity, and native diagnostics.
+Target previews, route markers, accessibility descriptors, transition plans, and runtime
+diagnostics now consume visual affordance descriptors directly; no `DockOverlayScene` semantic
+adapter remains. The native docking runtime panel reads runtime-owned visual affordance status and
+shows one compact affordance line per viewport with layer count, active layer, scope/state, target
+node, zone, payload index, frame generation, and visual-affordance motion state.
 
 Focused visual affordance runtime gates:
 
@@ -1059,11 +1059,12 @@ authority regressions are visible in the same panel.
 Docking target previews are scene-owned. During dogfood, every target-window preview should be
 explainable from the same capability model: `DockPresentationScene` resolves panes, tab bars,
 tab labels, splitters, floating containers, focus regions, and overlay anchors; `DockPreviewScene`
-describes allowed/rejected target facts; `DockOverlayScene` gives stable layer order for preview
-bodies, guide boxes, tab insertion, payload tabs, route markers, and rejected state;
+describes allowed/rejected target facts; `DockVisualAffordanceScene` gives stable layer identity for
+preview bodies, guide boxes, tab insertion, payload tabs, route markers, and rejected state;
 `DockTransitionPlan` describes motion/reduced-motion semantics; divider hit maps, zoom/focus state,
-and accessibility descriptors derive from the presentation scene. Rendering must not recreate guide
-availability independently from those descriptors. Debug selectors reflect that contract:
+accessibility descriptors, and runtime diagnostics consume the same descriptor path. Rendering must
+not recreate guide availability independently from those descriptors. Debug selectors reflect that
+contract:
 target-stack guides use `dock:<space>:drop-guide:inner:<tabs>:<zone>`, root/host guides use
 `dock:<space>:drop-guide:outer:<zone>`, the split body is exposed separately from the full target
 preview container as `dock:<space>:drop-preview:body`, and center/tab docking exposes a
