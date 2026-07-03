@@ -17,7 +17,10 @@ and plugin-like command metadata contribution.
 
 - `CommandCenter` is the recommended app-owned facade. It composes scoped metadata registration,
   source unregistration, availability projection, GPUI action mapping, shortcut projection,
-  dispatch, menu projection, fuzzy search, and in-memory usage/query history.
+  dispatch, menu projection, fuzzy search, and in-memory usage/query history. It also exposes
+  `record_query`, `recent_queries`, `previous_query`, `next_query`, and
+  `reset_query_navigation` so app shells do not need to reach into `history_mut()` for palette
+  query recall.
 - `CommandContextStack` carries the current command scope stack and GPUI key context stack from
   broad app/workspace context to focused surface context.
 - `CommandProvider*` types model dynamic command providers and async-friendly provider responses
@@ -40,7 +43,10 @@ and plugin-like command metadata contribution.
 - `Command` renders inline or dialog command palettes.
 - `CommandPaletteController` owns UI-side palette query/provider refresh lifecycle and emits
   `CommandPaletteProjection` updates without taking ownership of `CommandCenter`, dispatch, or
-  async scheduling.
+  async scheduling. It also wraps command-center query history navigation for palette surfaces:
+  `previous_query_for_keymap` / `next_query_for_keymap` and their window variants capture the
+  current input as the history prefix and restore that draft query after moving past the newest
+  matching history entry.
 - `CommandIndexSnapshot::from_registry_snapshot` turns registry metadata into searchable palette
   rows.
 - `CommandPaletteProjection` adapts a `CommandCenter` query projection into a UI-ready command
@@ -225,6 +231,29 @@ let mut palette_controller = CommandPaletteController::new()
 let update = palette_controller.set_query_for_keymap(&mut center, "readme", &keymap)?;
 let command = Command::new("workspace-palette", "Workspace commands")
     .palette_projection(update.palette_projection());
+```
+
+Palette query history stays in `CommandCenter`, but the controller owns the per-surface navigation
+prefix. Record accepted queries through the center, seed the controller with the user's current
+input, and call the history helpers from your key handler:
+
+```rust
+center
+    .record_query("open file")
+    .record_query("open settings");
+
+let mut palette_controller = CommandPaletteController::new().with_query("open");
+
+if let Some(update) = palette_controller.previous_query_for_keymap(&mut center, &keymap) {
+    let update = update?;
+    // update.query() == "open settings"
+    // update.palette_projection() is ready for Command::palette_projection(...)
+}
+
+if let Some(update) = palette_controller.next_query_for_keymap(&mut center, &keymap) {
+    let update = update?;
+    // Moving past the newest matching entry restores the original "open" draft query.
+}
 ```
 
 When a configured provider has no registered synchronous callback, the update records the provider

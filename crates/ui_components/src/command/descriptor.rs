@@ -242,6 +242,7 @@ impl CommandPaletteProjection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandPaletteController {
     query: String,
+    query_history_prefix: Option<String>,
     providers: Vec<CommandProviderRefreshController>,
 }
 
@@ -256,6 +257,7 @@ impl CommandPaletteController {
     pub fn new() -> Self {
         Self {
             query: String::new(),
+            query_history_prefix: None,
             providers: Vec::new(),
         }
     }
@@ -336,9 +338,7 @@ impl CommandPaletteController {
         query: impl Into<String>,
         keymap: &Keymap,
     ) -> Result<CommandPaletteControllerUpdate, CommandRegistryError> {
-        let query = query.into();
-        let query_changed = self.query != query;
-        self.query = query;
+        let query_changed = self.set_query_from_input(center, query);
         let (provider_projections, missing_provider_ids) =
             self.refresh_provider_controllers(center)?;
         Ok(CommandPaletteControllerUpdate::new(
@@ -357,9 +357,7 @@ impl CommandPaletteController {
         query: impl Into<String>,
         window: &Window,
     ) -> Result<CommandPaletteControllerUpdate, CommandRegistryError> {
-        let query = query.into();
-        let query_changed = self.query != query;
-        self.query = query;
+        let query_changed = self.set_query_from_input(center, query);
         let (provider_projections, missing_provider_ids) =
             self.refresh_provider_controllers(center)?;
         Ok(CommandPaletteControllerUpdate::new(
@@ -369,6 +367,48 @@ impl CommandPaletteController {
             missing_provider_ids,
             self.projection_for_window(center, window),
         ))
+    }
+
+    /// Moves to the previous matching query in command-center history and projects keymap state.
+    pub fn previous_query_for_keymap(
+        &mut self,
+        center: &mut CommandCenter,
+        keymap: &Keymap,
+    ) -> Option<Result<CommandPaletteControllerUpdate, CommandRegistryError>> {
+        let query =
+            self.query_history_query(center, CommandPaletteQueryHistoryDirection::Previous)?;
+        Some(self.set_query_from_history_for_keymap(center, query, keymap))
+    }
+
+    /// Moves to the next matching query in command-center history and projects keymap state.
+    pub fn next_query_for_keymap(
+        &mut self,
+        center: &mut CommandCenter,
+        keymap: &Keymap,
+    ) -> Option<Result<CommandPaletteControllerUpdate, CommandRegistryError>> {
+        let query = self.query_history_query(center, CommandPaletteQueryHistoryDirection::Next)?;
+        Some(self.set_query_from_history_for_keymap(center, query, keymap))
+    }
+
+    /// Moves to the previous matching query in command-center history and projects window state.
+    pub fn previous_query_for_window(
+        &mut self,
+        center: &mut CommandCenter,
+        window: &Window,
+    ) -> Option<Result<CommandPaletteControllerUpdate, CommandRegistryError>> {
+        let query =
+            self.query_history_query(center, CommandPaletteQueryHistoryDirection::Previous)?;
+        Some(self.set_query_from_history_for_window(center, query, window))
+    }
+
+    /// Moves to the next matching query in command-center history and projects window state.
+    pub fn next_query_for_window(
+        &mut self,
+        center: &mut CommandCenter,
+        window: &Window,
+    ) -> Option<Result<CommandPaletteControllerUpdate, CommandRegistryError>> {
+        let query = self.query_history_query(center, CommandPaletteQueryHistoryDirection::Next)?;
+        Some(self.set_query_from_history_for_window(center, query, window))
     }
 
     /// Applies an async provider response and projects app-level keymap state.
@@ -413,6 +453,112 @@ impl CommandPaletteController {
                 self.projection_for_window(center, window),
             )
         }))
+    }
+
+    fn set_query_from_input(
+        &mut self,
+        center: &mut CommandCenter,
+        query: impl Into<String>,
+    ) -> bool {
+        let query = query.into();
+        let query_changed = self.query != query;
+        if query_changed {
+            self.query_history_prefix = None;
+            center.reset_query_navigation();
+            self.query = query;
+        }
+        query_changed
+    }
+
+    fn query_history_query(
+        &mut self,
+        center: &mut CommandCenter,
+        direction: CommandPaletteQueryHistoryDirection,
+    ) -> Option<String> {
+        match direction {
+            CommandPaletteQueryHistoryDirection::Previous => {
+                let prefix = self
+                    .query_history_prefix
+                    .get_or_insert_with(|| self.query.clone())
+                    .clone();
+                let query = center.previous_query(prefix.as_str());
+                if query.is_none() {
+                    self.query_history_prefix = None;
+                    center.reset_query_navigation();
+                }
+                query
+            }
+            CommandPaletteQueryHistoryDirection::Next => {
+                let prefix = self.query_history_prefix.clone()?;
+                match center.next_query(prefix.as_str()) {
+                    Some(query) => Some(query),
+                    None => {
+                        self.query_history_prefix = None;
+                        center.reset_query_navigation();
+                        (self.query != prefix).then_some(prefix)
+                    }
+                }
+            }
+        }
+    }
+
+    fn set_query_from_history_for_keymap(
+        &mut self,
+        center: &mut CommandCenter,
+        query: String,
+        keymap: &Keymap,
+    ) -> Result<CommandPaletteControllerUpdate, CommandRegistryError> {
+        let (query, query_changed, provider_projections, missing_provider_ids) =
+            self.set_query_from_history(center, query)?;
+        Ok(CommandPaletteControllerUpdate::new(
+            query,
+            query_changed,
+            provider_projections,
+            missing_provider_ids,
+            self.projection_for_keymap(center, keymap),
+        ))
+    }
+
+    fn set_query_from_history_for_window(
+        &mut self,
+        center: &mut CommandCenter,
+        query: String,
+        window: &Window,
+    ) -> Result<CommandPaletteControllerUpdate, CommandRegistryError> {
+        let (query, query_changed, provider_projections, missing_provider_ids) =
+            self.set_query_from_history(center, query)?;
+        Ok(CommandPaletteControllerUpdate::new(
+            query,
+            query_changed,
+            provider_projections,
+            missing_provider_ids,
+            self.projection_for_window(center, window),
+        ))
+    }
+
+    fn set_query_from_history(
+        &mut self,
+        center: &mut CommandCenter,
+        query: String,
+    ) -> Result<
+        (
+            String,
+            bool,
+            Vec<CommandProviderRefreshProjection>,
+            Vec<CommandProviderId>,
+        ),
+        CommandRegistryError,
+    > {
+        let query_changed = self.query != query;
+        self.query = query;
+        let (provider_projections, missing_provider_ids) =
+            self.refresh_provider_controllers(center)?;
+        Ok((
+            self.query.clone(),
+            query_changed,
+            provider_projections,
+            missing_provider_ids,
+        ))
     }
 
     fn replace_provider_controller(&mut self, controller: CommandProviderRefreshController) {
@@ -476,6 +622,12 @@ impl CommandPaletteController {
             .find(|candidate| candidate.provider_id() == &provider_id)?;
         Some(controller.apply_response(center, request, response))
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandPaletteQueryHistoryDirection {
+    Previous,
+    Next,
 }
 
 /// Result of a command palette controller query or async response step.

@@ -1832,6 +1832,56 @@ fn command_palette_controller_refreshes_registered_provider_into_command_project
 }
 
 #[test]
+fn command_palette_controller_navigates_query_history_with_prefix() {
+    let mut center = open_gpui_command::CommandCenter::new("history-controller-v1");
+    center
+        .record_query("open file")
+        .record_query("save file")
+        .record_query("open settings");
+
+    let keymap = open_gpui::Keymap::default();
+    let mut controller = CommandPaletteController::new().with_query("open");
+
+    let latest = controller
+        .previous_query_for_keymap(&mut center, &keymap)
+        .expect("history entry")
+        .unwrap();
+
+    assert!(latest.query_changed());
+    assert_eq!(latest.query(), "open settings");
+    assert_eq!(controller.query(), "open settings");
+    assert_eq!(latest.palette_projection().query(), "open settings");
+
+    let older = controller
+        .previous_query_for_keymap(&mut center, &keymap)
+        .expect("older history entry")
+        .unwrap();
+    assert_eq!(older.query(), "open file");
+    assert_eq!(controller.query(), "open file");
+
+    let newer = controller
+        .next_query_for_keymap(&mut center, &keymap)
+        .expect("newer history entry")
+        .unwrap();
+    assert_eq!(newer.query(), "open settings");
+    assert_eq!(controller.query(), "open settings");
+
+    let restored = controller
+        .next_query_for_keymap(&mut center, &keymap)
+        .expect("restored draft query")
+        .unwrap();
+    assert_eq!(restored.query(), "open");
+    assert_eq!(controller.query(), "open");
+    assert_eq!(restored.palette_projection().query(), "open");
+
+    assert!(
+        controller
+            .next_query_for_keymap(&mut center, &keymap)
+            .is_none()
+    );
+}
+
+#[test]
 fn command_palette_controller_tracks_async_provider_requests_and_stale_responses() {
     let mut center = open_gpui_command::CommandCenter::new("async-controller-v1");
     let mut keymap = open_gpui::Keymap::default();

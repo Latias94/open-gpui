@@ -2,8 +2,8 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-03T23:59:00+08:00
-git_branch: refactor/docking-visual-affordance-runtime
+timestamp: 2026-07-03T22:58:55+08:00
+git_branch: main
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
   - docs/plans/2026-07-01-002-refactor-ui-public-gallery-boundaries-plan.md
@@ -78,6 +78,10 @@ verified_by:
   - cargo nextest run -p open-gpui-command --no-fail-fast
   - cargo nextest run -p open-gpui-ui-components choice --no-fail-fast
   - cargo nextest run -p open-gpui-ui-components command::runtime::tests --no-fail-fast
+  - cargo fmt -p open-gpui-command -p open-gpui-ui-components
+  - cargo nextest run -p open-gpui-command center_exposes_query_history_navigation memory_history_promotes_duplicate_queries memory_history_navigates_recent_queries_with_prefix --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components command_palette_controller_navigates_query_history_with_prefix --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components command_palette_controller --no-fail-fast
   - cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_choice_samples_expose_listbox_and_select_contracts --no-fail-fast
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_search_samples_expose_combobox_and_command_contracts --no-fail-fast
@@ -193,6 +197,11 @@ verified_by:
   `CommandProviderRegistration` names remain compatibility aliases. Handles can unregister
   themselves against an app-owned `CommandCenter`, while center methods still expose borrowed
   unregister entry points for hosts that keep handles in registries.
+- Done on `feat/command-query-history`: `CommandCenter` now exposes app-facing query history
+  methods for recording, listing, previous/next navigation, and reset. `MemoryCommandHistory`
+  promotes duplicate queries to the newest position. `CommandPaletteController` now wraps history
+  navigation for keymap/window projections, captures the current query as the navigation prefix, and
+  restores that draft query after moving past the newest matching history entry.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default

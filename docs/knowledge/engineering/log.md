@@ -6,6 +6,12 @@ status: active
 
 # Log
 
+- 2026-07-03: Added command query-history ergonomics on `feat/command-query-history`.
+  `CommandCenter` now exposes app-facing query record/list/previous/next/reset methods, duplicate
+  query recording promotes the newest occurrence, and `CommandPaletteController` wraps
+  keymap/window query-history navigation by capturing the current query as a prefix and restoring
+  the draft query after the newest matching history entry. Focused `open-gpui-command` and
+  `open-gpui-ui-components command_palette_controller` nextest gates passed.
 - 2026-07-03: Added explicit command lifecycle handles on
   `feat/command-source-handles`. `CommandSourceHandle` and `CommandProviderHandle` are now the
   recommended names for plugin-like registrations, with `CommandSourceRegistration` and

@@ -193,6 +193,33 @@ impl CommandCenter {
         self
     }
 
+    /// Records one command-palette query without requiring command dispatch.
+    pub fn record_query(&mut self, query: &str) -> &mut Self {
+        self.history.record_query(query);
+        self
+    }
+
+    /// Returns recent unique command-palette queries from newest to oldest.
+    pub fn recent_queries(&self) -> Vec<String> {
+        self.history.recent_queries()
+    }
+
+    /// Moves to the previous recorded query matching `prefix`.
+    pub fn previous_query(&mut self, prefix: &str) -> Option<String> {
+        self.history.previous_query(prefix)
+    }
+
+    /// Moves to the next recorded query matching `prefix`.
+    pub fn next_query(&mut self, prefix: &str) -> Option<String> {
+        self.history.next_query(prefix)
+    }
+
+    /// Resets command-palette query history navigation.
+    pub fn reset_query_navigation(&mut self) -> &mut Self {
+        self.history.reset_query_navigation();
+        self
+    }
+
     /// Returns the active command context stack.
     pub const fn context_stack(&self) -> &CommandContextStack {
         &self.context_stack
@@ -1264,6 +1291,27 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(ids, ["workspace.save", "workspace.open"]);
+    }
+
+    #[test]
+    fn center_exposes_query_history_navigation() {
+        let mut center = CommandCenter::new("center-v1");
+        center
+            .record_query("open file")
+            .record_query("save file")
+            .record_query("open settings");
+
+        assert_eq!(
+            center.recent_queries(),
+            ["open settings", "save file", "open file"]
+        );
+        assert_eq!(center.previous_query("open"), Some("open settings".into()));
+        assert_eq!(center.previous_query("open"), Some("open file".into()));
+        assert_eq!(center.next_query("open"), Some("open settings".into()));
+        assert_eq!(center.next_query("open"), None);
+
+        center.reset_query_navigation();
+        assert_eq!(center.previous_query("save"), Some("save file".into()));
     }
 
     #[test]

@@ -393,17 +393,20 @@ The UI component command tests now also cover `CommandPaletteProjection`, which 
 `CommandCenter` query/keymap projection into a `PreFiltered` `CommandIndexSnapshot`, provider
 statuses, and shortcut diagnostics; `CommandPaletteController`, which coordinates palette query
 changes across provider refresh controllers, refreshes registered synchronous providers, exposes
-missing-provider ids for app-owned async tasks, and ignores stale async responses through the
-existing provider request guard; plus `CommandProviderPaletteProjection`, which adapts a provider
-refresh projection into a `PreFiltered` `CommandIndexSnapshot`, carries loading provider status
-into `CommandLoadingState`, and lets `Command::provider_refresh_projection` bind query and snapshot
-metadata without app-owned snapshot glue.
+missing-provider ids for app-owned async tasks, ignores stale async responses through the existing
+provider request guard, and wraps command-center query-history navigation so up/down history keys
+can reuse the current query as a prefix and restore the draft query at the newest boundary; plus
+`CommandProviderPaletteProjection`, which adapts a provider refresh projection into a `PreFiltered`
+`CommandIndexSnapshot`, carries loading provider status into `CommandLoadingState`, and lets
+`Command::provider_refresh_projection` bind query and snapshot metadata without app-owned snapshot
+glue.
 Run the focused proof with:
 
 ```powershell
 cargo nextest run -p open-gpui-ui-components command
 cargo nextest run -p open-gpui-ui-components command_palette_controller --no-fail-fast
 cargo nextest run -p open-gpui-command --no-fail-fast
+cargo nextest run -p open-gpui-command center_exposes_query_history_navigation memory_history_promotes_duplicate_queries memory_history_navigates_recent_queries_with_prefix --no-fail-fast
 cargo nextest run -p open-gpui-command context_stack keymap_shortcut_projection_can_respect_context_stack center_context_stack_drives_scopes_keymap_and_provider_requests --no-fail-fast
 cargo nextest run -p open-gpui-command source_and_provider_handles_unregister_their_runtime_state --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command_descriptors --no-fail-fast
