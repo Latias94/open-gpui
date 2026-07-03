@@ -36,6 +36,9 @@ and plugin-like command metadata contribution.
 `open_gpui_ui_components` owns presentation:
 
 - `Command` renders inline or dialog command palettes.
+- `CommandPaletteController` owns UI-side palette query/provider refresh lifecycle and emits
+  `CommandPaletteProjection` updates without taking ownership of `CommandCenter`, dispatch, or
+  async scheduling.
 - `CommandIndexSnapshot::from_registry_snapshot` turns registry metadata into searchable palette
   rows.
 - `CommandPaletteProjection` adapts a `CommandCenter` query projection into a UI-ready command
@@ -144,9 +147,9 @@ match center.apply_provider_response_for_request("search-index", &request, respo
 }
 ```
 
-For reusable command-palette query pipelines, use `CommandProviderRefreshController` to connect
-query changes, optional loading status, response application, stale-response handling, and registry
-snapshot projection:
+For reusable per-provider command-palette query pipelines, use
+`CommandProviderRefreshController` to connect query changes, optional loading status, response
+application, stale-response handling, and registry snapshot projection:
 
 ```rust
 let mut controller =
@@ -158,6 +161,28 @@ let projection = controller
 let registry_snapshot = projection.snapshot();
 let status = projection.provider_status();
 ```
+
+For a full UI command palette that coordinates one query across one or more providers, use
+`CommandPaletteController` from `open_gpui_ui_components`. It wraps provider refresh controllers,
+refreshes registered synchronous providers on query changes, keeps loading projections for
+providers that are driven by app-owned async work, and returns the complete `CommandPaletteProjection`
+that the `Command` component consumes:
+
+```rust
+use open_gpui_ui_components::{Command, CommandPaletteController};
+
+let mut palette_controller = CommandPaletteController::new()
+    .provider_with_loading("recent-files", "Searching recent files");
+
+let update = palette_controller.set_query_for_keymap(&mut center, "readme", &keymap)?;
+let command = Command::new("workspace-palette", "Workspace commands")
+    .palette_projection(update.palette_projection());
+```
+
+When a configured provider has no registered synchronous callback, the update records the provider
+id in `missing_provider_ids()`. Applications can then run their own async task and feed the result
+back through `apply_provider_response_for_keymap` or `apply_provider_response_for_window`; stale
+responses keep using the same `CommandCenter` request-id guard and do not replace newer results.
 
 UI crates can use the provider-only adapter when they only need a refresh projection:
 
@@ -333,7 +358,7 @@ The gallery's `registry-dispatch` command sample uses `CommandCenter` to prove t
 recommended facade can project current keymap shortcut labels, preserve the command id used for
 dispatch, and surface an empty shortcut diagnostic set for the healthy sample.
 
-The gallery's `provider-search` command sample uses a `CommandCenter` provider refresh and
+The gallery's `provider-search` command sample uses `CommandPaletteController` and
 `CommandPaletteProjection` to prove that query-specific `CommandProviderSource` results can be
 applied to the center, bound to GPUI actions and shortcuts, checked for empty shortcut diagnostics,
 converted into a `CommandIndexSnapshot`, and rendered by the existing `Command` component without

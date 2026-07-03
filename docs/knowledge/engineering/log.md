@@ -6,6 +6,13 @@ status: active
 
 # Log
 
+- 2026-07-03: Added `CommandPaletteController` on `feat/command-palette-controller`. The UI-side
+  controller owns palette query/provider refresh lifecycle, refreshes registered synchronous
+  providers, reports configured providers that need app-owned async work, accepts external async
+  responses through the existing request-id stale guard, and returns a complete
+  `CommandPaletteProjection` update for `Command`. Root/prelude exports and the gallery
+  `provider-search` sample now use the controller. Focused `cargo nextest` verification passed for
+  controller, command palette, public surface, and gallery command sample gates.
 - 2026-07-03: Added `CommandPaletteProjection` on `feat/command-palette-session`. The UI-side
   projection now adapts a `CommandCenter` query plus keymap/window shortcut precedence into a
   `PreFiltered` `CommandIndexSnapshot`, provider statuses, and shortcut diagnostics.

@@ -176,6 +176,12 @@ verified_by:
   gallery `provider-search` sample now binds provider-generated command ids to GPUI actions and
   shortcuts before projection, keeping the provider-backed sample dispatch-ready and
   diagnostic-clean.
+- Done on `feat/command-palette-controller`: `open_gpui_ui_components::CommandPaletteController`
+  is the UI-side palette query/provider lifecycle controller. It refreshes registered synchronous
+  providers on query changes, reports configured providers that need app-owned async work, applies
+  external async responses through the existing request-id stale guard, and returns complete
+  `CommandPaletteProjection` updates for `Command`. The gallery `provider-search` sample now uses
+  this controller instead of directly owning a provider refresh controller.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default

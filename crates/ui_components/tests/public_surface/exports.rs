@@ -146,6 +146,19 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         );
     let _root_palette_projection_diagnostics: &[root::CommandShortcutDiagnostic] =
         root_palette_projection.shortcut_diagnostics();
+    let mut root_palette_controller: root::CommandPaletteController =
+        root::CommandPaletteController::new()
+            .with_query("open")
+            .provider_with_loading("root-provider", "Loading");
+    let root_palette_update: root::CommandPaletteControllerUpdate = root_palette_controller
+        .set_query_for_keymap(
+            &mut root_command_center,
+            "open",
+            &open_gpui::Keymap::default(),
+        )
+        .unwrap();
+    let _root_palette_update_projection: &root::CommandPaletteProjection =
+        root_palette_update.palette_projection();
     let _root_provider_state = root::CommandProviderState::Ready;
     assert_root_provider(
         &(root_provider_fn as fn(&root::CommandProviderRequest) -> root::CommandProviderResponse),
@@ -328,6 +341,20 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         );
     let _prelude_palette_projection_diagnostics: &[prelude::CommandShortcutDiagnostic] =
         prelude_palette_projection.shortcut_diagnostics();
+    let mut prelude_palette_controller: prelude::CommandPaletteController =
+        prelude::CommandPaletteController::new()
+            .with_query("open")
+            .provider_with_loading("prelude-provider", "Loading");
+    let prelude_palette_update: prelude::CommandPaletteControllerUpdate =
+        prelude_palette_controller
+            .set_query_for_keymap(
+                &mut prelude_command_center,
+                "open",
+                &open_gpui::Keymap::default(),
+            )
+            .unwrap();
+    let _prelude_palette_update_projection: &prelude::CommandPaletteProjection =
+        prelude_palette_update.palette_projection();
     let _prelude_provider_state = prelude::CommandProviderState::Loading;
     assert_prelude_provider(
         &(prelude_provider_fn
