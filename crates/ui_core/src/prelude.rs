@@ -34,6 +34,7 @@ pub use crate::{
         MotionModel, MotionPreset, MotionSpring, MotionSpringPhysics, MotionSpringPreset,
         MotionSpringSample, MotionSpringSpec,
     },
+    motion_value::{MotionValue, MotionValueRunOwner, MotionValueRunReplacement},
     overlay::{
         DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
         FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,

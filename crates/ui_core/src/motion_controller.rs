@@ -1,7 +1,7 @@
 //! Renderer-neutral motion controller contracts.
 
 use crate::motion_spring::{MotionModel, MotionSpringSample};
-use crate::{MotionRunState, MotionSpec};
+use crate::{MotionRunState, MotionSpec, MotionValue};
 use std::time::Duration;
 
 /// Renderer-neutral frame demand returned by motion controllers.
@@ -36,7 +36,7 @@ impl MotionFrameDemand {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MotionScalarTrack {
     model: MotionModel,
-    from: f32,
+    value: MotionValue,
     target: f32,
     initial_velocity: f32,
     started_at: Duration,
@@ -45,7 +45,7 @@ pub struct MotionScalarTrack {
 
 impl MotionScalarTrack {
     /// Starts a scalar track at the provided controller time.
-    pub const fn start(
+    pub fn start(
         model: MotionModel,
         from: f32,
         target: f32,
@@ -54,7 +54,7 @@ impl MotionScalarTrack {
     ) -> Self {
         Self {
             model,
-            from,
+            value: MotionValue::new(from, started_at),
             target,
             initial_velocity,
             started_at,
@@ -63,7 +63,7 @@ impl MotionScalarTrack {
     }
 
     /// Creates an immediate scalar track at a fixed value.
-    pub const fn immediate(value: f32, started_at: Duration) -> Self {
+    pub fn immediate(value: f32, started_at: Duration) -> Self {
         Self::start(
             MotionModel::timeline(MotionSpec::immediate()),
             value,
@@ -80,7 +80,12 @@ impl MotionScalarTrack {
 
     /// Returns the source value.
     pub const fn from(self) -> f32 {
-        self.from
+        self.value.current()
+    }
+
+    /// Returns the source motion value.
+    pub const fn value(self) -> MotionValue {
+        self.value
     }
 
     /// Returns the target value.
@@ -119,7 +124,7 @@ impl MotionScalarTrack {
         let effective_now = self.cancelled_at.unwrap_or(now);
         let elapsed = effective_now.saturating_sub(self.started_at);
         let mut sample = self.model.sample_scalar_elapsed(
-            self.from,
+            self.value.current(),
             self.target,
             self.initial_velocity,
             elapsed,

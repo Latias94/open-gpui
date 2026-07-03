@@ -20,6 +20,7 @@ pub mod motion_policy;
 pub mod motion_projection;
 pub mod motion_runtime;
 pub mod motion_spring;
+pub mod motion_value;
 pub mod overlay;
 pub mod prelude;
 pub mod sizing;
@@ -61,6 +62,7 @@ pub use motion_spring::{
     MotionModel, MotionPreset, MotionSpring, MotionSpringPhysics, MotionSpringPreset,
     MotionSpringSample, MotionSpringSpec,
 };
+pub use motion_value::{MotionValue, MotionValueRunOwner, MotionValueRunReplacement};
 pub use overlay::{
     DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
     FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,
