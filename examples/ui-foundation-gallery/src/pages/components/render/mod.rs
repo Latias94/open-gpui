@@ -7,19 +7,22 @@ use open_gpui::{AnyElement, Context, IntoElement, ListSizingBehavior, div, list,
 use open_gpui_ui_components::*;
 use open_gpui_ui_core::{Orientation, Sizable, Size, ThemeTokens, UiPx};
 
-#[path = "render/families.rs"]
+mod choice;
 mod families;
-#[path = "render/focus.rs"]
 mod focus;
-#[path = "render/readouts.rs"]
+mod forms;
+mod layout;
+mod metadata;
 mod readouts;
-#[path = "render/sections.rs"]
 mod sections;
-#[path = "render/support.rs"]
 mod support;
 
+use choice::*;
 use families::*;
 use focus::*;
+use forms::*;
+use layout::*;
+use metadata::*;
 use readouts::*;
 use sections::*;
 use support::*;

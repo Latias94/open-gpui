@@ -1262,9 +1262,13 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     let conformance_source = include_str!("../../src/pages/components/conformance.rs");
     let component_evidence_source =
         include_str!("../../../../crates/ui_components/src/component_contract/evidence.rs");
-    let render_source = include_str!("../../src/pages/components/render.rs");
+    let render_source = include_str!("../../src/pages/components/render/mod.rs");
+    let render_choice_source = include_str!("../../src/pages/components/render/choice.rs");
     let render_families_source = include_str!("../../src/pages/components/render/families.rs");
     let render_focus_source = include_str!("../../src/pages/components/render/focus.rs");
+    let render_forms_source = include_str!("../../src/pages/components/render/forms.rs");
+    let render_layout_source = include_str!("../../src/pages/components/render/layout.rs");
+    let render_metadata_source = include_str!("../../src/pages/components/render/metadata.rs");
     let render_readouts_source = include_str!("../../src/pages/components/render/readouts.rs");
     let render_sections_source = include_str!("../../src/pages/components/render/sections.rs");
     let render_support_source = include_str!("../../src/pages/components/render/support.rs");
@@ -1290,8 +1294,10 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(components_source.contains("pub mod catalog;"));
     assert!(components_source.contains("pub use catalog::{"));
     assert!(components_source.contains("pub mod conformance;"));
+    assert!(components_source.contains("mod render;"));
     assert!(components_source.contains("mod runtime;"));
     assert!(components_source.contains("mod samples;"));
+    assert!(!components_source.contains("#[path = \"components/render.rs\"]"));
     assert!(components_source.contains("pub use runtime::{"));
     assert!(components_source.contains("pub use samples::{"));
     assert!(!components_source.contains("pub mod runtime;"));
@@ -1351,23 +1357,46 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(!samples_source.contains("pub struct ButtonSample"));
     assert!(!samples_source.contains("static TABLE_SAMPLES"));
     for module_path in [
-        "#[path = \"render/families.rs\"]",
-        "#[path = \"render/focus.rs\"]",
-        "#[path = \"render/readouts.rs\"]",
-        "#[path = \"render/sections.rs\"]",
-        "#[path = \"render/support.rs\"]",
+        "mod choice;",
+        "mod families;",
+        "mod focus;",
+        "mod forms;",
+        "mod layout;",
+        "mod metadata;",
+        "mod readouts;",
+        "mod sections;",
+        "mod support;",
     ] {
         assert!(
             render_source.contains(module_path),
-            "render facade should declare owner module `{module_path}`"
+            "render facade should declare standard owner module `{module_path}`"
         );
     }
+    assert!(!render_source.contains("#[path = \"render/"));
+    assert!(render_choice_source.contains("fn render_component_choice_sections"));
+    assert!(render_choice_source.contains("fn render_switch_section"));
+    assert!(render_choice_source.contains("fn render_checkbox_section"));
+    assert!(render_choice_source.contains("fn render_radio_group_section"));
+    assert!(render_choice_source.contains("fn render_toggle_section"));
     assert!(render_families_source.contains("fn component_tree_samples_section"));
     assert!(render_focus_source.contains("fn render_component_focus_mode"));
+    assert!(render_forms_source.contains("fn render_component_text_input_section"));
+    assert!(render_forms_source.contains("fn render_component_textarea_section"));
+    assert!(render_forms_source.contains("fn render_component_field_section"));
+    assert!(render_layout_source.contains("fn render_component_scroll_area_section"));
+    assert!(render_layout_source.contains("fn render_scroll_area_sample"));
+    assert!(render_metadata_source.contains("fn render_component_catalog_section"));
+    assert!(render_metadata_source.contains("fn render_component_gates_section"));
     assert!(render_readouts_source.contains("fn component_table_state_row"));
     assert!(render_sections_source.contains("fn render_components_section"));
     assert!(render_support_source.contains("fn component_gallery_card_shell"));
     assert!(!render_source.contains("fn component_tree_samples_section"));
+    assert!(!render_sections_source.contains("fn render_switch_section"));
+    assert!(!render_sections_source.contains("pages::components::switch_samples"));
+    assert!(!render_sections_source.contains("pages::components::scroll_area_samples"));
+    assert!(!render_sections_source.contains("pages::components::text_input_samples"));
+    assert!(!render_sections_source.contains("pages::components::textarea_samples"));
+    assert!(!render_sections_source.contains("pages::components::field_samples"));
     assert!(!render_source.contains("fn component_table_state_row"));
     assert!(!render_source.contains("fn render_components_section"));
     assert!(!render_source.contains("fn component_gallery_card_shell"));
@@ -1375,8 +1404,11 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(!components_source.contains("pub struct TableSampleRuntimeLog"));
     assert!(!render_source.contains("pub const COMPONENT_CATALOG"));
     assert!(!render_sections_source.contains("pub const COMPONENT_CATALOG"));
+    assert!(!render_metadata_source.contains("pub const COMPONENT_CATALOG"));
+    assert!(!render_sections_source.contains("pages::components::COMPONENT_CATALOG"));
     assert!(
-        render_sections_source.contains("pages::components::COMPONENT_CATALOG"),
+        render_metadata_source.contains("pages::components::COMPONENT_CATALOG")
+            && render_metadata_source.contains("pages::components::COMPONENT_CONFORMANCE_GATES"),
         "rendering should consume catalog metadata instead of owning it"
     );
 }
@@ -1503,11 +1535,7 @@ fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
     let splitter_section = render_sections_source
         .split("component_page_section(\"splitter\")")
         .nth(1)
-        .and_then(|section| {
-            section
-                .split("component_page_section(\"scroll-area\")")
-                .next()
-        })
+        .and_then(|section| section.split("render_component_scroll_area_section").next())
         .expect("expected Splitter section in components render source");
 
     assert!(samples_source.contains(
