@@ -15,6 +15,7 @@ git_commits:
   - bda8321 feat(ui-core): add scalar motion value state
   - 21639e0 docs(ui): record motion value checkpoint
   - c840f2f refactor(ui): gate motion frames and policy
+  - 95db32f refactor(ui): narrow splitter motion surface
 tags:
   - ui-core
   - motion
@@ -69,11 +70,23 @@ Started the UI motion value foundation implementation on `feat/ui-motion-value-f
   -- --exact` checks passed for policy rejection, custom timeline, and resolved continuity preset;
   `cargo check -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-docking` passed without
   warnings after removing premature root/prelude `MotionValue` re-exports.
+- U5 is implemented: `Splitter::motion_preference` now controls committed-layout programmatic
+  motion from the real render path, reduced motion snaps to final state through the same runtime
+  policy gate, and panel identity/count changes are tested as immediate because insert/remove
+  transition descriptors are not yet executed by the GPUI adapter. The component default public
+  surface no longer re-exports Splitter transition descriptors; core keeps the lower-level split
+  module vocabulary for future renderer-neutral work without promising component behavior.
+- U5 verification: `cargo nextest run -p open-gpui-ui-components
+  runtime_panel_identity_changes_sync_immediately --no-fail-fast` passed; `cargo test -p
+  open-gpui-ui-components splitter::tests::runtime --lib` passed 6 tests; focused public surface
+  method/export/docs tests passed; `cargo check -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-docking` passed without warnings.
 
 # Next Action
 
-Implement U5 from the plan: decide whether `SplitterLayoutTransition` remains public and, if so,
-wire or narrow it honestly against the real Splitter runtime and public API inventory.
+Implement U6 from the plan: align Docking transitions with the explicit model/policy/projection
+boundary and remove any remaining path that treats projection-only geometry or old bounds
+interpolation as the release authority.
 
 # Citations
 

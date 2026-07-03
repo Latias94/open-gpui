@@ -24,6 +24,11 @@ status: active
   `feat/ui-motion-value-foundation`. `MotionFrameDemand` now reports `UpdateRender`, Splitter
   programmatic motion validates committed-layout models before scheduling, and Docking transition
   execution records the policy report for the resolved continuity model.
+- 2026-07-04: Narrowed the Splitter motion public surface on
+  `feat/ui-motion-value-foundation`. `Splitter::motion_preference` now drives the real render-path
+  committed-layout motion policy, panel identity/count changes are explicitly immediate, and
+  Splitter transition descriptors were removed from component default exports until the GPUI adapter
+  executes insert/remove/collapse/expand transitions.
 - 2026-07-04: Added command keybinding conflict reporting on
   `feat/command-keybinding-conflicts`. `CommandKeyBindingProjection` now reports conservative
   same-context shortcut conflicts, and `CommandKeyBindingInstallReport` summarizes append-only
