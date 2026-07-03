@@ -30,9 +30,9 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::linux::{Globals, Output, WaylandClientStatePtr, get_window};
 use open_gpui::{
-    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, GpuSpecs, Modifiers, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, GpuSpecs, Modifiers,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
     WindowDecorations, WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px,
     size,
@@ -116,6 +116,7 @@ pub struct WaylandWindowState {
     handle: AnyWindowHandle,
     active: bool,
     hovered: bool,
+    cursor_style: CursorStyle,
     pub(crate) force_render_after_recovery: bool,
     renderer_presented: bool,
     in_progress_configure: Option<InProgressConfigure>,
@@ -394,6 +395,7 @@ impl WaylandWindowState {
             handle,
             active: false,
             hovered: false,
+            cursor_style: CursorStyle::Arrow,
             force_render_after_recovery: false,
             renderer_presented: false,
             in_progress_window_controls: None,
@@ -582,6 +584,14 @@ impl WaylandWindowStatePtr {
     pub fn is_blocked(&self) -> bool {
         let state = self.state.borrow();
         !state.children.is_empty()
+    }
+
+    pub fn cursor_style(&self) -> CursorStyle {
+        self.state.borrow().cursor_style
+    }
+
+    pub fn set_cursor_style(&self, style: CursorStyle) {
+        self.state.borrow_mut().cursor_style = style;
     }
 
     pub fn frame(&self) {
@@ -1239,6 +1249,12 @@ impl PlatformWindow for WaylandWindow {
             .borrow()
             .mouse_location
             .unwrap_or_default()
+    }
+
+    fn set_cursor_style(&self, style: CursorStyle) {
+        self.0.set_cursor_style(style);
+        let client = self.borrow().client.clone();
+        client.set_cursor_style_for_window(&self.0, style);
     }
 
     fn modifiers(&self) -> Modifiers {

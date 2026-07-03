@@ -898,6 +898,10 @@ impl Frame {
     }
 
     pub(crate) fn cursor_style(&self, window: &Window) -> Option<CursorStyle> {
+        if !window.mouse_in_window {
+            return None;
+        }
+
         self.cursor_styles
             .iter()
             .rev()
@@ -999,6 +1003,7 @@ pub struct Window {
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
+    mouse_in_window: bool,
     mouse_hit_test: HitTest,
     modifiers: Modifiers,
     capslock: Capslock,
@@ -1575,8 +1580,12 @@ impl Window {
             let mut cx = cx.to_async();
             move |active| {
                 handle
-                    .update(&mut cx, |_, window, _| {
+                    .update(&mut cx, |_, window, cx| {
                         window.hovered.set(active);
+                        window.mouse_in_window = active;
+                        if !active {
+                            window.reset_cursor_style(cx);
+                        }
                         window.refresh();
                     })
                     .log_err();
@@ -1697,6 +1706,7 @@ impl Window {
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
             mouse_position,
+            mouse_in_window: hovered.get(),
             mouse_hit_test: HitTest::default(),
             modifiers,
             capslock,
@@ -2552,6 +2562,11 @@ impl Window {
     /// The position of the mouse relative to the window.
     pub fn mouse_position(&self) -> Point<Pixels> {
         self.mouse_position
+    }
+
+    /// Whether the mouse is currently inside this window according to the last platform input.
+    pub fn is_mouse_in_window(&self) -> bool {
+        self.mouse_in_window
     }
 
     /// Captures the pointer for the given hitbox. While captured, all mouse move and mouse up
@@ -4410,15 +4425,12 @@ impl Window {
         subscription
     }
 
-    fn reset_cursor_style(&self, cx: &mut App) {
-        // Set the cursor only if we're the active window.
-        if self.is_window_hovered() {
-            let style = self
-                .rendered_frame
-                .cursor_style(self)
-                .unwrap_or(CursorStyle::Arrow);
-            cx.platform.set_cursor_style(style);
-        }
+    fn reset_cursor_style(&self, _cx: &mut App) {
+        let style = self
+            .rendered_frame
+            .cursor_style(self)
+            .unwrap_or(CursorStyle::Arrow);
+        self.platform_window.set_cursor_style(style);
     }
 
     /// Dispatch a given keystroke as though the user had typed it.
@@ -4492,16 +4504,19 @@ impl Window {
             // API for the mouse position can only occur on the main thread.
             PlatformInput::MouseMove(mouse_move) => {
                 self.mouse_position = mouse_move.position;
+                self.mouse_in_window = true;
                 self.modifiers = mouse_move.modifiers;
                 PlatformInput::MouseMove(mouse_move)
             }
             PlatformInput::MouseDown(mouse_down) => {
                 self.mouse_position = mouse_down.position;
+                self.mouse_in_window = true;
                 self.modifiers = mouse_down.modifiers;
                 PlatformInput::MouseDown(mouse_down)
             }
             PlatformInput::MouseUp(mouse_up) => {
                 self.mouse_position = mouse_up.position;
+                self.mouse_in_window = true;
                 self.modifiers = mouse_up.modifiers;
                 PlatformInput::MouseUp(mouse_up)
             }
@@ -4509,6 +4524,8 @@ impl Window {
                 PlatformInput::MousePressure(mouse_pressure)
             }
             PlatformInput::MouseExited(mouse_exited) => {
+                self.mouse_position = mouse_exited.position;
+                self.mouse_in_window = false;
                 self.modifiers = mouse_exited.modifiers;
                 PlatformInput::MouseExited(mouse_exited)
             }
@@ -4519,11 +4536,13 @@ impl Window {
             }
             PlatformInput::ScrollWheel(scroll_wheel) => {
                 self.mouse_position = scroll_wheel.position;
+                self.mouse_in_window = true;
                 self.modifiers = scroll_wheel.modifiers;
                 PlatformInput::ScrollWheel(scroll_wheel)
             }
             PlatformInput::Pinch(pinch) => {
                 self.mouse_position = pinch.position;
+                self.mouse_in_window = true;
                 self.modifiers = pinch.modifiers;
                 PlatformInput::Pinch(pinch)
             }
@@ -4532,6 +4551,7 @@ impl Window {
             PlatformInput::FileDrop(file_drop) => match file_drop {
                 FileDropEvent::Entered { position, paths } => {
                     self.mouse_position = position;
+                    self.mouse_in_window = true;
                     if cx.active_drag.is_none() {
                         cx.active_drag = Some(AnyDrag {
                             value: Arc::new(paths.clone()),
@@ -4548,6 +4568,7 @@ impl Window {
                 }
                 FileDropEvent::Pending { position } => {
                     self.mouse_position = position;
+                    self.mouse_in_window = true;
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
                         pressed_button: Some(MouseButton::Left),
@@ -4557,6 +4578,7 @@ impl Window {
                 FileDropEvent::Submit { position } => {
                     cx.activate(true);
                     self.mouse_position = position;
+                    self.mouse_in_window = true;
                     PlatformInput::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,
                         position,
@@ -4565,6 +4587,7 @@ impl Window {
                     })
                 }
                 FileDropEvent::Exited => {
+                    self.mouse_in_window = false;
                     cx.active_drag.take();
                     PlatformInput::FileDrop(FileDropEvent::Exited)
                 }
@@ -4595,8 +4618,13 @@ impl Window {
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
-        let hit_test = self.rendered_frame.hit_test(self.mouse_position());
-        if hit_test != self.mouse_hit_test {
+        let exited_window = event.is::<crate::MouseExitEvent>();
+        let hit_test = if exited_window {
+            HitTest::default()
+        } else {
+            self.rendered_frame.hit_test(self.mouse_position())
+        };
+        if exited_window || hit_test != self.mouse_hit_test {
             self.mouse_hit_test = hit_test;
             self.reset_cursor_style(cx);
         }

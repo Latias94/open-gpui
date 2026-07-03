@@ -61,8 +61,6 @@ pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
     menus: RefCell<Vec<OwnedMenu>>,
     jump_list: RefCell<JumpList>,
-    // NOTE: standard cursor handles don't need to close.
-    pub(crate) current_cursor: Cell<Option<HCURSOR>>,
     /// Shared with each window so `WM_SETCURSOR` can read it directly.
     pub(crate) cursor_visible: Arc<AtomicBool>,
     directx_devices: RefCell<Option<DirectXDevices>>,
@@ -83,12 +81,9 @@ impl WindowsPlatformState {
     fn new(directx_devices: Option<DirectXDevices>) -> Self {
         let callbacks = PlatformCallbacks::default();
         let jump_list = JumpList::new();
-        let current_cursor = load_cursor(CursorStyle::Arrow);
-
         Self {
             callbacks,
             jump_list: RefCell::new(jump_list),
-            current_cursor: Cell::new(current_cursor),
             cursor_visible: Arc::new(AtomicBool::new(true)),
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
@@ -207,21 +202,11 @@ impl WindowsPlatform {
             .and_then(|hwnd| window_from_hwnd(hwnd.as_raw()))
     }
 
-    #[inline]
-    fn post_message(&self, message: u32, wparam: WPARAM, lparam: LPARAM) {
-        self.raw_window_handles
-            .read()
-            .iter()
-            .for_each(|handle| unsafe {
-                PostMessageW(Some(handle.as_raw()), message, wparam, lparam).log_err();
-            });
-    }
-
     fn generate_creation_info(&self) -> WindowCreationInfo {
         WindowCreationInfo {
             icon: self.icon,
             executor: self.foreground_executor.clone(),
-            current_cursor: self.inner.state.current_cursor.get(),
+            current_cursor: load_cursor(CursorStyle::Arrow),
             cursor_visible: self.inner.state.cursor_visible.clone(),
             drop_target_helper: self.drop_target_helper.clone().unwrap(),
             validation_number: self.inner.validation_number,
@@ -711,18 +696,6 @@ impl Platform for WindowsPlatform {
     // todo(windows)
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
         anyhow::bail!("not yet implemented");
-    }
-
-    fn set_cursor_style(&self, style: CursorStyle) {
-        let hcursor = load_cursor(style);
-        if self.inner.state.current_cursor.get().map(|c| c.0) != hcursor.map(|c| c.0) {
-            self.post_message(
-                WM_GPUI_CURSOR_STYLE_CHANGED,
-                WPARAM(0),
-                LPARAM(hcursor.map_or(0, |c| c.0 as isize)),
-            );
-            self.inner.state.current_cursor.set(hcursor);
-        }
     }
 
     fn hide_cursor_until_mouse_moves(&self) {

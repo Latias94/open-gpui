@@ -6,8 +6,8 @@ use open_gpui_util::ResultExt;
 
 use crate::linux::{LinuxClient, LinuxCommon, LinuxKeyboardLayout};
 use open_gpui::{
-    AnyWindowHandle, CursorStyle, DisplayId, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformWindow, WindowParams,
+    AnyWindowHandle, DisplayId, PlatformDisplay, PlatformKeyboardLayout, PlatformWindow,
+    WindowParams,
 };
 
 pub struct HeadlessClientState {
@@ -97,8 +97,6 @@ impl LinuxClient for HeadlessClient {
     fn compositor_name(&self) -> &'static str {
         "headless"
     }
-
-    fn set_cursor_style(&self, _style: CursorStyle) {}
 
     fn open_uri(&self, _uri: &str) {}
 

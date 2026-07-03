@@ -312,33 +312,9 @@ pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -
     )
 }
 
-/// Stores the cursor style on the active GPUI window and invalidates its cursor rects.
-///
-/// # Safety
-///
-/// This function is not thread safe. Callers must ensure this is called on the AppKit main
-/// thread because it reads the active AppKit window and updates GPUI window state associated
-/// with Objective-C objects.
-pub(crate) unsafe fn set_active_window_cursor_style(style: CursorStyle) {
-    // SAFETY: The caller guarantees AppKit main-thread access. `is_gpui_window` ensures the
-    // window has our WINDOW_STATE_IVAR before reading it.
+unsafe fn set_native_window_cursor_style(native_window: id, style: CursorStyle) {
     unsafe {
-        let app = NSApplication::sharedApplication(nil);
-        let key_window: id = msg_send![app, keyWindow];
-        let main_window: id = msg_send![app, mainWindow];
-        let active_window = if !key_window.is_null() && is_gpui_window(key_window) {
-            Some(key_window)
-        } else if !main_window.is_null() && is_gpui_window(main_window) {
-            Some(main_window)
-        } else {
-            None
-        };
-
-        let Some(active_window) = active_window else {
-            return;
-        };
-
-        let window_state = get_window_state(&*active_window);
+        let window_state = get_window_state(&*native_window);
         let mut window_state = window_state.lock();
         if window_state.cursor_style != style {
             window_state.cursor_style = style;
@@ -347,6 +323,42 @@ pub(crate) unsafe fn set_active_window_cursor_style(style: CursorStyle) {
                 invalidateCursorRectsForView: window_state.native_view.as_ptr()
             ];
         }
+    }
+}
+
+/// Returns the native GPUI window under the mouse, matching the public hovered-window semantics.
+///
+/// The returned Objective-C object is not retained. It must only be used synchronously on the
+/// AppKit main thread.
+unsafe fn hovered_gpui_native_window() -> Option<id> {
+    unsafe {
+        let mouse_location = NSEvent::mouseLocation(nil);
+        let app = NSApplication::sharedApplication(nil);
+        let windows: id = msg_send![app, orderedWindows];
+        let count: NSUInteger = msg_send![windows, count];
+        for i in 0..count {
+            let window: id = msg_send![windows, objectAtIndex: i];
+            let visible = window.isVisible() == YES;
+            let miniaturized: BOOL = msg_send![window, isMiniaturized];
+            if !visible || miniaturized == YES {
+                continue;
+            }
+
+            let frame = NSWindow::frame(window);
+            if !ns_rect_contains_point(frame, mouse_location) {
+                continue;
+            }
+
+            if !is_gpui_window(window) {
+                return None;
+            }
+
+            let window_state = get_window_state(&*window);
+            if window_state.lock().accepts_pointer_input {
+                return Some(window);
+            }
+        }
+        None
     }
 }
 
@@ -1129,33 +1141,7 @@ impl MacWindow {
 
     pub fn hovered_window() -> Option<AnyWindowHandle> {
         unsafe {
-            let mouse_location = NSEvent::mouseLocation(nil);
-            let app = NSApplication::sharedApplication(nil);
-            let windows: id = msg_send![app, orderedWindows];
-            let count: NSUInteger = msg_send![windows, count];
-            for i in 0..count {
-                let window: id = msg_send![windows, objectAtIndex:i];
-                let visible = window.isVisible() == YES;
-                let miniaturized: BOOL = msg_send![window, isMiniaturized];
-                if !visible || miniaturized == YES {
-                    continue;
-                }
-                let frame = NSWindow::frame(window);
-                if !ns_rect_contains_point(frame, mouse_location) {
-                    continue;
-                }
-
-                if !is_gpui_window(window) {
-                    return None;
-                }
-
-                let window_state = get_window_state(&*window);
-                let state = window_state.lock();
-                if state.accepts_pointer_input {
-                    return Some(state.handle);
-                }
-            }
-            None
+            hovered_gpui_native_window().map(|window| get_window_state(&*window).lock().handle)
         }
     }
 
@@ -1406,6 +1392,13 @@ impl PlatformWindow for MacWindow {
                 .mouseLocationOutsideOfEventStream()
         };
         convert_mouse_position(position, self.content_size().height)
+    }
+
+    fn set_cursor_style(&self, style: CursorStyle) {
+        let native_window = self.0.lock().native_window;
+        unsafe {
+            set_native_window_cursor_style(native_window, style);
+        }
     }
 
     fn modifiers(&self) -> Modifiers {

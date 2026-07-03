@@ -327,8 +327,6 @@ pub trait Platform: 'static {
     fn app_path(&self) -> Result<PathBuf>;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
 
-    fn set_cursor_style(&self, style: CursorStyle);
-
     /// Hides the mouse cursor until the user moves the mouse over one of
     /// this application's windows.
     fn hide_cursor_until_mouse_moves(&self);
@@ -740,6 +738,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn appearance(&self) -> WindowAppearance;
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn mouse_position(&self) -> Point<Pixels>;
+    fn set_cursor_style(&self, style: CursorStyle);
     fn modifiers(&self) -> Modifiers;
     fn capslock(&self) -> Capslock;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);

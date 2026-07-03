@@ -7,9 +7,9 @@
 
 use crate::ScreenCaptureSource;
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor, Keymap,
-    Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    AnyWindowHandle, BackgroundExecutor, ClipboardItem, ForegroundExecutor, Keymap, Menu, MenuItem,
+    MouseButton, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformHoveredWindow,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformViewportCapabilities, PlatformWindow, Task, TestDispatcher, WindowAppearance,
     WindowParams,
 };
@@ -213,10 +213,6 @@ impl Platform for VisualTestPlatform {
 
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         self.platform.path_for_auxiliary_executable(name)
-    }
-
-    fn set_cursor_style(&self, style: CursorStyle) {
-        self.platform.set_cursor_style(style)
     }
 
     fn hide_cursor_until_mouse_moves(&self) {
