@@ -152,6 +152,11 @@ verified_by:
   an old async response arrives after a newer query. Request ids are not reused across
   unregister/re-register cycles. Provider status now carries the producing request id and query for
   gallery/readout contracts.
+- Done on `feat/command-provider-refresh-controller`: `CommandProviderRefreshController` is the
+  reusable provider-backed command palette query pipeline. It owns query-change detection, optional
+  loading status, registered-provider refresh, async response application, stale-response handling,
+  provider status capture, and `CommandRegistrySnapshot` projection. The gallery `provider-search`
+  sample now uses this controller instead of hand-writing begin/apply/search calls.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default

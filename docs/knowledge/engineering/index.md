@@ -21,6 +21,8 @@
 * [Open GPUI command provider gallery verification](verification/open-gpui-command-provider-gallery-20260703.md) - Verification evidence for provider-backed command gallery contracts.
 * [Open GPUI command provider lifecycle](progress/2026-07-03-open-gpui-command-provider-lifecycle.md) - Center-issued provider request ids, lifecycle-bound responses, stale-response outcomes, and provider status query metadata.
 * [Open GPUI command provider lifecycle verification](verification/open-gpui-command-provider-lifecycle-20260703.md) - Verification evidence for provider lifecycle, stale response handling, public exports, and gallery request metadata.
+* [Open GPUI command provider refresh controller](progress/2026-07-03-open-gpui-command-provider-refresh-controller.md) - Reusable provider-backed command palette query/loading/response/snapshot pipeline.
+* [Open GPUI command provider refresh controller verification](verification/open-gpui-command-provider-refresh-controller-20260703.md) - Verification evidence for refresh controller, public exports, and gallery migration.
 * [Native UI hybrid registry architecture planning](progress/2026-07-02-native-ui-hybrid-registry-architecture-plan.md) - Superseded historical plan for the removed hybrid registry MVP.
 * [Native UI hybrid registry implementation](progress/2026-07-02-native-ui-hybrid-registry-implementation.md) - Superseded implementation history for the removed registry manifest, recipes, artifacts, and scan.
 * [Native UI hybrid registry implementation verification](verification/native-ui-hybrid-registry-implementation-20260702.md) - Superseded verification evidence for the removed hybrid registry work.

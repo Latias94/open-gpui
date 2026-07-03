@@ -267,6 +267,19 @@ impl CommandCenter {
         request
     }
 
+    /// Produces a response from one registered provider for an existing request.
+    pub fn provider_response_for_request(
+        &self,
+        provider_id: impl Into<CommandProviderId>,
+        request: &CommandProviderRequest,
+    ) -> Option<CommandProviderResponse> {
+        let provider_id = provider_id.into();
+        self.providers
+            .iter()
+            .find(|entry| entry.provider_id == provider_id)
+            .map(|entry| entry.provider.provide_commands(request))
+    }
+
     /// Refreshes one registered provider for a query and applies its response.
     pub fn refresh_provider(
         &mut self,

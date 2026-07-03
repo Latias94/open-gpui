@@ -122,6 +122,10 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_provider_outcome.stale_response();
     let _root_provider_status: &root::CommandProviderStatus =
         root_provider_outcome.status().unwrap();
+    let root_provider_controller = root::CommandProviderRefreshController::new("root-provider")
+        .with_loading_message("Loading");
+    let _root_provider_projection: root::CommandProviderRefreshProjection =
+        root_provider_controller.snapshot(&root_command_center);
     let _root_provider_state = root::CommandProviderState::Ready;
     assert_root_provider(
         &(root_provider_fn as fn(&root::CommandProviderRequest) -> root::CommandProviderResponse),
@@ -271,6 +275,11 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_provider_outcome.stale_response();
     let _prelude_provider_status: &prelude::CommandProviderStatus =
         prelude_provider_outcome.status().unwrap();
+    let prelude_provider_controller =
+        prelude::CommandProviderRefreshController::new("prelude-provider")
+            .with_loading_message("Loading");
+    let _prelude_provider_projection: prelude::CommandProviderRefreshProjection =
+        prelude_provider_controller.snapshot(&prelude_command_center);
     let _prelude_provider_state = prelude::CommandProviderState::Loading;
     assert_prelude_provider(
         &(prelude_provider_fn

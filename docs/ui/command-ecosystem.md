@@ -96,8 +96,8 @@ their own async task system.
 
 ```rust
 use open_gpui_command::{
-    CommandContribution, CommandDescriptor, CommandProviderApplyOutcome, CommandProviderResponse,
-    CommandProviderSource,
+    CommandContribution, CommandDescriptor, CommandProviderApplyOutcome,
+    CommandProviderRefreshController, CommandProviderResponse, CommandProviderSource,
 };
 
 let registration = center.register_provider("recent-files", |request| {
@@ -136,6 +136,21 @@ match center.apply_provider_response_for_request("search-index", &request, respo
         // A newer query started first; ignore this response.
     }
 }
+```
+
+For reusable command-palette query pipelines, use `CommandProviderRefreshController` to connect
+query changes, optional loading status, response application, stale-response handling, and registry
+snapshot projection:
+
+```rust
+let mut controller =
+    CommandProviderRefreshController::new("recent-files").with_loading_message("Searching");
+
+let projection = controller
+    .refresh_provider(&mut center, "readme")
+    .expect("provider is registered")?;
+let registry_snapshot = projection.snapshot();
+let status = projection.provider_status();
 ```
 
 Applying a provider response atomically replaces that provider's previous dynamic sources. If a new
