@@ -296,14 +296,20 @@ fn host_zoom_command_samples_egress_and_focus_ring_transition(cx: &mut TestAppCo
             .iter()
             .find(|clip| clip.node == left_tabs)
             .expect("zoom egress should clip the pane leaving the zoom target");
+        let previous_left_bounds = previous
+            .pane_for_node(left_tabs)
+            .expect("left pane should be in the previous scene")
+            .bounds;
         assert_eq!(
             leaving.content_bounds,
-            previous
-                .pane_for_node(left_tabs)
-                .expect("left pane should be in the previous scene")
-                .bounds
+            previous_left_bounds
         );
-        assert_eq!(leaving.visible_bounds.size.width, px(100.0));
+        assert!(
+            leaving.visible_bounds.size.width > px(0.0)
+                && leaving.visible_bounds.size.width < previous_left_bounds.size.width,
+            "zoom egress should reveal a partial spring-sampled width, got {:?}",
+            leaving.visible_bounds.size.width
+        );
         assert_eq!(leaving.visible_bounds.origin.x, px(0.0));
     });
 }

@@ -8,7 +8,8 @@ use open_gpui::{
     relative, rgb,
 };
 use open_gpui_ui_core::{
-    MotionModel, MotionPreference, MotionScalarController, MotionSpec, Orientation, Sizable, Size,
+    MotionDuration, MotionModel, MotionPreference, MotionScalarController, MotionSpec,
+    MotionSpringSpec, Orientation, Sizable, Size,
 };
 use std::time::{Duration, Instant};
 
@@ -104,7 +105,7 @@ impl SplitterRuntime {
                 panel_ids,
                 from_fractions,
                 target_fractions,
-                MotionModel::timeline(spec),
+                splitter_motion_model(spec),
             ),
         });
         true
@@ -192,6 +193,14 @@ fn scalar_controller_for_fractions(
         controller.start(panel_id, model, from, to, 0.0, Duration::ZERO);
     }
     controller
+}
+
+fn splitter_motion_model(spec: MotionSpec) -> MotionModel {
+    if spec.is_immediate() || matches!(spec.duration(), MotionDuration::Custom(_)) {
+        MotionModel::timeline(spec)
+    } else {
+        MotionModel::spring(MotionSpringSpec::layout(spec.preference()))
+    }
 }
 
 fn fraction_samples_for_transition(
@@ -564,7 +573,7 @@ mod tests {
             "programmatic splitter change should sample between old and new fractions"
         );
 
-        assert!(!runtime.sync_at(&to, start + Duration::from_millis(220)));
+        assert!(!runtime.sync_at(&to, start + Duration::from_millis(900)));
         assert!(fractions_equal(&runtime.panel_fractions, &[0.6, 0.4]));
         assert!(runtime.transition.is_none());
     }

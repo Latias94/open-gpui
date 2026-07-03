@@ -11,19 +11,19 @@ use crate::{
 };
 use open_gpui::{Bounds, Pixels, Window, point, size};
 use open_gpui_ui_core::{
-    MotionSnapshot, MotionSpec, MotionTimeline, MotionTimelineSample, lerp_rect,
-    motion_source_rect, preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
+    MotionDuration, MotionModel, MotionProjection, MotionScalarTrack, MotionSnapshot, MotionSpec,
+    MotionSpringSample, MotionSpringSpec, motion_source_rect, preferred_motion_edge,
+    retarget_motion_snapshots, reveal_rect_from_edge, ui_point, ui_rect, ui_size,
 };
-#[cfg(test)]
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockTransitionExecution {
     pub(crate) plan: DockTransitionPlan,
     pub(crate) spec: MotionSpec,
     pub(crate) state: DockTransitionExecutionState,
-    timeline: MotionTimeline,
+    track: MotionScalarTrack,
+    started_at: Instant,
     last_sample: Option<DockTransitionSample>,
     #[cfg(test)]
     test_started_at: Option<Duration>,
@@ -126,14 +126,14 @@ impl DockTransitionExecutor {
             plan,
             spec,
             state,
-            timeline: MotionTimeline::new(
-                if state == DockTransitionExecutionState::Immediate {
-                    MotionSpec::immediate()
-                } else {
-                    spec
-                },
-                Instant::now(),
+            track: MotionScalarTrack::start(
+                docking_motion_model(spec, state),
+                0.0,
+                1.0,
+                0.0,
+                Duration::ZERO,
             ),
+            started_at: Instant::now(),
             last_sample: None,
             #[cfg(test)]
             test_started_at: None,
@@ -154,13 +154,22 @@ impl DockTransitionExecutor {
             return Some(sample.clone());
         }
 
-        let sample = sample_execution(execution, execution.timeline.sample(Instant::now()));
+        let sample = sample_execution(
+            execution,
+            execution
+                .track
+                .sample_at(Instant::now().saturating_duration_since(execution.started_at)),
+        );
         execution.last_sample = Some(sample.clone());
         (!sample.complete).then_some(sample)
     }
 
     pub(crate) fn sample(&mut self, window: Option<&Window>) -> Option<DockTransitionSample> {
-        let sample = self.sample_timeline(|execution| execution.timeline.sample(Instant::now()))?;
+        let sample = self.sample_motion(|execution| {
+            execution
+                .track
+                .sample_at(Instant::now().saturating_duration_since(execution.started_at))
+        })?;
         if sample.needs_frame
             && let Some(window) = window
         {
@@ -175,22 +184,19 @@ impl DockTransitionExecutor {
 
     #[cfg(test)]
     pub(crate) fn sample_for_test(&mut self, now: Duration) -> Option<DockTransitionSample> {
-        self.sample_timeline(|execution| {
+        self.sample_motion(|execution| {
             let started_at = *execution.test_started_at.get_or_insert(now);
-            MotionTimeline::sample_elapsed(
-                execution.timeline.spec(),
-                now.saturating_sub(started_at),
-            )
+            execution.track.sample_at(now.saturating_sub(started_at))
         })
     }
 
-    fn sample_timeline(
+    fn sample_motion(
         &mut self,
-        timeline_sample_for: impl FnOnce(&mut DockTransitionExecution) -> MotionTimelineSample,
+        motion_sample_for: impl FnOnce(&mut DockTransitionExecution) -> MotionSpringSample,
     ) -> Option<DockTransitionSample> {
         let execution = self.current.as_mut()?;
-        let timeline_sample = timeline_sample_for(execution);
-        let sample = sample_execution(execution, timeline_sample);
+        let motion_sample = motion_sample_for(execution);
+        let sample = sample_execution(execution, motion_sample);
         execution.last_sample = Some(sample.clone());
         if sample.complete {
             self.current = None;
@@ -201,16 +207,16 @@ impl DockTransitionExecutor {
 
 fn sample_execution(
     execution: &DockTransitionExecution,
-    timeline_sample: MotionTimelineSample,
+    motion_sample: MotionSpringSample,
 ) -> DockTransitionSample {
-    let progress = timeline_sample.progress();
+    let progress = motion_sample.value().clamp(0.0, 1.0);
     let complete = execution.state == DockTransitionExecutionState::Immediate
-        || timeline_sample.reached_final_state();
+        || motion_sample.reached_final_state();
     DockTransitionSample {
         final_scene: execution.plan.final_scene.clone(),
         progress,
         complete,
-        needs_frame: timeline_sample.is_active() && !complete,
+        needs_frame: motion_sample.is_active() && !complete,
         pane_bounds: pane_bounds_samples(&execution.plan, progress),
         pane_clips: execution
             .plan
@@ -230,6 +236,16 @@ fn sample_execution(
             .iter()
             .map(|transition| visual_affordance_sample(transition, progress))
             .collect(),
+    }
+}
+
+fn docking_motion_model(spec: MotionSpec, state: DockTransitionExecutionState) -> MotionModel {
+    if state == DockTransitionExecutionState::Immediate || spec.is_immediate() {
+        MotionModel::timeline(MotionSpec::immediate())
+    } else if matches!(spec.duration(), MotionDuration::Custom(_)) {
+        MotionModel::timeline(spec)
+    } else {
+        MotionModel::spring(MotionSpringSpec::continuity(spec.preference()))
     }
 }
 
@@ -260,7 +276,7 @@ fn pane_visual_bounds(transition: &DockPaneTransition, progress: f32) -> Option<
         DockPaneTransitionKind::Moving
         | DockPaneTransitionKind::Resizing
         | DockPaneTransitionKind::Unchanged => match (transition.from, transition.to) {
-            (Some(from), Some(to)) => Some(lerp_bounds(from, to, progress)),
+            (Some(from), Some(to)) => Some(projected_bounds(from, to, progress)),
             (Some(bounds), None) | (None, Some(bounds)) => Some(bounds),
             (None, None) => None,
         },
@@ -394,7 +410,7 @@ fn divider_sample(transition: &DockDividerTransition, progress: f32) -> DockDivi
         (DockDividerTransitionKind::Appearing, None) => {
             appearing_divider_bounds(transition.to, transition.axis, progress)
         }
-        (_, Some(from)) => lerp_bounds(from, transition.to, progress),
+        (_, Some(from)) => projected_bounds(from, transition.to, progress),
         _ => transition.to,
     };
     DockDividerSample {
@@ -463,10 +479,18 @@ fn appearing_divider_bounds(
     }
 }
 
-fn lerp_bounds(from: Bounds<Pixels>, to: Bounds<Pixels>, progress: f32) -> Bounds<Pixels> {
-    bounds_from_ui_rect(lerp_rect(
-        ui_rect_from_bounds(from),
-        ui_rect_from_bounds(to),
-        progress,
+fn projected_bounds(from: Bounds<Pixels>, to: Bounds<Pixels>, progress: f32) -> Bounds<Pixels> {
+    let sample = MotionProjection::between(ui_rect_from_bounds(from), ui_rect_from_bounds(to))
+        .sample(progress);
+    let target = sample.target_bounds();
+    bounds_from_ui_rect(ui_rect(
+        ui_point(
+            target.origin.x + sample.translation().x,
+            target.origin.y + sample.translation().y,
+        ),
+        ui_size(
+            target.size.width * sample.scale().x(),
+            target.size.height * sample.scale().y(),
+        ),
     ))
 }
