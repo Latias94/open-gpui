@@ -83,6 +83,10 @@ fn public_contract_extraction_blockers_match_allowlist() {
 fn adapter_only_public_surfaces_match_allowlist() {
     let expected = [
         ("focus.rs", "BoxShadow"),
+        ("gpui_adapter.rs", "GpuiCommandAction"),
+        ("gpui_adapter.rs", "GpuiCommandActionMap"),
+        ("gpui_adapter.rs", "command_shortcut_label"),
+        ("gpui_adapter.rs", "command_shortcut_label_from_keymap"),
         ("focus.rs", "focus_ring_shadow"),
         ("focus.rs", "focus_ring_shadow_with_theme"),
         ("overlay.rs", "GpuiOverlayState"),
@@ -102,9 +106,13 @@ fn adapter_only_public_surfaces_match_allowlist() {
         "BoxShadow",
         "Entity<TextInputController>",
         "EntityInputHandler",
+        "GpuiCommandAction",
+        "GpuiCommandActionMap",
         "GpuiOverlayState",
         "ScrollHandle",
         "TextInputController",
+        "command_shortcut_label",
+        "command_shortcut_label_from_keymap",
         "focus_ring_shadow",
         "focus_ring_shadow_with_theme",
     ]);

@@ -223,6 +223,11 @@ adapter owns the `TextInputController`, keyed runtime query/open/selection state
 outside-press and Escape wiring, deferred dialog rendering, concrete focus handles, and scroll
 handles; the renderer-neutral state owns ranking, selection projection, snapshot metadata, and the
 virtualized result render plan.
+The reusable command ecosystem boundary is documented in
+[`docs/ui/command-ecosystem.md`](command-ecosystem.md): `open_gpui` owns action/keymap execution,
+`open_gpui_ui_core` owns command metadata and deterministic registry snapshots, and
+`open_gpui_ui_components::gpui_adapter` owns shortcut projection and `CommandSelection` dispatch
+adapters for GPUI `App` and `Window`.
 `open_gpui_ui_core::CommandDescriptor` is the shared app-command metadata contract for component
 projection. It carries id, label, group, keywords, shortcut, disabled state, caller-owned `when`
 metadata, and app-owned menu path without storing callbacks, dispatch, keybinding resolution, or a

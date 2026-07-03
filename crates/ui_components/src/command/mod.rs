@@ -1,6 +1,7 @@
 //! Command palette component built from search input, grouped command items, and listbox state.
 
 mod descriptor;
+pub(crate) mod gpui_adapter;
 mod model;
 mod render_plan;
 mod runtime;

@@ -6,6 +6,13 @@ status: active
 
 # Log
 
+- 2026-07-03: Continued the `open-gpui-command` ecosystem on
+  `feat/open-gpui-command-ecosystem` through U3-U5. `open_gpui_ui_components::gpui_adapter` now
+  exposes `GpuiCommandAction`, `GpuiCommandActionMap`, keymap/window shortcut projection, and
+  `CommandSelection` dispatch adapters for GPUI `App` and `Window`; the foundation gallery has a
+  registry-backed `registry-dispatch` command sample; and `docs/ui/command-ecosystem.md` records
+  the split between GPUI action/keymap execution, core registry metadata, and component adapter
+  projection.
 - 2026-07-03: Implemented the first `open-gpui-command` ecosystem slice on
   `feat/open-gpui-command-ecosystem`. `open_gpui_ui_core` now owns a deterministic
   `CommandRegistry`, `CommandContribution`, `CommandRegistrySnapshot`, and duplicate-id

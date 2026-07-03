@@ -358,9 +358,15 @@ cargo nextest run -p open-gpui-ui-components command
 cargo nextest run -p open-gpui-ui-core command --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command_descriptors --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command menu --no-fail-fast
+cargo nextest run -p open-gpui-ui-components gpui_adapter --no-fail-fast
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery command
 ```
+
+For the reusable command ecosystem, also keep `docs/ui/command-ecosystem.md` current. It records
+the split between GPUI `Action`/`Keymap` execution, `open_gpui_ui_core::CommandRegistry`
+metadata snapshots, and `open_gpui_ui_components::gpui_adapter::GpuiCommandActionMap` shortcut
+projection plus `CommandSelection` dispatch.
 
 The focused Tabs test renders real tabs,
 preserves the `default_selected` seed on the first frame, rejects disabled tab clicks, keeps manual

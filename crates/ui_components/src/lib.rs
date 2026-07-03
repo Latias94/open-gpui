@@ -74,6 +74,10 @@ pub mod gpui_adapter {
         UiA11yElementExt, gpui_accessible_action_from_ui, gpui_orientation_from_ui,
         gpui_role_from_ui, gpui_toggled_from_ui,
     };
+    pub use crate::command::gpui_adapter::{
+        GpuiCommandAction, GpuiCommandActionMap, command_shortcut_label,
+        command_shortcut_label_from_keymap,
+    };
     pub use crate::focus::{focus_ring_shadow, focus_ring_shadow_with_theme};
     pub use crate::geometry::{gpui_point_from_ui, gpui_px_from_ui, gpui_size_from_ui};
     pub use crate::overlay::{

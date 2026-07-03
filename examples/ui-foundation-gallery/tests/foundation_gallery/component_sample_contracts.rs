@@ -750,6 +750,7 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     let multi = &commands[1].state;
     let virtualized = &commands[2].state;
     let indexed = &commands[3].state;
+    let registry = &commands[4].state;
 
     assert_eq!(framework.open_mode(), ComboboxOpenMode::Controlled);
     assert!(framework.open());
@@ -815,6 +816,20 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
             "archive".to_string(),
         ]
     );
+    assert_eq!(
+        commands[4].dispatched_command_id.as_deref(),
+        Some("workspace.open")
+    );
+    assert_eq!(registry.index_revision(), Some("gallery-registry-v1"));
+    assert_eq!(
+        registry.index_mode(),
+        CommandIndexSnapshotMode::PreRankedFilter
+    );
+    assert_eq!(registry.selected_value(), Some("workspace.open"));
+    assert_eq!(registry.active_value(), Some("workspace.open"));
+    assert_eq!(registry.groups()[0].label(), "Workspace");
+    assert_eq!(registry.items()[0].shortcut(), Some("ctrl-shift-P"));
+    assert_eq!(registry.items()[1].shortcut(), Some("ctrl-S"));
 }
 
 #[test]

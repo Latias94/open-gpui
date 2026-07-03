@@ -1,4 +1,7 @@
 use super::*;
+use open_gpui::{KeyBinding, Keymap, actions};
+use open_gpui_ui_components::gpui_adapter::GpuiCommandActionMap;
+use open_gpui_ui_core::{CommandDescriptor, CommandRegistry};
 
 /// One switch sample in the gallery.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -125,6 +128,8 @@ pub struct CommandSample {
     pub groups: Arc<[CommandGroupDescriptor]>,
     /// Optional caller-owned command index snapshot.
     pub index_snapshot: Option<CommandIndexSnapshot>,
+    /// Command id that the sample dispatch adapter resolves from the active selection.
+    pub dispatched_command_id: Option<String>,
     /// Persistent selected values for multi-select samples.
     pub selected_values: Arc<[String]>,
     /// Estimated visible row count for the result viewport.
@@ -686,8 +691,13 @@ static VIRTUALIZED_COMMAND_ITEMS: LazyLock<Arc<[CommandItemDescriptor]>> = LazyL
         .into()
 });
 
+actions!(
+    gallery_registry_command,
+    [OpenRegistryCommand, SaveRegistryCommand,]
+);
+
 /// Returns command palette samples backed by real component state.
-pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 4] {
+pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 5] {
     let ranked_items: Arc<[CommandItemDescriptor]> = vec![
         CommandItemDescriptor::new("archive", "Archive").keyword("file"),
         CommandItemDescriptor::new("open-file", "Open File").shortcut("Ctrl+O"),
@@ -723,6 +733,37 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 4] {
                 .item(CommandItemDescriptor::new("switch-window", "Switch Window"))
                 .item(CommandItemDescriptor::new("close-window", "Close Window").disabled(true)),
         );
+    let mut command_registry = CommandRegistry::new("gallery-registry-v1");
+    command_registry
+        .register(
+            CommandDescriptor::new("workspace.open", "Open Workspace")
+                .group("Workspace")
+                .keyword("project"),
+        )
+        .unwrap();
+    command_registry
+        .register(
+            CommandDescriptor::new("workspace.save", "Save Workspace")
+                .group("Workspace")
+                .keyword("persist"),
+        )
+        .unwrap();
+    let mut keymap = Keymap::default();
+    keymap.add_bindings([
+        KeyBinding::new("ctrl-p", OpenRegistryCommand, None),
+        KeyBinding::new("ctrl-shift-p", OpenRegistryCommand, None),
+        KeyBinding::new("ctrl-s", SaveRegistryCommand, None),
+    ]);
+    let action_map = GpuiCommandActionMap::new()
+        .action("workspace.open", OpenRegistryCommand)
+        .action("workspace.save", SaveRegistryCommand);
+    let dispatched_command_id = action_map
+        .action_for_command("workspace.open")
+        .map(|action| action.command_id().to_owned())
+        .unwrap();
+    let registry_snapshot = action_map
+        .command_index_snapshot_with_keymap_shortcuts(&command_registry.snapshot(), &keymap)
+        .mode(CommandIndexSnapshotMode::PreRankedFilter);
 
     [
         command_sample_from_local(
@@ -815,6 +856,30 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 4] {
             4,
             tokens,
         ),
+        CommandSample {
+            dispatched_command_id: Some(dispatched_command_id),
+            ..command_sample_from_snapshot(
+                "registry-dispatch",
+                "Registry-backed command palette projects keymap shortcuts and records the dispatched command id.",
+                Size::Small,
+                false,
+                Some(true),
+                false,
+                "Registry commands",
+                "Search registered commands",
+                "workspace",
+                CommandSelectionMode::Single,
+                Some("workspace.open"),
+                Vec::<String>::new(),
+                Some("workspace.open"),
+                registry_snapshot,
+                true,
+                6,
+                None,
+                4,
+                tokens,
+            )
+        },
     ]
 }
 
@@ -970,6 +1035,7 @@ fn command_sample_from_local(
         items,
         groups,
         index_snapshot: None,
+        dispatched_command_id: None,
         selected_values: selected_values.into(),
         viewport_item_count,
         row_height,
@@ -1031,6 +1097,7 @@ fn command_sample_from_snapshot(
         items: Arc::from([]),
         groups: Arc::from([]),
         index_snapshot: Some(snapshot),
+        dispatched_command_id: None,
         selected_values: selected_values.into(),
         viewport_item_count,
         row_height,
