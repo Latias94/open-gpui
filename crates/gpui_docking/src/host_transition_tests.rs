@@ -689,7 +689,7 @@ fn overlay_replacement_keeps_preview_layers_at_current_target_bounds(cx: &mut Te
 }
 
 #[test]
-fn transition_plan_from_route_overlay_describes_source_marker() {
+fn transition_plan_from_route_affordance_describes_source_marker() {
     let tabs = crate::DockNodeId::null();
     let scene = single_pane_scene(tabs, host_bounds(320.0, 200.0));
     let route_preview = DockDropRoutePreview::from_route(
@@ -704,9 +704,13 @@ fn transition_plan_from_route_overlay_describes_source_marker() {
         point(px(24.0), px(48.0)),
     )
     .expect("known cross-window route should produce a source marker");
-    let overlay = DockOverlayScene::from_route_preview(&route_preview);
+    let affordance_scene = DockVisualAffordanceScene::from_route_preview(&route_preview);
 
-    let plan = transition_plan_from_overlay_scene(&scene, &overlay, DockMotionPreference::Animated);
+    let plan = DockTransitionPlan::from_visual_affordance_scene(
+        &scene,
+        &affordance_scene,
+        DockMotionPreference::Animated,
+    );
 
     assert!(plan.pane_transitions.is_empty());
     assert_eq!(plan.overlay_transitions.len(), 1);

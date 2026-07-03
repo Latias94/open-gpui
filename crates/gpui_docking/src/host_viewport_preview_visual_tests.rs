@@ -524,49 +524,6 @@ fn route_preview_descriptor_distinguishes_known_and_rejected_markers() {
 }
 
 #[test]
-fn route_overlay_scene_marks_known_and_rejected_marker_state() {
-    let known = DockDropRoutePreview::from_route(
-        &DockViewportDropRoute::KnownViewport {
-            target: DockViewportTargetHit::new(
-                space("target"),
-                handle(7),
-                point(px(300.0), px(20.0)),
-            ),
-            source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
-        },
-        point(px(40.0), px(50.0)),
-    )
-    .expect("known viewport route should produce a marker");
-    let rejected = DockDropRoutePreview::from_route(
-        &DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled),
-        point(px(12.0), px(34.0)),
-    )
-    .expect("rejected route should produce a marker");
-
-    let known_overlay = DockOverlayScene::from_route_preview(&known);
-    let rejected_overlay = DockOverlayScene::from_route_preview(&rejected);
-
-    assert_eq!(known_overlay.layers.len(), 1);
-    assert_eq!(
-        known_overlay.layers[0].kind,
-        DockOverlayLayerKind::RouteMarker
-    );
-    assert!(
-        known_overlay.layers[0].active,
-        "known viewport route markers should be active source-window affordances"
-    );
-    assert_eq!(rejected_overlay.layers.len(), 1);
-    assert_eq!(
-        rejected_overlay.layers[0].kind,
-        DockOverlayLayerKind::RouteMarker
-    );
-    assert!(
-        !rejected_overlay.layers[0].active,
-        "rejected route markers should remain visible but inactive for diagnostics and accessibility"
-    );
-}
-
-#[test]
 fn visual_affordance_scene_preserves_overlay_layer_scope_state_and_motion_identity() {
     let root = DockNodeId::null();
     let leaf_tabs = DockNodeId::null();

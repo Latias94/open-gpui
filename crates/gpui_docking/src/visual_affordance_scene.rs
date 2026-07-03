@@ -98,7 +98,28 @@ impl DockVisualAffordanceScene {
     }
 
     pub(crate) fn from_route_preview(preview: &DockDropRoutePreview) -> Self {
-        Self::from_overlay_scene(&DockOverlayScene::from_route_preview(preview))
+        Self {
+            space: None,
+            frame_generation: None,
+            layers: vec![DockVisualAffordanceLayer::new(
+                DockVisualAffordanceKind::RouteMarker,
+                preview.bounds,
+                preview.bounds,
+                preview.bounds,
+                None,
+                None,
+                DockVisualLayerScope::RouteSource,
+                if preview.rejected {
+                    DockVisualAffordanceState::Passive
+                } else {
+                    DockVisualAffordanceState::Active
+                },
+                None,
+                None,
+                Some(0),
+                Some("Route to another viewport".to_string()),
+            )],
+        }
     }
 
     pub(crate) fn from_overlay_scene(overlay: &DockOverlayScene) -> Self {
@@ -319,11 +340,6 @@ fn visual_layer_from_overlay_layer(
     layer: &DockOverlayLayer,
 ) -> DockVisualAffordanceLayer {
     let (kind, scope, state) = match layer.kind {
-        DockOverlayLayerKind::RouteMarker => (
-            DockVisualAffordanceKind::RouteMarker,
-            DockVisualLayerScope::RouteSource,
-            DockVisualAffordanceState::from_active(layer.active),
-        ),
         DockOverlayLayerKind::TargetBody => (
             DockVisualAffordanceKind::DropTargetBody,
             DockVisualLayerScope::Local,
@@ -386,7 +402,6 @@ fn preview_scope(layer: &DockOverlayLayer) -> DockVisualLayerScope {
 
 fn accessibility_label_for_overlay_layer(layer: &DockOverlayLayer) -> Option<String> {
     match layer.kind {
-        DockOverlayLayerKind::RouteMarker => Some("Route to another viewport".to_string()),
         DockOverlayLayerKind::TargetBody => Some("Dock target".to_string()),
         DockOverlayLayerKind::GuideBox => layer.zone.map(|zone| format!("Dock {zone:?}")),
         DockOverlayLayerKind::TabInsertion => Some("Insert tab".to_string()),

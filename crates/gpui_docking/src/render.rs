@@ -1167,13 +1167,12 @@ impl DockHost {
         preview: DockDropRoutePreview,
         window: &Window,
     ) -> AnyElement {
-        let overlay_scene = DockOverlayScene::from_route_preview(&preview);
-        let bounds = overlay_scene
+        let affordance_scene = DockVisualAffordanceScene::from_route_preview(&preview);
+        let bounds = affordance_scene
             .layers
             .first()
             .map(|layer| layer.bounds)
             .unwrap_or(preview.bounds);
-        let affordance_scene = DockVisualAffordanceScene::from_overlay_scene(&overlay_scene);
         let overlay_sample =
             self.sync_overlay_transition_for_render(session, &affordance_scene, bounds, window);
         let overlay_opacity = overlay_sample

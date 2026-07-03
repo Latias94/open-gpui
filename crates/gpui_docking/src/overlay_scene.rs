@@ -1,12 +1,14 @@
 use crate::{
     DockNodeId, DropZone,
     drop_preview::{
-        DockDropRoutePreview, DockPreviewDecision, DockPreviewDropBox, DockPreviewLayerKind,
-        DockPreviewScene, DockPreviewTabInsertion,
+        DockPreviewDecision, DockPreviewDropBox, DockPreviewLayerKind, DockPreviewScene,
+        DockPreviewTabInsertion,
     },
 };
 use open_gpui::{Bounds, Pixels};
 
+// Render adapter for concrete overlay drawing and measured payload-tab layout.
+// Semantic consumers should use DockVisualAffordanceScene instead.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockOverlayScene {
     pub(crate) layers: Vec<DockOverlayLayer>,
@@ -41,7 +43,6 @@ pub(crate) struct DockOverlayPayloadTabPlacement {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum DockOverlayLayerKind {
-    RouteMarker,
     TargetBody,
     GuideBox,
     TabInsertion,
@@ -171,23 +172,6 @@ impl DockOverlayScene {
         scene
     }
 
-    pub(crate) fn from_route_preview(preview: &DockDropRoutePreview) -> Self {
-        Self {
-            layers: vec![DockOverlayLayer {
-                kind: DockOverlayLayerKind::RouteMarker,
-                bounds: preview.bounds,
-                target_node: None,
-                zone: None,
-                preview_layer: None,
-                active: !preview.rejected,
-                payload_index: None,
-                payload_title: None,
-                drop_box: None,
-                tab_insertion: None,
-            }],
-        }
-    }
-
     pub(crate) fn apply_payload_tab_layout(&mut self, layout: &DockOverlayPayloadTabLayout) {
         for layer in &mut self.layers {
             match layer.kind {
@@ -211,9 +195,7 @@ impl DockOverlayScene {
                         layer.bounds = bounds;
                     }
                 }
-                DockOverlayLayerKind::RouteMarker
-                | DockOverlayLayerKind::GuideBox
-                | DockOverlayLayerKind::RejectedState => {}
+                DockOverlayLayerKind::GuideBox | DockOverlayLayerKind::RejectedState => {}
             }
         }
     }
