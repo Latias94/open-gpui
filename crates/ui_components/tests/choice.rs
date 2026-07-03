@@ -8,11 +8,11 @@ use open_gpui_ui_components::{
     Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command,
     CommandGroup, CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode,
     CommandItem, CommandItemDescriptor, CommandLoadingState, CommandMatchSource, CommandOpenMode,
-    CommandQueryMode, CommandSelection, CommandSelectionChange, CommandSelectionMode, Listbox,
-    ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
-    ListboxOptionKind, ListboxSelection, ListboxState, ScrollArea, ScrollResetPolicy, Select,
-    SelectOpenMode, SelectSelection, VirtualizerRange, gpui_adapter::init_text_input,
-    listbox_navigation_target,
+    CommandProviderPaletteProjection, CommandQueryMode, CommandSelection, CommandSelectionChange,
+    CommandSelectionMode, Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption,
+    ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState, ScrollArea,
+    ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, VirtualizerRange,
+    gpui_adapter::init_text_input, listbox_navigation_target,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -1656,6 +1656,121 @@ fn command_index_snapshot_loading_coexists_with_visible_and_empty_results() {
         Some("Indexing commands")
     );
     assert_eq!(empty_state.loading().unwrap().progress_percent(), None);
+}
+
+#[test]
+fn command_provider_palette_projection_maps_refresh_projection_to_prefiltered_index() {
+    let mut center = open_gpui_command::CommandCenter::new("provider-center-v1");
+    center.register_provider(
+        "recent-provider",
+        |request: &open_gpui_command::CommandProviderRequest| {
+            open_gpui_command::CommandProviderResponse::ready().source(
+                open_gpui_command::CommandProviderSource::new(
+                    "workspace",
+                    "recent-provider-results",
+                    [
+                        open_gpui_command::CommandContribution::new(
+                            open_gpui_command::CommandDescriptor::new(
+                                format!("provider.open.{}", request.query()),
+                                format!("Open {}", request.query()),
+                            )
+                            .group("Provider")
+                            .keyword("recent"),
+                        ),
+                        open_gpui_command::CommandContribution::new(
+                            open_gpui_command::CommandDescriptor::new(
+                                format!("provider.reveal.{}", request.query()),
+                                format!("Reveal {}", request.query()),
+                            )
+                            .group("Provider")
+                            .keyword("dynamic"),
+                        ),
+                    ],
+                ),
+            )
+        },
+    );
+    let mut controller =
+        open_gpui_command::CommandProviderRefreshController::new("recent-provider")
+            .with_loading_message("Searching provider commands");
+
+    let projection = controller
+        .refresh_provider(&mut center, "alpha")
+        .expect("provider should be registered")
+        .expect("provider response should be valid");
+    let palette_projection = CommandProviderPaletteProjection::from_refresh_projection(&projection);
+
+    assert_eq!(palette_projection.query(), "alpha");
+    assert_eq!(palette_projection.loading_state(), None);
+    assert_eq!(
+        palette_projection.index_snapshot().revision(),
+        "provider-center-v1"
+    );
+    assert_eq!(
+        palette_projection.index_snapshot().snapshot_mode(),
+        CommandIndexSnapshotMode::PreFiltered
+    );
+    assert_eq!(
+        palette_projection
+            .provider_status()
+            .map(|status| (status.query(), status.command_count())),
+        Some((Some("alpha"), 2))
+    );
+
+    let state = Command::new("provider-command", "Provider commands")
+        .provider_refresh_projection(&projection)
+        .selected("provider.open.alpha")
+        .active("provider.open.alpha")
+        .state();
+
+    assert_eq!(state.query(), "alpha");
+    assert_eq!(state.index_revision(), Some("provider-center-v1"));
+    assert_eq!(state.index_mode(), CommandIndexSnapshotMode::PreFiltered);
+    assert_eq!(state.filtered_item_count(), 2);
+    assert_eq!(state.groups()[0].label(), "Provider");
+    assert_eq!(
+        state
+            .group_items(0)
+            .map(|item| (item.value().to_owned(), item.match_source()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("provider.open.alpha".to_string(), None),
+            ("provider.reveal.alpha".to_string(), None),
+        ]
+    );
+}
+
+#[test]
+fn command_provider_palette_projection_carries_loading_status_into_index_snapshot() {
+    let mut center = open_gpui_command::CommandCenter::new("provider-center-v1");
+    let mut controller =
+        open_gpui_command::CommandProviderRefreshController::new("recent-provider")
+            .with_loading_message("Searching provider commands");
+
+    let projection = controller.set_query(&mut center, "alpha").unwrap();
+    let palette_projection = CommandProviderPaletteProjection::from(&projection);
+    let state = Command::new("loading-provider-command", "Provider commands")
+        .provider_refresh_projection(&projection)
+        .state();
+
+    assert_eq!(palette_projection.query(), "alpha");
+    assert_eq!(
+        palette_projection
+            .provider_status()
+            .map(open_gpui_command::CommandProviderStatus::state),
+        Some(open_gpui_command::CommandProviderState::Loading)
+    );
+    assert_eq!(
+        palette_projection
+            .loading_state()
+            .map(CommandLoadingState::message),
+        Some("Searching provider commands")
+    );
+    assert_eq!(
+        state.loading().map(CommandLoadingState::message),
+        Some("Searching provider commands")
+    );
+    assert_eq!(state.index_mode(), CommandIndexSnapshotMode::PreFiltered);
 }
 
 #[test]

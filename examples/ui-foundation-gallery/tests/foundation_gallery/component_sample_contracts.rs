@@ -851,10 +851,7 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
         provider.index_revision(),
         Some("gallery-provider-center-v1")
     );
-    assert_eq!(
-        provider.index_mode(),
-        CommandIndexSnapshotMode::PreRankedFilter
-    );
+    assert_eq!(provider.index_mode(), CommandIndexSnapshotMode::PreFiltered);
     assert_eq!(provider.query(), "alpha");
     assert_eq!(provider.selected_value(), Some("provider.open.alpha"));
     assert_eq!(provider.active_value(), Some("provider.open.alpha"));

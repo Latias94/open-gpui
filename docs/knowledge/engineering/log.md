@@ -6,6 +6,12 @@ status: active
 
 # Log
 
+- 2026-07-03: Added the UI-side command refresh bridge on
+  `feat/command-refresh-ui-bridge`. `CommandProviderPaletteProjection` now adapts
+  `CommandProviderRefreshProjection` into a `PreFiltered` `CommandIndexSnapshot`, loading metadata,
+  and provider-status readout while keeping `open_gpui_command` UI-neutral.
+  `Command::provider_refresh_projection` binds the provider query and snapshot without app-owned
+  snapshot glue, and the gallery `provider-search` sample now consumes the adapter.
 - 2026-07-03: Added `CommandProviderRefreshController` on
   `feat/command-provider-refresh-controller`. The controller starts provider requests when the
   query changes, optionally applies loading status, can refresh registered synchronous providers,

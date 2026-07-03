@@ -673,7 +673,7 @@ fn components_page_samples_expose_component_metadata() {
     );
     assert_eq!(
         commands[5].state.index_mode(),
-        CommandIndexSnapshotMode::PreRankedFilter
+        CommandIndexSnapshotMode::PreFiltered
     );
     let provider_status = commands[5]
         .provider_status
