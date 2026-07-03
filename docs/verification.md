@@ -391,8 +391,10 @@ registry sources, explicit `CommandSourceHandle`/`CommandProviderHandle` unregis
 the `CommandProviderRefreshController` query/loading/response/snapshot pipeline. The command crate
 also covers `CommandKeyBindingRegistry`, which lets app/plugin sources contribute command-id keyed
 shortcut dictionaries, projects valid entries into concrete GPUI `KeyBinding` values, preserves
-GPUI chord and key-context predicate semantics, and reports missing-action or parse diagnostics
-without panicking.
+GPUI chord and key-context predicate semantics, reports missing-action or parse diagnostics without
+panicking, reports same-context command shortcut conflicts, and returns an install report when
+app shells append projected bindings into a GPUI keymap. Conflict coverage includes global
+no-context bindings that overlap concrete context bindings under GPUI runtime precedence rules.
 The UI component command tests now also cover `CommandPaletteProjection`, which adapts a
 `CommandCenter` query/keymap projection into a `PreFiltered` `CommandIndexSnapshot`, provider
 statuses, and shortcut diagnostics; `CommandPaletteController`, which coordinates palette query
@@ -410,6 +412,7 @@ Run the focused proof with:
 cargo nextest run -p open-gpui-ui-components command
 cargo nextest run -p open-gpui-ui-components command_palette_controller --no-fail-fast
 cargo nextest run -p open-gpui-command --no-fail-fast
+cargo nextest run -p open-gpui-command center_reports_command_key_binding_conflicts_and_install_report center_reports_global_key_binding_context_conflicts --no-fail-fast
 cargo nextest run -p open-gpui-command center_projects_command_key_bindings_into_gpui_keymap center_reports_command_key_binding_projection_diagnostics --no-fail-fast
 cargo nextest run -p open-gpui-command center_exposes_query_history_navigation memory_history_promotes_duplicate_queries memory_history_navigates_recent_queries_with_prefix --no-fail-fast
 cargo nextest run -p open-gpui-command context_stack keymap_shortcut_projection_can_respect_context_stack center_context_stack_drives_scopes_keymap_and_provider_requests --no-fail-fast

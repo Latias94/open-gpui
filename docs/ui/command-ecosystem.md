@@ -26,7 +26,8 @@ and plugin-like command metadata contribution.
 - `CommandKeyBindingRegistry` stores command-id keyed shortcut dictionaries from apps or plugins
   and projects them into concrete GPUI `KeyBinding` values using `GpuiCommandActionMap`. Missing
   actions and bad GPUI keystroke/context syntax are reported as projection diagnostics instead of
-  panicking.
+  panicking. Same-context shortcut conflicts are reported separately, while valid bindings still
+  install so GPUI remains the runtime precedence authority.
 - `CommandProvider*` types model dynamic command providers and async-friendly provider responses
   without owning a task runtime.
 - `CommandDescriptor` stores id, label, group, keywords, shortcut display text, disabled state,
@@ -178,14 +179,35 @@ let shortcuts = center.register_key_bindings(
 );
 
 let mut keymap = Keymap::default();
-let projection = center.add_key_bindings_to_keymap(&mut keymap);
-assert!(projection.is_clean());
+let report = center.install_key_bindings(&mut keymap);
+assert!(report.is_clean());
+assert_eq!(report.installed_count(), 2);
 
 center.set_key_contexts([KeyContext::parse("Workspace mode=normal")?]);
 let snapshot = center.snapshot_for_keymap(&keymap);
 
 shortcuts.unregister(&mut center);
 ```
+
+The installation APIs (`install_key_bindings`, `install_key_bindings_in_app`, and
+`CommandKeyBindingRegistry::install_into_keymap`) append valid projected bindings to the target
+GPUI keymap and return `CommandKeyBindingInstallReport`. The report exposes skipped-entry
+diagnostics, same-context conflicts, the concrete binding count, and the underlying projection.
+Because GPUI keymaps do not expose source-level removal, unregistering a command key binding source
+updates the registry only; app shells that need live shortcut reload should rebuild their command
+owned keymap layer before reinstalling.
+
+Conflict reports are intentionally conservative. They flag entries that normalize to the same GPUI
+keystroke display string and the same normalized context predicate while targeting different
+command ids. A global binding with no context is also reported against concrete same-keystroke
+context bindings, because GPUI treats no-context bindings as active in focused contexts. Those
+bindings still install, and GPUI's usual precedence rules decide dispatch order: deeper focused
+contexts win first, then later registered bindings win within the same depth.
+
+For compatibility, `CommandKeyBindingProjection::is_clean()` means there were no skipped-entry
+projection errors. Use `has_conflicts()` or `is_strictly_clean()` when conflicts should fail a
+plugin-host validation gate. `CommandKeyBindingInstallReport::is_clean()` is strict because install
+reports are new and meant for startup validation.
 
 This layer does not replace GPUI's key dispatch engine. Chords still use GPUI's whitespace-separated
 keystroke sequences, context/mode checks still use GPUI key binding predicates such as

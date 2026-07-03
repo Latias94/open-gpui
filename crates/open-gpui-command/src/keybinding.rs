@@ -1,10 +1,11 @@
 //! Command-id keyed GPUI key binding registration.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use open_gpui::{DummyKeyboardMapper, KeyBinding, KeyBindingContextPredicate, Keymap};
+use open_gpui::{App, DummyKeyboardMapper, KeyBinding, KeyBindingContextPredicate, Keymap};
 
-use crate::{CommandSourceId, GpuiCommandActionMap};
+use crate::{CommandSourceId, GpuiCommandActionMap, gpui::command_shortcut_label};
 
 /// One command-id keyed key binding contribution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,6 +106,15 @@ pub struct CommandKeyBindingRegistry {
     entries: Vec<CommandKeyBindingEntry>,
 }
 
+struct ProjectedCommandKeyBinding {
+    key_binding: KeyBinding,
+    source_id: CommandSourceId,
+    command_id: String,
+    keystrokes: String,
+    context: Option<String>,
+    index: usize,
+}
+
 impl CommandKeyBindingRegistry {
     /// Creates an empty command key binding registry.
     pub fn new() -> Self {
@@ -142,10 +152,10 @@ impl CommandKeyBindingRegistry {
 
     /// Projects registered command-id bindings into concrete GPUI key bindings.
     pub fn project(&self, actions: &GpuiCommandActionMap) -> CommandKeyBindingProjection {
-        let mut key_bindings = Vec::new();
+        let mut projected = Vec::new();
         let mut diagnostics = Vec::new();
 
-        for entry in &self.entries {
+        for (index, entry) in self.entries.iter().enumerate() {
             let binding = entry.binding();
             let Some(action) = actions.action_for_command(binding.command_id()) else {
                 diagnostics.push(CommandKeyBindingDiagnostic::missing_action(entry));
@@ -165,6 +175,7 @@ impl CommandKeyBindingRegistry {
                 },
                 None => None,
             };
+            let normalized_context = context_predicate.as_ref().map(ToString::to_string);
 
             match KeyBinding::load(
                 binding.keystrokes(),
@@ -174,7 +185,14 @@ impl CommandKeyBindingRegistry {
                 None,
                 &DummyKeyboardMapper,
             ) {
-                Ok(key_binding) => key_bindings.push(key_binding),
+                Ok(key_binding) => projected.push(ProjectedCommandKeyBinding {
+                    keystrokes: command_shortcut_label(&key_binding),
+                    key_binding,
+                    source_id: entry.source_id().clone(),
+                    command_id: binding.command_id().to_owned(),
+                    context: normalized_context,
+                    index,
+                }),
                 Err(error) => diagnostics.push(CommandKeyBindingDiagnostic::invalid_keystrokes(
                     entry,
                     error.to_string(),
@@ -182,7 +200,13 @@ impl CommandKeyBindingRegistry {
             }
         }
 
-        CommandKeyBindingProjection::new(key_bindings, diagnostics)
+        let conflicts = key_binding_conflicts(&projected);
+        let key_bindings = projected
+            .into_iter()
+            .map(|projected| projected.key_binding)
+            .collect();
+
+        CommandKeyBindingProjection::new(key_bindings, diagnostics, conflicts)
     }
 
     /// Adds valid projected GPUI key bindings to an app keymap and returns the projection.
@@ -191,9 +215,163 @@ impl CommandKeyBindingRegistry {
         actions: &GpuiCommandActionMap,
         keymap: &mut Keymap,
     ) -> CommandKeyBindingProjection {
+        self.install_into_keymap(actions, keymap).into_projection()
+    }
+
+    /// Installs valid projected GPUI key bindings into an app keymap.
+    pub fn install_into_keymap(
+        &self,
+        actions: &GpuiCommandActionMap,
+        keymap: &mut Keymap,
+    ) -> CommandKeyBindingInstallReport {
         let projection = self.project(actions);
         keymap.add_bindings(projection.key_bindings().iter().cloned());
-        projection
+        CommandKeyBindingInstallReport::new(projection)
+    }
+
+    /// Installs valid projected GPUI key bindings into the app-level keymap.
+    pub fn install_in_app(
+        &self,
+        actions: &GpuiCommandActionMap,
+        cx: &mut App,
+    ) -> CommandKeyBindingInstallReport {
+        let projection = self.project(actions);
+        cx.bind_keys(projection.key_bindings().iter().cloned());
+        CommandKeyBindingInstallReport::new(projection)
+    }
+}
+
+fn key_binding_conflicts(
+    projected: &[ProjectedCommandKeyBinding],
+) -> Vec<CommandKeyBindingConflict> {
+    let mut groups =
+        BTreeMap::<String, BTreeMap<Option<String>, Vec<&ProjectedCommandKeyBinding>>>::new();
+
+    for binding in projected {
+        groups
+            .entry(binding.keystrokes.clone())
+            .or_default()
+            .entry(binding.context.clone())
+            .or_default()
+            .push(binding);
+    }
+
+    let mut conflicts = Vec::new();
+
+    for (keystrokes, context_groups) in groups {
+        let globals = context_groups.get(&None).cloned().unwrap_or_default();
+        push_conflict_if_needed(&mut conflicts, keystrokes.clone(), None, globals.clone());
+
+        for (context, contextual_bindings) in context_groups {
+            let Some(context) = context else {
+                continue;
+            };
+            let mut candidates = globals.clone();
+            candidates.extend(contextual_bindings);
+            push_conflict_if_needed(
+                &mut conflicts,
+                keystrokes.clone(),
+                Some(context),
+                candidates,
+            );
+        }
+    }
+
+    conflicts
+}
+
+fn push_conflict_if_needed(
+    conflicts: &mut Vec<CommandKeyBindingConflict>,
+    keystrokes: String,
+    context: Option<String>,
+    mut candidates: Vec<&ProjectedCommandKeyBinding>,
+) {
+    if !has_multiple_command_ids(&candidates) {
+        return;
+    }
+
+    candidates.sort_by_key(|binding| binding.index);
+    let entries = candidates
+        .into_iter()
+        .map(|binding| {
+            CommandKeyBindingConflictEntry::new(
+                binding.source_id.clone(),
+                binding.command_id.clone(),
+            )
+        })
+        .collect();
+    conflicts.push(CommandKeyBindingConflict::new(keystrokes, context, entries));
+}
+
+fn has_multiple_command_ids(candidates: &[&ProjectedCommandKeyBinding]) -> bool {
+    let Some(first) = candidates.first() else {
+        return false;
+    };
+    candidates
+        .iter()
+        .any(|candidate| candidate.command_id != first.command_id)
+}
+
+/// One source/command participant in a command key binding conflict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandKeyBindingConflictEntry {
+    source_id: CommandSourceId,
+    command_id: String,
+}
+
+impl CommandKeyBindingConflictEntry {
+    fn new(source_id: CommandSourceId, command_id: String) -> Self {
+        Self {
+            source_id,
+            command_id,
+        }
+    }
+
+    /// Returns the lifecycle source that contributed the conflicting binding.
+    pub const fn source_id(&self) -> &CommandSourceId {
+        &self.source_id
+    }
+
+    /// Returns the command id that owns the conflicting binding.
+    pub fn command_id(&self) -> &str {
+        &self.command_id
+    }
+}
+
+/// A command key binding conflict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandKeyBindingConflict {
+    keystrokes: String,
+    context: Option<String>,
+    entries: Vec<CommandKeyBindingConflictEntry>,
+}
+
+impl CommandKeyBindingConflict {
+    fn new(
+        keystrokes: String,
+        context: Option<String>,
+        entries: Vec<CommandKeyBindingConflictEntry>,
+    ) -> Self {
+        Self {
+            keystrokes,
+            context,
+            entries,
+        }
+    }
+
+    /// Returns the canonical GPUI display string for the conflicting keystrokes.
+    pub fn keystrokes(&self) -> &str {
+        &self.keystrokes
+    }
+
+    /// Returns the normalized GPUI context predicate where the conflict occurs.
+    pub fn context_ref(&self) -> Option<&str> {
+        self.context.as_deref()
+    }
+
+    /// Returns conflicting entries in registration order.
+    pub fn entries(&self) -> &[CommandKeyBindingConflictEntry] {
+        &self.entries
     }
 }
 
@@ -292,13 +470,19 @@ impl CommandKeyBindingDiagnostic {
 pub struct CommandKeyBindingProjection {
     key_bindings: Vec<KeyBinding>,
     diagnostics: Vec<CommandKeyBindingDiagnostic>,
+    conflicts: Vec<CommandKeyBindingConflict>,
 }
 
 impl CommandKeyBindingProjection {
-    fn new(key_bindings: Vec<KeyBinding>, diagnostics: Vec<CommandKeyBindingDiagnostic>) -> Self {
+    fn new(
+        key_bindings: Vec<KeyBinding>,
+        diagnostics: Vec<CommandKeyBindingDiagnostic>,
+        conflicts: Vec<CommandKeyBindingConflict>,
+    ) -> Self {
         Self {
             key_bindings,
             diagnostics,
+            conflicts,
         }
     }
 
@@ -312,8 +496,74 @@ impl CommandKeyBindingProjection {
         &self.diagnostics
     }
 
-    /// Returns whether every registered binding projected successfully.
+    /// Returns same-context command shortcut conflicts.
+    pub fn conflicts(&self) -> &[CommandKeyBindingConflict] {
+        &self.conflicts
+    }
+
+    /// Returns whether every registered binding projected without errors.
     pub fn is_clean(&self) -> bool {
         self.diagnostics.is_empty()
+    }
+
+    /// Returns whether any projected binding conflicts with another command binding.
+    pub fn has_conflicts(&self) -> bool {
+        !self.conflicts.is_empty()
+    }
+
+    /// Returns whether every registered binding projected without errors or conflicts.
+    pub fn is_strictly_clean(&self) -> bool {
+        self.diagnostics.is_empty() && self.conflicts.is_empty()
+    }
+}
+
+/// Result of installing command key bindings into a GPUI keymap.
+#[derive(Debug, Clone)]
+pub struct CommandKeyBindingInstallReport {
+    projection: CommandKeyBindingProjection,
+}
+
+impl CommandKeyBindingInstallReport {
+    fn new(projection: CommandKeyBindingProjection) -> Self {
+        Self { projection }
+    }
+
+    /// Returns the projection that was installed.
+    pub const fn projection(&self) -> &CommandKeyBindingProjection {
+        &self.projection
+    }
+
+    fn into_projection(self) -> CommandKeyBindingProjection {
+        self.projection
+    }
+
+    /// Returns the number of concrete GPUI bindings appended to the target keymap.
+    pub fn installed_count(&self) -> usize {
+        self.projection.key_bindings().len()
+    }
+
+    /// Returns valid GPUI key bindings in registry order.
+    pub fn key_bindings(&self) -> &[KeyBinding] {
+        self.projection.key_bindings()
+    }
+
+    /// Returns diagnostics for skipped bindings.
+    pub fn diagnostics(&self) -> &[CommandKeyBindingDiagnostic] {
+        self.projection.diagnostics()
+    }
+
+    /// Returns same-context command shortcut conflicts.
+    pub fn conflicts(&self) -> &[CommandKeyBindingConflict] {
+        self.projection.conflicts()
+    }
+
+    /// Returns whether any installed binding conflicts with another command binding.
+    pub fn has_conflicts(&self) -> bool {
+        self.projection.has_conflicts()
+    }
+
+    /// Returns whether installation projected without errors or conflicts.
+    pub fn is_clean(&self) -> bool {
+        self.projection.is_strictly_clean()
     }
 }

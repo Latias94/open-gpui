@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-03T23:26:02+08:00
+timestamp: 2026-07-04T00:10:27+08:00
 git_branch: main
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
@@ -84,6 +84,7 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-components command_palette_controller --no-fail-fast
   - cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
   - cargo nextest run -p open-gpui-command center_projects_command_key_bindings_into_gpui_keymap center_reports_command_key_binding_projection_diagnostics --no-fail-fast
+  - cargo nextest run -p open-gpui-command center_reports_command_key_binding_conflicts_and_install_report center_reports_global_key_binding_context_conflicts --no-fail-fast
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_choice_samples_expose_listbox_and_select_contracts --no-fail-fast
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_search_samples_expose_combobox_and_command_contracts --no-fail-fast
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata --no-fail-fast
@@ -208,6 +209,14 @@ verified_by:
   register command-id keyed shortcut dictionaries, project valid entries into GPUI `KeyBinding`
   values, and receive diagnostics for missing actions or invalid GPUI keystroke/context syntax.
   GPUI remains the chord, mode predicate, and focused-window precedence authority.
+- Done on `feat/command-keybinding-conflicts`: command keybinding projections now report
+  same-context and global-vs-context shortcut conflicts through `CommandKeyBindingConflict`, and
+  app shells can use `CommandKeyBindingInstallReport` from `CommandCenter::install_key_bindings` or
+  registry install helpers to inspect append-only GPUI keymap installation count, skipped-entry
+  diagnostics, and conflicts together. `CommandKeyBindingProjection::is_clean()` keeps its
+  diagnostic-only compatibility meaning; strict validation uses `has_conflicts()` or
+  `is_strictly_clean()`. The design deliberately does not claim source-level removal from external
+  GPUI keymaps; plugin hosts should rebuild their command-owned keymap layer before reinstalling.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default

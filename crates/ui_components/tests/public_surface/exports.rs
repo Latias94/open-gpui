@@ -1,5 +1,10 @@
 use super::*;
 
+open_gpui::actions!(
+    public_surface_command_actions,
+    [RootOpen, RootSave, PreludeOpen, PreludeSave]
+);
+
 #[test]
 fn crate_root_and_prelude_exports_remain_explicit() {
     use open_gpui_ui_components::{self as root, prelude};
@@ -114,10 +119,20 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         .unwrap();
     let _root_command_source_registration: root::CommandSourceRegistration =
         root_command_source.clone();
+    root_command_center
+        .register_action("root.open", RootOpen)
+        .register_action("root.save", RootSave);
     let root_key_binding = root::CommandKeyBinding::new("root.open", "ctrl-o").context("Root");
     let mut root_key_binding_registry = root::CommandKeyBindingRegistry::new();
-    let root_key_binding_handle: root::CommandKeyBindingHandle =
-        root_key_binding_registry.register("root-shortcuts", [root_key_binding]);
+    let root_key_binding_handle: root::CommandKeyBindingHandle = root_key_binding_registry
+        .register(
+            "root-shortcuts",
+            [
+                root_key_binding,
+                root::CommandKeyBinding::new("root.save", "ctrl-o").context("Root"),
+                root::CommandKeyBinding::new("root.missing", "ctrl-m"),
+            ],
+        );
     let root_key_binding_entry: &root::CommandKeyBindingEntry =
         &root_key_binding_registry.entries()[0];
     assert_eq!(root_key_binding_entry.binding().command_id(), "root.open");
@@ -127,10 +142,19 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     );
     let root_key_binding_projection: root::CommandKeyBindingProjection =
         root_key_binding_registry.project(root_command_center.actions());
-    let root_key_binding_diagnostic: &root::CommandKeyBindingDiagnostic =
+    let root_key_binding_conflict: &root::CommandKeyBindingConflict =
+        &root_key_binding_projection.conflicts()[0];
+    let root_key_binding_conflict_entry: &root::CommandKeyBindingConflictEntry =
+        &root_key_binding_conflict.entries()[0];
+    assert_eq!(root_key_binding_conflict_entry.command_id(), "root.open");
+    let mut root_keymap = open_gpui::Keymap::default();
+    let root_key_binding_report: root::CommandKeyBindingInstallReport = root_key_binding_registry
+        .install_into_keymap(root_command_center.actions(), &mut root_keymap);
+    assert_eq!(root_key_binding_report.installed_count(), 2);
+    let _root_key_binding_diagnostic: &root::CommandKeyBindingDiagnostic =
         &root_key_binding_projection.diagnostics()[0];
     let _root_key_binding_diagnostic_kind: root::CommandKeyBindingDiagnosticKind =
-        root_key_binding_diagnostic.kind();
+        _root_key_binding_diagnostic.kind();
     fn root_provider_fn(_: &root::CommandProviderRequest) -> root::CommandProviderResponse {
         root::CommandProviderResponse::ready()
     }
@@ -337,11 +361,21 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         .unwrap();
     let _prelude_command_source_registration: prelude::CommandSourceRegistration =
         prelude_command_source.clone();
+    prelude_command_center
+        .register_action("prelude.open", PreludeOpen)
+        .register_action("prelude.save", PreludeSave);
     let prelude_key_binding =
         prelude::CommandKeyBinding::new("prelude.open", "ctrl-o").context("Prelude");
     let mut prelude_key_binding_registry = prelude::CommandKeyBindingRegistry::new();
-    let prelude_key_binding_handle: prelude::CommandKeyBindingHandle =
-        prelude_key_binding_registry.register("prelude-shortcuts", [prelude_key_binding]);
+    let prelude_key_binding_handle: prelude::CommandKeyBindingHandle = prelude_key_binding_registry
+        .register(
+            "prelude-shortcuts",
+            [
+                prelude_key_binding,
+                prelude::CommandKeyBinding::new("prelude.save", "ctrl-o").context("Prelude"),
+                prelude::CommandKeyBinding::new("prelude.missing", "ctrl-m"),
+            ],
+        );
     let prelude_key_binding_entry: &prelude::CommandKeyBindingEntry =
         &prelude_key_binding_registry.entries()[0];
     assert_eq!(
@@ -354,6 +388,19 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     );
     let prelude_key_binding_projection: prelude::CommandKeyBindingProjection =
         prelude_key_binding_registry.project(prelude_command_center.actions());
+    let prelude_key_binding_conflict: &prelude::CommandKeyBindingConflict =
+        &prelude_key_binding_projection.conflicts()[0];
+    let prelude_key_binding_conflict_entry: &prelude::CommandKeyBindingConflictEntry =
+        &prelude_key_binding_conflict.entries()[0];
+    assert_eq!(
+        prelude_key_binding_conflict_entry.command_id(),
+        "prelude.open"
+    );
+    let mut prelude_keymap = open_gpui::Keymap::default();
+    let prelude_key_binding_report: prelude::CommandKeyBindingInstallReport =
+        prelude_key_binding_registry
+            .install_into_keymap(prelude_command_center.actions(), &mut prelude_keymap);
+    assert_eq!(prelude_key_binding_report.installed_count(), 2);
     let prelude_key_binding_diagnostic: &prelude::CommandKeyBindingDiagnostic =
         &prelude_key_binding_projection.diagnostics()[0];
     let _prelude_key_binding_diagnostic_kind: prelude::CommandKeyBindingDiagnosticKind =

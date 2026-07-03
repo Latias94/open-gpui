@@ -6,6 +6,10 @@ status: active
 
 # Log
 
+- 2026-07-04: Added command keybinding conflict reporting on
+  `feat/command-keybinding-conflicts`. `CommandKeyBindingProjection` now reports conservative
+  same-context shortcut conflicts, and `CommandKeyBindingInstallReport` summarizes append-only
+  installation into GPUI keymaps while preserving GPUI as the dispatch precedence authority.
 - 2026-07-03: Added the command keybinding registry on `feat/command-keybinding-registry`.
   `CommandKeyBindingRegistry` lets apps/plugins register command-id keyed shortcut dictionaries and
   project valid entries into GPUI `KeyBinding` values through `CommandCenter`. Invalid entries now
