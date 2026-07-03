@@ -673,7 +673,7 @@ fn preview_proof_summary() -> &'static str {
 }
 
 fn motion_runtime_proof_summary() -> &'static str {
-    "shared-runtime+timeline-state+sampled-progress+retargeted-identity+reduced-motion-final-state"
+    "shared-runtime+timeline-state+spring-sampling+scalar-controller+layout-projection+sampled-progress+retargeted-identity+reduced-motion-final-state+motion-policy+high-frequency-bypass"
 }
 
 fn tear_off_placement_summary(source: Option<&DockViewportTearOffPlacementRecord>) -> &'static str {
@@ -2402,7 +2402,7 @@ mod tests {
         );
         assert_eq!(
             motion_runtime_proof_summary(),
-            "shared-runtime+timeline-state+sampled-progress+retargeted-identity+reduced-motion-final-state"
+            "shared-runtime+timeline-state+spring-sampling+scalar-controller+layout-projection+sampled-progress+retargeted-identity+reduced-motion-final-state+motion-policy+high-frequency-bypass"
         );
         assert_eq!(
             placement_restore_summary(Some(&DockViewportRestoreReadinessRecord {

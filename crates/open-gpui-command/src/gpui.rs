@@ -582,11 +582,25 @@ mod tests {
     #[action(no_json)]
     struct DispatchProbe;
 
+    fn display_shortcut(keystrokes: &str) -> String {
+        command_shortcut_label(&KeyBinding::new(keystrokes, OpenWorkspace, None))
+    }
+
+    fn display_shortcut_opt(keystrokes: &str) -> Option<String> {
+        Some(display_shortcut(keystrokes))
+    }
+
     #[test]
     fn shortcut_label_uses_keybinding_display_text() {
         let binding = KeyBinding::new("ctrl-k ctrl-s", SaveWorkspace, None);
+        let expected = binding
+            .keystrokes()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
 
-        assert_eq!(command_shortcut_label(&binding), "ctrl-K ctrl-S");
+        assert_eq!(command_shortcut_label(&binding), expected);
     }
 
     #[test]
@@ -615,7 +629,10 @@ mod tests {
         assert_eq!(
             shortcuts,
             [
-                ("workspace.open".to_owned(), Some("ctrl-shift-O".to_owned())),
+                (
+                    "workspace.open".to_owned(),
+                    display_shortcut_opt("ctrl-shift-o")
+                ),
                 ("workspace.save".to_owned(), Some("Ctrl+S".to_owned())),
             ]
         );
@@ -653,20 +670,23 @@ mod tests {
         assert_eq!(
             workspace_projected
                 .descriptor("workspace.open")
-                .and_then(CommandDescriptor::shortcut_ref),
-            Some("ctrl-P")
+                .and_then(CommandDescriptor::shortcut_ref)
+                .map(ToOwned::to_owned),
+            display_shortcut_opt("ctrl-p")
         );
         assert_eq!(
             editor_projected
                 .descriptor("workspace.open")
-                .and_then(CommandDescriptor::shortcut_ref),
-            Some("ctrl-E")
+                .and_then(CommandDescriptor::shortcut_ref)
+                .map(ToOwned::to_owned),
+            display_shortcut_opt("ctrl-e")
         );
         assert_eq!(
             editor_projected
                 .descriptor("workspace.save")
-                .and_then(CommandDescriptor::shortcut_ref),
-            Some("ctrl-S")
+                .and_then(CommandDescriptor::shortcut_ref)
+                .map(ToOwned::to_owned),
+            display_shortcut_opt("ctrl-s")
         );
         assert!(
             action_map
@@ -748,7 +768,10 @@ mod tests {
             diagnostics[0].kind(),
             CommandShortcutDiagnosticKind::DuplicateShortcut
         );
-        assert_eq!(diagnostics[0].shortcut(), Some("ctrl-P"));
+        assert_eq!(
+            diagnostics[0].shortcut().map(ToOwned::to_owned),
+            display_shortcut_opt("ctrl-p")
+        );
         assert_eq!(
             diagnostics[0].command_ids(),
             ["workspace.open".to_string(), "workspace.save".to_string()]

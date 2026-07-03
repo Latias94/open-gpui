@@ -15,7 +15,11 @@ pub mod focus;
 pub mod geometry;
 pub mod grid_viewport;
 pub mod motion;
+pub mod motion_controller;
+pub mod motion_policy;
+pub mod motion_projection;
 pub mod motion_runtime;
+pub mod motion_spring;
 pub mod overlay;
 pub mod prelude;
 pub mod sizing;
@@ -39,10 +43,23 @@ pub use geometry::{
 };
 pub use grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d};
 pub use motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
+pub use motion_controller::{
+    MotionFrameDemand, MotionScalarController, MotionScalarControllerSample, MotionScalarTrack,
+    MotionScalarTrackSample,
+};
+pub use motion_policy::{
+    MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
+    MotionPolicyReport, MotionPreviewTargetPolicy, validate_motion_policy,
+};
+pub use motion_projection::{MotionProjection, MotionProjectionSample, MotionProjectionScale};
 pub use motion_runtime::{
     MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionSnapshot, MotionTimeline,
     MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
     preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
+};
+pub use motion_spring::{
+    MotionModel, MotionSpring, MotionSpringPhysics, MotionSpringPreset, MotionSpringSample,
+    MotionSpringSpec,
 };
 pub use overlay::{
     DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,

@@ -7,8 +7,11 @@ use open_gpui::{
     IntoElement, ParentElement, Pixels, Point, Render, RenderOnce, Styled, Window, div, px,
     relative, rgb,
 };
-use open_gpui_ui_core::{MotionPreference, MotionSpec, MotionTimeline, Orientation, Sizable, Size};
-use std::time::Instant;
+use open_gpui_ui_core::{
+    MotionDuration, MotionModel, MotionPreference, MotionScalarController, MotionSpec,
+    MotionSpringSpec, Orientation, Sizable, Size,
+};
+use std::time::{Duration, Instant};
 
 const EPSILON: f32 = 0.000_1;
 
@@ -95,10 +98,15 @@ impl SplitterRuntime {
         self.panel_fractions = from_fractions.clone();
         self.state_fractions = target_fractions.clone();
         self.transition = Some(SplitterRuntimeTransition {
-            panel_ids,
-            from_fractions,
-            to_fractions: target_fractions,
-            timeline: MotionTimeline::new(spec, now),
+            panel_ids: panel_ids.clone(),
+            to_fractions: target_fractions.clone(),
+            started_at: now,
+            controller: scalar_controller_for_fractions(
+                panel_ids,
+                from_fractions,
+                target_fractions,
+                splitter_motion_model(spec),
+            ),
         });
         true
     }
@@ -135,13 +143,11 @@ impl SplitterRuntime {
         let Some(transition) = self.transition.as_ref() else {
             return true;
         };
-        let sample = transition.timeline.sample(now);
-        self.panel_fractions = lerp_fractions(
-            &transition.from_fractions,
-            &transition.to_fractions,
-            sample.progress(),
-        );
-        let complete = sample.reached_final_state();
+        let sample = transition
+            .controller
+            .sample_at(now.saturating_duration_since(transition.started_at));
+        self.panel_fractions = fraction_samples_for_transition(transition, &sample);
+        let complete = !sample.frame_demand().needs_frame();
         if complete {
             self.panel_fractions = transition.to_fractions.clone();
             self.transition = None;
@@ -153,21 +159,19 @@ impl SplitterRuntime {
         let Some(transition) = self.transition.as_ref() else {
             return self.panel_fractions.clone();
         };
-        let progress = transition.timeline.sample(now).progress();
-        lerp_fractions(
-            &transition.from_fractions,
-            &transition.to_fractions,
-            progress,
-        )
+        let sample = transition
+            .controller
+            .sample_at(now.saturating_duration_since(transition.started_at));
+        fraction_samples_for_transition(transition, &sample)
     }
 }
 
 #[derive(Debug, Clone)]
 struct SplitterRuntimeTransition {
     panel_ids: Vec<String>,
-    from_fractions: Vec<f32>,
     to_fractions: Vec<f32>,
-    timeline: MotionTimeline,
+    started_at: Instant,
+    controller: MotionScalarController<String>,
 }
 
 fn fractions_equal(left: &[f32], right: &[f32]) -> bool {
@@ -178,14 +182,41 @@ fn fractions_equal(left: &[f32], right: &[f32]) -> bool {
             .all(|(left, right)| (left - right).abs() <= EPSILON)
 }
 
-fn lerp_fractions(from: &[f32], to: &[f32], progress: f32) -> Vec<f32> {
-    if from.len() != to.len() {
-        return to.to_vec();
+fn scalar_controller_for_fractions(
+    panel_ids: Vec<String>,
+    from_fractions: Vec<f32>,
+    to_fractions: Vec<f32>,
+    model: MotionModel,
+) -> MotionScalarController<String> {
+    let mut controller = MotionScalarController::new();
+    for ((panel_id, from), to) in panel_ids.into_iter().zip(from_fractions).zip(to_fractions) {
+        controller.start(panel_id, model, from, to, 0.0, Duration::ZERO);
     }
-    let progress = progress.clamp(0.0, 1.0);
-    from.iter()
-        .zip(to)
-        .map(|(from, to)| from + ((to - from) * progress))
+    controller
+}
+
+fn splitter_motion_model(spec: MotionSpec) -> MotionModel {
+    if spec.is_immediate() || matches!(spec.duration(), MotionDuration::Custom(_)) {
+        MotionModel::timeline(spec)
+    } else {
+        MotionModel::spring(MotionSpringSpec::layout(spec.preference()))
+    }
+}
+
+fn fraction_samples_for_transition(
+    transition: &SplitterRuntimeTransition,
+    sample: &open_gpui_ui_core::MotionScalarControllerSample<String>,
+) -> Vec<f32> {
+    transition
+        .panel_ids
+        .iter()
+        .zip(&transition.to_fractions)
+        .map(|(panel_id, target)| {
+            sample
+                .track(panel_id)
+                .map(|track| track.sample().value())
+                .unwrap_or(*target)
+        })
         .collect()
 }
 
@@ -505,6 +536,9 @@ fn render_handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use open_gpui_ui_core::{
+        MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue, validate_motion_policy,
+    };
     use std::time::Duration;
 
     fn state(left: f32, right: f32) -> SplitterState {
@@ -539,7 +573,7 @@ mod tests {
             "programmatic splitter change should sample between old and new fractions"
         );
 
-        assert!(!runtime.sync_at(&to, start + Duration::from_millis(220)));
+        assert!(!runtime.sync_at(&to, start + Duration::from_millis(900)));
         assert!(fractions_equal(&runtime.panel_fractions, &[0.6, 0.4]));
         assert!(runtime.transition.is_none());
     }
@@ -592,5 +626,27 @@ mod tests {
         assert!(fractions_equal(&runtime.state_fractions, &[0.6, 0.4]));
         assert!(fractions_equal(&runtime.panel_fractions, &[0.6, 0.4]));
         assert!(runtime.transition.is_none());
+    }
+
+    #[test]
+    fn splitter_motion_policy_preserves_programmatic_motion_and_drag_bypass() {
+        let programmatic = MotionPolicyInput::new(
+            MotionPolicyContext::CommittedLayout,
+            MotionModel::timeline(MotionSpec::committed_layout(MotionPreference::Animated)),
+        )
+        .with_spatial_motion(true)
+        .with_reduced_motion_final_state(true);
+        assert!(validate_motion_policy(programmatic).is_ok());
+
+        let pointer_drag = MotionPolicyInput::new(
+            MotionPolicyContext::PointerDrag,
+            MotionModel::timeline(MotionSpec::committed_layout(MotionPreference::Animated)),
+        )
+        .with_spatial_motion(true)
+        .with_reduced_motion_final_state(true);
+        assert!(
+            validate_motion_policy(pointer_drag)
+                .has_issue(MotionPolicyIssue::SpatialMotionForbidden)
+        );
     }
 }

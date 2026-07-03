@@ -85,7 +85,7 @@ the gates aligned to the shared primitive boundary:
 
 ```sh
 cargo fmt --all -- --check
-cargo nextest run -p open-gpui-ui-core motion split --no-fail-fast
+cargo nextest run -p open-gpui-ui-core motion spring projection policy --no-fail-fast
 cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast
 cargo nextest run -p open-gpui-docking host_presentation_scene_tests host_viewport_preview_visual_tests host_transition_tests host_zoom_focus_tests host_divider_hit_map_tests host_accessibility_tests --no-fail-fast
 cargo check -p open-gpui-docking-native
@@ -130,16 +130,18 @@ and corner hits derive from the shared split hit map, and accessibility descript
 bounds, orientation, selected state, disabled state, and actions.
 
 The shared motion runtime checks additionally prove that `open_gpui_ui_core` owns deterministic
-timeline sampling, terminal state, reduced-motion completion, and stable-identity retarget
-matching. `ui_components::Splitter` uses that runtime for programmatic fraction changes while
-keeping pointer drags immediate. Docking uses the same runtime for transition progress and
-retarget scaffolding while keeping pane, divider, overlay, zoom, focus, tab, route, and viewport
-semantics local. Transition pane clips mount real final-size pane content behind an occlusion mask
-rather than generic placeholder rectangles, overlay preview feedback runs through an
-adapter-owned transition executor with short affordance motion, repeated overlay changes retarget
-from previous overlay bounds, and interrupted zoom/unzoom starts from the current sampled
-geometry. The native runtime panel exposes this as
-`motion proof: shared-runtime+timeline-state+sampled-progress+retargeted-identity+reduced-motion-final-state`.
+timeline sampling, spring sampling, scalar controller frame-demand vocabulary, layout projection
+data, motion policy validation, terminal state, reduced-motion completion, and stable-identity
+retarget matching. `ui_components::Splitter` uses the scalar controller and default layout spring
+for programmatic fraction changes while keeping pointer drags immediate and policy-tested.
+Docking uses the same scalar motion model for transition progress, keeps explicit custom timeline
+specs intact, samples move/resize bounds through renderer-neutral projection data, and keeps pane,
+divider, visual-affordance, zoom, focus, tab, route, and viewport semantics local. Transition pane
+clips mount real final-size pane content behind an occlusion mask rather than generic placeholder
+rectangles, visual-affordance preview geometry stays pinned to the current semantic target,
+adapter-owned transition executors still request GPUI frames, and interrupted zoom/unzoom starts
+from the current sampled geometry. The native runtime panel exposes this as
+`motion proof: shared-runtime+timeline-state+spring-sampling+scalar-controller+layout-projection+sampled-progress+retargeted-identity+reduced-motion-final-state+motion-policy+high-frequency-bypass`.
 The remaining render-measured drop-scene probe is intentionally limited to tab-label facts whose
 bounds depend on text shaping; presentation-scene facts own root, pane, tab bar, empty, and
 floating-title targets.

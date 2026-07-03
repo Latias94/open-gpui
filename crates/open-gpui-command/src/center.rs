@@ -1029,6 +1029,14 @@ mod tests {
     #[action(no_json)]
     struct CenterDispatchProbe;
 
+    fn display_shortcut(keystrokes: &str) -> String {
+        crate::command_shortcut_label(&KeyBinding::new(keystrokes, OpenWorkspace, None))
+    }
+
+    fn display_shortcut_opt(keystrokes: &str) -> Option<String> {
+        Some(display_shortcut(keystrokes))
+    }
+
     #[test]
     fn center_projects_scopes_availability_shortcuts_and_history() {
         let mut center = CommandCenter::new("center-v1");
@@ -1085,7 +1093,10 @@ mod tests {
         assert_eq!(descriptors[0].label(), "Open Editor Workspace");
         assert!(descriptors[0].disabled_state());
         assert_eq!(descriptors[0].disabled_reason_ref(), Some("Editor is busy"));
-        assert_eq!(descriptors[0].shortcut_ref(), Some("ctrl-shift-O"));
+        assert_eq!(
+            descriptors[0].shortcut_ref().map(ToOwned::to_owned),
+            display_shortcut_opt("ctrl-shift-o")
+        );
         assert_eq!(center.projection_diagnostics().len(), 1);
         assert_eq!(
             center.projection_diagnostics()[0].kind(),
@@ -1198,14 +1209,16 @@ mod tests {
         assert_eq!(
             snapshot
                 .descriptor("workspace.open")
-                .and_then(CommandDescriptor::shortcut_ref),
-            Some("ctrl-E")
+                .and_then(CommandDescriptor::shortcut_ref)
+                .map(ToOwned::to_owned),
+            display_shortcut_opt("ctrl-e")
         );
         assert_eq!(
             snapshot
                 .descriptor("workspace.save")
-                .and_then(CommandDescriptor::shortcut_ref),
-            Some("ctrl-S")
+                .and_then(CommandDescriptor::shortcut_ref)
+                .map(ToOwned::to_owned),
+            display_shortcut_opt("ctrl-s")
         );
         assert_eq!(
             center
@@ -1417,7 +1430,7 @@ mod tests {
                 &OpenWorkspace,
                 &[KeyContext::parse("Workspace mode=normal").unwrap()],
             ),
-            Some("ctrl-K ctrl-O".into())
+            display_shortcut_opt("ctrl-k ctrl-o")
         );
 
         let (bindings, pending) = keymap.bindings_for_input(
@@ -1510,7 +1523,7 @@ mod tests {
         assert!(!projection.is_strictly_clean());
         assert!(projection.has_conflicts());
         let conflict = &projection.conflicts()[0];
-        assert_eq!(conflict.keystrokes(), "ctrl-P");
+        assert_eq!(conflict.keystrokes(), display_shortcut("ctrl-p"));
         assert_eq!(conflict.context_ref(), Some("Workspace"));
         assert_eq!(
             conflict
@@ -1562,7 +1575,10 @@ mod tests {
         assert!(projection.is_clean());
         assert!(!projection.is_strictly_clean());
         assert_eq!(projection.conflicts().len(), 1);
-        assert_eq!(projection.conflicts()[0].keystrokes(), "ctrl-G");
+        assert_eq!(
+            projection.conflicts()[0].keystrokes(),
+            display_shortcut("ctrl-g")
+        );
         assert_eq!(projection.conflicts()[0].context_ref(), Some("Workspace"));
         assert_eq!(
             projection.conflicts()[0]

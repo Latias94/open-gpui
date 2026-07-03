@@ -3,6 +3,10 @@
 **Status**: Accepted
 **Date**: 2026-07-02
 
+**Supersession note**: ADR 0016 accepts the narrow spring, projection, controller, and policy
+primitive that this ADR explicitly deferred. This ADR remains current for timeline sampling,
+reduced-motion final semantics, and the adapter-owned frame scheduling boundary.
+
 ## Context
 
 ADR 0011 moved split and motion vocabulary into `open_gpui_ui_core` but rejected putting animation
@@ -121,6 +125,7 @@ separate product and platform decisions.
 
 - `docs/adr/0011-docking-split-motion-primitive-boundary.md`
 - `docs/adr/0012-docking-runtime-capability-alignment.md`
+- `docs/adr/0016-ui-motion-spring-foundation.md`
 - `docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md`
 - `docs/verification.md`
 - `docs/knowledge/engineering/progress/2026-07-02-ui-motion-runtime-foundation.md`

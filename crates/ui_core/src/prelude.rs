@@ -16,10 +16,23 @@ pub use crate::{
     },
     grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d},
     motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec},
+    motion_controller::{
+        MotionFrameDemand, MotionScalarController, MotionScalarControllerSample, MotionScalarTrack,
+        MotionScalarTrackSample,
+    },
+    motion_policy::{
+        MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
+        MotionPolicyReport, MotionPreviewTargetPolicy, validate_motion_policy,
+    },
+    motion_projection::{MotionProjection, MotionProjectionSample, MotionProjectionScale},
     motion_runtime::{
         MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionSnapshot, MotionTimeline,
         MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
         preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
+    },
+    motion_spring::{
+        MotionModel, MotionSpring, MotionSpringPhysics, MotionSpringPreset, MotionSpringSample,
+        MotionSpringSpec,
     },
     overlay::{
         DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,

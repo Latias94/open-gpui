@@ -300,7 +300,11 @@ fn transition_executor_samples_timeline_and_reveal_geometry(cx: &mut TestAppCont
         let midpoint = host
             .sample_transition_for_test(Duration::from_millis(100))
             .expect("animated execution should expose a midpoint sample");
-        assert_eq!(midpoint.progress, 0.5);
+        assert!(
+            midpoint.progress > 0.0 && midpoint.progress < 1.0,
+            "spring midpoint should sample active progress, got {}",
+            midpoint.progress
+        );
         assert!(!midpoint.complete);
         assert!(midpoint.needs_frame);
         let midpoint_clip = midpoint
@@ -311,7 +315,7 @@ fn transition_executor_samples_timeline_and_reveal_geometry(cx: &mut TestAppCont
         assert_eq!(midpoint_clip.content_bounds, final_bounds);
         assert_eq!(
             midpoint_clip.visible_bounds.size.width,
-            final_bounds.size.width * 0.5
+            final_bounds.size.width * midpoint.progress
         );
         assert_eq!(
             midpoint_clip.visible_bounds.size.height,
@@ -321,19 +325,19 @@ fn transition_executor_samples_timeline_and_reveal_geometry(cx: &mut TestAppCont
             midpoint
                 .dividers
                 .iter()
-                .any(|divider| divider.split == root && divider.progress == 0.5),
-            "appearing divider should sample through midpoint progress"
+                .any(|divider| divider.split == root && divider.progress == midpoint.progress),
+            "appearing divider should use the same sampled spring progress"
         );
 
         let end = host
-            .sample_transition_for_test(Duration::from_millis(200))
+            .sample_transition_for_test(Duration::from_millis(900))
             .expect("completion sample should be returned before clearing");
         assert_eq!(end.progress, 1.0);
         assert!(end.complete);
         assert!(!end.needs_frame);
         assert_eq!(end.final_scene, next);
         assert!(
-            host.sample_transition_for_test(Duration::from_millis(201))
+            host.sample_transition_for_test(Duration::from_millis(901))
                 .is_none(),
             "completed transition should clear itself after the completion sample"
         );
