@@ -1,6 +1,6 @@
 //! App-owned command runtime facade.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use open_gpui::{Action, App, Keymap, Window};
@@ -11,8 +11,8 @@ use crate::{
     CommandProviderRequest, CommandProviderRequestId, CommandProviderResponse,
     CommandProviderSource, CommandProviderStaleResponse, CommandProviderStatus,
     CommandRegistryError, CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection,
-    CommandSourceId, CommandUsageHistory, GpuiCommandActionMap, MemoryCommandHistory,
-    ScopedCommandRegistry,
+    CommandShortcutDiagnostic, CommandShortcutDiagnosticKind, CommandSourceId, CommandUsageHistory,
+    GpuiCommandActionMap, MemoryCommandHistory, ScopedCommandRegistry,
 };
 
 /// A registered command source within one command scope.
@@ -491,6 +491,54 @@ impl CommandCenter {
         self.rank_snapshot(with_shortcuts)
     }
 
+    /// Diagnoses action and keymap shortcut drift for the current command snapshot.
+    pub fn shortcut_diagnostics_for_keymap(
+        &self,
+        keymap: &Keymap,
+    ) -> Vec<CommandShortcutDiagnostic> {
+        let scoped = self.scope_projection().into_snapshot();
+        let visible = self.rank_snapshot(scoped.with_availability(&self.availability));
+        self.filter_hidden_orphan_shortcut_diagnostics(
+            self.actions
+                .shortcut_diagnostics_for_keymap(&visible, keymap),
+        )
+    }
+
+    /// Diagnoses action and shortcut drift for the focused-window command snapshot.
+    pub fn shortcut_diagnostics_for_window(
+        &self,
+        window: &Window,
+    ) -> Vec<CommandShortcutDiagnostic> {
+        let scoped = self.scope_projection().into_snapshot();
+        let visible = self.rank_snapshot(scoped.with_availability(&self.availability));
+        self.filter_hidden_orphan_shortcut_diagnostics(
+            self.actions
+                .shortcut_diagnostics_for_window(&visible, window),
+        )
+    }
+
+    fn filter_hidden_orphan_shortcut_diagnostics(
+        &self,
+        diagnostics: Vec<CommandShortcutDiagnostic>,
+    ) -> Vec<CommandShortcutDiagnostic> {
+        let scoped_command_ids = self
+            .scope_projection()
+            .into_snapshot()
+            .descriptors()
+            .map(|descriptor| descriptor.id().to_owned())
+            .collect::<BTreeSet<_>>();
+
+        diagnostics
+            .into_iter()
+            .filter(|diagnostic| {
+                diagnostic.kind() != CommandShortcutDiagnosticKind::OrphanAction
+                    || !diagnostic
+                        .command_id()
+                        .is_some_and(|command_id| scoped_command_ids.contains(command_id))
+            })
+            .collect()
+    }
+
     /// Searches and ranks the center snapshot without shortcut projection.
     pub fn search_snapshot(&self, query: &str) -> CommandRegistrySnapshot {
         self.search_rank_snapshot(self.snapshot(), query)
@@ -859,6 +907,7 @@ mod tests {
             center.projection_diagnostics()[0].kind(),
             CommandProjectionDiagnosticKind::DuplicateCommandId
         );
+        assert!(center.shortcut_diagnostics_for_keymap(&keymap).is_empty());
 
         let menu = center.menu_tree_for_keymap(&keymap);
         assert!(

@@ -22,7 +22,8 @@ pub use availability::{
 };
 pub use center::{CommandCenter, CommandProviderRegistration, CommandSourceRegistration};
 pub use gpui::{
-    CommandDispatchOutcome, GpuiCommandAction, GpuiCommandActionMap, command_shortcut_label,
+    CommandDispatchOutcome, CommandShortcutDiagnostic, CommandShortcutDiagnosticKind,
+    GpuiCommandAction, GpuiCommandActionMap, command_shortcut_label,
     command_shortcut_label_from_keymap,
 };
 pub use history::{CommandHistoryEntry, CommandUsageHistory, MemoryCommandHistory};

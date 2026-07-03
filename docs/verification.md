@@ -380,7 +380,8 @@ The focused gallery Command smoke renders ranked, multi-select, virtualized, and
 verifies selected chips, stable selected values, and snapshot metadata are inspectable, and
 confirms wheel input on the virtualized sample does not move the surrounding card.
 The Components-page command contracts also cover the `registry-dispatch` sample for
-`CommandCenter` shortcut/dispatch projection and the `provider-search` sample for
+`CommandCenter` shortcut/dispatch projection plus empty shortcut diagnostics, and the
+`provider-search` sample for
 `CommandProviderSource` refresh into a rendered `CommandIndexSnapshot`, including provider request
 id and query metadata. The command crate provider lifecycle tests cover center-issued request ids,
 bound responses, stale async responses being ignored without mutating registry sources, and the

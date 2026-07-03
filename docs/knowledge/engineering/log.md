@@ -6,6 +6,12 @@ status: active
 
 # Log
 
+- 2026-07-03: Added command shortcut diagnostics on
+  `feat/command-app-integration-diagnostics`. `GpuiCommandActionMap` now reports strict
+  command/action/keymap drift for missing actions, orphan actions, missing shortcuts, and duplicated
+  projected shortcut labels. `CommandCenter` exposes the same check for app-owned validation while
+  filtering hidden-but-still-registered commands out of orphan diagnostics. The gallery
+  `registry-dispatch` sample now proves a healthy empty diagnostic set.
 - 2026-07-03: Added the UI-side command refresh bridge on
   `feat/command-refresh-ui-bridge`. `CommandProviderPaletteProjection` now adapts
   `CommandProviderRefreshProjection` into a `PreFiltered` `CommandIndexSnapshot`, loading metadata,

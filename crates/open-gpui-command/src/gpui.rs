@@ -1,6 +1,6 @@
 //! GPUI action and keymap adapters for command registry projections.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use open_gpui::{Action, App, KeyBinding, Keymap, Window};
 
@@ -31,6 +31,91 @@ impl CommandDispatchOutcome {
     /// Returns whether dispatch succeeded.
     pub const fn dispatched(&self) -> bool {
         matches!(self, Self::Dispatched)
+    }
+}
+
+/// Category for one command shortcut projection diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandShortcutDiagnosticKind {
+    /// A visible command descriptor has no registered GPUI action.
+    MissingAction,
+    /// A GPUI action binding exists for a command id that is not present in the snapshot.
+    OrphanAction,
+    /// A visible command has an action but no keymap shortcut.
+    MissingShortcut,
+    /// More than one visible command projects the same shortcut label.
+    DuplicateShortcut,
+}
+
+/// One command shortcut projection diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandShortcutDiagnostic {
+    kind: CommandShortcutDiagnosticKind,
+    command_ids: Vec<String>,
+    shortcut: Option<String>,
+    action_name: Option<String>,
+}
+
+impl CommandShortcutDiagnostic {
+    fn missing_action(command_id: impl Into<String>) -> Self {
+        Self {
+            kind: CommandShortcutDiagnosticKind::MissingAction,
+            command_ids: vec![command_id.into()],
+            shortcut: None,
+            action_name: None,
+        }
+    }
+
+    fn orphan_action(command_id: impl Into<String>, action_name: impl Into<String>) -> Self {
+        Self {
+            kind: CommandShortcutDiagnosticKind::OrphanAction,
+            command_ids: vec![command_id.into()],
+            shortcut: None,
+            action_name: Some(action_name.into()),
+        }
+    }
+
+    fn missing_shortcut(command_id: impl Into<String>, action_name: impl Into<String>) -> Self {
+        Self {
+            kind: CommandShortcutDiagnosticKind::MissingShortcut,
+            command_ids: vec![command_id.into()],
+            shortcut: None,
+            action_name: Some(action_name.into()),
+        }
+    }
+
+    fn duplicate_shortcut(shortcut: impl Into<String>, command_ids: Vec<String>) -> Self {
+        Self {
+            kind: CommandShortcutDiagnosticKind::DuplicateShortcut,
+            command_ids,
+            shortcut: Some(shortcut.into()),
+            action_name: None,
+        }
+    }
+
+    /// Returns the diagnostic category.
+    pub const fn kind(&self) -> CommandShortcutDiagnosticKind {
+        self.kind
+    }
+
+    /// Returns command ids associated with this diagnostic.
+    pub fn command_ids(&self) -> &[String] {
+        &self.command_ids
+    }
+
+    /// Returns the single command id for single-command diagnostics.
+    pub fn command_id(&self) -> Option<&str> {
+        (self.command_ids.len() == 1).then(|| self.command_ids[0].as_str())
+    }
+
+    /// Returns the duplicated shortcut label when this is a duplicate-shortcut diagnostic.
+    pub fn shortcut(&self) -> Option<&str> {
+        self.shortcut.as_deref()
+    }
+
+    /// Returns the GPUI action name when this diagnostic is tied to one action.
+    pub fn action_name(&self) -> Option<&str> {
+        self.action_name.as_deref()
     }
 }
 
@@ -157,6 +242,30 @@ impl GpuiCommandActionMap {
             .iter()
             .rev()
             .find(|candidate| candidate.command_id() == command_id)
+    }
+
+    /// Diagnoses command/action/keymap drift for an app-level keymap projection.
+    pub fn shortcut_diagnostics_for_keymap(
+        &self,
+        registry: &CommandRegistrySnapshot,
+        keymap: &Keymap,
+    ) -> Vec<CommandShortcutDiagnostic> {
+        self.shortcut_diagnostics_with(registry, |action| {
+            command_shortcut_label_from_keymap(keymap, action)
+        })
+    }
+
+    /// Diagnoses command/action/keymap drift for focused-window shortcut projection.
+    pub fn shortcut_diagnostics_for_window(
+        &self,
+        registry: &CommandRegistrySnapshot,
+        window: &Window,
+    ) -> Vec<CommandShortcutDiagnostic> {
+        self.shortcut_diagnostics_with(registry, |action| {
+            window
+                .highest_precedence_binding_for_action(action)
+                .map(|binding| command_shortcut_label(&binding))
+        })
     }
 
     /// Projects app-level keymap shortcuts onto a command registry snapshot.
@@ -288,6 +397,63 @@ impl GpuiCommandActionMap {
         }
         outcome
     }
+
+    fn shortcut_diagnostics_with(
+        &self,
+        registry: &CommandRegistrySnapshot,
+        mut shortcut_for_action: impl FnMut(&dyn Action) -> Option<String>,
+    ) -> Vec<CommandShortcutDiagnostic> {
+        let mut diagnostics = Vec::new();
+        let mut registry_ids = BTreeSet::new();
+        let mut shortcut_to_commands = BTreeMap::<String, Vec<String>>::new();
+
+        for descriptor in registry.descriptors() {
+            let command_id = descriptor.id().to_owned();
+            registry_ids.insert(command_id.clone());
+            let Some(command_action) = self.action_for_command(command_id.as_str()) else {
+                diagnostics.push(CommandShortcutDiagnostic::missing_action(command_id));
+                continue;
+            };
+            let Some(shortcut) = shortcut_for_action(command_action.action()) else {
+                diagnostics.push(CommandShortcutDiagnostic::missing_shortcut(
+                    command_id,
+                    command_action.action().name(),
+                ));
+                continue;
+            };
+            shortcut_to_commands
+                .entry(shortcut)
+                .or_default()
+                .push(command_id);
+        }
+
+        for (shortcut, command_ids) in shortcut_to_commands {
+            if command_ids.len() > 1 {
+                diagnostics.push(CommandShortcutDiagnostic::duplicate_shortcut(
+                    shortcut,
+                    command_ids,
+                ));
+            }
+        }
+
+        let mut effective_actions = BTreeMap::<String, String>::new();
+        for command_action in &self.actions {
+            effective_actions.insert(
+                command_action.command_id().to_owned(),
+                command_action.action().name().to_owned(),
+            );
+        }
+        for (command_id, action_name) in effective_actions {
+            if !registry_ids.contains(command_id.as_str()) {
+                diagnostics.push(CommandShortcutDiagnostic::orphan_action(
+                    command_id,
+                    action_name,
+                ));
+            }
+        }
+
+        diagnostics
+    }
 }
 
 /// Returns the display shortcut label for a key binding.
@@ -336,8 +502,8 @@ mod tests {
     use open_gpui::{KeyBinding, Keymap, actions};
 
     use crate::{
-        CommandAvailabilityMap, CommandDescriptor, CommandDispatchOutcome, CommandRegistry,
-        CommandUsageHistory, MemoryCommandHistory,
+        CommandAvailabilityMap, CommandContribution, CommandDescriptor, CommandDispatchOutcome,
+        CommandRegistry, CommandRegistrySnapshot, CommandUsageHistory, MemoryCommandHistory,
     };
 
     use super::*;
@@ -384,6 +550,86 @@ mod tests {
                 ("workspace.open".to_owned(), Some("ctrl-shift-O".to_owned())),
                 ("workspace.save".to_owned(), Some("Ctrl+S".to_owned())),
             ]
+        );
+    }
+
+    #[test]
+    fn shortcut_diagnostics_report_registry_action_and_keymap_drift() {
+        let mut keymap = Keymap::default();
+        keymap.add_bindings([KeyBinding::new("ctrl-o", OpenWorkspace, None)]);
+        let registry = CommandRegistrySnapshot::new(
+            "workspace-v1",
+            [
+                CommandContribution::new(CommandDescriptor::new(
+                    "workspace.open",
+                    "Open Workspace",
+                )),
+                CommandContribution::new(CommandDescriptor::new(
+                    "workspace.save",
+                    "Save Workspace",
+                )),
+                CommandContribution::new(CommandDescriptor::new(
+                    "workspace.close",
+                    "Close Workspace",
+                )),
+            ],
+        );
+        let action_map = GpuiCommandActionMap::new()
+            .action("workspace.open", OpenWorkspace)
+            .action("workspace.save", SaveWorkspace)
+            .action("workspace.orphan", SaveWorkspace);
+
+        let diagnostics = action_map.shortcut_diagnostics_for_keymap(&registry, &keymap);
+
+        assert_eq!(diagnostics.len(), 3);
+        assert_eq!(
+            diagnostics[0].kind(),
+            CommandShortcutDiagnosticKind::MissingShortcut
+        );
+        assert_eq!(diagnostics[0].command_id(), Some("workspace.save"));
+        assert_eq!(
+            diagnostics[0].action_name(),
+            Some("test_only::SaveWorkspace")
+        );
+        assert_eq!(
+            diagnostics[1].kind(),
+            CommandShortcutDiagnosticKind::MissingAction
+        );
+        assert_eq!(diagnostics[1].command_id(), Some("workspace.close"));
+        assert_eq!(
+            diagnostics[2].kind(),
+            CommandShortcutDiagnosticKind::OrphanAction
+        );
+        assert_eq!(diagnostics[2].command_id(), Some("workspace.orphan"));
+        assert_eq!(
+            diagnostics[2].action_name(),
+            Some("test_only::SaveWorkspace")
+        );
+    }
+
+    #[test]
+    fn shortcut_diagnostics_report_duplicate_projected_shortcuts() {
+        let mut keymap = Keymap::default();
+        keymap.add_bindings([
+            KeyBinding::new("ctrl-p", OpenWorkspace, None),
+            KeyBinding::new("ctrl-p", SaveWorkspace, None),
+        ]);
+        let registry = command_registry_snapshot();
+        let action_map = GpuiCommandActionMap::new()
+            .action("workspace.open", OpenWorkspace)
+            .action("workspace.save", SaveWorkspace);
+
+        let diagnostics = action_map.shortcut_diagnostics_for_keymap(&registry, &keymap);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].kind(),
+            CommandShortcutDiagnosticKind::DuplicateShortcut
+        );
+        assert_eq!(diagnostics[0].shortcut(), Some("ctrl-P"));
+        assert_eq!(
+            diagnostics[0].command_ids(),
+            ["workspace.open".to_string(), "workspace.save".to_string()]
         );
     }
 

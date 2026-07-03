@@ -1271,6 +1271,24 @@ pub(crate) fn component_command_samples_section(
                             status.command_count()
                         )
                     });
+                    let shortcut_diagnostics_summary = (!sample.shortcut_diagnostics.is_empty())
+                        .then(|| {
+                            sample
+                                .shortcut_diagnostics
+                                .iter()
+                                .map(|diagnostic| match diagnostic.shortcut() {
+                                    Some(shortcut) => {
+                                        format!("{:?} {}", diagnostic.kind(), shortcut)
+                                    }
+                                    None => format!(
+                                        "{:?} {}",
+                                        diagnostic.kind(),
+                                        diagnostic.command_id().unwrap_or("unknown")
+                                    ),
+                                })
+                                .collect::<Vec<_>>()
+                                .join("; ")
+                        });
 
                     // Keep the gallery sample closed on mount so the page stays scrollable.
 
@@ -1371,6 +1389,9 @@ pub(crate) fn component_command_samples_section(
                         )
                         .child(command)
                         .child(component_command_state_row(&state))
+                        .when_some(shortcut_diagnostics_summary, |this, summary| {
+                            this.child(div().text_xs().text_color(rgb(0x5a6472)).child(summary))
+                        })
                         .when_some(provider_status_summary, |this, summary| {
                             this.child(div().text_xs().text_color(rgb(0x5a6472)).child(summary))
                         })

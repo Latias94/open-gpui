@@ -658,6 +658,7 @@ fn components_page_samples_expose_component_metadata() {
         commands[4].dispatched_command_id.as_deref(),
         Some("workspace.open")
     );
+    assert!(commands[4].shortcut_diagnostics.is_empty());
     assert_eq!(
         commands[4]
             .state

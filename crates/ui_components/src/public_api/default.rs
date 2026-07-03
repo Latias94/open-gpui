@@ -186,9 +186,9 @@ pub use open_gpui_command::{
     CommandProviderRequestId, CommandProviderResponse, CommandProviderSource,
     CommandProviderStaleResponse, CommandProviderState, CommandProviderStatus, CommandRegistry,
     CommandRegistryError, CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection,
-    CommandSourceId, CommandSourceRegistration, CommandUsageHistory, GpuiCommandAction,
-    GpuiCommandActionMap, MemoryCommandHistory, ScopedCommandRegistry,
-    command_effective_availability,
+    CommandShortcutDiagnostic, CommandShortcutDiagnosticKind, CommandSourceId,
+    CommandSourceRegistration, CommandUsageHistory, GpuiCommandAction, GpuiCommandActionMap,
+    MemoryCommandHistory, ScopedCommandRegistry, command_effective_availability,
 };
 pub use open_gpui_ui_core::{
     GridViewport2D, TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,

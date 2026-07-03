@@ -25,6 +25,8 @@
 * [Open GPUI command provider refresh controller verification](verification/open-gpui-command-provider-refresh-controller-20260703.md) - Verification evidence for refresh controller, public exports, and gallery migration.
 * [Open GPUI command refresh UI bridge](progress/2026-07-03-open-gpui-command-refresh-ui-bridge.md) - UI-side adapter from provider refresh projections to command palette snapshots, loading state, and provider status.
 * [Open GPUI command refresh UI bridge verification](verification/open-gpui-command-refresh-ui-bridge-20260703.md) - Verification evidence for the UI adapter, public surface, and gallery provider sample.
+* [Open GPUI command shortcut diagnostics](progress/2026-07-03-open-gpui-command-shortcut-diagnostics.md) - Command/action/keymap drift diagnostics for app startup checks and plugin-host validation.
+* [Open GPUI command shortcut diagnostics verification](verification/open-gpui-command-shortcut-diagnostics-20260703.md) - Verification evidence for strict adapter diagnostics, CommandCenter facade filtering, exports, and gallery proof.
 * [Native UI hybrid registry architecture planning](progress/2026-07-02-native-ui-hybrid-registry-architecture-plan.md) - Superseded historical plan for the removed hybrid registry MVP.
 * [Native UI hybrid registry implementation](progress/2026-07-02-native-ui-hybrid-registry-implementation.md) - Superseded implementation history for the removed registry manifest, recipes, artifacts, and scan.
 * [Native UI hybrid registry implementation verification](verification/native-ui-hybrid-registry-implementation-20260702.md) - Superseded verification evidence for the removed hybrid registry work.

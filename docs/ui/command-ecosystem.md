@@ -30,7 +30,8 @@ and plugin-like command metadata contribution.
 - `CommandMenuTree` builds a neutral menu hierarchy from command metadata.
 - `MemoryCommandHistory` records in-memory usage/query hints for ranking and query recall.
 - `GpuiCommandActionMap` maps command ids to GPUI actions, projects current shortcut labels from a
-  `Keymap` or focused `Window`, and dispatches command ids through `App` or `Window`.
+  `Keymap` or focused `Window`, dispatches command ids through `App` or `Window`, and diagnoses
+  command/action/keymap drift.
 
 `open_gpui_ui_components` owns presentation:
 
@@ -246,6 +247,32 @@ For custom ranking, call `center.search_snapshot(query)` or
 `center.search_snapshot_for_keymap(query, &keymap)` before converting the result into
 `CommandIndexSnapshot`.
 
+## Shortcut Diagnostics
+
+Shortcut diagnostics are for application startup checks, plugin host validation, and gallery or
+test assertions. They report mismatches between command metadata, GPUI action bindings, and the
+effective keymap projection:
+
+```rust
+use open_gpui_command::CommandShortcutDiagnosticKind;
+
+let diagnostics = center.shortcut_diagnostics_for_keymap(&keymap);
+assert!(
+    diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.kind() != CommandShortcutDiagnosticKind::MissingAction)
+);
+```
+
+The lower-level `GpuiCommandActionMap` diagnoses against exactly the snapshot it receives. That
+strict mode is useful for framework tests because an action bound to a command id outside the
+snapshot is reported as `OrphanAction`.
+
+`CommandCenter` runs diagnostics against the current visible snapshot, but it suppresses orphan
+diagnostics for commands that still exist in active scoped sources and are only hidden by current
+availability. Hidden commands should disappear from palettes and menus without looking like stale
+plugin registrations.
+
 ## Modes And Chords
 
 This layer does not invent a second Vim/chord engine. Mode state and chord resolution stay with the
@@ -276,8 +303,8 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_exp
 ```
 
 The gallery's `registry-dispatch` command sample uses `CommandCenter` to prove that the
-recommended facade can project current keymap shortcut labels and preserve the command id used for
-dispatch.
+recommended facade can project current keymap shortcut labels, preserve the command id used for
+dispatch, and surface an empty shortcut diagnostic set for the healthy sample.
 
 The gallery's `provider-search` command sample uses a `CommandCenter` provider refresh to prove
 that query-specific `CommandProviderSource` results can be applied to the center, converted into a
