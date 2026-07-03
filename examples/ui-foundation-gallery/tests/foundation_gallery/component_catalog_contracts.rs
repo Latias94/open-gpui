@@ -648,7 +648,7 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(commands[4].id, "registry-dispatch");
     assert_eq!(
         commands[4].state.index_revision(),
-        Some("gallery-registry-v1")
+        Some("gallery-command-center-v1")
     );
     assert_eq!(
         commands[4].state.index_mode(),

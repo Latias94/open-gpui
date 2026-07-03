@@ -86,6 +86,16 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let _root_registry_duplicate: root::CommandRegistryError = root_command_registry
         .register(root_core_command.clone())
         .unwrap_err();
+    let mut root_command_center = root::CommandCenter::new("root-center-v1");
+    let _root_command_source: root::CommandSourceRegistration = root_command_center
+        .register_source(
+            "root",
+            "root-source",
+            [root::CommandContribution::new(root_core_command.clone())],
+        )
+        .unwrap();
+    let _root_command_actions = root::GpuiCommandActionMap::new();
+    let _root_command_outcome = root::CommandDispatchOutcome::MissingAction;
     let root_command_items = vec![root::CommandItem::new("open", "Open")];
     let root_command_snapshot = root::CommandIndexSnapshot::new("root-v1")
         .mode(root::CommandIndexSnapshotMode::PreRankedFilter)
@@ -185,6 +195,18 @@ fn crate_root_and_prelude_exports_remain_explicit() {
                 .source("prelude-workspace"),
         ],
     );
+    let mut prelude_command_center = prelude::CommandCenter::new("prelude-center-v1");
+    let _prelude_command_source: prelude::CommandSourceRegistration = prelude_command_center
+        .register_source(
+            "prelude",
+            "prelude-source",
+            [prelude::CommandContribution::new(
+                prelude_core_command.clone(),
+            )],
+        )
+        .unwrap();
+    let _prelude_command_actions = prelude::GpuiCommandActionMap::new();
+    let _prelude_command_outcome = prelude::CommandDispatchOutcome::MissingAction;
     let prelude_command_items = vec![prelude::CommandItem::new("open", "Open")];
     let prelude_command_snapshot =
         prelude::CommandIndexSnapshot::from_registry_snapshot(&prelude_registry_snapshot)

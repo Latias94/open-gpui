@@ -47,6 +47,8 @@ pub struct MemoryCommandHistory {
     capacity: usize,
     next_sequence: u64,
     entries: VecDeque<CommandHistoryEntry>,
+    queries: VecDeque<String>,
+    query_cursor: Option<usize>,
 }
 
 impl Default for MemoryCommandHistory {
@@ -62,6 +64,8 @@ impl MemoryCommandHistory {
             capacity: capacity.max(1),
             next_sequence: 1,
             entries: VecDeque::new(),
+            queries: VecDeque::new(),
+            query_cursor: None,
         }
     }
 
@@ -84,11 +88,61 @@ impl MemoryCommandHistory {
 
     /// Returns the newest query, when one has been recorded.
     pub fn last_query(&self) -> Option<&str> {
-        self.entries
-            .iter()
-            .rev()
-            .find(|entry| !entry.query.is_empty())
-            .map(CommandHistoryEntry::query)
+        self.queries.back().map(String::as_str).or_else(|| {
+            self.entries
+                .iter()
+                .rev()
+                .find(|entry| !entry.query.is_empty())
+                .map(CommandHistoryEntry::query)
+        })
+    }
+
+    /// Records one command query without requiring command dispatch.
+    pub fn record_query(&mut self, query: &str) {
+        if query.is_empty() {
+            return;
+        }
+        if self.queries.back().is_some_and(|last| last == query) {
+            self.query_cursor = None;
+            return;
+        }
+        if self.queries.len() == self.capacity {
+            self.queries.pop_front();
+        }
+        self.queries.push_back(query.to_owned());
+        self.query_cursor = None;
+    }
+
+    /// Returns recent unique queries from newest to oldest.
+    pub fn recent_queries(&self) -> Vec<String> {
+        let mut seen = BTreeMap::<String, ()>::new();
+        let mut recent = Vec::new();
+        for query in self.queries.iter().rev() {
+            if seen.insert(query.clone(), ()).is_none() {
+                recent.push(query.clone());
+            }
+        }
+        recent
+    }
+
+    /// Moves to the previous query matching `prefix`.
+    ///
+    /// The returned value is owned so UI runtimes can update controlled query state without
+    /// borrowing this history store.
+    pub fn previous_query(&mut self, prefix: &str) -> Option<String> {
+        self.navigate_query(prefix, QueryNavigation::Previous)
+    }
+
+    /// Moves to the next query matching `prefix`.
+    ///
+    /// Returns `None` at the newest matching query boundary.
+    pub fn next_query(&mut self, prefix: &str) -> Option<String> {
+        self.navigate_query(prefix, QueryNavigation::Next)
+    }
+
+    /// Resets query-history navigation.
+    pub fn reset_query_navigation(&mut self) {
+        self.query_cursor = None;
     }
 
     /// Ranks a registry snapshot using in-memory usage and recency hints.
@@ -96,15 +150,60 @@ impl MemoryCommandHistory {
         &self,
         snapshot: &CommandRegistrySnapshot,
     ) -> CommandRegistrySnapshot {
-        let mut contributions = snapshot.contributions().to_vec();
-        contributions.sort_by(|left, right| {
+        let mut contributions = snapshot
+            .contributions()
+            .iter()
+            .cloned()
+            .enumerate()
+            .collect::<Vec<_>>();
+        contributions.sort_by(|(left_index, left), (right_index, right)| {
             let left_score = self.score(left.descriptor().id());
             let right_score = self.score(right.descriptor().id());
             right_score
                 .cmp(&left_score)
-                .then_with(|| left.descriptor().label().cmp(right.descriptor().label()))
+                .then_with(|| left_index.cmp(right_index))
         });
-        CommandRegistrySnapshot::new(snapshot.revision(), contributions)
+        CommandRegistrySnapshot::new(
+            snapshot.revision(),
+            contributions
+                .into_iter()
+                .map(|(_, contribution)| contribution)
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn navigate_query(&mut self, prefix: &str, direction: QueryNavigation) -> Option<String> {
+        let matching_indices = self
+            .queries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, query)| {
+                (prefix.is_empty() || query.starts_with(prefix)).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        if matching_indices.is_empty() {
+            self.query_cursor = None;
+            return None;
+        }
+
+        let next_match = match (self.query_cursor, direction) {
+            (None, QueryNavigation::Previous) => matching_indices.last().copied(),
+            (None, QueryNavigation::Next) => None,
+            (Some(cursor), QueryNavigation::Previous) => {
+                let position = matching_indices
+                    .iter()
+                    .position(|index| *index == cursor)
+                    .unwrap_or(matching_indices.len());
+                Some(matching_indices[position.saturating_sub(1)])
+            }
+            (Some(cursor), QueryNavigation::Next) => {
+                let position = matching_indices.iter().position(|index| *index == cursor)?;
+                matching_indices.get(position + 1).copied()
+            }
+        }?;
+
+        self.query_cursor = Some(next_match);
+        self.queries.get(next_match).cloned()
     }
 
     fn score(&self, command_id: &str) -> u64 {
@@ -122,6 +221,7 @@ impl CommandUsageHistory for MemoryCommandHistory {
         if self.entries.len() == self.capacity {
             self.entries.pop_front();
         }
+        self.record_query(query);
         self.entries.push_back(CommandHistoryEntry {
             command_id: command_id.to_owned(),
             query: query.to_owned(),
@@ -144,6 +244,12 @@ impl CommandUsageHistory for MemoryCommandHistory {
             .find(|entry| entry.command_id == command_id)
             .map(CommandHistoryEntry::sequence)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QueryNavigation {
+    Previous,
+    Next,
 }
 
 impl<T> CommandUsageHistory for &mut T
@@ -178,6 +284,7 @@ mod tests {
         assert_eq!(history.usage_count("file.open"), 1);
         assert_eq!(history.recent_command_ids(), ["file.open", "file.save"]);
         assert_eq!(history.last_query(), Some("again"));
+        assert_eq!(history.recent_queries(), ["again", "save"]);
     }
 
     #[test]
@@ -200,5 +307,22 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(ids, ["file.save", "file.open"]);
+    }
+
+    #[test]
+    fn memory_history_navigates_recent_queries_with_prefix() {
+        let mut history = MemoryCommandHistory::new(4);
+        history.record_query("open file");
+        history.record_query("save file");
+        history.record_query("open settings");
+
+        assert_eq!(history.previous_query("open"), Some("open settings".into()));
+        assert_eq!(history.previous_query("open"), Some("open file".into()));
+        assert_eq!(history.previous_query("open"), Some("open file".into()));
+        assert_eq!(history.next_query("open"), Some("open settings".into()));
+        assert_eq!(history.next_query("open"), None);
+
+        history.reset_query_navigation();
+        assert_eq!(history.previous_query("save"), Some("save file".into()));
     }
 }

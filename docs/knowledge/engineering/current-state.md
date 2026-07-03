@@ -18,6 +18,7 @@ related_plan:
   - docs/plans/2026-07-02-004-refactor-docking-render-authority-convergence-plan.md
   - docs/plans/2026-07-03-001-refactor-docking-visual-affordance-runtime-plan.md
   - docs/plans/2026-07-03-002-refactor-docking-affordance-authority-cleanup-plan.md
+  - docs/plans/2026-07-03-003-feat-command-center-runtime-plan.md
 related_research:
   - native-ui-framework-design-research/report.md
 related_adr:
@@ -74,6 +75,15 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-components command_descriptors --no-fail-fast
   - cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
   - cargo nextest run -p open-gpui-ui-foundation-gallery component --no-fail-fast
+  - cargo nextest run -p open-gpui-command --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components choice --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components command::runtime::tests --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_choice_samples_expose_listbox_and_select_contracts --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_search_samples_expose_combobox_and_command_contracts --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata --no-fail-fast
+  - cargo fmt -p open-gpui-command -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --check
+  - python C:\Users\Frankorz\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
   - cargo run -p xtask -- scan-theme-drift
   - cargo run -p xtask -- scan-theme-schema
   - cargo run -p xtask -- scan-ui-contract
@@ -117,6 +127,14 @@ verified_by:
   projection, neutral menu trees, memory history, and GPUI command-id dispatch adapters.
   `open_gpui_ui_core::command` was deleted; Command, Menu, ContextMenu, and gallery samples now
   consume command metadata from `open_gpui_command`.
+- Done on `feat/command-center-runtime`: `open_gpui_command::CommandCenter` is the recommended
+  app-owned runtime facade over scoped source registration, source/scope unregistration,
+  availability, GPUI action mapping, shortcut projection, fuzzy search, menu projection,
+  dispatch, and bounded usage/query history. The command UI now carries disabled reasons through
+  descriptors, resolved item state, behavior snapshots, and row aria labels; command runtime
+  navigation handles Vim-style control aliases, PageUp/PageDown disabled landings, and
+  `prefer_character_input` IME/character input guards. The gallery `registry-dispatch` sample now
+  uses `CommandCenter` instead of manually joining `CommandRegistry` and `GpuiCommandActionMap`.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default

@@ -152,6 +152,7 @@ pub struct CommandItemDescriptor {
     pub(super) keywords: Vec<String>,
     pub(super) shortcut: Option<String>,
     pub(super) disabled: bool,
+    pub(super) disabled_reason: Option<String>,
     pub(super) when: Option<String>,
 }
 
@@ -164,6 +165,7 @@ impl CommandItemDescriptor {
             keywords: Vec::new(),
             shortcut: None,
             disabled: false,
+            disabled_reason: None,
             when: None,
         }
     }
@@ -173,6 +175,9 @@ impl CommandItemDescriptor {
         let mut item = Self::new(descriptor.id(), descriptor.label())
             .keywords(descriptor.keywords_ref().iter().cloned())
             .disabled(descriptor.disabled_state());
+        if let Some(reason) = descriptor.disabled_reason_ref() {
+            item = item.disabled_reason(reason);
+        }
         if let Some(shortcut) = descriptor.shortcut_ref() {
             item = item.shortcut(shortcut);
         }
@@ -206,6 +211,16 @@ impl CommandItemDescriptor {
         self
     }
 
+    /// Marks the item as disabled with a user-displayable reason.
+    pub fn disabled_reason(mut self, reason: impl Into<String>) -> Self {
+        let reason = reason.into();
+        if !reason.is_empty() {
+            self.disabled = true;
+            self.disabled_reason = Some(reason);
+        }
+        self
+    }
+
     /// Applies caller-owned availability metadata without evaluating it.
     pub fn when(mut self, when: impl Into<String>) -> Self {
         self.when = Some(when.into());
@@ -235,6 +250,11 @@ impl CommandItemDescriptor {
     /// Returns whether the item is disabled.
     pub const fn disabled_state(&self) -> bool {
         self.disabled
+    }
+
+    /// Returns the optional disabled reason.
+    pub fn disabled_reason_ref(&self) -> Option<&str> {
+        self.disabled_reason.as_deref()
     }
 
     /// Returns caller-owned availability metadata.

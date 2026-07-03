@@ -1390,7 +1390,7 @@ fn command_items_project_core_command_descriptors() {
         .group("Workspace")
         .keyword("project")
         .shortcut("Ctrl+Shift+O")
-        .disabled(true)
+        .disabled_reason("Workspace is read-only")
         .when("workspace")
         .menu_path(["File", "Open"]);
     let item = CommandItemDescriptor::from_command_descriptor(&descriptor);
@@ -1403,14 +1403,22 @@ fn command_items_project_core_command_descriptors() {
     assert_eq!(item.shortcut_ref(), Some("Ctrl+Shift+O"));
     assert_eq!(item.when_ref(), Some("workspace"));
     assert!(item.disabled_state());
+    assert_eq!(item.disabled_reason_ref(), Some("Workspace is read-only"));
 
     let state = Command::new("descriptor-command", "Commands")
         .item(CommandItem::from_command_descriptor(&descriptor))
+        .item(CommandItem::new("workspace.save", "Save Workspace").disabled_reason("No workspace"))
         .state();
     assert_eq!(state.items()[0].value(), "workspace.open");
     assert_eq!(state.items()[0].shortcut(), Some("Ctrl+Shift+O"));
     assert_eq!(state.items()[0].when_ref(), Some("workspace"));
     assert!(state.items()[0].disabled());
+    assert_eq!(
+        state.items()[0].disabled_reason_ref(),
+        Some("Workspace is read-only")
+    );
+    assert!(state.items()[1].disabled());
+    assert_eq!(state.items()[1].disabled_reason_ref(), Some("No workspace"));
 
     let indexed = Command::new("descriptor-index", "Commands")
         .index_snapshot(CommandIndexSnapshot::new("commands-v1").command_descriptor(&descriptor))
@@ -1429,12 +1437,14 @@ fn command_items_project_core_command_descriptors() {
                     item.value().to_owned(),
                     item.shortcut().map(str::to_owned),
                     item.when_ref().map(str::to_owned),
+                    item.disabled_reason_ref().map(str::to_owned),
                 )
             }),
         Some((
             "workspace.open".to_owned(),
             Some("Ctrl+Shift+O".to_owned()),
             Some("workspace".to_owned()),
+            Some("Workspace is read-only".to_owned()),
         ))
     );
 }
@@ -1458,7 +1468,7 @@ fn command_index_snapshot_projects_core_command_registry_snapshot() {
         .register(
             open_gpui_command::CommandDescriptor::new("file.save", "Save File")
                 .group("File")
-                .disabled(true),
+                .disabled_reason("Read-only file"),
         )
         .unwrap();
 
@@ -1486,6 +1496,7 @@ fn command_index_snapshot_projects_core_command_registry_snapshot() {
                     item.shortcut().map(str::to_owned),
                     item.when_ref().map(str::to_owned),
                     item.disabled(),
+                    item.disabled_reason_ref().map(str::to_owned),
                 )
             })
             .collect::<Vec<_>>(),
@@ -1495,8 +1506,15 @@ fn command_index_snapshot_projects_core_command_registry_snapshot() {
                 Some("Ctrl+Shift+O".to_owned()),
                 Some("workspace".to_owned()),
                 false,
+                None,
             ),
-            ("file.save".to_owned(), None, None, true),
+            (
+                "file.save".to_owned(),
+                None,
+                None,
+                true,
+                Some("Read-only file".to_owned()),
+            ),
         ]
     );
 }
@@ -1638,6 +1656,20 @@ fn command_index_snapshot_loading_coexists_with_visible_and_empty_results() {
         Some("Indexing commands")
     );
     assert_eq!(empty_state.loading().unwrap().progress_percent(), None);
+}
+
+#[test]
+fn command_behavior_snapshot_exposes_disabled_reasons() {
+    let snapshot = Command::new("reason-command", "Commands")
+        .item(CommandItem::new("delete-file", "Delete File").disabled_reason("No file selected"))
+        .behavior_snapshot();
+
+    assert_eq!(snapshot.rows()[0].value(), "delete-file");
+    assert!(snapshot.rows()[0].disabled());
+    assert_eq!(
+        snapshot.rows()[0].disabled_reason_ref(),
+        Some("No file selected")
+    );
 }
 
 #[test]

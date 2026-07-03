@@ -194,6 +194,7 @@ pub struct CommandItemState {
     shortcut: Option<String>,
     when: Option<String>,
     disabled: bool,
+    disabled_reason: Option<String>,
     selected: bool,
     active: bool,
     match_source: Option<CommandMatchSource>,
@@ -236,6 +237,11 @@ impl CommandItemState {
     /// Returns whether the item is disabled.
     pub const fn disabled(&self) -> bool {
         self.disabled
+    }
+
+    /// Returns the optional disabled reason.
+    pub fn disabled_reason_ref(&self) -> Option<&str> {
+        self.disabled_reason.as_deref()
     }
 
     /// Returns whether the item can be activated.
@@ -753,6 +759,7 @@ impl CommandState {
                     shortcut: item.descriptor.shortcut,
                     when: item.descriptor.when,
                     disabled: item.descriptor.disabled,
+                    disabled_reason: item.descriptor.disabled_reason,
                     selected,
                     active: option.active(),
                     match_source: item.rank.source,

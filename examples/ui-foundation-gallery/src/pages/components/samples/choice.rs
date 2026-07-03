@@ -1,6 +1,6 @@
 use super::*;
 use open_gpui::{KeyBinding, Keymap, actions};
-use open_gpui_command::{CommandDescriptor, CommandRegistry, GpuiCommandActionMap};
+use open_gpui_command::{CommandCenter, CommandContribution, CommandDescriptor};
 
 /// One switch sample in the gallery.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -732,19 +732,23 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 5] {
                 .item(CommandItemDescriptor::new("switch-window", "Switch Window"))
                 .item(CommandItemDescriptor::new("close-window", "Close Window").disabled(true)),
         );
-    let mut command_registry = CommandRegistry::new("gallery-registry-v1");
-    command_registry
-        .register(
-            CommandDescriptor::new("workspace.open", "Open Workspace")
-                .group("Workspace")
-                .keyword("project"),
-        )
-        .unwrap();
-    command_registry
-        .register(
-            CommandDescriptor::new("workspace.save", "Save Workspace")
-                .group("Workspace")
-                .keyword("persist"),
+    let mut command_center = CommandCenter::new("gallery-command-center-v1");
+    command_center
+        .register_source(
+            "global",
+            "gallery",
+            [
+                CommandContribution::new(
+                    CommandDescriptor::new("workspace.open", "Open Workspace")
+                        .group("Workspace")
+                        .keyword("project"),
+                ),
+                CommandContribution::new(
+                    CommandDescriptor::new("workspace.save", "Save Workspace")
+                        .group("Workspace")
+                        .keyword("persist"),
+                ),
+            ],
         )
         .unwrap();
     let mut keymap = Keymap::default();
@@ -753,17 +757,17 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 5] {
         KeyBinding::new("ctrl-shift-p", OpenRegistryCommand, None),
         KeyBinding::new("ctrl-s", SaveRegistryCommand, None),
     ]);
-    let action_map = GpuiCommandActionMap::new()
-        .action("workspace.open", OpenRegistryCommand)
-        .action("workspace.save", SaveRegistryCommand);
-    let dispatched_command_id = action_map
+    command_center
+        .register_action("workspace.open", OpenRegistryCommand)
+        .register_action("workspace.save", SaveRegistryCommand);
+    let dispatched_command_id = command_center
+        .actions()
         .action_for_command("workspace.open")
         .map(|action| action.command_id().to_owned())
         .unwrap();
-    let registry_snapshot = CommandIndexSnapshot::from_registry_snapshot(
-        &action_map.registry_snapshot_with_keymap_shortcuts(&command_registry.snapshot(), &keymap),
-    )
-    .mode(CommandIndexSnapshotMode::PreRankedFilter);
+    let command_center_snapshot =
+        CommandIndexSnapshot::from_registry_snapshot(&command_center.snapshot_for_keymap(&keymap))
+            .mode(CommandIndexSnapshotMode::PreRankedFilter);
 
     [
         command_sample_from_local(
@@ -860,7 +864,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 5] {
             dispatched_command_id: Some(dispatched_command_id),
             ..command_sample_from_snapshot(
                 "registry-dispatch",
-                "Registry-backed command palette projects keymap shortcuts and records the dispatched command id.",
+                "CommandCenter-backed palette projects keymap shortcuts and records the dispatched command id.",
                 Size::Small,
                 false,
                 Some(true),
@@ -872,7 +876,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 5] {
                 Some("workspace.open"),
                 Vec::<String>::new(),
                 Some("workspace.open"),
-                registry_snapshot,
+                command_center_snapshot,
                 true,
                 6,
                 None,
