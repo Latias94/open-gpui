@@ -135,6 +135,12 @@ verified_by:
   navigation handles Vim-style control aliases, PageUp/PageDown disabled landings, and
   `prefer_character_input` IME/character input guards. The gallery `registry-dispatch` sample now
   uses `CommandCenter` instead of manually joining `CommandRegistry` and `GpuiCommandActionMap`.
+- Done on `feat/command-provider-runtime`: `open_gpui_command` now has runtime-neutral dynamic
+  provider primitives (`CommandProviderRequest`, `CommandProviderResponse`,
+  `CommandProviderSource`, provider status/state) and `CommandCenter` can register provider
+  callbacks, refresh providers by query, apply externally produced async responses, atomically
+  replace provider-owned dynamic sources, and unregister provider sources without affecting static
+  command registrations.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default

@@ -18,6 +18,8 @@ and plugin-like command metadata contribution.
 - `CommandCenter` is the recommended app-owned facade. It composes scoped metadata registration,
   source unregistration, availability projection, GPUI action mapping, shortcut projection,
   dispatch, menu projection, fuzzy search, and in-memory usage/query history.
+- `CommandProvider*` types model dynamic command providers and async-friendly provider responses
+  without owning a task runtime.
 - `CommandDescriptor` stores id, label, group, keywords, shortcut display text, disabled state,
   optional disabled reason, caller-owned `when` metadata, and optional menu path.
 - `CommandRegistry` stores deterministic command contributions and duplicate-id diagnostics.
@@ -84,6 +86,51 @@ let command_index =
 
 Applications can keep one center per app, workspace, plugin host, window, or surface. A center is
 deliberately app-owned state, not a global singleton.
+
+## Dynamic Providers
+
+Dynamic providers are for command results that depend on query text, current scopes, async indexes,
+or external state. `open_gpui_command` keeps this boundary runtime-neutral: providers return
+`CommandProviderResponse` values, and applications may compute those values synchronously or in
+their own async task system.
+
+```rust
+use open_gpui_command::{
+    CommandContribution, CommandDescriptor, CommandProviderResponse, CommandProviderSource,
+};
+
+let registration = center.register_provider("recent-files", |request| {
+    CommandProviderResponse::ready().source(CommandProviderSource::new(
+        "workspace",
+        "recent-files-source",
+        [CommandContribution::new(
+            CommandDescriptor::new(
+                format!("recent.open.{}", request.query()),
+                format!("Open Recent {}", request.query()),
+            )
+            .group("Recent"),
+        )],
+    ))
+});
+
+center.refresh_provider(registration.provider_id().clone(), "readme");
+```
+
+For asynchronous providers, run the work in application code and apply the latest response when it
+finishes:
+
+```rust
+let response = CommandProviderResponse::loading("Searching").source(CommandProviderSource::new(
+    "workspace",
+    "search-index-source",
+    search_results,
+));
+center.apply_provider_response("search-index", response)?;
+```
+
+Applying a provider response atomically replaces that provider's previous dynamic sources. If a new
+response has duplicate command ids for a scope, the existing registry state is preserved and the
+error is returned.
 
 ## Plugin-Like Contributions
 
@@ -161,7 +208,8 @@ application and GPUI keymap system. The command ecosystem carries display and di
 - current shortcut label after keymap precedence resolution;
 - grouping and menu path;
 - disabled and `when` metadata for app-owned policy projection;
-- bounded query/usage history for app-owned palette ranking.
+- bounded query/usage history for app-owned palette ranking;
+- dynamic provider status for app-owned async/search UX.
 
 That keeps the component library useful for editors, design tools, and multi-viewport apps without
 forcing one global registry or one input-mode model on every application.

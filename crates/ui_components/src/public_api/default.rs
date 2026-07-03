@@ -180,10 +180,12 @@ pub use open_gpui_command::{
     CommandAvailability, CommandAvailabilityMap, CommandAvailabilityResolver, CommandCenter,
     CommandContribution, CommandDescriptor, CommandDispatchOutcome, CommandHistoryEntry,
     CommandMenuCommand, CommandMenuEntry, CommandMenuSubmenu, CommandMenuTree,
-    CommandProjectionDiagnostic, CommandProjectionDiagnosticKind, CommandRegistry,
-    CommandRegistryError, CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection,
-    CommandSourceId, CommandSourceRegistration, CommandUsageHistory, GpuiCommandAction,
-    GpuiCommandActionMap, MemoryCommandHistory, ScopedCommandRegistry,
+    CommandProjectionDiagnostic, CommandProjectionDiagnosticKind, CommandProvider,
+    CommandProviderId, CommandProviderRegistration, CommandProviderRequest,
+    CommandProviderResponse, CommandProviderSource, CommandProviderState, CommandProviderStatus,
+    CommandRegistry, CommandRegistryError, CommandRegistrySnapshot, CommandScopeId,
+    CommandScopeProjection, CommandSourceId, CommandSourceRegistration, CommandUsageHistory,
+    GpuiCommandAction, GpuiCommandActionMap, MemoryCommandHistory, ScopedCommandRegistry,
     command_effective_availability,
 };
 pub use open_gpui_ui_core::{

@@ -94,6 +94,29 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             [root::CommandContribution::new(root_core_command.clone())],
         )
         .unwrap();
+    fn root_provider_fn(_: &root::CommandProviderRequest) -> root::CommandProviderResponse {
+        root::CommandProviderResponse::ready()
+    }
+    fn assert_root_provider<T: root::CommandProvider>(_: &T) {}
+    let _root_provider_id = root::CommandProviderId::new("root-provider");
+    let _root_provider_request = root::CommandProviderRequest::new("open").active_scopes(["root"]);
+    let root_provider_response =
+        root::CommandProviderResponse::loading("Loading").source(root::CommandProviderSource::new(
+            "root",
+            "root-provider-source",
+            [root::CommandContribution::new(
+                root::CommandDescriptor::new("root.provider", "Provider"),
+            )],
+        ));
+    let _root_provider_status: root::CommandProviderStatus = root_command_center
+        .apply_provider_response("root-provider", root_provider_response)
+        .unwrap();
+    let _root_provider_state = root::CommandProviderState::Ready;
+    assert_root_provider(
+        &(root_provider_fn as fn(&root::CommandProviderRequest) -> root::CommandProviderResponse),
+    );
+    let _root_provider_registration: root::CommandProviderRegistration =
+        root_command_center.register_provider("root-provider-callback", root_provider_fn);
     let _root_command_actions = root::GpuiCommandActionMap::new();
     let _root_command_outcome = root::CommandDispatchOutcome::MissingAction;
     let root_command_items = vec![root::CommandItem::new("open", "Open")];
@@ -205,6 +228,34 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             )],
         )
         .unwrap();
+    fn prelude_provider_fn(
+        _: &prelude::CommandProviderRequest,
+    ) -> prelude::CommandProviderResponse {
+        prelude::CommandProviderResponse::ready()
+    }
+    fn assert_prelude_provider<T: prelude::CommandProvider>(_: &T) {}
+    let _prelude_provider_id = prelude::CommandProviderId::new("prelude-provider");
+    let _prelude_provider_request =
+        prelude::CommandProviderRequest::new("open").active_scopes(["prelude"]);
+    let prelude_provider_response = prelude::CommandProviderResponse::failed("Unavailable").source(
+        prelude::CommandProviderSource::new(
+            "prelude",
+            "prelude-provider-source",
+            [prelude::CommandContribution::new(
+                prelude::CommandDescriptor::new("prelude.provider", "Provider"),
+            )],
+        ),
+    );
+    let _prelude_provider_status: prelude::CommandProviderStatus = prelude_command_center
+        .apply_provider_response("prelude-provider", prelude_provider_response)
+        .unwrap();
+    let _prelude_provider_state = prelude::CommandProviderState::Loading;
+    assert_prelude_provider(
+        &(prelude_provider_fn
+            as fn(&prelude::CommandProviderRequest) -> prelude::CommandProviderResponse),
+    );
+    let _prelude_provider_registration: prelude::CommandProviderRegistration =
+        prelude_command_center.register_provider("prelude-provider-callback", prelude_provider_fn);
     let _prelude_command_actions = prelude::GpuiCommandActionMap::new();
     let _prelude_command_outcome = prelude::CommandDispatchOutcome::MissingAction;
     let prelude_command_items = vec![prelude::CommandItem::new("open", "Open")];
