@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
+    AnyView, App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
@@ -58,6 +58,7 @@ pub struct IconButtonState {
     variant: ButtonVariant,
     size: Size,
     disabled: bool,
+    selected: bool,
     accessible_label: SharedString,
     metrics: IconButtonMetrics,
     colors: IconButtonColors,
@@ -70,15 +71,17 @@ impl IconButtonState {
         variant: ButtonVariant,
         size: Size,
         disabled: bool,
+        selected: bool,
         accessible_label: impl Into<SharedString>,
         tokens: ThemeTokens,
     ) -> Self {
-        let colors = ThemeResolver::button_colors(tokens, variant, false);
+        let colors = ThemeResolver::button_colors(tokens, variant, selected);
 
         Self {
             variant,
             size,
             disabled,
+            selected,
             accessible_label: accessible_label.into(),
             metrics: IconButtonMetrics::from_size(size),
             colors,
@@ -99,6 +102,11 @@ impl IconButtonState {
     /// Returns whether the button is disabled.
     pub const fn disabled(&self) -> bool {
         self.disabled
+    }
+
+    /// Returns whether the icon button is selected.
+    pub const fn selected(&self) -> bool {
+        self.selected
     }
 
     /// Returns whether activation handlers should run.
@@ -141,8 +149,10 @@ pub struct IconButton {
     variant: ButtonVariant,
     size: Size,
     disabled: bool,
+    selected: bool,
     tokens: ThemeTokens,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    tooltip: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
 }
 
 impl IconButton {
@@ -159,8 +169,10 @@ impl IconButton {
             variant: ButtonVariant::Ghost,
             size: Size::Medium,
             disabled: false,
+            selected: false,
             tokens: ThemeTokens::default(),
             on_click: None,
+            tooltip: None,
         }
     }
 
@@ -173,6 +185,12 @@ impl IconButton {
     /// Marks the button as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Marks the icon button as selected.
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 
@@ -191,6 +209,12 @@ impl IconButton {
         self
     }
 
+    /// Adds a hover/focus tooltip to the icon button.
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip = Some(Rc::new(tooltip));
+        self
+    }
+
     /// Returns the accessible label.
     pub fn accessible_label(&self) -> &str {
         &self.accessible_label
@@ -202,6 +226,7 @@ impl IconButton {
             self.variant,
             self.size,
             self.disabled,
+            self.selected,
             self.accessible_label.clone(),
             self.tokens,
         )
@@ -251,6 +276,7 @@ impl RenderOnce for IconButton {
             .tab_stop(!disabled)
             .ui_role(state.role())
             .aria_label(label)
+            .aria_selected(state.selected())
             .aria_disabled(disabled)
             .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
@@ -263,6 +289,9 @@ impl RenderOnce for IconButton {
                     cx.stop_propagation();
                     on_click(event, window, cx);
                 })
+            })
+            .when_some(self.tooltip, |this, tooltip| {
+                this.tooltip(move |window, cx| tooltip(window, cx))
             })
             .child(self.icon)
     }

@@ -149,7 +149,7 @@ impl MenuItemState {
             | MenuItemKind::Checkbox
             | MenuItemKind::Radio
             | MenuItemKind::Submenu => Some(Role::MenuItem),
-            MenuItemKind::Separator => None,
+            MenuItemKind::Header | MenuItemKind::Separator => None,
         }
     }
 }

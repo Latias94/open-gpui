@@ -7,7 +7,7 @@ use open_gpui_ui_components::{
     SidebarCollapseMode, SidebarItem, SidebarItemDescriptor, SidebarSection,
     SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Tabs, TabsActivationMode,
     TabsItem, TabsItemDescriptor, TabsSelection, TabsState, ToggleGroup, ToggleGroupItem, Toolbar,
-    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState,
+    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
     active_index_from_str_keys, first_enabled, last_enabled, next_enabled,
     sidebar_navigation_target, toolbar_navigation_target,
 };
@@ -887,4 +887,16 @@ fn toolbar_builder_state_skips_disabled_and_separator_items() {
         ),
         Some(3)
     );
+}
+
+#[test]
+fn toolbar_items_accept_tooltip_builders() {
+    let state = Toolbar::new("editor-tools", "Editor")
+        .item(ToolbarItem::icon("undo", "U", "Undo").tooltip(Tooltip::text("Undo")))
+        .item(ToolbarItem::separator("separator").tooltip(Tooltip::text("Ignored")))
+        .state();
+
+    assert_eq!(state.items().len(), 2);
+    assert_eq!(state.items()[0].value(), "undo");
+    assert_eq!(state.items()[1].kind(), ToolbarItemKind::Separator);
 }

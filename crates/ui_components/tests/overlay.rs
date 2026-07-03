@@ -700,6 +700,85 @@ fn menu_state_records_items_roving_focus_and_overlay_policy() {
 }
 
 #[test]
+fn menu_state_skips_header_items_for_focus_and_activation() {
+    let state = Menu::new("selection-menu", "Selection")
+        .open(true)
+        .default_focused_value("organize-heading")
+        .items([
+            MenuItem::header("organize-heading", "Organize"),
+            MenuItem::separator("separator"),
+            MenuItem::action("create-card", "Create Card"),
+        ])
+        .state();
+
+    assert!(state.open());
+    assert_eq!(state.items().len(), 3);
+    assert_eq!(state.items()[0].kind(), MenuItemKind::Header);
+    assert_eq!(state.items()[0].role(), None);
+    assert!(!state.items()[0].disabled());
+    assert!(!state.items()[0].focusable());
+    assert!(!state.items()[0].activation_enabled());
+    assert_eq!(state.focused_index(), Some(2));
+    assert_eq!(state.focused_value(), Some("create-card"));
+}
+
+#[open_gpui::test]
+fn menu_icon_trigger_keeps_accessible_menu_behavior_and_compacts_trigger(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .flex()
+                .gap_2()
+                .child(
+                    Menu::new("text-menu", "More")
+                        .small()
+                        .item(MenuItem::action("copy", "Copy")),
+                )
+                .child(
+                    Menu::new("icon-menu", "More")
+                        .trigger_icon("...")
+                        .trigger_tooltip(Tooltip::text("More"))
+                        .small()
+                        .item(MenuItem::action("copy", "Copy")),
+                )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let text_trigger = cx
+        .debug_bounds("menu:text-menu:trigger")
+        .expect("text menu trigger should render");
+    let icon_trigger = cx
+        .debug_bounds("menu:icon-menu:trigger")
+        .expect("icon menu trigger should render");
+
+    assert!(
+        icon_trigger.size.width < text_trigger.size.width,
+        "icon trigger should be narrower than text trigger"
+    );
+
+    let state = Menu::new("state-icon-menu", "More")
+        .trigger_icon("...")
+        .open(true)
+        .item(MenuItem::action("copy", "Copy"))
+        .state();
+
+    assert_eq!(state.trigger_role(), Role::Button);
+    assert_eq!(state.content_role(), Role::Menu);
+    assert!(state.trigger_selected());
+    assert_eq!(state.focused_value(), Some("copy"));
+}
+
+#[test]
 fn menu_items_project_core_command_descriptors() {
     let descriptor = open_gpui_command::CommandDescriptor::new("workspace.open", "Open Workspace")
         .shortcut("Ctrl+Shift+O")

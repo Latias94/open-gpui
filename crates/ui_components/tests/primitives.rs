@@ -4,7 +4,7 @@ use open_gpui::{Context, IntoElement, ParentElement, Render, Styled, Window, div
 use open_gpui_ui_components::{
     Avatar, AvatarGroup, AvatarGroupCount, Badge, BadgeVariant, Button, ButtonVariant, Checkbox,
     ColorState, DEFAULT_FOCUS_RING_WIDTH, IconButton, Kbd, Label, Progress, ProgressVisualMode,
-    Separator, Skeleton, Switch, Toggle, ToggleVariant,
+    Separator, Skeleton, Switch, Toggle, ToggleVariant, Tooltip,
 };
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, Toggled, semantic, ui_px};
 use std::cell::RefCell;
@@ -136,6 +136,25 @@ fn icon_button_requires_accessible_label_and_reuses_button_primitives() {
     assert_eq!(state.colors().border().token(), semantic::BORDER);
     assert_eq!(state.focus_ring().color().token(), semantic::FOCUS_RING);
     assert!(state.activation_enabled());
+}
+
+#[test]
+fn selected_icon_button_reuses_selected_button_colors() {
+    let state = IconButton::new("active-search", "?", "Search")
+        .variant(ButtonVariant::Ghost)
+        .selected(true)
+        .state();
+
+    assert!(state.selected());
+    assert_eq!(state.colors().background().token(), semantic::ACCENT);
+    assert_eq!(state.colors().background().state(), ColorState::Selected);
+}
+
+#[test]
+fn buttons_accept_tooltip_builders() {
+    let _button = Button::new("save", "Save").tooltip(Tooltip::text("Save changes"));
+    let _icon_button =
+        IconButton::new("search", "?", "Search").tooltip(Tooltip::text("Search workspace"));
 }
 
 #[test]

@@ -471,6 +471,9 @@ pub(super) fn resolved_menu_items(
     items
         .iter()
         .map(|item_state| match item_state.kind() {
+            open_gpui_ui_components::MenuItemKind::Header => {
+                MenuItem::header(item_state.value(), item_state.label().to_owned())
+            }
             open_gpui_ui_components::MenuItemKind::Separator => {
                 MenuItem::separator(item_state.value())
             }

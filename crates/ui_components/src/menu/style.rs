@@ -11,6 +11,7 @@ pub struct MenuColors {
     pub(crate) item_hover_background: ColorIntent,
     pub(crate) item_focus_background: ColorIntent,
     pub(crate) item_disabled_foreground: ColorIntent,
+    pub(crate) header_foreground: ColorIntent,
     pub(crate) separator: ColorIntent,
     pub(crate) trigger_background: ColorIntent,
     pub(crate) trigger_hover_background: ColorIntent,
@@ -53,6 +54,11 @@ impl MenuColors {
     /// Returns disabled menu item foreground color intent.
     pub const fn item_disabled_foreground(self) -> ColorIntent {
         self.item_disabled_foreground
+    }
+
+    /// Returns section header foreground color intent.
+    pub const fn header_foreground(self) -> ColorIntent {
+        self.header_foreground
     }
 
     /// Returns separator color intent.

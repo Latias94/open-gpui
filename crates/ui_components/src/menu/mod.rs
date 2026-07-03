@@ -12,8 +12,9 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent, ParentElement,
-    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    AnyElement, AnyView, App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent,
+    ParentElement, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
+    Window, div,
 };
 use open_gpui_command::CommandDescriptor;
 use open_gpui_ui_core::{
@@ -61,6 +62,25 @@ fn menu_item_element(
     theme: &ThemeContext,
 ) -> AnyElement {
     match item_state.kind() {
+        MenuItemKind::Header => div()
+            .id(format!("{debug_prefix}-header:{}", item_state.value()))
+            .debug_selector({
+                let header_debug_id = debug_id.clone();
+                let header_value = item_state.value().to_owned();
+                move || format!("{debug_prefix}:{header_debug_id}:header:{header_value}")
+            })
+            .pl(gpui_px_from_ui(
+                metrics.item_padding_x() + metrics.submenu_indent() * item_state.depth() as f32,
+            ))
+            .pr(gpui_px_from_ui(metrics.item_padding_x()))
+            .pt_2()
+            .pb_1()
+            .text_xs()
+            .font_weight(open_gpui::FontWeight::BOLD)
+            .text_color(theme.resolve(colors.header_foreground()))
+            .aria_label(item_state.label().to_owned())
+            .child(item_state.label().to_owned())
+            .into_any_element(),
         MenuItemKind::Separator => {
             let separator_color = theme.resolve(colors.separator());
 
@@ -259,6 +279,16 @@ impl MenuItem {
         }
     }
 
+    /// Creates a static section header item.
+    pub fn header(value: impl Into<String>, label: impl Into<SharedString>) -> Self {
+        let label = label.into();
+        Self {
+            descriptor: MenuItemDescriptor::header(value, label.to_string()),
+            children: Vec::new(),
+            on_select: None,
+        }
+    }
+
     /// Creates a checkbox menu item.
     pub fn checkbox(
         value: impl Into<String>,
@@ -403,6 +433,7 @@ impl MenuItem {
 pub struct Menu {
     id: ElementId,
     trigger_label: SharedString,
+    trigger_icon: Option<SharedString>,
     items: Vec<MenuItem>,
     size: Size,
     disabled: bool,
@@ -418,6 +449,7 @@ pub struct Menu {
     tokens: ThemeTokens,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
+    trigger_tooltip: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
 }
 
 impl Menu {
@@ -426,6 +458,7 @@ impl Menu {
         Self {
             id: id.into(),
             trigger_label: trigger_label.into(),
+            trigger_icon: None,
             items: Vec::new(),
             size: Size::Medium,
             disabled: false,
@@ -441,7 +474,14 @@ impl Menu {
             tokens: ThemeTokens::default(),
             on_open_change: None,
             on_select: None,
+            trigger_tooltip: None,
         }
+    }
+
+    /// Uses an icon-only trigger while preserving the trigger label for accessibility.
+    pub fn trigger_icon(mut self, icon: impl Into<SharedString>) -> Self {
+        self.trigger_icon = Some(icon.into());
+        self
     }
 
     /// Adds one menu item.
@@ -540,6 +580,15 @@ impl Menu {
         self
     }
 
+    /// Adds a hover/focus tooltip to the menu trigger.
+    pub fn trigger_tooltip(
+        mut self,
+        tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+    ) -> Self {
+        self.trigger_tooltip = Some(Rc::new(tooltip));
+        self
+    }
+
     /// Returns resolved menu state.
     pub fn state(&self) -> MenuState {
         MenuState::resolve(
@@ -616,6 +665,8 @@ impl RenderOnce for Menu {
         let trigger_id: ElementId = (id.clone(), "trigger").into();
         let content_id: ElementId = (id.clone(), "content").into();
         let trigger_label = self.trigger_label;
+        let trigger_icon = self.trigger_icon;
+        let trigger_tooltip = self.trigger_tooltip;
         let items = self.items;
         let on_open_change = self.on_open_change;
         let on_select = self.on_select;
@@ -633,6 +684,8 @@ impl RenderOnce for Menu {
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
         let open = state.open();
+        let icon_only_trigger = trigger_icon.is_some();
+        let trigger_content = trigger_icon.unwrap_or_else(|| trigger_label.clone());
         let trigger_border = theme.resolve(colors.trigger_border());
         let trigger_background = theme.resolve(colors.trigger_background());
         let trigger_foreground = theme.resolve(colors.trigger_foreground());
@@ -680,7 +733,13 @@ impl RenderOnce for Menu {
                         move || format!("menu:{debug_id}:trigger")
                     })
                     .min_h(gpui_px_from_ui(metrics.trigger_height()))
-                    .px(gpui_px_from_ui(metrics.trigger_padding_x()))
+                    .when(!icon_only_trigger, |this| {
+                        this.px(gpui_px_from_ui(metrics.trigger_padding_x()))
+                    })
+                    .when(icon_only_trigger, |this| {
+                        this.w(gpui_px_from_ui(metrics.trigger_height()))
+                            .min_w(gpui_px_from_ui(metrics.trigger_height()))
+                    })
                     .py(gpui_px_from_ui(metrics.trigger_padding_y()))
                     .flex()
                     .items_center()
@@ -743,7 +802,10 @@ impl RenderOnce for Menu {
                                 );
                             })
                     })
-                    .child(trigger_label),
+                    .when_some(trigger_tooltip, |this, tooltip| {
+                        this.tooltip(move |window, cx| tooltip(window, cx))
+                    })
+                    .child(trigger_content),
             )
             .when(open, |this| {
                 this.child(gpui_relative_overlay_layer(

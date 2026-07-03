@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
-    App, ClickEvent, Context, ElementId, FocusHandle, InteractiveElement, IntoElement,
+    AnyView, App, ClickEvent, Context, ElementId, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
     Window, div,
 };
@@ -511,6 +511,7 @@ pub struct ToolbarItem {
     descriptor: ToolbarItemDescriptor,
     visible_label: Option<SharedString>,
     on_select: Option<Rc<dyn Fn(ToolbarSelection, &mut Window, &mut App)>>,
+    tooltip: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
 }
 
 impl ToolbarItem {
@@ -521,6 +522,7 @@ impl ToolbarItem {
             descriptor: ToolbarItemDescriptor::action(value, label.to_string()),
             visible_label: Some(label),
             on_select: None,
+            tooltip: None,
         }
     }
 
@@ -534,6 +536,7 @@ impl ToolbarItem {
             descriptor: ToolbarItemDescriptor::action(value, label),
             visible_label: Some(icon.into()),
             on_select: None,
+            tooltip: None,
         }
     }
 
@@ -547,6 +550,7 @@ impl ToolbarItem {
             descriptor: ToolbarItemDescriptor::toggle(value, label),
             visible_label: Some(icon.into()),
             on_select: None,
+            tooltip: None,
         }
     }
 
@@ -557,6 +561,7 @@ impl ToolbarItem {
             descriptor: ToolbarItemDescriptor::toggle(value, label.to_string()),
             visible_label: Some(label),
             on_select: None,
+            tooltip: None,
         }
     }
 
@@ -566,6 +571,7 @@ impl ToolbarItem {
             descriptor: ToolbarItemDescriptor::separator(value),
             visible_label: None,
             on_select: None,
+            tooltip: None,
         }
     }
 
@@ -587,6 +593,14 @@ impl ToolbarItem {
         handler: impl Fn(ToolbarSelection, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_select = Some(Rc::new(handler));
+        self
+    }
+
+    /// Adds a hover/focus tooltip to a non-separator toolbar item.
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        if self.descriptor.kind() != ToolbarItemKind::Separator {
+            self.tooltip = Some(Rc::new(tooltip));
+        }
         self
     }
 
@@ -786,6 +800,7 @@ impl RenderOnce for Toolbar {
                 .children(state.items().iter().enumerate().map(|(index, item)| {
                     let descriptor = item_descriptors[index].clone();
                     let visible_label = items[index].visible_label.clone();
+                    let item_tooltip = items[index].tooltip.clone();
                     let click_item_handler = items[index].select_handler();
                     let key_item_handler = click_item_handler.clone();
                     let click_toolbar_handler = on_select.clone();
@@ -960,6 +975,9 @@ impl RenderOnce for Toolbar {
 
                                 cx.stop_propagation();
                             }
+                        })
+                        .when_some(item_tooltip, |this, tooltip| {
+                            this.tooltip(move |window, cx| tooltip(window, cx))
                         })
                         .child(visible_label.unwrap_or_else(|| descriptor.label().into()))
                         .into_any_element()

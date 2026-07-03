@@ -845,6 +845,7 @@ impl ThemeResolver {
                 ColorState::Disabled,
                 0x7a8491,
             ),
+            header_foreground: ColorIntent::new(tokens.text_muted, DEFAULT_TEXT_MUTED),
             separator: ColorIntent::new(tokens.border, DEFAULT_BORDER),
             trigger_background: ColorIntent::with_state(
                 tokens.surface_muted,

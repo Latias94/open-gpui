@@ -883,6 +883,19 @@ impl VisualTestContext {
         })
     }
 
+    /// Simulate a mouse drag from one point to another on the current window.
+    pub fn simulate_drag(
+        &mut self,
+        start: Point<Pixels>,
+        end: Point<Pixels>,
+        button: MouseButton,
+        modifiers: Modifiers,
+    ) {
+        self.simulate_mouse_down(start, button, modifiers);
+        self.simulate_mouse_move(end, Some(button), modifiers);
+        self.simulate_mouse_up(end, button, modifiers);
+    }
+
     /// Simulate a primary mouse click at the given point
     pub fn simulate_click(&mut self, position: Point<Pixels>, modifiers: Modifiers) {
         self.simulate_event(MouseDownEvent {
@@ -1203,9 +1216,9 @@ impl AnyWindowHandle {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Context, Empty, FocusHandle, InteractiveElement, IntoElement, ParentElement,
-        PathPromptOptions, PlatformHoveredWindow, Render, StatefulInteractiveElement,
-        TestAppContext, VisualContext, div, px, size,
+        Context, Empty, FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement,
+        PathPromptOptions, PlatformHoveredWindow, Render, StatefulInteractiveElement, Styled,
+        TestAppContext, VisualContext, div, point, px, size,
     };
     use std::path::PathBuf;
 
@@ -1358,5 +1371,56 @@ mod tests {
         );
         assert!(cx.debug_selector_is_focused("focus-debug:second"));
         assert!(!cx.debug_selector_is_focused("focus-debug:first"));
+    }
+
+    #[open_gpui::test]
+    fn test_simulate_drag_dispatches_mouse_sequence(cx: &mut TestAppContext) {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        #[derive(Clone)]
+        struct DragRecorder {
+            events: Rc<RefCell<Vec<&'static str>>>,
+        }
+
+        impl Render for DragRecorder {
+            fn render(
+                &mut self,
+                _window: &mut crate::Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
+                div()
+                    .id("drag-recorder")
+                    .w(px(200.0))
+                    .h(px(120.0))
+                    .on_mouse_down(MouseButton::Left, {
+                        let events = self.events.clone();
+                        move |_, _, _| events.borrow_mut().push("down")
+                    })
+                    .on_mouse_move({
+                        let events = self.events.clone();
+                        move |_, _, _| events.borrow_mut().push("move")
+                    })
+                    .on_mouse_up(MouseButton::Left, {
+                        let events = self.events.clone();
+                        move |_, _, _| events.borrow_mut().push("up")
+                    })
+            }
+        }
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let events_for_view = events.clone();
+        let (_view, visual_cx) = cx.add_window_view(move |_, _| DragRecorder {
+            events: events_for_view.clone(),
+        });
+
+        visual_cx.simulate_drag(
+            point(px(20.0), px(20.0)),
+            point(px(120.0), px(80.0)),
+            MouseButton::Left,
+            crate::Modifiers::none(),
+        );
+
+        assert_eq!(events.borrow().as_slice(), ["down", "move", "up"]);
     }
 }

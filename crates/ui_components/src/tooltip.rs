@@ -1,12 +1,14 @@
 //! Tooltip component.
 
 use crate::geometry::gpui_px_from_ui;
+use crate::kbd::Kbd;
 use std::time::Duration;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div,
+    Action, AnyElement, AnyView, App, Context, ElementId, IntoElement, KeyBinding, KeyContext,
+    ParentElement, Render, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window,
+    div,
 };
 use open_gpui_ui_core::{
     InitialFocusIntent, OverlayAnchorInput, OverlayLayerKind, OverlayPlacementAlignment,
@@ -372,6 +374,34 @@ impl Tooltip {
         }
     }
 
+    /// Creates a GPUI tooltip-builder closure for attaching text tooltips to interactive elements.
+    pub fn text(
+        text: impl Into<SharedString>,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+        let text = text.into();
+        move |_, cx| cx.new(|_| TextTooltipView { text: text.clone() }).into()
+    }
+
+    /// Creates a tooltip builder that appends the active keybinding for an action when available.
+    pub fn for_action(
+        label: impl Into<SharedString>,
+        action: impl Action + 'static,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+        action_tooltip_builder(label, Box::new(action), None)
+    }
+
+    /// Creates a tooltip builder that appends the keybinding for an action in a specific key context.
+    pub fn for_action_in_context<C, E>(
+        label: impl Into<SharedString>,
+        action: impl Action + 'static,
+        key_context: C,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static
+    where
+        C: TryInto<KeyContext, Error = E>,
+    {
+        action_tooltip_builder(label, Box::new(action), key_context.try_into().ok())
+    }
+
     /// Marks the tooltip trigger as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
@@ -434,6 +464,78 @@ impl Tooltip {
             TooltipContent::Text(_) => TooltipContentKind::Text,
             TooltipContent::Element(_) => TooltipContentKind::Element,
         }
+    }
+}
+
+fn action_tooltip_builder(
+    label: impl Into<SharedString>,
+    action: Box<dyn Action>,
+    key_context: Option<KeyContext>,
+) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let label = label.into();
+    move |window, cx| {
+        let key_binding =
+            key_binding_text_for_action(window, action.as_ref(), key_context.as_ref());
+        cx.new(|_| ActionTooltipView {
+            label: label.clone(),
+            key_binding,
+        })
+        .into()
+    }
+}
+
+fn key_binding_text_for_action(
+    window: &Window,
+    action: &dyn Action,
+    key_context: Option<&KeyContext>,
+) -> Option<SharedString> {
+    let binding = match key_context {
+        Some(key_context) => {
+            window.highest_precedence_binding_for_action_in_context(action, key_context.clone())
+        }
+        None => window.highest_precedence_binding_for_action(action),
+    }?;
+
+    Some(key_binding_text(&binding).into())
+}
+
+fn key_binding_text(binding: &KeyBinding) -> String {
+    binding
+        .keystrokes()
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+struct TextTooltipView {
+    text: SharedString,
+}
+
+impl Render for TextTooltipView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        Tooltip::new("tooltip", self.text.clone())
+    }
+}
+
+struct ActionTooltipView {
+    label: SharedString,
+    key_binding: Option<SharedString>,
+}
+
+impl Render for ActionTooltipView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        Tooltip::element(
+            "tooltip",
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(div().child(self.label.clone()))
+                .when_some(self.key_binding.clone(), |this, key_binding| {
+                    this.child(Kbd::new("tooltip-keybinding", key_binding).xsmall())
+                }),
+        )
     }
 }
 
