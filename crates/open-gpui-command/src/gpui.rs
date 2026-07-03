@@ -117,8 +117,30 @@ impl GpuiCommandActionMap {
         self
     }
 
+    /// Registers one command id to GPUI action binding in-place.
+    pub fn register_action(
+        &mut self,
+        command_id: impl Into<String>,
+        action: impl Action + 'static,
+    ) -> &mut Self {
+        self.actions
+            .push(GpuiCommandAction::new(command_id, action));
+        self
+    }
+
     /// Adds one boxed command id to GPUI action binding.
     pub fn boxed_action(mut self, command_id: impl Into<String>, action: Box<dyn Action>) -> Self {
+        self.actions
+            .push(GpuiCommandAction::boxed(command_id, action));
+        self
+    }
+
+    /// Registers one boxed command id to GPUI action binding in-place.
+    pub fn register_boxed_action(
+        &mut self,
+        command_id: impl Into<String>,
+        action: Box<dyn Action>,
+    ) -> &mut Self {
         self.actions
             .push(GpuiCommandAction::boxed(command_id, action));
         self

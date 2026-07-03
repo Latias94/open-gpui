@@ -7,6 +7,7 @@
 //! can share one command domain model.
 
 mod availability;
+mod center;
 pub mod gpui;
 mod history;
 mod menu;
@@ -17,6 +18,7 @@ pub use availability::{
     CommandAvailability, CommandAvailabilityMap, CommandAvailabilityResolver,
     command_effective_availability,
 };
+pub use center::{CommandCenter, CommandSourceRegistration};
 pub use gpui::{
     CommandDispatchOutcome, GpuiCommandAction, GpuiCommandActionMap, command_shortcut_label,
     command_shortcut_label_from_keymap,
