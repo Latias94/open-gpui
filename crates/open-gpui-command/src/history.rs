@@ -102,9 +102,8 @@ impl MemoryCommandHistory {
         if query.is_empty() {
             return;
         }
-        if self.queries.back().is_some_and(|last| last == query) {
-            self.query_cursor = None;
-            return;
+        if let Some(position) = self.queries.iter().position(|candidate| candidate == query) {
+            self.queries.remove(position);
         }
         if self.queries.len() == self.capacity {
             self.queries.pop_front();
@@ -324,5 +323,21 @@ mod tests {
 
         history.reset_query_navigation();
         assert_eq!(history.previous_query("save"), Some("save file".into()));
+    }
+
+    #[test]
+    fn memory_history_promotes_duplicate_queries() {
+        let mut history = MemoryCommandHistory::new(4);
+        history.record_query("open file");
+        history.record_query("save file");
+        history.record_query("open settings");
+        history.record_query("open file");
+
+        assert_eq!(
+            history.recent_queries(),
+            ["open file", "open settings", "save file"]
+        );
+        assert_eq!(history.previous_query("open"), Some("open file".into()));
+        assert_eq!(history.previous_query("open"), Some("open settings".into()));
     }
 }
