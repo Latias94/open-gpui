@@ -11,6 +11,11 @@ status: active
   proof-gated scalar value/run state, frame-demand reasons, production policy gates, and projection
   honesty while deferring keyframes, grouped playback, public subscribers, DOM/React APIs, and
   compositor-backed execution.
+- 2026-07-04: Completed the first UI motion value foundation code checkpoint on
+  `feat/ui-motion-value-foundation`. `MotionRunState` now names shared run state, `MotionPreset`
+  makes default spring selection explicit, Splitter programmatic motion resolves an explicit layout
+  preset, and Docking exposes explicit model/preset execution while `MotionSpec` compatibility
+  paths remain timeline-backed.
 - 2026-07-04: Added command keybinding conflict reporting on
   `feat/command-keybinding-conflicts`. `CommandKeyBindingProjection` now reports conservative
   same-context shortcut conflicts, and `CommandKeyBindingInstallReport` summarizes append-only

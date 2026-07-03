@@ -9,6 +9,8 @@ related_adr:
   - docs/adr/0017-ui-motion-value-foundation.md
 git_commits:
   - 6d89aac docs(ui): plan motion value foundation
+  - 9a6e119 docs(ui): record motion value boundary
+  - 1e52b12 refactor(ui): make motion model resolution explicit
 tags:
   - ui-core
   - motion
@@ -37,11 +39,21 @@ Started the UI motion value foundation implementation on `feat/ui-motion-value-f
   branch started.
 - Plan commit: `6d89aac docs(ui): plan motion value foundation`.
 - ADR 0017 records the accepted value/model/run/policy boundary for this implementation round.
+- U2 is implemented: `MotionRunState` is the shared state name with `MotionTimelineState` retained
+  as a compatibility alias; `MotionPreset` resolves explicit default spring presets; Splitter and
+  docking custom `MotionSpec` paths remain timeline-backed; default Splitter and docking spring
+  behavior now uses explicit preset/model entry points.
+- U2 verification so far: `cargo nextest run -p open-gpui-ui-core motion --no-fail-fast` passed;
+  focused `cargo test --lib -- --exact` checks passed for Splitter custom timeline/reduced motion
+  and docking custom timeline/default preset tests; `cargo check -p open-gpui-ui-core -p
+  open-gpui-ui-components -p open-gpui-docking` passed. Wider nextest filters for
+  `open-gpui-ui-components splitter` and `open-gpui-docking host_transition_tests` were interrupted
+  after hanging without failure output and should be retried later or replaced with narrower gates.
 
 # Next Action
 
-Implement U2 from the plan: normalize motion model/state/preset semantics, characterize projection
-consumption, and stop hidden `MotionSpec` to spring conversion in Splitter and docking paths.
+Implement U3 from the plan: add proof-gated scalar value/run state only if Splitter or docking has a
+real consumer path; otherwise keep it private or delete it.
 
 # Citations
 
