@@ -240,7 +240,7 @@ pub(super) fn command_content_element(
         })
         .aria_label(label.clone())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
-            let key = event.keystroke.key.as_str();
+            let key = command_key_down_event_key(event);
             if key == "escape" && escape_change.is_some() {
                 cx.stop_propagation();
                 window.prevent_default();
@@ -250,6 +250,9 @@ pub(super) fn command_content_element(
                     window,
                     cx,
                 );
+                return;
+            }
+            if event.prefer_character_input {
                 return;
             }
 
@@ -402,6 +405,7 @@ fn command_navigation_target<'a>(
     key: &str,
     viewport_extent: UiPx,
 ) -> Option<&'a crate::listbox::ListboxOptionState> {
+    let key = command_navigation_key(key);
     if let Some(target) = state.listbox().navigation_target(key) {
         return Some(target);
     }
@@ -419,11 +423,64 @@ fn command_navigation_target<'a>(
         _ => return None,
     };
 
-    state
-        .listbox()
-        .options()
-        .get(target)
-        .filter(|option| option.focusable())
+    command_focusable_option_near(state.listbox().options(), target, matches!(key, "pagedown"))
+}
+
+fn command_navigation_key(key: &str) -> &str {
+    match key {
+        "ctrl-j" | "ctrl-n" => "down",
+        "ctrl-k" | "ctrl-p" => "up",
+        "ctrl-d" => "pagedown",
+        "ctrl-u" => "pageup",
+        _ => key,
+    }
+}
+
+fn command_key_down_event_key(event: &KeyDownEvent) -> &str {
+    let key = event.keystroke.key.as_str();
+    let modifiers = event.keystroke.modifiers;
+    if modifiers.control && modifiers.number_of_modifiers() == 1 {
+        return match key {
+            "j" | "n" => "down",
+            "k" | "p" => "up",
+            "d" => "pagedown",
+            "u" => "pageup",
+            _ => key,
+        };
+    }
+    key
+}
+
+fn command_focusable_option_near(
+    options: &[crate::listbox::ListboxOptionState],
+    target: usize,
+    forward: bool,
+) -> Option<&crate::listbox::ListboxOptionState> {
+    if forward {
+        options
+            .iter()
+            .skip(target)
+            .find(|option| option.focusable())
+            .or_else(|| {
+                options
+                    .iter()
+                    .take(target)
+                    .rev()
+                    .find(|option| option.focusable())
+            })
+    } else {
+        options
+            .iter()
+            .take(target + 1)
+            .rev()
+            .find(|option| option.focusable())
+            .or_else(|| {
+                options
+                    .iter()
+                    .skip(target + 1)
+                    .find(|option| option.focusable())
+            })
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -565,6 +622,7 @@ fn render_command_result_row(
     let render_key = row.render_key().to_owned();
     let label = row.label().to_owned();
     let shortcut = row.shortcut().map(str::to_owned);
+    let disabled_reason = row.disabled_reason_ref().map(str::to_owned);
     let selection = CommandSelection::from_item(row.item());
     let disabled = row.disabled();
     let selected = row.selected();
@@ -585,6 +643,9 @@ fn render_command_result_row(
     });
     let row_hover_background = theme.resolve(command_row_hover_background(colors));
     let shortcut_foreground = theme.resolve(colors.shortcut_foreground());
+    let option_aria_label = disabled_reason
+        .as_ref()
+        .map_or_else(|| label.clone(), |reason| format!("{label}, {reason}"));
 
     div()
         .id(format!("command-row:{render_key}"))
@@ -637,7 +698,7 @@ fn render_command_result_row(
                 .bg(row_background)
                 .text_color(row_foreground)
                 .ui_role(row.role())
-                .aria_label(label.clone())
+                .aria_label(option_aria_label)
                 .aria_selected(selected)
                 .aria_disabled(disabled)
                 .when_some(position, |this, position| {
@@ -823,6 +884,7 @@ fn command_selection_change_after_toggle(
 
 #[cfg(test)]
 mod tests {
+    use open_gpui::{KeyDownEvent, Keystroke, Modifiers};
     use open_gpui_ui_core::ui_px;
 
     use super::*;
@@ -840,6 +902,18 @@ mod tests {
                     .item(CommandItem::new("new-file", "New File").shortcut("Ctrl+N"))
                     .item(CommandItem::new("close-window", "Close Window").shortcut("Alt+F4")),
             )
+            .state()
+    }
+
+    fn paged_keyboard_state(selected: &str) -> CommandState {
+        Command::new("paged-palette", "Command palette")
+            .open(true)
+            .row_height(ui_px(20.0))
+            .selected(selected)
+            .item(CommandItem::new("open-file", "Open File"))
+            .item(CommandItem::new("disabled-one", "Disabled One").disabled(true))
+            .item(CommandItem::new("disabled-two", "Disabled Two").disabled(true))
+            .item(CommandItem::new("close-window", "Close Window"))
             .state()
     }
 
@@ -862,6 +936,63 @@ mod tests {
                 "New File".to_string(),
                 Some("Ctrl+N".to_string()),
             ))
+        );
+    }
+
+    #[test]
+    fn keyboard_action_supports_vim_navigation_aliases() {
+        let state = keyboard_state(false);
+        let down = command_keyboard_action(&state, "down", ui_px(224.0));
+        let up = command_keyboard_action(&state, "up", ui_px(224.0));
+
+        assert_eq!(
+            command_keyboard_action(&state, "ctrl-j", ui_px(224.0)),
+            down
+        );
+        assert_eq!(
+            command_keyboard_action(&state, "ctrl-n", ui_px(224.0)),
+            down
+        );
+        assert_eq!(command_keyboard_action(&state, "ctrl-k", ui_px(224.0)), up);
+        assert_eq!(command_keyboard_action(&state, "ctrl-p", ui_px(224.0)), up);
+    }
+
+    #[test]
+    fn keyboard_event_key_normalizes_control_navigation_aliases() {
+        let event = KeyDownEvent {
+            keystroke: Keystroke {
+                modifiers: Modifiers {
+                    control: true,
+                    ..Modifiers::none()
+                },
+                key: "j".to_string(),
+                key_char: None,
+            },
+            is_held: false,
+            prefer_character_input: false,
+        };
+
+        assert_eq!(command_key_down_event_key(&event), "down");
+    }
+
+    #[test]
+    fn keyboard_action_pages_to_nearest_focusable_command() {
+        let down_state = paged_keyboard_state("open-file");
+        assert_eq!(
+            command_keyboard_action(&down_state, "pagedown", ui_px(40.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 3,
+                value: "close-window".to_string()
+            })
+        );
+
+        let up_state = paged_keyboard_state("close-window");
+        assert_eq!(
+            command_keyboard_action(&up_state, "pageup", ui_px(40.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 0,
+                value: "open-file".to_string()
+            })
         );
     }
 

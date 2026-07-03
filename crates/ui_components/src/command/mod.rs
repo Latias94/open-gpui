@@ -755,6 +755,12 @@ impl CommandItem {
         self
     }
 
+    /// Marks the command as disabled with a user-displayable reason.
+    pub fn disabled_reason(mut self, reason: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.disabled_reason(reason);
+        self
+    }
+
     /// Applies caller-owned availability metadata without evaluating it.
     pub fn when(mut self, when: impl Into<String>) -> Self {
         self.descriptor = self.descriptor.when(when);

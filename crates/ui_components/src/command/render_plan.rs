@@ -56,6 +56,11 @@ impl CommandRowBehaviorSnapshot {
         self.item.when_ref()
     }
 
+    /// Returns the optional disabled reason.
+    pub fn disabled_reason_ref(&self) -> Option<&str> {
+        self.item.disabled_reason_ref()
+    }
+
     /// Returns the render key used by element ids and virtualizer measurements.
     pub fn render_key(&self) -> &str {
         &self.render_key
@@ -276,6 +281,11 @@ impl CommandRowRenderPlan {
     /// Returns optional shortcut label.
     pub fn shortcut(&self) -> Option<&str> {
         self.item.shortcut()
+    }
+
+    /// Returns the optional disabled reason.
+    pub fn disabled_reason_ref(&self) -> Option<&str> {
+        self.item.disabled_reason_ref()
     }
 
     /// Returns the render key used by element ids and virtualizer measurements.
