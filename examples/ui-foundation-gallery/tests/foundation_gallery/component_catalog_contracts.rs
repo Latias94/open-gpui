@@ -1241,7 +1241,7 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     let conformance_source = include_str!("../../src/pages/components/conformance.rs");
     let component_evidence_source =
         include_str!("../../../../crates/ui_components/src/component_contract/evidence.rs");
-    let render_source = include_str!("../../src/pages/components/render.rs");
+    let render_source = include_str!("../../src/pages/components/render/mod.rs");
     let render_choice_source = include_str!("../../src/pages/components/render/choice.rs");
     let render_families_source = include_str!("../../src/pages/components/render/families.rs");
     let render_focus_source = include_str!("../../src/pages/components/render/focus.rs");
@@ -1273,8 +1273,10 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(components_source.contains("pub mod catalog;"));
     assert!(components_source.contains("pub use catalog::{"));
     assert!(components_source.contains("pub mod conformance;"));
+    assert!(components_source.contains("mod render;"));
     assert!(components_source.contains("mod runtime;"));
     assert!(components_source.contains("mod samples;"));
+    assert!(!components_source.contains("#[path = \"components/render.rs\"]"));
     assert!(components_source.contains("pub use runtime::{"));
     assert!(components_source.contains("pub use samples::{"));
     assert!(!components_source.contains("pub mod runtime;"));
@@ -1334,21 +1336,22 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(!samples_source.contains("pub struct ButtonSample"));
     assert!(!samples_source.contains("static TABLE_SAMPLES"));
     for module_path in [
-        "#[path = \"render/choice.rs\"]",
-        "#[path = \"render/families.rs\"]",
-        "#[path = \"render/focus.rs\"]",
-        "#[path = \"render/forms.rs\"]",
-        "#[path = \"render/layout.rs\"]",
-        "#[path = \"render/metadata.rs\"]",
-        "#[path = \"render/readouts.rs\"]",
-        "#[path = \"render/sections.rs\"]",
-        "#[path = \"render/support.rs\"]",
+        "mod choice;",
+        "mod families;",
+        "mod focus;",
+        "mod forms;",
+        "mod layout;",
+        "mod metadata;",
+        "mod readouts;",
+        "mod sections;",
+        "mod support;",
     ] {
         assert!(
             render_source.contains(module_path),
-            "render facade should declare owner module `{module_path}`"
+            "render facade should declare standard owner module `{module_path}`"
         );
     }
+    assert!(!render_source.contains("#[path = \"render/"));
     assert!(render_choice_source.contains("fn render_component_choice_sections"));
     assert!(render_choice_source.contains("fn render_switch_section"));
     assert!(render_choice_source.contains("fn render_checkbox_section"));

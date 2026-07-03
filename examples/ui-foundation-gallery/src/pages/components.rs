@@ -4,7 +4,6 @@
 pub mod catalog;
 #[path = "components/conformance.rs"]
 pub mod conformance;
-#[path = "components/render.rs"]
 mod render;
 #[path = "components/runtime.rs"]
 mod runtime;
