@@ -15,6 +15,7 @@ pub mod focus;
 pub mod geometry;
 pub mod grid_viewport;
 pub mod motion;
+pub mod motion_controller;
 pub mod motion_projection;
 pub mod motion_runtime;
 pub mod motion_spring;
@@ -41,6 +42,10 @@ pub use geometry::{
 };
 pub use grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d};
 pub use motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
+pub use motion_controller::{
+    MotionFrameDemand, MotionScalarController, MotionScalarControllerSample, MotionScalarTrack,
+    MotionScalarTrackSample,
+};
 pub use motion_projection::{MotionProjection, MotionProjectionSample, MotionProjectionScale};
 pub use motion_runtime::{
     MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionSnapshot, MotionTimeline,
