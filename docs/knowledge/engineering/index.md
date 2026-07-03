@@ -33,6 +33,8 @@
 * [Open GPUI command palette controller verification](verification/open-gpui-command-palette-controller-20260703.md) - Verification evidence for `CommandPaletteController`, public exports, async stale-response handling, and gallery migration.
 * [Open GPUI command context keymap](progress/2026-07-03-open-gpui-command-context-keymap.md) - Command scope and GPUI key context stack for context-aware shortcut projection.
 * [Open GPUI command context keymap verification](verification/open-gpui-command-context-keymap-20260703.md) - Verification evidence for `CommandContextStack`, context-aware keymap projection, public exports, and gallery proof.
+* [Open GPUI command source handles](progress/2026-07-03-open-gpui-command-source-handles.md) - Explicit source/provider lifecycle handles for plugin-like command registrations.
+* [Open GPUI command source handles verification](verification/open-gpui-command-source-handles-20260703.md) - Verification evidence for handle unregister behavior, public exports, and command docs.
 * [Native UI hybrid registry architecture planning](progress/2026-07-02-native-ui-hybrid-registry-architecture-plan.md) - Superseded historical plan for the removed hybrid registry MVP.
 * [Native UI hybrid registry implementation](progress/2026-07-02-native-ui-hybrid-registry-implementation.md) - Superseded implementation history for the removed registry manifest, recipes, artifacts, and scan.
 * [Native UI hybrid registry implementation verification](verification/native-ui-hybrid-registry-implementation-20260702.md) - Superseded verification evidence for the removed hybrid registry work.

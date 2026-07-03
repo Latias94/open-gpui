@@ -105,13 +105,15 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             .map(|entry| entry.key.as_ref()),
         Some("Root")
     );
-    let _root_command_source: root::CommandSourceRegistration = root_command_center
+    let root_command_source: root::CommandSourceHandle = root_command_center
         .register_source(
             "root",
             "root-source",
             [root::CommandContribution::new(root_core_command.clone())],
         )
         .unwrap();
+    let _root_command_source_registration: root::CommandSourceRegistration =
+        root_command_source.clone();
     fn root_provider_fn(_: &root::CommandProviderRequest) -> root::CommandProviderResponse {
         root::CommandProviderResponse::ready()
     }
@@ -174,8 +176,10 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     assert_root_provider(
         &(root_provider_fn as fn(&root::CommandProviderRequest) -> root::CommandProviderResponse),
     );
-    let _root_provider_registration: root::CommandProviderRegistration =
+    let root_provider_handle: root::CommandProviderHandle =
         root_command_center.register_provider("root-provider-callback", root_provider_fn);
+    let _root_provider_registration: root::CommandProviderRegistration =
+        root_provider_handle.clone();
     let _root_command_actions = root::GpuiCommandActionMap::new();
     let _root_command_outcome = root::CommandDispatchOutcome::MissingAction;
     let root_command_items = vec![root::CommandItem::new("open", "Open")];
@@ -305,7 +309,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             .map(|entry| entry.key.as_ref()),
         Some("Prelude")
     );
-    let _prelude_command_source: prelude::CommandSourceRegistration = prelude_command_center
+    let prelude_command_source: prelude::CommandSourceHandle = prelude_command_center
         .register_source(
             "prelude",
             "prelude-source",
@@ -314,6 +318,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             )],
         )
         .unwrap();
+    let _prelude_command_source_registration: prelude::CommandSourceRegistration =
+        prelude_command_source.clone();
     fn prelude_provider_fn(
         _: &prelude::CommandProviderRequest,
     ) -> prelude::CommandProviderResponse {
@@ -385,8 +391,10 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         &(prelude_provider_fn
             as fn(&prelude::CommandProviderRequest) -> prelude::CommandProviderResponse),
     );
-    let _prelude_provider_registration: prelude::CommandProviderRegistration =
+    let prelude_provider_handle: prelude::CommandProviderHandle =
         prelude_command_center.register_provider("prelude-provider-callback", prelude_provider_fn);
+    let _prelude_provider_registration: prelude::CommandProviderRegistration =
+        prelude_provider_handle.clone();
     let _prelude_command_actions = prelude::GpuiCommandActionMap::new();
     let _prelude_command_outcome = prelude::CommandDispatchOutcome::MissingAction;
     let prelude_command_items = vec![prelude::CommandItem::new("open", "Open")];

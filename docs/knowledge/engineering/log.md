@@ -6,6 +6,12 @@ status: active
 
 # Log
 
+- 2026-07-03: Added explicit command lifecycle handles on
+  `feat/command-source-handles`. `CommandSourceHandle` and `CommandProviderHandle` are now the
+  recommended names for plugin-like registrations, with `CommandSourceRegistration` and
+  `CommandProviderRegistration` retained as compatibility aliases. Handles can unregister
+  themselves against an app-owned `CommandCenter`, and borrowed center unregister methods remain
+  available for hosts that store handles in registries.
 - 2026-07-03: Added `CommandContextStack` on `feat/command-context-keymap`. The stack carries
   command scopes and GPUI key contexts separately, so `CommandCenter` can project focused command
   scopes while app-level keymap shortcut display and diagnostics respect the same GPUI key context

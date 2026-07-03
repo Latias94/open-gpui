@@ -15,15 +15,15 @@ use crate::{
     GpuiCommandActionMap, MemoryCommandHistory, ScopedCommandRegistry,
 };
 
-/// A registered command source within one command scope.
+/// Handle for a registered command source within one command scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandSourceRegistration {
+pub struct CommandSourceHandle {
     scope_id: CommandScopeId,
     source_id: CommandSourceId,
 }
 
-impl CommandSourceRegistration {
-    /// Creates a command source registration token.
+impl CommandSourceHandle {
+    /// Creates a command source lifecycle handle.
     pub fn new(scope_id: impl Into<CommandScopeId>, source_id: impl Into<CommandSourceId>) -> Self {
         Self {
             scope_id: scope_id.into(),
@@ -40,16 +40,32 @@ impl CommandSourceRegistration {
     pub const fn source_id(&self) -> &CommandSourceId {
         &self.source_id
     }
+
+    /// Unregisters this source from a command center.
+    ///
+    /// Source ids are center-wide lifecycle ids. Unregistering a source removes every
+    /// contribution carrying the same source id across all scopes.
+    pub fn unregister(self, center: &mut CommandCenter) -> usize {
+        center.unregister_source(self.source_id)
+    }
+
+    /// Unregisters this source from a command center without consuming the handle.
+    pub fn unregister_from(&self, center: &mut CommandCenter) -> usize {
+        center.unregister_source_handle(self)
+    }
 }
 
-/// A registered dynamic command provider.
+/// Backward-compatible alias for command source lifecycle handles.
+pub type CommandSourceRegistration = CommandSourceHandle;
+
+/// Handle for a registered dynamic command provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandProviderRegistration {
+pub struct CommandProviderHandle {
     provider_id: CommandProviderId,
 }
 
-impl CommandProviderRegistration {
-    /// Creates a command provider registration token.
+impl CommandProviderHandle {
+    /// Creates a command provider lifecycle handle.
     pub fn new(provider_id: impl Into<CommandProviderId>) -> Self {
         Self {
             provider_id: provider_id.into(),
@@ -60,7 +76,20 @@ impl CommandProviderRegistration {
     pub const fn provider_id(&self) -> &CommandProviderId {
         &self.provider_id
     }
+
+    /// Unregisters this provider and removes its applied dynamic sources.
+    pub fn unregister(self, center: &mut CommandCenter) -> usize {
+        center.unregister_provider_id(self.provider_id)
+    }
+
+    /// Unregisters this provider without consuming the handle.
+    pub fn unregister_from(&self, center: &mut CommandCenter) -> usize {
+        center.unregister_provider_handle(self)
+    }
 }
+
+/// Backward-compatible alias for dynamic command provider lifecycle handles.
+pub type CommandProviderRegistration = CommandProviderHandle;
 
 #[derive(Clone)]
 struct CommandProviderEntry {
@@ -230,7 +259,7 @@ impl CommandCenter {
         &mut self,
         provider_id: impl Into<CommandProviderId>,
         provider: impl CommandProvider,
-    ) -> CommandProviderRegistration {
+    ) -> CommandProviderHandle {
         self.register_provider_arc(provider_id, Arc::new(provider))
     }
 
@@ -239,7 +268,7 @@ impl CommandCenter {
         &mut self,
         provider_id: impl Into<CommandProviderId>,
         provider: Arc<dyn CommandProvider>,
-    ) -> CommandProviderRegistration {
+    ) -> CommandProviderHandle {
         let provider_id = provider_id.into();
         self.unregister_provider_id(provider_id.clone());
         if !provider_id.is_empty() {
@@ -248,12 +277,17 @@ impl CommandCenter {
                 provider,
             });
         }
-        CommandProviderRegistration::new(provider_id)
+        CommandProviderHandle::new(provider_id)
+    }
+
+    /// Unregisters a dynamic command provider handle and removes its applied sources.
+    pub fn unregister_provider_handle(&mut self, handle: &CommandProviderHandle) -> usize {
+        self.unregister_provider_id(handle.provider_id().clone())
     }
 
     /// Unregisters a dynamic command provider and removes its applied sources.
-    pub fn unregister_provider(&mut self, registration: &CommandProviderRegistration) -> usize {
-        self.unregister_provider_id(registration.provider_id().clone())
+    pub fn unregister_provider(&mut self, handle: &CommandProviderHandle) -> usize {
+        self.unregister_provider_handle(handle)
     }
 
     /// Unregisters a dynamic command provider id and removes its applied sources.
@@ -441,19 +475,24 @@ impl CommandCenter {
         scope_id: impl Into<CommandScopeId>,
         source_id: impl Into<CommandSourceId>,
         contributions: impl IntoIterator<Item = CommandContribution>,
-    ) -> Result<CommandSourceRegistration, CommandRegistryError> {
+    ) -> Result<CommandSourceHandle, CommandRegistryError> {
         let scope_id = scope_id.into();
         let source_id = source_id.into();
         let sourced_contributions = sourced_contributions(&source_id, contributions);
 
         self.registry
             .register_all_in_scope(scope_id.clone(), sourced_contributions)?;
-        Ok(CommandSourceRegistration::new(scope_id, source_id))
+        Ok(CommandSourceHandle::new(scope_id, source_id))
+    }
+
+    /// Unregisters all commands from the given source handle.
+    pub fn unregister_source_handle(&mut self, handle: &CommandSourceHandle) -> usize {
+        self.unregister_source(handle.source_id().clone())
     }
 
     /// Unregisters all commands from the given source registration.
-    pub fn unregister(&mut self, registration: &CommandSourceRegistration) -> usize {
-        self.unregister_source(registration.source_id().clone())
+    pub fn unregister(&mut self, handle: &CommandSourceHandle) -> usize {
+        self.unregister_source_handle(handle)
     }
 
     /// Unregisters all commands from a source id.
@@ -1087,7 +1126,7 @@ mod tests {
     #[test]
     fn center_unregisters_sources_from_snapshots_and_menus() {
         let mut center = CommandCenter::new("center-v1");
-        let registration = center
+        let source_handle = center
             .register_source(
                 "global",
                 "plugin",
@@ -1098,10 +1137,53 @@ mod tests {
             .unwrap();
 
         assert!(center.snapshot().descriptor("plugin.run").is_some());
-        assert_eq!(center.unregister(&registration), 1);
+        assert_eq!(center.unregister(&source_handle), 1);
         assert!(center.snapshot().descriptor("plugin.run").is_none());
         assert!(center.menu_tree().entries().is_empty());
-        assert_eq!(center.unregister(&registration), 0);
+        assert_eq!(center.unregister(&source_handle), 0);
+    }
+
+    #[test]
+    fn source_and_provider_handles_unregister_their_runtime_state() {
+        let mut center = CommandCenter::new("center-v1");
+        let source_handle = center
+            .register_source(
+                "global",
+                "plugin-source",
+                [CommandContribution::new(CommandDescriptor::new(
+                    "plugin.run",
+                    "Run Plugin",
+                ))],
+            )
+            .unwrap();
+        let provider_handle =
+            center.register_provider("plugin-provider", |_: &crate::CommandProviderRequest| {
+                CommandProviderResponse::ready().source(CommandProviderSource::new(
+                    "global",
+                    "plugin-provider-source",
+                    [CommandContribution::new(CommandDescriptor::new(
+                        "plugin.dynamic",
+                        "Dynamic Plugin",
+                    ))],
+                ))
+            });
+
+        center
+            .refresh_provider("plugin-provider", "")
+            .expect("provider should be registered")
+            .unwrap();
+
+        assert!(center.snapshot().descriptor("plugin.run").is_some());
+        assert!(center.snapshot().descriptor("plugin.dynamic").is_some());
+
+        assert_eq!(source_handle.unregister(&mut center), 1);
+        assert!(center.snapshot().descriptor("plugin.run").is_none());
+        assert!(center.snapshot().descriptor("plugin.dynamic").is_some());
+
+        assert_eq!(provider_handle.unregister(&mut center), 1);
+        assert_eq!(center.provider_count(), 0);
+        assert!(center.provider_status("plugin-provider").is_none());
+        assert!(center.snapshot().descriptor("plugin.dynamic").is_none());
     }
 
     #[open_gpui::test]
@@ -1384,7 +1466,7 @@ mod tests {
     #[test]
     fn center_unregister_provider_removes_applied_sources() {
         let mut center = CommandCenter::new("center-v1");
-        let registration =
+        let provider_handle =
             center.register_provider("dynamic", |_: &crate::CommandProviderRequest| {
                 CommandProviderResponse::ready().source(CommandProviderSource::new(
                     "global",
@@ -1403,7 +1485,7 @@ mod tests {
         assert_eq!(center.provider_count(), 1);
         assert!(center.snapshot().descriptor("dynamic.open").is_some());
 
-        assert_eq!(center.unregister_provider(&registration), 1);
+        assert_eq!(center.unregister_provider(&provider_handle), 1);
         assert_eq!(center.provider_count(), 0);
         assert!(center.provider_status("dynamic").is_none());
         assert!(center.snapshot().descriptor("dynamic.open").is_none());
