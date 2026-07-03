@@ -1245,6 +1245,7 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     let render_choice_source = include_str!("../../src/pages/components/render/choice.rs");
     let render_families_source = include_str!("../../src/pages/components/render/families.rs");
     let render_focus_source = include_str!("../../src/pages/components/render/focus.rs");
+    let render_forms_source = include_str!("../../src/pages/components/render/forms.rs");
     let render_layout_source = include_str!("../../src/pages/components/render/layout.rs");
     let render_metadata_source = include_str!("../../src/pages/components/render/metadata.rs");
     let render_readouts_source = include_str!("../../src/pages/components/render/readouts.rs");
@@ -1336,6 +1337,7 @@ fn components_catalog_metadata_is_separate_from_rendering() {
         "#[path = \"render/choice.rs\"]",
         "#[path = \"render/families.rs\"]",
         "#[path = \"render/focus.rs\"]",
+        "#[path = \"render/forms.rs\"]",
         "#[path = \"render/layout.rs\"]",
         "#[path = \"render/metadata.rs\"]",
         "#[path = \"render/readouts.rs\"]",
@@ -1354,6 +1356,9 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(render_choice_source.contains("fn render_toggle_section"));
     assert!(render_families_source.contains("fn component_tree_samples_section"));
     assert!(render_focus_source.contains("fn render_component_focus_mode"));
+    assert!(render_forms_source.contains("fn render_component_text_input_section"));
+    assert!(render_forms_source.contains("fn render_component_textarea_section"));
+    assert!(render_forms_source.contains("fn render_component_field_section"));
     assert!(render_layout_source.contains("fn render_component_scroll_area_section"));
     assert!(render_layout_source.contains("fn render_scroll_area_sample"));
     assert!(render_metadata_source.contains("fn render_component_catalog_section"));
@@ -1365,6 +1370,9 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(!render_sections_source.contains("fn render_switch_section"));
     assert!(!render_sections_source.contains("pages::components::switch_samples"));
     assert!(!render_sections_source.contains("pages::components::scroll_area_samples"));
+    assert!(!render_sections_source.contains("pages::components::text_input_samples"));
+    assert!(!render_sections_source.contains("pages::components::textarea_samples"));
+    assert!(!render_sections_source.contains("pages::components::field_samples"));
     assert!(!render_source.contains("fn component_table_state_row"));
     assert!(!render_source.contains("fn render_components_section"));
     assert!(!render_source.contains("fn component_gallery_card_shell"));
