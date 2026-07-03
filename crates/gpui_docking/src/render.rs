@@ -37,7 +37,6 @@ use std::{cell::RefCell, rc::Rc};
 pub(crate) type DockViewportHostSceneFrameSlot = Rc<RefCell<Option<DockViewportHostSceneFrame>>>;
 
 const DROP_PREVIEW_TAB_HEIGHT: f32 = 26.0;
-const DROP_PREVIEW_TAB_HORIZONTAL_INSET: f32 = 8.0;
 const DROP_PREVIEW_TAB_GAP: f32 = 6.0;
 const DROP_PREVIEW_TAB_MIN_WIDTH: f32 = 72.0;
 const DROP_PREVIEW_TAB_MAX_WIDTH: f32 = 180.0;
@@ -274,27 +273,20 @@ impl DockHost {
             })
             .unwrap_or(items.len())
             .min(items.len());
-        let rendered_insertion_x = self
-            .viewport_runtime()
-            .rendered_tab_label_bounds_for_tabs(self.space(), None, target_tabs, insert_index)
-            .map(|bounds| bounds.origin.x);
+        let slot_insertion_x = insertion
+            .tab_insertion
+            .as_ref()
+            .and_then(|insertion| insertion.slot_bounds)
+            .map(|bounds| bounds.center().x);
         let mut tab_left = self
             .viewport_runtime()
             .rendered_tab_bar_bounds_for_tabs(self.space(), None, target_tabs)
-            .map(|tab_bar_bounds| tab_bar_bounds.origin.x + px(DROP_PREVIEW_TAB_HORIZONTAL_INSET))
-            .unwrap_or(preview_bounds.origin.x + px(DROP_PREVIEW_TAB_HORIZONTAL_INSET));
+            .map(|tab_bar_bounds| tab_bar_bounds.origin.x)
+            .unwrap_or(preview_bounds.origin.x);
 
-        if let Some(label_bounds) = insert_index.checked_sub(1).and_then(|target_index| {
-            self.viewport_runtime().rendered_tab_label_bounds_for_tabs(
-                self.space(),
-                None,
-                target_tabs,
-                target_index,
-            )
-        }) {
-            tab_left = label_bounds.right() + tab_gap;
-        } else {
-            for item in items.iter().take(insert_index) {
+        let existing_tab_widths = items
+            .iter()
+            .map(|item| {
                 let title = session.panel_title(item);
                 let title_line = window.text_system().shape_line(
                     SharedString::from(title.clone()),
@@ -302,14 +294,13 @@ impl DockHost {
                     &[text_style.to_run(title.len())],
                     None,
                 );
-                tab_left += preview_tab_width(title_line.width()) + tab_gap;
-            }
-        }
+                preview_tab_width(title_line.width())
+            })
+            .collect::<Vec<_>>();
+        tab_left = slot_insertion_x.unwrap_or_else(|| {
+            stable_tab_preview_insert_left(tab_left, insert_index, &existing_tab_widths)
+        });
 
-        let tab_strip_left = f32::from(preview_bounds.origin.x);
-        let tab_strip_right = f32::from(preview_bounds.origin.x + preview_bounds.size.width);
-        let tab_gap = f32::from(tab_gap);
-        let requested_left = f32::from(tab_left).max(tab_strip_left);
         let mut tab_widths = Vec::with_capacity(payload_tabs.len());
         for payload_tab in &payload_tabs {
             let payload_title = payload_tab.title.as_str();
@@ -321,6 +312,11 @@ impl DockHost {
             );
             tab_widths.push(f32::from(preview_tab_width(payload_line.width())));
         }
+
+        let tab_strip_left = f32::from(preview_bounds.origin.x);
+        let tab_strip_right = f32::from(preview_bounds.origin.x + preview_bounds.size.width);
+        let tab_gap = f32::from(tab_gap);
+        let requested_left = f32::from(tab_left).max(tab_strip_left);
         let mut visible_count = tab_widths.len();
         while visible_count > 0 {
             let total_gap = tab_gap * visible_count.saturating_sub(1) as f32;
@@ -363,7 +359,8 @@ impl DockHost {
 
         let first_tab_bounds = tab_bounds.first()?.bounds;
         let insertion_width = px(3.0);
-        let insertion_x = rendered_insertion_x.unwrap_or(first_tab_bounds.origin.x);
+        let insertion_x = slot_insertion_x
+            .unwrap_or_else(|| stable_tab_preview_insertion_x(first_tab_bounds.origin.x));
         let insertion_bounds = Bounds::new(
             point(
                 insertion_x - insertion_width / 2.0,
@@ -1404,6 +1401,23 @@ fn preview_transition_opacity(progress: f32) -> f32 {
     0.68 + (0.32 * progress.clamp(0.0, 1.0))
 }
 
+fn stable_tab_preview_insert_left(
+    tab_strip_start: Pixels,
+    insert_index: usize,
+    existing_tab_widths: &[Pixels],
+) -> Pixels {
+    existing_tab_widths
+        .iter()
+        .take(insert_index)
+        .fold(tab_strip_start, |left, width| {
+            left + *width + px(DROP_PREVIEW_TAB_GAP)
+        })
+}
+
+fn stable_tab_preview_insertion_x(payload_tab_left: Pixels) -> Pixels {
+    payload_tab_left
+}
+
 fn cursor_for_divider_target(target: &DockDividerHitTarget) -> CursorStyle {
     match target {
         DockDividerHitTarget::Single(handle) => match handle.key.axis {
@@ -1781,6 +1795,25 @@ mod tests {
         assert_eq!(
             preview_tab_width(px(90.0)),
             px(90.0 + DROP_PREVIEW_TAB_TEXT_PADDING)
+        );
+    }
+
+    #[test]
+    fn stable_tab_preview_insert_left_uses_deterministic_tab_widths() {
+        let tab_strip_start = px(8.0);
+        let widths = [px(72.0), px(90.0), px(120.0)];
+
+        assert_eq!(
+            stable_tab_preview_insert_left(tab_strip_start, 0, &widths),
+            px(8.0)
+        );
+        assert_eq!(
+            stable_tab_preview_insert_left(tab_strip_start, 1, &widths),
+            px(86.0)
+        );
+        assert_eq!(
+            stable_tab_preview_insert_left(tab_strip_start, 2, &widths),
+            px(182.0)
         );
     }
 }

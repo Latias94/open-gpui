@@ -3,7 +3,7 @@ use crate::{
     DropZone, SplitAxis,
     geometry::{self, DockDropBox, DockDropBoxKind, DockDropGeometry, DockDropGuideStyle},
 };
-use open_gpui::{Bounds, Pixels, Point, Size, px, size};
+use open_gpui::{Bounds, Pixels, Point, Size, point, px, size};
 
 pub(crate) type DockDropTargetValidator<'a> =
     dyn Fn(&DockResolvedDropTarget) -> Result<(), DockPolicyError> + 'a;
@@ -24,7 +24,9 @@ pub(crate) struct DockResolvedDropTarget {
     pub(crate) inner_target_bounds: Option<Bounds<Pixels>>,
     pub(crate) availability: DockResolvedDropTargetAvailability,
     pub(crate) drop_box: Option<DockDropBox>,
+    pub(crate) hit_bounds: Option<Bounds<Pixels>>,
     pub(crate) preview_bounds: Option<Bounds<Pixels>>,
+    pub(crate) tab_insertion_bounds: Option<Bounds<Pixels>>,
     pub(crate) edge_sizing: Option<DockEdgeDockSizing>,
     pub(crate) edge_plan: Option<DockEdgeDockPlan>,
     pub(crate) is_central_region: bool,
@@ -293,7 +295,9 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
                 inner_target_bounds: None,
                 availability: DockResolvedDropTargetAvailability::all(),
                 drop_box: None,
+                hit_bounds: Some(target.bounds),
                 preview_bounds: Some(target.bounds),
+                tab_insertion_bounds: None,
                 edge_sizing: None,
                 edge_plan: None,
                 is_central_region: target.is_central,
@@ -342,7 +346,9 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
                 inner_target_bounds: None,
                 availability: DockResolvedDropTargetAvailability::all(),
                 drop_box: None,
+                hit_bounds: Some(target.bounds),
                 preview_bounds: Some(target_bounds),
+                tab_insertion_bounds: None,
                 edge_sizing: None,
                 edge_plan: None,
                 is_central_region: target.is_central,
@@ -363,6 +369,11 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
         } else {
             target.target_index.saturating_add(1)
         };
+        let tab_insertion_x = if insert_index == target.target_index {
+            target.bounds.origin.x
+        } else {
+            target.bounds.right()
+        };
         push_drop_candidate(
             &mut candidates,
             &mut order,
@@ -376,7 +387,12 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
                 inner_target_bounds: None,
                 availability: DockResolvedDropTargetAvailability::all(),
                 drop_box: None,
+                hit_bounds: Some(target.bounds),
                 preview_bounds: Some(target_bounds),
+                tab_insertion_bounds: Some(tab_insertion_slot_bounds(
+                    tab_insertion_x,
+                    target.bounds,
+                )),
                 edge_sizing: None,
                 edge_plan: None,
                 is_central_region: target.is_central,
@@ -403,7 +419,9 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
                 inner_target_bounds: None,
                 availability: DockResolvedDropTargetAvailability::all(),
                 drop_box: None,
+                hit_bounds: Some(target.title_bounds),
                 preview_bounds: Some(target.preview_bounds),
+                tab_insertion_bounds: None,
                 edge_sizing: None,
                 edge_plan: None,
                 is_central_region: false,
@@ -424,6 +442,14 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
     }
 
     candidates
+}
+
+fn tab_insertion_slot_bounds(insertion_x: Pixels, target_bounds: Bounds<Pixels>) -> Bounds<Pixels> {
+    let width = px(3.0);
+    Bounds::new(
+        point(insertion_x - width / 2.0, target_bounds.origin.y),
+        size(width, target_bounds.size.height),
+    )
 }
 
 fn resolve_layout_drop_guide_target(
@@ -568,7 +594,9 @@ fn resolve_root_edge_drop(
             sides: true,
         },
         drop_box: Some(metadata.drop_box),
+        hit_bounds: Some(metadata.drop_box.hit_bounds),
         preview_bounds: Some(metadata.preview_bounds),
+        tab_insertion_bounds: None,
         edge_sizing: Some(metadata.edge_sizing),
         edge_plan,
         is_central_region,
@@ -593,7 +621,9 @@ fn root_guide_target(
             sides: true,
         },
         drop_box: None,
+        hit_bounds: Some(root.bounds),
         preview_bounds: Some(root.bounds),
+        tab_insertion_bounds: None,
         edge_sizing: None,
         edge_plan: None,
         is_central_region: leaf
@@ -624,7 +654,9 @@ fn leaf_guide_target(leaf: &DockLeafDropTarget) -> DockResolvedDropTarget {
         inner_target_bounds: None,
         availability: DockResolvedDropTargetAvailability::all(),
         drop_box: None,
+        hit_bounds: Some(leaf.bounds),
         preview_bounds: Some(leaf.bounds),
+        tab_insertion_bounds: None,
         edge_sizing: None,
         edge_plan: None,
         is_central_region: leaf.is_central,
@@ -749,7 +781,9 @@ fn target_from_leaf_geometry(
             inner_target_bounds: None,
             availability: DockResolvedDropTargetAvailability::all(),
             drop_box: Some(geometry.drop_box),
+            hit_bounds: Some(geometry.drop_box.hit_bounds),
             preview_bounds: Some(geometry.preview_bounds()),
+            tab_insertion_bounds: None,
             edge_sizing: None,
             edge_plan: None,
             is_central_region: leaf.is_central,
@@ -773,7 +807,9 @@ fn target_from_leaf_geometry(
         inner_target_bounds: None,
         availability: DockResolvedDropTargetAvailability::all(),
         drop_box: Some(metadata.drop_box),
+        hit_bounds: Some(metadata.drop_box.hit_bounds),
         preview_bounds: Some(metadata.preview_bounds),
+        tab_insertion_bounds: None,
         edge_sizing: Some(metadata.edge_sizing),
         edge_plan,
         is_central_region: leaf.is_central,

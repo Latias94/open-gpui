@@ -466,7 +466,7 @@ fn payload_tabs_for_target(
                 index: insert_index
                     .map(DockPreviewTabInsertionIndex::At)
                     .unwrap_or(DockPreviewTabInsertionIndex::Append),
-                slot_bounds: None,
+                slot_bounds: target.tab_insertion_bounds,
                 clipping_bounds,
             }),
             tabs: Vec::new(),
@@ -797,7 +797,9 @@ mod tests {
             inner_target_bounds: Some(bounds(0.0, 0.0, 320.0, 200.0)),
             availability: DockResolvedDropTargetAvailability::all(),
             drop_box,
+            hit_bounds: Some(bounds(0.0, 0.0, 320.0, 200.0)),
             preview_bounds: Some(bounds(0.0, 0.0, 320.0, 200.0)),
+            tab_insertion_bounds: None,
             edge_sizing,
             edge_plan: None,
             is_central_region: false,

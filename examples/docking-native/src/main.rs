@@ -1121,12 +1121,11 @@ fn viewport_title(space: &DockSpaceId) -> &'static str {
 }
 
 fn main() {
-    env_logger::builder()
-        .format_timestamp_millis()
-        .filter_level(log::LevelFilter::Info)
-        .filter_module("open_gpui_docking", log::LevelFilter::Debug)
-        .filter_module("open_gpui", log::LevelFilter::Info)
-        .init();
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info,open_gpui_docking=info,open_gpui=info"),
+    )
+    .format_timestamp_millis()
+    .init();
     log::info!("{DOCKING_DEBUG_PREFIX} starting docking native example");
     application().run(|cx: &mut App| {
         let controller = cx.new(|_| build_controller());
