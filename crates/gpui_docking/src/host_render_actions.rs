@@ -392,6 +392,8 @@ impl DockHost {
                     index: handle_index,
                     axis,
                 },
+                before: splitter.before,
+                after: splitter.after,
                 bounds: splitter.bounds,
                 extent: splitter.extent,
             },

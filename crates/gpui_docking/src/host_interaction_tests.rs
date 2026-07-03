@@ -9,7 +9,7 @@ use crate::{
     drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
     host_test_support::*,
     interaction::DockPayloadDropRelease,
-    transition_geometry::DockOverlayTransitionKind,
+    transition_geometry::DockVisualAffordanceTransitionKind,
 };
 use open_gpui::{
     AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, point,
@@ -309,22 +309,22 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
     let preview_bounds = debug_bounds(&mut drag_visual, &preview);
     let preview_body_bounds = debug_bounds(&mut drag_visual, &preview_body);
     let preview_tab_bounds = debug_bounds(&mut drag_visual, &preview_tab);
-    let overlay_sample = cx
+    let visual_affordance_sample = cx
         .update_entity(&host, |host, _| {
-            host.sample_overlay_transition_for_test(Duration::from_millis(0))
+            host.sample_visual_affordance_transition_for_test(Duration::from_millis(0))
         })
-        .expect("center hover should schedule an overlay transition sample");
-    let overlay_kinds = overlay_sample
-        .overlays
+        .expect("center hover should schedule an visual affordance transition sample");
+    let affordance_kinds = visual_affordance_sample
+        .visual_affordances
         .iter()
         .map(|overlay| overlay.kind)
         .collect::<Vec<_>>();
     assert!(
-        overlay_kinds.contains(&DockOverlayTransitionKind::TargetBody)
-            && overlay_kinds.contains(&DockOverlayTransitionKind::TabInsertion)
-            && overlay_kinds.contains(&DockOverlayTransitionKind::PayloadTab)
-            && overlay_kinds.contains(&DockOverlayTransitionKind::PayloadGhost),
-        "center hover should route body, insertion slot, payload tabs, and payload ghosts through the overlay transition runtime: {overlay_kinds:?}"
+        affordance_kinds.contains(&DockVisualAffordanceTransitionKind::TargetBody)
+            && affordance_kinds.contains(&DockVisualAffordanceTransitionKind::TabInsertion)
+            && affordance_kinds.contains(&DockVisualAffordanceTransitionKind::PayloadTab)
+            && affordance_kinds.contains(&DockVisualAffordanceTransitionKind::PayloadGhost),
+        "center hover should route body, insertion slot, payload tabs, and payload ghosts through the visual affordance transition runtime: {affordance_kinds:?}"
     );
     assert!(
         preview_bounds.contains(&preview_tab_bounds.center()),
@@ -1666,6 +1666,7 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
     let start = debug_bounds(&mut visual, &source_tab).center();
     let threshold = point(start.x + px(24.0), start.y);
     let end = inner_edge_drop_position(target_bounds, DropZone::Right);
+    let window_id = window.window_id();
 
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
@@ -1699,6 +1700,17 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
         .is_none(),
         "edge split previews should not render a payload tab label"
     );
+    let status = cx.read_entity(&host, |host, _| host.viewport_runtime().runtime_status());
+    let affordance = status
+        .visual_affordances
+        .iter()
+        .find(|record| record.space == space() && record.window_id == window_id)
+        .expect("rendered drop preview should publish a runtime affordance diagnostic");
+    assert!(
+        affordance.summary.active_count > 0,
+        "runtime affordance diagnostic should describe the active preview"
+    );
+
     visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let visual = VisualTestContext::from_window(window.into(), cx);
@@ -1706,6 +1718,14 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
     assert!(
         selector_for(&visual, &host, DockDebugRegion::DropPreview).is_none(),
         "edge drop preview should clear after release"
+    );
+    let status = cx.read_entity(&host, |host, _| host.viewport_runtime().runtime_status());
+    assert!(
+        status
+            .visual_affordances
+            .iter()
+            .all(|record| record.window_id != window_id),
+        "cleared drop preview should clear the runtime affordance diagnostic"
     );
 }
 

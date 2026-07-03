@@ -1783,9 +1783,9 @@ mod handle_suite {
         interaction::{
             DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession,
         },
-        overlay_scene::{DockOverlayLayerKind, DockOverlayScene},
         viewport_activation::apply_viewport_activation_transaction,
         viewport_registry::{DockViewportRouteUnavailableReason, DockViewportStaleReason},
+        visual_affordance_scene::{DockVisualAffordanceKind, DockVisualAffordanceScene},
     };
     use open_gpui::{
         AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext,
@@ -2024,9 +2024,10 @@ mod handle_suite {
             Some(2),
             "routed preview scene should preserve all stack payload tabs before target render"
         );
-        let routed_overlay = DockOverlayScene::from_preview(&routed_preview.preview.scene);
+        let routed_affordance =
+            DockVisualAffordanceScene::from_preview(&routed_preview.preview.scene);
         assert_eq!(
-            routed_overlay
+            routed_affordance
                 .payload_tabs()
                 .map(|layer| (layer.payload_index, layer.payload_title.as_deref()))
                 .collect::<Vec<_>>(),
@@ -2034,18 +2035,18 @@ mod handle_suite {
             "target routed preview should expose visible payload tab layers"
         );
         assert_eq!(
-            routed_overlay
+            routed_affordance
                 .payload_ghosts()
                 .map(|layer| (layer.payload_index, layer.payload_title.as_deref()))
                 .collect::<Vec<_>>(),
             vec![(Some(0), Some("Panel A")), (Some(1), Some("Panel C"))],
-            "target routed preview should expose payload ghost layers for overlay transitions"
+            "target routed preview should expose payload ghost layers for visual affordance transitions"
         );
         assert!(
-            routed_overlay
+            routed_affordance
                 .layers
                 .iter()
-                .any(|layer| layer.kind == DockOverlayLayerKind::TabInsertion),
+                .any(|layer| layer.kind == DockVisualAffordanceKind::TabInsertionSlot),
             "target routed preview should keep a tab insertion layer separate from payload ghosts"
         );
 
@@ -2474,7 +2475,7 @@ mod handle_suite {
         );
         assert!(
             selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_some(),
-            "target overlay should exist before escape"
+            "target visual affordance should exist before escape"
         );
         assert!(cx.read(|app| app.has_active_drag()));
         assert!(runtime.has_routed_drop_preview_for_drag_session(Some(&session)));

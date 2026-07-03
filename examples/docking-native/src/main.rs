@@ -10,7 +10,8 @@ use open_gpui_docking::{
     DockViewportPlatformCapabilityRecord, DockViewportPlatformFlagCapabilityRecord,
     DockViewportPlatformSyncRecord, DockViewportReleaseUnavailableRecord,
     DockViewportRestoreReadinessRecord, DockViewportRuntimeHandle,
-    DockViewportTearOffPlacementRecord, DockViewportWindowBounds, EditorDockLayoutSpec,
+    DockViewportTearOffPlacementRecord, DockViewportWindowBounds, DockVisualAffordanceDebugSummary,
+    EditorDockLayoutSpec,
 };
 use open_gpui_platform::application;
 
@@ -153,7 +154,7 @@ impl Render for RuntimeStatusPanel {
                 })
                 .collect::<Vec<_>>();
             let placement = self.runtime.export_placement();
-            vec![
+            let mut lines = vec![
                 format!("close policy: {:?}", self.runtime.close_policy()),
                 format!("registered viewports: {}", spaces.len()),
                 format!("placement snapshots: {}", placement.viewports.len()),
@@ -232,7 +233,15 @@ impl Render for RuntimeStatusPanel {
                             .and_then(|record| record.placement_source.as_ref())
                     )
                 ),
-            ]
+            ];
+            lines.extend(status.visual_affordances.iter().map(|record| {
+                format!(
+                    "affordance {}: {}",
+                    record.space.as_str(),
+                    affordance_debug_summary(&record.summary)
+                )
+            }));
+            lines
         };
         let last_operation = self.last_operation.clone();
 
@@ -518,6 +527,45 @@ fn debug_option<T: std::fmt::Debug>(value: Option<T>) -> String {
     value
         .map(|value| format!("{value:?}"))
         .unwrap_or_else(|| "none".to_string())
+}
+
+fn affordance_debug_summary(summary: &DockVisualAffordanceDebugSummary) -> String {
+    let active = summary
+        .active
+        .as_ref()
+        .map(|layer| {
+            format!(
+                "{} {} state={} node={} zone={} payload={} label={}",
+                layer.kind,
+                layer.scope,
+                layer.state,
+                layer
+                    .target_node
+                    .map(|node| node.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                layer
+                    .zone
+                    .map(|zone| format!("{zone:?}"))
+                    .unwrap_or_else(|| "none".to_string()),
+                layer
+                    .payload_index
+                    .map(|index| index.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                layer.label.as_deref().unwrap_or("none"),
+            )
+        })
+        .unwrap_or_else(|| "none".to_string());
+    format!(
+        "layers={} active={} motion={} frame={} active={}",
+        summary.layer_count,
+        summary.active_count,
+        summary.motion_state.as_deref().unwrap_or("none"),
+        summary
+            .frame_generation
+            .map(|generation| generation.to_string())
+            .unwrap_or_else(|| "none".to_string()),
+        active,
+    )
 }
 
 fn capability_flag(value: bool) -> &'static str {
@@ -1111,7 +1159,7 @@ fn main() {
         });
         controller.update(cx, |controller, _| {
             controller
-                .attach_panel_view("runtime", runtime_panel)
+                .attach_panel_view("runtime", runtime_panel.clone())
                 .expect("runtime panel descriptor should exist");
         });
         log::info!("{DOCKING_DEBUG_PREFIX} opened runtime panel and attached dock layout");
@@ -1139,13 +1187,13 @@ fn main() {
 
         let secondary_options =
             restored_viewport_options(&placement, SECONDARY_SPACE, secondary_bounds);
-        runtime
+        let _secondary_opened = runtime
             .open_viewport(SECONDARY_SPACE, secondary_options, cx)
             .expect("failed to open secondary docking viewport");
         log::info!("{DOCKING_DEBUG_PREFIX} opened secondary viewport space={SECONDARY_SPACE}");
 
         let central_options = restored_viewport_options(&placement, CENTRAL_SPACE, central_bounds);
-        runtime
+        let _central_opened = runtime
             .open_viewport(CENTRAL_SPACE, central_options, cx)
             .expect("failed to open empty central docking viewport");
         log::info!("{DOCKING_DEBUG_PREFIX} opened central viewport space={CENTRAL_SPACE}");

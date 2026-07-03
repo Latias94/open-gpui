@@ -2,8 +2,8 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-03T06:58:31+08:00
-git_branch: main
+timestamp: 2026-07-03T23:59:00+08:00
+git_branch: refactor/docking-visual-affordance-runtime
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
   - docs/plans/2026-07-01-002-refactor-ui-public-gallery-boundaries-plan.md
@@ -16,6 +16,8 @@ related_plan:
   - docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md
   - docs/plans/2026-07-02-003-refactor-ui-framework-deep-modules-plan.md
   - docs/plans/2026-07-02-004-refactor-docking-render-authority-convergence-plan.md
+  - docs/plans/2026-07-03-001-refactor-docking-visual-affordance-runtime-plan.md
+  - docs/plans/2026-07-03-002-refactor-docking-affordance-authority-cleanup-plan.md
 related_research:
   - native-ui-framework-design-research/report.md
 related_adr:
@@ -59,6 +61,11 @@ verified_by:
   - cargo nextest run -p open-gpui-docking transition_executor_samples_timeline_and_reveal_geometry transition_executor_replaces_active_execution_and_completes_reduced_motion_immediately transition_sample_overlay_renders_from_executor source_hover_over_known_viewport_renders_target_drop_preview routed_preview_replacement_clears_old_target_overlay_without_stale_payload --no-fail-fast
   - cargo check -p open-gpui-docking
   - cargo check -p open-gpui-docking-native
+  - cargo nextest run -p open-gpui-docking host_viewport_preview_visual_tests host_presentation_scene_tests host_divider_hit_map_tests --no-fail-fast
+  - cargo nextest run -p open-gpui-docking host_transition_tests host_render_tests host_viewport_preview_visual_tests --no-fail-fast
+  - cargo nextest run -p open-gpui-docking host_accessibility_tests host_divider_hit_map_tests host_debug --no-fail-fast
+  - cargo nextest run -p open-gpui-docking host_viewport_preview_visual_tests host_transition_tests host_render_tests --no-fail-fast
+  - cargo check -p open-gpui-docking-native --tests
   - cargo check -p open-gpui-ui-core --tests
   - cargo check -p open-gpui-ui-components --tests
   - cargo check -p open-gpui-ui-foundation-gallery --tests
@@ -175,6 +182,18 @@ verified_by:
   testing now uses the same zoom-resolved render scene as viewport host-scene facts, split layout
   resolution no longer materializes docking-side panel/handle Vecs, and render-geometry parity
   tests live in `host_render_geometry_parity_tests.rs`.
+- Done on `refactor/docking-visual-affordance-runtime`: docking visual feedback now has a
+  crate-private `DockVisualAffordanceScene` that describes drop target bodies, guide boxes, tab
+  insertion slots, payload tab/ghost previews, route markers, rejected targets, divider handles and
+  corners, focus rings, and zoom egress. Target preview rendering, visual-affordance motion,
+  accessibility descriptors, divider/focus/zoom diagnostics, and the native runtime panel consume
+  affordance summaries directly; the old `DockOverlayScene` bridge was deleted. Runtime visual
+  diagnostics are published through `DockViewportRuntimeStatus`, so the native panel reads
+  runtime-owned status instead of opening hosts for diagnostics.
+- Done on `refactor/docking-visual-affordance-runtime`: `open_gpui_ui_core` now owns renderer-neutral
+  rect motion helpers (`MotionEdge`, preferred edge selection, offscreen source rects, reveal rects,
+  and rect interpolation). Docking transition sampling consumes those primitives, graph layout
+  reuses `resolve_dock_split_layout`, and split/divider conversions to `UiRect` are centralized.
 - Current docs direction: component ecosystem changes start with
   `cargo run -p xtask -- scan-ui-contract`, followed by public-surface, a11y, theme, or gallery
   focused nextest gates for behavior proof. Docking preview follow-up should start from the native
@@ -200,6 +219,9 @@ verified_by:
 - [UI framework deep modules plan](../../plans/2026-07-02-003-refactor-ui-framework-deep-modules-plan.md)
 - [UI framework deep modules verification](verification/2026-07-02-ui-framework-deep-modules.md)
 - [Docking render authority convergence plan](../../plans/2026-07-02-004-refactor-docking-render-authority-convergence-plan.md)
+- [Docking visual affordance runtime plan](../../plans/2026-07-03-001-refactor-docking-visual-affordance-runtime-plan.md)
+- [Docking visual affordance runtime progress](progress/2026-07-03-docking-visual-affordance-runtime.md)
+- [Docking affordance authority cleanup plan](../../plans/2026-07-03-002-refactor-docking-affordance-authority-cleanup-plan.md)
 - [Native UI framework design research report](../../../native-ui-framework-design-research/report.md)
 - [Native UI framework distribution strategy decision](decisions/open-gpui-native-ui-framework-distribution-strategy.md)
 - [Native UI framework strategy architecture page](../../architecture/native-ui-framework-strategy.md)

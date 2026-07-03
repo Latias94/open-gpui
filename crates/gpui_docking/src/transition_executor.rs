@@ -1,15 +1,18 @@
 use crate::{
     DockNodeId, DropZone, SplitAxis,
+    geometry::{bounds_from_ui_rect, ui_rect_from_bounds},
     presentation_scene::DockPresentationScene,
     transition_geometry::{
-        DockDividerTransition, DockDividerTransitionKind, DockOverlayTransition,
-        DockOverlayTransitionKind, DockPaneTransition, DockPaneTransitionKind, DockSlideTransition,
-        DockTransitionEdge, DockTransitionPlan,
+        DockDividerTransition, DockDividerTransitionKind, DockPaneTransition,
+        DockPaneTransitionKind, DockSlideTransition, DockTransitionEdge, DockTransitionPlan,
+        DockVisualAffordanceTransition, DockVisualAffordanceTransitionKind,
     },
+    visual_affordance_scene::DockVisualAffordanceId,
 };
-use open_gpui::{Bounds, Pixels, Window, point, px, size};
+use open_gpui::{Bounds, Pixels, Window, point, size};
 use open_gpui_ui_core::{
-    MotionSnapshot, MotionSpec, MotionTimeline, MotionTimelineSample, retarget_motion_snapshots,
+    MotionSnapshot, MotionSpec, MotionTimeline, MotionTimelineSample, lerp_rect,
+    motion_source_rect, preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
 };
 #[cfg(test)]
 use std::time::Duration;
@@ -50,7 +53,7 @@ pub(crate) struct DockTransitionSample {
     pub(crate) pane_bounds: Vec<DockPaneBoundsSample>,
     pub(crate) pane_clips: Vec<DockPaneClipSample>,
     pub(crate) dividers: Vec<DockDividerSample>,
-    pub(crate) overlays: Vec<DockOverlaySample>,
+    pub(crate) visual_affordances: Vec<DockVisualAffordanceSample>,
 }
 
 /// Sampled visual bounds for a pane at the current transition frame.
@@ -81,10 +84,11 @@ pub(crate) struct DockDividerSample {
     pub(crate) progress: f32,
 }
 
-/// Sampled overlay transition geometry.
+/// Sampled visual affordance transition geometry.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockOverlaySample {
-    pub(crate) kind: DockOverlayTransitionKind,
+pub(crate) struct DockVisualAffordanceSample {
+    pub(crate) motion_key: DockVisualAffordanceId,
+    pub(crate) kind: DockVisualAffordanceTransitionKind,
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) target_node: Option<DockNodeId>,
     pub(crate) zone: Option<DropZone>,
@@ -93,6 +97,10 @@ pub(crate) struct DockOverlaySample {
 }
 
 impl DockTransitionExecutor {
+    pub(crate) fn current_state_for_debug(&self) -> Option<DockTransitionExecutionState> {
+        self.current.as_ref().map(|execution| execution.state)
+    }
+
     pub(crate) fn execute(
         &mut self,
         plan: DockTransitionPlan,
@@ -216,11 +224,11 @@ fn sample_execution(
             .iter()
             .map(|transition| divider_sample(transition, progress))
             .collect(),
-        overlays: execution
+        visual_affordances: execution
             .plan
-            .overlay_transitions
+            .visual_affordance_transitions
             .iter()
-            .map(|transition| overlay_sample(transition, progress))
+            .map(|transition| visual_affordance_sample(transition, progress))
             .collect(),
     }
 }
@@ -342,68 +350,20 @@ fn slide_transition_from_bounds(
     final_bounds: Bounds<Pixels>,
     scene_bounds: Bounds<Pixels>,
 ) -> DockSlideTransition {
-    let edge = preferred_retarget_edge(final_bounds, scene_bounds);
+    let edge = preferred_motion_edge(
+        ui_rect_from_bounds(final_bounds),
+        ui_rect_from_bounds(scene_bounds),
+    );
     DockSlideTransition {
         edge,
-        source_bounds: slide_source_bounds(edge, final_bounds, scene_bounds),
+        source_bounds: bounds_from_ui_rect(motion_source_rect(
+            edge,
+            ui_rect_from_bounds(final_bounds),
+            ui_rect_from_bounds(scene_bounds),
+        )),
         final_bounds,
         occlusion_bounds: final_bounds,
     }
-}
-
-fn preferred_retarget_edge(
-    bounds: Bounds<Pixels>,
-    scene_bounds: Bounds<Pixels>,
-) -> DockTransitionEdge {
-    let left = f32::from((bounds.origin.x - scene_bounds.origin.x).abs());
-    let right = f32::from((scene_bounds.right() - bounds.right()).abs());
-    let top = f32::from((bounds.origin.y - scene_bounds.origin.y).abs());
-    let bottom = f32::from((scene_bounds.bottom() - bounds.bottom()).abs());
-    let touching_epsilon = 0.5_f32;
-
-    if left <= touching_epsilon {
-        return DockTransitionEdge::Left;
-    }
-    if right <= touching_epsilon {
-        return DockTransitionEdge::Right;
-    }
-    if top <= touching_epsilon {
-        return DockTransitionEdge::Top;
-    }
-    if bottom <= touching_epsilon {
-        return DockTransitionEdge::Bottom;
-    }
-
-    [
-        (DockTransitionEdge::Left, left),
-        (DockTransitionEdge::Right, right),
-        (DockTransitionEdge::Top, top),
-        (DockTransitionEdge::Bottom, bottom),
-    ]
-    .into_iter()
-    .min_by(|(_, a), (_, b)| a.total_cmp(b))
-    .map(|(edge, _)| edge)
-    .unwrap_or(DockTransitionEdge::Left)
-}
-
-fn slide_source_bounds(
-    edge: DockTransitionEdge,
-    final_bounds: Bounds<Pixels>,
-    scene_bounds: Bounds<Pixels>,
-) -> Bounds<Pixels> {
-    let origin = match edge {
-        DockTransitionEdge::Left => point(
-            scene_bounds.origin.x - final_bounds.size.width,
-            final_bounds.origin.y,
-        ),
-        DockTransitionEdge::Right => point(scene_bounds.right(), final_bounds.origin.y),
-        DockTransitionEdge::Top => point(
-            final_bounds.origin.x,
-            scene_bounds.origin.y - final_bounds.size.height,
-        ),
-        DockTransitionEdge::Bottom => point(final_bounds.origin.x, scene_bounds.bottom()),
-    };
-    Bounds::new(origin, final_bounds.size)
 }
 
 fn pane_clip_sample(transition: &DockPaneTransition, progress: f32) -> Option<DockPaneClipSample> {
@@ -446,8 +406,12 @@ fn divider_sample(transition: &DockDividerTransition, progress: f32) -> DockDivi
     }
 }
 
-fn overlay_sample(transition: &DockOverlayTransition, progress: f32) -> DockOverlaySample {
-    DockOverlaySample {
+fn visual_affordance_sample(
+    transition: &DockVisualAffordanceTransition,
+    progress: f32,
+) -> DockVisualAffordanceSample {
+    DockVisualAffordanceSample {
+        motion_key: transition.motion_key.clone(),
         kind: transition.kind,
         bounds: transition.bounds,
         target_node: transition.target_node,
@@ -462,31 +426,11 @@ fn reveal_bounds(
     edge: DockTransitionEdge,
     progress: f32,
 ) -> Bounds<Pixels> {
-    let progress = progress.clamp(0.0, 1.0);
-    match edge {
-        DockTransitionEdge::Left => {
-            let width = final_bounds.size.width * progress;
-            Bounds::new(final_bounds.origin, size(width, final_bounds.size.height))
-        }
-        DockTransitionEdge::Right => {
-            let width = final_bounds.size.width * progress;
-            Bounds::new(
-                point(final_bounds.right() - width, final_bounds.origin.y),
-                size(width, final_bounds.size.height),
-            )
-        }
-        DockTransitionEdge::Top => {
-            let height = final_bounds.size.height * progress;
-            Bounds::new(final_bounds.origin, size(final_bounds.size.width, height))
-        }
-        DockTransitionEdge::Bottom => {
-            let height = final_bounds.size.height * progress;
-            Bounds::new(
-                point(final_bounds.origin.x, final_bounds.bottom() - height),
-                size(final_bounds.size.width, height),
-            )
-        }
-    }
+    bounds_from_ui_rect(reveal_rect_from_edge(
+        ui_rect_from_bounds(final_bounds),
+        edge,
+        progress,
+    ))
 }
 
 fn appearing_divider_bounds(
@@ -520,18 +464,9 @@ fn appearing_divider_bounds(
 }
 
 fn lerp_bounds(from: Bounds<Pixels>, to: Bounds<Pixels>, progress: f32) -> Bounds<Pixels> {
-    Bounds::new(
-        point(
-            lerp_pixels(from.origin.x, to.origin.x, progress),
-            lerp_pixels(from.origin.y, to.origin.y, progress),
-        ),
-        size(
-            lerp_pixels(from.size.width, to.size.width, progress),
-            lerp_pixels(from.size.height, to.size.height, progress),
-        ),
-    )
-}
-
-fn lerp_pixels(from: Pixels, to: Pixels, progress: f32) -> Pixels {
-    px(f32::from(from) + (f32::from(to) - f32::from(from)) * progress.clamp(0.0, 1.0))
+    bounds_from_ui_rect(lerp_rect(
+        ui_rect_from_bounds(from),
+        ui_rect_from_bounds(to),
+        progress,
+    ))
 }

@@ -1,26 +1,31 @@
-use crate::overlay_scene::{DockOverlayLayerKind, DockOverlayScene};
 use crate::{
     DockNodeId, DropZone, SplitAxis,
+    geometry::{bounds_from_ui_rect, ui_rect_from_bounds},
     presentation_scene::{
         DockPresentationFocusRegion, DockPresentationPane, DockPresentationScene,
     },
+    visual_affordance_scene::{
+        DockVisualAffordanceId, DockVisualAffordanceKind, DockVisualAffordanceLayer,
+        DockVisualAffordanceScene,
+    },
     zoom_state::DockZoomScene,
 };
-use open_gpui::{Bounds, Pixels, point};
-use open_gpui_ui_core::MotionPreference;
+use open_gpui::{Bounds, Pixels};
+use open_gpui_ui_core::{MotionEdge, MotionPreference, motion_source_rect, preferred_motion_edge};
 use std::collections::{HashMap, HashSet};
 
-/// Descriptor plan for docking presentation, divider, and overlay transitions.
+/// Descriptor plan for docking presentation, divider, and visual affordance transitions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DockTransitionPlan {
     pub(crate) preference: DockMotionPreference,
     pub(crate) final_scene: DockPresentationScene,
     pub(crate) pane_transitions: Vec<DockPaneTransition>,
     pub(crate) divider_transitions: Vec<DockDividerTransition>,
-    pub(crate) overlay_transitions: Vec<DockOverlayTransition>,
+    pub(crate) visual_affordance_transitions: Vec<DockVisualAffordanceTransition>,
 }
 
 pub(crate) type DockMotionPreference = MotionPreference;
+pub(crate) type DockTransitionEdge = MotionEdge;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockPaneTransition {
@@ -49,14 +54,6 @@ pub(crate) struct DockSlideTransition {
     pub(crate) occlusion_bounds: Bounds<Pixels>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DockTransitionEdge {
-    Left,
-    Right,
-    Top,
-    Bottom,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockDividerTransition {
     pub(crate) split: DockNodeId,
@@ -76,8 +73,9 @@ pub(crate) enum DockDividerTransitionKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockOverlayTransition {
-    pub(crate) kind: DockOverlayTransitionKind,
+pub(crate) struct DockVisualAffordanceTransition {
+    pub(crate) motion_key: DockVisualAffordanceId,
+    pub(crate) kind: DockVisualAffordanceTransitionKind,
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) target_node: Option<DockNodeId>,
     pub(crate) zone: Option<DropZone>,
@@ -86,7 +84,7 @@ pub(crate) struct DockOverlayTransition {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum DockOverlayTransitionKind {
+pub(crate) enum DockVisualAffordanceTransitionKind {
     RouteMarker,
     TargetBody,
     GuideBox,
@@ -97,16 +95,20 @@ pub(crate) enum DockOverlayTransitionKind {
     RejectedNoop,
 }
 
-impl DockOverlayTransitionKind {
-    pub(crate) fn from_layer_kind(kind: DockOverlayLayerKind) -> Self {
+impl DockVisualAffordanceTransitionKind {
+    pub(crate) fn from_affordance_kind(kind: DockVisualAffordanceKind) -> Self {
         match kind {
-            DockOverlayLayerKind::RouteMarker => Self::RouteMarker,
-            DockOverlayLayerKind::TargetBody => Self::TargetBody,
-            DockOverlayLayerKind::GuideBox => Self::GuideBox,
-            DockOverlayLayerKind::TabInsertion => Self::TabInsertion,
-            DockOverlayLayerKind::PayloadTab => Self::PayloadTab,
-            DockOverlayLayerKind::PayloadGhost => Self::PayloadGhost,
-            DockOverlayLayerKind::RejectedState => Self::RejectedNoop,
+            DockVisualAffordanceKind::RouteMarker => Self::RouteMarker,
+            DockVisualAffordanceKind::DropTargetBody => Self::TargetBody,
+            DockVisualAffordanceKind::GuideBox => Self::GuideBox,
+            DockVisualAffordanceKind::TabInsertionSlot => Self::TabInsertion,
+            DockVisualAffordanceKind::PayloadTab => Self::PayloadTab,
+            DockVisualAffordanceKind::PayloadGhost => Self::PayloadGhost,
+            DockVisualAffordanceKind::FocusRing => Self::FocusRing,
+            DockVisualAffordanceKind::RejectedTarget
+            | DockVisualAffordanceKind::DividerHandle
+            | DockVisualAffordanceKind::DividerCorner
+            | DockVisualAffordanceKind::ZoomEgress => Self::RejectedNoop,
         }
     }
 }
@@ -122,13 +124,13 @@ impl DockTransitionPlan {
             final_scene: next.clone(),
             pane_transitions: pane_transitions(previous, next, preference),
             divider_transitions: divider_transitions(previous, next, preference),
-            overlay_transitions: Vec::new(),
+            visual_affordance_transitions: Vec::new(),
         }
     }
 
-    pub(crate) fn from_overlay_scene(
+    pub(crate) fn from_visual_affordance_scene(
         final_scene: &DockPresentationScene,
-        overlay_scene: &DockOverlayScene,
+        affordance_scene: &DockVisualAffordanceScene,
         preference: DockMotionPreference,
     ) -> Self {
         Self {
@@ -136,17 +138,10 @@ impl DockTransitionPlan {
             final_scene: final_scene.clone(),
             pane_transitions: Vec::new(),
             divider_transitions: Vec::new(),
-            overlay_transitions: overlay_scene
+            visual_affordance_transitions: affordance_scene
                 .layers
                 .iter()
-                .map(|layer| DockOverlayTransition {
-                    kind: DockOverlayTransitionKind::from_layer_kind(layer.kind),
-                    bounds: layer.bounds,
-                    target_node: layer.target_node,
-                    zone: layer.zone,
-                    payload_index: layer.payload_index,
-                    immediate: preference.is_immediate(),
-                })
+                .map(|layer| visual_affordance_transition_from_layer(layer, preference))
                 .collect(),
         }
     }
@@ -163,7 +158,8 @@ impl DockTransitionPlan {
                 .iter_mut()
                 .find(|transition| transition.node == egress.node)
             {
-                let source_bounds = egress.edge.source_bounds(egress.from, previous.bounds);
+                let source_bounds =
+                    source_bounds_for_edge(egress.edge, egress.from, previous.bounds);
                 transition.from = Some(egress.from);
                 transition.to = Some(source_bounds);
                 transition.slide = Some(DockSlideTransition {
@@ -175,7 +171,7 @@ impl DockTransitionPlan {
             }
         }
         if let Some(focus) = zoom.focus.as_ref() {
-            plan.overlay_transitions
+            plan.visual_affordance_transitions
                 .push(focus_ring_transition(focus, preference));
         }
         plan
@@ -191,7 +187,7 @@ impl DockTransitionPlan {
             final_scene: final_scene.clone(),
             pane_transitions: Vec::new(),
             divider_transitions: Vec::new(),
-            overlay_transitions: vec![focus_ring_transition(focus, preference)],
+            visual_affordance_transitions: vec![focus_ring_transition(focus, preference)],
         }
     }
 
@@ -199,20 +195,47 @@ impl DockTransitionPlan {
         self.preference.is_immediate()
             && self.pane_transitions.iter().all(|item| item.immediate)
             && self.divider_transitions.iter().all(|item| item.immediate)
-            && self.overlay_transitions.iter().all(|item| item.immediate)
+            && self
+                .visual_affordance_transitions
+                .iter()
+                .all(|item| item.immediate)
     }
 }
 
 fn focus_ring_transition(
     focus: &DockPresentationFocusRegion,
     preference: DockMotionPreference,
-) -> DockOverlayTransition {
-    DockOverlayTransition {
-        kind: DockOverlayTransitionKind::FocusRing,
+) -> DockVisualAffordanceTransition {
+    let motion_key = DockVisualAffordanceId {
+        kind: DockVisualAffordanceKind::FocusRing,
+        target_node: Some(focus.tabs),
+        zone: None,
+        layer_scope: crate::visual_affordance_scene::DockVisualLayerScope::Focus,
+        payload_index: None,
+        serial: None,
+    };
+    DockVisualAffordanceTransition {
+        motion_key,
+        kind: DockVisualAffordanceTransitionKind::FocusRing,
         bounds: focus.bounds,
         target_node: Some(focus.tabs),
         zone: None,
         payload_index: None,
+        immediate: preference.is_immediate(),
+    }
+}
+
+fn visual_affordance_transition_from_layer(
+    layer: &DockVisualAffordanceLayer,
+    preference: DockMotionPreference,
+) -> DockVisualAffordanceTransition {
+    DockVisualAffordanceTransition {
+        motion_key: layer.motion_key.clone(),
+        kind: DockVisualAffordanceTransitionKind::from_affordance_kind(layer.kind),
+        bounds: layer.bounds,
+        target_node: layer.target_node,
+        zone: layer.zone,
+        payload_index: layer.payload_index,
         immediate: preference.is_immediate(),
     }
 }
@@ -341,8 +364,8 @@ fn slide_transition(
 ) -> DockSlideTransition {
     let edge = preferred_transition_edge(final_bounds, scene_bounds);
     DockSlideTransition {
+        source_bounds: source_bounds_for_edge(edge, final_bounds, scene_bounds),
         edge,
-        source_bounds: edge.source_bounds(final_bounds, scene_bounds),
         final_bounds,
         occlusion_bounds: final_bounds,
     }
@@ -352,55 +375,20 @@ pub(crate) fn preferred_transition_edge(
     bounds: Bounds<Pixels>,
     scene_bounds: Bounds<Pixels>,
 ) -> DockTransitionEdge {
-    let left = f32::from((bounds.origin.x - scene_bounds.origin.x).abs());
-    let right = f32::from((scene_bounds.right() - bounds.right()).abs());
-    let top = f32::from((bounds.origin.y - scene_bounds.origin.y).abs());
-    let bottom = f32::from((scene_bounds.bottom() - bounds.bottom()).abs());
-    let touching_epsilon = 0.5_f32;
-
-    if left <= touching_epsilon {
-        return DockTransitionEdge::Left;
-    }
-    if right <= touching_epsilon {
-        return DockTransitionEdge::Right;
-    }
-    if top <= touching_epsilon {
-        return DockTransitionEdge::Top;
-    }
-    if bottom <= touching_epsilon {
-        return DockTransitionEdge::Bottom;
-    }
-
-    [
-        (DockTransitionEdge::Left, left),
-        (DockTransitionEdge::Right, right),
-        (DockTransitionEdge::Top, top),
-        (DockTransitionEdge::Bottom, bottom),
-    ]
-    .into_iter()
-    .min_by(|(_, a), (_, b)| a.total_cmp(b))
-    .map(|(edge, _)| edge)
-    .unwrap_or(DockTransitionEdge::Left)
+    preferred_motion_edge(
+        ui_rect_from_bounds(bounds),
+        ui_rect_from_bounds(scene_bounds),
+    )
 }
 
-impl DockTransitionEdge {
-    fn source_bounds(
-        self,
-        final_bounds: Bounds<Pixels>,
-        scene_bounds: Bounds<Pixels>,
-    ) -> Bounds<Pixels> {
-        let origin = match self {
-            Self::Left => point(
-                scene_bounds.origin.x - final_bounds.size.width,
-                final_bounds.origin.y,
-            ),
-            Self::Right => point(scene_bounds.right(), final_bounds.origin.y),
-            Self::Top => point(
-                final_bounds.origin.x,
-                scene_bounds.origin.y - final_bounds.size.height,
-            ),
-            Self::Bottom => point(final_bounds.origin.x, scene_bounds.bottom()),
-        };
-        Bounds::new(origin, final_bounds.size)
-    }
+fn source_bounds_for_edge(
+    edge: DockTransitionEdge,
+    final_bounds: Bounds<Pixels>,
+    scene_bounds: Bounds<Pixels>,
+) -> Bounds<Pixels> {
+    bounds_from_ui_rect(motion_source_rect(
+        edge,
+        ui_rect_from_bounds(final_bounds),
+        ui_rect_from_bounds(scene_bounds),
+    ))
 }

@@ -13,17 +13,17 @@ use crate::{
         DockPayloadDropRelease, DockRenderedOutsideReleaseDecision,
         DockRenderedOutsideReleaseRequest,
     },
-    overlay_scene::{
-        DockOverlayLayer, DockOverlayPayloadTabLayout, DockOverlayPayloadTabPlacement,
-        DockOverlayScene,
-    },
     presentation_scene::DockPresentationScene,
     render_split::DockRenderSplitInput,
     transition_executor::{
-        DockDividerSample, DockOverlaySample, DockPaneClipSample, DockTransitionSample,
+        DockDividerSample, DockPaneClipSample, DockTransitionSample, DockVisualAffordanceSample,
     },
     transition_geometry::{DockMotionPreference, DockTransitionPlan},
     viewport_drop_scene::DockViewportHostSceneFrame,
+    visual_affordance_scene::{
+        DockPayloadTabPreviewLayout, DockPayloadTabPreviewPlacement, DockVisualAffordanceLayer,
+        DockVisualAffordanceScene,
+    },
 };
 use open_gpui::{
     AnyElement, BorderStyle, Bounds, Context, CursorStyle, DispatchPhase, DragMoveEvent,
@@ -243,15 +243,15 @@ impl DockHost {
         &self,
         session: &DockHostRenderSession,
         preview_bounds: Bounds<Pixels>,
-        overlay_scene: &DockOverlayScene,
+        affordance_scene: &DockVisualAffordanceScene,
         window: &Window,
-    ) -> Option<DockOverlayPayloadTabLayout> {
-        let insertion = overlay_scene.tab_insertion()?;
+    ) -> Option<DockPayloadTabPreviewLayout> {
+        let insertion = affordance_scene.tab_insertion()?;
         let target_tabs = insertion.target_node?;
         let DockNode::Tabs { items, .. } = session.node(target_tabs)?.clone() else {
             return None;
         };
-        let payload_tabs = overlay_payload_tabs(overlay_scene);
+        let payload_tabs = affordance_payload_tabs(affordance_scene);
         if payload_tabs.is_empty() {
             return None;
         }
@@ -351,7 +351,7 @@ impl DockHost {
             requested_left.min((tab_strip_right - tab_strip_width).max(tab_strip_left));
         let mut tab_bounds = Vec::with_capacity(payload_tabs.len());
         for (payload_tab, tab_width) in payload_tabs.iter().zip(tab_widths) {
-            tab_bounds.push(DockOverlayPayloadTabPlacement {
+            tab_bounds.push(DockPayloadTabPreviewPlacement {
                 payload_index: payload_tab.index,
                 bounds: Bounds::new(
                     point(px(tab_left), preview_bounds.origin.y),
@@ -380,7 +380,7 @@ impl DockHost {
             open_gpui::size(preview_bounds.size.width, body_height),
         );
 
-        Some(DockOverlayPayloadTabLayout {
+        Some(DockPayloadTabPreviewLayout {
             body_bounds,
             insertion_bounds,
             payload_tabs: tab_bounds,
@@ -692,8 +692,9 @@ impl DockHost {
         for divider in &sample.dividers {
             layer = layer.child(self.render_transition_divider(session, divider));
         }
-        for (index, overlay) in sample.overlays.iter().enumerate() {
-            layer = layer.child(self.render_transition_overlay(session, index, overlay));
+        for (index, affordance) in sample.visual_affordances.iter().enumerate() {
+            layer =
+                layer.child(self.render_transition_visual_affordance(session, index, affordance));
         }
 
         layer.into_any_element()
@@ -813,24 +814,27 @@ impl DockHost {
             .into_any_element()
     }
 
-    fn render_transition_overlay(
+    fn render_transition_visual_affordance(
         &mut self,
         session: &DockHostRenderSession,
         index: usize,
-        overlay: &DockOverlaySample,
+        affordance: &DockVisualAffordanceSample,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
-            DockDebugRegion::TransitionOverlay { index },
-            format!("{}:transition:overlay:{index}", session.selector_prefix()),
+            DockDebugRegion::TransitionVisualAffordance { index },
+            format!(
+                "{}:transition:visual-affordance:{index}",
+                session.selector_prefix()
+            ),
         );
         div()
             .id(selector.clone())
             .debug_selector(move || selector)
             .absolute()
-            .left(overlay.bounds.origin.x)
-            .top(overlay.bounds.origin.y)
-            .w(overlay.bounds.size.width)
-            .h(overlay.bounds.size.height)
+            .left(affordance.bounds.origin.x)
+            .top(affordance.bounds.origin.y)
+            .w(affordance.bounds.size.width)
+            .h(affordance.bounds.size.height)
             .rounded_sm()
             .border_1()
             .border_color(rgb(0x2563eb))
@@ -973,7 +977,9 @@ impl DockHost {
             return Some(self.render_route_drop_preview(session, preview, window));
         }
 
-        self.clear_overlay_transition_for_render();
+        if self.clear_visual_affordance_transition_for_render() {
+            self.clear_visual_affordance_debug_summary(window.window_handle().window_id());
+        }
         None
     }
 
@@ -984,7 +990,7 @@ impl DockHost {
         window: &Window,
     ) -> AnyElement {
         let scene = &preview.scene;
-        let mut overlay_scene = DockOverlayScene::from_preview(scene);
+        let mut affordance_scene = DockVisualAffordanceScene::from_preview(scene);
         let bounds = scene
             .payload_tabs
             .as_ref()
@@ -994,17 +1000,21 @@ impl DockHost {
                     .rendered_leaf_bounds_for_tabs(self.space(), None, tabs)
             })
             .unwrap_or(scene.body.future_bounds);
-        let payload_tab_layout = if overlay_scene.has_payload_tab_preview() {
-            self.drop_preview_payload_tab_layout(session, bounds, &overlay_scene, window)
+        let payload_tab_layout = if affordance_scene.has_payload_tab_preview() {
+            self.drop_preview_payload_tab_layout(session, bounds, &affordance_scene, window)
         } else {
             None
         };
         if let Some(layout) = payload_tab_layout.as_ref() {
-            overlay_scene.apply_payload_tab_layout(layout);
+            affordance_scene.apply_payload_tab_layout(layout);
         }
-        let overlay_sample =
-            self.sync_overlay_transition_for_render(session, &overlay_scene, bounds, window);
-        let overlay_opacity = overlay_sample
+        let visual_affordance_sample = self.sync_visual_affordance_transition_for_render(
+            session,
+            &affordance_scene,
+            bounds,
+            window,
+        );
+        let affordance_opacity = visual_affordance_sample
             .as_ref()
             .map(|sample| preview_transition_opacity(sample.progress))
             .unwrap_or(1.0);
@@ -1023,14 +1033,11 @@ impl DockHost {
             .w(bounds.size.width)
             .h(bounds.size.height)
             .overflow_hidden()
-            .opacity(overlay_opacity);
+            .opacity(affordance_opacity);
 
-        if overlay_scene.has_payload_tab_preview() && payload_tab_layout.is_some() {
-            let body_layer = overlay_scene
-                .layers
-                .iter()
-                .find(|layer| layer.kind == crate::overlay_scene::DockOverlayLayerKind::TargetBody);
-            let insertion_layer = overlay_scene.tab_insertion();
+        if affordance_scene.has_payload_tab_preview() && payload_tab_layout.is_some() {
+            let body_layer = affordance_scene.target_body();
+            let insertion_layer = affordance_scene.tab_insertion();
             let Some(body_layer) = body_layer else {
                 return element.into_any_element();
             };
@@ -1072,8 +1079,8 @@ impl DockHost {
                     .rounded_sm()
                     .bg(palette.border),
             );
-            for placement in overlay_payload_tabs(&overlay_scene) {
-                let placement_bounds = overlay_scene
+            for placement in affordance_payload_tabs(&affordance_scene) {
+                let placement_bounds = affordance_scene
                     .payload_tabs()
                     .find(|layer| layer.payload_index == Some(placement.index))
                     .map(|layer| layer.bounds)
@@ -1137,11 +1144,13 @@ impl DockHost {
             );
         }
 
-        for drop_box in overlay_scene.guide_drop_boxes() {
+        for drop_box in affordance_scene.guide_drop_boxes() {
             element = element.child(self.render_scene_drop_guide(session, bounds, drop_box));
         }
 
-        for accessible in DockAccessibilityScene::overlay_elements_for_render(&overlay_scene) {
+        for accessible in
+            DockAccessibilityScene::visual_affordance_elements_for_render(&affordance_scene)
+        {
             let local_bounds = localize_bounds(accessible.bounds, bounds.origin);
             let marker = div()
                 .id(accessible.id_str().to_string())
@@ -1163,15 +1172,19 @@ impl DockHost {
         preview: DockDropRoutePreview,
         window: &Window,
     ) -> AnyElement {
-        let overlay_scene = DockOverlayScene::from_route_preview(&preview);
-        let bounds = overlay_scene
+        let affordance_scene = DockVisualAffordanceScene::from_route_preview(&preview);
+        let bounds = affordance_scene
             .layers
             .first()
             .map(|layer| layer.bounds)
             .unwrap_or(preview.bounds);
-        let overlay_sample =
-            self.sync_overlay_transition_for_render(session, &overlay_scene, bounds, window);
-        let overlay_opacity = overlay_sample
+        let visual_affordance_sample = self.sync_visual_affordance_transition_for_render(
+            session,
+            &affordance_scene,
+            bounds,
+            window,
+        );
+        let affordance_opacity = visual_affordance_sample
             .as_ref()
             .map(|sample| preview_transition_opacity(sample.progress))
             .unwrap_or(1.0);
@@ -1193,35 +1206,37 @@ impl DockHost {
             .border_1()
             .border_color(palette.border)
             .bg(palette.background)
-            .opacity(overlay_opacity)
+            .opacity(affordance_opacity)
             .into_any_element()
     }
 
-    fn sync_overlay_transition_for_render(
+    fn sync_visual_affordance_transition_for_render(
         &mut self,
         session: &DockHostRenderSession,
-        overlay_scene: &DockOverlayScene,
+        affordance_scene: &DockVisualAffordanceScene,
         fallback_bounds: Bounds<Pixels>,
         window: &Window,
     ) -> Option<DockTransitionSample> {
-        if self.last_overlay_scene() != Some(overlay_scene) {
+        if self.last_visual_affordance_scene() != Some(affordance_scene) {
             let final_scene = self.last_presentation_scene().cloned().unwrap_or_else(|| {
                 DockPresentationScene::from_render_session(session, fallback_bounds)
             });
-            let plan = DockTransitionPlan::from_overlay_scene(
+            let plan = DockTransitionPlan::from_visual_affordance_scene(
                 &final_scene,
-                overlay_scene,
+                affordance_scene,
                 DockMotionPreference::Animated,
             );
-            self.set_last_overlay_scene(overlay_scene.clone());
-            self.execute_overlay_transition_plan(
+            self.set_last_visual_affordance_scene(affordance_scene.clone());
+            self.execute_visual_affordance_transition_plan(
                 plan,
                 MotionSpec::affordance(DockMotionPreference::Animated),
                 Some(window),
             );
         }
 
-        self.sample_overlay_transition_for_render(Some(window))
+        let sample = self.sample_visual_affordance_transition_for_render(Some(window));
+        self.publish_visual_affordance_debug_summary(window.window_handle().window_id());
+        sample
     }
 
     fn render_scene_drop_guide(
@@ -1365,16 +1380,20 @@ impl DockHost {
     }
 }
 
-fn overlay_payload_tabs(overlay_scene: &DockOverlayScene) -> Vec<DockDropPreviewPayloadTab> {
-    let mut tabs = overlay_scene
+fn affordance_payload_tabs(
+    affordance_scene: &DockVisualAffordanceScene,
+) -> Vec<DockDropPreviewPayloadTab> {
+    let mut tabs = affordance_scene
         .payload_tabs()
-        .filter_map(payload_tab_from_overlay_layer)
+        .filter_map(payload_tab_from_affordance_layer)
         .collect::<Vec<_>>();
     tabs.sort_by_key(|tab| tab.index);
     tabs
 }
 
-fn payload_tab_from_overlay_layer(layer: &DockOverlayLayer) -> Option<DockDropPreviewPayloadTab> {
+fn payload_tab_from_affordance_layer(
+    layer: &DockVisualAffordanceLayer,
+) -> Option<DockDropPreviewPayloadTab> {
     Some(DockDropPreviewPayloadTab {
         index: layer.payload_index?,
         title: layer.payload_title.clone().unwrap_or_default(),
@@ -1649,59 +1668,39 @@ mod tests {
     }
 
     #[test]
-    fn payload_tab_render_inputs_come_from_overlay_layers() {
-        let overlay = DockOverlayScene {
-            layers: vec![
-                DockOverlayLayer {
-                    kind: crate::overlay_scene::DockOverlayLayerKind::TabInsertion,
-                    bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(3.0), px(26.0))),
-                    target_node: None,
-                    zone: Some(DropZone::Center),
-                    preview_layer: None,
-                    active: true,
-                    payload_index: None,
-                    payload_title: None,
-                    drop_box: None,
-                    tab_insertion: None,
-                },
-                DockOverlayLayer {
-                    kind: crate::overlay_scene::DockOverlayLayerKind::PayloadTab,
-                    bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(80.0), px(26.0))),
-                    target_node: None,
-                    zone: Some(DropZone::Center),
-                    preview_layer: None,
-                    active: true,
-                    payload_index: Some(1),
-                    payload_title: Some("Diff".to_string()),
-                    drop_box: None,
-                    tab_insertion: None,
-                },
-                DockOverlayLayer {
-                    kind: crate::overlay_scene::DockOverlayLayerKind::PayloadTab,
-                    bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(80.0), px(26.0))),
-                    target_node: None,
-                    zone: Some(DropZone::Center),
-                    preview_layer: None,
-                    active: true,
-                    payload_index: Some(0),
-                    payload_title: Some("Preview".to_string()),
-                    drop_box: None,
-                    tab_insertion: None,
-                },
-            ],
-        };
+    fn payload_tab_render_inputs_come_from_visual_affordance_layers() {
+        let mut preview = preview(false, true);
+        preview.scene.payload_tabs.as_mut().unwrap().insertion =
+            Some(crate::drop_preview::DockPreviewTabInsertion {
+                target_tabs: None,
+                index: crate::drop_preview::DockPreviewTabInsertionIndex::Append,
+                slot_bounds: Some(Bounds::new(
+                    point(px(0.0), px(0.0)),
+                    size(px(3.0), px(26.0)),
+                )),
+                clipping_bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(80.0), px(26.0))),
+            });
+        preview.scene.payload_tabs.as_mut().unwrap().tabs = vec![
+            crate::drop_preview::DockPreviewPayloadTab {
+                title: "Diff".to_string(),
+            },
+            crate::drop_preview::DockPreviewPayloadTab {
+                title: "Preview".to_string(),
+            },
+        ];
+        let affordance_scene = DockVisualAffordanceScene::from_preview(&preview.scene);
 
-        assert!(overlay.has_payload_tab_preview());
+        assert!(affordance_scene.has_payload_tab_preview());
         assert_eq!(
-            overlay_payload_tabs(&overlay),
+            affordance_payload_tabs(&affordance_scene),
             vec![
                 DockDropPreviewPayloadTab {
                     index: 0,
-                    title: "Preview".to_string(),
+                    title: "Diff".to_string(),
                 },
                 DockDropPreviewPayloadTab {
                     index: 1,
-                    title: "Diff".to_string(),
+                    title: "Preview".to_string(),
                 },
             ]
         );

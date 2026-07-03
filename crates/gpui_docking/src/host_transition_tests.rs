@@ -3,16 +3,19 @@ use crate::{
     DockViewportTargetHit, DropZone, SplitAxis,
     drop_preview::DockDropRoutePreview,
     host_test_support::{floating_bounds, open_host, space, split_graph},
-    overlay_scene::{DockOverlayLayer, DockOverlayLayerKind, DockOverlayScene},
     presentation_scene::{
         DockPresentationOverlayAnchor, DockPresentationOverlayAnchorKind, DockPresentationPane,
         DockPresentationPaneKind, DockPresentationScene,
     },
     transition_geometry::{
-        DockDividerTransitionKind, DockMotionPreference, DockOverlayTransitionKind,
-        DockPaneTransitionKind, DockTransitionEdge, DockTransitionPlan,
+        DockDividerTransitionKind, DockMotionPreference, DockPaneTransitionKind,
+        DockTransitionEdge, DockTransitionPlan, DockVisualAffordanceTransitionKind,
     },
     viewport_test_support::handle,
+    visual_affordance_scene::{
+        DockVisualAffordanceKind, DockVisualAffordanceLayer, DockVisualAffordanceScene,
+        DockVisualAffordanceState, DockVisualLayerScope,
+    },
 };
 use open_gpui::{Bounds, TestAppContext, point, px, size};
 use open_gpui_ui_core::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
@@ -51,25 +54,59 @@ fn single_pane_scene(
     }
 }
 
-fn tab_preview_overlay_layer(
+fn test_affordance_layer(
     tabs: crate::DockNodeId,
-    kind: DockOverlayLayerKind,
+    kind: DockVisualAffordanceKind,
     bounds: Bounds<open_gpui::Pixels>,
     zone: Option<DropZone>,
     payload_index: Option<usize>,
-) -> DockOverlayLayer {
-    DockOverlayLayer {
+) -> DockVisualAffordanceLayer {
+    DockVisualAffordanceLayer::test_layer(
         kind,
         bounds,
-        target_node: Some(tabs),
+        Some(tabs),
         zone,
-        preview_layer: None,
-        active: true,
+        DockVisualLayerScope::Local,
+        if kind == DockVisualAffordanceKind::RejectedTarget {
+            DockVisualAffordanceState::Rejected
+        } else {
+            DockVisualAffordanceState::Active
+        },
         payload_index,
-        payload_title: payload_index.map(|_| "Preview".to_string()),
-        drop_box: None,
-        tab_insertion: None,
+        payload_index.map(|_| "Preview".to_string()),
+        None,
+        accessibility_label_for_test_affordance(kind, zone, payload_index),
+    )
+}
+
+fn accessibility_label_for_test_affordance(
+    kind: DockVisualAffordanceKind,
+    zone: Option<DropZone>,
+    payload_index: Option<usize>,
+) -> Option<String> {
+    match kind {
+        DockVisualAffordanceKind::DropTargetBody => Some("Dock target".to_string()),
+        DockVisualAffordanceKind::GuideBox => zone.map(|zone| format!("Dock {zone:?}")),
+        DockVisualAffordanceKind::TabInsertionSlot => Some("Insert tab".to_string()),
+        DockVisualAffordanceKind::PayloadTab => payload_index.map(|_| "Preview".to_string()),
+        DockVisualAffordanceKind::PayloadGhost => {
+            payload_index.map(|_| "Preview Preview".to_string())
+        }
+        DockVisualAffordanceKind::RejectedTarget => Some("Drop target unavailable".to_string()),
+        DockVisualAffordanceKind::RouteMarker
+        | DockVisualAffordanceKind::DividerHandle
+        | DockVisualAffordanceKind::DividerCorner
+        | DockVisualAffordanceKind::FocusRing
+        | DockVisualAffordanceKind::ZoomEgress => None,
     }
+}
+
+fn transition_plan_from_affordance_scene(
+    scene: &DockPresentationScene,
+    affordance_scene: &DockVisualAffordanceScene,
+    preference: DockMotionPreference,
+) -> DockTransitionPlan {
+    DockTransitionPlan::from_visual_affordance_scene(scene, &affordance_scene, preference)
 }
 
 #[open_gpui::test]
@@ -399,167 +436,142 @@ fn transition_executor_replaces_active_execution_and_completes_reduced_motion_im
 }
 
 #[test]
-fn transition_plan_from_overlay_scene_describes_tab_insertion_and_payload_tabs() {
+fn transition_plan_from_affordance_scene_describes_tab_insertion_and_payload_tabs() {
     let tabs = crate::DockNodeId::null();
     let scene = single_pane_scene(tabs, host_bounds(320.0, 200.0));
-    let overlay = DockOverlayScene {
-        layers: vec![
-            DockOverlayLayer {
-                kind: DockOverlayLayerKind::TabInsertion,
-                bounds: floating_bounds(8.0, 0.0, 3.0, 26.0),
-                target_node: Some(tabs),
-                zone: Some(DropZone::Center),
-                preview_layer: None,
-                active: true,
-                payload_index: None,
-                payload_title: None,
-                drop_box: None,
-                tab_insertion: None,
-            },
-            DockOverlayLayer {
-                kind: DockOverlayLayerKind::PayloadTab,
-                bounds: floating_bounds(10.0, 0.0, 90.0, 26.0),
-                target_node: Some(tabs),
-                zone: Some(DropZone::Center),
-                preview_layer: None,
-                active: true,
-                payload_index: Some(0),
-                payload_title: Some("Preview".to_string()),
-                drop_box: None,
-                tab_insertion: None,
-            },
-            DockOverlayLayer {
-                kind: DockOverlayLayerKind::PayloadGhost,
-                bounds: floating_bounds(10.0, 0.0, 90.0, 26.0),
-                target_node: Some(tabs),
-                zone: Some(DropZone::Center),
-                preview_layer: None,
-                active: true,
-                payload_index: Some(0),
-                payload_title: Some("Preview".to_string()),
-                drop_box: None,
-                tab_insertion: None,
-            },
-        ],
-    };
-
-    let plan =
-        DockTransitionPlan::from_overlay_scene(&scene, &overlay, DockMotionPreference::Animated);
+    let affordance_scene = DockVisualAffordanceScene::from_test_layers(vec![
+        test_affordance_layer(
+            tabs,
+            DockVisualAffordanceKind::TabInsertionSlot,
+            floating_bounds(8.0, 0.0, 3.0, 26.0),
+            Some(DropZone::Center),
+            None,
+        ),
+        test_affordance_layer(
+            tabs,
+            DockVisualAffordanceKind::PayloadTab,
+            floating_bounds(10.0, 0.0, 90.0, 26.0),
+            Some(DropZone::Center),
+            Some(0),
+        ),
+        test_affordance_layer(
+            tabs,
+            DockVisualAffordanceKind::PayloadGhost,
+            floating_bounds(10.0, 0.0, 90.0, 26.0),
+            Some(DropZone::Center),
+            Some(0),
+        ),
+    ]);
+    let plan = DockTransitionPlan::from_visual_affordance_scene(
+        &scene,
+        &affordance_scene,
+        DockMotionPreference::Animated,
+    );
 
     assert!(plan.pane_transitions.is_empty());
-    assert_eq!(plan.overlay_transitions.len(), 3);
+    assert_eq!(plan.visual_affordance_transitions.len(), 3);
     assert_eq!(
-        plan.overlay_transitions[0].kind,
-        DockOverlayTransitionKind::TabInsertion
+        plan.visual_affordance_transitions[0].kind,
+        DockVisualAffordanceTransitionKind::TabInsertion
     );
-    assert_eq!(plan.overlay_transitions[0].target_node, Some(tabs));
-    assert_eq!(plan.overlay_transitions[0].zone, Some(DropZone::Center));
     assert_eq!(
-        plan.overlay_transitions[1].kind,
-        DockOverlayTransitionKind::PayloadTab
+        plan.visual_affordance_transitions[0].target_node,
+        Some(tabs)
     );
-    assert_eq!(plan.overlay_transitions[1].payload_index, Some(0));
     assert_eq!(
-        plan.overlay_transitions[2].kind,
-        DockOverlayTransitionKind::PayloadGhost
+        plan.visual_affordance_transitions[0].zone,
+        Some(DropZone::Center)
     );
-    assert_eq!(plan.overlay_transitions[2].payload_index, Some(0));
+    assert_eq!(
+        plan.visual_affordance_transitions[1].kind,
+        DockVisualAffordanceTransitionKind::PayloadTab
+    );
+    assert_eq!(plan.visual_affordance_transitions[1].payload_index, Some(0));
+    assert_eq!(
+        plan.visual_affordance_transitions[2].kind,
+        DockVisualAffordanceTransitionKind::PayloadGhost
+    );
+    assert_eq!(plan.visual_affordance_transitions[2].payload_index, Some(0));
+    for (transition, layer) in plan
+        .visual_affordance_transitions
+        .iter()
+        .zip(affordance_scene.layers.iter())
+    {
+        assert_eq!(
+            transition.motion_key, layer.motion_key,
+            "visual affordance motion should use visual affordance identity"
+        );
+    }
 }
 
 #[test]
-fn transition_plan_from_overlay_scene_uses_current_bounds_for_matching_layers() {
+fn transition_plan_from_affordance_scene_uses_current_bounds_for_matching_layers() {
     let tabs = crate::DockNodeId::null();
     let scene = single_pane_scene(tabs, host_bounds(320.0, 200.0));
-    let next = DockOverlayScene {
-        layers: vec![DockOverlayLayer {
-            kind: DockOverlayLayerKind::GuideBox,
-            bounds: floating_bounds(40.0, 20.0, 90.0, 48.0),
-            target_node: Some(tabs),
-            zone: Some(DropZone::Left),
-            preview_layer: None,
-            active: true,
-            payload_index: None,
-            payload_title: None,
-            drop_box: None,
-            tab_insertion: None,
-        }],
-    };
+    let next = DockVisualAffordanceScene::from_test_layers(vec![test_affordance_layer(
+        tabs,
+        DockVisualAffordanceKind::GuideBox,
+        floating_bounds(40.0, 20.0, 90.0, 48.0),
+        Some(DropZone::Left),
+        None,
+    )]);
 
-    let plan =
-        DockTransitionPlan::from_overlay_scene(&scene, &next, DockMotionPreference::Animated);
+    let plan = transition_plan_from_affordance_scene(&scene, &next, DockMotionPreference::Animated);
 
-    assert_eq!(plan.overlay_transitions.len(), 1);
-    assert_eq!(plan.overlay_transitions[0].bounds, next.layers[0].bounds);
+    assert_eq!(plan.visual_affordance_transitions.len(), 1);
+    assert_eq!(
+        plan.visual_affordance_transitions[0].bounds,
+        next.layers[0].bounds
+    );
 }
 
 #[test]
 fn transition_plan_keeps_preview_layers_at_current_target_bounds() {
     let tabs = crate::DockNodeId::null();
     let scene = single_pane_scene(tabs, host_bounds(320.0, 200.0));
-    let next = DockOverlayScene {
-        layers: vec![
-            DockOverlayLayer {
-                kind: DockOverlayLayerKind::TargetBody,
-                bounds: floating_bounds(80.0, 26.0, 180.0, 120.0),
-                target_node: Some(tabs),
-                zone: None,
-                preview_layer: None,
-                active: true,
-                payload_index: None,
-                payload_title: None,
-                drop_box: None,
-                tab_insertion: None,
-            },
-            DockOverlayLayer {
-                kind: DockOverlayLayerKind::TabInsertion,
-                bounds: floating_bounds(120.0, 0.0, 3.0, 26.0),
-                target_node: Some(tabs),
-                zone: Some(DropZone::Center),
-                preview_layer: None,
-                active: true,
-                payload_index: None,
-                payload_title: None,
-                drop_box: None,
-                tab_insertion: None,
-            },
-            DockOverlayLayer {
-                kind: DockOverlayLayerKind::PayloadTab,
-                bounds: floating_bounds(124.0, 0.0, 90.0, 26.0),
-                target_node: Some(tabs),
-                zone: Some(DropZone::Center),
-                preview_layer: None,
-                active: true,
-                payload_index: Some(0),
-                payload_title: Some("Preview".to_string()),
-                drop_box: None,
-                tab_insertion: None,
-            },
-            DockOverlayLayer {
-                kind: DockOverlayLayerKind::PayloadGhost,
-                bounds: floating_bounds(124.0, 0.0, 90.0, 26.0),
-                target_node: Some(tabs),
-                zone: Some(DropZone::Center),
-                preview_layer: None,
-                active: true,
-                payload_index: Some(0),
-                payload_title: Some("Preview".to_string()),
-                drop_box: None,
-                tab_insertion: None,
-            },
-        ],
-    };
+    let next = DockVisualAffordanceScene::from_test_layers(vec![
+        test_affordance_layer(
+            tabs,
+            DockVisualAffordanceKind::DropTargetBody,
+            floating_bounds(80.0, 26.0, 180.0, 120.0),
+            None,
+            None,
+        ),
+        test_affordance_layer(
+            tabs,
+            DockVisualAffordanceKind::TabInsertionSlot,
+            floating_bounds(120.0, 0.0, 3.0, 26.0),
+            Some(DropZone::Center),
+            None,
+        ),
+        test_affordance_layer(
+            tabs,
+            DockVisualAffordanceKind::PayloadTab,
+            floating_bounds(124.0, 0.0, 90.0, 26.0),
+            Some(DropZone::Center),
+            Some(0),
+        ),
+        test_affordance_layer(
+            tabs,
+            DockVisualAffordanceKind::PayloadGhost,
+            floating_bounds(124.0, 0.0, 90.0, 26.0),
+            Some(DropZone::Center),
+            Some(0),
+        ),
+    ]);
 
-    let plan =
-        DockTransitionPlan::from_overlay_scene(&scene, &next, DockMotionPreference::Animated);
+    let plan = transition_plan_from_affordance_scene(&scene, &next, DockMotionPreference::Animated);
 
-    assert_eq!(plan.overlay_transitions.len(), next.layers.len());
-    for (transition, layer) in plan.overlay_transitions.iter().zip(&next.layers) {
+    assert_eq!(plan.visual_affordance_transitions.len(), next.layers.len());
+    for (transition, layer) in plan.visual_affordance_transitions.iter().zip(&next.layers) {
         assert_eq!(transition.bounds, layer.bounds);
     }
 }
 
 #[open_gpui::test]
-fn overlay_replacement_keeps_preview_layers_at_current_target_bounds(cx: &mut TestAppContext) {
+fn visual_affordance_replacement_keeps_preview_layers_at_current_target_bounds(
+    cx: &mut TestAppContext,
+) {
     let (graph, _root, tabs, _right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let (_window, host, _visual) = open_host(
         cx,
@@ -574,38 +586,44 @@ fn overlay_replacement_keeps_preview_layers_at_current_target_bounds(cx: &mut Te
     let next_insertion = floating_bounds(120.0, 0.0, 3.0, 26.0);
     let previous_payload = floating_bounds(16.0, 0.0, 80.0, 26.0);
     let next_payload = floating_bounds(124.0, 0.0, 90.0, 26.0);
-    let tab_preview_scene = |body, insertion, payload| DockOverlayScene {
-        layers: vec![
-            tab_preview_overlay_layer(tabs, DockOverlayLayerKind::TargetBody, body, None, None),
-            tab_preview_overlay_layer(
+    let tab_preview_scene = |body, insertion, payload| {
+        DockVisualAffordanceScene::from_test_layers(vec![
+            test_affordance_layer(
                 tabs,
-                DockOverlayLayerKind::TabInsertion,
+                DockVisualAffordanceKind::DropTargetBody,
+                body,
+                None,
+                None,
+            ),
+            test_affordance_layer(
+                tabs,
+                DockVisualAffordanceKind::TabInsertionSlot,
                 insertion,
                 Some(DropZone::Center),
                 None,
             ),
-            tab_preview_overlay_layer(
+            test_affordance_layer(
                 tabs,
-                DockOverlayLayerKind::PayloadTab,
+                DockVisualAffordanceKind::PayloadTab,
                 payload,
                 Some(DropZone::Center),
                 Some(0),
             ),
-            tab_preview_overlay_layer(
+            test_affordance_layer(
                 tabs,
-                DockOverlayLayerKind::PayloadGhost,
+                DockVisualAffordanceKind::PayloadGhost,
                 payload,
                 Some(DropZone::Center),
                 Some(0),
             ),
-        ],
+        ])
     };
     let previous = tab_preview_scene(previous_body, previous_insertion, previous_payload);
     let next = tab_preview_scene(next_body, next_insertion, next_payload);
     let first_plan =
-        DockTransitionPlan::from_overlay_scene(&scene, &previous, DockMotionPreference::Animated);
+        transition_plan_from_affordance_scene(&scene, &previous, DockMotionPreference::Animated);
     let replacement_plan =
-        DockTransitionPlan::from_overlay_scene(&scene, &next, DockMotionPreference::Animated);
+        transition_plan_from_affordance_scene(&scene, &next, DockMotionPreference::Animated);
     let spec = MotionSpec::new(
         MotionPreference::Animated,
         MotionDuration::Custom(Duration::from_millis(400)),
@@ -614,52 +632,56 @@ fn overlay_replacement_keeps_preview_layers_at_current_target_bounds(cx: &mut Te
 
     host.update(cx, |host, _| {
         assert_eq!(
-            host.execute_overlay_transition_plan(first_plan, spec, None),
+            host.execute_visual_affordance_transition_plan(first_plan, spec, None),
             DockTransitionExecutionState::Scheduled
         );
         assert!(
-            host.sample_overlay_transition_for_test(Duration::from_millis(0))
+            host.sample_visual_affordance_transition_for_test(Duration::from_millis(0))
                 .is_some()
         );
         assert!(
-            host.sample_overlay_transition_for_test(Duration::from_millis(100))
+            host.sample_visual_affordance_transition_for_test(Duration::from_millis(100))
                 .is_some()
         );
 
         assert_eq!(
-            host.execute_overlay_transition_plan(replacement_plan, spec, None),
+            host.execute_visual_affordance_transition_plan(replacement_plan, spec, None),
             DockTransitionExecutionState::Scheduled
         );
         let sample = host
-            .sample_overlay_transition_for_test(Duration::from_millis(100))
-            .expect("replacement overlay transition should expose a retargeted start sample");
+            .sample_visual_affordance_transition_for_test(Duration::from_millis(100))
+            .expect(
+                "replacement visual affordance transition should expose a retargeted start sample",
+            );
         assert_eq!(sample.progress, 0.0);
 
-        let overlay_bounds = |kind, payload_index| {
+        let affordance_bounds = |kind, payload_index| {
             sample
-                .overlays
+                .visual_affordances
                 .iter()
-                .find(|overlay| overlay.kind == kind && overlay.payload_index == payload_index)
-                .map(|overlay| overlay.bounds)
-                .expect("sample should include overlay kind")
+                .find(|affordance| {
+                    affordance.kind == kind && affordance.payload_index == payload_index
+                })
+                .map(|affordance| affordance.bounds)
+                .expect("sample should include visual affordance kind")
         };
         assert_eq!(
-            overlay_bounds(DockOverlayTransitionKind::TargetBody, None),
+            affordance_bounds(DockVisualAffordanceTransitionKind::TargetBody, None),
             next_body,
             "target body should stay pinned to the current hover target"
         );
         assert_eq!(
-            overlay_bounds(DockOverlayTransitionKind::TabInsertion, None),
+            affordance_bounds(DockVisualAffordanceTransitionKind::TabInsertion, None),
             next_insertion,
             "tab insertion should stay pinned to the current pointer target"
         );
         assert_eq!(
-            overlay_bounds(DockOverlayTransitionKind::PayloadTab, Some(0)),
+            affordance_bounds(DockVisualAffordanceTransitionKind::PayloadTab, Some(0)),
             next_payload,
             "payload tab preview should not drift from the current insertion slot"
         );
         assert_eq!(
-            overlay_bounds(DockOverlayTransitionKind::PayloadGhost, Some(0)),
+            affordance_bounds(DockVisualAffordanceTransitionKind::PayloadGhost, Some(0)),
             next_payload,
             "payload ghost should stay aligned with the payload tab preview"
         );
@@ -667,7 +689,7 @@ fn overlay_replacement_keeps_preview_layers_at_current_target_bounds(cx: &mut Te
 }
 
 #[test]
-fn transition_plan_from_route_overlay_describes_source_marker() {
+fn transition_plan_from_route_affordance_describes_source_marker() {
     let tabs = crate::DockNodeId::null();
     let scene = single_pane_scene(tabs, host_bounds(320.0, 200.0));
     let route_preview = DockDropRoutePreview::from_route(
@@ -682,48 +704,51 @@ fn transition_plan_from_route_overlay_describes_source_marker() {
         point(px(24.0), px(48.0)),
     )
     .expect("known cross-window route should produce a source marker");
-    let overlay = DockOverlayScene::from_route_preview(&route_preview);
+    let affordance_scene = DockVisualAffordanceScene::from_route_preview(&route_preview);
 
-    let plan =
-        DockTransitionPlan::from_overlay_scene(&scene, &overlay, DockMotionPreference::Animated);
+    let plan = DockTransitionPlan::from_visual_affordance_scene(
+        &scene,
+        &affordance_scene,
+        DockMotionPreference::Animated,
+    );
 
     assert!(plan.pane_transitions.is_empty());
-    assert_eq!(plan.overlay_transitions.len(), 1);
+    assert_eq!(plan.visual_affordance_transitions.len(), 1);
     assert_eq!(
-        plan.overlay_transitions[0].kind,
-        DockOverlayTransitionKind::RouteMarker
+        plan.visual_affordance_transitions[0].kind,
+        DockVisualAffordanceTransitionKind::RouteMarker
     );
-    assert_eq!(plan.overlay_transitions[0].bounds, route_preview.bounds);
-    assert!(!plan.overlay_transitions[0].immediate);
+    assert_eq!(
+        plan.visual_affordance_transitions[0].bounds,
+        route_preview.bounds
+    );
+    assert!(!plan.visual_affordance_transitions[0].immediate);
 }
 
 #[test]
-fn transition_plan_from_rejected_overlay_is_rejected_noop() {
+fn transition_plan_from_rejected_affordance_is_rejected_noop() {
     let tabs = crate::DockNodeId::null();
     let scene = single_pane_scene(tabs, host_bounds(320.0, 200.0));
-    let overlay = DockOverlayScene {
-        layers: vec![DockOverlayLayer {
-            kind: DockOverlayLayerKind::RejectedState,
-            bounds: scene.bounds,
-            target_node: Some(tabs),
-            zone: None,
-            preview_layer: None,
-            active: true,
-            payload_index: None,
-            payload_title: None,
-            drop_box: None,
-            tab_insertion: None,
-        }],
-    };
+    let affordance_scene =
+        DockVisualAffordanceScene::from_test_layers(vec![test_affordance_layer(
+            tabs,
+            DockVisualAffordanceKind::RejectedTarget,
+            scene.bounds,
+            None,
+            None,
+        )]);
 
-    let plan =
-        DockTransitionPlan::from_overlay_scene(&scene, &overlay, DockMotionPreference::Reduced);
+    let plan = transition_plan_from_affordance_scene(
+        &scene,
+        &affordance_scene,
+        DockMotionPreference::Reduced,
+    );
 
     assert!(plan.pane_transitions.is_empty());
-    assert_eq!(plan.overlay_transitions.len(), 1);
+    assert_eq!(plan.visual_affordance_transitions.len(), 1);
     assert_eq!(
-        plan.overlay_transitions[0].kind,
-        DockOverlayTransitionKind::RejectedNoop
+        plan.visual_affordance_transitions[0].kind,
+        DockVisualAffordanceTransitionKind::RejectedNoop
     );
     assert!(plan.is_immediate());
 }

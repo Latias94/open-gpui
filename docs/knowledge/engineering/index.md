@@ -43,6 +43,7 @@
 * [Docking flat motion runtime verification](verification/docking-flat-motion-runtime-20260702.md) - Verification evidence for focused and final flat motion runtime gates.
 * [UI motion runtime foundation](progress/2026-07-02-ui-motion-runtime-foundation.md) - Progress note for the shared `ui_core` motion timeline and retarget primitive used by Splitter and docking.
 * [Docking render authority convergence planning](progress/2026-07-02-docking-render-authority-convergence-plan.md) - Follow-up plan note for scene/render/drop-fact geometry parity and duplicate render geometry deletion.
+* [Docking visual affordance runtime](progress/2026-07-03-docking-visual-affordance-runtime.md) - Implementation state for unified docking preview, motion, accessibility, debug, and native affordance diagnostics.
 * [Tree renderer productization verification](verification/tree-renderer-productization-20260622.md) - Verification evidence for the official Tree renderer, gallery sample, and nested scroll smokes.
 * [Tree virtualized window verification](verification/tree-virtualized-window-20260626.md) - Verification evidence for the opt-in Tree virtualized render window, API export coverage, and gallery metadata proof.
 * [Table sticky pinned columns verification](verification/table-sticky-pinned-columns-20260623.md) - Verification evidence for sticky pinned Table center scrolling and nested vertical containment.

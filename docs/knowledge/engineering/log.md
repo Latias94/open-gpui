@@ -6,6 +6,23 @@ status: active
 
 # Log
 
+- 2026-07-03: Implemented
+  `docs/plans/2026-07-03-002-refactor-docking-affordance-authority-cleanup-plan.md` on
+  `refactor/docking-visual-affordance-runtime`. Target preview rendering now consumes
+  `DockVisualAffordanceScene` directly, overlay motion APIs were renamed to visual-affordance
+  motion APIs, the old `DockOverlayScene` bridge was deleted, native visual diagnostics are
+  published through `DockViewportRuntimeStatus`, and `ui_core` owns reusable rect motion helpers for
+  preferred edge selection, offscreen source rects, reveal rects, and interpolation. Docking graph
+  layout now reuses the shared split layout scene path. Focused docking/native/ui-core checks and
+  the broad `open-gpui-docking` nextest suite passed before merging.
+- 2026-07-03: Implemented U1-U6 of
+  `docs/plans/2026-07-03-001-refactor-docking-visual-affordance-runtime-plan.md` on
+  `refactor/docking-visual-affordance-runtime`. The branch now has `DockVisualAffordanceScene` as
+  the visual feedback authority for preview layers, route markers, divider/corner affordances,
+  focus/zoom indicators, accessibility overlay descriptors, overlay motion identity, and native
+  runtime diagnostics. The old route-marker overlay adapter was removed; `DockOverlayScene` remains
+  only as a render adapter for drop-preview drawing and measured payload-tab layout. Focused
+  preview/render/transition/accessibility/debug gates and native checks passed.
 - 2026-07-03: Extracted the command ecosystem into `open_gpui_command` on
   `refactor/open-gpui-command-crate`. `open_gpui_ui_core::command` was deleted; first-party code now
   imports command metadata and registry types from `open_gpui_command` or the intentional

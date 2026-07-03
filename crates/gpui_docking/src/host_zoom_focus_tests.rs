@@ -3,7 +3,9 @@ use crate::{
     debug::DockDebugRegion,
     host_test_support::{item, open_host, selector_for, space, split_graph},
     presentation_scene::DockPresentationOverlayAnchorKind,
-    transition_geometry::{DockMotionPreference, DockOverlayTransitionKind, DockTransitionEdge},
+    transition_geometry::{
+        DockMotionPreference, DockTransitionEdge, DockVisualAffordanceTransitionKind,
+    },
     zoom_state::{DockZoomScene, DockZoomState},
 };
 use open_gpui::{AppContext as _, Bounds, TestAppContext, point, px, size};
@@ -248,8 +250,8 @@ fn public_zoom_command_uses_rendered_scene_for_transition(cx: &mut TestAppContex
         assert_eq!(sample.final_scene.panes.len(), 1);
         assert_eq!(sample.final_scene.panes[0].node, Some(right_tabs));
         assert!(sample.pane_clips.iter().any(|clip| clip.node == left_tabs));
-        assert!(sample.overlays.iter().any(|overlay| {
-            overlay.kind == DockOverlayTransitionKind::FocusRing
+        assert!(sample.visual_affordances.iter().any(|overlay| {
+            overlay.kind == DockVisualAffordanceTransitionKind::FocusRing
                 && overlay.target_node == Some(right_tabs)
         }));
     });
@@ -280,8 +282,8 @@ fn host_zoom_command_samples_egress_and_focus_ring_transition(cx: &mut TestAppCo
         assert_eq!(start.final_scene.panes.len(), 1);
         assert_eq!(start.final_scene.panes[0].node, Some(right_tabs));
         assert_eq!(start.progress, 0.0);
-        assert!(start.overlays.iter().any(|overlay| {
-            overlay.kind == DockOverlayTransitionKind::FocusRing
+        assert!(start.visual_affordances.iter().any(|overlay| {
+            overlay.kind == DockVisualAffordanceTransitionKind::FocusRing
                 && overlay.target_node == Some(right_tabs)
                 && overlay.bounds == bounds
         }));
@@ -496,12 +498,12 @@ fn host_focus_command_samples_focus_ring_without_overriding_focus_authority(
             sample.final_scene, scene,
             "focus pulse should not replace the semantic presentation scene"
         );
-        assert_eq!(sample.overlays.len(), 1);
+        assert_eq!(sample.visual_affordances.len(), 1);
         assert_eq!(
-            sample.overlays[0].kind,
-            DockOverlayTransitionKind::FocusRing
+            sample.visual_affordances[0].kind,
+            DockVisualAffordanceTransitionKind::FocusRing
         );
-        assert_eq!(sample.overlays[0].target_node, Some(right_tabs));
+        assert_eq!(sample.visual_affordances[0].target_node, Some(right_tabs));
     });
 }
 
@@ -534,10 +536,10 @@ fn public_focus_command_uses_immediate_overlay_only_feedback(cx: &mut TestAppCon
         execution.plan.pane_transitions.is_empty(),
         "focus feedback should not animate layout for high-frequency focus commands"
     );
-    assert_eq!(execution.plan.overlay_transitions.len(), 1);
+    assert_eq!(execution.plan.visual_affordance_transitions.len(), 1);
     assert_eq!(
-        execution.plan.overlay_transitions[0].kind,
-        DockOverlayTransitionKind::FocusRing
+        execution.plan.visual_affordance_transitions[0].kind,
+        DockVisualAffordanceTransitionKind::FocusRing
     );
-    assert!(execution.plan.overlay_transitions[0].immediate);
+    assert!(execution.plan.visual_affordance_transitions[0].immediate);
 }

@@ -4,6 +4,7 @@ use crate::{
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
     DockViewportFocusRequest, DockViewportRestoreReadiness, DockViewportRouteSelectionSource,
     DockViewportShouldCloseOutcome, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    DockVisualAffordanceDebugSummary,
     viewport_drop_route::DockViewportDropRouteUnavailableReason,
     viewport_registry::{
         DockViewportCoordinateSnapshot, DockViewportCoordinateSpace, DockViewportInputMask,
@@ -39,6 +40,8 @@ pub struct DockViewportRuntimeStatus {
     pub last_tear_off: Option<DockViewportTearOffRecord>,
     /// Most recent live platform-window sync attempted for a reused viewport.
     pub last_platform_sync: Option<DockViewportPlatformSyncRecord>,
+    /// Latest visual affordance diagnostics published by rendered viewport hosts.
+    pub visual_affordances: Vec<DockViewportVisualAffordanceRecord>,
 }
 
 /// Platform capability snapshot relevant to multi-viewport docking.
@@ -560,6 +563,17 @@ pub struct DockViewportRestoreReadinessRecord {
     pub missing: usize,
 }
 
+/// Visual affordance diagnostics published by a rendered viewport host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockViewportVisualAffordanceRecord {
+    /// Logical dock space rendered by the host.
+    pub space: DockSpaceId,
+    /// GPUI window that produced the diagnostic snapshot.
+    pub window_id: WindowId,
+    /// Compact visual affordance summary from the host render path.
+    pub summary: DockVisualAffordanceDebugSummary,
+}
+
 impl DockViewportRuntimeStatus {
     /// Attaches the current platform viewport capability snapshot to this diagnostic status.
     pub fn with_platform_capabilities(
@@ -644,6 +658,33 @@ impl DockViewportRuntimeStatus {
         self.last_platform_sync = Some(record);
     }
 
+    pub(crate) fn record_visual_affordance(
+        &mut self,
+        space: DockSpaceId,
+        window_id: WindowId,
+        summary: DockVisualAffordanceDebugSummary,
+    ) {
+        if let Some(record) = self
+            .visual_affordances
+            .iter_mut()
+            .find(|record| record.space == space && record.window_id == window_id)
+        {
+            record.summary = summary;
+            return;
+        }
+        self.visual_affordances
+            .push(DockViewportVisualAffordanceRecord {
+                space,
+                window_id,
+                summary,
+            });
+    }
+
+    pub(crate) fn clear_visual_affordance(&mut self, space: &DockSpaceId, window_id: WindowId) {
+        self.visual_affordances
+            .retain(|record| record.space != *space || record.window_id != window_id);
+    }
+
     pub(crate) fn last_platform_sync_is_unsupported_pointer_input(
         &self,
         window_id: WindowId,
@@ -691,6 +732,7 @@ impl DockViewportRuntimeStatus {
         {
             self.last_platform_sync = None;
         }
+        self.clear_visual_affordance(space, window_id);
     }
 }
 
@@ -1161,6 +1203,37 @@ mod tests {
                 missing: 0,
             })
         );
+    }
+
+    #[test]
+    fn visual_affordance_records_update_and_clear_with_window_references() {
+        let space = DockSpaceId::from("target");
+        let window = handle(12);
+        let mut status = DockViewportRuntimeStatus::default();
+        let empty_summary = DockVisualAffordanceDebugSummary {
+            space: Some(space.as_str().to_string()),
+            frame_generation: Some(1),
+            layer_count: 0,
+            active_count: 0,
+            active: None,
+            motion_state: Some("Scheduled".to_string()),
+            churn_signature: "empty".to_string(),
+        };
+        let active_summary = DockVisualAffordanceDebugSummary {
+            active_count: 1,
+            churn_signature: "active".to_string(),
+            ..empty_summary.clone()
+        };
+
+        status.record_visual_affordance(space.clone(), window.window_id(), empty_summary);
+        status.record_visual_affordance(space.clone(), window.window_id(), active_summary.clone());
+
+        assert_eq!(status.visual_affordances.len(), 1);
+        assert_eq!(status.visual_affordances[0].summary, active_summary);
+
+        status.clear_window_references(&space, window.window_id());
+
+        assert!(status.visual_affordances.is_empty());
     }
 
     #[test]

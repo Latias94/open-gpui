@@ -1,10 +1,30 @@
-use crate::{DropZone, SplitAxis};
+use crate::DropZone;
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
-use open_gpui_ui_core::resolve_split_fractions;
+use open_gpui_ui_core::{UiRect, ui_point, ui_px, ui_rect, ui_size};
 
 const DEFAULT_DROP_GUIDE_FONT_SIZE: f32 = 16.0;
 const DEFAULT_MIN_SPLIT_PREVIEW_EXTENT: f32 = 8.0;
 const DEFAULT_MAX_SPLIT_PREVIEW_EXTENT: f32 = 48.0;
+
+pub(crate) fn ui_rect_from_bounds(bounds: Bounds<Pixels>) -> UiRect {
+    ui_rect(
+        ui_point(
+            ui_px(f32::from(bounds.origin.x)),
+            ui_px(f32::from(bounds.origin.y)),
+        ),
+        ui_size(
+            ui_px(f32::from(bounds.size.width)),
+            ui_px(f32::from(bounds.size.height)),
+        ),
+    )
+}
+
+pub(crate) fn bounds_from_ui_rect(rect: UiRect) -> Bounds<Pixels> {
+    Bounds::new(
+        point(px(rect.origin.x.as_f32()), px(rect.origin.y.as_f32())),
+        size(px(rect.size.width.as_f32()), px(rect.size.height.as_f32())),
+    )
+}
 
 /// Style inputs used to calculate dock drop guide hit rectangles.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -236,47 +256,6 @@ fn resolve_drop_geometry(
 
 fn valid_extent(value: f32) -> bool {
     value.is_finite() && value > 0.0
-}
-
-fn split_extent(axis: SplitAxis, split_bounds: Bounds<Pixels>) -> Pixels {
-    match axis {
-        SplitAxis::Horizontal => split_bounds.size.width,
-        SplitAxis::Vertical => split_bounds.size.height,
-    }
-}
-
-pub(crate) fn split_pane_bounds(
-    axis: SplitAxis,
-    split_bounds: Bounds<Pixels>,
-    shares: &[f32],
-) -> Vec<Bounds<Pixels>> {
-    let mut cursor = axis_origin(axis, split_bounds);
-    let extent = split_extent(axis, split_bounds);
-    resolve_split_fractions(shares.len(), shares)
-        .iter()
-        .map(|share| {
-            let pane_extent = extent * *share;
-            let bounds = match axis {
-                SplitAxis::Horizontal => Bounds::new(
-                    point(cursor, split_bounds.origin.y),
-                    size(pane_extent, split_bounds.size.height),
-                ),
-                SplitAxis::Vertical => Bounds::new(
-                    point(split_bounds.origin.x, cursor),
-                    size(split_bounds.size.width, pane_extent),
-                ),
-            };
-            cursor += pane_extent;
-            bounds
-        })
-        .collect()
-}
-
-fn axis_origin(axis: SplitAxis, split_bounds: Bounds<Pixels>) -> Pixels {
-    match axis {
-        SplitAxis::Horizontal => split_bounds.origin.x,
-        SplitAxis::Vertical => split_bounds.origin.y,
-    }
 }
 
 fn drop_box_metrics(width: f32, height: f32, style: DockDropGuideStyle) -> DockDropBoxMetrics {
@@ -806,78 +785,5 @@ mod tests {
             .find(|drop_box| drop_box.kind == kind)
             .map(|drop_box| drop_box.hit_bounds.center())
             .unwrap_or_else(|| panic!("{kind:?} should exist"))
-    }
-
-    #[test]
-    fn split_pane_bounds_match_horizontal_fraction_boundaries() {
-        let pane_bounds =
-            split_pane_bounds(SplitAxis::Horizontal, bounds(400.0, 100.0), &[0.25, 0.75]);
-
-        assert_eq!(pane_bounds.len(), 2);
-        assert_eq!(pane_bounds[0].origin.x, px(10.0));
-        assert_eq!(pane_bounds[0].size.width, px(100.0));
-        assert_eq!(pane_bounds[1].origin.x, px(110.0));
-        assert_eq!(pane_bounds[1].size.width, px(300.0));
-    }
-
-    #[test]
-    fn split_pane_bounds_match_vertical_fraction_boundaries() {
-        let pane_bounds =
-            split_pane_bounds(SplitAxis::Vertical, bounds(200.0, 400.0), &[0.25, 0.75]);
-
-        assert_eq!(pane_bounds[0].origin.y, px(20.0));
-        assert_eq!(pane_bounds[0].size.height, px(100.0));
-        assert_eq!(pane_bounds[1].origin.y, px(120.0));
-        assert_eq!(pane_bounds[1].size.height, px(300.0));
-    }
-
-    #[test]
-    fn split_layout_repairs_fraction_input_once() {
-        let shares = resolve_split_fractions(3, &[f32::NAN]);
-        let pane_bounds = split_pane_bounds(SplitAxis::Horizontal, bounds(300.0, 100.0), &shares);
-
-        assert_eq!(pane_bounds.len(), 3);
-        assert_close(shares.iter().sum(), 1.0);
-        assert_close(shares[0], 0.0);
-        assert_close(shares[1], 0.5);
-        assert_close(shares[2], 0.5);
-    }
-
-    #[test]
-    fn central_split_child_receives_remaining_space() {
-        let shares = open_gpui_ui_core::resolve_split_fractions_with_fill_child(
-            3,
-            &[0.2, 0.0, 0.3],
-            Some(1),
-        );
-        let pane_bounds = split_pane_bounds(SplitAxis::Horizontal, bounds(1000.0, 100.0), &shares);
-
-        assert_close(shares[0], 0.2);
-        assert_close(shares[1], 0.5);
-        assert_close(shares[2], 0.3);
-        assert_eq!(pane_bounds[0].size.width, px(200.0));
-        assert_eq!(pane_bounds[1].size.width, px(500.0));
-        assert_eq!(pane_bounds[2].size.width, px(300.0));
-    }
-
-    #[test]
-    fn central_split_child_yields_space_when_neighbors_over_allocate() {
-        let shares = open_gpui_ui_core::resolve_split_fractions_with_fill_child(
-            3,
-            &[0.8, 0.0, 0.7],
-            Some(1),
-        );
-
-        assert_close(shares[0], 0.5333);
-        assert_close(shares[1], 0.0);
-        assert_close(shares[2], 0.4667);
-        assert_close(shares.iter().sum(), 1.0);
-    }
-
-    fn assert_close(actual: f32, expected: f32) {
-        assert!(
-            (actual - expected).abs() <= 0.001,
-            "expected {actual} to be close to {expected}"
-        );
     }
 }

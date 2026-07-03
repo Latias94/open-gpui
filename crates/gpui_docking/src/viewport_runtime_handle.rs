@@ -10,7 +10,8 @@ use crate::{
     DockViewportRoutedDropPreview, DockViewportRuntime, DockViewportRuntimeStatus,
     DockViewportRuntimeUpdate, DockViewportShouldCloseOutcome, DockViewportTearOffCancelReason,
     DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
-    DockViewportWindowFacts, apply_viewport_window_effects, close_window_quietly,
+    DockViewportWindowFacts, DockVisualAffordanceDebugSummary, apply_viewport_window_effects,
+    close_window_quietly,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
@@ -184,6 +185,23 @@ impl DockViewportRuntimeHandle {
     /// Returns the latest read-only runtime diagnostic snapshot.
     pub fn runtime_status(&self) -> DockViewportRuntimeStatus {
         self.runtime.borrow().runtime_status()
+    }
+
+    pub(crate) fn record_visual_affordance_status(
+        &self,
+        space: DockSpaceId,
+        window_id: WindowId,
+        summary: DockVisualAffordanceDebugSummary,
+    ) {
+        self.runtime
+            .borrow_mut()
+            .record_visual_affordance_status(space, window_id, summary);
+    }
+
+    pub(crate) fn clear_visual_affordance_status(&self, space: &DockSpaceId, window_id: WindowId) {
+        self.runtime
+            .borrow_mut()
+            .clear_visual_affordance_status(space, window_id);
     }
 
     #[cfg(test)]

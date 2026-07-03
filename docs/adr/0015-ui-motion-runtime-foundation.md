@@ -33,6 +33,9 @@ elapsed sampling, and stable-identity retarget matching.
 - `MotionSnapshot`, `MotionRetargetItem`, `MotionRetargetSet`, and
   `retarget_motion_snapshots` provide stable-identity matching between an interrupted sample set
   and a new target set.
+- `MotionEdge`, `preferred_motion_edge`, `motion_source_rect`, `reveal_rect_from_edge`, and
+  `lerp_rect` provide renderer-neutral rect motion sampling for layout-like components that reveal,
+  leave, or retarget bounds from window edges.
 - Reduced motion remains semantic completion, not "no state".
 
 Adapters still own the GPUI and domain-specific parts:
@@ -42,7 +45,9 @@ Adapters still own the GPUI and domain-specific parts:
 - `open_gpui_docking` owns `DockGraph`, `DockPresentationScene`, `DockTransitionPlan`, pane,
   divider, overlay, tab, route, viewport, zoom, focus, and release semantics.
 - Docking uses the shared runtime for timeline/progress and stable-identity matching, but it keeps
-  pane/divider/overlay sample construction local.
+  pane/divider/visual-affordance sample construction local. Generic rect edge/reveal/interpolation
+  sampling comes from `ui_core`; graph, tab, route, viewport, zoom, and focus semantics remain in
+  docking.
 - GPUI windows, render layers, cursor state, and `request_animation_frame` stay out of
   `ui_core`.
 
@@ -103,6 +108,8 @@ separate product and platform decisions.
   start-time/progress/completion fields.
 - Future retargetable motion should match stable identities with `retarget_motion_snapshots` and
   keep enter/leave policies in the adapter.
+- Future edge reveal or bounds interpolation should reuse the rect motion helpers before adding
+  local `lerp_bounds`, source-bounds, or preferred-edge functions.
 - Tests should use deterministic elapsed sampling instead of sleeping or relying on wall-clock
   timing.
 - Pointer-coupled interactions should remain direct unless a plan explicitly accepts input lag.

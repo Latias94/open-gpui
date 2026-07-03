@@ -1,12 +1,10 @@
 use crate::{
     DockNodeId, SplitAxis,
+    geometry::{bounds_from_ui_rect, ui_rect_from_bounds},
     presentation_scene::{DockPresentationScene, DockPresentationSplitter},
 };
-use open_gpui::{Bounds, Pixels, Point, point, px, size};
-use open_gpui_ui_core::{
-    Orientation, SplitterHandleLayout, SplitterHitMap, SplitterHitTarget, UiRect, ui_point, ui_px,
-    ui_rect, ui_size,
-};
+use open_gpui::{Bounds, Pixels, Point};
+use open_gpui_ui_core::{Orientation, SplitterHandleLayout, SplitterHitMap, SplitterHitTarget};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockDividerHitMap {
@@ -29,6 +27,8 @@ pub(crate) struct DockDividerHandleKey {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct DockDividerHandleHitTarget {
     pub(crate) key: DockDividerHandleKey,
+    pub(crate) before: DockNodeId,
+    pub(crate) after: DockNodeId,
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) extent: Pixels,
 }
@@ -120,7 +120,7 @@ impl DockDividerHitMap {
             .collect()
     }
 
-    #[cfg(test)]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn targets(&self) -> &[DockDividerHitTarget] {
         &self.targets
     }
@@ -140,6 +140,8 @@ fn handle_target(splitter: &DockPresentationSplitter) -> DockDividerHandleHitTar
             index: splitter.index,
             axis: splitter.axis,
         },
+        before: splitter.before,
+        after: splitter.after,
         bounds: splitter.bounds,
         extent: splitter.extent,
     }
@@ -150,8 +152,8 @@ fn splitter_handle_layout_for_target(handle: DockDividerHandleHitTarget) -> Spli
         format!("dock-split-{}", handle.key.split.as_u64()),
         orientation_for_axis(handle.key.axis),
         handle.key.index,
-        "before",
-        "after",
+        format!("dock-node-{}", handle.before.as_u64()),
+        format!("dock-node-{}", handle.after.as_u64()),
         false,
         ui_rect_from_bounds(handle.bounds),
         ui_rect_from_bounds(handle.bounds),
@@ -177,26 +179,6 @@ fn orientation_for_axis(axis: SplitAxis) -> Orientation {
         SplitAxis::Horizontal => Orientation::Horizontal,
         SplitAxis::Vertical => Orientation::Vertical,
     }
-}
-
-fn ui_rect_from_bounds(bounds: Bounds<Pixels>) -> UiRect {
-    ui_rect(
-        ui_point(
-            ui_px(f32::from(bounds.origin.x)),
-            ui_px(f32::from(bounds.origin.y)),
-        ),
-        ui_size(
-            ui_px(f32::from(bounds.size.width)),
-            ui_px(f32::from(bounds.size.height)),
-        ),
-    )
-}
-
-fn bounds_from_ui_rect(rect: UiRect) -> Bounds<Pixels> {
-    Bounds::new(
-        point(px(rect.origin.x.as_f32()), px(rect.origin.y.as_f32())),
-        size(px(rect.size.width.as_f32()), px(rect.size.height.as_f32())),
-    )
 }
 
 fn corner_affordance_state(
