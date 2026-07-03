@@ -1463,6 +1463,24 @@ impl DockViewportRuntime {
         self.status.record_platform_sync(record);
     }
 
+    pub(crate) fn record_visual_affordance_status(
+        &mut self,
+        space: DockSpaceId,
+        window_id: WindowId,
+        summary: crate::DockVisualAffordanceDebugSummary,
+    ) {
+        self.status
+            .record_visual_affordance(space, window_id, summary);
+    }
+
+    pub(crate) fn clear_visual_affordance_status(
+        &mut self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) {
+        self.status.clear_visual_affordance(space, window_id);
+    }
+
     fn deliver_payload_drop_inner(
         &mut self,
         delivery: DockDropDelivery,

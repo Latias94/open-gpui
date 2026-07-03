@@ -2,10 +2,11 @@ use crate::{
     DockHost,
     debug::{DockDebugRegion, DockVisualAffordanceDebugSummary},
 };
+use open_gpui::WindowId;
 
 impl DockHost {
     /// Returns a compact summary of the last rendered visual affordance scene.
-    pub fn visual_affordance_debug_summary(&self) -> DockVisualAffordanceDebugSummary {
+    pub(crate) fn visual_affordance_debug_summary(&self) -> DockVisualAffordanceDebugSummary {
         let motion_state = self
             .visual_affordance_transition_executor_for_debug()
             .current_state_for_debug()
@@ -14,6 +15,19 @@ impl DockHost {
             self.last_visual_affordance_scene(),
             motion_state,
         )
+    }
+
+    pub(crate) fn publish_visual_affordance_debug_summary(&self, window_id: WindowId) {
+        self.viewport_runtime().record_visual_affordance_status(
+            self.space().clone(),
+            window_id,
+            self.visual_affordance_debug_summary(),
+        );
+    }
+
+    pub(crate) fn clear_visual_affordance_debug_summary(&self, window_id: WindowId) {
+        self.viewport_runtime()
+            .clear_visual_affordance_status(self.space(), window_id);
     }
 
     /// Returns a debug selector emitted for a test region during the most recent render.

@@ -1666,6 +1666,7 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
     let start = debug_bounds(&mut visual, &source_tab).center();
     let threshold = point(start.x + px(24.0), start.y);
     let end = inner_edge_drop_position(target_bounds, DropZone::Right);
+    let window_id = window.window_id();
 
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
@@ -1699,6 +1700,17 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
         .is_none(),
         "edge split previews should not render a payload tab label"
     );
+    let status = cx.read_entity(&host, |host, _| host.viewport_runtime().runtime_status());
+    let affordance = status
+        .visual_affordances
+        .iter()
+        .find(|record| record.space == space() && record.window_id == window_id)
+        .expect("rendered drop preview should publish a runtime affordance diagnostic");
+    assert!(
+        affordance.summary.active_count > 0,
+        "runtime affordance diagnostic should describe the active preview"
+    );
+
     visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let visual = VisualTestContext::from_window(window.into(), cx);
@@ -1706,6 +1718,14 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
     assert!(
         selector_for(&visual, &host, DockDebugRegion::DropPreview).is_none(),
         "edge drop preview should clear after release"
+    );
+    let status = cx.read_entity(&host, |host, _| host.viewport_runtime().runtime_status());
+    assert!(
+        status
+            .visual_affordances
+            .iter()
+            .all(|record| record.window_id != window_id),
+        "cleared drop preview should clear the runtime affordance diagnostic"
     );
 }
 

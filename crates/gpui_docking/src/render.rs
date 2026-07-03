@@ -977,7 +977,9 @@ impl DockHost {
             return Some(self.render_route_drop_preview(session, preview, window));
         }
 
-        self.clear_visual_affordance_transition_for_render();
+        if self.clear_visual_affordance_transition_for_render() {
+            self.clear_visual_affordance_debug_summary(window.window_handle().window_id());
+        }
         None
     }
 
@@ -1232,7 +1234,9 @@ impl DockHost {
             );
         }
 
-        self.sample_visual_affordance_transition_for_render(Some(window))
+        let sample = self.sample_visual_affordance_transition_for_render(Some(window));
+        self.publish_visual_affordance_debug_summary(window.window_handle().window_id());
+        sample
     }
 
     fn render_scene_drop_guide(

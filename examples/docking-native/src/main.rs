@@ -37,10 +37,6 @@ struct RuntimeStatusPanel {
     primary_bounds: Bounds<Pixels>,
     secondary_bounds: Bounds<Pixels>,
     central_bounds: Bounds<Pixels>,
-    hosts: Vec<(
-        DockSpaceId,
-        open_gpui::WindowHandle<open_gpui_docking::DockHost>,
-    )>,
     last_operation: Option<String>,
 }
 
@@ -60,23 +56,8 @@ impl RuntimeStatusPanel {
             primary_bounds,
             secondary_bounds,
             central_bounds,
-            hosts: Vec::new(),
             last_operation: None,
         }
-    }
-
-    fn register_host(
-        &mut self,
-        space: DockSpaceId,
-        host: open_gpui::WindowHandle<open_gpui_docking::DockHost>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some((_, existing)) = self.hosts.iter_mut().find(|(known, _)| known == &space) {
-            *existing = host;
-        } else {
-            self.hosts.push((space, host));
-        }
-        cx.notify();
     }
 
     fn set_operation_log(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
@@ -253,12 +234,12 @@ impl Render for RuntimeStatusPanel {
                     )
                 ),
             ];
-            lines.extend(self.hosts.iter().map(|(space, host)| {
-                let summary = host
-                    .update(cx, |host, _, _| host.visual_affordance_debug_summary())
-                    .map(|summary| affordance_debug_summary(&summary))
-                    .unwrap_or_else(|error| format!("unavailable: {error}"));
-                format!("affordance {}: {}", space.as_str(), summary)
+            lines.extend(status.visual_affordances.iter().map(|record| {
+                format!(
+                    "affordance {}: {}",
+                    record.space.as_str(),
+                    affordance_debug_summary(&record.summary)
+                )
             }));
             lines
         };
@@ -1187,13 +1168,6 @@ fn main() {
         let primary_opened = runtime
             .open_viewport(SPACE, primary_options, cx)
             .expect("failed to open primary docking viewport");
-        let primary_host = primary_opened
-            .window()
-            .downcast::<open_gpui_docking::DockHost>()
-            .expect("primary viewport should render DockHost");
-        runtime_panel.update(cx, |panel, cx| {
-            panel.register_host(SPACE.into(), primary_host, cx);
-        });
         log::info!(
             "{DOCKING_DEBUG_PREFIX} opened primary viewport space={} window_id={:?}",
             SPACE,
@@ -1213,29 +1187,15 @@ fn main() {
 
         let secondary_options =
             restored_viewport_options(&placement, SECONDARY_SPACE, secondary_bounds);
-        let secondary_opened = runtime
+        let _secondary_opened = runtime
             .open_viewport(SECONDARY_SPACE, secondary_options, cx)
             .expect("failed to open secondary docking viewport");
-        let secondary_host = secondary_opened
-            .window()
-            .downcast::<open_gpui_docking::DockHost>()
-            .expect("secondary viewport should render DockHost");
-        runtime_panel.update(cx, |panel, cx| {
-            panel.register_host(SECONDARY_SPACE.into(), secondary_host, cx);
-        });
         log::info!("{DOCKING_DEBUG_PREFIX} opened secondary viewport space={SECONDARY_SPACE}");
 
         let central_options = restored_viewport_options(&placement, CENTRAL_SPACE, central_bounds);
-        let central_opened = runtime
+        let _central_opened = runtime
             .open_viewport(CENTRAL_SPACE, central_options, cx)
             .expect("failed to open empty central docking viewport");
-        let central_host = central_opened
-            .window()
-            .downcast::<open_gpui_docking::DockHost>()
-            .expect("central viewport should render DockHost");
-        runtime_panel.update(cx, |panel, cx| {
-            panel.register_host(CENTRAL_SPACE.into(), central_host, cx);
-        });
         log::info!("{DOCKING_DEBUG_PREFIX} opened central viewport space={CENTRAL_SPACE}");
 
         cx.activate(true);
