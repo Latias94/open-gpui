@@ -383,13 +383,16 @@ The Components-page command contracts also cover the `registry-dispatch` sample 
 `CommandCenter` shortcut/dispatch projection plus empty shortcut diagnostics, and the
 `provider-search` sample for
 `CommandProviderSource` refresh into a rendered `CommandIndexSnapshot`, including provider request
-id and query metadata. The command crate provider lifecycle tests cover center-issued request ids,
-bound responses, stale async responses being ignored without mutating registry sources, and the
-`CommandProviderRefreshController` query/loading/response/snapshot pipeline.
-The UI component command tests now also cover `CommandProviderPaletteProjection`, which adapts a
-provider refresh projection into a `PreFiltered` `CommandIndexSnapshot`, carries loading provider
-status into `CommandLoadingState`, and lets `Command::provider_refresh_projection` bind query and
-snapshot metadata without app-owned snapshot glue.
+id, query metadata, projected shortcuts, and empty shortcut diagnostics. The command crate provider
+lifecycle tests cover center-issued request ids, bound responses, stale async responses being
+ignored without mutating registry sources, and the `CommandProviderRefreshController`
+query/loading/response/snapshot pipeline.
+The UI component command tests now also cover `CommandPaletteProjection`, which adapts a
+`CommandCenter` query/keymap projection into a `PreFiltered` `CommandIndexSnapshot`, provider
+statuses, and shortcut diagnostics, plus `CommandProviderPaletteProjection`, which adapts a provider
+refresh projection into a `PreFiltered` `CommandIndexSnapshot`, carries loading provider status
+into `CommandLoadingState`, and lets `Command::provider_refresh_projection` bind query and snapshot
+metadata without app-owned snapshot glue.
 Run the focused proof with:
 
 ```powershell

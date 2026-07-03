@@ -691,6 +691,7 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(provider_status.state(), CommandProviderState::Ready);
     assert_eq!(provider_status.source_count(), 1);
     assert_eq!(provider_status.command_count(), 2);
+    assert!(commands[5].shortcut_diagnostics.is_empty());
     assert_eq!(commands[5].state.query(), "alpha");
     assert_eq!(commands[5].state.filtered_item_count(), 2);
     assert_eq!(commands[5].state.groups()[0].label(), "Provider");
@@ -701,6 +702,14 @@ fn components_page_samples_expose_component_metadata() {
             .next()
             .map(|item| item.value()),
         Some("provider.open.alpha")
+    );
+    assert_eq!(
+        commands[5]
+            .state
+            .group_items(0)
+            .next()
+            .and_then(|item| item.shortcut()),
+        Some("ctrl-alt-O")
     );
 
     assert_eq!(labels.len(), 4);

@@ -2,16 +2,16 @@ mod support;
 
 use open_gpui::{
     Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Render, ScrollDelta,
-    ScrollWheelEvent, Styled, Window, div, point, px,
+    ScrollWheelEvent, Styled, Window, actions, div, point, px,
 };
 use open_gpui_ui_components::{
     Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command,
     CommandGroup, CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode,
     CommandItem, CommandItemDescriptor, CommandLoadingState, CommandMatchSource, CommandOpenMode,
-    CommandProviderPaletteProjection, CommandQueryMode, CommandSelection, CommandSelectionChange,
-    CommandSelectionMode, Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption,
-    ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState, ScrollArea,
-    ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, VirtualizerRange,
+    CommandPaletteProjection, CommandProviderPaletteProjection, CommandQueryMode, CommandSelection,
+    CommandSelectionChange, CommandSelectionMode, Listbox, ListboxGroup, ListboxGroupDescriptor,
+    ListboxOption, ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState,
+    ScrollArea, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, VirtualizerRange,
     gpui_adapter::init_text_input, listbox_navigation_target,
 };
 use open_gpui_ui_core::{
@@ -21,6 +21,11 @@ use open_gpui_ui_core::{
 use std::cell::RefCell;
 use std::rc::Rc;
 use support::tokens::custom_tokens;
+
+actions!(
+    command_palette_projection_test,
+    [OpenPaletteCommand, RevealPaletteCommand]
+);
 
 #[test]
 fn listbox_state_resolves_grouped_options_navigation_and_typeahead() {
@@ -1656,6 +1661,97 @@ fn command_index_snapshot_loading_coexists_with_visible_and_empty_results() {
         Some("Indexing commands")
     );
     assert_eq!(empty_state.loading().unwrap().progress_percent(), None);
+}
+
+#[test]
+fn command_palette_projection_adapts_center_query_shortcuts_providers_and_diagnostics() {
+    let mut center = open_gpui_command::CommandCenter::new("palette-center-v1");
+    center
+        .register_source(
+            "workspace",
+            "workspace-core",
+            [open_gpui_command::CommandContribution::new(
+                open_gpui_command::CommandDescriptor::new("workspace.open", "Open Workspace")
+                    .group("Workspace")
+                    .keyword("project"),
+            )],
+        )
+        .unwrap();
+    center.register_provider(
+        "recent-provider",
+        |request: &open_gpui_command::CommandProviderRequest| {
+            open_gpui_command::CommandProviderResponse::ready().source(
+                open_gpui_command::CommandProviderSource::new(
+                    "workspace",
+                    "recent-provider-results",
+                    [open_gpui_command::CommandContribution::new(
+                        open_gpui_command::CommandDescriptor::new(
+                            format!("provider.open.{}", request.query()),
+                            format!("Open {}", request.query()),
+                        )
+                        .group("Provider")
+                        .keyword("recent"),
+                    )],
+                ),
+            )
+        },
+    );
+    let mut controller =
+        open_gpui_command::CommandProviderRefreshController::new("recent-provider")
+            .with_loading_message("Searching provider commands");
+    let provider_projection = controller
+        .refresh_provider(&mut center, "alpha")
+        .expect("provider should be registered")
+        .expect("provider response should be valid");
+    assert_eq!(provider_projection.query(), "alpha");
+
+    center
+        .register_action("workspace.open", OpenPaletteCommand)
+        .register_action("provider.open.alpha", RevealPaletteCommand);
+    let mut keymap = open_gpui::Keymap::default();
+    keymap.add_bindings([
+        open_gpui::KeyBinding::new("ctrl-p", OpenPaletteCommand, None),
+        open_gpui::KeyBinding::new("ctrl-alt-o", RevealPaletteCommand, None),
+    ]);
+
+    let projection = CommandPaletteProjection::from_center_for_keymap(&center, "alpha", &keymap);
+
+    assert_eq!(projection.query(), "alpha");
+    assert!(projection.shortcut_diagnostics().is_empty());
+    assert_eq!(projection.provider_statuses().len(), 1);
+    assert_eq!(
+        projection
+            .provider_status()
+            .map(|status| (status.query(), status.command_count())),
+        Some((Some("alpha"), 1))
+    );
+    assert_eq!(projection.index_snapshot().revision(), "palette-center-v1");
+    assert_eq!(
+        projection.index_snapshot().snapshot_mode(),
+        CommandIndexSnapshotMode::PreFiltered
+    );
+
+    let state = Command::new("palette-projected-command", "Projected commands")
+        .palette_projection(&projection)
+        .selected("provider.open.alpha")
+        .active("provider.open.alpha")
+        .state();
+
+    assert_eq!(state.query(), "alpha");
+    assert_eq!(state.index_revision(), Some("palette-center-v1"));
+    assert_eq!(state.index_mode(), CommandIndexSnapshotMode::PreFiltered);
+    assert_eq!(state.filtered_item_count(), 1);
+    assert_eq!(state.groups()[0].label(), "Provider");
+    assert_eq!(
+        state
+            .group_items(0)
+            .map(|item| (item.value().to_owned(), item.shortcut().map(str::to_owned)))
+            .collect::<Vec<_>>(),
+        vec![(
+            "provider.open.alpha".to_string(),
+            Some("ctrl-alt-O".to_string())
+        )]
+    );
 }
 
 #[test]

@@ -773,11 +773,14 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 6] {
         .action_for_command("workspace.open")
         .map(|action| action.command_id().to_owned())
         .unwrap();
-    let command_center_snapshot =
-        CommandIndexSnapshot::from_registry_snapshot(&command_center.snapshot_for_keymap(&keymap))
-            .mode(CommandIndexSnapshotMode::PreRankedFilter);
+    let command_center_palette =
+        CommandPaletteProjection::from_center_for_keymap(&command_center, "workspace", &keymap);
+    let command_center_snapshot = command_center_palette
+        .index_snapshot()
+        .clone()
+        .mode(CommandIndexSnapshotMode::PreRankedFilter);
     let command_shortcut_diagnostics =
-        Arc::from(command_center.shortcut_diagnostics_for_keymap(&keymap));
+        Arc::from(command_center_palette.shortcut_diagnostics().to_vec());
     let provider_query = "alpha";
     let mut provider_center = CommandCenter::new("gallery-provider-center-v1");
     let _provider_registration = provider_center.register_provider(
@@ -815,12 +818,24 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 6] {
         .refresh_provider(&mut provider_center, provider_query)
         .expect("gallery provider is registered")
         .expect("gallery provider response is valid");
-    let provider_palette =
-        CommandProviderPaletteProjection::from_refresh_projection(&provider_projection);
+    let mut provider_keymap = Keymap::default();
+    provider_keymap.add_bindings([
+        KeyBinding::new("ctrl-alt-o", OpenRegistryCommand, None),
+        KeyBinding::new("ctrl-alt-r", SaveRegistryCommand, None),
+    ]);
+    provider_center
+        .register_action("provider.open.alpha", OpenRegistryCommand)
+        .register_action("provider.reveal.alpha", SaveRegistryCommand);
+    let provider_palette = CommandPaletteProjection::from_center_for_keymap(
+        &provider_center,
+        provider_projection.query(),
+        &provider_keymap,
+    );
     let provider_status = provider_palette
         .provider_status()
         .expect("gallery provider status is projected")
         .clone();
+    let provider_shortcut_diagnostics = Arc::from(provider_palette.shortcut_diagnostics().to_vec());
     let provider_snapshot = provider_palette.into_index_snapshot();
 
     [
@@ -941,9 +956,10 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 6] {
         },
         CommandSample {
             provider_status: Some(provider_status),
+            shortcut_diagnostics: provider_shortcut_diagnostics,
             ..command_sample_from_snapshot(
                 "provider-search",
-                "CommandCenter provider refresh projects query-specific dynamic commands into the palette snapshot.",
+                "CommandCenter palette projection joins provider results, shortcuts, diagnostics, and query state.",
                 Size::Small,
                 false,
                 Some(true),

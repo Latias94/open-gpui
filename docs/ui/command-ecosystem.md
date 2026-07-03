@@ -38,6 +38,8 @@ and plugin-like command metadata contribution.
 - `Command` renders inline or dialog command palettes.
 - `CommandIndexSnapshot::from_registry_snapshot` turns registry metadata into searchable palette
   rows.
+- `CommandPaletteProjection` adapts a `CommandCenter` query projection into a UI-ready command
+  snapshot, provider statuses, and shortcut diagnostics.
 - `CommandProviderPaletteProjection` adapts a provider refresh projection into a UI-ready command
   snapshot, loading state, and provider-status readout without moving UI semantics into
   `open_gpui_command`.
@@ -157,8 +159,7 @@ let registry_snapshot = projection.snapshot();
 let status = projection.provider_status();
 ```
 
-UI crates should use the presentation adapter instead of hand-stitching registry snapshots and
-loading metadata:
+UI crates can use the provider-only adapter when they only need a refresh projection:
 
 ```rust
 use open_gpui_ui_components::{Command, CommandProviderPaletteProjection};
@@ -169,11 +170,32 @@ let command = Command::new("recent-files", "Recent files")
     .provider_refresh_projection(&projection);
 ```
 
-The adapter treats provider refresh snapshots as `PreFiltered`: the command center has already
-searched the registry for the provider query, so the component preserves the provider result set
-instead of applying a second local filter. Loading provider status is projected into
-`CommandLoadingState`, while ready and failed provider status remains available through
-`provider_status()`.
+For a complete command-center palette projection, prefer `CommandPaletteProjection`. It joins the
+current query, keymap/window shortcut projection, provider statuses, and shortcut diagnostics before
+feeding the `Command` component:
+
+```rust
+use open_gpui_ui_components::{Command, CommandPaletteProjection};
+
+let provider_projection = controller
+    .refresh_provider(&mut center, "readme")
+    .expect("provider is registered")?;
+let palette_projection = CommandPaletteProjection::from_center_for_keymap(
+    &center,
+    provider_projection.query(),
+    &keymap,
+);
+let command = Command::new("workspace-palette", "Workspace commands")
+    .palette_projection(&palette_projection)
+    .on_select(move |selection, window, cx| {
+        center.dispatch_in_window(selection.value(), palette_projection.query(), window, cx);
+    });
+```
+
+Both adapters treat command-center snapshots as `PreFiltered`: the command center has already
+searched and ranked the registry for the query, so the component preserves that result set instead
+of applying a second local filter. Loading provider status is projected into `CommandLoadingState`,
+while ready and failed provider status remains available through provider-status accessors.
 
 Applying a provider response atomically replaces that provider's previous dynamic sources. If a new
 response has duplicate command ids for a scope, the existing registry state is preserved and the
@@ -243,6 +265,11 @@ Use `dispatch_in_window` when the selection belongs to a concrete focused surfac
 focused windows and global handlers. Successful dispatch records usage/query history, while hidden
 or disabled commands are blocked by the same availability projection used by palettes and menus.
 
+Dynamic provider commands can also dispatch through `CommandCenter`, but only when their dynamic
+command ids are bound to GPUI actions. If a provider result represents application-specific data
+that should not become a GPUI action, keep the command id stable and handle it directly in
+`on_select` instead of calling `dispatch_in_window`.
+
 For custom ranking, call `center.search_snapshot(query)` or
 `center.search_snapshot_for_keymap(query, &keymap)` before converting the result into
 `CommandIndexSnapshot`.
@@ -306,7 +333,8 @@ The gallery's `registry-dispatch` command sample uses `CommandCenter` to prove t
 recommended facade can project current keymap shortcut labels, preserve the command id used for
 dispatch, and surface an empty shortcut diagnostic set for the healthy sample.
 
-The gallery's `provider-search` command sample uses a `CommandCenter` provider refresh to prove
-that query-specific `CommandProviderSource` results can be applied to the center, converted into a
-`CommandIndexSnapshot`, and rendered by the existing `Command` component without making
-`open_gpui_command` depend on UI component types.
+The gallery's `provider-search` command sample uses a `CommandCenter` provider refresh and
+`CommandPaletteProjection` to prove that query-specific `CommandProviderSource` results can be
+applied to the center, bound to GPUI actions and shortcuts, checked for empty shortcut diagnostics,
+converted into a `CommandIndexSnapshot`, and rendered by the existing `Command` component without
+making `open_gpui_command` depend on UI component types.

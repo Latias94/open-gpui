@@ -848,6 +848,7 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     assert_eq!(provider_status.state(), CommandProviderState::Ready);
     assert_eq!(provider_status.source_count(), 1);
     assert_eq!(provider_status.command_count(), 2);
+    assert!(commands[5].shortcut_diagnostics.is_empty());
     assert_eq!(
         provider.index_revision(),
         Some("gallery-provider-center-v1")
@@ -873,6 +874,13 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
                 "Reveal alpha provider result".to_string()
             ),
         ]
+    );
+    assert_eq!(
+        provider
+            .group_items(0)
+            .next()
+            .and_then(|item| item.shortcut()),
+        Some("ctrl-alt-O")
     );
 }
 
