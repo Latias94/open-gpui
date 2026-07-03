@@ -34,6 +34,10 @@ status: active
   moving/resizing pane transitions mount final-size pane content through projection clip/occlusion
   layers, and the scalar sample type was renamed from `MotionSpringSample` to
   `MotionScalarSample`.
+- 2026-07-04: Completed the UI motion value foundation proof pass on
+  `feat/ui-motion-value-foundation`. Native runtime motion proof output now reports
+  value/run/scalar-sample/model/policy/projection-clip capabilities, verification docs describe
+  projection clips as rendered behavior, and final focused gates passed before merge.
 - 2026-07-04: Added command keybinding conflict reporting on
   `feat/command-keybinding-conflicts`. `CommandKeyBindingProjection` now reports conservative
   same-context shortcut conflicts, and `CommandKeyBindingInstallReport` summarizes append-only

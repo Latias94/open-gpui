@@ -18,6 +18,7 @@ git_commits:
   - 95db32f refactor(ui): narrow splitter motion surface
   - ecdc00f docs(ui): record splitter motion checkpoint
   - f39f296 refactor(ui): render docking projection clips
+  - 9a0173d docs(ui): record docking projection checkpoint
 tags:
   - ui-core
   - motion
@@ -95,11 +96,24 @@ Started the UI motion value foundation implementation on `feat/ui-motion-value-f
   host_zoom_focus_tests host_viewport_preview_visual_tests host_accessibility_tests
   --no-fail-fast` passed 105 tests; `cargo check -p open-gpui-ui-core -p open-gpui-ui-components -p
   open-gpui-docking` passed without warnings.
+- U7 is implemented in the working tree: native runtime proof strings now report value/run/scalar
+  sample/model/policy/projection-clip capabilities, `docs/verification.md` describes projection
+  clip rendering rather than old bounds interpolation, and
+  `docs/knowledge/engineering/verification/ui-motion-value-foundation-20260704.md` records the
+  verification evidence for this round.
+- U7 verification: `cargo fmt --all -- --check`, `cargo nextest run -p open-gpui-ui-core motion
+  value run projection policy --no-fail-fast`, focused Splitter/public-surface tests, `cargo
+  nextest run -p open-gpui-docking host_transition_tests host_render_tests host_zoom_focus_tests
+  host_viewport_preview_visual_tests host_accessibility_tests --no-fail-fast`, `cargo check -p
+  open-gpui-docking-native --bin open-gpui-docking-native`, native runtime-status nextest, wiki
+  memory validation, and `git diff --check` passed. The broad components nextest filter
+  `splitter component_api_inventory` was interrupted after stalling without failure output and was
+  replaced by the focused tests recorded in the verification evidence.
 
 # Next Action
 
-Implement U7 from the plan: update proof and verification docs, native status/debug surface, run the
-final verification contract, then merge the feature branch back to local `main` and push.
+Commit U7 proof updates, merge `feat/ui-motion-value-foundation` into local `main`, and push
+remote `main`.
 
 # Citations
 

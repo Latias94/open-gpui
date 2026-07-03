@@ -130,18 +130,20 @@ and corner hits derive from the shared split hit map, and accessibility descript
 bounds, orientation, selected state, disabled state, and actions.
 
 The shared motion runtime checks additionally prove that `open_gpui_ui_core` owns deterministic
-timeline sampling, spring sampling, scalar controller frame-demand vocabulary, layout projection
-data, motion policy validation, terminal state, reduced-motion completion, and stable-identity
-retarget matching. `ui_components::Splitter` uses the scalar controller and default layout spring
-for programmatic fraction changes while keeping pointer drags immediate and policy-tested.
-Docking uses the same scalar motion model for transition progress, keeps explicit custom timeline
-specs intact, samples move/resize bounds through renderer-neutral projection data, and keeps pane,
-divider, visual-affordance, zoom, focus, tab, route, and viewport semantics local. Transition pane
-clips mount real final-size pane content behind an occlusion mask rather than generic placeholder
-rectangles, visual-affordance preview geometry stays pinned to the current semantic target,
-adapter-owned transition executors still request GPUI frames, and interrupted zoom/unzoom starts
-from the current sampled geometry. The native runtime panel exposes this as
-`motion proof: shared-runtime+timeline-state+spring-sampling+scalar-controller+layout-projection+sampled-progress+retargeted-identity+reduced-motion-final-state+motion-policy+high-frequency-bypass`.
+timeline sampling, spring sampling, scalar values, model-neutral scalar samples, frame-demand
+reasons, explicit model/preset resolution, layout projection data, motion policy validation,
+terminal state, reduced-motion completion, and stable-identity retarget matching.
+`ui_components::Splitter` uses the scalar controller and explicit committed-layout model for
+programmatic fraction changes while keeping pointer drags immediate and policy-tested. Docking uses
+the same scalar motion model for transition progress, keeps explicit custom timeline specs intact,
+renders move/resize panes through renderer-neutral projection visual bounds plus final-size
+clip/occlusion layers, and keeps pane, divider, visual-affordance, zoom, focus, tab, route, and
+viewport semantics local. Transition pane clips mount real final-size pane content behind an
+occlusion mask rather than generic placeholder rectangles, visual-affordance preview geometry stays
+pinned to the current semantic target, adapter-owned transition executors still request GPUI
+frames, and interrupted zoom/unzoom starts from the current sampled geometry. The native runtime
+panel exposes this as
+`motion proof: shared-runtime+run-state+scalar-value+scalar-sample+explicit-models+policy-gates+layout-projection+projection-clips+sampled-progress+retargeted-identity+reduced-motion-final-state+high-frequency-bypass`.
 The remaining render-measured drop-scene probe is intentionally limited to tab-label facts whose
 bounds depend on text shaping; presentation-scene facts own root, pane, tab bar, empty, and
 floating-title targets.
@@ -1195,9 +1197,9 @@ Current docking multi-viewport capability states:
   descriptors are covered by focused tests. The native runtime panel exposes preview capability as
   `preview proof: presentation-scene+real-content-reveal+overlay-motion+tab-insertion+retargeting+splitter-motion+zoom-focus+divider-hit-map+corner-drag+a11y+route-cleanup+reduced-motion`
   and motion runtime capability as
-  `motion proof: shared-runtime+timeline-state+sampled-progress+retargeted-identity+reduced-motion-final-state`.
-  The transition executor currently productizes sampled pane, divider, overlay, zoom, and focus
-  motion on top of the shared timeline primitive.
+  `motion proof: shared-runtime+run-state+scalar-value+scalar-sample+explicit-models+policy-gates+layout-projection+projection-clips+sampled-progress+retargeted-identity+reduced-motion-final-state+high-frequency-bypass`.
+  The transition executor currently productizes sampled pane, divider, visual-affordance, zoom, and
+  focus motion on top of explicit timeline or spring scalar models.
   Overlay-scene-to-transition conversion for tab insertion, payload ghosts, route markers, and
   rejected state is descriptor proof, not an every-frame drag-preview animation guarantee.
   Automated owners: `host_presentation_scene_tests`, `host_viewport_preview_visual_tests`,
