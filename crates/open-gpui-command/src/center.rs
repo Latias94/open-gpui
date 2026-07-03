@@ -1,12 +1,16 @@
 //! App-owned command runtime facade.
 
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use open_gpui::{Action, App, Keymap, Window};
 
 use crate::{
     CommandAvailabilityMap, CommandContribution, CommandDispatchOutcome, CommandMenuTree,
-    CommandProjectionDiagnostic, CommandRegistryError, CommandRegistrySnapshot, CommandScopeId,
-    CommandScopeProjection, CommandSourceId, CommandUsageHistory, GpuiCommandActionMap,
-    MemoryCommandHistory, ScopedCommandRegistry,
+    CommandProjectionDiagnostic, CommandProvider, CommandProviderId, CommandProviderRequest,
+    CommandProviderResponse, CommandProviderSource, CommandProviderStatus, CommandRegistryError,
+    CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection, CommandSourceId,
+    CommandUsageHistory, GpuiCommandActionMap, MemoryCommandHistory, ScopedCommandRegistry,
 };
 
 /// A registered command source within one command scope.
@@ -36,6 +40,40 @@ impl CommandSourceRegistration {
     }
 }
 
+/// A registered dynamic command provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandProviderRegistration {
+    provider_id: CommandProviderId,
+}
+
+impl CommandProviderRegistration {
+    /// Creates a command provider registration token.
+    pub fn new(provider_id: impl Into<CommandProviderId>) -> Self {
+        Self {
+            provider_id: provider_id.into(),
+        }
+    }
+
+    /// Returns the registered provider id.
+    pub const fn provider_id(&self) -> &CommandProviderId {
+        &self.provider_id
+    }
+}
+
+#[derive(Clone)]
+struct CommandProviderEntry {
+    provider_id: CommandProviderId,
+    provider: Arc<dyn CommandProvider>,
+}
+
+impl std::fmt::Debug for CommandProviderEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommandProviderEntry")
+            .field("provider_id", &self.provider_id)
+            .finish_non_exhaustive()
+    }
+}
+
 /// App-owned command runtime facade.
 ///
 /// `CommandCenter` composes the lower-level command primitives into the default app/plugin
@@ -48,6 +86,9 @@ pub struct CommandCenter {
     availability: CommandAvailabilityMap,
     active_scopes: Vec<CommandScopeId>,
     history: MemoryCommandHistory,
+    providers: Vec<CommandProviderEntry>,
+    provider_sources: BTreeMap<CommandProviderId, Vec<CommandSourceId>>,
+    provider_statuses: BTreeMap<CommandProviderId, CommandProviderStatus>,
 }
 
 impl CommandCenter {
@@ -59,6 +100,9 @@ impl CommandCenter {
             availability: CommandAvailabilityMap::new(),
             active_scopes: Vec::new(),
             history: MemoryCommandHistory::default(),
+            providers: Vec::new(),
+            provider_sources: BTreeMap::new(),
+            provider_statuses: BTreeMap::new(),
         }
     }
 
@@ -136,6 +180,150 @@ impl CommandCenter {
         &self.active_scopes
     }
 
+    /// Registers or replaces a dynamic command provider.
+    ///
+    /// Replacing an existing provider with the same id removes that provider's previously applied
+    /// dynamic sources before installing the new provider callback.
+    pub fn register_provider(
+        &mut self,
+        provider_id: impl Into<CommandProviderId>,
+        provider: impl CommandProvider,
+    ) -> CommandProviderRegistration {
+        self.register_provider_arc(provider_id, Arc::new(provider))
+    }
+
+    /// Registers or replaces a dynamic command provider from a shared trait object.
+    pub fn register_provider_arc(
+        &mut self,
+        provider_id: impl Into<CommandProviderId>,
+        provider: Arc<dyn CommandProvider>,
+    ) -> CommandProviderRegistration {
+        let provider_id = provider_id.into();
+        self.unregister_provider_id(provider_id.clone());
+        if !provider_id.is_empty() {
+            self.providers.push(CommandProviderEntry {
+                provider_id: provider_id.clone(),
+                provider,
+            });
+        }
+        CommandProviderRegistration::new(provider_id)
+    }
+
+    /// Unregisters a dynamic command provider and removes its applied sources.
+    pub fn unregister_provider(&mut self, registration: &CommandProviderRegistration) -> usize {
+        self.unregister_provider_id(registration.provider_id().clone())
+    }
+
+    /// Unregisters a dynamic command provider id and removes its applied sources.
+    pub fn unregister_provider_id(&mut self, provider_id: impl Into<CommandProviderId>) -> usize {
+        let provider_id = provider_id.into();
+        self.providers
+            .retain(|entry| entry.provider_id != provider_id);
+        self.provider_statuses.remove(&provider_id);
+        self.unregister_provider_sources(&provider_id)
+    }
+
+    /// Returns the latest applied status for a provider.
+    pub fn provider_status(
+        &self,
+        provider_id: impl Into<CommandProviderId>,
+    ) -> Option<&CommandProviderStatus> {
+        let provider_id = provider_id.into();
+        self.provider_statuses.get(&provider_id)
+    }
+
+    /// Iterates latest applied provider statuses in provider-id order.
+    pub fn provider_statuses(&self) -> impl Iterator<Item = &CommandProviderStatus> + '_ {
+        self.provider_statuses.values()
+    }
+
+    /// Returns the number of registered dynamic provider callbacks.
+    pub fn provider_count(&self) -> usize {
+        self.providers.len()
+    }
+
+    /// Refreshes one registered provider for a query and applies its response.
+    pub fn refresh_provider(
+        &mut self,
+        provider_id: impl Into<CommandProviderId>,
+        query: &str,
+    ) -> Option<Result<CommandProviderStatus, CommandRegistryError>> {
+        let provider_id = provider_id.into();
+        let provider = self
+            .providers
+            .iter()
+            .find(|entry| entry.provider_id == provider_id)
+            .map(|entry| Arc::clone(&entry.provider))?;
+        let request = self.provider_request(query);
+        let response = provider.provide_commands(&request);
+        Some(self.apply_provider_response(provider_id, response))
+    }
+
+    /// Refreshes all registered providers for a query and applies their responses in order.
+    pub fn refresh_providers(
+        &mut self,
+        query: &str,
+    ) -> Result<Vec<CommandProviderStatus>, CommandRegistryError> {
+        let providers = self
+            .providers
+            .iter()
+            .map(|entry| (entry.provider_id.clone(), Arc::clone(&entry.provider)))
+            .collect::<Vec<_>>();
+        let request = self.provider_request(query);
+        let mut statuses = Vec::with_capacity(providers.len());
+        for (provider_id, provider) in providers {
+            let response = provider.provide_commands(&request);
+            statuses.push(self.apply_provider_response(provider_id, response)?);
+        }
+        Ok(statuses)
+    }
+
+    /// Applies an externally produced provider response.
+    ///
+    /// This is the runtime-neutral async boundary: applications can compute provider results in
+    /// their own task system and apply the latest response when it completes.
+    pub fn apply_provider_response(
+        &mut self,
+        provider_id: impl Into<CommandProviderId>,
+        response: CommandProviderResponse,
+    ) -> Result<CommandProviderStatus, CommandRegistryError> {
+        let provider_id = provider_id.into();
+        let state = response.state();
+        let message = response.message().map(str::to_owned);
+        let sources = response.sources_ref().to_vec();
+        let mut next_registry = self.registry.clone();
+        if let Some(source_ids) = self.provider_sources.get(&provider_id) {
+            for source_id in source_ids {
+                next_registry.unregister_source(source_id.clone());
+            }
+        }
+        for source in &sources {
+            register_provider_source(&mut next_registry, source)?;
+        }
+
+        let source_ids = sources
+            .iter()
+            .map(|source| source.source_id().clone())
+            .collect::<Vec<_>>();
+        let command_count = sources
+            .iter()
+            .map(CommandProviderSource::len)
+            .sum::<usize>();
+        let status = CommandProviderStatus::new(
+            provider_id.clone(),
+            state,
+            message,
+            sources.len(),
+            command_count,
+        );
+
+        self.registry = next_registry;
+        self.provider_sources
+            .insert(provider_id.clone(), source_ids);
+        self.provider_statuses.insert(provider_id, status.clone());
+        Ok(status)
+    }
+
     /// Registers contributions from one source in one scope.
     pub fn register_source(
         &mut self,
@@ -145,13 +333,7 @@ impl CommandCenter {
     ) -> Result<CommandSourceRegistration, CommandRegistryError> {
         let scope_id = scope_id.into();
         let source_id = source_id.into();
-        let sourced_contributions = contributions
-            .into_iter()
-            .map(|contribution| {
-                CommandContribution::new(contribution.descriptor().clone())
-                    .source(source_id.clone())
-            })
-            .collect::<Vec<_>>();
+        let sourced_contributions = sourced_contributions(&source_id, contributions);
 
         self.registry
             .register_all_in_scope(scope_id.clone(), sourced_contributions)?;
@@ -364,6 +546,43 @@ impl CommandCenter {
             self.history.record_usage(command_id, query);
         }
     }
+
+    fn provider_request(&self, query: &str) -> CommandProviderRequest {
+        CommandProviderRequest::new(query).active_scopes(self.active_scopes.iter().cloned())
+    }
+
+    fn unregister_provider_sources(&mut self, provider_id: &CommandProviderId) -> usize {
+        let source_ids = self
+            .provider_sources
+            .remove(provider_id)
+            .unwrap_or_default();
+        source_ids
+            .into_iter()
+            .map(|source_id| self.registry.unregister_source(source_id))
+            .sum()
+    }
+}
+
+fn register_provider_source(
+    registry: &mut ScopedCommandRegistry,
+    source: &CommandProviderSource,
+) -> Result<(), CommandRegistryError> {
+    registry.register_all_in_scope(
+        source.scope_id().clone(),
+        sourced_contributions(source.source_id(), source.contributions().iter().cloned()),
+    )
+}
+
+fn sourced_contributions(
+    source_id: &CommandSourceId,
+    contributions: impl IntoIterator<Item = CommandContribution>,
+) -> Vec<CommandContribution> {
+    contributions
+        .into_iter()
+        .map(|contribution| {
+            CommandContribution::new(contribution.descriptor().clone()).source(source_id.clone())
+        })
+        .collect()
 }
 
 fn command_search_score(descriptor: &crate::CommandDescriptor, query: &str) -> Option<u16> {
@@ -450,7 +669,8 @@ mod tests {
     use crate::{
         CommandAvailabilityMap, CommandCenter, CommandContribution, CommandDescriptor,
         CommandDispatchOutcome, CommandMenuEntry, CommandProjectionDiagnosticKind,
-        CommandUsageHistory,
+        CommandProviderResponse, CommandProviderSource, CommandProviderState,
+        CommandProviderStatus, CommandUsageHistory,
     };
 
     actions!(center_test_only, [OpenWorkspace, SaveWorkspace]);
@@ -631,6 +851,154 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(ids, ["workspace.save", "workspace.open"]);
+    }
+
+    #[test]
+    fn center_refreshes_provider_sources_with_active_scope_request() {
+        let mut center = CommandCenter::new("center-v1");
+        center.set_active_scopes(["global"]);
+        center.register_provider("recent-files", |request: &crate::CommandProviderRequest| {
+            assert_eq!(request.active_scopes_ref()[0].as_str(), "global");
+            CommandProviderResponse::ready().source(CommandProviderSource::new(
+                "global",
+                "recent-files-source",
+                [CommandContribution::new(
+                    CommandDescriptor::new(
+                        format!("recent.{}", request.query()),
+                        format!("Recent {}", request.query()),
+                    )
+                    .keyword("dynamic"),
+                )],
+            ))
+        });
+
+        let status = center
+            .refresh_provider("recent-files", "alpha")
+            .expect("provider should be registered")
+            .unwrap();
+        assert_eq!(status.state(), CommandProviderState::Ready);
+        assert_eq!(status.source_count(), 1);
+        assert_eq!(status.command_count(), 1);
+        assert_eq!(
+            center
+                .provider_status("recent-files")
+                .map(CommandProviderStatus::command_count),
+            Some(1)
+        );
+        assert!(center.snapshot().descriptor("recent.alpha").is_some());
+
+        center
+            .refresh_provider("recent-files", "beta")
+            .expect("provider should still be registered")
+            .unwrap();
+        let snapshot = center.snapshot();
+        assert!(snapshot.descriptor("recent.alpha").is_none());
+        assert_eq!(
+            snapshot
+                .contribution("recent.beta")
+                .and_then(CommandContribution::source_ref),
+            Some("recent-files-source")
+        );
+    }
+
+    #[test]
+    fn center_applies_external_provider_response_for_async_boundaries() {
+        let mut center = CommandCenter::new("center-v1");
+
+        let status = center
+            .apply_provider_response(
+                "async-search",
+                CommandProviderResponse::loading("Searching").source(CommandProviderSource::new(
+                    "global",
+                    "async-search-source",
+                    [CommandContribution::new(
+                        CommandDescriptor::new("async.open", "Open Async Result").keyword("search"),
+                    )],
+                )),
+            )
+            .unwrap();
+
+        assert_eq!(status.state(), CommandProviderState::Loading);
+        assert_eq!(status.message(), Some("Searching"));
+        assert_eq!(
+            center
+                .search_snapshot("async")
+                .descriptors()
+                .map(CommandDescriptor::id)
+                .collect::<Vec<_>>(),
+            ["async.open"]
+        );
+    }
+
+    #[test]
+    fn center_unregister_provider_removes_applied_sources() {
+        let mut center = CommandCenter::new("center-v1");
+        let registration =
+            center.register_provider("dynamic", |_: &crate::CommandProviderRequest| {
+                CommandProviderResponse::ready().source(CommandProviderSource::new(
+                    "global",
+                    "dynamic-source",
+                    [CommandContribution::new(CommandDescriptor::new(
+                        "dynamic.open",
+                        "Open Dynamic",
+                    ))],
+                ))
+            });
+
+        center
+            .refresh_provider("dynamic", "")
+            .expect("provider should be registered")
+            .unwrap();
+        assert_eq!(center.provider_count(), 1);
+        assert!(center.snapshot().descriptor("dynamic.open").is_some());
+
+        assert_eq!(center.unregister_provider(&registration), 1);
+        assert_eq!(center.provider_count(), 0);
+        assert!(center.provider_status("dynamic").is_none());
+        assert!(center.snapshot().descriptor("dynamic.open").is_none());
+    }
+
+    #[test]
+    fn center_provider_response_is_atomic_on_registration_error() {
+        let mut center = CommandCenter::new("center-v1");
+        center
+            .apply_provider_response(
+                "dynamic",
+                CommandProviderResponse::ready().source(CommandProviderSource::new(
+                    "global",
+                    "dynamic-source",
+                    [CommandContribution::new(CommandDescriptor::new(
+                        "dynamic.ok",
+                        "Dynamic OK",
+                    ))],
+                )),
+            )
+            .unwrap();
+
+        let error = center
+            .apply_provider_response(
+                "dynamic",
+                CommandProviderResponse::ready().source(CommandProviderSource::new(
+                    "global",
+                    "bad-source",
+                    [
+                        CommandContribution::new(CommandDescriptor::new("duplicate", "First")),
+                        CommandContribution::new(CommandDescriptor::new("duplicate", "Second")),
+                    ],
+                )),
+            )
+            .unwrap_err();
+
+        assert_eq!(error.id(), "duplicate");
+        let snapshot = center.snapshot();
+        assert!(snapshot.descriptor("dynamic.ok").is_some());
+        assert!(snapshot.descriptor("duplicate").is_none());
+        assert_eq!(
+            center
+                .provider_status("dynamic")
+                .map(CommandProviderStatus::command_count),
+            Some(1)
+        );
     }
 
     #[test]

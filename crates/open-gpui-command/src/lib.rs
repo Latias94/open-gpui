@@ -11,6 +11,7 @@ mod center;
 pub mod gpui;
 mod history;
 mod menu;
+mod provider;
 mod registry;
 mod scope;
 
@@ -18,13 +19,17 @@ pub use availability::{
     CommandAvailability, CommandAvailabilityMap, CommandAvailabilityResolver,
     command_effective_availability,
 };
-pub use center::{CommandCenter, CommandSourceRegistration};
+pub use center::{CommandCenter, CommandProviderRegistration, CommandSourceRegistration};
 pub use gpui::{
     CommandDispatchOutcome, GpuiCommandAction, GpuiCommandActionMap, command_shortcut_label,
     command_shortcut_label_from_keymap,
 };
 pub use history::{CommandHistoryEntry, CommandUsageHistory, MemoryCommandHistory};
 pub use menu::{CommandMenuCommand, CommandMenuEntry, CommandMenuSubmenu, CommandMenuTree};
+pub use provider::{
+    CommandProvider, CommandProviderId, CommandProviderRequest, CommandProviderResponse,
+    CommandProviderSource, CommandProviderState, CommandProviderStatus,
+};
 pub use registry::{
     CommandContribution, CommandDescriptor, CommandRegistry, CommandRegistryError,
     CommandRegistrySnapshot, CommandSourceId,
