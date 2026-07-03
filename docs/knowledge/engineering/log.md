@@ -20,6 +20,10 @@ status: active
   `feat/ui-motion-value-foundation`. `MotionValue` now owns current, previous, previous-frame,
   velocity, jump/cancel, and active-owner state, and `MotionScalarTrack` stores its source through
   `MotionValue` so Splitter/Docking consume it through the existing scalar controller path.
+- 2026-07-04: Added UI motion frame-demand reasons and production policy gates on
+  `feat/ui-motion-value-foundation`. `MotionFrameDemand` now reports `UpdateRender`, Splitter
+  programmatic motion validates committed-layout models before scheduling, and Docking transition
+  execution records the policy report for the resolved continuity model.
 - 2026-07-04: Added command keybinding conflict reporting on
   `feat/command-keybinding-conflicts`. `CommandKeyBindingProjection` now reports conservative
   same-context shortcut conflicts, and `CommandKeyBindingInstallReport` summarizes append-only
