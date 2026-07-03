@@ -8,19 +8,18 @@ use open_gpui::{
     relative, rgb,
 };
 use open_gpui_ui_core::{
-    MotionDuration, MotionModel, MotionPreference, MotionScalarController, MotionSpec,
-    MotionSpringSpec, Orientation, Sizable, Size,
+    MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPreference, MotionPreset,
+    MotionScalarController, Orientation, Sizable, Size, validate_motion_policy,
 };
 use std::time::{Duration, Instant};
 
 const EPSILON: f32 = 0.000_1;
 
 pub use open_gpui_ui_core::{
-    SplitterHandleLayout, SplitterHandleState, SplitterHandleTransition,
-    SplitterHandleTransitionKind, SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion,
-    SplitterLayoutScene, SplitterLayoutTransition, SplitterMetrics, SplitterPanelDescriptor,
-    SplitterPanelLayout, SplitterPanelState, SplitterPanelTransition, SplitterPanelTransitionKind,
-    SplitterResizeOutcome, SplitterResizeResult, SplitterState, SplitterTransitionIntent,
+    SplitterHandleLayout, SplitterHandleState, SplitterHitMap, SplitterHitTarget,
+    SplitterJunctionHitRegion, SplitterLayoutScene, SplitterMetrics, SplitterPanelDescriptor,
+    SplitterPanelLayout, SplitterPanelState, SplitterResizeOutcome, SplitterResizeResult,
+    SplitterState,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -33,19 +32,21 @@ struct SplitterRuntime {
 }
 
 impl SplitterRuntime {
-    fn sync(&mut self, state: &SplitterState) -> bool {
-        self.sync_at(state, Instant::now())
-    }
-
+    #[cfg(test)]
     fn sync_at(&mut self, state: &SplitterState, now: Instant) -> bool {
-        self.sync_at_with_spec(
+        self.sync_at_with_model(
             state,
             now,
-            MotionSpec::committed_layout(MotionPreference::Animated),
+            MotionPreset::committed_layout(MotionPreference::Animated).resolve_model(),
         )
     }
 
-    fn sync_at_with_spec(&mut self, state: &SplitterState, now: Instant, spec: MotionSpec) -> bool {
+    fn sync_at_with_model(
+        &mut self,
+        state: &SplitterState,
+        now: Instant,
+        model: MotionModel,
+    ) -> bool {
         let panel_ids = state
             .panels()
             .iter()
@@ -89,7 +90,12 @@ impl SplitterRuntime {
             self.transition = None;
             return false;
         }
-        if spec.is_immediate() {
+        let policy_report = validate_motion_policy(
+            MotionPolicyInput::new(MotionPolicyContext::CommittedLayout, model)
+                .with_spatial_motion(!model.is_immediate())
+                .with_reduced_motion_final_state(true),
+        );
+        if model.is_immediate() || !policy_report.is_ok() {
             self.state_fractions = target_fractions.clone();
             self.panel_fractions = target_fractions;
             self.transition = None;
@@ -105,7 +111,7 @@ impl SplitterRuntime {
                 panel_ids,
                 from_fractions,
                 target_fractions,
-                splitter_motion_model(spec),
+                model,
             ),
         });
         true
@@ -195,14 +201,6 @@ fn scalar_controller_for_fractions(
     controller
 }
 
-fn splitter_motion_model(spec: MotionSpec) -> MotionModel {
-    if spec.is_immediate() || matches!(spec.duration(), MotionDuration::Custom(_)) {
-        MotionModel::timeline(spec)
-    } else {
-        MotionModel::spring(MotionSpringSpec::layout(spec.preference()))
-    }
-}
-
 fn fraction_samples_for_transition(
     transition: &SplitterRuntimeTransition,
     sample: &open_gpui_ui_core::MotionScalarControllerSample<String>,
@@ -278,6 +276,7 @@ pub struct Splitter {
     orientation: Orientation,
     size: Size,
     disabled: bool,
+    motion_preference: MotionPreference,
     panels: Vec<SplitterPanel>,
 }
 
@@ -292,6 +291,7 @@ impl Splitter {
             orientation: Orientation::Horizontal,
             size: Size::Medium,
             disabled: false,
+            motion_preference: MotionPreference::Animated,
             panels: Vec::new(),
         }
     }
@@ -315,6 +315,12 @@ impl Splitter {
     /// Disables resize handles.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Applies the motion preference for programmatic layout changes.
+    pub fn motion_preference(mut self, motion_preference: MotionPreference) -> Self {
+        self.motion_preference = motion_preference;
         self
     }
 
@@ -346,9 +352,12 @@ impl Sizable for Splitter {
 impl RenderOnce for Splitter {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let base_state = self.state();
+        let motion_model = MotionPreset::committed_layout(self.motion_preference).resolve_model();
         let runtime =
             window.use_keyed_state(self.id.clone(), cx, |_, _| SplitterRuntime::default());
-        let needs_frame = runtime.update(cx, |runtime, _| runtime.sync(&base_state));
+        let needs_frame = runtime.update(cx, |runtime, _| {
+            runtime.sync_at_with_model(&base_state, Instant::now(), motion_model)
+        });
         if needs_frame {
             window.request_animation_frame();
         }
@@ -537,7 +546,8 @@ fn render_handle(
 mod tests {
     use super::*;
     use open_gpui_ui_core::{
-        MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue, validate_motion_policy,
+        MotionDuration, MotionEasing, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
+        MotionSpec, validate_motion_policy,
     };
     use std::time::Duration;
 
@@ -617,11 +627,92 @@ mod tests {
         let mut runtime = SplitterRuntime::default();
 
         runtime.sync_at(&from, start);
-        assert!(!runtime.sync_at_with_spec(
+        assert!(!runtime.sync_at_with_model(
             &to,
             start,
-            MotionSpec::committed_layout(MotionPreference::Reduced)
+            MotionPreset::committed_layout(MotionPreference::Reduced).resolve_model()
         ));
+
+        assert!(fractions_equal(&runtime.state_fractions, &[0.6, 0.4]));
+        assert!(fractions_equal(&runtime.panel_fractions, &[0.6, 0.4]));
+        assert!(runtime.transition.is_none());
+    }
+
+    #[test]
+    fn runtime_panel_identity_changes_sync_immediately() {
+        let start = Instant::now();
+        let from = state(0.3, 0.7);
+        let replaced = SplitterState::resolve(
+            "runtime-motion",
+            Orientation::Horizontal,
+            Size::Medium,
+            false,
+            [
+                SplitterPanelDescriptor::new("left", 0.2),
+                SplitterPanelDescriptor::new("center", 0.3),
+                SplitterPanelDescriptor::new("right", 0.5),
+            ],
+        );
+        let mut runtime = SplitterRuntime::default();
+
+        runtime.sync_at(&from, start);
+        assert!(!runtime.sync_at(&replaced, start + Duration::from_millis(16)));
+
+        assert_eq!(
+            runtime.panel_ids,
+            [
+                "left".to_string(),
+                "center".to_string(),
+                "right".to_string()
+            ]
+        );
+        assert!(fractions_equal(&runtime.panel_fractions, &[0.2, 0.3, 0.5]));
+        assert!(runtime.transition.is_none());
+    }
+
+    #[test]
+    fn runtime_custom_timeline_model_remains_timeline_backed() {
+        let start = Instant::now();
+        let from = state(0.3, 0.7);
+        let to = state(0.6, 0.4);
+        let spec = MotionSpec::new(
+            MotionPreference::Animated,
+            MotionDuration::Custom(Duration::from_millis(240)),
+            MotionEasing::Linear,
+        );
+        let mut runtime = SplitterRuntime::default();
+
+        runtime.sync_at(&from, start);
+        assert!(runtime.sync_at_with_model(
+            &to,
+            start,
+            MotionPreset::timeline(spec).resolve_model()
+        ));
+
+        let transition = runtime
+            .transition
+            .as_ref()
+            .expect("custom timeline should create a transition");
+        assert!(matches!(
+            transition.controller.tracks()[0].1.model(),
+            MotionModel::Timeline(model_spec) if model_spec == spec
+        ));
+    }
+
+    #[test]
+    fn runtime_policy_rejects_over_budget_programmatic_timeline() {
+        let start = Instant::now();
+        let from = state(0.3, 0.7);
+        let to = state(0.6, 0.4);
+        let model = MotionModel::timeline(MotionSpec::new(
+            MotionPreference::Animated,
+            MotionDuration::Custom(Duration::from_millis(420)),
+            MotionEasing::Linear,
+        ));
+        let mut runtime = SplitterRuntime::default();
+
+        runtime.sync_at(&from, start);
+        assert!(!runtime.sync_at_with_model(&to, start, model));
 
         assert!(fractions_equal(&runtime.state_fractions, &[0.6, 0.4]));
         assert!(fractions_equal(&runtime.panel_fractions, &[0.6, 0.4]));
@@ -632,7 +723,7 @@ mod tests {
     fn splitter_motion_policy_preserves_programmatic_motion_and_drag_bypass() {
         let programmatic = MotionPolicyInput::new(
             MotionPolicyContext::CommittedLayout,
-            MotionModel::timeline(MotionSpec::committed_layout(MotionPreference::Animated)),
+            MotionPreset::committed_layout(MotionPreference::Animated).resolve_model(),
         )
         .with_spatial_motion(true)
         .with_reduced_motion_final_state(true);

@@ -9,7 +9,7 @@ use crate::{
     zoom_state::{DockZoomScene, DockZoomState},
 };
 use open_gpui::{AppContext as _, Bounds, TestAppContext, point, px, size};
-use open_gpui_ui_core::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
+use open_gpui_ui_core::{MotionDuration, MotionEasing, MotionModel, MotionPreference, MotionSpec};
 use slotmap::Key;
 use std::time::Duration;
 
@@ -275,7 +275,13 @@ fn host_zoom_command_samples_egress_and_focus_ring_transition(cx: &mut TestAppCo
     );
 
     host.update(cx, |host, cx| {
-        assert!(host.zoom_pane_with_scene(right_tabs, previous.clone(), spec, None, cx));
+        assert!(host.zoom_pane_with_scene(
+            right_tabs,
+            previous.clone(),
+            MotionModel::timeline(spec),
+            None,
+            cx
+        ));
         let start = host
             .sample_transition_for_test(Duration::from_millis(0))
             .expect("zoom command should schedule a transition sample");
@@ -329,7 +335,7 @@ fn host_unzoom_command_samples_restored_scene_without_graph_mutation(cx: &mut Te
         assert!(host.unzoom_with_scene(
             zoomed.clone(),
             base.clone(),
-            MotionSpec::layout(DockMotionPreference::Reduced),
+            MotionModel::timeline(MotionSpec::layout(DockMotionPreference::Reduced)),
             None,
             cx
         ));
@@ -370,7 +376,13 @@ fn host_unzoom_command_retargets_from_active_zoom_sample(cx: &mut TestAppContext
     );
 
     host.update(cx, |host, cx| {
-        assert!(host.zoom_pane_with_scene(right_tabs, base.clone(), spec, None, cx));
+        assert!(host.zoom_pane_with_scene(
+            right_tabs,
+            base.clone(),
+            MotionModel::timeline(spec),
+            None,
+            cx
+        ));
         let zoom_midpoint = host
             .sample_transition_for_test(Duration::from_millis(50))
             .expect("zoom should be active at midpoint");
@@ -388,7 +400,13 @@ fn host_unzoom_command_retargets_from_active_zoom_sample(cx: &mut TestAppContext
             .bounds;
         let zoomed = zoom_midpoint.final_scene.clone();
 
-        assert!(host.unzoom_with_scene(zoomed, base.clone(), spec, None, cx));
+        assert!(host.unzoom_with_scene(
+            zoomed,
+            base.clone(),
+            MotionModel::timeline(spec),
+            None,
+            cx
+        ));
         let unzoom_start = host
             .sample_transition_for_test(Duration::from_millis(50))
             .expect("unzoom should start from the active zoom sample");
@@ -530,7 +548,7 @@ fn public_focus_command_uses_immediate_overlay_only_feedback(cx: &mut TestAppCon
             .expect("public focus command should expose immediate focus feedback")
     });
 
-    assert!(execution.spec.is_immediate());
+    assert!(execution.model.is_immediate());
     assert_eq!(
         execution.state,
         crate::DockTransitionExecutionState::Immediate

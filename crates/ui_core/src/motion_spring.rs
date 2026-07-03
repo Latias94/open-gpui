@@ -1,6 +1,6 @@
 //! Renderer-neutral spring sampling for layout-like UI motion.
 
-use crate::{MotionPreference, MotionSpec, MotionTimeline, MotionTimelineState};
+use crate::{MotionPreference, MotionRunState, MotionSpec, MotionTimeline};
 use std::time::{Duration, Instant};
 
 const DEFAULT_MASS: f32 = 1.0;
@@ -205,20 +205,87 @@ impl MotionSpringSpec {
     }
 }
 
-/// A sampled point on a spring transition.
+/// Explicit preset that resolves to a concrete motion model.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MotionSpringSample {
-    state: MotionTimelineState,
+pub enum MotionPreset {
+    /// Immediate completion.
+    Immediate,
+    /// Duration/easing timeline motion.
+    Timeline(MotionSpec),
+    /// Explicit spring motion.
+    Spring(MotionSpringSpec),
+    /// Default committed layout spring.
+    CommittedLayout(MotionPreference),
+    /// Default continuity spring.
+    Continuity(MotionPreference),
+    /// Default affordance spring.
+    Affordance(MotionPreference),
+}
+
+impl MotionPreset {
+    /// Creates an immediate preset.
+    pub const fn immediate() -> Self {
+        Self::Immediate
+    }
+
+    /// Creates an explicit timeline preset.
+    pub const fn timeline(spec: MotionSpec) -> Self {
+        Self::Timeline(spec)
+    }
+
+    /// Creates an explicit spring preset.
+    pub const fn spring(spec: MotionSpringSpec) -> Self {
+        Self::Spring(spec)
+    }
+
+    /// Creates the default committed layout preset.
+    pub const fn committed_layout(preference: MotionPreference) -> Self {
+        Self::CommittedLayout(preference)
+    }
+
+    /// Creates the default continuity preset.
+    pub const fn continuity(preference: MotionPreference) -> Self {
+        Self::Continuity(preference)
+    }
+
+    /// Creates the default affordance preset.
+    pub const fn affordance(preference: MotionPreference) -> Self {
+        Self::Affordance(preference)
+    }
+
+    /// Resolves this preset to the concrete motion model that should execute.
+    pub fn resolve_model(self) -> MotionModel {
+        match self {
+            Self::Immediate => MotionModel::timeline(MotionSpec::immediate()),
+            Self::Timeline(spec) => MotionModel::timeline(spec),
+            Self::Spring(spec) => MotionModel::spring(spec),
+            Self::CommittedLayout(preference) => {
+                MotionModel::spring(MotionSpringSpec::layout(preference))
+            }
+            Self::Continuity(preference) => {
+                MotionModel::spring(MotionSpringSpec::continuity(preference))
+            }
+            Self::Affordance(preference) => {
+                MotionModel::spring(MotionSpringSpec::affordance(preference))
+            }
+        }
+    }
+}
+
+/// A sampled point on a scalar motion model.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MotionScalarSample {
+    state: MotionRunState,
     elapsed: Duration,
     value: f32,
     velocity: f32,
     target: f32,
 }
 
-impl MotionSpringSample {
-    /// Creates a spring sample from explicit values.
+impl MotionScalarSample {
+    /// Creates a scalar motion sample from explicit values.
     pub const fn new(
-        state: MotionTimelineState,
+        state: MotionRunState,
         elapsed: Duration,
         value: f32,
         velocity: f32,
@@ -234,7 +301,7 @@ impl MotionSpringSample {
     }
 
     /// Returns the sampled state.
-    pub const fn state(self) -> MotionTimelineState {
+    pub const fn state(self) -> MotionRunState {
         self.state
     }
 
@@ -303,7 +370,7 @@ impl MotionSpring {
     /// Creates a new spring whose source and velocity come from an interrupted sample.
     pub fn retarget_from_sample(
         spec: MotionSpringSpec,
-        sample: MotionSpringSample,
+        sample: MotionScalarSample,
         target: f32,
         started_at: Instant,
     ) -> Self {
@@ -346,7 +413,7 @@ impl MotionSpring {
     }
 
     /// Samples the spring at the provided instant.
-    pub fn sample(self, now: Instant) -> MotionSpringSample {
+    pub fn sample(self, now: Instant) -> MotionScalarSample {
         let effective_now = self.cancelled_at.unwrap_or(now);
         let elapsed = effective_now.saturating_duration_since(self.started_at);
         let mut sample = Self::sample_elapsed(
@@ -357,7 +424,7 @@ impl MotionSpring {
             elapsed,
         );
         if self.cancelled_at.is_some() && !sample.reached_final_state() {
-            sample.state = MotionTimelineState::Cancelled;
+            sample.state = MotionRunState::Cancelled;
         }
         sample
     }
@@ -369,14 +436,14 @@ impl MotionSpring {
         target: f32,
         initial_velocity: f32,
         elapsed: Duration,
-    ) -> MotionSpringSample {
+    ) -> MotionScalarSample {
         let from = sanitize_number(from, 0.0);
         let target = sanitize_number(target, from);
         let initial_velocity = sanitize_number(initial_velocity, 0.0);
 
         if spec.is_immediate() {
-            return MotionSpringSample::new(
-                MotionTimelineState::Immediate,
+            return MotionScalarSample::new(
+                MotionRunState::Immediate,
                 elapsed,
                 target,
                 0.0,
@@ -387,9 +454,9 @@ impl MotionSpring {
         let physics = spec.physics();
         if elapsed.is_zero() {
             let state = if at_rest(from, target, initial_velocity, physics) {
-                MotionTimelineState::Completed
+                MotionRunState::Completed
             } else {
-                MotionTimelineState::Active
+                MotionRunState::Active
             };
             let value = if state.reached_final_state() {
                 target
@@ -401,21 +468,15 @@ impl MotionSpring {
             } else {
                 initial_velocity
             };
-            return MotionSpringSample::new(state, elapsed, value, velocity, target);
+            return MotionScalarSample::new(state, elapsed, value, velocity, target);
         }
 
         let (value, velocity) =
             sample_spring_value(physics, from, target, initial_velocity, elapsed);
         if at_rest(value, target, velocity, physics) {
-            MotionSpringSample::new(MotionTimelineState::Completed, elapsed, target, 0.0, target)
+            MotionScalarSample::new(MotionRunState::Completed, elapsed, target, 0.0, target)
         } else {
-            MotionSpringSample::new(
-                MotionTimelineState::Active,
-                elapsed,
-                value,
-                velocity,
-                target,
-            )
+            MotionScalarSample::new(MotionRunState::Active, elapsed, value, velocity, target)
         }
     }
 }
@@ -463,7 +524,7 @@ impl MotionModel {
         target: f32,
         initial_velocity: f32,
         elapsed: Duration,
-    ) -> MotionSpringSample {
+    ) -> MotionScalarSample {
         match self {
             Self::Timeline(spec) => {
                 let sample = MotionTimeline::sample_elapsed(spec, elapsed);
@@ -476,7 +537,7 @@ impl MotionModel {
                 } else {
                     (target - from) / duration
                 };
-                MotionSpringSample::new(sample.state(), sample.elapsed(), value, velocity, target)
+                MotionScalarSample::new(sample.state(), sample.elapsed(), value, velocity, target)
             }
             Self::Spring(spec) => {
                 MotionSpring::sample_elapsed(spec, from, target, initial_velocity, elapsed)
@@ -633,19 +694,19 @@ mod tests {
         );
 
         let start = spring.sample(started_at);
-        assert_eq!(start.state(), MotionTimelineState::Active);
+        assert_eq!(start.state(), MotionRunState::Active);
         assert_eq!(start.elapsed(), Duration::ZERO);
         assert_eq!(start.value(), 0.0);
         assert_eq!(start.target(), 1.0);
 
         let midpoint = spring.sample(started_at + Duration::from_millis(90));
-        assert_eq!(midpoint.state(), MotionTimelineState::Active);
+        assert_eq!(midpoint.state(), MotionRunState::Active);
         assert!(midpoint.value() > 0.0);
         assert!(midpoint.value() < 1.08);
         assert!(midpoint.velocity().is_finite());
 
         let complete = spring.sample(started_at + Duration::from_secs(2));
-        assert_eq!(complete.state(), MotionTimelineState::Completed);
+        assert_eq!(complete.state(), MotionRunState::Completed);
         assert_eq!(complete.value(), 1.0);
         assert_eq!(complete.velocity(), 0.0);
         assert!(complete.reached_final_state());
@@ -661,7 +722,7 @@ mod tests {
             Duration::from_millis(600),
         );
 
-        assert_eq!(sample.state(), MotionTimelineState::Completed);
+        assert_eq!(sample.state(), MotionRunState::Completed);
         assert_eq!(sample.value(), 10.0001);
     }
 
@@ -700,7 +761,7 @@ mod tests {
             Duration::from_millis(16),
         );
 
-        assert_eq!(sample.state(), MotionTimelineState::Immediate);
+        assert_eq!(sample.state(), MotionRunState::Immediate);
         assert_eq!(sample.value(), 1.0);
         assert_eq!(sample.velocity(), 0.0);
         assert!(sample.reached_final_state());
@@ -734,6 +795,31 @@ mod tests {
     }
 
     #[test]
+    fn motion_preset_resolves_default_springs_explicitly() {
+        let custom_timeline = MotionPreset::timeline(crate::MotionSpec::new(
+            MotionPreference::Animated,
+            crate::MotionDuration::Custom(Duration::from_millis(240)),
+            crate::MotionEasing::Linear,
+        ))
+        .resolve_model();
+        assert!(matches!(custom_timeline, MotionModel::Timeline(_)));
+
+        let committed = MotionPreset::committed_layout(MotionPreference::Animated).resolve_model();
+        assert!(matches!(
+            committed,
+            MotionModel::Spring(spec)
+                if spec.preset() == Some(MotionSpringPreset::Layout)
+        ));
+
+        let continuity = MotionPreset::continuity(MotionPreference::Animated).resolve_model();
+        assert!(matches!(
+            continuity,
+            MotionModel::Spring(spec)
+                if spec.preset() == Some(MotionSpringPreset::Continuity)
+        ));
+    }
+
+    #[test]
     fn motion_model_samples_timeline_and_spring_as_scalar_values() {
         let timeline = MotionModel::timeline(crate::MotionSpec::new(
             MotionPreference::Animated,
@@ -743,7 +829,7 @@ mod tests {
         let timeline_sample =
             timeline.sample_scalar_elapsed(0.0, 10.0, 0.0, Duration::from_millis(100));
 
-        assert_eq!(timeline_sample.state(), MotionTimelineState::Active);
+        assert_eq!(timeline_sample.state(), MotionRunState::Active);
         assert_eq!(timeline_sample.value(), 5.0);
         assert_eq!(timeline_sample.target(), 10.0);
 
@@ -751,7 +837,7 @@ mod tests {
         let spring_sample =
             spring.sample_scalar_elapsed(0.0, 10.0, 0.0, Duration::from_millis(100));
 
-        assert_eq!(spring_sample.state(), MotionTimelineState::Active);
+        assert_eq!(spring_sample.state(), MotionRunState::Active);
         assert!(spring_sample.value() > 0.0);
         assert_eq!(spring_sample.target(), 10.0);
         assert!(spring_sample.velocity().is_finite());

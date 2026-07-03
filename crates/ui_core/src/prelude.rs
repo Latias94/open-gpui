@@ -17,8 +17,8 @@ pub use crate::{
     grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d},
     motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec},
     motion_controller::{
-        MotionFrameDemand, MotionScalarController, MotionScalarControllerSample, MotionScalarTrack,
-        MotionScalarTrackSample,
+        MotionFrameDemand, MotionFrameReason, MotionScalarController, MotionScalarControllerSample,
+        MotionScalarTrack, MotionScalarTrackSample,
     },
     motion_policy::{
         MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
@@ -26,13 +26,13 @@ pub use crate::{
     },
     motion_projection::{MotionProjection, MotionProjectionSample, MotionProjectionScale},
     motion_runtime::{
-        MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionSnapshot, MotionTimeline,
-        MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
+        MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionRunState, MotionSnapshot,
+        MotionTimeline, MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
         preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
     },
     motion_spring::{
-        MotionModel, MotionSpring, MotionSpringPhysics, MotionSpringPreset, MotionSpringSample,
-        MotionSpringSpec,
+        MotionModel, MotionPreset, MotionScalarSample, MotionSpring, MotionSpringPhysics,
+        MotionSpringPreset, MotionSpringSpec,
     },
     overlay::{
         DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
@@ -47,11 +47,9 @@ pub use crate::{
     sizing::{Density, Sizable, Size},
     split::{
         SplitTreeChild, SplitTreeNode, SplitterHandleLayout, SplitterHandlePlacement,
-        SplitterHandleState, SplitterHandleTransition, SplitterHandleTransitionKind,
-        SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion, SplitterLayoutScene,
-        SplitterLayoutTransition, SplitterMetrics, SplitterPanelDescriptor, SplitterPanelLayout,
-        SplitterPanelState, SplitterPanelTransition, SplitterPanelTransitionKind,
-        SplitterResizeOutcome, SplitterResizeResult, SplitterState, SplitterTransitionIntent,
+        SplitterHandleState, SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion,
+        SplitterLayoutScene, SplitterMetrics, SplitterPanelDescriptor, SplitterPanelLayout,
+        SplitterPanelState, SplitterResizeOutcome, SplitterResizeResult, SplitterState,
         normalize_split_fractions, resize_split_fractions_by_pixels, resolve_split_fractions,
         resolve_split_fractions_with_fill_child,
     },

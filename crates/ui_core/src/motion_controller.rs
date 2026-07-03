@@ -1,7 +1,8 @@
 //! Renderer-neutral motion controller contracts.
 
-use crate::motion_spring::{MotionModel, MotionSpringSample};
-use crate::{MotionSpec, MotionTimelineState};
+use crate::motion_spring::{MotionModel, MotionScalarSample};
+use crate::motion_value::MotionValue;
+use crate::{MotionRunState, MotionSpec};
 use std::time::Duration;
 
 /// Renderer-neutral frame demand returned by motion controllers.
@@ -9,34 +10,54 @@ use std::time::Duration;
 pub enum MotionFrameDemand {
     /// No more animation frames are required.
     Idle,
-    /// At least one track is active and the adapter should request another frame.
-    NeedsFrame,
+    /// At least one track is active and the adapter should request another frame for the reason.
+    NeedsFrame(MotionFrameReason),
+}
+
+/// Minimal reason vocabulary for adapter-owned frame requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionFrameReason {
+    /// The adapter should sample motion and render the updated presentation state.
+    UpdateRender,
 }
 
 impl MotionFrameDemand {
     /// Returns whether another frame should be requested by the adapter.
     pub const fn needs_frame(self) -> bool {
-        matches!(self, Self::NeedsFrame)
+        matches!(self, Self::NeedsFrame(_))
+    }
+
+    /// Returns the reason another frame is needed.
+    pub const fn reason(self) -> Option<MotionFrameReason> {
+        match self {
+            Self::Idle => None,
+            Self::NeedsFrame(reason) => Some(reason),
+        }
     }
 
     fn from_active(active: bool) -> Self {
-        if active { Self::NeedsFrame } else { Self::Idle }
+        if active {
+            Self::NeedsFrame(MotionFrameReason::UpdateRender)
+        } else {
+            Self::Idle
+        }
     }
 
     fn combine(self, other: Self) -> Self {
-        if self.needs_frame() || other.needs_frame() {
-            Self::NeedsFrame
-        } else {
-            Self::Idle
+        match (self, other) {
+            (Self::NeedsFrame(reason), _) | (_, Self::NeedsFrame(reason)) => {
+                Self::NeedsFrame(reason)
+            }
+            (Self::Idle, Self::Idle) => Self::Idle,
         }
     }
 }
 
 /// One scalar motion track sampled by deterministic elapsed time.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MotionScalarTrack {
     model: MotionModel,
-    from: f32,
+    value: MotionValue,
     target: f32,
     initial_velocity: f32,
     started_at: Duration,
@@ -45,7 +66,7 @@ pub struct MotionScalarTrack {
 
 impl MotionScalarTrack {
     /// Starts a scalar track at the provided controller time.
-    pub const fn start(
+    pub fn start(
         model: MotionModel,
         from: f32,
         target: f32,
@@ -54,7 +75,7 @@ impl MotionScalarTrack {
     ) -> Self {
         Self {
             model,
-            from,
+            value: MotionValue::new(from, started_at),
             target,
             initial_velocity,
             started_at,
@@ -63,7 +84,7 @@ impl MotionScalarTrack {
     }
 
     /// Creates an immediate scalar track at a fixed value.
-    pub const fn immediate(value: f32, started_at: Duration) -> Self {
+    pub fn immediate(value: f32, started_at: Duration) -> Self {
         Self::start(
             MotionModel::timeline(MotionSpec::immediate()),
             value,
@@ -74,32 +95,32 @@ impl MotionScalarTrack {
     }
 
     /// Returns the motion model.
-    pub const fn model(self) -> MotionModel {
+    pub const fn model(&self) -> MotionModel {
         self.model
     }
 
     /// Returns the source value.
-    pub const fn from(self) -> f32 {
-        self.from
+    pub const fn from(&self) -> f32 {
+        self.value.current()
     }
 
     /// Returns the target value.
-    pub const fn target(self) -> f32 {
+    pub const fn target(&self) -> f32 {
         self.target
     }
 
     /// Returns the initial velocity.
-    pub const fn initial_velocity(self) -> f32 {
+    pub const fn initial_velocity(&self) -> f32 {
         self.initial_velocity
     }
 
     /// Returns the controller time at which the track started.
-    pub const fn started_at(self) -> Duration {
+    pub const fn started_at(&self) -> Duration {
         self.started_at
     }
 
     /// Returns the controller time at which the track was cancelled.
-    pub const fn cancelled_at(self) -> Option<Duration> {
+    pub const fn cancelled_at(&self) -> Option<Duration> {
         self.cancelled_at
     }
 
@@ -109,24 +130,24 @@ impl MotionScalarTrack {
     }
 
     /// Retargets the track from its sampled value and velocity.
-    pub fn retarget(self, model: MotionModel, target: f32, now: Duration) -> Self {
+    pub fn retarget(&self, model: MotionModel, target: f32, now: Duration) -> Self {
         let sample = self.sample_at(now);
         Self::start(model, sample.value(), target, sample.velocity(), now)
     }
 
     /// Samples the track at the provided controller time.
-    pub fn sample_at(self, now: Duration) -> MotionSpringSample {
+    pub fn sample_at(&self, now: Duration) -> MotionScalarSample {
         let effective_now = self.cancelled_at.unwrap_or(now);
         let elapsed = effective_now.saturating_sub(self.started_at);
         let mut sample = self.model.sample_scalar_elapsed(
-            self.from,
+            self.value.current(),
             self.target,
             self.initial_velocity,
             elapsed,
         );
         if self.cancelled_at.is_some() && sample.state().is_active() {
-            sample = MotionSpringSample::new(
-                MotionTimelineState::Cancelled,
+            sample = MotionScalarSample::new(
+                MotionRunState::Cancelled,
                 sample.elapsed(),
                 sample.value(),
                 sample.velocity(),
@@ -137,7 +158,7 @@ impl MotionScalarTrack {
     }
 
     /// Returns whether this track needs another adapter-owned frame.
-    pub fn frame_demand_at(self, now: Duration) -> MotionFrameDemand {
+    pub fn frame_demand_at(&self, now: Duration) -> MotionFrameDemand {
         MotionFrameDemand::from_active(self.sample_at(now).is_active())
     }
 }
@@ -146,12 +167,12 @@ impl MotionScalarTrack {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MotionScalarTrackSample<K> {
     key: K,
-    sample: MotionSpringSample,
+    sample: MotionScalarSample,
 }
 
 impl<K> MotionScalarTrackSample<K> {
     /// Creates a keyed track sample.
-    pub const fn new(key: K, sample: MotionSpringSample) -> Self {
+    pub const fn new(key: K, sample: MotionScalarSample) -> Self {
         Self { key, sample }
     }
 
@@ -161,7 +182,7 @@ impl<K> MotionScalarTrackSample<K> {
     }
 
     /// Returns the scalar motion sample.
-    pub const fn sample(&self) -> MotionSpringSample {
+    pub const fn sample(&self) -> MotionScalarSample {
         self.sample
     }
 }
@@ -314,8 +335,8 @@ impl<K: Clone> MotionScalarController<K> {
 mod tests {
     use super::*;
     use crate::{
-        MotionDuration, MotionEasing, MotionModel, MotionPreference, MotionSpec, MotionSpringSpec,
-        MotionTimelineState,
+        MotionDuration, MotionEasing, MotionModel, MotionPreference, MotionRunState, MotionSpec,
+        MotionSpringSpec,
     };
     use std::time::Duration;
 
@@ -333,6 +354,10 @@ mod tests {
 
         let active = controller.sample_at(Duration::from_millis(50));
         assert!(active.frame_demand().needs_frame());
+        assert_eq!(
+            active.frame_demand().reason(),
+            Some(MotionFrameReason::UpdateRender)
+        );
         assert_eq!(active.tracks().len(), 2);
         assert!(
             active
@@ -368,6 +393,10 @@ mod tests {
         assert_eq!(retargeted.velocity(), sampled.velocity());
         assert_eq!(retargeted.target(), 2.0);
         assert!(after.frame_demand().needs_frame());
+        assert_eq!(
+            after.frame_demand().reason(),
+            Some(MotionFrameReason::UpdateRender)
+        );
     }
 
     #[test]
@@ -387,7 +416,7 @@ mod tests {
         track.cancel_at(Duration::from_millis(40));
         let sample = track.sample_at(Duration::from_millis(100));
 
-        assert_eq!(sample.state(), MotionTimelineState::Cancelled);
+        assert_eq!(sample.state(), MotionRunState::Cancelled);
         assert!(!sample.reached_final_state());
         assert!(
             !track
@@ -401,7 +430,7 @@ mod tests {
         let track = MotionScalarTrack::immediate(0.75, Duration::from_millis(10));
 
         let sample = track.sample_at(Duration::from_millis(10));
-        assert_eq!(sample.state(), MotionTimelineState::Immediate);
+        assert_eq!(sample.state(), MotionRunState::Immediate);
         assert_eq!(sample.value(), 0.75);
         assert!(
             !track

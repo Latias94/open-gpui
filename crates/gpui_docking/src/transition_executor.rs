@@ -11,16 +11,18 @@ use crate::{
 };
 use open_gpui::{Bounds, Pixels, Window, point, size};
 use open_gpui_ui_core::{
-    MotionDuration, MotionModel, MotionProjection, MotionScalarTrack, MotionSnapshot, MotionSpec,
-    MotionSpringSample, MotionSpringSpec, motion_source_rect, preferred_motion_edge,
-    retarget_motion_snapshots, reveal_rect_from_edge, ui_point, ui_rect, ui_size,
+    MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPolicyReport, MotionProjection,
+    MotionScalarSample, MotionScalarTrack, MotionSnapshot, MotionSpec, motion_source_rect,
+    preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
+    validate_motion_policy,
 };
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockTransitionExecution {
     pub(crate) plan: DockTransitionPlan,
-    pub(crate) spec: MotionSpec,
+    pub(crate) model: MotionModel,
+    pub(crate) policy_report: MotionPolicyReport,
     pub(crate) state: DockTransitionExecutionState,
     track: MotionScalarTrack,
     started_at: Instant,
@@ -105,9 +107,28 @@ impl DockTransitionExecutor {
         &mut self,
         plan: DockTransitionPlan,
         spec: MotionSpec,
+        window: Option<&Window>,
+    ) -> &DockTransitionExecution {
+        self.execute_model(plan, MotionModel::timeline(spec), window)
+    }
+
+    pub(crate) fn execute_model(
+        &mut self,
+        plan: DockTransitionPlan,
+        model: MotionModel,
         _window: Option<&Window>,
     ) -> &DockTransitionExecution {
-        let state = if plan.is_immediate() || spec.is_immediate() {
+        let policy_report = validate_motion_policy(
+            MotionPolicyInput::new(MotionPolicyContext::Continuity, model)
+                .with_spatial_motion(!plan.is_immediate() && !model.is_immediate())
+                .with_reduced_motion_final_state(true),
+        );
+        let model = if policy_report.is_ok() {
+            model
+        } else {
+            MotionModel::timeline(MotionSpec::immediate())
+        };
+        let state = if plan.is_immediate() || model.is_immediate() {
             DockTransitionExecutionState::Immediate
         } else {
             DockTransitionExecutionState::Scheduled
@@ -124,15 +145,10 @@ impl DockTransitionExecutor {
 
         self.current = Some(DockTransitionExecution {
             plan,
-            spec,
+            model,
+            policy_report,
             state,
-            track: MotionScalarTrack::start(
-                docking_motion_model(spec, state),
-                0.0,
-                1.0,
-                0.0,
-                Duration::ZERO,
-            ),
+            track: MotionScalarTrack::start(model, 0.0, 1.0, 0.0, Duration::ZERO),
             started_at: Instant::now(),
             last_sample: None,
             #[cfg(test)]
@@ -192,7 +208,7 @@ impl DockTransitionExecutor {
 
     fn sample_motion(
         &mut self,
-        motion_sample_for: impl FnOnce(&mut DockTransitionExecution) -> MotionSpringSample,
+        motion_sample_for: impl FnOnce(&mut DockTransitionExecution) -> MotionScalarSample,
     ) -> Option<DockTransitionSample> {
         let execution = self.current.as_mut()?;
         let motion_sample = motion_sample_for(execution);
@@ -207,7 +223,7 @@ impl DockTransitionExecutor {
 
 fn sample_execution(
     execution: &DockTransitionExecution,
-    motion_sample: MotionSpringSample,
+    motion_sample: MotionScalarSample,
 ) -> DockTransitionSample {
     let progress = motion_sample.value().clamp(0.0, 1.0);
     let complete = execution.state == DockTransitionExecutionState::Immediate
@@ -239,16 +255,6 @@ fn sample_execution(
     }
 }
 
-fn docking_motion_model(spec: MotionSpec, state: DockTransitionExecutionState) -> MotionModel {
-    if state == DockTransitionExecutionState::Immediate || spec.is_immediate() {
-        MotionModel::timeline(MotionSpec::immediate())
-    } else if matches!(spec.duration(), MotionDuration::Custom(_)) {
-        MotionModel::timeline(spec)
-    } else {
-        MotionModel::spring(MotionSpringSpec::continuity(spec.preference()))
-    }
-}
-
 fn pane_bounds_samples(plan: &DockTransitionPlan, progress: f32) -> Vec<DockPaneBoundsSample> {
     plan.pane_transitions
         .iter()
@@ -276,7 +282,7 @@ fn pane_visual_bounds(transition: &DockPaneTransition, progress: f32) -> Option<
         DockPaneTransitionKind::Moving
         | DockPaneTransitionKind::Resizing
         | DockPaneTransitionKind::Unchanged => match (transition.from, transition.to) {
-            (Some(from), Some(to)) => Some(projected_bounds(from, to, progress)),
+            (Some(from), Some(to)) => Some(projected_visual_bounds(from, to, progress)),
             (Some(bounds), None) | (None, Some(bounds)) => Some(bounds),
             (None, None) => None,
         },
@@ -383,25 +389,39 @@ fn slide_transition_from_bounds(
 }
 
 fn pane_clip_sample(transition: &DockPaneTransition, progress: f32) -> Option<DockPaneClipSample> {
-    let slide = transition.slide.as_ref()?;
     match transition.kind {
-        DockPaneTransitionKind::Entering => Some(DockPaneClipSample {
-            node: transition.node,
-            content_bounds: slide.final_bounds,
-            visible_bounds: reveal_bounds(slide.final_bounds, slide.edge, progress),
-            occlusion_bounds: slide.occlusion_bounds,
-            progress,
-        }),
-        DockPaneTransitionKind::Leaving => Some(DockPaneClipSample {
-            node: transition.node,
-            content_bounds: slide.final_bounds,
-            visible_bounds: reveal_bounds(slide.final_bounds, slide.edge, 1.0 - progress),
-            occlusion_bounds: slide.occlusion_bounds,
-            progress,
-        }),
-        DockPaneTransitionKind::Moving
-        | DockPaneTransitionKind::Resizing
-        | DockPaneTransitionKind::Unchanged => None,
+        DockPaneTransitionKind::Entering => {
+            let slide = transition.slide.as_ref()?;
+            Some(DockPaneClipSample {
+                node: transition.node,
+                content_bounds: slide.final_bounds,
+                visible_bounds: reveal_bounds(slide.final_bounds, slide.edge, progress),
+                occlusion_bounds: slide.occlusion_bounds,
+                progress,
+            })
+        }
+        DockPaneTransitionKind::Leaving => {
+            let slide = transition.slide.as_ref()?;
+            Some(DockPaneClipSample {
+                node: transition.node,
+                content_bounds: slide.final_bounds,
+                visible_bounds: reveal_bounds(slide.final_bounds, slide.edge, 1.0 - progress),
+                occlusion_bounds: slide.occlusion_bounds,
+                progress,
+            })
+        }
+        DockPaneTransitionKind::Moving | DockPaneTransitionKind::Resizing => {
+            let from = transition.from?;
+            let to = transition.to?;
+            Some(DockPaneClipSample {
+                node: transition.node,
+                content_bounds: to,
+                visible_bounds: projected_visual_bounds(from, to, progress),
+                occlusion_bounds: to,
+                progress,
+            })
+        }
+        DockPaneTransitionKind::Unchanged => None,
     }
 }
 
@@ -410,7 +430,7 @@ fn divider_sample(transition: &DockDividerTransition, progress: f32) -> DockDivi
         (DockDividerTransitionKind::Appearing, None) => {
             appearing_divider_bounds(transition.to, transition.axis, progress)
         }
-        (_, Some(from)) => projected_bounds(from, transition.to, progress),
+        (_, Some(from)) => projected_visual_bounds(from, transition.to, progress),
         _ => transition.to,
     };
     DockDividerSample {
@@ -479,18 +499,14 @@ fn appearing_divider_bounds(
     }
 }
 
-fn projected_bounds(from: Bounds<Pixels>, to: Bounds<Pixels>, progress: f32) -> Bounds<Pixels> {
-    let sample = MotionProjection::between(ui_rect_from_bounds(from), ui_rect_from_bounds(to))
-        .sample(progress);
-    let target = sample.target_bounds();
-    bounds_from_ui_rect(ui_rect(
-        ui_point(
-            target.origin.x + sample.translation().x,
-            target.origin.y + sample.translation().y,
-        ),
-        ui_size(
-            target.size.width * sample.scale().x(),
-            target.size.height * sample.scale().y(),
-        ),
-    ))
+fn projected_visual_bounds(
+    from: Bounds<Pixels>,
+    to: Bounds<Pixels>,
+    progress: f32,
+) -> Bounds<Pixels> {
+    bounds_from_ui_rect(
+        MotionProjection::between(ui_rect_from_bounds(from), ui_rect_from_bounds(to))
+            .sample(progress)
+            .visual_bounds(),
+    )
 }

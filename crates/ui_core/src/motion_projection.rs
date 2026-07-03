@@ -1,6 +1,9 @@
 //! Renderer-neutral layout projection primitives.
 
-use crate::{MotionEdge, MotionPreference, UiPoint, UiPx, UiRect, reveal_rect_from_edge, ui_point};
+use crate::{
+    MotionEdge, MotionPreference, UiPoint, UiPx, UiRect, reveal_rect_from_edge, ui_point, ui_rect,
+    ui_size,
+};
 
 const TRANSLATE_EPSILON: f32 = 0.01;
 const SCALE_EPSILON: f32 = 0.000_1;
@@ -179,6 +182,23 @@ impl MotionProjectionSample {
         self.target_bounds
     }
 
+    /// Returns the sampled visual bounds after applying projection translation and scale.
+    ///
+    /// The semantic layout target remains `target_bounds`; adapters can use this rectangle for an
+    /// overlay or clip while keeping child content laid out at the final size.
+    pub fn visual_bounds(self) -> UiRect {
+        ui_rect(
+            ui_point(
+                self.target_bounds.origin.x + self.translation.x,
+                self.target_bounds.origin.y + self.translation.y,
+            ),
+            ui_size(
+                self.target_bounds.size.width * self.scale.x(),
+                self.target_bounds.size.height * self.scale.y(),
+            ),
+        )
+    }
+
     /// Returns clamped projection progress.
     pub const fn progress(self) -> f32 {
         self.progress
@@ -280,6 +300,7 @@ mod tests {
 
         let start = projection.sample(0.0);
         assert_eq!(start.target_bounds(), rect(30.0, 60.0, 200.0, 100.0));
+        assert_eq!(start.visual_bounds(), rect(10.0, 20.0, 100.0, 50.0));
         assert_eq!(
             start.translation(),
             ui_point(UiPx::new(-20.0), UiPx::new(-40.0))
@@ -288,6 +309,7 @@ mod tests {
 
         let end = projection.sample(1.0);
         assert_eq!(end.target_bounds(), rect(30.0, 60.0, 200.0, 100.0));
+        assert_eq!(end.visual_bounds(), rect(30.0, 60.0, 200.0, 100.0));
         assert_eq!(end.translation(), ui_point(UiPx::ZERO, UiPx::ZERO));
         assert_eq!(end.scale(), MotionProjectionScale::IDENTITY);
     }

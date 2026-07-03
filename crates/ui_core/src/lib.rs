@@ -20,6 +20,7 @@ pub mod motion_policy;
 pub mod motion_projection;
 pub mod motion_runtime;
 pub mod motion_spring;
+pub mod motion_value;
 pub mod overlay;
 pub mod prelude;
 pub mod sizing;
@@ -44,8 +45,8 @@ pub use geometry::{
 pub use grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d};
 pub use motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
 pub use motion_controller::{
-    MotionFrameDemand, MotionScalarController, MotionScalarControllerSample, MotionScalarTrack,
-    MotionScalarTrackSample,
+    MotionFrameDemand, MotionFrameReason, MotionScalarController, MotionScalarControllerSample,
+    MotionScalarTrack, MotionScalarTrackSample,
 };
 pub use motion_policy::{
     MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
@@ -53,13 +54,13 @@ pub use motion_policy::{
 };
 pub use motion_projection::{MotionProjection, MotionProjectionSample, MotionProjectionScale};
 pub use motion_runtime::{
-    MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionSnapshot, MotionTimeline,
-    MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
+    MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionRunState, MotionSnapshot,
+    MotionTimeline, MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
     preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
 };
 pub use motion_spring::{
-    MotionModel, MotionSpring, MotionSpringPhysics, MotionSpringPreset, MotionSpringSample,
-    MotionSpringSpec,
+    MotionModel, MotionPreset, MotionScalarSample, MotionSpring, MotionSpringPhysics,
+    MotionSpringPreset, MotionSpringSpec,
 };
 pub use overlay::{
     DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
@@ -76,12 +77,10 @@ pub use overlay::{
 pub use sizing::{Density, Sizable, Size};
 pub use split::{
     SplitTreeChild, SplitTreeNode, SplitterHandleLayout, SplitterHandlePlacement,
-    SplitterHandleState, SplitterHandleTransition, SplitterHandleTransitionKind, SplitterHitMap,
-    SplitterHitTarget, SplitterJunctionHitRegion, SplitterLayoutScene, SplitterLayoutTransition,
-    SplitterMetrics, SplitterPanelDescriptor, SplitterPanelLayout, SplitterPanelState,
-    SplitterPanelTransition, SplitterPanelTransitionKind, SplitterResizeOutcome,
-    SplitterResizeResult, SplitterState, SplitterTransitionIntent, normalize_split_fractions,
-    resize_split_fractions_by_pixels, resolve_split_fractions,
+    SplitterHandleState, SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion,
+    SplitterLayoutScene, SplitterMetrics, SplitterPanelDescriptor, SplitterPanelLayout,
+    SplitterPanelState, SplitterResizeOutcome, SplitterResizeResult, SplitterState,
+    normalize_split_fractions, resize_split_fractions_by_pixels, resolve_split_fractions,
     resolve_split_fractions_with_fill_child,
 };
 pub use table::{

@@ -6,7 +6,7 @@ use crate::{
     transition_geometry::{DockMotionPreference, DockTransitionPlan},
 };
 use open_gpui::{Context, Window};
-use open_gpui_ui_core::MotionSpec;
+use open_gpui_ui_core::{MotionModel, MotionPreset, MotionSpec};
 
 impl DockHost {
     /// Presents one pane as a zoomed full-host pane without mutating the dock graph.
@@ -15,7 +15,7 @@ impl DockHost {
             return self.zoom_pane_with_scene(
                 target,
                 previous,
-                MotionSpec::layout(DockMotionPreference::Animated),
+                MotionPreset::continuity(DockMotionPreference::Animated).resolve_model(),
                 None,
                 cx,
             );
@@ -35,7 +35,7 @@ impl DockHost {
         &mut self,
         target: DockNodeId,
         previous: DockPresentationScene,
-        spec: MotionSpec,
+        model: MotionModel,
         window: Option<&Window>,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -45,13 +45,14 @@ impl DockHost {
 
         let space = self.space().clone();
         self.zoom_state_mut().zoom(space, target);
-        let Some(zoom_scene) = self.zoom_state().resolve(&previous, spec.preference()) else {
+        let preference = model.preference();
+        let Some(zoom_scene) = self.zoom_state().resolve(&previous, preference) else {
             cx.notify();
             return true;
         };
-        let plan = DockTransitionPlan::from_zoom_scene(&previous, &zoom_scene, spec.preference());
+        let plan = DockTransitionPlan::from_zoom_scene(&previous, &zoom_scene, preference);
         self.set_last_presentation_scene(zoom_scene.scene.clone());
-        self.execute_transition_plan(plan, spec, window, cx);
+        self.execute_transition_plan_with_model(plan, model, window, cx);
         true
     }
 
@@ -65,7 +66,7 @@ impl DockHost {
             return self.unzoom_with_scene(
                 previous,
                 final_scene,
-                MotionSpec::layout(DockMotionPreference::Animated),
+                MotionPreset::continuity(DockMotionPreference::Animated).resolve_model(),
                 None,
                 cx,
             );
@@ -84,7 +85,7 @@ impl DockHost {
         &mut self,
         previous: DockPresentationScene,
         final_scene: DockPresentationScene,
-        spec: MotionSpec,
+        model: MotionModel,
         window: Option<&Window>,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -93,9 +94,9 @@ impl DockHost {
             return false;
         }
 
-        let plan = DockTransitionPlan::between(&previous, &final_scene, spec.preference());
+        let plan = DockTransitionPlan::between(&previous, &final_scene, model.preference());
         self.set_last_presentation_scene(final_scene.clone());
-        self.execute_transition_plan(plan, spec, window, cx);
+        self.execute_transition_plan_with_model(plan, model, window, cx);
         true
     }
 
@@ -201,7 +202,6 @@ impl DockHost {
         }
     }
 
-    /// Executes a transition plan through the docking adapter-owned motion executor.
     /// Executes a docking transition plan through the adapter-owned motion executor.
     pub fn execute_transition_plan(
         &mut self,
@@ -210,9 +210,31 @@ impl DockHost {
         window: Option<&Window>,
         cx: &mut Context<Self>,
     ) -> DockTransitionExecutionState {
+        self.execute_transition_plan_with_model(plan, MotionModel::timeline(spec), window, cx)
+    }
+
+    /// Executes a docking transition plan with an explicit motion preset.
+    pub fn execute_transition_plan_with_preset(
+        &mut self,
+        plan: DockTransitionPlan,
+        preset: MotionPreset,
+        window: Option<&Window>,
+        cx: &mut Context<Self>,
+    ) -> DockTransitionExecutionState {
+        self.execute_transition_plan_with_model(plan, preset.resolve_model(), window, cx)
+    }
+
+    /// Executes a docking transition plan with an explicit motion model.
+    pub fn execute_transition_plan_with_model(
+        &mut self,
+        plan: DockTransitionPlan,
+        model: MotionModel,
+        window: Option<&Window>,
+        cx: &mut Context<Self>,
+    ) -> DockTransitionExecutionState {
         let state = self
             .transition_executor_mut()
-            .execute(plan, spec, window)
+            .execute_model(plan, model, window)
             .state;
         cx.notify();
         state

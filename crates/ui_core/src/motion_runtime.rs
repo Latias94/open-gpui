@@ -7,20 +7,20 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Runtime state for a sampled motion timeline.
+/// Runtime state for sampled motion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MotionTimelineState {
+pub enum MotionRunState {
     /// The motion spec completed immediately.
     Immediate,
-    /// The motion timeline is still active.
+    /// The motion run is still active.
     Active,
-    /// The motion timeline reached its final state.
+    /// The motion run reached its final state.
     Completed,
-    /// The motion timeline was cancelled before reaching its final state.
+    /// The motion run was cancelled before reaching its final state.
     Cancelled,
 }
 
-impl MotionTimelineState {
+impl MotionRunState {
     /// Returns whether callers should continue requesting animation frames.
     pub const fn is_active(self) -> bool {
         matches!(self, Self::Active)
@@ -37,10 +37,13 @@ impl MotionTimelineState {
     }
 }
 
+/// Compatibility alias for older timeline-only code.
+pub type MotionTimelineState = MotionRunState;
+
 /// A sampled point on a motion timeline.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MotionTimelineSample {
-    state: MotionTimelineState,
+    state: MotionRunState,
     elapsed: Duration,
     raw_progress: f32,
     progress: f32,
@@ -49,7 +52,7 @@ pub struct MotionTimelineSample {
 impl MotionTimelineSample {
     /// Creates a sample from explicit values.
     pub const fn new(
-        state: MotionTimelineState,
+        state: MotionRunState,
         elapsed: Duration,
         raw_progress: f32,
         progress: f32,
@@ -63,7 +66,7 @@ impl MotionTimelineSample {
     }
 
     /// Returns the sampled timeline state.
-    pub const fn state(self) -> MotionTimelineState {
+    pub const fn state(self) -> MotionRunState {
         self.state
     }
 
@@ -137,7 +140,7 @@ impl MotionTimeline {
         let elapsed = effective_now.saturating_duration_since(self.started_at);
         let mut sample = Self::sample_elapsed(self.spec, elapsed);
         if self.cancelled_at.is_some() && !sample.reached_final_state() {
-            sample.state = MotionTimelineState::Cancelled;
+            sample.state = MotionRunState::Cancelled;
         }
         sample
     }
@@ -145,20 +148,20 @@ impl MotionTimeline {
     /// Samples a motion spec using an explicit elapsed duration.
     pub fn sample_elapsed(spec: MotionSpec, elapsed: Duration) -> MotionTimelineSample {
         if spec.is_immediate() {
-            return MotionTimelineSample::new(MotionTimelineState::Immediate, elapsed, 1.0, 1.0);
+            return MotionTimelineSample::new(MotionRunState::Immediate, elapsed, 1.0, 1.0);
         }
 
         let duration = spec.duration().as_duration();
         if duration.is_zero() {
-            return MotionTimelineSample::new(MotionTimelineState::Immediate, elapsed, 1.0, 1.0);
+            return MotionTimelineSample::new(MotionRunState::Immediate, elapsed, 1.0, 1.0);
         }
 
         let raw_progress = (elapsed.as_secs_f32() / duration.as_secs_f32()).clamp(0.0, 1.0);
         let progress = spec.easing().sample(raw_progress);
         let state = if raw_progress >= 1.0 {
-            MotionTimelineState::Completed
+            MotionRunState::Completed
         } else {
-            MotionTimelineState::Active
+            MotionRunState::Active
         };
         MotionTimelineSample::new(state, elapsed, raw_progress, progress)
     }
@@ -449,18 +452,18 @@ mod tests {
         let timeline = MotionTimeline::new(spec, started_at);
 
         let start = timeline.sample(started_at);
-        assert_eq!(start.state(), MotionTimelineState::Active);
+        assert_eq!(start.state(), MotionRunState::Active);
         assert_eq!(start.elapsed(), Duration::from_millis(0));
         assert_eq!(start.raw_progress(), 0.0);
         assert_eq!(start.progress(), 0.0);
 
         let midpoint = timeline.sample(started_at + Duration::from_millis(100));
-        assert_eq!(midpoint.state(), MotionTimelineState::Active);
+        assert_eq!(midpoint.state(), MotionRunState::Active);
         assert_eq!(midpoint.raw_progress(), 0.5);
         assert_eq!(midpoint.progress(), 0.5);
 
         let complete = timeline.sample(started_at + Duration::from_millis(250));
-        assert_eq!(complete.state(), MotionTimelineState::Completed);
+        assert_eq!(complete.state(), MotionRunState::Completed);
         assert_eq!(complete.raw_progress(), 1.0);
         assert_eq!(complete.progress(), 1.0);
         assert!(complete.reached_final_state());
@@ -473,7 +476,7 @@ mod tests {
             Duration::from_millis(0),
         );
 
-        assert_eq!(sample.state(), MotionTimelineState::Immediate);
+        assert_eq!(sample.state(), MotionRunState::Immediate);
         assert_eq!(sample.raw_progress(), 1.0);
         assert_eq!(sample.progress(), 1.0);
         assert!(sample.reached_final_state());
@@ -492,7 +495,7 @@ mod tests {
         timeline.cancel_at(started_at + Duration::from_millis(80));
         let sample = timeline.sample(started_at + Duration::from_millis(160));
 
-        assert_eq!(sample.state(), MotionTimelineState::Cancelled);
+        assert_eq!(sample.state(), MotionRunState::Cancelled);
         assert!((sample.raw_progress() - 0.4).abs() < f32::EPSILON);
         assert!((sample.progress() - 0.4).abs() < f32::EPSILON);
         assert!(!sample.reached_final_state());

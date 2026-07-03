@@ -6,6 +6,38 @@ status: active
 
 # Log
 
+- 2026-07-04: Started the UI motion value foundation on
+  `feat/ui-motion-value-foundation`. ADR 0017 accepts explicit model/preset resolution,
+  proof-gated scalar value/run state, frame-demand reasons, production policy gates, and projection
+  honesty while deferring keyframes, grouped playback, public subscribers, DOM/React APIs, and
+  compositor-backed execution.
+- 2026-07-04: Completed the first UI motion value foundation code checkpoint on
+  `feat/ui-motion-value-foundation`. `MotionRunState` now names shared run state, `MotionPreset`
+  makes default spring selection explicit, Splitter programmatic motion resolves an explicit layout
+  preset, and Docking exposes explicit model/preset execution while `MotionSpec` compatibility
+  paths remain timeline-backed.
+- 2026-07-04: Added proof-gated scalar motion value state on
+  `feat/ui-motion-value-foundation`. `MotionValue` now owns current, previous, previous-frame,
+  velocity, jump/cancel, and active-owner state, and `MotionScalarTrack` stores its source through
+  `MotionValue` so Splitter/Docking consume it through the existing scalar controller path.
+- 2026-07-04: Added UI motion frame-demand reasons and production policy gates on
+  `feat/ui-motion-value-foundation`. `MotionFrameDemand` now reports `UpdateRender`, Splitter
+  programmatic motion validates committed-layout models before scheduling, and Docking transition
+  execution records the policy report for the resolved continuity model.
+- 2026-07-04: Narrowed the Splitter motion public surface on
+  `feat/ui-motion-value-foundation`. `Splitter::motion_preference` now drives the real render-path
+  committed-layout motion policy, panel identity/count changes are explicitly immediate, and
+  Splitter transition descriptors were removed from component default exports until the GPUI adapter
+  executes insert/remove/collapse/expand transitions.
+- 2026-07-04: Rendered Docking projection clips on `feat/ui-motion-value-foundation`.
+  `MotionProjectionSample::visual_bounds()` is now the core visual-bounds helper, Docking
+  moving/resizing pane transitions mount final-size pane content through projection clip/occlusion
+  layers, and the scalar sample type was renamed from `MotionSpringSample` to
+  `MotionScalarSample`.
+- 2026-07-04: Completed the UI motion value foundation proof pass on
+  `feat/ui-motion-value-foundation`. Native runtime motion proof output now reports
+  value/run/scalar-sample/model/policy/projection-clip capabilities, verification docs describe
+  projection clips as rendered behavior, and final focused gates passed before merge.
 - 2026-07-04: Added command keybinding conflict reporting on
   `feat/command-keybinding-conflicts`. `CommandKeyBindingProjection` now reports conservative
   same-context shortcut conflicts, and `CommandKeyBindingInstallReport` summarizes append-only
