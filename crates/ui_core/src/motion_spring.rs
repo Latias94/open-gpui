@@ -1,6 +1,6 @@
 //! Renderer-neutral spring sampling for layout-like UI motion.
 
-use crate::{MotionPreference, MotionSpec, MotionTimelineState};
+use crate::{MotionPreference, MotionSpec, MotionTimeline, MotionTimelineState};
 use std::time::{Duration, Instant};
 
 const DEFAULT_MASS: f32 = 1.0;
@@ -455,6 +455,34 @@ impl MotionModel {
             Self::Spring(spec) => spec.is_immediate(),
         }
     }
+
+    /// Samples this motion model as a scalar value.
+    pub fn sample_scalar_elapsed(
+        self,
+        from: f32,
+        target: f32,
+        initial_velocity: f32,
+        elapsed: Duration,
+    ) -> MotionSpringSample {
+        match self {
+            Self::Timeline(spec) => {
+                let sample = MotionTimeline::sample_elapsed(spec, elapsed);
+                let from = sanitize_number(from, 0.0);
+                let target = sanitize_number(target, from);
+                let value = from + (target - from) * sample.progress();
+                let duration = spec.duration().as_duration().as_secs_f32();
+                let velocity = if sample.reached_final_state() || duration <= 0.0 {
+                    0.0
+                } else {
+                    (target - from) / duration
+                };
+                MotionSpringSample::new(sample.state(), sample.elapsed(), value, velocity, target)
+            }
+            Self::Spring(spec) => {
+                MotionSpring::sample_elapsed(spec, from, target, initial_velocity, elapsed)
+            }
+        }
+    }
 }
 
 fn sample_spring_value(
@@ -703,5 +731,29 @@ mod tests {
         assert!(!timeline.is_immediate());
         assert!(!spring.is_immediate());
         assert_eq!(spring.preference(), MotionPreference::Animated);
+    }
+
+    #[test]
+    fn motion_model_samples_timeline_and_spring_as_scalar_values() {
+        let timeline = MotionModel::timeline(crate::MotionSpec::new(
+            MotionPreference::Animated,
+            crate::MotionDuration::Custom(Duration::from_millis(200)),
+            crate::MotionEasing::Linear,
+        ));
+        let timeline_sample =
+            timeline.sample_scalar_elapsed(0.0, 10.0, 0.0, Duration::from_millis(100));
+
+        assert_eq!(timeline_sample.state(), MotionTimelineState::Active);
+        assert_eq!(timeline_sample.value(), 5.0);
+        assert_eq!(timeline_sample.target(), 10.0);
+
+        let spring = MotionModel::spring(MotionSpringSpec::layout(MotionPreference::Animated));
+        let spring_sample =
+            spring.sample_scalar_elapsed(0.0, 10.0, 0.0, Duration::from_millis(100));
+
+        assert_eq!(spring_sample.state(), MotionTimelineState::Active);
+        assert!(spring_sample.value() > 0.0);
+        assert_eq!(spring_sample.target(), 10.0);
+        assert!(spring_sample.velocity().is_finite());
     }
 }
