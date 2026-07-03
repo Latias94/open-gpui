@@ -23,6 +23,10 @@ and plugin-like command metadata contribution.
   query recall.
 - `CommandContextStack` carries the current command scope stack and GPUI key context stack from
   broad app/workspace context to focused surface context.
+- `CommandKeyBindingRegistry` stores command-id keyed shortcut dictionaries from apps or plugins
+  and projects them into concrete GPUI `KeyBinding` values using `GpuiCommandActionMap`. Missing
+  actions and bad GPUI keystroke/context syntax are reported as projection diagnostics instead of
+  panicking.
 - `CommandProvider*` types model dynamic command providers and async-friendly provider responses
   without owning a task runtime.
 - `CommandDescriptor` stores id, label, group, keywords, shortcut display text, disabled state,
@@ -149,6 +153,44 @@ the displayed shortcut for `OpenWorkspace` becomes the `Editor` binding. The low
 `GpuiCommandActionMap` exposes the same behavior through
 `registry_snapshot_with_keymap_shortcuts_in_context` and
 `shortcut_diagnostics_for_keymap_in_context` for callers that manage snapshots directly.
+
+## Command Key Binding Sources
+
+Use `CommandKeyBinding` when a plugin or app module wants to contribute shortcuts by command id
+without directly constructing GPUI action values. The command center keeps the binding source
+lifecycle separate from command metadata sources, then projects valid entries into a GPUI `Keymap`:
+
+```rust
+use open_gpui::{KeyContext, Keymap};
+use open_gpui_command::CommandKeyBinding;
+
+center
+    .register_action("workspace.open", OpenWorkspace)
+    .register_action("workspace.save", SaveWorkspace);
+
+let shortcuts = center.register_key_bindings(
+    "workspace-shortcuts",
+    [
+        CommandKeyBinding::new("workspace.open", "ctrl-k ctrl-o").context("Workspace"),
+        CommandKeyBinding::new("workspace.save", "ctrl-s")
+            .context("Workspace && mode == normal"),
+    ],
+);
+
+let mut keymap = Keymap::default();
+let projection = center.add_key_bindings_to_keymap(&mut keymap);
+assert!(projection.is_clean());
+
+center.set_key_contexts([KeyContext::parse("Workspace mode=normal")?]);
+let snapshot = center.snapshot_for_keymap(&keymap);
+
+shortcuts.unregister(&mut center);
+```
+
+This layer does not replace GPUI's key dispatch engine. Chords still use GPUI's whitespace-separated
+keystroke sequences, context/mode checks still use GPUI key binding predicates such as
+`Workspace && mode == normal`, and focused-window precedence still comes from
+`Window::highest_precedence_binding_for_action`.
 
 ## Dynamic Providers
 

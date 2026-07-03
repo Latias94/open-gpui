@@ -114,6 +114,23 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         .unwrap();
     let _root_command_source_registration: root::CommandSourceRegistration =
         root_command_source.clone();
+    let root_key_binding = root::CommandKeyBinding::new("root.open", "ctrl-o").context("Root");
+    let mut root_key_binding_registry = root::CommandKeyBindingRegistry::new();
+    let root_key_binding_handle: root::CommandKeyBindingHandle =
+        root_key_binding_registry.register("root-shortcuts", [root_key_binding]);
+    let root_key_binding_entry: &root::CommandKeyBindingEntry =
+        &root_key_binding_registry.entries()[0];
+    assert_eq!(root_key_binding_entry.binding().command_id(), "root.open");
+    assert_eq!(
+        root_key_binding_handle.source_id().as_str(),
+        "root-shortcuts"
+    );
+    let root_key_binding_projection: root::CommandKeyBindingProjection =
+        root_key_binding_registry.project(root_command_center.actions());
+    let root_key_binding_diagnostic: &root::CommandKeyBindingDiagnostic =
+        &root_key_binding_projection.diagnostics()[0];
+    let _root_key_binding_diagnostic_kind: root::CommandKeyBindingDiagnosticKind =
+        root_key_binding_diagnostic.kind();
     fn root_provider_fn(_: &root::CommandProviderRequest) -> root::CommandProviderResponse {
         root::CommandProviderResponse::ready()
     }
@@ -320,6 +337,27 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         .unwrap();
     let _prelude_command_source_registration: prelude::CommandSourceRegistration =
         prelude_command_source.clone();
+    let prelude_key_binding =
+        prelude::CommandKeyBinding::new("prelude.open", "ctrl-o").context("Prelude");
+    let mut prelude_key_binding_registry = prelude::CommandKeyBindingRegistry::new();
+    let prelude_key_binding_handle: prelude::CommandKeyBindingHandle =
+        prelude_key_binding_registry.register("prelude-shortcuts", [prelude_key_binding]);
+    let prelude_key_binding_entry: &prelude::CommandKeyBindingEntry =
+        &prelude_key_binding_registry.entries()[0];
+    assert_eq!(
+        prelude_key_binding_entry.binding().command_id(),
+        "prelude.open"
+    );
+    assert_eq!(
+        prelude_key_binding_handle.source_id().as_str(),
+        "prelude-shortcuts"
+    );
+    let prelude_key_binding_projection: prelude::CommandKeyBindingProjection =
+        prelude_key_binding_registry.project(prelude_command_center.actions());
+    let prelude_key_binding_diagnostic: &prelude::CommandKeyBindingDiagnostic =
+        &prelude_key_binding_projection.diagnostics()[0];
+    let _prelude_key_binding_diagnostic_kind: prelude::CommandKeyBindingDiagnosticKind =
+        prelude_key_binding_diagnostic.kind();
     fn prelude_provider_fn(
         _: &prelude::CommandProviderRequest,
     ) -> prelude::CommandProviderResponse {
