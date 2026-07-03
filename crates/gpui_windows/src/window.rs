@@ -6,7 +6,10 @@ use std::{
     path::PathBuf,
     rc::{Rc, Weak},
     str::FromStr,
-    sync::{Arc, Once, atomic::AtomicBool},
+    sync::{
+        Arc, Once,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -720,6 +723,21 @@ impl PlatformWindow for WindowsWindow {
             point
         };
         logical_point(point.x as f32, point.y as f32, scale_factor)
+    }
+
+    fn set_cursor_style(&self, style: CursorStyle) {
+        let hcursor = load_cursor(style);
+        if self.state.current_cursor.get().map(|cursor| cursor.0) == hcursor.map(|cursor| cursor.0)
+        {
+            return;
+        }
+
+        self.state.current_cursor.set(hcursor);
+        if self.state.hovered.get() && self.state.cursor_visible.load(Ordering::Relaxed) {
+            unsafe {
+                SetCursor(hcursor);
+            }
+        }
     }
 
     fn modifiers(&self) -> Modifiers {

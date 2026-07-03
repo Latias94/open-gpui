@@ -305,6 +305,48 @@ impl X11ClientStatePtr {
         state.ximc = Some(ximc);
         state.xim_handler = Some(xim_handler);
     }
+
+    pub fn set_cursor_style_for_window(&self, x_window: xproto::Window, style: CursorStyle) {
+        let Some(client) = self.get_client() else {
+            return;
+        };
+        let mut state = client.0.borrow_mut();
+        let current_style = state
+            .cursor_styles
+            .get(&x_window)
+            .unwrap_or(&CursorStyle::Arrow);
+        let window = state.windows.get(&x_window);
+        let should_change =
+            *current_style != style && window.is_none_or(|window| !window.is_blocked());
+
+        if !should_change {
+            return;
+        }
+
+        state.cursor_styles.insert(x_window, style);
+
+        // Don't clobber the invisible cursor; restore reads back from `cursor_styles`.
+        if state.cursor_hidden_window == Some(x_window) {
+            return;
+        }
+
+        let Some(cursor) = state.get_cursor_icon(style) else {
+            return;
+        };
+
+        check_reply(
+            || "Failed to set cursor style",
+            state.xcb_connection.change_window_attributes(
+                x_window,
+                &xproto::ChangeWindowAttributesAux {
+                    cursor: Some(cursor),
+                    ..Default::default()
+                },
+            ),
+        )
+        .log_err();
+        state.xcb_connection.flush().log_err();
+    }
 }
 
 #[derive(Clone)]
@@ -1657,52 +1699,6 @@ impl LinuxClient for X11Client {
 
         state.windows.insert(x_window, window_ref);
         Ok(Box::new(window))
-    }
-
-    fn set_cursor_style(&self, style: CursorStyle) {
-        let mut state = self.0.borrow_mut();
-        let Some(focused_window) = state.mouse_focused_window else {
-            return;
-        };
-        let current_style = state
-            .cursor_styles
-            .get(&focused_window)
-            .unwrap_or(&CursorStyle::Arrow);
-
-        let window = state
-            .mouse_focused_window
-            .and_then(|w| state.windows.get(&w));
-
-        let should_change = *current_style != style
-            && (window.is_none() || window.is_some_and(|w| !w.is_blocked()));
-
-        if !should_change {
-            return;
-        }
-
-        state.cursor_styles.insert(focused_window, style);
-
-        // Don't clobber the invisible cursor; restore reads back from `cursor_styles`.
-        if state.cursor_hidden_window == Some(focused_window) {
-            return;
-        }
-
-        let Some(cursor) = state.get_cursor_icon(style) else {
-            return;
-        };
-
-        check_reply(
-            || "Failed to set cursor style",
-            state.xcb_connection.change_window_attributes(
-                focused_window,
-                &ChangeWindowAttributesAux {
-                    cursor: Some(cursor),
-                    ..Default::default()
-                },
-            ),
-        )
-        .log_err();
-        state.xcb_connection.flush().log_err();
     }
 
     fn hide_cursor_until_mouse_moves(&self) {

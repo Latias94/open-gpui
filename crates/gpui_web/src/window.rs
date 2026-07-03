@@ -1,11 +1,12 @@
 use crate::display::WebDisplay;
 use crate::events::{ClickState, WebEventListeners, is_mac_platform};
+use crate::platform::set_body_cursor;
 use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 
 use open_gpui::{
-    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs,
-    Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, DispatchEventResult,
+    GpuSpecs, Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
@@ -55,6 +56,8 @@ pub(crate) struct WebWindowInner {
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
     pub(crate) is_composing: Cell<bool>,
+    pub(crate) cursor_visible: Rc<Cell<bool>>,
+    pub(crate) last_cursor_css: Rc<Cell<&'static str>>,
     mql_handle: RefCell<Option<MqlHandle>>,
     pending_physical_size: Cell<Option<(u32, u32)>>,
 }
@@ -76,6 +79,8 @@ impl WebWindow {
         _params: WindowParams,
         context: &WgpuContext,
         browser_window: web_sys::Window,
+        cursor_visible: Rc<Cell<bool>>,
+        last_cursor_css: Rc<Cell<&'static str>>,
     ) -> anyhow::Result<Self> {
         let document = browser_window
             .document()
@@ -182,6 +187,8 @@ impl WebWindow {
             last_physical_size: Cell::new((0, 0)),
             notify_scale: Cell::new(false),
             is_composing: Cell::new(false),
+            cursor_visible,
+            last_cursor_css,
             mql_handle: RefCell::new(None),
             pending_physical_size: Cell::new(None),
         });
@@ -504,6 +511,30 @@ impl raw_window_handle::HasDisplayHandle for WebWindow {
     }
 }
 
+fn cursor_style_to_css(style: CursorStyle) -> &'static str {
+    match style {
+        CursorStyle::Arrow => "default",
+        CursorStyle::IBeam => "text",
+        CursorStyle::Crosshair => "crosshair",
+        CursorStyle::ClosedHand => "grabbing",
+        CursorStyle::OpenHand => "grab",
+        CursorStyle::PointingHand => "pointer",
+        CursorStyle::ResizeLeft | CursorStyle::ResizeRight | CursorStyle::ResizeLeftRight => {
+            "ew-resize"
+        }
+        CursorStyle::ResizeUp | CursorStyle::ResizeDown | CursorStyle::ResizeUpDown => "ns-resize",
+        CursorStyle::ResizeUpLeftDownRight => "nesw-resize",
+        CursorStyle::ResizeUpRightDownLeft => "nwse-resize",
+        CursorStyle::ResizeColumn => "col-resize",
+        CursorStyle::ResizeRow => "row-resize",
+        CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
+        CursorStyle::OperationNotAllowed => "not-allowed",
+        CursorStyle::DragLink => "alias",
+        CursorStyle::DragCopy => "copy",
+        CursorStyle::ContextualMenu => "context-menu",
+    }
+}
+
 impl PlatformWindow for WebWindow {
     fn bounds(&self) -> Bounds<Pixels> {
         self.inner.state.borrow().bounds
@@ -545,6 +576,15 @@ impl PlatformWindow for WebWindow {
 
     fn mouse_position(&self) -> Point<Pixels> {
         self.inner.state.borrow().mouse_position
+    }
+
+    fn set_cursor_style(&self, style: CursorStyle) {
+        let css_cursor = cursor_style_to_css(style);
+        self.inner.last_cursor_css.set(css_cursor);
+        let _ = self.inner.canvas.style().set_property("cursor", css_cursor);
+        if self.inner.cursor_visible.get() {
+            set_body_cursor(&self.inner.browser_window, css_cursor);
+        }
     }
 
     fn modifiers(&self) -> Modifiers {

@@ -1,7 +1,6 @@
 use crate::{
     BoolExt, MacDispatcher, MacDisplay, MacKeyboardLayout, MacKeyboardMapper, MacWindow,
     events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
-    set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
@@ -36,9 +35,9 @@ use objc::{
     sel, sel_impl,
 };
 use open_gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    KeyContext, Keymap, Menu, MenuItem, MouseButton, NavigationDirection, OsMenu, OwnedMenu,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ForegroundExecutor, KeyContext,
+    Keymap, Menu, MenuItem, MouseButton, NavigationDirection, OsMenu, OwnedMenu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformViewportCapabilities, PlatformWindow, Result, SystemMenuType, Task, ThermalState,
     WindowAppearance, WindowParams,
@@ -1025,14 +1024,6 @@ impl Platform for MacPlatform {
             let url: id = msg_send![bundle, URLForAuxiliaryExecutable: name];
             anyhow::ensure!(!url.is_null(), "resource not found");
             ns_url_to_path(url)
-        }
-    }
-
-    /// Match cursor style to one of the styles available
-    /// in macOS's [NSCursor](https://developer.apple.com/documentation/appkit/nscursor).
-    fn set_cursor_style(&self, style: CursorStyle) {
-        unsafe {
-            set_active_window_cursor_style(style);
         }
     }
 

@@ -2244,7 +2244,10 @@ impl Interactivity {
 
                                             if let Some(drag) = cx.active_drag.as_ref() {
                                                 if let Some(mouse_cursor) = drag.cursor_style {
-                                                    window.set_window_cursor_style(mouse_cursor);
+                                                    if window.is_mouse_in_window() {
+                                                        window
+                                                            .set_window_cursor_style(mouse_cursor);
+                                                    }
                                                 }
                                             } else {
                                                 if let Some(mouse_cursor) = style.mouse_cursor {
@@ -3080,7 +3083,11 @@ impl Interactivity {
                     }
                 }
 
-                style.mouse_cursor = drag.cursor_style;
+                style.mouse_cursor = if window.is_mouse_in_window() {
+                    drag.cursor_style
+                } else {
+                    None
+                };
                 cx.active_drag = Some(drag);
             }
         }

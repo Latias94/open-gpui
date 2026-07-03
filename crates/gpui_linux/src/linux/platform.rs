@@ -23,12 +23,11 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::linux::{LinuxDispatcher, PriorityQueueCalloopReceiver};
 use open_gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow,
-    Result, RunnableVariant, Task, ThermalState, WindowAppearance, WindowButtonLayout,
-    WindowParams,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId, ForegroundExecutor,
+    Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow, Result, RunnableVariant,
+    Task, ThermalState, WindowAppearance, WindowButtonLayout, WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use open_gpui::{MouseButton, Pixels, Point, px};
@@ -80,7 +79,6 @@ pub(crate) trait LinuxClient {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>>;
-    fn set_cursor_style(&self, style: CursorStyle);
     fn hide_cursor_until_mouse_moves(&self) {}
     fn is_cursor_visible(&self) -> bool {
         true
@@ -557,10 +555,6 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         Err(anyhow::Error::msg(
             "Platform<LinuxPlatform>::path_for_auxiliary_executable is not implemented yet",
         ))
-    }
-
-    fn set_cursor_style(&self, style: CursorStyle) {
-        self.inner.set_cursor_style(style)
     }
 
     fn hide_cursor_until_mouse_moves(&self) {

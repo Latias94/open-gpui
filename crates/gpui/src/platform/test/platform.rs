@@ -279,9 +279,35 @@ impl TestPlatform {
         *self.hovered_window_available.borrow_mut() = available;
     }
 
+    pub(crate) fn cursor_style(&self) -> CursorStyle {
+        *self.active_cursor.lock()
+    }
+
+    pub(crate) fn set_window_cursor_style(&self, window: &TestWindow, style: CursorStyle) {
+        let cursor_owner = if *self.hovered_window_available.borrow() {
+            self.hovered_window
+                .borrow()
+                .as_ref()
+                .is_some_and(|hovered| Rc::ptr_eq(&hovered.0, &window.0))
+        } else {
+            self.active_window
+                .borrow()
+                .as_ref()
+                .is_some_and(|active| Rc::ptr_eq(&active.0, &window.0))
+        };
+
+        if cursor_owner {
+            *self.active_cursor.lock() = style;
+        }
+    }
+
     pub(crate) fn set_hovered_window(&self, window: Option<TestWindow>) {
         let previous_window = self.hovered_window.borrow_mut().take();
         self.hovered_window.borrow_mut().clone_from(&window);
+        *self.active_cursor.lock() = window
+            .as_ref()
+            .map(|window| window.0.lock().cursor_style)
+            .unwrap_or(CursorStyle::Arrow);
 
         if let Some(previous_window) = previous_window {
             if let Some(window) = window.as_ref()
@@ -546,10 +572,6 @@ impl Platform for TestPlatform {
 
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<std::path::PathBuf> {
         unimplemented!()
-    }
-
-    fn set_cursor_style(&self, style: crate::CursorStyle) {
-        *self.active_cursor.lock() = style;
     }
 
     fn hide_cursor_until_mouse_moves(&self) {}

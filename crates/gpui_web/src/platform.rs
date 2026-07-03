@@ -5,7 +5,7 @@ use crate::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
 use open_gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DummyKeyboardMapper,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DummyKeyboardMapper,
     ForegroundExecutor, Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
     ThermalState, WindowAppearance, WindowParams,
@@ -171,7 +171,14 @@ impl Platform for WebPlatform {
             anyhow::anyhow!("WebGPU context not initialized. Was Platform::run() called?")
         })?;
 
-        let window = WebWindow::new(handle, params, context, self.browser_window.clone())?;
+        let window = WebWindow::new(
+            handle,
+            params,
+            context,
+            self.browser_window.clone(),
+            self.cursor_visible.clone(),
+            self.last_cursor_css.clone(),
+        )?;
         *self.active_window.borrow_mut() = Some(handle);
         Ok(Box::new(window))
     }
@@ -284,37 +291,6 @@ impl Platform for WebPlatform {
         ))
     }
 
-    fn set_cursor_style(&self, style: CursorStyle) {
-        let css_cursor = match style {
-            CursorStyle::Arrow => "default",
-            CursorStyle::IBeam => "text",
-            CursorStyle::Crosshair => "crosshair",
-            CursorStyle::ClosedHand => "grabbing",
-            CursorStyle::OpenHand => "grab",
-            CursorStyle::PointingHand => "pointer",
-            CursorStyle::ResizeLeft | CursorStyle::ResizeRight | CursorStyle::ResizeLeftRight => {
-                "ew-resize"
-            }
-            CursorStyle::ResizeUp | CursorStyle::ResizeDown | CursorStyle::ResizeUpDown => {
-                "ns-resize"
-            }
-            CursorStyle::ResizeUpLeftDownRight => "nesw-resize",
-            CursorStyle::ResizeUpRightDownLeft => "nwse-resize",
-            CursorStyle::ResizeColumn => "col-resize",
-            CursorStyle::ResizeRow => "row-resize",
-            CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
-            CursorStyle::OperationNotAllowed => "not-allowed",
-            CursorStyle::DragLink => "alias",
-            CursorStyle::DragCopy => "copy",
-            CursorStyle::ContextualMenu => "context-menu",
-        };
-
-        self.last_cursor_css.set(css_cursor);
-        if self.cursor_visible.get() {
-            set_body_cursor(&self.browser_window, css_cursor);
-        }
-    }
-
     fn hide_cursor_until_mouse_moves(&self) {
         if !self.cursor_visible.replace(false) {
             return;
@@ -425,7 +401,7 @@ fn cursor_restore_listeners(
     handles
 }
 
-fn set_body_cursor(browser_window: &web_sys::Window, css_cursor: &str) {
+pub(crate) fn set_body_cursor(browser_window: &web_sys::Window, css_cursor: &str) {
     if let Some(document) = browser_window.document()
         && let Some(body) = document.body()
         && let Err(error) = body.style().set_property("cursor", css_cursor)

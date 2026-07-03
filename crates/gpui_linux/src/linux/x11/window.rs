@@ -3,11 +3,11 @@ use x11rb::connection::RequestConnection;
 
 use crate::linux::X11ClientStatePtr;
 use open_gpui::{
-    AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
-    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, px,
+    AnyWindowHandle, Bounds, CursorStyle, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs,
+    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge,
+    ScaledPixels, Scene, Size, Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowDecorations, WindowKind, WindowParams, px,
 };
 use open_gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
@@ -1420,6 +1420,11 @@ impl PlatformWindow for X11Window {
         .map_or(Point::new(Pixels::ZERO, Pixels::ZERO), |reply| {
             point_from_x11_window_coords(reply.win_x, reply.win_y, scale_factor)
         })
+    }
+
+    fn set_cursor_style(&self, style: CursorStyle) {
+        let client = self.0.state.borrow().client.clone();
+        client.set_cursor_style_for_window(self.0.x_window, style);
     }
 
     fn modifiers(&self) -> Modifiers {
