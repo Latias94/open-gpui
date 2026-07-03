@@ -383,7 +383,8 @@ The Components-page command contracts also cover the `registry-dispatch` sample 
 `CommandCenter` shortcut/dispatch projection and the `provider-search` sample for
 `CommandProviderSource` refresh into a rendered `CommandIndexSnapshot`, including provider request
 id and query metadata. The command crate provider lifecycle tests cover center-issued request ids,
-bound responses, and stale async responses being ignored without mutating registry sources.
+bound responses, stale async responses being ignored without mutating registry sources, and the
+`CommandProviderRefreshController` query/loading/response/snapshot pipeline.
 Run the focused proof with:
 
 ```powershell

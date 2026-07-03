@@ -12,6 +12,7 @@ pub mod gpui;
 mod history;
 mod menu;
 mod provider;
+mod refresh;
 mod registry;
 mod scope;
 
@@ -31,6 +32,7 @@ pub use provider::{
     CommandProviderRequestId, CommandProviderResponse, CommandProviderSource,
     CommandProviderStaleResponse, CommandProviderState, CommandProviderStatus,
 };
+pub use refresh::{CommandProviderRefreshController, CommandProviderRefreshProjection};
 pub use registry::{
     CommandContribution, CommandDescriptor, CommandRegistry, CommandRegistryError,
     CommandRegistrySnapshot, CommandSourceId,

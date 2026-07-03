@@ -6,6 +6,12 @@ status: active
 
 # Log
 
+- 2026-07-03: Added `CommandProviderRefreshController` on
+  `feat/command-provider-refresh-controller`. The controller starts provider requests when the
+  query changes, optionally applies loading status, can refresh registered synchronous providers,
+  applies async responses for captured requests, returns stale outcomes without mutating sources,
+  and projects the current `CommandRegistrySnapshot`. The gallery `provider-search` sample now uses
+  the controller instead of manually stitching provider refresh and snapshot projection.
 - 2026-07-03: Added provider lifecycle request tracking on
   `feat/command-provider-lifecycle`. `CommandCenter` now issues per-provider
   `CommandProviderRequestId` values through `begin_provider_request` and synchronous

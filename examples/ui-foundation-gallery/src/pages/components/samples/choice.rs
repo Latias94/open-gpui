@@ -1,8 +1,8 @@
 use super::*;
 use open_gpui::{KeyBinding, Keymap, actions};
 use open_gpui_command::{
-    CommandCenter, CommandContribution, CommandDescriptor, CommandProviderResponse,
-    CommandProviderSource, CommandProviderStatus,
+    CommandCenter, CommandContribution, CommandDescriptor, CommandProviderRefreshController,
+    CommandProviderResponse, CommandProviderSource, CommandProviderStatus,
 };
 
 /// One switch sample in the gallery.
@@ -804,14 +804,19 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 6] {
             ))
         },
     );
-    let provider_status = provider_center
-        .refresh_provider("recent-provider", provider_query)
+    let mut provider_controller = CommandProviderRefreshController::new("recent-provider")
+        .with_loading_message("Searching provider commands");
+    let provider_projection = provider_controller
+        .refresh_provider(&mut provider_center, provider_query)
         .expect("gallery provider is registered")
         .expect("gallery provider response is valid");
-    let provider_snapshot = CommandIndexSnapshot::from_registry_snapshot(
-        &provider_center.search_snapshot(provider_query),
-    )
-    .mode(CommandIndexSnapshotMode::PreRankedFilter);
+    let provider_status = provider_projection
+        .provider_status()
+        .expect("gallery provider status is projected")
+        .clone();
+    let provider_snapshot =
+        CommandIndexSnapshot::from_registry_snapshot(provider_projection.snapshot())
+            .mode(CommandIndexSnapshotMode::PreRankedFilter);
 
     [
         command_sample_from_local(
