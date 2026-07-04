@@ -2,7 +2,9 @@ use open_gpui::{
     Bounds, Entity, MouseButton, Pixels, ScrollDelta, ScrollWheelEvent, VisualTestContext, point,
     px, size,
 };
-use open_gpui_command::CommandProviderState;
+use open_gpui_command::{
+    CommandKeyBindingPatchOperation, CommandKeyBindingPatchOutcome, CommandProviderState,
+};
 use open_gpui_ui_components::component_contract::{
     COMPONENT_API_INVENTORY, COMPONENT_CONTRACT_ROWS, PUBLIC_SURFACE_OWNER_MAP,
     SurfaceGalleryStatus, component_contract_family, component_contract_gallery_status,
@@ -10,16 +12,13 @@ use open_gpui_ui_components::component_contract::{
 use open_gpui_ui_components::{
     A11yLabelSource, A11yValueKind, AlertDialogIntent, AlertDialogOpenMode, BadgeVariant,
     ButtonVariant, ComboboxOpenMode, CommandIndexSnapshotMode, CommandKeyBindingEditorFilterMode,
-    CommandKeyBindingPatchOperation, CommandKeyBindingPatchOutcome, CommandOpenMode,
-    CommandSelectionMode, CommandStatusIntent, DialogOpenMode, FeedbackIntent, HoverCardOpenIntent,
-    HoverCardOpenMode, MenuItemKind, MenuOpenMode, OverlayResolvedState, PopoverOpenMode,
-    ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode, SheetCloseAffordance, SheetModalMode,
-    SheetOpenMode, SheetSide, TableCellEditor, TableCellValue, TableColumnFacets, TableColumnId,
-    TableColumnOrderChange, TableColumnRegion, TableExpansionMode, TableExpansionState,
-    TableGlobalFilterChange, TablePredicateFilterChange, TablePredicateFilterOperator,
-    TableRangeFilterChange, TableRowChildrenLoadState, TableRowId, TableRowRegion, TableStageMode,
-    TableTextFilterOperator, TextInputDisplayMode, ThemeMode, ToggleVariant, TooltipOpenIntent,
-    TreeKeyboardAction, VirtualizedListScrollStrategy,
+    CommandOpenMode, CommandSelectionMode, CommandStatusIntent, DialogOpenMode, FeedbackIntent,
+    HoverCardOpenIntent, HoverCardOpenMode, MenuItemKind, MenuOpenMode, OverlayResolvedState,
+    PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode, SheetCloseAffordance,
+    SheetModalMode, SheetOpenMode, SheetSide, TableColumnOrderChange, TableGlobalFilterChange,
+    TablePredicateFilterChange, TablePredicateFilterOperator, TableRangeFilterChange,
+    TextInputDisplayMode, ThemeMode, ToggleVariant, TooltipOpenIntent, TreeKeyboardAction,
+    VirtualizedListScrollStrategy,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state, init_text_input,
     },
@@ -28,13 +27,27 @@ use open_gpui_ui_core::{
     AccessibleAction, Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy,
     FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy, OverlayLayerKind,
     OverlayPlacementAlignment, OverlayPlacementSide, PanelAdaptiveClass, Role, Size,
-    TableColumnWidthPolicy, ThemeTokens, Toggled, semantic, ui_point, ui_px,
+    TableCellEditor, TableCellValue, TableColumnFacets, TableColumnId, TableColumnRegion,
+    TableColumnWidthPolicy, TableExpansionMode, TableExpansionState, TableRowChildrenLoadState,
+    TableRowId, TableRowRegion, TableStageMode, TableTextFilterOperator, ThemeTokens, Toggled,
+    semantic, ui_point, ui_px,
 };
 use open_gpui_ui_foundation_gallery::{
     DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, GalleryShell, GalleryShellSnapshot,
     StoryContract, StoryProbeOperation, foundation_snapshot, pages,
 };
 use std::time::Duration;
+
+open_gpui::actions!(foundation_gallery_shortcut_test, [DisplayShortcutCommand]);
+
+fn display_shortcut(keystrokes: &str) -> String {
+    open_gpui::KeyBinding::new(keystrokes, DisplayShortcutCommand, None)
+        .keystrokes()
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 fn redraw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| {

@@ -910,6 +910,7 @@ pub(crate) fn component_listbox_samples_section(
                     let sample_id = sample.id;
 
                     let debug_selector = sample.debug_selector();
+                    let state_debug_selector = format!("{debug_selector}:state");
 
                     let state = sample.state.clone();
 
@@ -981,7 +982,11 @@ pub(crate) fn component_listbox_samples_section(
                                 .child(sample.summary),
                         )
                         .child(listbox)
-                        .child(component_listbox_state_row(&state))
+                        .child(
+                            div()
+                                .debug_selector(move || state_debug_selector)
+                                .child(component_listbox_state_row(&state)),
+                        )
                 })),
         )
 }
@@ -1010,6 +1015,7 @@ pub(crate) fn component_select_samples_section(
                     let sample_id = sample.id;
 
                     let debug_selector = sample.debug_selector();
+                    let state_debug_selector = format!("{debug_selector}:state");
 
                     let state = sample.state.clone();
 
@@ -1100,7 +1106,11 @@ pub(crate) fn component_select_samples_section(
                                 .child(sample.summary),
                         )
                         .child(select)
-                        .child(component_select_state_row(&state))
+                        .child(
+                            div()
+                                .debug_selector(move || state_debug_selector)
+                                .child(component_select_state_row(&state)),
+                        )
                 })),
         )
 }
@@ -1129,6 +1139,7 @@ pub(crate) fn component_combobox_samples_section(
                     let sample_id = sample.id;
 
                     let debug_selector = sample.debug_selector();
+                    let state_debug_selector = format!("{debug_selector}:state");
 
                     let state = sample.state.clone();
 
@@ -1220,7 +1231,11 @@ pub(crate) fn component_combobox_samples_section(
                                 .child(sample.summary),
                         )
                         .child(combobox)
-                        .child(component_combobox_state_row(&state))
+                        .child(
+                            div()
+                                .debug_selector(move || state_debug_selector)
+                                .child(component_combobox_state_row(&state)),
+                        )
                 })),
         )
 }
@@ -1249,6 +1264,7 @@ pub(crate) fn component_command_samples_section(
                     let sample_id = sample.id;
 
                     let debug_selector = sample.debug_selector();
+                    let state_debug_selector = format!("{debug_selector}:state");
 
                     let state = sample.state.clone();
 
@@ -1362,7 +1378,11 @@ pub(crate) fn component_command_samples_section(
                                 .child(sample.summary),
                         )
                         .child(command)
-                        .child(component_command_state_row(&state))
+                        .child(
+                            div()
+                                .debug_selector(move || state_debug_selector)
+                                .child(component_command_state_row(&state)),
+                        )
                         .when(!keymap_resolutions.is_empty(), |this| {
                             this.child(component_command_keymap_resolution_rows(
                                 sample_id,

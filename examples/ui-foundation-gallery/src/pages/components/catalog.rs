@@ -441,7 +441,7 @@ impl ComponentCatalogEntry {
                 story_section_for_catalog_entry(&self),
                 self.catalog_selector(),
                 self.sample_selector,
-                None,
+                official_story_state_readout_selector(self.name),
                 component_story_probes(&self),
             )),
             ComponentCatalogStatus::StateContract => Some(StoryContract::component(
@@ -466,6 +466,16 @@ const fn contract_family_or(name: &'static str, fallback: &'static str) -> &'sta
     match component_contract_family(name) {
         Some(family) => family,
         None => fallback,
+    }
+}
+
+fn official_story_state_readout_selector(name: &'static str) -> Option<&'static str> {
+    match name {
+        "Listbox" => Some("gallery:component-listbox-sample:assignee-listbox:state"),
+        "Select" => Some("gallery:component-select-sample:priority-select:state"),
+        "Combobox" => Some("gallery:component-combobox-sample:framework-combobox:state"),
+        "Command" => Some("gallery:component-command-sample:ranked-search:state"),
+        _ => None,
     }
 }
 

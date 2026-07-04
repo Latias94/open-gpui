@@ -518,6 +518,72 @@ fn components_gallery_smoke_focused_command_samples_cover_depth_behaviors(
 }
 
 #[open_gpui::test]
+fn components_gallery_smoke_focused_choice_search_state_readouts_render(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+
+    for (name, sample_selector, state_readout_selector) in [
+        (
+            "Listbox",
+            "gallery:component-listbox-sample:assignee-listbox",
+            "gallery:component-listbox-sample:assignee-listbox:state",
+        ),
+        (
+            "Select",
+            "gallery:component-select-sample:priority-select",
+            "gallery:component-select-sample:priority-select:state",
+        ),
+        (
+            "Combobox",
+            "gallery:component-combobox-sample:framework-combobox",
+            "gallery:component-combobox-sample:framework-combobox:state",
+        ),
+        (
+            "Command",
+            "gallery:component-command-sample:ranked-search",
+            "gallery:component-command-sample:ranked-search:state",
+        ),
+    ] {
+        let entry = pages::components::COMPONENT_CATALOG
+            .iter()
+            .find(|entry| entry.name == name)
+            .unwrap_or_else(|| panic!("expected catalog entry `{name}`"));
+        let story = component_story_contract(name);
+
+        for operation in [
+            StoryProbeOperation::Open,
+            StoryProbeOperation::Select,
+            StoryProbeOperation::Focus,
+            StoryProbeOperation::ReadPublicPayload,
+        ] {
+            assert!(
+                story.has_operation(operation),
+                "expected focused choice/search story `{name}` to declare `{}`",
+                operation.as_str()
+            );
+        }
+
+        assert_eq!(
+            story.selectors().state_readout_selector(),
+            Some(state_readout_selector)
+        );
+
+        focus_components_section(&shell, cx, entry);
+        scroll_page_selector_into_view(&shell, cx, state_readout_selector);
+
+        assert!(
+            cx.debug_bounds(sample_selector).is_some(),
+            "expected focused choice/search story `{name}` to render sample `{sample_selector}`"
+        );
+        assert!(
+            cx.debug_bounds(state_readout_selector).is_some(),
+            "expected focused choice/search story `{name}` to render state readout `{state_readout_selector}`"
+        );
+    }
+}
+
+#[open_gpui::test]
 fn components_gallery_smoke_focused_mode_resets_page_on_family_change(
     cx: &mut open_gpui::TestAppContext,
 ) {

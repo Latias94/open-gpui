@@ -665,7 +665,7 @@ fn components_page_samples_expose_component_metadata() {
             .group_items(0)
             .next()
             .and_then(|item| item.shortcut()),
-        Some("ctrl-shift-P")
+        Some(display_shortcut("ctrl-shift-p").as_str())
     );
     assert_eq!(commands[5].id, "provider-search");
     assert_eq!(
@@ -710,7 +710,7 @@ fn components_page_samples_expose_component_metadata() {
             .group_items(0)
             .next()
             .and_then(|item| item.shortcut()),
-        Some("ctrl-alt-O")
+        Some(display_shortcut("ctrl-alt-o").as_str())
     );
     assert_eq!(commands[6].id, "diagnostics-empty");
     assert_eq!(
@@ -761,7 +761,7 @@ fn components_page_samples_expose_component_metadata() {
             .iter()
             .find(|item| item.value() == "workspace.open")
             .and_then(|item| item.shortcut()),
-        Some("ctrl-E")
+        Some(display_shortcut("ctrl-e").as_str())
     );
     assert_eq!(
         commands[7]
@@ -770,7 +770,7 @@ fn components_page_samples_expose_component_metadata() {
             .iter()
             .find(|item| item.value() == "editor.format")
             .and_then(|item| item.shortcut()),
-        Some("ctrl-shift-F")
+        Some(display_shortcut("ctrl-shift-f").as_str())
     );
     assert_eq!(commands[8].id, "keymap-resolution");
     assert_eq!(
@@ -897,14 +897,14 @@ fn components_page_samples_expose_component_metadata() {
             (
                 "gallery-defaults".to_string(),
                 "workspace.open".to_string(),
-                "ctrl-P".to_string(),
+                display_shortcut("ctrl-p"),
                 Some("Workspace".to_string()),
                 1,
             ),
             (
                 "gallery-plugin".to_string(),
                 "workspace.save".to_string(),
-                "ctrl-P".to_string(),
+                display_shortcut("ctrl-p"),
                 Some("Workspace".to_string()),
                 1,
             ),
@@ -2200,6 +2200,101 @@ fn gallery_story_contracts_cover_components_state_readouts_and_overlays() {
         dialog_story.selectors().surface_selector(),
         Some("dialog:overlay-dialog-demo:controlled-modal:surface")
     );
+}
+
+#[test]
+fn choice_search_story_contracts_expose_state_readouts_and_contract_rows() {
+    use std::collections::BTreeMap;
+
+    let contract_entries = COMPONENT_CONTRACT_ROWS
+        .iter()
+        .map(|entry| (entry.name, entry))
+        .collect::<BTreeMap<_, _>>();
+    let expected = [
+        (
+            "Listbox",
+            "choice",
+            "ListboxState",
+            "listbox",
+            "gallery:component-listbox-sample:assignee-listbox",
+            "gallery:component-listbox-sample:assignee-listbox:state",
+        ),
+        (
+            "Select",
+            "choice",
+            "SelectState",
+            "select",
+            "gallery:component-select-sample:priority-select",
+            "gallery:component-select-sample:priority-select:state",
+        ),
+        (
+            "Combobox",
+            "choice-search",
+            "ComboboxState",
+            "combobox",
+            "gallery:component-combobox-sample:framework-combobox",
+            "gallery:component-combobox-sample:framework-combobox:state",
+        ),
+        (
+            "Command",
+            "choice-search",
+            "CommandState",
+            "command",
+            "gallery:component-command-sample:ranked-search",
+            "gallery:component-command-sample:ranked-search:state",
+        ),
+    ];
+
+    for (name, family, state, section, sample_selector, state_readout_selector) in expected {
+        let story = component_story_contract(name);
+        assert_eq!(
+            story.kind(),
+            open_gpui_ui_foundation_gallery::StoryContractKind::Component
+        );
+        assert_eq!(story.family(), family);
+        assert_eq!(story.state(), Some(state));
+        assert_eq!(story.section_id(), Some(section));
+        assert_eq!(story.selectors().sample_selector(), Some(sample_selector));
+        assert_eq!(
+            story.selectors().state_readout_selector(),
+            Some(state_readout_selector)
+        );
+        assert_eq!(story.selectors().primary_selector(), Some(sample_selector));
+
+        for operation in [
+            StoryProbeOperation::Open,
+            StoryProbeOperation::Select,
+            StoryProbeOperation::Focus,
+            StoryProbeOperation::ReadPublicPayload,
+        ] {
+            assert!(
+                story.has_operation(operation),
+                "choice/search story `{name}` should declare `{}` probe support",
+                operation.as_str()
+            );
+        }
+
+        let entry = contract_entries
+            .get(name)
+            .unwrap_or_else(|| panic!("expected component contract row `{name}`"));
+        assert_eq!(entry.family, component_contract_family(name));
+        assert_eq!(
+            entry.gallery_status,
+            SurfaceGalleryStatus::OfficialComponent
+        );
+
+        let focused = pages::components::component_story_contracts_for_focus(
+            pages::components::ComponentFocusMode::Section(section),
+        );
+        assert_eq!(
+            focused
+                .iter()
+                .map(|focused_story| focused_story.owner_name())
+                .collect::<Vec<_>>(),
+            vec![name],
+            "focused `{section}` mode should enumerate only `{name}`"
+        );
+    }
 }
 
 #[test]

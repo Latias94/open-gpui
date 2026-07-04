@@ -833,8 +833,14 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     assert_eq!(registry.selected_value(), Some("workspace.open"));
     assert_eq!(registry.active_value(), Some("workspace.open"));
     assert_eq!(registry.groups()[0].label(), "Workspace");
-    assert_eq!(registry.items()[0].shortcut(), Some("ctrl-shift-P"));
-    assert_eq!(registry.items()[1].shortcut(), Some("ctrl-S"));
+    assert_eq!(
+        registry.items()[0].shortcut(),
+        Some(display_shortcut("ctrl-shift-p").as_str())
+    );
+    assert_eq!(
+        registry.items()[1].shortcut(),
+        Some(display_shortcut("ctrl-s").as_str())
+    );
     assert!(registry.loop_navigation());
     assert!(registry.group_navigation());
 
@@ -886,7 +892,7 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
             .group_items(0)
             .next()
             .and_then(|item| item.shortcut()),
-        Some("ctrl-alt-O")
+        Some(display_shortcut("ctrl-alt-o").as_str())
     );
 
     assert_eq!(commands[6].id, "diagnostics-empty");
@@ -947,7 +953,7 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
             .map(|item| (item.label().to_owned(), item.shortcut().map(str::to_owned))),
         Some((
             "Open Focused Editor".to_string(),
-            Some("ctrl-E".to_string())
+            Some(display_shortcut("ctrl-e"))
         ))
     );
     assert_eq!(
@@ -958,7 +964,7 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
             .map(|item| (item.label().to_owned(), item.shortcut().map(str::to_owned))),
         Some((
             "Format Focused Editor".to_string(),
-            Some("ctrl-shift-F".to_string())
+            Some(display_shortcut("ctrl-shift-f"))
         ))
     );
 
@@ -986,9 +992,12 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
         vec![
             (
                 "workspace.open".to_string(),
-                Some("ctrl-K ctrl-O".to_string())
+                Some(display_shortcut("ctrl-k ctrl-o"))
             ),
-            ("workspace.save".to_string(), Some("ctrl-S".to_string())),
+            (
+                "workspace.save".to_string(),
+                Some(display_shortcut("ctrl-s"))
+            ),
         ]
     );
     assert_eq!(commands[8].shortcut_diagnostics.len(), 1);
