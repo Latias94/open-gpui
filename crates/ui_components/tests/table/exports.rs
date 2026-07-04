@@ -1,71 +1,72 @@
 use super::*;
 
 #[test]
-fn table_public_exports_include_core_table_and_virtualizer_contracts() {
+fn table_public_exports_use_explicit_core_table_and_virtualizer_contracts() {
     use open_gpui_ui_components::{self as root, prelude};
+    use open_gpui_ui_core as ui_core;
 
-    let state: root::TableState =
-        root::TableState::new([root::TableRow::new("row-a").with_cell("name", "Alpha")])
-            .with_columns([root::TableColumn::new("name", "Name")]);
+    let state: ui_core::TableState =
+        ui_core::TableState::new([ui_core::TableRow::new("row-a").with_cell("name", "Alpha")])
+            .with_columns([ui_core::TableColumn::new("name", "Name")]);
     let table: root::Table = root::Table::new("root-table", "Root table", state.clone());
-    let _prelude_state: prelude::TableState = state;
+    let _prelude_state: ui_core::TableState = state;
     let _prelude_table: prelude::Table = prelude::Table::new(
         "prelude-table",
         "Prelude table",
-        root::TableState::new([root::TableRow::new("row-b").with_cell("name", "Beta")])
-            .with_columns([root::TableColumn::new("name", "Name")]),
+        ui_core::TableState::new([ui_core::TableRow::new("row-b").with_cell("name", "Beta")])
+            .with_columns([ui_core::TableColumn::new("name", "Name")]),
     );
-    let virtualizer: root::VirtualizerState =
-        root::VirtualizerState::new(4, ui_px(24.0)).with_overscan(2);
-    let root_state_readout: &root::TableState = table.state();
+    let virtualizer: ui_core::VirtualizerState =
+        ui_core::VirtualizerState::new(4, ui_px(24.0)).with_overscan(2);
+    let root_state_readout: &ui_core::TableState = table.state();
     let root_resolved_state = root_state_readout.resolve();
     assert_eq!(root_resolved_state.final_model().rows().len(), 1);
     let root_snapshot: root::TableBehaviorSnapshot =
         table.behavior_snapshot(UiPx::ZERO, ui_px(96.0));
     let _prelude_snapshot: prelude::TableBehaviorSnapshot = root_snapshot.clone();
     let _root_region_snapshot: root::TableColumnRegionSnapshot = root_snapshot.column_regions();
-    let _root_header_groups: &root::TableResolvedHeaderGroupRegions =
+    let _root_header_groups: &ui_core::TableResolvedHeaderGroupRegions =
         root_resolved_state.header_groups();
-    let _root_header_kind: root::TableResolvedHeaderKind =
+    let _root_header_kind: ui_core::TableResolvedHeaderKind =
         root_resolved_state.center_header_groups()[0].headers()[0].kind();
-    let _root_header_cell: &root::TableResolvedHeaderCell =
+    let _root_header_cell: &ui_core::TableResolvedHeaderCell =
         &root_resolved_state.center_header_groups()[0].headers()[0];
-    let _root_header_group: &root::TableResolvedHeaderGroup =
+    let _root_header_group: &ui_core::TableResolvedHeaderGroup =
         &root_resolved_state.center_header_groups()[0];
     let _root_header_summary: root::TableHeaderSummarySnapshot = root_snapshot.header_summary();
-    let root_group_id = root::TableColumnGroupId::new("identity");
+    let root_group_id = ui_core::TableColumnGroupId::new("identity");
     assert_eq!(root_group_id.as_str(), "identity");
-    let root_column_group = root::TableColumnGroup::new(
+    let root_column_group = ui_core::TableColumnGroup::new(
         root_group_id.clone(),
         "Identity",
-        [root::TableColumn::new("name", "Name")],
+        [ui_core::TableColumn::new("name", "Name")],
     )
-    .with_child(root::TableColumn::new("team", "Team"));
+    .with_child(ui_core::TableColumn::new("team", "Team"));
     let root_column_tree_state =
-        root::TableState::new([root::TableRow::new("row-a").with_cell("name", "Alpha")])
+        ui_core::TableState::new([ui_core::TableRow::new("row-a").with_cell("name", "Alpha")])
             .with_column_tree([root_column_group.clone()]);
-    let _root_column_node: &root::TableColumnNode = &root_column_tree_state.column_tree()[0];
-    let _root_column_group: root::TableColumnGroup = root_column_group;
-    let prelude_group = prelude::TableColumnGroup::new(
-        prelude::TableColumnGroupId::new("status-group"),
+    let _root_column_node: &ui_core::TableColumnNode = &root_column_tree_state.column_tree()[0];
+    let _root_column_group: ui_core::TableColumnGroup = root_column_group;
+    let prelude_group = ui_core::TableColumnGroup::new(
+        ui_core::TableColumnGroupId::new("status-group"),
         "Status",
-        [prelude::TableColumn::new("status", "Status")],
+        [ui_core::TableColumn::new("status", "Status")],
     );
     let prelude_state =
-        prelude::TableState::new([prelude::TableRow::new("row-c").with_cell("status", "Ready")])
-            .with_column_tree([prelude::TableColumnNode::from(prelude_group)]);
+        ui_core::TableState::new([ui_core::TableRow::new("row-c").with_cell("status", "Ready")])
+            .with_column_tree([ui_core::TableColumnNode::from(prelude_group)]);
     assert_eq!(prelude_state.columns()[0].id().as_str(), "status");
-    let root_pinned_state = root::TableState::new([root::TableRow::new("row-a")
+    let root_pinned_state = ui_core::TableState::new([ui_core::TableRow::new("row-a")
         .with_cell("name", "Alpha")
         .with_cell("team", "UI")
         .with_cell("status", "Ready")])
     .with_columns([
-        root::TableColumn::new("name", "Name"),
-        root::TableColumn::new("team", "Team"),
-        root::TableColumn::new("status", "Status"),
+        ui_core::TableColumn::new("name", "Name"),
+        ui_core::TableColumn::new("team", "Team"),
+        ui_core::TableColumn::new("status", "Status"),
     ])
     .with_column_pinning(
-        root::TableColumnPinning::new()
+        ui_core::TableColumnPinning::new()
             .pinned_left(["name"])
             .pinned_right(["status"]),
     );
@@ -77,48 +78,48 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _prelude_pinned_regions: prelude::TableColumnRegionSnapshot = root_pinned_regions;
     let _prelude_header_summary: prelude::TableHeaderSummarySnapshot = _root_header_summary;
     assert_eq!(root_pinned_snapshot.table_id(), "root-pinned-table");
-    let root_row_pinning: root::TableRowPinning = root::TableRowPinning::new()
+    let root_row_pinning: ui_core::TableRowPinning = ui_core::TableRowPinning::new()
         .pinned_top(["row-a"])
         .pinned_bottom(["row-b"]);
-    let _prelude_row_pinning: prelude::TableRowPinning = root_row_pinning.clone();
+    let _prelude_row_pinning: ui_core::TableRowPinning = root_row_pinning.clone();
     let _root_row_measure_mode: root::TableRowMeasureMode = root::TableRowMeasureMode::Measured;
     let _prelude_row_measure_mode: prelude::TableRowMeasureMode =
         prelude::TableRowMeasureMode::Fixed;
-    let _root_row_pinning_policy: root::TableRowPinningPolicy =
-        root::TableRowPinningPolicy::PageOnly;
-    let _prelude_row_pinning_policy: prelude::TableRowPinningPolicy =
-        prelude::TableRowPinningPolicy::KeepPinnedRows;
-    let _root_row_region: root::TableRowRegion = root::TableRowRegion::Top;
-    let _prelude_row_region: prelude::TableRowRegion = prelude::TableRowRegion::Bottom;
+    let _root_row_pinning_policy: ui_core::TableRowPinningPolicy =
+        ui_core::TableRowPinningPolicy::PageOnly;
+    let _prelude_row_pinning_policy: ui_core::TableRowPinningPolicy =
+        ui_core::TableRowPinningPolicy::KeepPinnedRows;
+    let _root_row_region: ui_core::TableRowRegion = ui_core::TableRowRegion::Top;
+    let _prelude_row_region: ui_core::TableRowRegion = ui_core::TableRowRegion::Bottom;
     let root_row_counts: root::TableRowCountSnapshot = root::Table::new(
         "root-row-pinning-table",
         "Root row pinning table",
-        root::TableState::new([
-            root::TableRow::new("row-a").with_cell("name", "Alpha"),
-            root::TableRow::new("row-b").with_cell("name", "Beta"),
+        ui_core::TableState::new([
+            ui_core::TableRow::new("row-a").with_cell("name", "Alpha"),
+            ui_core::TableRow::new("row-b").with_cell("name", "Beta"),
         ])
-        .with_columns([root::TableColumn::new("name", "Name")])
+        .with_columns([ui_core::TableColumn::new("name", "Name")])
         .with_row_pinning(root_row_pinning.clone()),
     )
     .behavior_snapshot(UiPx::ZERO, ui_px(96.0))
     .row_counts();
     let _prelude_row_counts: prelude::TableRowCountSnapshot = root_row_counts;
     assert_eq!(root_pinned_regions.center_columns(), 1);
-    let root_grid_viewport: root::GridViewport2D = root::resolve_grid_viewport_2d(
-        &root::VirtualizerState::new(2, ui_px(24.0))
+    let root_grid_viewport: ui_core::GridViewport2D = ui_core::resolve_grid_viewport_2d(
+        &ui_core::VirtualizerState::new(2, ui_px(24.0))
             .with_viewport_extent(ui_px(24.0))
             .with_scroll_offset(ui_px(12.0)),
-        &root::VirtualizerState::new(2, ui_px(24.0))
+        &ui_core::VirtualizerState::new(2, ui_px(24.0))
             .with_viewport_extent(ui_px(24.0))
             .with_scroll_offset(ui_px(12.0)),
     );
-    let _prelude_grid_viewport: prelude::GridViewport2D = root_grid_viewport.clone();
-    let _prelude_grid_viewport_via_prelude: prelude::GridViewport2D =
-        prelude::resolve_grid_viewport_2d(
-            &prelude::VirtualizerState::new(2, ui_px(24.0))
+    let _prelude_grid_viewport: ui_core::GridViewport2D = root_grid_viewport.clone();
+    let _prelude_grid_viewport_via_prelude: ui_core::GridViewport2D =
+        ui_core::resolve_grid_viewport_2d(
+            &ui_core::VirtualizerState::new(2, ui_px(24.0))
                 .with_viewport_extent(ui_px(24.0))
                 .with_scroll_offset(ui_px(12.0)),
-            &prelude::VirtualizerState::new(2, ui_px(24.0))
+            &ui_core::VirtualizerState::new(2, ui_px(24.0))
                 .with_viewport_extent(ui_px(24.0))
                 .with_scroll_offset(ui_px(12.0)),
         );
@@ -127,59 +128,59 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .sort_action()
         .expect("sortable exported table column should expose a header action")
         .clone();
-    let _root_cache_key: root::TableStateCacheKey = table.state().cache_key();
+    let _root_cache_key: ui_core::TableStateCacheKey = table.state().cache_key();
     let _prelude_header_action: prelude::TableHeaderAction = header_action;
-    let _prelude_cache_key: prelude::TableStateCacheKey = table.state().cache_key();
-    let _root_aggregation: root::TableAggregation =
-        root::TableAggregation::new("score", root::TableAggregateKind::Sum);
-    let _prelude_aggregation: prelude::TableAggregation =
-        prelude::TableAggregation::average("score");
-    let _root_expansion: root::TableExpansionState = root::TableExpansionState::all();
-    let _prelude_expansion: prelude::TableExpansionState =
-        prelude::TableExpansionState::rows([prelude::TableRowId::new("group:team=ui")]);
-    let _root_expansion_mode: root::TableExpansionMode = root::TableExpansionMode::Manual;
-    let _prelude_expansion_mode: prelude::TableExpansionMode = prelude::TableExpansionMode::Client;
-    let _root_stage_mode: root::TableStageMode = root::TableStageMode::Manual;
-    let _prelude_stage_mode: prelude::TableStageMode = prelude::TableStageMode::Client;
-    let root_filter = root::TableFilter::one_of("status", ["Ready", "Blocked"]);
-    let _prelude_filter: prelude::TableFilter = prelude::TableFilter::contains("team", "UI");
-    let _root_filter_kind: root::TableFilterKind = root_filter.kind().clone();
-    let _prelude_filter_kind: prelude::TableFilterKind =
-        prelude::TableFilterKind::Contains { query: "UI".into() };
-    let _root_text_filter_operator: root::TableTextFilterOperator =
-        root::TableTextFilterOperator::StartsWith;
-    let _prelude_text_filter_operator: prelude::TableTextFilterOperator =
-        prelude::TableTextFilterOperator::NotContains;
-    let _root_numeric_bound: root::TableNumericFilterBound =
-        root::TableNumericFilterBound::new(10.0)
+    let _prelude_cache_key: ui_core::TableStateCacheKey = table.state().cache_key();
+    let _root_aggregation: ui_core::TableAggregation =
+        ui_core::TableAggregation::new("score", ui_core::TableAggregateKind::Sum);
+    let _prelude_aggregation: ui_core::TableAggregation =
+        ui_core::TableAggregation::average("score");
+    let _root_expansion: ui_core::TableExpansionState = ui_core::TableExpansionState::all();
+    let _prelude_expansion: ui_core::TableExpansionState =
+        ui_core::TableExpansionState::rows([ui_core::TableRowId::new("group:team=ui")]);
+    let _root_expansion_mode: ui_core::TableExpansionMode = ui_core::TableExpansionMode::Manual;
+    let _prelude_expansion_mode: ui_core::TableExpansionMode = ui_core::TableExpansionMode::Client;
+    let _root_stage_mode: ui_core::TableStageMode = ui_core::TableStageMode::Manual;
+    let _prelude_stage_mode: ui_core::TableStageMode = ui_core::TableStageMode::Client;
+    let root_filter = ui_core::TableFilter::one_of("status", ["Ready", "Blocked"]);
+    let _prelude_filter: ui_core::TableFilter = ui_core::TableFilter::contains("team", "UI");
+    let _root_filter_kind: ui_core::TableFilterKind = root_filter.kind().clone();
+    let _prelude_filter_kind: ui_core::TableFilterKind =
+        ui_core::TableFilterKind::Contains { query: "UI".into() };
+    let _root_text_filter_operator: ui_core::TableTextFilterOperator =
+        ui_core::TableTextFilterOperator::StartsWith;
+    let _prelude_text_filter_operator: ui_core::TableTextFilterOperator =
+        ui_core::TableTextFilterOperator::NotContains;
+    let _root_numeric_bound: ui_core::TableNumericFilterBound =
+        ui_core::TableNumericFilterBound::new(10.0)
             .expect("finite numeric bounds should be constructible");
-    let _prelude_numeric_bound: prelude::TableNumericFilterBound =
-        prelude::TableNumericFilterBound::new(20.0)
+    let _prelude_numeric_bound: ui_core::TableNumericFilterBound =
+        ui_core::TableNumericFilterBound::new(20.0)
             .expect("finite numeric bounds should be constructible");
-    let _root_numeric_filter_operator: root::TableNumericFilterOperator =
-        root::TableNumericFilterOperator::GreaterThanOrEqual;
-    let _prelude_numeric_filter_operator: prelude::TableNumericFilterOperator =
-        prelude::TableNumericFilterOperator::LessThan;
-    let root_range_filter = root::TableFilter::number_range("score", Some(10.0), Some(20.0))
+    let _root_numeric_filter_operator: ui_core::TableNumericFilterOperator =
+        ui_core::TableNumericFilterOperator::GreaterThanOrEqual;
+    let _prelude_numeric_filter_operator: ui_core::TableNumericFilterOperator =
+        ui_core::TableNumericFilterOperator::LessThan;
+    let root_range_filter = ui_core::TableFilter::number_range("score", Some(10.0), Some(20.0))
         .expect("exported numeric range filter should construct");
     assert_eq!(
         root_range_filter.number_range_bounds(),
         Some((Some(10.0), Some(20.0)))
     );
-    let root_facet_value = root::TableFacetValueCount::new("Ready", 2);
-    let root_facets: root::TableColumnFacets =
-        root::TableColumnFacets::manual("status", 2).with_unique_values([root_facet_value]);
-    let _prelude_facets: prelude::TableColumnFacets = root_facets.clone();
-    let root_global_facets: root::TableGlobalFacetSummary =
-        root::TableGlobalFacetSummary::default();
-    let _prelude_global_facets: prelude::TableGlobalFacetSummary = root_global_facets.clone();
+    let root_facet_value = ui_core::TableFacetValueCount::new("Ready", 2);
+    let root_facets: ui_core::TableColumnFacets =
+        ui_core::TableColumnFacets::manual("status", 2).with_unique_values([root_facet_value]);
+    let _prelude_facets: ui_core::TableColumnFacets = root_facets.clone();
+    let root_global_facets: ui_core::TableGlobalFacetSummary =
+        ui_core::TableGlobalFacetSummary::default();
+    let _prelude_global_facets: ui_core::TableGlobalFacetSummary = root_global_facets.clone();
     let root_global_filter: root::TableGlobalFilter =
         root::TableGlobalFilter::new("root-global-filter", "Search").query("ready");
     let _root_global_filter_state: root::TableGlobalFilterState = root_global_filter.state();
     let _root_global_filter_change: root::TableGlobalFilterChange =
         root::TableGlobalFilterChange::new("ready");
     let root_predicate_operator: root::TablePredicateFilterOperator =
-        root::TablePredicateFilterOperator::text(root::TableTextFilterOperator::StartsWith);
+        root::TablePredicateFilterOperator::text(ui_core::TableTextFilterOperator::StartsWith);
     let root_predicate_filter: root::TablePredicateFilter =
         root::TablePredicateFilter::new("root-name-predicate", "Name", "name")
             .operator(root_predicate_operator)
@@ -202,7 +203,7 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         prelude::TableGlobalFilterChange::clear();
     let prelude_predicate_operator: prelude::TablePredicateFilterOperator =
         prelude::TablePredicateFilterOperator::number(
-            prelude::TableNumericFilterOperator::GreaterThan,
+            ui_core::TableNumericFilterOperator::GreaterThan,
         );
     let prelude_predicate_filter: prelude::TablePredicateFilter =
         prelude::TablePredicateFilter::new("prelude-score-predicate", "Score", "score")
@@ -242,10 +243,10 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let root_column_visibility: root::TableColumnVisibility =
         root::TableColumnVisibility::new("root-columns", "Columns")
             .columns([
-                root::TableColumn::new("name", "Name").with_hideable(false),
-                root::TableColumn::new("status", "Status"),
+                ui_core::TableColumn::new("name", "Name").with_hideable(false),
+                ui_core::TableColumn::new("status", "Status"),
             ])
-            .visibility(root::TableColumnVisibilityOverrides::new().hide("status"));
+            .visibility(ui_core::TableColumnVisibilityOverrides::new().hide("status"));
     let root_column_visibility_state: root::TableColumnVisibilityState =
         root_column_visibility.state();
     let _root_column_visibility_item: Option<&root::TableColumnVisibilityItemState> =
@@ -255,13 +256,17 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _root_column_visibility_action: root::TableColumnVisibilityAction =
         root_column_visibility_change.action();
     let root_column_order_change: root::TableColumnOrderChange =
-        root::TableColumnOrderChange::move_before("score", "team", root::TableColumnRegion::Center);
+        root::TableColumnOrderChange::move_before(
+            "score",
+            "team",
+            ui_core::TableColumnRegion::Center,
+        );
     let _root_column_order_placement: root::TableColumnOrderPlacement =
         root_column_order_change.placement();
     let prelude_column_visibility: prelude::TableColumnVisibility =
         prelude::TableColumnVisibility::new("prelude-columns", "Columns")
-            .columns([prelude::TableColumn::new("status", "Status")])
-            .default_visibility(prelude::TableColumnVisibilityOverrides::new().hide("status"));
+            .columns([ui_core::TableColumn::new("status", "Status")])
+            .default_visibility(ui_core::TableColumnVisibilityOverrides::new().hide("status"));
     let prelude_column_visibility_state: prelude::TableColumnVisibilityState =
         prelude_column_visibility.state();
     let _prelude_column_visibility_item: Option<&prelude::TableColumnVisibilityItemState> =
@@ -273,9 +278,10 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _prelude_column_order_change: prelude::TableColumnOrderChange = root_column_order_change;
     let _prelude_column_order_placement: prelude::TableColumnOrderPlacement =
         prelude::TableColumnOrderPlacement::After;
-    let _root_facet_range: Option<root::TableFacetRange> = root::TableFacetRange::new(1.0, 2.0);
+    let _root_facet_range: Option<ui_core::TableFacetRange> =
+        ui_core::TableFacetRange::new(1.0, 2.0);
     let root_range_facets =
-        root::TableColumnFacets::manual("score", 2).with_numeric_range(1.0, 20.0);
+        ui_core::TableColumnFacets::manual("score", 2).with_numeric_range(1.0, 20.0);
     let root_range_filter: root::TableRangeFilter =
         root::TableRangeFilter::new("root-score-range", "Score", "score")
             .facets(root_range_facets.clone())
@@ -290,24 +296,24 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _prelude_range_filter_state: prelude::TableRangeFilterState = prelude_range_filter.state();
     let _prelude_range_change: prelude::TableRangeFilterChange =
         prelude::TableRangeFilterChange::clear("score");
-    let _prelude_facet_value: prelude::TableFacetValueCount =
-        prelude::TableFacetValueCount::new("Blocked", 1);
-    let _root_child_load_state: root::TableRowChildrenLoadState =
-        root::TableRowChildrenLoadState::loading("Loading children");
-    let _prelude_child_load_state: prelude::TableRowChildrenLoadState =
-        prelude::TableRowChildrenLoadState::failed("Load failed");
-    let _prelude_row_kind: prelude::TableResolvedRowKind = prelude::TableResolvedRowKind::Leaf;
-    let root_tree_state = root::TableState::new([root::TableRow::new("root")
+    let _prelude_facet_value: ui_core::TableFacetValueCount =
+        ui_core::TableFacetValueCount::new("Blocked", 1);
+    let _root_child_load_state: ui_core::TableRowChildrenLoadState =
+        ui_core::TableRowChildrenLoadState::loading("Loading children");
+    let _prelude_child_load_state: ui_core::TableRowChildrenLoadState =
+        ui_core::TableRowChildrenLoadState::failed("Load failed");
+    let _prelude_row_kind: ui_core::TableResolvedRowKind = ui_core::TableResolvedRowKind::Leaf;
+    let root_tree_state = ui_core::TableState::new([ui_core::TableRow::new("root")
         .with_cell("name", "Root")
-        .with_child(root::TableRow::new("child").with_cell("name", "Child"))])
-    .with_columns([root::TableColumn::new("name", "Name")])
+        .with_child(ui_core::TableRow::new("child").with_cell("name", "Child"))])
+    .with_columns([ui_core::TableColumn::new("name", "Name")])
     .with_all_rows_expanded();
-    let root_tree_row: root::TableTreeRow = root_tree_state.resolve().final_model().rows()[0]
+    let root_tree_row: ui_core::TableTreeRow = root_tree_state.resolve().final_model().rows()[0]
         .tree()
         .expect("tree source row should expose hierarchy metadata")
         .clone();
-    let _prelude_tree_row: prelude::TableTreeRow = root_tree_row;
-    let _resolved_kind: Option<&root::TableGroupRow> =
+    let _prelude_tree_row: ui_core::TableTreeRow = root_tree_row;
+    let _resolved_kind: Option<&ui_core::TableGroupRow> =
         table.state().resolve().final_model().rows()[0].group();
     let _root_table_modifiers: root::TableInputModifiers = root::TableInputModifiers::default();
     let _prelude_table_modifiers: prelude::TableInputModifiers =
@@ -322,50 +328,51 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         root::TableRowActivationKind::DoubleClick;
     let _prelude_activation_kind: prelude::TableRowActivationKind =
         prelude::TableRowActivationKind::Keyboard;
-    let _root_pinning: root::TableColumnPinning =
-        root::TableColumnPinning::new().pinned_left(["name"]);
-    let _root_width_policy: root::TableColumnWidthPolicy = root::TableColumnWidthPolicy::ContentFit;
-    let _prelude_width_policy: prelude::TableColumnWidthPolicy =
-        prelude::TableColumnWidthPolicy::Fixed;
-    let content_fit_column = root::TableColumn::new("status", "Status").with_content_fit();
+    let _root_pinning: ui_core::TableColumnPinning =
+        ui_core::TableColumnPinning::new().pinned_left(["name"]);
+    let _root_width_policy: ui_core::TableColumnWidthPolicy =
+        ui_core::TableColumnWidthPolicy::ContentFit;
+    let _prelude_width_policy: ui_core::TableColumnWidthPolicy =
+        ui_core::TableColumnWidthPolicy::Fixed;
+    let content_fit_column = ui_core::TableColumn::new("status", "Status").with_content_fit();
     assert!(content_fit_column.is_content_fit());
     assert_eq!(
         content_fit_column.width_policy(),
-        root::TableColumnWidthPolicy::ContentFit
+        ui_core::TableColumnWidthPolicy::ContentFit
     );
-    let root_visibility = root::TableColumnVisibilityOverrides::new()
+    let root_visibility = ui_core::TableColumnVisibilityOverrides::new()
         .hide("score")
         .show("status")
         .without("missing");
-    let _root_visibility: root::TableColumnVisibilityOverrides = root_visibility.clone();
-    let _prelude_visibility: prelude::TableColumnVisibilityOverrides =
-        prelude::TableColumnVisibilityOverrides::new().show("status");
+    let _root_visibility: ui_core::TableColumnVisibilityOverrides = root_visibility.clone();
+    let _prelude_visibility: ui_core::TableColumnVisibilityOverrides =
+        ui_core::TableColumnVisibilityOverrides::new().show("status");
     assert_eq!(
-        root_visibility.override_for(&root::TableColumnId::new("score")),
+        root_visibility.override_for(&ui_core::TableColumnId::new("score")),
         Some(false)
     );
-    let root_sizing = root::TableColumnSizing::new().with_width("name", ui_px(180.0));
-    let _root_sizing: root::TableColumnSizing = root_sizing.clone();
-    let _prelude_sizing: prelude::TableColumnSizing =
-        prelude::TableColumnSizing::new().with_width("name", ui_px(180.0));
-    let root_resize_state = root::TableColumnResizeState::begin(
+    let root_sizing = ui_core::TableColumnSizing::new().with_width("name", ui_px(180.0));
+    let _root_sizing: ui_core::TableColumnSizing = root_sizing.clone();
+    let _prelude_sizing: ui_core::TableColumnSizing =
+        ui_core::TableColumnSizing::new().with_width("name", ui_px(180.0));
+    let root_resize_state = ui_core::TableColumnResizeState::begin(
         "name",
         ui_px(12.0),
         ui_px(180.0),
         [("name", ui_px(180.0))],
     );
-    let root_resize_update: root::TableColumnResizeUpdate = root::drag_table_column_resize(
-        root::TableColumnResizeMode::OnChange,
-        root::TableColumnResizeDirection::Ltr,
+    let root_resize_update: ui_core::TableColumnResizeUpdate = ui_core::drag_table_column_resize(
+        ui_core::TableColumnResizeMode::OnChange,
+        ui_core::TableColumnResizeDirection::Ltr,
         &root_sizing,
         &root_resize_state,
         ui_px(24.0),
     );
-    let _prelude_resize_state: prelude::TableColumnResizeState = root_resize_update.state().clone();
-    let _prelude_resize_update: prelude::TableColumnResizeUpdate = root::end_table_column_resize(
-        prelude::TableColumnResizeMode::OnEnd,
-        prelude::TableColumnResizeDirection::Ltr,
-        &prelude::TableColumnSizing::new().with_width("name", ui_px(180.0)),
+    let _prelude_resize_state: ui_core::TableColumnResizeState = root_resize_update.state().clone();
+    let _prelude_resize_update: ui_core::TableColumnResizeUpdate = ui_core::end_table_column_resize(
+        ui_core::TableColumnResizeMode::OnEnd,
+        ui_core::TableColumnResizeDirection::Ltr,
+        &ui_core::TableColumnSizing::new().with_width("name", ui_px(180.0)),
         &root_resize_state,
         Some(ui_px(24.0)),
     );
@@ -378,27 +385,27 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
             .expect("resize update should commit in on-change mode"),
     );
     let _prelude_resize_change: prelude::TableColumnSizingChange = root_resize_change;
-    let _root_resolved_sizing: root::TableResolvedColumnSizing = table
+    let _root_resolved_sizing: ui_core::TableResolvedColumnSizing = table
         .state()
         .resolve()
         .visible_column_sizing()
-        .column(&root::TableColumnId::new("name"))
+        .column(&ui_core::TableColumnId::new("name"))
         .expect("resolved column sizing should be available")
         .clone();
-    let _prelude_resolved_sizing: prelude::TableResolvedColumnSizing =
+    let _prelude_resolved_sizing: ui_core::TableResolvedColumnSizing =
         _root_resolved_sizing.clone();
-    let _root_resolved_sizing_regions: root::TableResolvedColumnSizingRegions =
+    let _root_resolved_sizing_regions: ui_core::TableResolvedColumnSizingRegions =
         table.state().resolve().visible_column_sizing().clone();
-    let _prelude_resolved_sizing_regions: prelude::TableResolvedColumnSizingRegions =
+    let _prelude_resolved_sizing_regions: ui_core::TableResolvedColumnSizingRegions =
         _root_resolved_sizing_regions.clone();
-    let _root_default_width = root::TABLE_DEFAULT_COLUMN_WIDTH;
-    let _root_min_width = root::TABLE_MIN_COLUMN_WIDTH;
-    let _root_max_width = root::TABLE_MAX_COLUMN_WIDTH;
-    let _prelude_default_width = prelude::TABLE_DEFAULT_COLUMN_WIDTH;
-    let _prelude_min_width = prelude::TABLE_MIN_COLUMN_WIDTH;
-    let _prelude_max_width = prelude::TABLE_MAX_COLUMN_WIDTH;
-    let _prelude_region: prelude::TableColumnRegion = prelude::TableColumnRegion::Center;
-    let _prelude_regions: prelude::TableColumnRegions =
+    let _root_default_width = ui_core::TABLE_DEFAULT_COLUMN_WIDTH;
+    let _root_min_width = ui_core::TABLE_MIN_COLUMN_WIDTH;
+    let _root_max_width = ui_core::TABLE_MAX_COLUMN_WIDTH;
+    let _prelude_default_width = ui_core::TABLE_DEFAULT_COLUMN_WIDTH;
+    let _prelude_min_width = ui_core::TABLE_MIN_COLUMN_WIDTH;
+    let _prelude_max_width = ui_core::TABLE_MAX_COLUMN_WIDTH;
+    let _prelude_region: ui_core::TableColumnRegion = ui_core::TableColumnRegion::Center;
+    let _prelude_regions: ui_core::TableColumnRegions =
         table.state().resolve().visible_column_regions().clone();
 
     assert_eq!(root_snapshot.role(), Role::Table);

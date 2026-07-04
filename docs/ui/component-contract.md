@@ -321,7 +321,10 @@ helpers that remain public for concrete applications must be reachable through
 `init_text_input`, `focus_ring_shadow_with_theme`, the legacy `focus_ring_shadow` compatibility
 helper, accessibility mapping helpers, geometry conversion helpers, and GPUI overlay scheduling
 helpers. The crate root and prelude default interface are reserved for official components and
-renderer-neutral contracts.
+renderer-neutral contracts. Reusable command infrastructure stays under `open_gpui_command`;
+renderer-neutral table, virtualizer, and grid contracts stay under `open_gpui_ui_core`. Component
+examples may consume those owner-crate APIs explicitly, but `open_gpui_ui_components` should not
+re-export them as broad default-surface conveniences.
 
 The current foundation refactor makes these names shipped high-value component families:
 `Accordion`, `Collapsible`, `Slider`, `NumberInput`, `ToggleGroup`, `Link`, `Breadcrumb`, `Tag`,

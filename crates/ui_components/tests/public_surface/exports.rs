@@ -1,5 +1,8 @@
 use super::*;
 
+use open_gpui_command as command_core;
+use open_gpui_ui_core as ui_core;
+
 open_gpui::actions!(
     public_surface_command_actions,
     [RootOpen, RootSave, PreludeOpen, PreludeSave]
@@ -77,7 +80,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_toolbar = root::Toolbar::new("toolbar", "Editor");
     let root_listbox = root::Listbox::new("listbox", "Choices");
     let root_select = root::Select::new("select", "Choice");
-    let root_select_option = root::TableSelectOption::new("ready", "Ready");
+    let root_select_option = ui_core::TableSelectOption::new("ready", "Ready");
     let root_combobox = root::Combobox::new("combobox", "Search");
     let root_command = root::Command::new("command", "Commands");
     let root_command_status_item: root::CommandStatusItem =
@@ -89,28 +92,32 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             .with_group_navigation(true);
     assert!(!root_command_navigation.loop_navigation());
     assert!(root_command_navigation.group_navigation());
-    let root_core_command = root::CommandDescriptor::new("root.open", "Open").shortcut("Ctrl+O");
-    let mut root_command_registry = root::CommandRegistry::new("root-registry-v1");
+    let root_core_command =
+        command_core::CommandDescriptor::new("root.open", "Open").shortcut("Ctrl+O");
+    let mut root_command_registry = command_core::CommandRegistry::new("root-registry-v1");
     root_command_registry
         .register_contribution(
-            root::CommandContribution::new(root_core_command.clone()).source("root-workspace"),
+            command_core::CommandContribution::new(root_core_command.clone())
+                .source("root-workspace"),
         )
         .unwrap();
-    let root_registry_snapshot: root::CommandRegistrySnapshot = root_command_registry.snapshot();
-    let root_shortcut_diagnostics: Vec<root::CommandShortcutDiagnostic> =
-        root::GpuiCommandActionMap::new().shortcut_diagnostics_for_keymap(
+    let root_registry_snapshot: command_core::CommandRegistrySnapshot =
+        root_command_registry.snapshot();
+    let root_shortcut_diagnostics: Vec<command_core::CommandShortcutDiagnostic> =
+        command_core::GpuiCommandActionMap::new().shortcut_diagnostics_for_keymap(
             &root_registry_snapshot,
             &open_gpui::Keymap::default(),
         );
-    let _root_shortcut_diagnostic_kind: root::CommandShortcutDiagnosticKind =
+    let _root_shortcut_diagnostic_kind: command_core::CommandShortcutDiagnosticKind =
         root_shortcut_diagnostics[0].kind();
-    let _root_registry_duplicate: root::CommandRegistryError = root_command_registry
+    let _root_registry_duplicate: command_core::CommandRegistryError = root_command_registry
         .register(root_core_command.clone())
         .unwrap_err();
-    let mut root_command_center = root::CommandCenter::new("root-center-v1");
-    let root_context_stack: root::CommandContextStack = root::CommandContextStack::new()
-        .scope("root")
-        .key_context(open_gpui::KeyContext::parse("Root").unwrap());
+    let mut root_command_center = command_core::CommandCenter::new("root-center-v1");
+    let root_context_stack: command_core::CommandContextStack =
+        command_core::CommandContextStack::new()
+            .scope("root")
+            .key_context(open_gpui::KeyContext::parse("Root").unwrap());
     root_command_center.set_context_stack(root_context_stack);
     assert_eq!(root_command_center.active_scopes()[0].as_str(), "root");
     assert_eq!(
@@ -119,109 +126,119 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             .map(|entry| entry.key.as_ref()),
         Some("Root")
     );
-    let root_command_source: root::CommandSourceHandle = root_command_center
+    let root_command_source: command_core::CommandSourceHandle = root_command_center
         .register_source(
             "root",
             "root-source",
-            [root::CommandContribution::new(root_core_command.clone())],
+            [command_core::CommandContribution::new(
+                root_core_command.clone(),
+            )],
         )
         .unwrap();
-    let _root_command_source_registration: root::CommandSourceRegistration =
+    let _root_command_source_registration: command_core::CommandSourceRegistration =
         root_command_source.clone();
     root_command_center
         .register_action("root.open", RootOpen)
         .register_action("root.save", RootSave);
-    let root_key_binding = root::CommandKeyBinding::new("root.open", "ctrl-o").context("Root");
-    let mut root_key_binding_registry = root::CommandKeyBindingRegistry::new();
-    let root_key_binding_handle: root::CommandKeyBindingHandle = root_key_binding_registry
+    let root_key_binding =
+        command_core::CommandKeyBinding::new("root.open", "ctrl-o").context("Root");
+    let mut root_key_binding_registry = command_core::CommandKeyBindingRegistry::new();
+    let root_key_binding_handle: command_core::CommandKeyBindingHandle = root_key_binding_registry
         .register(
             "root-shortcuts",
             [
                 root_key_binding,
-                root::CommandKeyBinding::new("root.save", "ctrl-o").context("Root"),
-                root::CommandKeyBinding::new("root.missing", "ctrl-m"),
+                command_core::CommandKeyBinding::new("root.save", "ctrl-o").context("Root"),
+                command_core::CommandKeyBinding::new("root.missing", "ctrl-m"),
             ],
         );
-    let root_key_binding_entry: &root::CommandKeyBindingEntry =
+    let root_key_binding_entry: &command_core::CommandKeyBindingEntry =
         &root_key_binding_registry.entries()[0];
     assert_eq!(root_key_binding_entry.binding().command_id(), "root.open");
     assert_eq!(
         root_key_binding_handle.source_id().as_str(),
         "root-shortcuts"
     );
-    let root_key_binding_projection: root::CommandKeyBindingProjection =
+    let root_key_binding_projection: command_core::CommandKeyBindingProjection =
         root_key_binding_registry.project(root_command_center.actions());
-    let root_key_binding_conflict: &root::CommandKeyBindingConflict =
+    let root_key_binding_conflict: &command_core::CommandKeyBindingConflict =
         &root_key_binding_projection.conflicts()[0];
-    let root_key_binding_conflict_entry: &root::CommandKeyBindingConflictEntry =
+    let root_key_binding_conflict_entry: &command_core::CommandKeyBindingConflictEntry =
         &root_key_binding_conflict.entries()[0];
     assert_eq!(root_key_binding_conflict_entry.command_id(), "root.open");
-    let root_projected_entry: &root::CommandKeyBindingProjectedEntry =
+    let root_projected_entry: &command_core::CommandKeyBindingProjectedEntry =
         &root_key_binding_projection.projected_entries()[0];
     assert_eq!(root_projected_entry.command_id(), "root.open");
     assert_eq!(root_projected_entry.raw_keystrokes(), "ctrl-o");
-    let root_edit_target: root::CommandKeyBindingEditTarget = root_projected_entry.edit_target();
-    let root_key_binding_patch: root::CommandKeyBindingPatch =
-        root::CommandKeyBindingPatch::replace(
+    let root_edit_target: command_core::CommandKeyBindingEditTarget =
+        root_projected_entry.edit_target();
+    let root_key_binding_patch: command_core::CommandKeyBindingPatch =
+        command_core::CommandKeyBindingPatch::replace(
             root_edit_target.clone(),
-            root::CommandKeyBinding::new("root.open", "ctrl-shift-o").context("Root"),
+            command_core::CommandKeyBinding::new("root.open", "ctrl-shift-o").context("Root"),
         );
-    let _root_patch_operation: root::CommandKeyBindingPatchOperation =
+    let _root_patch_operation: command_core::CommandKeyBindingPatchOperation =
         root_key_binding_patch.operation();
-    let root_key_binding_patch_preview: root::CommandKeyBindingPatchPreview =
+    let root_key_binding_patch_preview: command_core::CommandKeyBindingPatchPreview =
         root_key_binding_registry.preview_patch(
             root_command_center.actions(),
             root_key_binding_patch.clone(),
         );
-    let _root_patch_outcome: root::CommandKeyBindingPatchOutcome =
+    let _root_patch_outcome: command_core::CommandKeyBindingPatchOutcome =
         root_key_binding_patch_preview.outcome();
     let mut root_keymap = open_gpui::Keymap::default();
-    let root_key_binding_report: root::CommandKeyBindingInstallReport = root_key_binding_registry
-        .install_into_keymap(root_command_center.actions(), &mut root_keymap);
+    let root_key_binding_report: command_core::CommandKeyBindingInstallReport =
+        root_key_binding_registry
+            .install_into_keymap(root_command_center.actions(), &mut root_keymap);
     assert_eq!(root_key_binding_report.installed_count(), 2);
-    let _root_key_sequence = root::parse_command_key_sequence("ctrl-o").unwrap();
-    let root_keymap_resolution: root::CommandKeymapResolution = root_command_center
+    let _root_key_sequence = command_core::parse_command_key_sequence("ctrl-o").unwrap();
+    let root_keymap_resolution: command_core::CommandKeymapResolution = root_command_center
         .resolve_key_sequence_for_keymap("ctrl-o", &root_keymap)
         .unwrap();
-    let root_keymap_command: &root::CommandKeymapResolvedCommand = root_keymap_resolution
+    let root_keymap_command: &command_core::CommandKeymapResolvedCommand = root_keymap_resolution
         .primary_dispatchable_command()
         .unwrap();
-    let _root_keymap_command_state: &root::CommandKeymapCommandState = root_keymap_command.state();
-    let _root_key_binding_diagnostic: &root::CommandKeyBindingDiagnostic =
+    let _root_keymap_command_state: &command_core::CommandKeymapCommandState =
+        root_keymap_command.state();
+    let _root_key_binding_diagnostic: &command_core::CommandKeyBindingDiagnostic =
         &root_key_binding_projection.diagnostics()[0];
-    let _root_key_binding_diagnostic_kind: root::CommandKeyBindingDiagnosticKind =
+    let _root_key_binding_diagnostic_kind: command_core::CommandKeyBindingDiagnosticKind =
         _root_key_binding_diagnostic.kind();
-    fn root_provider_fn(_: &root::CommandProviderRequest) -> root::CommandProviderResponse {
-        root::CommandProviderResponse::ready()
+    fn root_provider_fn(
+        _: &command_core::CommandProviderRequest,
+    ) -> command_core::CommandProviderResponse {
+        command_core::CommandProviderResponse::ready()
     }
-    fn assert_root_provider<T: root::CommandProvider>(_: &T) {}
-    let _root_provider_id = root::CommandProviderId::new("root-provider");
+    fn assert_root_provider<T: command_core::CommandProvider>(_: &T) {}
+    let _root_provider_id = command_core::CommandProviderId::new("root-provider");
     let _root_manual_provider_request =
-        root::CommandProviderRequest::new("open").active_scopes(["root"]);
-    let _root_provider_request_id = root::CommandProviderRequestId::new(1);
+        command_core::CommandProviderRequest::new("open").active_scopes(["root"]);
+    let _root_provider_request_id = command_core::CommandProviderRequestId::new(1);
     let root_provider_request = root_command_center.begin_provider_request("root-provider", "open");
-    let root_provider_response =
-        root::CommandProviderResponse::loading("Loading").source(root::CommandProviderSource::new(
+    let root_provider_response = command_core::CommandProviderResponse::loading("Loading").source(
+        command_core::CommandProviderSource::new(
             "root",
             "root-provider-source",
-            [root::CommandContribution::new(
-                root::CommandDescriptor::new("root.provider", "Provider"),
+            [command_core::CommandContribution::new(
+                command_core::CommandDescriptor::new("root.provider", "Provider"),
             )],
-        ));
-    let root_provider_outcome: root::CommandProviderApplyOutcome = root_command_center
+        ),
+    );
+    let root_provider_outcome: command_core::CommandProviderApplyOutcome = root_command_center
         .apply_provider_response_for_request(
             "root-provider",
             &root_provider_request,
             root_provider_response,
         )
         .unwrap();
-    let _root_provider_stale: Option<&root::CommandProviderStaleResponse> =
+    let _root_provider_stale: Option<&command_core::CommandProviderStaleResponse> =
         root_provider_outcome.stale_response();
-    let _root_provider_status: &root::CommandProviderStatus =
+    let _root_provider_status: &command_core::CommandProviderStatus =
         root_provider_outcome.status().unwrap();
-    let root_provider_controller = root::CommandProviderRefreshController::new("root-provider")
-        .with_loading_message("Loading");
-    let root_provider_projection: root::CommandProviderRefreshProjection =
+    let root_provider_controller =
+        command_core::CommandProviderRefreshController::new("root-provider")
+            .with_loading_message("Loading");
+    let root_provider_projection: command_core::CommandProviderRefreshProjection =
         root_provider_controller.snapshot(&root_command_center);
     let root_provider_palette_projection: root::CommandProviderPaletteProjection =
         root::CommandProviderPaletteProjection::from_refresh_projection(&root_provider_projection);
@@ -234,7 +251,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             "open",
             &open_gpui::Keymap::default(),
         );
-    let _root_palette_projection_diagnostics: &[root::CommandShortcutDiagnostic] =
+    let _root_palette_projection_diagnostics: &[command_core::CommandShortcutDiagnostic] =
         root_palette_projection.shortcut_diagnostics();
     let _root_palette_projection_status_items: &[root::CommandStatusItem] =
         root_palette_projection.status_items();
@@ -254,9 +271,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_palette_preflight: root::CommandPaletteKeymapPreflight = root_palette_controller
         .preflight_key_sequence_for_keymap(&root_command_center, "ctrl-o", &root_keymap)
         .unwrap();
-    let _root_palette_preflight_resolution: &root::CommandKeymapResolution =
+    let _root_palette_preflight_resolution: &command_core::CommandKeymapResolution =
         root_palette_preflight.resolution();
-    let _root_palette_preflight_command: Option<&root::CommandKeymapResolvedCommand> =
+    let _root_palette_preflight_command: Option<&command_core::CommandKeymapResolvedCommand> =
         root_palette_preflight.primary_dispatchable_command();
     let root_shortcut_inspector: root::CommandShortcutInspectorState =
         root::CommandShortcutInspectorState::from_preflight(&root_palette_preflight);
@@ -283,25 +300,26 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let _root_pending_provider_request: root::CommandPalettePendingProviderRequest =
         root::CommandPalettePendingProviderRequest::new(
             "root-provider",
-            root::CommandProviderRequest::new("open"),
+            command_core::CommandProviderRequest::new("open"),
         );
     let root_pending_provider_requests: &[root::CommandPalettePendingProviderRequest] =
         root_palette_update.pending_provider_requests();
     if let Some(pending) = root_palette_update.pending_provider_request("root-provider") {
-        let _root_pending_provider_id: &root::CommandProviderId = pending.provider_id();
-        let _root_pending_request: &root::CommandProviderRequest = pending.request();
+        let _root_pending_provider_id: &command_core::CommandProviderId = pending.provider_id();
+        let _root_pending_request: &command_core::CommandProviderRequest = pending.request();
     }
     assert_eq!(root_pending_provider_requests.len(), 1);
-    let _root_provider_state = root::CommandProviderState::Ready;
+    let _root_provider_state = command_core::CommandProviderState::Ready;
     assert_root_provider(
-        &(root_provider_fn as fn(&root::CommandProviderRequest) -> root::CommandProviderResponse),
+        &(root_provider_fn
+            as fn(&command_core::CommandProviderRequest) -> command_core::CommandProviderResponse),
     );
-    let root_provider_handle: root::CommandProviderHandle =
+    let root_provider_handle: command_core::CommandProviderHandle =
         root_command_center.register_provider("root-provider-callback", root_provider_fn);
-    let _root_provider_registration: root::CommandProviderRegistration =
+    let _root_provider_registration: command_core::CommandProviderRegistration =
         root_provider_handle.clone();
-    let _root_command_actions = root::GpuiCommandActionMap::new();
-    let _root_command_outcome = root::CommandDispatchOutcome::MissingAction;
+    let _root_command_actions = command_core::GpuiCommandActionMap::new();
+    let _root_command_outcome = command_core::CommandDispatchOutcome::MissingAction;
     let root_command_items = vec![root::CommandItem::new("open", "Open")];
     let root_command_snapshot = root::CommandIndexSnapshot::new("root-v1")
         .mode(root::CommandIndexSnapshotMode::PreRankedFilter)
@@ -364,7 +382,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root::TableToolbar::new("table-toolbar", "Filters").summary("2 rows visible");
     let root_faceted_filter = root::TableFacetedFilter::new("status-filter", "Status", "status");
     let root_column_visibility = root::TableColumnVisibility::new("column-visibility", "Columns")
-        .columns([root::TableColumn::new("status", "Status")]);
+        .columns([ui_core::TableColumn::new("status", "Status")]);
     let root_avatar = root::Avatar::new("avatar", "Ada Lovelace");
     let root_separator = root::Separator::new("separator");
     let root_kbd = root::Kbd::new("kbd", "Ctrl+K");
@@ -403,7 +421,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_toolbar = prelude::Toolbar::new("toolbar", "Editor");
     let prelude_listbox = prelude::Listbox::new("listbox", "Choices");
     let prelude_select = prelude::Select::new("select", "Choice");
-    let prelude_select_option = prelude::TableSelectOption::new("blocked", "Blocked");
+    let prelude_select_option = ui_core::TableSelectOption::new("blocked", "Blocked");
     let prelude_combobox = prelude::Combobox::new("combobox", "Search");
     let prelude_command = prelude::Command::new("command", "Commands");
     let prelude_command_status_item: prelude::CommandStatusItem =
@@ -417,25 +435,26 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     assert!(!prelude_command_navigation.loop_navigation());
     assert!(prelude_command_navigation.group_navigation());
     let prelude_core_command =
-        prelude::CommandDescriptor::new("prelude.open", "Open").shortcut("Ctrl+O");
-    let prelude_registry_snapshot = prelude::CommandRegistrySnapshot::new(
+        command_core::CommandDescriptor::new("prelude.open", "Open").shortcut("Ctrl+O");
+    let prelude_registry_snapshot = command_core::CommandRegistrySnapshot::new(
         "prelude-registry-v1",
         [
-            prelude::CommandContribution::new(prelude_core_command.clone())
+            command_core::CommandContribution::new(prelude_core_command.clone())
                 .source("prelude-workspace"),
         ],
     );
-    let prelude_shortcut_diagnostics: Vec<prelude::CommandShortcutDiagnostic> =
-        prelude::GpuiCommandActionMap::new().shortcut_diagnostics_for_keymap(
+    let prelude_shortcut_diagnostics: Vec<command_core::CommandShortcutDiagnostic> =
+        command_core::GpuiCommandActionMap::new().shortcut_diagnostics_for_keymap(
             &prelude_registry_snapshot,
             &open_gpui::Keymap::default(),
         );
-    let _prelude_shortcut_diagnostic_kind: prelude::CommandShortcutDiagnosticKind =
+    let _prelude_shortcut_diagnostic_kind: command_core::CommandShortcutDiagnosticKind =
         prelude_shortcut_diagnostics[0].kind();
-    let mut prelude_command_center = prelude::CommandCenter::new("prelude-center-v1");
-    let prelude_context_stack: prelude::CommandContextStack = prelude::CommandContextStack::new()
-        .scope("prelude")
-        .key_context(open_gpui::KeyContext::parse("Prelude").unwrap());
+    let mut prelude_command_center = command_core::CommandCenter::new("prelude-center-v1");
+    let prelude_context_stack: command_core::CommandContextStack =
+        command_core::CommandContextStack::new()
+            .scope("prelude")
+            .key_context(open_gpui::KeyContext::parse("Prelude").unwrap());
     prelude_command_center.set_context_stack(prelude_context_stack);
     assert_eq!(
         prelude_command_center.active_scopes()[0].as_str(),
@@ -447,33 +466,33 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             .map(|entry| entry.key.as_ref()),
         Some("Prelude")
     );
-    let prelude_command_source: prelude::CommandSourceHandle = prelude_command_center
+    let prelude_command_source: command_core::CommandSourceHandle = prelude_command_center
         .register_source(
             "prelude",
             "prelude-source",
-            [prelude::CommandContribution::new(
+            [command_core::CommandContribution::new(
                 prelude_core_command.clone(),
             )],
         )
         .unwrap();
-    let _prelude_command_source_registration: prelude::CommandSourceRegistration =
+    let _prelude_command_source_registration: command_core::CommandSourceRegistration =
         prelude_command_source.clone();
     prelude_command_center
         .register_action("prelude.open", PreludeOpen)
         .register_action("prelude.save", PreludeSave);
     let prelude_key_binding =
-        prelude::CommandKeyBinding::new("prelude.open", "ctrl-o").context("Prelude");
-    let mut prelude_key_binding_registry = prelude::CommandKeyBindingRegistry::new();
-    let prelude_key_binding_handle: prelude::CommandKeyBindingHandle = prelude_key_binding_registry
-        .register(
+        command_core::CommandKeyBinding::new("prelude.open", "ctrl-o").context("Prelude");
+    let mut prelude_key_binding_registry = command_core::CommandKeyBindingRegistry::new();
+    let prelude_key_binding_handle: command_core::CommandKeyBindingHandle =
+        prelude_key_binding_registry.register(
             "prelude-shortcuts",
             [
                 prelude_key_binding,
-                prelude::CommandKeyBinding::new("prelude.save", "ctrl-o").context("Prelude"),
-                prelude::CommandKeyBinding::new("prelude.missing", "ctrl-m"),
+                command_core::CommandKeyBinding::new("prelude.save", "ctrl-o").context("Prelude"),
+                command_core::CommandKeyBinding::new("prelude.missing", "ctrl-m"),
             ],
         );
-    let prelude_key_binding_entry: &prelude::CommandKeyBindingEntry =
+    let prelude_key_binding_entry: &command_core::CommandKeyBindingEntry =
         &prelude_key_binding_registry.entries()[0];
     assert_eq!(
         prelude_key_binding_entry.binding().command_id(),
@@ -483,90 +502,91 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_key_binding_handle.source_id().as_str(),
         "prelude-shortcuts"
     );
-    let prelude_key_binding_projection: prelude::CommandKeyBindingProjection =
+    let prelude_key_binding_projection: command_core::CommandKeyBindingProjection =
         prelude_key_binding_registry.project(prelude_command_center.actions());
-    let prelude_key_binding_conflict: &prelude::CommandKeyBindingConflict =
+    let prelude_key_binding_conflict: &command_core::CommandKeyBindingConflict =
         &prelude_key_binding_projection.conflicts()[0];
-    let prelude_key_binding_conflict_entry: &prelude::CommandKeyBindingConflictEntry =
+    let prelude_key_binding_conflict_entry: &command_core::CommandKeyBindingConflictEntry =
         &prelude_key_binding_conflict.entries()[0];
     assert_eq!(
         prelude_key_binding_conflict_entry.command_id(),
         "prelude.open"
     );
-    let prelude_projected_entry: &prelude::CommandKeyBindingProjectedEntry =
+    let prelude_projected_entry: &command_core::CommandKeyBindingProjectedEntry =
         &prelude_key_binding_projection.projected_entries()[0];
     assert_eq!(prelude_projected_entry.command_id(), "prelude.open");
     assert_eq!(prelude_projected_entry.raw_keystrokes(), "ctrl-o");
-    let prelude_edit_target: prelude::CommandKeyBindingEditTarget =
+    let prelude_edit_target: command_core::CommandKeyBindingEditTarget =
         prelude_projected_entry.edit_target();
-    let prelude_key_binding_patch: prelude::CommandKeyBindingPatch =
-        prelude::CommandKeyBindingPatch::replace(
+    let prelude_key_binding_patch: command_core::CommandKeyBindingPatch =
+        command_core::CommandKeyBindingPatch::replace(
             prelude_edit_target.clone(),
-            prelude::CommandKeyBinding::new("prelude.open", "ctrl-shift-o").context("Prelude"),
+            command_core::CommandKeyBinding::new("prelude.open", "ctrl-shift-o").context("Prelude"),
         );
-    let _prelude_patch_operation: prelude::CommandKeyBindingPatchOperation =
+    let _prelude_patch_operation: command_core::CommandKeyBindingPatchOperation =
         prelude_key_binding_patch.operation();
-    let prelude_key_binding_patch_preview: prelude::CommandKeyBindingPatchPreview =
+    let prelude_key_binding_patch_preview: command_core::CommandKeyBindingPatchPreview =
         prelude_key_binding_registry.preview_patch(
             prelude_command_center.actions(),
             prelude_key_binding_patch.clone(),
         );
-    let _prelude_patch_outcome: prelude::CommandKeyBindingPatchOutcome =
+    let _prelude_patch_outcome: command_core::CommandKeyBindingPatchOutcome =
         prelude_key_binding_patch_preview.outcome();
     let mut prelude_keymap = open_gpui::Keymap::default();
-    let prelude_key_binding_report: prelude::CommandKeyBindingInstallReport =
+    let prelude_key_binding_report: command_core::CommandKeyBindingInstallReport =
         prelude_key_binding_registry
             .install_into_keymap(prelude_command_center.actions(), &mut prelude_keymap);
     assert_eq!(prelude_key_binding_report.installed_count(), 2);
-    let _prelude_key_sequence = prelude::parse_command_key_sequence("ctrl-o").unwrap();
-    let prelude_keymap_resolution: prelude::CommandKeymapResolution = prelude_command_center
+    let _prelude_key_sequence = command_core::parse_command_key_sequence("ctrl-o").unwrap();
+    let prelude_keymap_resolution: command_core::CommandKeymapResolution = prelude_command_center
         .resolve_key_sequence_for_keymap("ctrl-o", &prelude_keymap)
         .unwrap();
-    let prelude_keymap_command: &prelude::CommandKeymapResolvedCommand = prelude_keymap_resolution
-        .primary_dispatchable_command()
-        .unwrap();
-    let _prelude_keymap_command_state: &prelude::CommandKeymapCommandState =
+    let prelude_keymap_command: &command_core::CommandKeymapResolvedCommand =
+        prelude_keymap_resolution
+            .primary_dispatchable_command()
+            .unwrap();
+    let _prelude_keymap_command_state: &command_core::CommandKeymapCommandState =
         prelude_keymap_command.state();
-    let prelude_key_binding_diagnostic: &prelude::CommandKeyBindingDiagnostic =
+    let prelude_key_binding_diagnostic: &command_core::CommandKeyBindingDiagnostic =
         &prelude_key_binding_projection.diagnostics()[0];
-    let _prelude_key_binding_diagnostic_kind: prelude::CommandKeyBindingDiagnosticKind =
+    let _prelude_key_binding_diagnostic_kind: command_core::CommandKeyBindingDiagnosticKind =
         prelude_key_binding_diagnostic.kind();
     fn prelude_provider_fn(
-        _: &prelude::CommandProviderRequest,
-    ) -> prelude::CommandProviderResponse {
-        prelude::CommandProviderResponse::ready()
+        _: &command_core::CommandProviderRequest,
+    ) -> command_core::CommandProviderResponse {
+        command_core::CommandProviderResponse::ready()
     }
-    fn assert_prelude_provider<T: prelude::CommandProvider>(_: &T) {}
-    let _prelude_provider_id = prelude::CommandProviderId::new("prelude-provider");
+    fn assert_prelude_provider<T: command_core::CommandProvider>(_: &T) {}
+    let _prelude_provider_id = command_core::CommandProviderId::new("prelude-provider");
     let _prelude_manual_provider_request =
-        prelude::CommandProviderRequest::new("open").active_scopes(["prelude"]);
-    let _prelude_provider_request_id = prelude::CommandProviderRequestId::new(1);
+        command_core::CommandProviderRequest::new("open").active_scopes(["prelude"]);
+    let _prelude_provider_request_id = command_core::CommandProviderRequestId::new(1);
     let prelude_provider_request =
         prelude_command_center.begin_provider_request("prelude-provider", "open");
-    let prelude_provider_response = prelude::CommandProviderResponse::failed("Unavailable").source(
-        prelude::CommandProviderSource::new(
+    let prelude_provider_response = command_core::CommandProviderResponse::failed("Unavailable")
+        .source(command_core::CommandProviderSource::new(
             "prelude",
             "prelude-provider-source",
-            [prelude::CommandContribution::new(
-                prelude::CommandDescriptor::new("prelude.provider", "Provider"),
+            [command_core::CommandContribution::new(
+                command_core::CommandDescriptor::new("prelude.provider", "Provider"),
             )],
-        ),
-    );
-    let prelude_provider_outcome: prelude::CommandProviderApplyOutcome = prelude_command_center
-        .apply_provider_response_for_request(
-            "prelude-provider",
-            &prelude_provider_request,
-            prelude_provider_response,
-        )
-        .unwrap();
-    let _prelude_provider_stale: Option<&prelude::CommandProviderStaleResponse> =
+        ));
+    let prelude_provider_outcome: command_core::CommandProviderApplyOutcome =
+        prelude_command_center
+            .apply_provider_response_for_request(
+                "prelude-provider",
+                &prelude_provider_request,
+                prelude_provider_response,
+            )
+            .unwrap();
+    let _prelude_provider_stale: Option<&command_core::CommandProviderStaleResponse> =
         prelude_provider_outcome.stale_response();
-    let _prelude_provider_status: &prelude::CommandProviderStatus =
+    let _prelude_provider_status: &command_core::CommandProviderStatus =
         prelude_provider_outcome.status().unwrap();
     let prelude_provider_controller =
-        prelude::CommandProviderRefreshController::new("prelude-provider")
+        command_core::CommandProviderRefreshController::new("prelude-provider")
             .with_loading_message("Loading");
-    let prelude_provider_projection: prelude::CommandProviderRefreshProjection =
+    let prelude_provider_projection: command_core::CommandProviderRefreshProjection =
         prelude_provider_controller.snapshot(&prelude_command_center);
     let prelude_provider_palette_projection: prelude::CommandProviderPaletteProjection =
         prelude::CommandProviderPaletteProjection::from_refresh_projection(
@@ -581,7 +601,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             "open",
             &open_gpui::Keymap::default(),
         );
-    let _prelude_palette_projection_diagnostics: &[prelude::CommandShortcutDiagnostic] =
+    let _prelude_palette_projection_diagnostics: &[command_core::CommandShortcutDiagnostic] =
         prelude_palette_projection.shortcut_diagnostics();
     let _prelude_palette_projection_status_items: &[prelude::CommandStatusItem] =
         prelude_palette_projection.status_items();
@@ -603,9 +623,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_palette_controller
             .preflight_key_sequence_for_keymap(&prelude_command_center, "ctrl-o", &prelude_keymap)
             .unwrap();
-    let _prelude_palette_preflight_resolution: &prelude::CommandKeymapResolution =
+    let _prelude_palette_preflight_resolution: &command_core::CommandKeymapResolution =
         prelude_palette_preflight.resolution();
-    let _prelude_palette_preflight_command: Option<&prelude::CommandKeymapResolvedCommand> =
+    let _prelude_palette_preflight_command: Option<&command_core::CommandKeymapResolvedCommand> =
         prelude_palette_preflight.primary_dispatchable_command();
     let prelude_shortcut_inspector: prelude::CommandShortcutInspectorState =
         prelude::CommandShortcutInspectorState::from_preflight(&prelude_palette_preflight);
@@ -632,26 +652,26 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let _prelude_pending_provider_request: prelude::CommandPalettePendingProviderRequest =
         prelude::CommandPalettePendingProviderRequest::new(
             "prelude-provider",
-            prelude::CommandProviderRequest::new("open"),
+            command_core::CommandProviderRequest::new("open"),
         );
     let prelude_pending_provider_requests: &[prelude::CommandPalettePendingProviderRequest] =
         prelude_palette_update.pending_provider_requests();
     if let Some(pending) = prelude_palette_update.pending_provider_request("prelude-provider") {
-        let _prelude_pending_provider_id: &prelude::CommandProviderId = pending.provider_id();
-        let _prelude_pending_request: &prelude::CommandProviderRequest = pending.request();
+        let _prelude_pending_provider_id: &command_core::CommandProviderId = pending.provider_id();
+        let _prelude_pending_request: &command_core::CommandProviderRequest = pending.request();
     }
     assert_eq!(prelude_pending_provider_requests.len(), 1);
-    let _prelude_provider_state = prelude::CommandProviderState::Loading;
+    let _prelude_provider_state = command_core::CommandProviderState::Loading;
     assert_prelude_provider(
         &(prelude_provider_fn
-            as fn(&prelude::CommandProviderRequest) -> prelude::CommandProviderResponse),
+            as fn(&command_core::CommandProviderRequest) -> command_core::CommandProviderResponse),
     );
-    let prelude_provider_handle: prelude::CommandProviderHandle =
+    let prelude_provider_handle: command_core::CommandProviderHandle =
         prelude_command_center.register_provider("prelude-provider-callback", prelude_provider_fn);
-    let _prelude_provider_registration: prelude::CommandProviderRegistration =
+    let _prelude_provider_registration: command_core::CommandProviderRegistration =
         prelude_provider_handle.clone();
-    let _prelude_command_actions = prelude::GpuiCommandActionMap::new();
-    let _prelude_command_outcome = prelude::CommandDispatchOutcome::MissingAction;
+    let _prelude_command_actions = command_core::GpuiCommandActionMap::new();
+    let _prelude_command_outcome = command_core::CommandDispatchOutcome::MissingAction;
     let prelude_command_items = vec![prelude::CommandItem::new("open", "Open")];
     let prelude_command_snapshot =
         prelude::CommandIndexSnapshot::from_registry_snapshot(&prelude_registry_snapshot)
@@ -720,7 +740,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude::TableFacetedFilter::new("status-filter", "Status", "status");
     let prelude_column_visibility =
         prelude::TableColumnVisibility::new("column-visibility", "Columns")
-            .columns([prelude::TableColumn::new("status", "Status")]);
+            .columns([ui_core::TableColumn::new("status", "Status")]);
     let prelude_avatar = prelude::Avatar::new("avatar", "Ada Lovelace");
     let prelude_separator = prelude::Separator::new("separator");
     let prelude_kbd = prelude::Kbd::new("kbd", "Ctrl+K");
