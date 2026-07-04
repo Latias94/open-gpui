@@ -1,6 +1,9 @@
 //! Scroll area component.
 
 use crate::geometry::gpui_px_from_ui;
+use crate::scroll_surface::{
+    ScrollSurfaceRuntime, scroll_surface_handle, should_reset_scroll_surface,
+};
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ElementId, IntoElement, ParentElement, RenderOnce, ScrollHandle, Styled,
@@ -169,12 +172,6 @@ impl ScrollAreaState {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-struct ScrollAreaRuntime {
-    reset_key: Option<String>,
-    scroll_handle: ScrollHandle,
-}
-
 /// A concrete GPUI scroll area viewport.
 #[derive(IntoElement)]
 pub struct ScrollArea {
@@ -276,24 +273,23 @@ impl RenderOnce for ScrollArea {
         let current_reset_key = state.reset_key().map(str::to_owned);
         let runtime = window.use_keyed_state(runtime_id, cx, {
             let current_reset_key = current_reset_key.clone();
-            |_, _| ScrollAreaRuntime {
-                reset_key: current_reset_key,
-                scroll_handle: ScrollHandle::new(),
-            }
+            |_, _| ScrollSurfaceRuntime::new(current_reset_key)
         });
-        let previous_reset_key = runtime.read(cx).reset_key.clone();
-        let scroll_handle = self
-            .scroll_handle
-            .clone()
-            .unwrap_or_else(|| runtime.read(cx).scroll_handle.clone());
+        let runtime_snapshot = runtime.read(cx).clone();
+        let previous_reset_key = runtime_snapshot.reset_key().map(str::to_owned);
+        let scroll_handle = scroll_surface_handle(&runtime_snapshot, self.scroll_handle.as_ref());
 
-        if state.should_reset_for_key_change(previous_reset_key.as_deref()) {
+        if should_reset_scroll_surface(
+            state.reset_policy() == ScrollResetPolicy::ResetOnKeyChange,
+            previous_reset_key.as_deref(),
+            state.reset_key(),
+        ) {
             scroll_handle.set_offset(point(px(0.0), px(0.0)));
         }
 
         if previous_reset_key.as_deref() != current_reset_key.as_deref() {
             runtime.update(cx, |runtime, _| {
-                runtime.reset_key = current_reset_key;
+                runtime.set_reset_key(current_reset_key);
             });
         }
 

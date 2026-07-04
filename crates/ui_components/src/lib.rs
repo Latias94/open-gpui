@@ -42,6 +42,7 @@ mod public_api;
 pub mod radio;
 pub mod roving_focus;
 pub mod scroll_area;
+mod scroll_surface;
 pub mod select;
 pub mod separator;
 pub mod sheet;
