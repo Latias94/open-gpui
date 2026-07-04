@@ -357,8 +357,9 @@ A component is official only when it satisfies the current-crate completion cont
 its source home is the `crates/ui_components/src/component_contract/` module family.
 `component_contract/mod.rs` is only the facade; `component_contract/types.rs` owns row types,
 `component_contract/rows.rs` is the row facade, `component_contract/rows/catalog.rs` owns canonical
-contract rows, `component_contract/projections.rs` owns query APIs, including derived overlay and
-recipe row queries, `component_contract/source_mapping.rs` owns source-owner projections,
+contract rows, `component_contract/projections.rs` owns the primary `component_contract_entry`
+lookup plus derived default-surface, gallery, official-component, overlay, and recipe row queries,
+`component_contract/source_mapping.rs` owns source-owner projections,
 `component_contract/surfaces.rs` owns adjacent public-surface rows, and
 `component_contract/api_inventory.rs` owns public API inventory and method baselines. That split
 keeps marker lists derived from the canonical rows instead of preserving a second fact source.

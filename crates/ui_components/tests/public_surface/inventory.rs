@@ -11,10 +11,12 @@ fn component_api_inventory_covers_official_gallery_catalog() {
     let contract_official_names = COMPONENT_API_INVENTORY
         .iter()
         .filter(|entry| {
-            matches!(
-                component_contract_gallery_status(entry.component),
-                SurfaceGalleryStatus::OfficialComponent | SurfaceGalleryStatus::OfficialOverlay
-            )
+            component_contract_entry(entry.component).is_some_and(|contract| {
+                matches!(
+                    contract.gallery_status,
+                    SurfaceGalleryStatus::OfficialComponent | SurfaceGalleryStatus::OfficialOverlay
+                )
+            })
         })
         .map(|entry| entry.component.to_string())
         .collect::<BTreeSet<_>>();
@@ -76,7 +78,7 @@ fn component_contract_rows_cover_inventory_and_adjacent_surfaces() {
 }
 
 #[test]
-fn component_contract_projection_functions_delegate_to_contract_rows() {
+fn component_contract_entry_returns_canonical_rows() {
     for entry in COMPONENT_CONTRACT_ROWS {
         let projected = component_contract_entry(entry.name)
             .unwrap_or_else(|| panic!("missing canonical contract row for `{}`", entry.name));
@@ -84,24 +86,6 @@ fn component_contract_projection_functions_delegate_to_contract_rows() {
             projected, entry,
             "{} projection should return the canonical contract row",
             entry.name
-        );
-        assert_eq!(component_contract_family(entry.name), entry.family);
-        assert_eq!(
-            component_contract_gallery_status(entry.name),
-            entry.gallery_status
-        );
-        assert_eq!(
-            component_contract_default_export(entry.name),
-            entry.default_export
-        );
-        assert_eq!(
-            component_contract_docs_status(entry.name),
-            Some(entry.docs_status)
-        );
-        assert_eq!(component_contract_docs_token(entry.name), entry.docs_token);
-        assert_eq!(
-            component_contract_source_home(entry.name),
-            Some(entry.source_home)
         );
         assert_eq!(component_source_inputs(entry.name), entry.source_inputs);
     }
@@ -162,7 +146,8 @@ fn component_contract_rows_are_split_by_responsibility() {
     assert!(inventory.contains("COMPONENT_API_INVENTORY"));
     assert!(inventory.contains("component_public_methods"));
     let projections = read_source_file(&contract_dir.join("projections.rs"));
-    assert!(projections.contains("component_contract_gallery_status"));
+    assert!(projections.contains("gallery_surface_rows"));
+    assert!(projections.contains("official_component_rows"));
     let source_mapping = read_source_file(&contract_dir.join("source_mapping.rs"));
     assert!(source_mapping.contains("component_source_inputs"));
     let evidence = read_source_file(&contract_dir.join("evidence.rs"));
@@ -188,6 +173,45 @@ fn component_contract_queries_derive_overlay_and_recipe_rows() {
     assert_eq!(
         overlays, expected_overlays,
         "official overlay query must derive from contract gallery status"
+    );
+
+    let official_components = official_component_rows()
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected_official_components = COMPONENT_CONTRACT_ROWS
+        .iter()
+        .filter(|entry| entry.gallery_status == SurfaceGalleryStatus::OfficialComponent)
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        official_components, expected_official_components,
+        "official component query must derive from contract gallery status"
+    );
+
+    let gallery_rows = gallery_surface_rows()
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected_gallery_rows = COMPONENT_CONTRACT_ROWS
+        .iter()
+        .filter(|entry| entry.gallery_status != SurfaceGalleryStatus::NotInGallery)
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        gallery_rows, expected_gallery_rows,
+        "gallery row query must derive from contract gallery status"
+    );
+
+    let default_rows = default_surface_rows()
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected_default_rows = COMPONENT_CONTRACT_ROWS
+        .iter()
+        .filter(|entry| entry.default_export)
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        default_rows, expected_default_rows,
+        "default surface query must derive from contract default export intent"
     );
 
     let recipes = component_recipe_component_rows()
@@ -239,7 +263,9 @@ fn component_recipe_inventory_rows_are_classified_once() {
             "component recipe `{recipe}` must use the contract recipe owner"
         );
         assert_eq!(
-            component_contract_gallery_status(recipe),
+            component_contract_entry(recipe)
+                .expect("recipe should have a contract row")
+                .gallery_status,
             SurfaceGalleryStatus::NotInGallery,
             "component recipe `{recipe}` should not become a standalone official gallery row"
         );

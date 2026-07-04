@@ -13,7 +13,13 @@ fn table_component_source_mapping_tracks_split_render_owners() {
         ["table/mod.rs", "table/resolve.rs"]
     );
 
-    for owner in table_render_owner_files() {
+    for owner in [
+        "table/body/mod.rs",
+        "table/cell.rs",
+        "table/editors.rs",
+        "table/header.rs",
+        "table/resize.rs",
+    ] {
         assert!(
             source_dir.join(owner).is_file(),
             "split Table render owner `{owner}` should exist"

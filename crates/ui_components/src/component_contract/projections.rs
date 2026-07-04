@@ -1,9 +1,8 @@
 //! Projection APIs over canonical component contract rows.
 
 use super::{
-    COMPONENT_API_INVENTORY, COMPONENT_CONTRACT_ROWS, ComponentApiInventoryEntry,
-    ComponentContractEntry, PublicSurfaceOwnerClass, PublicSurfaceOwnerEntry, SurfaceDocsStatus,
-    SurfaceGalleryStatus,
+    COMPONENT_API_INVENTORY, COMPONENT_CONTRACT_ROWS, ComponentContractEntry,
+    PublicSurfaceOwnerClass, SurfaceGalleryStatus,
 };
 
 /// Returns the canonical product metadata row for a public surface token.
@@ -19,14 +18,25 @@ pub const fn component_contract_entry(name: &str) -> Option<&'static ComponentCo
     None
 }
 
-/// Returns whether an API inventory component is intended for root/prelude defaults.
-pub fn component_inventory_default_export(entry: &ComponentApiInventoryEntry) -> bool {
-    component_contract_entry(entry.component).is_some_and(|entry| entry.default_export)
+/// Returns rows exported through the crate root and prelude defaults.
+pub fn default_surface_rows() -> impl Iterator<Item = &'static ComponentContractEntry> {
+    COMPONENT_CONTRACT_ROWS
+        .iter()
+        .filter(|entry| entry.default_export)
 }
 
-/// Returns whether an adjacent public surface is intended for root/prelude defaults.
-pub fn public_surface_default_export(entry: &PublicSurfaceOwnerEntry) -> bool {
-    component_contract_entry(entry.name).is_some_and(|entry| entry.default_export)
+/// Returns rows that are expected to appear in a gallery catalog or adjacent readout.
+pub fn gallery_surface_rows() -> impl Iterator<Item = &'static ComponentContractEntry> {
+    COMPONENT_CONTRACT_ROWS
+        .iter()
+        .filter(|entry| entry.gallery_status != SurfaceGalleryStatus::NotInGallery)
+}
+
+/// Returns official component rows shown by the Components gallery.
+pub fn official_component_rows() -> impl Iterator<Item = &'static ComponentContractEntry> {
+    COMPONENT_CONTRACT_ROWS
+        .iter()
+        .filter(|entry| entry.gallery_status == SurfaceGalleryStatus::OfficialComponent)
 }
 
 /// Returns official overlay rows derived from the canonical contract table.
@@ -44,54 +54,6 @@ pub fn component_recipe_component_rows() -> impl Iterator<Item = &'static Compon
                 .iter()
                 .any(|inventory| inventory.component == entry.name)
     })
-}
-
-/// Returns the contract-owned gallery status for a component or adjacent surface.
-pub const fn component_contract_gallery_status(name: &str) -> SurfaceGalleryStatus {
-    match component_contract_entry(name) {
-        Some(entry) => entry.gallery_status,
-        None => SurfaceGalleryStatus::NotInGallery,
-    }
-}
-
-/// Returns the contract-owned component family or ownership group.
-pub const fn component_contract_family(name: &str) -> Option<&'static str> {
-    match component_contract_entry(name) {
-        Some(entry) => entry.family,
-        None => None,
-    }
-}
-
-/// Returns the primary contract-owned source home for a public surface.
-pub const fn component_contract_source_home(name: &str) -> Option<&'static str> {
-    match component_contract_entry(name) {
-        Some(entry) => Some(entry.source_home),
-        None => None,
-    }
-}
-
-/// Returns whether the surface should be exported through root and prelude defaults.
-pub const fn component_contract_default_export(name: &str) -> bool {
-    match component_contract_entry(name) {
-        Some(entry) => entry.default_export,
-        None => false,
-    }
-}
-
-/// Returns the contract-owned docs coverage status for a public surface.
-pub const fn component_contract_docs_status(name: &str) -> Option<SurfaceDocsStatus> {
-    match component_contract_entry(name) {
-        Some(entry) => Some(entry.docs_status),
-        None => None,
-    }
-}
-
-/// Returns the docs token that should prove documentation coverage for a public surface.
-pub const fn component_contract_docs_token(name: &str) -> Option<&'static str> {
-    match component_contract_entry(name) {
-        Some(entry) => entry.docs_token,
-        None => None,
-    }
 }
 
 const fn token_eq(left: &str, right: &str) -> bool {
