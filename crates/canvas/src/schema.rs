@@ -1,6 +1,6 @@
 use crate::{
-    CanvasEdge, CanvasNode, CanvasRecordId, CanvasShape, CanvasTransaction, CanvasValue,
-    DocumentCommand,
+    CanvasConnectionEndpointRole, CanvasEdge, CanvasNode, CanvasRecordId, CanvasShape,
+    CanvasTransaction, CanvasValue, DocumentCommand,
 };
 use indexmap::IndexMap;
 use open_gpui::{Bounds, Pixels, Point, Size, px};
@@ -201,6 +201,14 @@ pub trait CanvasNodeInteractionPolicy: Send + Sync {
 
     fn node_intersects_bounds(&self, _hit: CanvasNodeBoundsHitTest<'_>) -> Option<bool> {
         None
+    }
+
+    fn node_accepts_connection_endpoint(
+        &self,
+        _node: &CanvasNode,
+        _role: CanvasConnectionEndpointRole,
+    ) -> bool {
+        false
     }
 }
 
@@ -724,6 +732,16 @@ impl CanvasKindRegistry {
                     margin,
                 })
             })
+    }
+
+    pub fn node_accepts_connection_endpoint(
+        &self,
+        node: &CanvasNode,
+        role: CanvasConnectionEndpointRole,
+    ) -> bool {
+        self.node_kind(&node.kind)
+            .and_then(CanvasNodeKind::interaction_policy)
+            .is_some_and(|interaction| interaction.node_accepts_connection_endpoint(node, role))
     }
 
     pub fn shape_contains_point(

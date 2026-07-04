@@ -202,13 +202,13 @@ pub(crate) fn node_component_kit_actions(
     )
 }
 
-pub(crate) fn dispatch_node_drag_surface_mouse_down(
+pub(crate) fn dispatch_product_surface_pointer_down(
     view: WeakEntity<JellyflowCanvasView>,
     event: &MouseDownEvent,
     cx: &mut App,
 ) -> bool {
     view.update(cx, |this, cx| {
-        this.handle_node_surface_drag_start(event, cx)
+        this.handle_product_surface_pointer_down(event, cx)
     })
     .unwrap_or(false)
 }
@@ -225,6 +225,7 @@ struct JellyflowCanvasView {
     measured_regions: OpenGpuiBoundsCollector,
     measurement_coverage: BTreeMap<JellyNodeId, OpenGpuiMeasurementCoverage>,
     measurement_revision: u64,
+    measurement_refresh_requested: bool,
     measurement_frame_pending: bool,
     auto_fit_viewport: bool,
     deferred_editor_refresh: bool,
@@ -347,17 +348,14 @@ impl Render for JellyflowCanvasView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let measurement_consume = self.consume_layout_pass_measurements();
         self.measured_regions.clear();
-        if matches!(
-            measurement_consume,
-            LayoutPassMeasurementConsume::NoRegions | LayoutPassMeasurementConsume::Changed
-        ) && !self.measurement_frame_pending
-        {
-            self.measurement_frame_pending = true;
-            cx.on_next_frame(window, |this, window, cx| {
-                this.measurement_frame_pending = false;
-                window.refresh();
-                cx.notify();
-            });
+        let should_schedule_measurement_frame = self.measurement_refresh_requested
+            || matches!(
+                measurement_consume,
+                LayoutPassMeasurementConsume::NoRegions | LayoutPassMeasurementConsume::Changed
+            );
+        self.measurement_refresh_requested = false;
+        if should_schedule_measurement_frame {
+            self.schedule_measurement_frame(window, cx);
         }
 
         let model = CanvasPaintModel::from(&self.editor);
@@ -574,12 +572,12 @@ impl JellyflowCanvasView {
                     ButtonVariant::Secondary
                 })
                 .with_size(Size::XSmall)
-                .on_click(move |event, _window, cx| {
+                .on_click(move |event, window, cx| {
                     cx.stop_propagation();
                     let _ = event;
                     let id = id.clone();
                     view.update(cx, |this, cx| {
-                        this.switch_product_gallery_fixture(&id, cx);
+                        this.switch_product_gallery_fixture(&id, window, cx);
                     })
                     .ok();
                 })
@@ -927,7 +925,12 @@ impl JellyflowCanvasView {
         cx.notify();
     }
 
-    fn switch_product_gallery_fixture(&mut self, fixture_id: &str, cx: &mut Context<Self>) {
+    fn switch_product_gallery_fixture(
+        &mut self,
+        fixture_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(case) = self
             .gallery
             .cases()
@@ -955,17 +958,31 @@ impl JellyflowCanvasView {
                 self.measured_regions.clear();
                 self.measurement_coverage.clear();
                 self.measurement_revision = 1;
-                self.measurement_frame_pending = false;
+                self.measurement_refresh_requested = false;
                 self.auto_fit_viewport = true;
                 self.deferred_editor_refresh = false;
                 self.last_canvas_view_size = None;
                 self.last_canvas_bounds = None;
+                window.refresh();
+                self.schedule_measurement_frame(window, cx);
                 cx.notify();
             }
             Err(error) => {
                 eprintln!("product gallery fixture projection failed: {fixture_id}: {error}");
             }
         }
+    }
+
+    fn schedule_measurement_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.measurement_frame_pending {
+            return;
+        }
+        self.measurement_frame_pending = true;
+        cx.on_next_frame(window, |this, window, cx| {
+            this.measurement_frame_pending = false;
+            window.refresh();
+            cx.notify();
+        });
     }
 
     fn dispatch_control_authoring_plan(
@@ -987,7 +1004,7 @@ impl JellyflowCanvasView {
                     for node_id in invalidated_nodes {
                         self.measurement_coverage.remove(&node_id);
                     }
-                    self.measurement_frame_pending = true;
+                    self.measurement_refresh_requested = true;
                 }
                 self.refresh_editor_from_store();
                 cx.notify();
@@ -1281,7 +1298,7 @@ impl JellyflowCanvasView {
         }
     }
 
-    fn handle_node_surface_drag_start(
+    fn handle_product_surface_pointer_down(
         &mut self,
         event: &MouseDownEvent,
         cx: &mut Context<Self>,
@@ -1289,7 +1306,7 @@ impl JellyflowCanvasView {
         let Some(bounds) = self.last_canvas_bounds else {
             return false;
         };
-        if let Some(event) = canvas_drag_start_event_from_bounds(bounds, event) {
+        if let Some(event) = canvas_pointer_down_event_from_bounds(bounds, event) {
             self.handle_canvas_event(Some(event), cx);
             return true;
         }
@@ -3784,7 +3801,7 @@ fn canvas_viewport_size_update(
     }
 }
 
-fn canvas_drag_start_event_from_bounds(
+fn canvas_pointer_down_event_from_bounds(
     bounds: Bounds<Pixels>,
     event: &MouseDownEvent,
 ) -> Option<CanvasEvent> {
@@ -4234,6 +4251,7 @@ fn main() {
                     measured_regions: OpenGpuiBoundsCollector::new(),
                     measurement_coverage: BTreeMap::new(),
                     measurement_revision: 1,
+                    measurement_refresh_requested: false,
                     measurement_frame_pending: false,
                     auto_fit_viewport: true,
                     deferred_editor_refresh: false,
@@ -4444,7 +4462,7 @@ mod tests {
         };
 
         assert_eq!(
-            canvas_drag_start_event_from_bounds(bounds, &event),
+            canvas_pointer_down_event_from_bounds(bounds, &event),
             Some(CanvasEvent::PointerDown {
                 position: point(px(100.0), px(100.0)),
                 button: PointerButton::Primary,
@@ -4506,6 +4524,7 @@ mod tests {
             measured_regions: OpenGpuiBoundsCollector::new(),
             measurement_coverage: BTreeMap::new(),
             measurement_revision: 1,
+            measurement_refresh_requested: false,
             measurement_frame_pending: false,
             auto_fit_viewport: false,
             deferred_editor_refresh: false,
@@ -4629,6 +4648,114 @@ mod tests {
     }
 
     #[open_gpui::test]
+    fn product_gallery_switch_schedules_measurement_frame(cx: &mut open_gpui::TestAppContext) {
+        let (gallery, store, editor, projection) = product_gallery_state();
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let window = cx.open_window(size(px(CANVAS_WIDTH), px(CANVAS_HEIGHT)), move |_, cx| {
+            JellyflowCanvasView {
+                editor,
+                store,
+                focus_handle: cx.focus_handle(),
+                projection,
+                gallery,
+                adapter: OpenGpuiAdapter::default(),
+                semantic_registry,
+                node_kit_registry,
+                measured_regions: OpenGpuiBoundsCollector::new(),
+                measurement_coverage: BTreeMap::new(),
+                measurement_revision: 1,
+                measurement_refresh_requested: false,
+                measurement_frame_pending: false,
+                auto_fit_viewport: true,
+                deferred_editor_refresh: false,
+                last_canvas_view_size: Some(default_canvas_view_size()),
+                last_canvas_bounds: Some(Bounds::new(
+                    point(px(24.0), px(46.0)),
+                    default_canvas_view_size(),
+                )),
+            }
+        });
+
+        window
+            .update(cx, |this, window, cx| {
+                let active = this.gallery.active_id().to_owned();
+                let target = this
+                    .gallery
+                    .cases()
+                    .iter()
+                    .find(|case| case.id() != active)
+                    .expect("product gallery should expose another fixture")
+                    .id()
+                    .to_owned();
+
+                this.switch_product_gallery_fixture(&target, window, cx);
+
+                assert_eq!(this.gallery.active_id(), target);
+                assert!(this.measurement_frame_pending);
+                assert!(this.measured_regions.regions().is_empty());
+                assert!(this.measurement_coverage.is_empty());
+                assert_eq!(this.measurement_revision, 1);
+                assert!(this.last_canvas_view_size.is_none());
+                assert!(this.last_canvas_bounds.is_none());
+            })
+            .expect("product gallery test window updates");
+    }
+
+    #[open_gpui::test]
+    fn product_gallery_switch_reuses_pending_measurement_frame(cx: &mut open_gpui::TestAppContext) {
+        let (gallery, store, editor, projection) = product_gallery_state();
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let window = cx.open_window(size(px(CANVAS_WIDTH), px(CANVAS_HEIGHT)), move |_, cx| {
+            JellyflowCanvasView {
+                editor,
+                store,
+                focus_handle: cx.focus_handle(),
+                projection,
+                gallery,
+                adapter: OpenGpuiAdapter::default(),
+                semantic_registry,
+                node_kit_registry,
+                measured_regions: OpenGpuiBoundsCollector::new(),
+                measurement_coverage: BTreeMap::new(),
+                measurement_revision: 1,
+                measurement_refresh_requested: false,
+                measurement_frame_pending: true,
+                auto_fit_viewport: true,
+                deferred_editor_refresh: false,
+                last_canvas_view_size: Some(default_canvas_view_size()),
+                last_canvas_bounds: Some(Bounds::new(
+                    point(px(24.0), px(46.0)),
+                    default_canvas_view_size(),
+                )),
+            }
+        });
+
+        window
+            .update(cx, |this, window, cx| {
+                let active = this.gallery.active_id().to_owned();
+                let target = this
+                    .gallery
+                    .cases()
+                    .iter()
+                    .find(|case| case.id() != active)
+                    .expect("product gallery should expose another fixture")
+                    .id()
+                    .to_owned();
+
+                this.switch_product_gallery_fixture(&target, window, cx);
+
+                assert_eq!(this.gallery.active_id(), target);
+                assert!(
+                    this.measurement_frame_pending,
+                    "fixture switch must reuse the pending measurement frame instead of clearing it"
+                );
+            })
+            .expect("product gallery pending-frame test window updates");
+    }
+
+    #[open_gpui::test]
     fn canvas_view_persists_layout_pass_region_kind_coverage(cx: &mut open_gpui::TestAppContext) {
         let (store, document, projection) =
             project_kit_fixture("shader.blueprint", "shader.material_mix").unwrap();
@@ -4647,6 +4774,7 @@ mod tests {
             measured_regions: OpenGpuiBoundsCollector::new(),
             measurement_coverage: BTreeMap::new(),
             measurement_revision: 1,
+            measurement_refresh_requested: false,
             measurement_frame_pending: false,
             auto_fit_viewport: false,
             deferred_editor_refresh: false,
@@ -4758,7 +4886,7 @@ mod tests {
             position: down_position,
             ..MouseDownEvent::default()
         };
-        let Some(down) = canvas_drag_start_event_from_bounds(canvas_bounds, &down_event) else {
+        let Some(down) = canvas_pointer_down_event_from_bounds(canvas_bounds, &down_event) else {
             return false;
         };
         if editor.handle_event(down).is_err() || editor.is_tool_state_idle() {
@@ -6202,6 +6330,7 @@ mod tests {
             measured_regions: OpenGpuiBoundsCollector::new(),
             measurement_coverage: BTreeMap::new(),
             measurement_revision: 1,
+            measurement_refresh_requested: false,
             measurement_frame_pending: false,
             auto_fit_viewport: false,
             deferred_editor_refresh: false,

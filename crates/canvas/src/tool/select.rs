@@ -1,3 +1,7 @@
+use super::builtin::{
+    begin_connection_from_source, cancel_connection, finish_connection_from_source,
+    update_connection_from_source,
+};
 use super::context::CanvasConnectionHit;
 use super::*;
 use crate::{
@@ -119,6 +123,21 @@ impl SelectToolStateMachine {
             ) => {
                 self.handle_reconnecting_pointer_move(context, position, edge_id, *endpoint, fixed)
             }
+            (ToolState::Connecting { source, .. }, CanvasEvent::PointerMove { position, .. }) => {
+                let document_position = context.viewport().view_to_document(position);
+                update_connection_from_source(source, document_position)
+            }
+            (
+                ToolState::Connecting { source, .. },
+                CanvasEvent::PointerUp {
+                    position,
+                    button: PointerButton::Primary,
+                    ..
+                },
+            ) => {
+                let document_position = context.viewport().view_to_document(position);
+                finish_connection_from_source(context, source, document_position)?
+            }
             (
                 ToolState::Pointing {
                     origin,
@@ -184,6 +203,7 @@ impl SelectToolStateMachine {
             (ToolState::Reconnecting { .. }, CanvasEvent::Cancel) => {
                 vec![CanvasToolEffect::SetState(ToolState::Idle)]
             }
+            (ToolState::Connecting { .. }, CanvasEvent::Cancel) => cancel_connection(),
             (ToolState::PendingTranslation { base_selection, .. }, CanvasEvent::Cancel) => {
                 vec![
                     CanvasToolEffect::SetSelection(base_selection.clone()),
@@ -232,6 +252,13 @@ impl SelectToolStateMachine {
                     current: document_position,
                 }),
             ]);
+        }
+
+        if let CanvasConnectionHit::Valid(source) =
+            context.connection_hit_at(document_position, CanvasConnectionEndpointRole::Source)
+            && source.handle_id.is_some()
+        {
+            return Ok(begin_connection_from_source(source, document_position));
         }
 
         if let Some(handle) = context.transform_handle_at(document_position) {

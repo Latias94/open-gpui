@@ -107,13 +107,7 @@ impl BuiltInCanvasToolReducer for ConnectToolStateMachine {
                     .connection_hit_at(document_position, CanvasConnectionEndpointRole::Source)
                 {
                     CanvasConnectionHit::Valid(source) => {
-                        vec![
-                            CanvasToolEffect::SetConnectionRelease(None),
-                            CanvasToolEffect::SetState(ToolState::Connecting {
-                                source,
-                                current: document_position,
-                            }),
-                        ]
+                        begin_connection_from_source(source, document_position)
                     }
                     CanvasConnectionHit::Invalid => {
                         vec![CanvasToolEffect::SetConnectionRelease(Some(
@@ -133,10 +127,7 @@ impl BuiltInCanvasToolReducer for ConnectToolStateMachine {
             }
             (ToolState::Connecting { source, .. }, CanvasEvent::PointerMove { position, .. }) => {
                 let document_position = context.viewport().view_to_document(position);
-                vec![CanvasToolEffect::SetState(ToolState::Connecting {
-                    source: source.clone(),
-                    current: document_position,
-                })]
+                update_connection_from_source(source, document_position)
             }
             (
                 ToolState::Connecting { source, .. },
@@ -147,72 +138,101 @@ impl BuiltInCanvasToolReducer for ConnectToolStateMachine {
                 },
             ) => {
                 let document_position = context.viewport().view_to_document(position);
-                let mut effects = Vec::new();
-                match context
-                    .connection_hit_at(document_position, CanvasConnectionEndpointRole::Target)
-                {
-                    CanvasConnectionHit::Valid(target)
-                        if source.node_id != target.node_id
-                            || source.handle_id != target.handle_id =>
-                    {
-                        let edge_id = EdgeId::new(format!(
-                            "{}->{}:{}",
-                            source.node_id,
-                            target.node_id,
-                            context.document().edge_count()
-                        ));
-                        effects.push(CanvasToolEffect::ApplyTransaction(
-                            CanvasTransaction::single(DocumentCommand::InsertEdge(
-                                CanvasEdge::new(edge_id.clone(), source.clone(), target.clone()),
-                            )),
-                        ));
-                        effects.push(CanvasToolEffect::SetConnectionRelease(Some(
-                            CanvasConnectionRelease::Connected(CanvasConnectedRelease {
-                                source: source.clone(),
-                                target,
-                                edge_id,
-                                position: document_position,
-                            }),
-                        )));
-                    }
-                    CanvasConnectionHit::Valid(_) => {
-                        effects.push(CanvasToolEffect::SetConnectionRelease(Some(
-                            CanvasConnectionRelease::Rejected(CanvasRejectedConnectionRelease {
-                                reason: CanvasConnectionRejectReason::SameEndpoint,
-                                source: Some(source.clone()),
-                                edge_id: None,
-                                endpoint: Some(CanvasConnectionEndpointRole::Target),
-                                position: document_position,
-                            }),
-                        )));
-                    }
-                    CanvasConnectionHit::Invalid => {
-                        effects.push(CanvasToolEffect::SetConnectionRelease(Some(
-                            CanvasConnectionRelease::Rejected(CanvasRejectedConnectionRelease {
-                                reason: CanvasConnectionRejectReason::InvalidTarget,
-                                source: Some(source.clone()),
-                                edge_id: None,
-                                endpoint: Some(CanvasConnectionEndpointRole::Target),
-                                position: document_position,
-                            }),
-                        )));
-                    }
-                    CanvasConnectionHit::Empty => {
-                        effects.push(CanvasToolEffect::SetConnectionRelease(Some(
-                            CanvasConnectionRelease::Dropped(CanvasDroppedConnectionRelease {
-                                source: source.clone(),
-                                position: document_position,
-                            }),
-                        )));
-                    }
-                }
-                effects.push(CanvasToolEffect::SetState(ToolState::Idle));
-                effects
+                finish_connection_from_source(context, source, document_position)?
             }
-            (ToolState::Connecting { .. }, CanvasEvent::Cancel) => {
-                vec![CanvasToolEffect::SetState(ToolState::Idle)]
-            }
+            (ToolState::Connecting { .. }, CanvasEvent::Cancel) => cancel_connection(),
             _ => Vec::new(),
         })
     }
+}
+
+pub(super) fn begin_connection_from_source(
+    source: CanvasEndpoint,
+    current: Point<Pixels>,
+) -> Vec<CanvasToolEffect> {
+    vec![
+        CanvasToolEffect::SetConnectionRelease(None),
+        CanvasToolEffect::SetState(ToolState::Connecting { source, current }),
+    ]
+}
+
+pub(super) fn update_connection_from_source(
+    source: &CanvasEndpoint,
+    current: Point<Pixels>,
+) -> Vec<CanvasToolEffect> {
+    vec![CanvasToolEffect::SetState(ToolState::Connecting {
+        source: source.clone(),
+        current,
+    })]
+}
+
+pub(super) fn finish_connection_from_source(
+    context: CanvasToolReducerContext<'_>,
+    source: &CanvasEndpoint,
+    position: Point<Pixels>,
+) -> Result<Vec<CanvasToolEffect>, DocumentError> {
+    let mut effects = Vec::new();
+    match context.connection_hit_at(position, CanvasConnectionEndpointRole::Target) {
+        CanvasConnectionHit::Valid(target)
+            if source.node_id != target.node_id || source.handle_id != target.handle_id =>
+        {
+            let edge_id = EdgeId::new(format!(
+                "{}->{}:{}",
+                source.node_id,
+                target.node_id,
+                context.document().edge_count()
+            ));
+            effects.push(CanvasToolEffect::ApplyTransaction(
+                CanvasTransaction::single(DocumentCommand::InsertEdge(CanvasEdge::new(
+                    edge_id.clone(),
+                    source.clone(),
+                    target.clone(),
+                ))),
+            ));
+            effects.push(CanvasToolEffect::SetConnectionRelease(Some(
+                CanvasConnectionRelease::Connected(CanvasConnectedRelease {
+                    source: source.clone(),
+                    target,
+                    edge_id,
+                    position,
+                }),
+            )));
+        }
+        CanvasConnectionHit::Valid(_) => {
+            effects.push(CanvasToolEffect::SetConnectionRelease(Some(
+                CanvasConnectionRelease::Rejected(CanvasRejectedConnectionRelease {
+                    reason: CanvasConnectionRejectReason::SameEndpoint,
+                    source: Some(source.clone()),
+                    edge_id: None,
+                    endpoint: Some(CanvasConnectionEndpointRole::Target),
+                    position,
+                }),
+            )));
+        }
+        CanvasConnectionHit::Invalid => {
+            effects.push(CanvasToolEffect::SetConnectionRelease(Some(
+                CanvasConnectionRelease::Rejected(CanvasRejectedConnectionRelease {
+                    reason: CanvasConnectionRejectReason::InvalidTarget,
+                    source: Some(source.clone()),
+                    edge_id: None,
+                    endpoint: Some(CanvasConnectionEndpointRole::Target),
+                    position,
+                }),
+            )));
+        }
+        CanvasConnectionHit::Empty => {
+            effects.push(CanvasToolEffect::SetConnectionRelease(Some(
+                CanvasConnectionRelease::Dropped(CanvasDroppedConnectionRelease {
+                    source: source.clone(),
+                    position,
+                }),
+            )));
+        }
+    }
+    effects.push(CanvasToolEffect::SetState(ToolState::Idle));
+    Ok(effects)
+}
+
+pub(super) fn cancel_connection() -> Vec<CanvasToolEffect> {
+    vec![CanvasToolEffect::SetState(ToolState::Idle)]
 }

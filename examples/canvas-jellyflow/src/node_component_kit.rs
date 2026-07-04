@@ -290,7 +290,7 @@ impl OpenGpuiNodeComponentContext<'_, crate::GpuiNodeRendererServices> {
                 if outcome.changed() {
                     this.measured_regions.clear();
                     this.measurement_coverage.remove(&node_id);
-                    this.measurement_frame_pending = true;
+                    this.measurement_refresh_requested = true;
                     cx.notify();
                 }
                 outcome
@@ -384,6 +384,25 @@ pub fn render_overflow_region(
     render_measured_region(id, collector, child)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OpenGpuiProductInteractionRole {
+    SurfacePointer,
+    ControlShield,
+    PortHandle,
+    ReadableContent,
+    OverflowAction,
+}
+
+pub fn product_interaction_roles() -> [OpenGpuiProductInteractionRole; 5] {
+    [
+        OpenGpuiProductInteractionRole::SurfacePointer,
+        OpenGpuiProductInteractionRole::ControlShield,
+        OpenGpuiProductInteractionRole::PortHandle,
+        OpenGpuiProductInteractionRole::ReadableContent,
+        OpenGpuiProductInteractionRole::OverflowAction,
+    ]
+}
+
 pub fn render_drag_exclusion_region(
     id: OpenGpuiMeasurementId,
     collector: OpenGpuiBoundsCollector,
@@ -392,7 +411,7 @@ pub fn render_drag_exclusion_region(
     render_measured_region(
         id,
         collector,
-        render_interactive_control_region(child.into_any_element()),
+        render_product_control_shield(child.into_any_element()),
     )
 }
 
@@ -420,7 +439,7 @@ pub fn interactive_control_region_policy() -> OpenGpuiInteractiveRegionPolicy {
 }
 
 pub fn render_dense_surface_panel(child: AnyElement) -> AnyElement {
-    render_interactive_control_region(child)
+    render_product_control_shield(child)
 }
 
 pub fn render_measured_control_region(
@@ -443,7 +462,7 @@ pub enum OpenGpuiNodeAnchorPlacement {
     Inline,
 }
 
-pub fn render_handle_region(
+pub fn render_product_port_handle_region(
     id: OpenGpuiMeasurementId,
     collector: OpenGpuiBoundsCollector,
     placement: OpenGpuiNodeAnchorPlacement,
@@ -464,14 +483,6 @@ pub fn render_handle_region(
     };
 
     render_measured_region(id, collector, anchor)
-}
-
-pub fn render_anchor_region(
-    id: OpenGpuiMeasurementId,
-    collector: OpenGpuiBoundsCollector,
-    placement: OpenGpuiNodeAnchorPlacement,
-) -> AnyElement {
-    render_handle_region(id, collector, placement)
 }
 
 pub fn gpui_view_bounds(bounds: Bounds<Pixels>) -> OpenGpuiViewBounds {
@@ -665,10 +676,6 @@ impl ProductLayoutRegion {
             mode: region.mode,
         }
     }
-
-    pub fn bottom(self) -> f32 {
-        self.top.as_f32() + self.height.as_f32()
-    }
 }
 
 pub fn product_layout_stack(node_size: CanvasSize, footer_height: f32) -> AdaptiveNodeLayoutStack {
@@ -789,24 +796,33 @@ pub fn render_product_card(
     fill: open_gpui::Rgba,
     view: WeakEntity<crate::JellyflowCanvasView>,
 ) -> open_gpui::Div {
-    div()
-        .size_full()
-        .relative()
-        .rounded_sm()
-        .border_1()
-        .border_color(if context.state.selected {
-            rgb(0x2563eb)
-        } else {
-            accent
-        })
-        .bg(fill)
-        .overflow_hidden()
-        .shadow_sm()
-        .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
-            if crate::dispatch_node_drag_surface_mouse_down(view.clone(), event, cx) {
-                cx.stop_propagation();
-            }
-        })
+    render_product_surface_pointer_region(
+        div()
+            .size_full()
+            .relative()
+            .rounded_sm()
+            .border_1()
+            .border_color(if context.state.selected {
+                rgb(0x2563eb)
+            } else {
+                accent
+            })
+            .bg(fill)
+            .overflow_hidden()
+            .shadow_sm(),
+        view,
+    )
+}
+
+pub fn render_product_surface_pointer_region(
+    surface: open_gpui::Div,
+    view: WeakEntity<crate::JellyflowCanvasView>,
+) -> open_gpui::Div {
+    surface.on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+        if crate::dispatch_product_surface_pointer_down(view.clone(), event, cx) {
+            cx.stop_propagation();
+        }
+    })
 }
 
 pub fn render_product_header(
@@ -817,38 +833,35 @@ pub fn render_product_header(
     collector: OpenGpuiBoundsCollector,
     view: WeakEntity<crate::JellyflowCanvasView>,
 ) -> AnyElement {
+    let header = div()
+        .absolute()
+        .left(px(PRODUCT_CARD_PAD))
+        .top(px(PRODUCT_CARD_PAD))
+        .right(px(PRODUCT_CARD_PAD))
+        .h(px(PRODUCT_HEADER_HEIGHT))
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .overflow_hidden()
+        .child(render_product_badge(
+            open_gpui_custom_renderer_badge_element_id(context.node_id, &context.renderer_key),
+            family,
+            BadgeVariant::Default,
+        ))
+        .child(
+            div()
+                .text_xs()
+                .truncate()
+                .min_w(px(0.0))
+                .text_color(accent)
+                .child(status),
+        );
+
     render_readable_region(
         product_header_measurement_id(context.node_id),
         collector,
-        div()
-            .absolute()
-            .left(px(PRODUCT_CARD_PAD))
-            .top(px(PRODUCT_CARD_PAD))
-            .right(px(PRODUCT_CARD_PAD))
-            .h(px(PRODUCT_HEADER_HEIGHT))
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_2()
-            .overflow_hidden()
-            .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
-                if crate::dispatch_node_drag_surface_mouse_down(view.clone(), event, cx) {
-                    cx.stop_propagation();
-                }
-            })
-            .child(render_product_badge(
-                open_gpui_custom_renderer_badge_element_id(context.node_id, &context.renderer_key),
-                family,
-                BadgeVariant::Default,
-            ))
-            .child(
-                div()
-                    .text_xs()
-                    .truncate()
-                    .min_w(px(0.0))
-                    .text_color(accent)
-                    .child(status),
-            ),
+        render_product_surface_pointer_region(header, view),
     )
 }
 
@@ -894,7 +907,7 @@ pub fn render_product_side_anchor(
     collector: OpenGpuiBoundsCollector,
     side: ProductNodeAnchorSide,
 ) -> AnyElement {
-    let anchor = render_handle_region(
+    let anchor = render_product_port_handle_region(
         context.anchor_measurement_id(anchor_key),
         collector,
         match side {
@@ -919,7 +932,7 @@ pub fn render_product_inline_anchor(
     anchor_key: String,
     collector: OpenGpuiBoundsCollector,
 ) -> AnyElement {
-    render_handle_region(
+    render_product_port_handle_region(
         context.anchor_measurement_id(anchor_key),
         collector,
         OpenGpuiNodeAnchorPlacement::Inline,
@@ -1454,7 +1467,7 @@ fn repeatable_list_height(
     visible_height + overflow_height + row_gap * row_count.saturating_sub(1) as f32
 }
 
-pub fn render_interactive_control_region(child: AnyElement) -> AnyElement {
+pub fn render_product_control_shield(child: AnyElement) -> AnyElement {
     div()
         .block_mouse_except_scroll()
         .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, _window, cx| {
@@ -1578,7 +1591,7 @@ pub fn render_control_plan(
         }
     };
 
-    render_interactive_control_region(element)
+    render_product_control_shield(element)
 }
 
 pub fn render_dispatch_action_button(
@@ -1607,7 +1620,7 @@ pub fn render_dispatch_action_button(
         });
     }
 
-    render_interactive_control_region(button.into_any_element())
+    render_product_control_shield(button.into_any_element())
 }
 
 pub fn render_action_menu(
@@ -1641,7 +1654,7 @@ pub fn render_action_menu(
     .with_size(Size::XSmall)
     .into_any_element();
 
-    render_interactive_control_region(menu)
+    render_product_control_shield(menu)
 }
 
 pub fn repeatable_action_button(
@@ -1667,7 +1680,7 @@ pub fn repeatable_action_button(
         });
     }
 
-    render_interactive_control_region(button.into_any_element())
+    render_product_control_shield(button.into_any_element())
 }
 
 pub fn render_action_buttons(
@@ -2031,6 +2044,17 @@ mod tests {
         assert!(policy.blocks_keyboard_shortcuts);
         assert!(policy.preserves_scroll_events);
         assert!(policy.shields_dense_surface());
+    }
+
+    #[test]
+    fn product_interaction_roles_cover_graph_and_widget_boundaries() {
+        let roles = product_interaction_roles();
+
+        assert!(roles.contains(&OpenGpuiProductInteractionRole::SurfacePointer));
+        assert!(roles.contains(&OpenGpuiProductInteractionRole::ControlShield));
+        assert!(roles.contains(&OpenGpuiProductInteractionRole::PortHandle));
+        assert!(roles.contains(&OpenGpuiProductInteractionRole::ReadableContent));
+        assert!(roles.contains(&OpenGpuiProductInteractionRole::OverflowAction));
     }
 
     #[test]

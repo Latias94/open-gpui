@@ -478,10 +478,15 @@ where
                         });
                 }
                 HitTarget::Node(node_id) => {
-                    return Some(CanvasEndpoint {
-                        node_id: node_id.clone(),
-                        handle_id: None,
-                    });
+                    let node = self.document.node(node_id)?;
+                    if self.kind_registry.is_some_and(|registry| {
+                        registry.node_accepts_connection_endpoint(node, role)
+                    }) {
+                        return Some(CanvasEndpoint {
+                            node_id: node_id.clone(),
+                            handle_id: None,
+                        });
+                    }
                 }
                 HitTarget::Edge(_) | HitTarget::Shape(_) => {}
             }

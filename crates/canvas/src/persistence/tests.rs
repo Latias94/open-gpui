@@ -1,11 +1,11 @@
 use super::*;
 use crate::{
-    CanvasEditor, CanvasEvent, CanvasKeyModifiers, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
-    CanvasNodeSchemaPolicy, CanvasRecordBindingRelation, CanvasRecordId, CanvasRecordKind,
-    CanvasRecordRelation, CanvasRelationChange, CanvasSchemaError, CanvasSelection, CanvasShape,
-    CanvasStore, CanvasTool, CanvasToolContext, CanvasToolId, CanvasToolIntent, CanvasToolReducer,
-    CanvasToolRegistry, CanvasTransaction, DocumentCommand, DocumentError, EdgeId, NodeId,
-    PointerButton, ShapeId,
+    CanvasEditor, CanvasEvent, CanvasHandle, CanvasKeyModifiers, CanvasKindRegistry, CanvasNode,
+    CanvasNodeKind, CanvasNodeSchemaPolicy, CanvasRecordBindingRelation, CanvasRecordId,
+    CanvasRecordKind, CanvasRecordRelation, CanvasRelationChange, CanvasSchemaError,
+    CanvasSelection, CanvasShape, CanvasStore, CanvasTool, CanvasToolContext, CanvasToolId,
+    CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentCommand,
+    DocumentError, EdgeId, HandleRole, NodeId, PointerButton, ShapeId,
     persistence::store::{apply_persistent_tool_effect, apply_persistent_tool_effects},
     test_support::{child_frame_fixture, connected_pair_fixture, document_fixture},
     tool::CanvasToolEffect,
@@ -1790,18 +1790,17 @@ fn persistent_tool_effects_keep_gesture_updates_out_of_log_until_commit() {
 
 #[test]
 fn persistent_event_dispatch_logs_builtin_connect_transaction() {
-    let document = document_fixture()
-        .node(CanvasNode::new(
-            "a",
-            point(px(0.0), px(0.0)),
-            size(px(100.0), px(100.0)),
-        ))
-        .node(CanvasNode::new(
-            "b",
-            point(px(200.0), px(0.0)),
-            size(px(100.0), px(100.0)),
-        ))
-        .build();
+    let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+    let mut source_handle = CanvasHandle::new("out", point(px(100.0), px(50.0)));
+    source_handle.role = HandleRole::Source;
+    source.handles.push(source_handle);
+
+    let mut target = CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+    let mut target_handle = CanvasHandle::new("in", point(px(0.0), px(50.0)));
+    target_handle.role = HandleRole::Target;
+    target.handles.push(target_handle);
+
+    let document = document_fixture().node(source).node(target).build();
     let mut editor = CanvasEditor::new(document);
     editor.set_tool(CanvasTool::Connect).unwrap();
     let mut store = MemoryCanvasPersistenceStore::default();
@@ -1815,7 +1814,7 @@ fn persistent_event_dispatch_logs_builtin_connect_transaction() {
         &mut store,
         &mut cursor,
         CanvasEvent::PointerDown {
-            position: point(px(10.0), px(10.0)),
+            position: point(px(100.0), px(50.0)),
             button: PointerButton::Primary,
             modifiers: CanvasKeyModifiers::default(),
         },
@@ -1829,7 +1828,7 @@ fn persistent_event_dispatch_logs_builtin_connect_transaction() {
         &mut store,
         &mut cursor,
         CanvasEvent::PointerUp {
-            position: point(px(210.0), px(10.0)),
+            position: point(px(200.0), px(50.0)),
             button: PointerButton::Primary,
             modifiers: CanvasKeyModifiers::default(),
         },

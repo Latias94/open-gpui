@@ -175,6 +175,7 @@ fn open_gallery_case_window(
                 measured_regions: OpenGpuiBoundsCollector::new(),
                 measurement_coverage: BTreeMap::new(),
                 measurement_revision: 1,
+                measurement_refresh_requested: false,
                 measurement_frame_pending: false,
                 auto_fit_viewport: true,
                 deferred_editor_refresh: false,

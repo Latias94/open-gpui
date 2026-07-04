@@ -994,7 +994,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        CanvasEdge, CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeHitTest,
+        CanvasEdge, CanvasKindRegistry, CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeHitTest,
         CanvasNodeInteractionPolicy, CanvasNodeKind, CanvasNodeResizeProposal,
         CanvasNodeSchemaPolicy, CanvasNodeTransformPolicy, CanvasRecordId, CanvasRecordKind,
         CanvasRecordScopeOptions, CanvasResizeHandle, CanvasRoutePath, CanvasRouteRequest,
@@ -1138,6 +1138,18 @@ mod tests {
         }
     }
 
+    struct WholeNodeEndpointKind;
+
+    impl CanvasNodeInteractionPolicy for WholeNodeEndpointKind {
+        fn node_accepts_connection_endpoint(
+            &self,
+            _node: &CanvasNode,
+            _role: CanvasConnectionEndpointRole,
+        ) -> bool {
+            true
+        }
+    }
+
     fn required_title_node_kind() -> CanvasNodeKind {
         CanvasNodeKind::new().with_schema_policy(RequiredTitleNodeKind)
     }
@@ -1156,6 +1168,10 @@ mod tests {
 
     fn right_half_node_kind() -> CanvasNodeKind {
         CanvasNodeKind::new().with_interaction_policy(RightHalfNodeKind)
+    }
+
+    fn whole_node_endpoint_kind() -> CanvasNodeKind {
+        CanvasNodeKind::new().with_interaction_policy(WholeNodeEndpointKind)
     }
 
     #[test]
@@ -4007,7 +4023,7 @@ mod tests {
     }
 
     #[test]
-    fn connect_tool_creates_edge_between_nodes() {
+    fn connect_tool_ignores_node_body_endpoints_by_default() {
         let document = document_fixture()
             .node(CanvasNode::new(
                 "a",
@@ -4038,6 +4054,41 @@ mod tests {
             })
             .unwrap();
 
+        assert_eq!(editor.document().edge_count(), 0);
+        assert_eq!(editor.history().undo_depth(), 0);
+        assert_eq!(editor.take_connection_release(), None);
+    }
+
+    #[test]
+    fn connect_tool_creates_edge_between_policy_node_endpoints() {
+        let mut a = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        a.kind = "whole-node".to_owned();
+        let mut b = CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+        b.kind = "whole-node".to_owned();
+
+        let document = document_fixture().node(a).node(b).build();
+        let mut registry = CanvasKindRegistry::default();
+        registry.register_node_kind("whole-node", whole_node_endpoint_kind());
+
+        let mut editor = CanvasEditor::new(document);
+        editor.set_kind_registry(registry).unwrap();
+        editor.set_tool(CanvasTool::Connect).unwrap();
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(10.0), px(10.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(210.0), px(10.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
         assert_eq!(editor.document().edge_count(), 1);
         assert_eq!(editor.history().undo_depth(), 1);
         assert_eq!(
@@ -4049,12 +4100,6 @@ mod tests {
                 position: point(px(210.0), px(10.0)),
             }))
         );
-
-        assert!(editor.undo().unwrap());
-        assert!(editor.document().edge_count() == 0);
-
-        assert!(editor.redo().unwrap());
-        assert_eq!(editor.document().edge_count(), 1);
     }
 
     #[test]
@@ -4170,6 +4215,61 @@ mod tests {
         let edge = editor.document().edges().next().unwrap();
         assert_eq!(edge.source.handle_id, Some(HandleId::from("out")));
         assert_eq!(edge.target.handle_id, Some(HandleId::from("in")));
+    }
+
+    #[test]
+    fn select_tool_starts_connection_from_source_handle_before_node_drag() {
+        use crate::{CanvasHandle, HandleId, HandleRole};
+
+        let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut source_handle = CanvasHandle::new("out", point(px(100.0), px(50.0)));
+        source_handle.role = HandleRole::Source;
+        source.handles.push(source_handle);
+
+        let mut target =
+            CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut target_handle = CanvasHandle::new("in", point(px(0.0), px(50.0)));
+        target_handle.role = HandleRole::Target;
+        target.handles.push(target_handle);
+
+        let document = document_fixture().node(source).node(target).build();
+        let mut editor = CanvasEditor::new(document);
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(100.0), px(50.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        assert_eq!(
+            editor.connection_drag_state(),
+            Some(CanvasConnectionDragState {
+                source: CanvasEndpoint::new("a", Some("out")),
+                current: point(px(100.0), px(50.0)),
+            })
+        );
+
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(200.0), px(50.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        let edge = editor.document().edges().next().unwrap();
+        assert_eq!(edge.source.handle_id, Some(HandleId::from("out")));
+        assert_eq!(edge.target.handle_id, Some(HandleId::from("in")));
+        assert_eq!(
+            editor.take_connection_release(),
+            Some(CanvasConnectionRelease::Connected(CanvasConnectedRelease {
+                source: CanvasEndpoint::new("a", Some("out")),
+                target: CanvasEndpoint::new("b", Some("in")),
+                edge_id: EdgeId::from("a->b:0"),
+                position: point(px(200.0), px(50.0)),
+            }))
+        );
     }
 
     #[test]

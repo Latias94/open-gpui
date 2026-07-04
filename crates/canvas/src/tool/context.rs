@@ -474,10 +474,18 @@ impl CanvasToolReducerContext<'_> {
                     return CanvasConnectionHit::Invalid;
                 }
                 HitTarget::Node(node_id) => {
-                    return CanvasConnectionHit::Valid(CanvasEndpoint {
-                        node_id: node_id.clone(),
-                        handle_id: None,
-                    });
+                    let Some(node) = self.document.node(node_id) else {
+                        continue;
+                    };
+                    if self
+                        .kind_registry
+                        .node_accepts_connection_endpoint(node, role)
+                    {
+                        return CanvasConnectionHit::Valid(CanvasEndpoint {
+                            node_id: node_id.clone(),
+                            handle_id: None,
+                        });
+                    }
                 }
                 HitTarget::Edge(_) | HitTarget::Shape(_) => {}
             }
