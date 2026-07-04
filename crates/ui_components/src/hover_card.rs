@@ -20,7 +20,7 @@ use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
     GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
-    consume_overlay_event, emit_overlay_open_change, escape_open_change, gpui_overlay_state,
+    apply_overlay_open_change, consume_overlay_event, escape_open_change, gpui_overlay_state,
     gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
 };
 use crate::theme::{ThemeContext, ThemeResolver};
@@ -1172,16 +1172,31 @@ fn set_hover_card_open(
     cx: &mut App,
 ) {
     let changed = runtime.read(cx).open != open;
-    runtime.update(cx, |runtime, _| {
-        runtime.open = open;
-        if !open {
-            runtime.focus_open = false;
-        }
-        runtime.delayed_task = None;
-        runtime.epoch = runtime.epoch.wrapping_add(1);
-    });
     if changed {
-        emit_overlay_open_change(open, on_open_change.as_deref(), window, cx);
+        apply_overlay_open_change(
+            runtime,
+            open,
+            on_open_change.as_deref(),
+            window,
+            cx,
+            |runtime| {
+                runtime.open = open;
+                if !open {
+                    runtime.focus_open = false;
+                }
+                runtime.delayed_task = None;
+                runtime.epoch = runtime.epoch.wrapping_add(1);
+            },
+        );
+    } else {
+        runtime.update(cx, |runtime, _| {
+            runtime.open = open;
+            if !open {
+                runtime.focus_open = false;
+            }
+            runtime.delayed_task = None;
+            runtime.epoch = runtime.epoch.wrapping_add(1);
+        });
     }
 }
 

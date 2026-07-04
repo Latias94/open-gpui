@@ -25,7 +25,7 @@ use crate::menu::{
     visible_menu_items,
 };
 use crate::overlay::{
-    GpuiOverlayPlacement, close_overlay_runtime, consume_overlay_event, emit_overlay_open_change,
+    GpuiOverlayPlacement, apply_overlay_open_change, close_overlay_runtime, consume_overlay_event,
     gpui_overlay_state, gpui_positioned_overlay_layer, outside_press_open_change,
     resolve_overlay_open_state, set_overlay_open,
 };
@@ -278,11 +278,18 @@ impl RenderOnce for ContextMenu {
             .cursor_context_menu()
             .on_mouse_down(MouseButton::Right, move |event, window, cx| {
                 consume_overlay_event(window, cx);
-                open_runtime.update(cx, |runtime, _| {
-                    runtime.open_at(event.position);
-                    set_overlay_open(&mut runtime.open, true);
-                });
-                emit_overlay_open_change(true, open_change.as_deref(), window, cx);
+                let anchor_point = event.position;
+                apply_overlay_open_change(
+                    open_runtime.clone(),
+                    true,
+                    open_change.as_deref(),
+                    window,
+                    cx,
+                    move |runtime| {
+                        runtime.open_at(anchor_point);
+                        set_overlay_open(&mut runtime.open, true);
+                    },
+                );
             })
             .child(
                 div()

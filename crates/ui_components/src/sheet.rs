@@ -20,8 +20,8 @@ use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::ui_size_from_gpui_size;
 use crate::overlay::{
     OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
-    close_overlay_runtime_with_after_update, consume_overlay_event, emit_overlay_open_change,
-    escape_open_change, gpui_full_window_overlay_layer, gpui_overlay_state,
+    apply_overlay_open_change_with_after_update, close_overlay_runtime_with_after_update,
+    consume_overlay_event, escape_open_change, gpui_full_window_overlay_layer, gpui_overlay_state,
     outside_press_open_change, resolve_overlay_open_state, set_overlay_open,
 };
 use crate::theme::{ThemeContext, ThemeResolver};
@@ -915,24 +915,32 @@ impl RenderOnce for Sheet {
                             .on_click(move |_event: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 let next_open = !open;
-                                runtime.update(cx, |runtime, _| {
-                                    set_overlay_open(&mut runtime.open, next_open);
-                                });
-                                if next_open
-                                    && let Some(focus) = sheet_initial_focus_handle(
-                                        &runtime,
-                                        &focus_state,
-                                        &initial_focus,
-                                        cx,
-                                    )
-                                {
-                                    window.defer(cx, move |window, cx| focus.focus(window, cx));
-                                }
-                                emit_overlay_open_change(
+                                let focus_runtime = runtime.clone();
+                                let focus_state = focus_state.clone();
+                                let initial_focus = initial_focus.clone();
+                                apply_overlay_open_change_with_after_update(
+                                    runtime.clone(),
                                     next_open,
                                     on_open_change.as_deref(),
                                     window,
                                     cx,
+                                    |runtime| {
+                                        set_overlay_open(&mut runtime.open, next_open);
+                                    },
+                                    move |window, cx| {
+                                        if next_open
+                                            && let Some(focus) = sheet_initial_focus_handle(
+                                                &focus_runtime,
+                                                &focus_state,
+                                                &initial_focus,
+                                                cx,
+                                            )
+                                        {
+                                            window.defer(cx, move |window, cx| {
+                                                focus.focus(window, cx)
+                                            });
+                                        }
+                                    },
                                 );
                             })
                     })
