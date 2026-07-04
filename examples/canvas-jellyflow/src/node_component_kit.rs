@@ -376,6 +376,33 @@ pub fn render_drag_exclusion_region(
     )
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OpenGpuiInteractiveRegionPolicy {
+    pub blocks_left_mouse_down: bool,
+    pub blocks_keyboard_shortcuts: bool,
+    pub preserves_scroll_events: bool,
+}
+
+impl OpenGpuiInteractiveRegionPolicy {
+    pub fn shields_dense_surface(self) -> bool {
+        self.blocks_left_mouse_down
+            && self.blocks_keyboard_shortcuts
+            && self.preserves_scroll_events
+    }
+}
+
+pub fn interactive_control_region_policy() -> OpenGpuiInteractiveRegionPolicy {
+    OpenGpuiInteractiveRegionPolicy {
+        blocks_left_mouse_down: true,
+        blocks_keyboard_shortcuts: true,
+        preserves_scroll_events: true,
+    }
+}
+
+pub fn render_dense_surface_panel(child: AnyElement) -> AnyElement {
+    render_interactive_control_region(child)
+}
+
 pub fn render_measured_control_region(
     id: OpenGpuiMeasurementId,
     drag_exclusion_id: OpenGpuiMeasurementId,
@@ -1460,6 +1487,16 @@ mod tests {
                 node_id.0
             )
         );
+    }
+
+    #[test]
+    fn interactive_region_policy_shields_dense_editing_surfaces() {
+        let policy = interactive_control_region_policy();
+
+        assert!(policy.blocks_left_mouse_down);
+        assert!(policy.blocks_keyboard_shortcuts);
+        assert!(policy.preserves_scroll_events);
+        assert!(policy.shields_dense_surface());
     }
 
     #[test]

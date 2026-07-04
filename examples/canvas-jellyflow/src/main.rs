@@ -1526,7 +1526,7 @@ fn render_selected_inspector_panel(
         })
         .collect::<Vec<_>>();
 
-    div()
+    let panel = div()
         .flex()
         .flex_col()
         .gap_2()
@@ -1550,7 +1550,9 @@ fn render_selected_inspector_panel(
             )
         })
         .children(inspectors)
-        .into_any_element()
+        .into_any_element();
+
+    node_component_kit::render_dense_surface_panel(panel)
 }
 
 fn render_inspector_card(
@@ -1677,7 +1679,7 @@ fn render_selected_blackboard_panel(
         })
         .collect::<Vec<_>>();
 
-    div()
+    let panel = div()
         .flex()
         .flex_col()
         .gap_2()
@@ -1691,7 +1693,9 @@ fn render_selected_blackboard_panel(
                 .child("Blackboard"),
         )
         .children(blackboards)
-        .into_any_element()
+        .into_any_element();
+
+    node_component_kit::render_dense_surface_panel(panel)
 }
 
 fn render_blackboard_card(
@@ -5888,6 +5892,16 @@ mod tests {
     }
 
     #[test]
+    fn product_dense_surface_probe_covers_editing_and_menu_boundaries() {
+        let evidence = product_dense_surface_interaction_evidence();
+
+        assert_eq!(evidence.surface_count, 4);
+        assert!(evidence.drag_exclusion_checked);
+        assert!(evidence.keyboard_focus_checked);
+        assert!(evidence.graph_menu_absence_checked);
+    }
+
+    #[test]
     fn canvas_example_consumes_adapter_product_fixture_gates() {
         assert_product_fixture_regression_gates();
         assert_authoring_interaction_regression_gates();
@@ -6840,6 +6854,151 @@ mod tests {
                 })
     }
 
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    struct ProductDenseSurfaceInteractionEvidence {
+        surface_count: usize,
+        drag_exclusion_checked: bool,
+        keyboard_focus_checked: bool,
+        graph_menu_absence_checked: bool,
+    }
+
+    fn product_dense_surface_interaction_evidence() -> ProductDenseSurfaceInteractionEvidence {
+        let policy = node_component_kit::interactive_control_region_policy();
+        let inspector = product_inspector_surface_dispatchable();
+        let blackboard = product_blackboard_surface_dispatchable();
+        let node_menu = product_node_menu_surface_dispatchable();
+        let dropped_wire = product_dropped_wire_menu_surface_dispatchable();
+        let surface_count = [inspector, blackboard, node_menu, dropped_wire]
+            .into_iter()
+            .filter(|covered| *covered)
+            .count();
+
+        ProductDenseSurfaceInteractionEvidence {
+            surface_count,
+            drag_exclusion_checked: surface_count >= 3 && policy.shields_dense_surface(),
+            keyboard_focus_checked: surface_count >= 3 && policy.shields_dense_surface(),
+            graph_menu_absence_checked: product_graph_menu_absence_checked(),
+        }
+    }
+
+    fn product_inspector_surface_dispatchable() -> bool {
+        let Ok((store, _document, _projection, node_id)) = project_schema_node("demo.table") else {
+            return false;
+        };
+        let registry = NodeKitRegistry::builtin().node_registry();
+        let Some(node) = store.graph().nodes().get(&node_id) else {
+            return false;
+        };
+        let Some(descriptor) = registry.view_descriptor(&node.kind) else {
+            return false;
+        };
+        let inspectors = project_inspectors_for_surface(
+            &descriptor,
+            &node.data,
+            &OpenGpuiInspectorSurface::RepeatableItem {
+                collection_key: "table.columns".to_owned(),
+                item_id: "email".to_owned(),
+            },
+        );
+
+        inspectors.iter().any(|inspector| {
+            inspector.editable_controls().next().is_some()
+                && plan_action_dispatch(&inspector.action_menu, "action.column.remove").is_some()
+        })
+    }
+
+    fn product_blackboard_surface_dispatchable() -> bool {
+        let Ok((store, _document, _projection, node_id)) = project_schema_node("demo.shader.mix")
+        else {
+            return false;
+        };
+        let registry = NodeKitRegistry::builtin().node_registry();
+        let Some(node) = store.graph().nodes().get(&node_id) else {
+            return false;
+        };
+        let Some(descriptor) = registry.view_descriptor(&node.kind) else {
+            return false;
+        };
+
+        project_blackboards_for_descriptor(&descriptor, &node.data)
+            .iter()
+            .any(|blackboard| {
+                blackboard.key == "blackboard.shader.properties"
+                    && plan_action_dispatch(&blackboard.action_menu, "action.shader_property.add")
+                        .is_some()
+            })
+    }
+
+    fn product_node_menu_surface_dispatchable() -> bool {
+        let Ok((store, document, _projection, node_id)) = project_schema_node("demo.llm") else {
+            return false;
+        };
+        let registry = NodeKitRegistry::builtin().node_registry();
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let Some(canvas_node) = document.node(&NodeId::from(canvas_node_id(&node_id))) else {
+            return false;
+        };
+        let Some(graph_node) = store.graph().nodes().get(&node_id) else {
+            return false;
+        };
+        let Some(surface) = node_surface_summary_for_node(
+            canvas_node,
+            node_id,
+            graph_node,
+            store.graph(),
+            1.0,
+            true,
+            &registry,
+            &node_kit_registry,
+            None,
+        ) else {
+            return false;
+        };
+
+        surface.action_menus.iter().any(|menu| {
+            menu.surface == MenuSurface::Node
+                && plan_action_dispatch(menu, "action.llm.run").is_some()
+        }) || plan_action_dispatch(&surface.toolbar_menu, "action.llm.run").is_some()
+    }
+
+    fn product_dropped_wire_menu_surface_dispatchable() -> bool {
+        let store = make_demo_store();
+        let registry = NodeKitRegistry::builtin().node_registry();
+        let source_key = PortKey::new("completion");
+        let Some(source) = dropped_wire_source_for_port_key(store.graph(), &source_key) else {
+            return false;
+        };
+        let pointer = dropped_wire_insert_pointer(store.graph(), source);
+        let menu = project_dropped_wire_menu(&registry, source, Some(&source_key), pointer);
+
+        menu.surface == MenuSurface::DroppedWire
+            && pointer.x >= 0.0
+            && pointer.y >= 0.0
+            && pointer.x <= CANVAS_WIDTH
+            && pointer.y <= CANVAS_HEIGHT
+            && plan_dropped_wire_insert(&menu, "action.insert.llm", source, pointer).is_some()
+    }
+
+    fn product_graph_menu_absence_checked() -> bool {
+        let registry = NodeKitRegistry::builtin().node_registry();
+        product_fixture_catalog().iter().all(|fixture| {
+            let Ok((store, _document, _projection)) =
+                project_kit_fixture(&fixture.kit_key, &fixture.fixture_key)
+            else {
+                return false;
+            };
+            store.graph().nodes().values().all(|node| {
+                registry
+                    .view_descriptor(&node.kind)
+                    .is_some_and(|descriptor| {
+                        project_actions_for_surface(&descriptor, &OpenGpuiActionSurface::Graph)
+                            .actions
+                            .is_empty()
+                    })
+            })
+        })
+    }
+
     fn canvas_host_product_interaction_report() -> OpenGpuiHostProductInteractionReport {
         let catalog = product_fixture_catalog();
         let renderer_registry = demo_node_renderer_registry();
@@ -6907,10 +7066,20 @@ mod tests {
         let reconnect_affordance_visible = product_reconnect_affordance_probe();
         let reconnect_sequence_evidence = product_reconnect_sequence_evidence();
         let dropped_wire_gesture_connected = product_dropped_wire_gesture_probe();
+        let dense_surface_evidence = product_dense_surface_interaction_evidence();
 
         let mut report = OpenGpuiHostProductInteractionReport::default();
         report.mark_drag_surface_coverage(product_drag_surfaces, drag_sequence_checked);
-        report.mark_control_event_shielding_checked(true);
+        report.mark_control_event_shielding_checked(
+            dense_surface_evidence.drag_exclusion_checked
+                && dense_surface_evidence.keyboard_focus_checked,
+        );
+        report.mark_dense_surface_interaction_coverage(
+            dense_surface_evidence.surface_count,
+            dense_surface_evidence.drag_exclusion_checked,
+            dense_surface_evidence.keyboard_focus_checked,
+            dense_surface_evidence.graph_menu_absence_checked,
+        );
         report.mark_port_hotspot_path_checked(port_hotspot_path_checked);
         report.mark_tool_switcher_visible(product_tool_switcher_visible());
         report.mark_connect_flow_store_synced(connect_flow_store_synced);
