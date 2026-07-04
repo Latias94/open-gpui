@@ -22,6 +22,7 @@ pub(super) fn product_gallery_native_lifecycle_evidence(
             semantic_registry,
             node_kit_registry,
             measured_regions: OpenGpuiBoundsCollector::new(),
+            measurement_coverage: BTreeMap::new(),
             measurement_revision: 1,
             measurement_frame_pending: false,
             auto_fit_viewport: true,

@@ -1,9 +1,9 @@
 use super::*;
 use std::collections::BTreeSet;
 
-use jellyflow::runtime::runtime::measurement::MeasuredSurfaceAnchor;
+use jellyflow::runtime::runtime::measurement::{MeasuredSurfaceAnchor, MeasuredSurfaceSlot};
 use jellyflow_open_gpui::{
-    OpenGpuiSizeEvidence,
+    OpenGpuiMeasurementCoverage, OpenGpuiSizeEvidence,
     testing::{
         OpenGpuiHostRendererSource, OpenGpuiHostVisualInteractionReport,
         OpenGpuiHostVisualSurfaceRow, OpenGpuiMeasuredInternalsEvidence,
@@ -66,6 +66,7 @@ pub(super) fn canvas_host_visual_interaction_report() -> OpenGpuiHostVisualInter
                 measurement_projection
                     .evidence()
                     .node_measurement_source(node_id),
+                None,
             ));
         }
     }
@@ -86,6 +87,7 @@ fn visual_surface_report_row(
     node_id: JellyNodeId,
     surface: &NodeSurfaceSummary,
     measurement_source: measurement_bridge::ProjectionFallbackMeasurementSource,
+    measurement_coverage: Option<&OpenGpuiMeasurementCoverage>,
 ) -> OpenGpuiHostVisualSurfaceRow {
     let source = host_renderer_source(registry, renderers, &surface.renderer_context);
     let content_visible = !surface.title.is_empty()
@@ -101,7 +103,7 @@ fn visual_surface_report_row(
         width: canvas_node.size.width.as_f32(),
         height: canvas_node.size.height.as_f32(),
     });
-    let measured_content = measured_content_evidence(surface, canvas_node);
+    let measured_content = measured_content_evidence(surface, canvas_node, measurement_coverage);
     let content_readable = within_node_bounds
         && measured_content.text_overflow_count == 0
         && measured_content.clipped_control_count == 0;
@@ -144,6 +146,9 @@ fn visual_surface_report_row(
         measurement_source,
         measured_content.readable_region_count,
         measured_content.control_region_count,
+        measured_content.drag_exclusion_region_count,
+        measured_content.overflow_region_count,
+        measurement_coverage,
         hidden_repeatable_overflow,
         repeatable_overflow_indicators,
     ))
@@ -155,33 +160,65 @@ struct MeasuredContentEvidence {
     clipped_control_count: usize,
     readable_region_count: usize,
     control_region_count: usize,
+    drag_exclusion_region_count: usize,
+    overflow_region_count: usize,
 }
 
 fn measured_content_evidence(
     surface: &NodeSurfaceSummary,
     canvas_node: &CanvasNode,
+    measurement_coverage: Option<&OpenGpuiMeasurementCoverage>,
 ) -> MeasuredContentEvidence {
     let Some(measurement) = surface.measurement.as_ref() else {
-        return MeasuredContentEvidence::default();
+        return measured_region_kind_evidence(measurement_coverage);
     };
     let control_keys = expected_control_keys(surface);
-    let mut evidence = MeasuredContentEvidence::default();
+    measured_content_evidence_from_slots(
+        measurement.slots.iter(),
+        &control_keys,
+        measurement_coverage,
+        JellySize {
+            width: canvas_node.size.width.as_f32(),
+            height: canvas_node.size.height.as_f32(),
+        },
+    )
+}
 
-    for slot in measurement.slots.iter().filter(|slot| slot.is_visible()) {
-        if control_keys.contains(slot.key.as_str()) {
-            evidence.control_region_count += 1;
-            if !rect_inside_canvas_node(slot.rect, canvas_node) {
+fn measured_content_evidence_from_slots<'a>(
+    slots: impl IntoIterator<Item = &'a MeasuredSurfaceSlot>,
+    control_keys: &BTreeSet<String>,
+    measurement_coverage: Option<&OpenGpuiMeasurementCoverage>,
+    node_size: JellySize,
+) -> MeasuredContentEvidence {
+    let mut evidence = measured_region_kind_evidence(measurement_coverage);
+    let has_measured_controls = evidence.control_region_count > 0;
+
+    for slot in slots.into_iter().filter(|slot| slot.is_visible()) {
+        if has_measured_controls && control_keys.contains(slot.key.as_str()) {
+            if !rect_inside_size(slot.rect, node_size) {
                 evidence.clipped_control_count += 1;
             }
-        } else {
-            evidence.readable_region_count += 1;
-            if !rect_inside_canvas_node(slot.rect, canvas_node) {
-                evidence.text_overflow_count += 1;
-            }
+        } else if !rect_inside_size(slot.rect, node_size) {
+            evidence.text_overflow_count += 1;
         }
     }
 
     evidence
+}
+
+fn measured_region_kind_evidence(
+    measurement_coverage: Option<&OpenGpuiMeasurementCoverage>,
+) -> MeasuredContentEvidence {
+    measurement_coverage
+        .map(|coverage| MeasuredContentEvidence {
+            text_overflow_count: 0,
+            clipped_control_count: 0,
+            readable_region_count: coverage.readable_regions,
+            control_region_count: coverage.control_regions,
+            drag_exclusion_region_count: coverage.drag_exclusion_regions,
+            overflow_region_count: coverage.overflow_regions,
+        })
+        .unwrap_or_default()
 }
 
 fn expected_control_keys(surface: &NodeSurfaceSummary) -> BTreeSet<String> {
@@ -193,11 +230,11 @@ fn expected_control_keys(surface: &NodeSurfaceSummary) -> BTreeSet<String> {
         .collect()
 }
 
-fn rect_inside_canvas_node(rect: JellyRect, canvas_node: &CanvasNode) -> bool {
+fn rect_inside_size(rect: JellyRect, size: JellySize) -> bool {
     rect.origin.x >= 0.0
         && rect.origin.y >= 0.0
-        && rect.origin.x + rect.size.width <= canvas_node.size.width.as_f32()
-        && rect.origin.y + rect.size.height <= canvas_node.size.height.as_f32()
+        && rect.origin.x + rect.size.width <= size.width
+        && rect.origin.y + rect.size.height <= size.height
         && rect.size.width > 0.0
         && rect.size.height > 0.0
 }
@@ -230,19 +267,26 @@ fn measured_internals_evidence(
     measurement_source: measurement_bridge::ProjectionFallbackMeasurementSource,
     measured_readable_regions: usize,
     measured_control_regions: usize,
+    measured_drag_exclusion_regions: usize,
+    measured_overflow_regions: usize,
+    measurement_coverage: Option<&OpenGpuiMeasurementCoverage>,
     hidden_repeatable_overflow: usize,
     repeatable_overflow_indicators: usize,
 ) -> OpenGpuiMeasuredInternalsEvidence {
     let node_bounds_present =
         canvas_node.size.width.as_f32() > 0.0 && canvas_node.size.height.as_f32() > 0.0;
     let measured_handle_count = canvas_node.handles.len();
-    let stale_region_count =
-        usize::from(!measured_store.node_measurement_status(node_id).is_fresh());
+    let stale_region_count = measurement_coverage
+        .map(|coverage| coverage.stale_regions)
+        .unwrap_or_else(|| {
+            usize::from(!measured_store.node_measurement_status(node_id).is_fresh())
+        });
     let missing_required_overflow_count =
         usize::from(hidden_repeatable_overflow > 0 && repeatable_overflow_indicators == 0);
     let node_bounds_source = match measurement_source {
         measurement_bridge::ProjectionFallbackMeasurementSource::FreshLayoutPass
-            if node_bounds_present =>
+            if node_bounds_present
+                && measurement_coverage.is_some_and(|coverage| coverage.is_full_layout_pass()) =>
         {
             OpenGpuiMeasuredInternalsSource::LayoutPass
         }
@@ -268,8 +312,8 @@ fn measured_internals_evidence(
         projected_handle_count: 0,
         readable_region_count,
         control_region_count: measured_control_regions,
-        drag_exclusion_region_count: 0,
-        overflow_region_count: repeatable_overflow_indicators,
+        drag_exclusion_region_count: measured_drag_exclusion_regions,
+        overflow_region_count: measured_overflow_regions,
         stale_region_count,
         component_declared_overflow_count: repeatable_overflow_indicators,
         missing_required_overflow_count,
@@ -552,4 +596,61 @@ fn measured_transform_store() -> (NodeGraphStore, JellyNodeId, JellyPortId, Jell
         )
         .expect("measured transform node");
     (measured_store, transform, prompt, completion)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn full_region_coverage() -> OpenGpuiMeasurementCoverage {
+        OpenGpuiMeasurementCoverage {
+            layout_pass_regions: 4,
+            projection_fallback_regions: 0,
+            missing_regions: 0,
+            stale_regions: 0,
+            partial_regions: 0,
+            duplicate_regions: 0,
+            measured_slots: 1,
+            measured_anchors: 1,
+            readable_regions: 1,
+            control_regions: 1,
+            drag_exclusion_regions: 1,
+            overflow_regions: 1,
+        }
+    }
+
+    #[test]
+    fn measured_content_evidence_uses_coverage_region_kinds() {
+        let prompt_slot = MeasuredSurfaceSlot::new(
+            "prompt",
+            JellyRect {
+                origin: JellyPoint { x: 8.0, y: 12.0 },
+                size: JellySize {
+                    width: 120.0,
+                    height: 24.0,
+                },
+            },
+        );
+        let control_keys = BTreeSet::from(["prompt".to_owned()]);
+        let node_size = JellySize {
+            width: 220.0,
+            height: 160.0,
+        };
+
+        let fallback_evidence =
+            measured_content_evidence_from_slots([&prompt_slot], &control_keys, None, node_size);
+        assert_eq!(fallback_evidence.control_region_count, 0);
+        assert_eq!(fallback_evidence.drag_exclusion_region_count, 0);
+
+        let layout_pass_evidence = measured_content_evidence_from_slots(
+            [&prompt_slot],
+            &control_keys,
+            Some(&full_region_coverage()),
+            node_size,
+        );
+        assert_eq!(layout_pass_evidence.readable_region_count, 1);
+        assert_eq!(layout_pass_evidence.control_region_count, 1);
+        assert_eq!(layout_pass_evidence.drag_exclusion_region_count, 1);
+        assert_eq!(layout_pass_evidence.overflow_region_count, 1);
+    }
 }

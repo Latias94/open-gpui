@@ -270,6 +270,7 @@ impl OpenGpuiNodeComponentContext<'_, crate::GpuiNodeRendererServices> {
                     crate::request_node_internals_update(&mut this.store, node_id, reason);
                 if outcome.changed() {
                     this.measured_regions.clear();
+                    this.measurement_coverage.remove(&node_id);
                     this.measurement_frame_pending = true;
                     cx.notify();
                 }

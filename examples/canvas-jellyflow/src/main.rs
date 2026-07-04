@@ -42,10 +42,10 @@ use jellyflow_open_gpui::{
     OpenGpuiConnectionSyncRequest, OpenGpuiControlEditPlan, OpenGpuiControlEventValue,
     OpenGpuiControlPlan, OpenGpuiDroppedWireInsertError, OpenGpuiDynamicPortPolicy,
     OpenGpuiGraphAffordanceEvidence, OpenGpuiInspectorPlan, OpenGpuiInspectorSurface,
-    OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource, OpenGpuiMeasurementId,
-    OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource, OpenGpuiMenuPlan,
-    OpenGpuiNodeRendererContext, OpenGpuiNodeRendererOutputSource, OpenGpuiNodeRendererRegistry,
-    OpenGpuiNodeRendererState, OpenGpuiNodeRendererTable,
+    OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource, OpenGpuiMeasurementCoverage,
+    OpenGpuiMeasurementId, OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
+    OpenGpuiMenuPlan, OpenGpuiNodeRendererContext, OpenGpuiNodeRendererOutputSource,
+    OpenGpuiNodeRendererRegistry, OpenGpuiNodeRendererState, OpenGpuiNodeRendererTable,
     OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout, OpenGpuiNodeTransformSnapshot,
     OpenGpuiProductSurfacePreset, OpenGpuiRepeatableActionPlan,
@@ -87,6 +87,7 @@ use open_gpui_ui_components::prelude::Sizable;
 use open_gpui_ui_components::{Badge, BadgeVariant, Button, ButtonVariant, Progress};
 use open_gpui_ui_core::Size;
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 #[cfg(test)]
 mod gallery_screenshot;
@@ -220,6 +221,7 @@ struct JellyflowCanvasView {
     semantic_registry: NodeRegistry,
     node_kit_registry: NodeKitRegistry,
     measured_regions: OpenGpuiBoundsCollector,
+    measurement_coverage: BTreeMap<JellyNodeId, OpenGpuiMeasurementCoverage>,
     measurement_revision: u64,
     measurement_frame_pending: bool,
     auto_fit_viewport: bool,
@@ -956,6 +958,7 @@ impl JellyflowCanvasView {
                 self.projection = projection;
                 self.gallery.set_active(case.id().to_owned());
                 self.measured_regions.clear();
+                self.measurement_coverage.clear();
                 self.measurement_revision = 1;
                 self.measurement_frame_pending = false;
                 self.auto_fit_viewport = true;
@@ -981,10 +984,14 @@ impl JellyflowCanvasView {
                     eprintln!("control edit dispatch failed: {error}");
                     return;
                 }
+                let invalidated_nodes = plan.invalidation.nodes.clone();
                 let invalidation =
                     apply_node_internals_invalidation(&mut self.store, plan.invalidation);
                 if invalidation.changed() {
                     self.measured_regions.clear();
+                    for node_id in invalidated_nodes {
+                        self.measurement_coverage.remove(&node_id);
+                    }
                     self.measurement_frame_pending = true;
                 }
                 self.refresh_editor_from_store();
@@ -1184,10 +1191,12 @@ impl JellyflowCanvasView {
     fn consume_layout_pass_measurements(&mut self) -> LayoutPassMeasurementConsume {
         let regions = self.measured_regions.regions();
         if regions.is_empty() {
+            self.measurement_coverage.clear();
             return LayoutPassMeasurementConsume::NoRegions;
         }
 
         let mut changed = false;
+        let mut next_coverage = BTreeMap::new();
         let node_ids = self
             .store
             .graph()
@@ -1227,7 +1236,7 @@ impl JellyflowCanvasView {
                 .editor
                 .viewport()
                 .document_bounds_to_view(canvas_node.bounds());
-            let (mut measurement, _coverage) = measurement_bridge::layout_pass_measurement_for_node(
+            let (mut measurement, coverage) = measurement_bridge::layout_pass_measurement_for_node(
                 node_id,
                 &node,
                 self.store.graph(),
@@ -1249,9 +1258,11 @@ impl JellyflowCanvasView {
             );
             let outcome = self.store.report_node_measurement(measurement);
             if let Ok(outcome) = outcome {
+                next_coverage.insert(node_id, coverage);
                 changed |= outcome.changed();
             }
         }
+        self.measurement_coverage = next_coverage;
 
         if changed {
             if self.is_pointer_interacting() {
@@ -4283,6 +4294,7 @@ fn main() {
                     semantic_registry,
                     node_kit_registry,
                     measured_regions: OpenGpuiBoundsCollector::new(),
+                    measurement_coverage: BTreeMap::new(),
                     measurement_revision: 1,
                     measurement_frame_pending: false,
                     auto_fit_viewport: true,
@@ -4554,6 +4566,7 @@ mod tests {
             semantic_registry,
             node_kit_registry,
             measured_regions: OpenGpuiBoundsCollector::new(),
+            measurement_coverage: BTreeMap::new(),
             measurement_revision: 1,
             measurement_frame_pending: false,
             auto_fit_viewport: false,
@@ -4673,6 +4686,93 @@ mod tests {
                     .position
                     .x
                     .as_f32()
+            );
+        });
+    }
+
+    #[open_gpui::test]
+    fn canvas_view_persists_layout_pass_region_kind_coverage(cx: &mut open_gpui::TestAppContext) {
+        let (store, document, projection) =
+            project_kit_fixture("shader.blueprint", "shader.material_mix").unwrap();
+        let editor = editor_for_document(document).unwrap();
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let view = cx.new(|cx| JellyflowCanvasView {
+            editor,
+            store,
+            focus_handle: cx.focus_handle(),
+            projection,
+            gallery: product_gallery::ProductGalleryState::default(),
+            adapter: OpenGpuiAdapter::default(),
+            semantic_registry,
+            node_kit_registry,
+            measured_regions: OpenGpuiBoundsCollector::new(),
+            measurement_coverage: BTreeMap::new(),
+            measurement_revision: 1,
+            measurement_frame_pending: false,
+            auto_fit_viewport: false,
+            deferred_editor_refresh: false,
+            last_canvas_view_size: None,
+            last_canvas_bounds: None,
+        });
+
+        cx.update_entity(&view, |this, _| {
+            let canvas_node = this
+                .editor
+                .document()
+                .nodes()
+                .find(|node| node.kind == "shader-card")
+                .expect("shader card canvas node")
+                .clone();
+            let node_id = jelly_node_id_from_node(&canvas_node).expect("jellyflow node id");
+            let node_view_bounds = this
+                .editor
+                .viewport()
+                .document_bounds_to_view(canvas_node.bounds());
+            let region_bounds = jellyflow_open_gpui::OpenGpuiViewBounds::new(
+                jellyflow_open_gpui::OpenGpuiViewPoint::new(
+                    node_view_bounds.origin.x.as_f32() + 16.0,
+                    node_view_bounds.origin.y.as_f32() + 34.0,
+                ),
+                jellyflow_open_gpui::OpenGpuiViewSize::new(96.0, 24.0),
+            );
+
+            this.measured_regions.record_id(
+                OpenGpuiMeasurementId::slot(node_id, "field.factor"),
+                region_bounds,
+                None::<String>,
+            );
+            this.measured_regions.record_id(
+                OpenGpuiMeasurementId::readable(node_id, "slot:field.factor"),
+                region_bounds,
+                None::<String>,
+            );
+            this.measured_regions.record_id(
+                OpenGpuiMeasurementId::control_in_slot(node_id, "field.factor", "factor"),
+                region_bounds,
+                None::<String>,
+            );
+            this.measured_regions.record_id(
+                OpenGpuiMeasurementId::drag_exclusion(node_id, "field.factor:factor"),
+                region_bounds,
+                None::<String>,
+            );
+
+            let consume = this.consume_layout_pass_measurements();
+            assert!(matches!(
+                consume,
+                LayoutPassMeasurementConsume::Changed | LayoutPassMeasurementConsume::Unchanged
+            ));
+            let coverage = this
+                .measurement_coverage
+                .get(&node_id)
+                .expect("layout pass coverage should be cached for measured node");
+            assert_eq!(coverage.readable_regions, 1);
+            assert_eq!(coverage.control_regions, 1);
+            assert_eq!(coverage.drag_exclusion_regions, 1);
+            assert!(
+                !coverage.is_full_layout_pass(),
+                "partial node-internal coverage must not be promoted into full layout-pass proof"
             );
         });
     }
@@ -5896,6 +5996,7 @@ mod tests {
         let evidence = product_dense_surface_interaction_evidence();
 
         assert_eq!(evidence.surface_count, 4);
+        assert_eq!(evidence.measured_drag_exclusion_regions, 1);
         assert!(evidence.drag_exclusion_checked);
         assert!(evidence.keyboard_focus_checked);
         assert!(evidence.graph_menu_absence_checked);
@@ -6161,6 +6262,7 @@ mod tests {
             semantic_registry,
             node_kit_registry,
             measured_regions: OpenGpuiBoundsCollector::new(),
+            measurement_coverage: BTreeMap::new(),
             measurement_revision: 1,
             measurement_frame_pending: false,
             auto_fit_viewport: false,
@@ -6896,6 +6998,7 @@ mod tests {
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     struct ProductDenseSurfaceInteractionEvidence {
         surface_count: usize,
+        measured_drag_exclusion_regions: usize,
         drag_exclusion_checked: bool,
         keyboard_focus_checked: bool,
         graph_menu_absence_checked: bool,
@@ -6911,13 +7014,43 @@ mod tests {
             .into_iter()
             .filter(|covered| *covered)
             .count();
+        let measured_drag_exclusion_regions = product_drag_exclusion_measurement_probe();
 
         ProductDenseSurfaceInteractionEvidence {
             surface_count,
-            drag_exclusion_checked: surface_count >= 3 && policy.shields_dense_surface(),
+            measured_drag_exclusion_regions,
+            drag_exclusion_checked: surface_count >= 3
+                && policy.shields_dense_surface()
+                && measured_drag_exclusion_regions > 0,
             keyboard_focus_checked: surface_count >= 3 && policy.shields_dense_surface(),
             graph_menu_absence_checked: product_graph_menu_absence_checked(),
         }
+    }
+
+    fn product_drag_exclusion_measurement_probe() -> usize {
+        let node_id = JellyNodeId::from_u128(0x0d_1f_79);
+        let bounds = jellyflow_open_gpui::OpenGpuiViewBounds::new(
+            jellyflow_open_gpui::OpenGpuiViewPoint::new(24.0, 36.0),
+            jellyflow_open_gpui::OpenGpuiViewSize::new(120.0, 28.0),
+        );
+        let context = jellyflow_open_gpui::OpenGpuiMeasurementContext::new(
+            node_id,
+            jellyflow_open_gpui::OpenGpuiViewPoint::new(0.0, 0.0),
+            1.0,
+            JellySize {
+                width: 220.0,
+                height: 160.0,
+            },
+        );
+        let (_, coverage) = jellyflow_open_gpui::layout_pass_measurement_from_regions(
+            context,
+            [
+                OpenGpuiMeasurementId::drag_exclusion(node_id, "field.prompt:prompt")
+                    .into_region(bounds),
+            ],
+            [],
+        );
+        coverage.drag_exclusion_regions
     }
 
     fn product_inspector_surface_dispatchable() -> bool {
