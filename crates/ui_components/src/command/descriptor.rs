@@ -427,13 +427,13 @@ impl CommandPaletteController {
         keymap: &Keymap,
     ) -> Result<CommandPaletteControllerUpdate, CommandRegistryError> {
         let query_changed = self.set_query_from_input(center, query);
-        let (provider_projections, missing_provider_ids) =
+        let (provider_projections, pending_provider_requests) =
             self.refresh_provider_controllers(center)?;
         Ok(CommandPaletteControllerUpdate::new(
             self.query.clone(),
             query_changed,
             provider_projections,
-            missing_provider_ids,
+            pending_provider_requests,
             self.projection_for_keymap(center, keymap),
         ))
     }
@@ -446,13 +446,13 @@ impl CommandPaletteController {
         window: &Window,
     ) -> Result<CommandPaletteControllerUpdate, CommandRegistryError> {
         let query_changed = self.set_query_from_input(center, query);
-        let (provider_projections, missing_provider_ids) =
+        let (provider_projections, pending_provider_requests) =
             self.refresh_provider_controllers(center)?;
         Ok(CommandPaletteControllerUpdate::new(
             self.query.clone(),
             query_changed,
             provider_projections,
-            missing_provider_ids,
+            pending_provider_requests,
             self.projection_for_window(center, window),
         ))
     }
@@ -515,7 +515,7 @@ impl CommandPaletteController {
                 self.query.clone(),
                 false,
                 [provider_projection],
-                [],
+                Vec::<CommandPalettePendingProviderRequest>::new(),
                 self.projection_for_keymap(center, keymap),
             )
         }))
@@ -537,7 +537,7 @@ impl CommandPaletteController {
                 self.query.clone(),
                 false,
                 [provider_projection],
-                [],
+                Vec::<CommandPalettePendingProviderRequest>::new(),
                 self.projection_for_window(center, window),
             )
         }))
@@ -596,13 +596,13 @@ impl CommandPaletteController {
         query: String,
         keymap: &Keymap,
     ) -> Result<CommandPaletteControllerUpdate, CommandRegistryError> {
-        let (query, query_changed, provider_projections, missing_provider_ids) =
+        let (query, query_changed, provider_projections, pending_provider_requests) =
             self.set_query_from_history(center, query)?;
         Ok(CommandPaletteControllerUpdate::new(
             query,
             query_changed,
             provider_projections,
-            missing_provider_ids,
+            pending_provider_requests,
             self.projection_for_keymap(center, keymap),
         ))
     }
@@ -613,13 +613,13 @@ impl CommandPaletteController {
         query: String,
         window: &Window,
     ) -> Result<CommandPaletteControllerUpdate, CommandRegistryError> {
-        let (query, query_changed, provider_projections, missing_provider_ids) =
+        let (query, query_changed, provider_projections, pending_provider_requests) =
             self.set_query_from_history(center, query)?;
         Ok(CommandPaletteControllerUpdate::new(
             query,
             query_changed,
             provider_projections,
-            missing_provider_ids,
+            pending_provider_requests,
             self.projection_for_window(center, window),
         ))
     }
@@ -633,19 +633,19 @@ impl CommandPaletteController {
             String,
             bool,
             Vec<CommandProviderRefreshProjection>,
-            Vec<CommandProviderId>,
+            Vec<CommandPalettePendingProviderRequest>,
         ),
         CommandRegistryError,
     > {
         let query_changed = self.query != query;
         self.query = query;
-        let (provider_projections, missing_provider_ids) =
+        let (provider_projections, pending_provider_requests) =
             self.refresh_provider_controllers(center)?;
         Ok((
             self.query.clone(),
             query_changed,
             provider_projections,
-            missing_provider_ids,
+            pending_provider_requests,
         ))
     }
 
@@ -664,12 +664,12 @@ impl CommandPaletteController {
     ) -> Result<
         (
             Vec<CommandProviderRefreshProjection>,
-            Vec<CommandProviderId>,
+            Vec<CommandPalettePendingProviderRequest>,
         ),
         CommandRegistryError,
     > {
         let mut provider_projections = Vec::with_capacity(self.providers.len());
-        let mut missing_provider_ids = Vec::new();
+        let mut pending_provider_requests = Vec::new();
 
         for controller in &mut self.providers {
             let projection = controller.set_query(center, self.query.clone())?;
@@ -685,7 +685,10 @@ impl CommandPaletteController {
             let Some(response) =
                 center.provider_response_for_request(controller.provider_id().clone(), &request)
             else {
-                missing_provider_ids.push(controller.provider_id().clone());
+                pending_provider_requests.push(CommandPalettePendingProviderRequest::new(
+                    controller.provider_id().clone(),
+                    request,
+                ));
                 provider_projections.push(projection);
                 continue;
             };
@@ -693,7 +696,7 @@ impl CommandPaletteController {
             provider_projections.push(controller.apply_response(center, &request, response)?);
         }
 
-        Ok((provider_projections, missing_provider_ids))
+        Ok((provider_projections, pending_provider_requests))
     }
 
     fn apply_provider_response(
@@ -718,6 +721,38 @@ enum CommandPaletteQueryHistoryDirection {
     Next,
 }
 
+/// App-owned async provider request emitted by a command palette controller step.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPalettePendingProviderRequest {
+    provider_id: CommandProviderId,
+    request: CommandProviderRequest,
+}
+
+impl CommandPalettePendingProviderRequest {
+    /// Creates a pending provider request.
+    pub fn new(provider_id: impl Into<CommandProviderId>, request: CommandProviderRequest) -> Self {
+        Self {
+            provider_id: provider_id.into(),
+            request,
+        }
+    }
+
+    /// Returns the provider id that should produce this request.
+    pub const fn provider_id(&self) -> &CommandProviderId {
+        &self.provider_id
+    }
+
+    /// Returns the provider request to pass back with the async response.
+    pub const fn request(&self) -> &CommandProviderRequest {
+        &self.request
+    }
+
+    /// Consumes the pending request into its provider id and request.
+    pub fn into_parts(self) -> (CommandProviderId, CommandProviderRequest) {
+        (self.provider_id, self.request)
+    }
+}
+
 /// Result of a command palette controller query or async response step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandPaletteControllerUpdate {
@@ -725,6 +760,7 @@ pub struct CommandPaletteControllerUpdate {
     query_changed: bool,
     provider_projections: Vec<CommandProviderRefreshProjection>,
     missing_provider_ids: Vec<CommandProviderId>,
+    pending_provider_requests: Vec<CommandPalettePendingProviderRequest>,
     palette_projection: CommandPaletteProjection,
 }
 
@@ -733,14 +769,20 @@ impl CommandPaletteControllerUpdate {
         query: String,
         query_changed: bool,
         provider_projections: impl IntoIterator<Item = CommandProviderRefreshProjection>,
-        missing_provider_ids: impl IntoIterator<Item = CommandProviderId>,
+        pending_provider_requests: impl IntoIterator<Item = CommandPalettePendingProviderRequest>,
         palette_projection: CommandPaletteProjection,
     ) -> Self {
+        let pending_provider_requests: Vec<_> = pending_provider_requests.into_iter().collect();
+        let missing_provider_ids = pending_provider_requests
+            .iter()
+            .map(|pending| pending.provider_id().clone())
+            .collect();
         Self {
             query,
             query_changed,
             provider_projections: provider_projections.into_iter().collect(),
-            missing_provider_ids: missing_provider_ids.into_iter().collect(),
+            missing_provider_ids,
+            pending_provider_requests,
             palette_projection,
         }
     }
@@ -773,6 +815,21 @@ impl CommandPaletteControllerUpdate {
     /// Returns configured provider ids that had no registered synchronous callback.
     pub fn missing_provider_ids(&self) -> &[CommandProviderId] {
         &self.missing_provider_ids
+    }
+
+    /// Returns app-owned async provider requests to execute after this step.
+    pub fn pending_provider_requests(&self) -> &[CommandPalettePendingProviderRequest] {
+        &self.pending_provider_requests
+    }
+
+    /// Returns a pending async provider request by provider id.
+    pub fn pending_provider_request(
+        &self,
+        provider_id: &str,
+    ) -> Option<&CommandPalettePendingProviderRequest> {
+        self.pending_provider_requests
+            .iter()
+            .find(|pending| pending.provider_id().as_str() == provider_id)
     }
 
     /// Returns the UI-ready palette projection for this step.

@@ -36,10 +36,10 @@ pub use crate::command::{
     CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItem,
     CommandItemDescriptor, CommandItemState, CommandLoadingState, CommandMatchSource,
     CommandMetrics, CommandNavigationBehavior, CommandOpenMode, CommandPaletteController,
-    CommandPaletteControllerUpdate, CommandPaletteProjection, CommandProviderPaletteProjection,
-    CommandQueryMode, CommandRowBehaviorSnapshot, CommandSelectedChipState, CommandSelection,
-    CommandSelectionChange, CommandSelectionMode, CommandState, CommandStatusIntent,
-    CommandStatusItem,
+    CommandPaletteControllerUpdate, CommandPalettePendingProviderRequest, CommandPaletteProjection,
+    CommandProviderPaletteProjection, CommandQueryMode, CommandRowBehaviorSnapshot,
+    CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandSelectionMode,
+    CommandState, CommandStatusIntent, CommandStatusItem,
 };
 pub use crate::component_contract::{
     COMPONENT_A11Y_EVIDENCE, COMPONENT_CONFORMANCE_GATES, ComponentA11yEvidence,

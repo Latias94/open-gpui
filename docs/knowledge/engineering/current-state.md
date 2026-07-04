@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-04T09:15:19+08:00
+timestamp: 2026-07-04T09:56:04+08:00
 git_branch: feat/command-navigation-polish
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
@@ -100,6 +100,10 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-foundation-gallery component_gallery_shell_reads_choice_active_metadata_from_resolved_state components_page_search_samples_expose_combobox_and_command_contracts --no-fail-fast
   - cargo check -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --tests
   - cargo run -p xtask -- scan-ui-contract
+  - cargo nextest run -p open-gpui-ui-components command_palette_controller --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components command --no-fail-fast
+  - cargo check -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --tests
   - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --check
   - cargo check -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --tests
   - cargo nextest run -p open-gpui-ui-components command --no-fail-fast
@@ -246,6 +250,11 @@ verified_by:
   the first focusable command in the previous/next rendered group when group navigation is enabled.
   The builder API, resolved state getters, public exports, API inventory, docs, gallery readouts,
   and focused runtime tests were updated together.
+- Done on `feat/command-navigation-polish`: `CommandPaletteControllerUpdate` now exposes
+  `CommandPalettePendingProviderRequest` values through `pending_provider_requests()` and
+  `pending_provider_request(provider_id)`, so app shells can schedule async provider work with the
+  exact request they must later pass back. `missing_provider_ids()` remains as a compatibility
+  summary derived from those pending requests.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default
@@ -330,8 +339,8 @@ verified_by:
 - Not current roadmap work: broad splitting of every remaining 1k+ component file and
   `open-gpui-ui-headless` extraction.
 - Blocked: None.
-- Next action: commit or merge the command navigation polish slice, then continue command ecosystem
-  hardening with async provider UX or real app-shell dogfood around `CommandPaletteController`.
+- Next action: commit the pending provider request slice, then dogfood it in a real app-shell or
+  gallery runtime path that schedules async work and applies a later response.
 
 # Citations
 
@@ -363,3 +372,5 @@ verified_by:
 - [Open GPUI command palette status items verification](verification/open-gpui-command-palette-status-items-20260704.md)
 - [Open GPUI command navigation polish](progress/2026-07-04-open-gpui-command-navigation-polish.md)
 - [Open GPUI command navigation polish verification](verification/open-gpui-command-navigation-polish-20260704.md)
+- [Open GPUI command palette pending provider requests](progress/2026-07-04-open-gpui-command-palette-pending-provider-requests.md)
+- [Open GPUI command palette pending provider requests verification](verification/open-gpui-command-palette-pending-provider-requests-20260704.md)

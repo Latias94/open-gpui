@@ -406,9 +406,10 @@ the Command runtime navigation layer, which supports Home/End, configurable Up/D
 navigation, Vim-style control aliases, PageUp/PageDown, and Alt+Up/Alt+Down group jumps;
 `CommandPaletteController`, which coordinates palette query
 changes across provider refresh controllers, refreshes registered synchronous providers, exposes
-missing-provider ids for app-owned async tasks, ignores stale async responses through the existing
-provider request guard, and wraps command-center query-history navigation so up/down history keys
-can reuse the current query as a prefix and restore the draft query at the newest boundary; plus
+pending provider requests for app-owned async tasks, keeps compatibility missing-provider ids,
+ignores stale async responses through the existing provider request guard, and wraps command-center
+query-history navigation so up/down history keys can reuse the current query as a prefix and
+restore the draft query at the newest boundary; plus
 `CommandProviderPaletteProjection`, which adapts a provider refresh projection into a `PreFiltered`
 `CommandIndexSnapshot`, carries loading provider status into `CommandLoadingState`, and lets
 `Command::provider_refresh_projection` bind query and snapshot metadata without app-owned snapshot

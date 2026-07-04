@@ -1889,6 +1889,7 @@ fn command_palette_controller_refreshes_registered_provider_into_command_project
     assert!(update.query_changed());
     assert_eq!(update.query(), "alpha");
     assert!(update.missing_provider_ids().is_empty());
+    assert!(update.pending_provider_requests().is_empty());
     assert_eq!(update.provider_projections().len(), 1);
     assert!(
         update
@@ -1997,6 +1998,13 @@ fn command_palette_controller_tracks_async_provider_requests_and_stale_responses
         .and_then(open_gpui_command::CommandProviderRefreshProjection::request)
         .expect("alpha request")
         .clone();
+    let alpha_pending = alpha
+        .pending_provider_request("async-provider")
+        .expect("alpha pending provider request");
+    assert_eq!(alpha.pending_provider_requests().len(), 1);
+    assert_eq!(alpha_pending.provider_id().as_str(), "async-provider");
+    assert_eq!(alpha_pending.request(), &alpha_request);
+    assert_eq!(alpha_pending.request().query(), "alpha");
 
     assert_eq!(
         alpha
@@ -2022,6 +2030,12 @@ fn command_palette_controller_tracks_async_provider_requests_and_stale_responses
         .and_then(open_gpui_command::CommandProviderRefreshProjection::request)
         .expect("beta request")
         .clone();
+    let beta_pending = beta
+        .pending_provider_request("async-provider")
+        .expect("beta pending provider request");
+    assert_eq!(beta.pending_provider_requests().len(), 1);
+    assert_eq!(beta_pending.request(), &beta_request);
+    assert_eq!(beta_pending.request().query(), "beta");
 
     let stale = controller
         .apply_provider_response_for_keymap(
@@ -2095,6 +2109,7 @@ fn command_palette_controller_tracks_async_provider_requests_and_stale_responses
     );
     assert_eq!(ready.palette_projection().loading_state(), None);
     assert!(ready.palette_projection().shortcut_diagnostics().is_empty());
+    assert!(ready.pending_provider_requests().is_empty());
 
     let state = Command::new("async-controller-command", "Async commands")
         .palette_projection(ready.palette_projection())

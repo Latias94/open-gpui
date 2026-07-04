@@ -224,6 +224,18 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         .unwrap();
     let _root_palette_update_projection: &root::CommandPaletteProjection =
         root_palette_update.palette_projection();
+    let _root_pending_provider_request: root::CommandPalettePendingProviderRequest =
+        root::CommandPalettePendingProviderRequest::new(
+            "root-provider",
+            root::CommandProviderRequest::new("open"),
+        );
+    let root_pending_provider_requests: &[root::CommandPalettePendingProviderRequest] =
+        root_palette_update.pending_provider_requests();
+    if let Some(pending) = root_palette_update.pending_provider_request("root-provider") {
+        let _root_pending_provider_id: &root::CommandProviderId = pending.provider_id();
+        let _root_pending_request: &root::CommandProviderRequest = pending.request();
+    }
+    assert_eq!(root_pending_provider_requests.len(), 1);
     let _root_provider_state = root::CommandProviderState::Ready;
     assert_root_provider(
         &(root_provider_fn as fn(&root::CommandProviderRequest) -> root::CommandProviderResponse),
@@ -502,6 +514,18 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             .unwrap();
     let _prelude_palette_update_projection: &prelude::CommandPaletteProjection =
         prelude_palette_update.palette_projection();
+    let _prelude_pending_provider_request: prelude::CommandPalettePendingProviderRequest =
+        prelude::CommandPalettePendingProviderRequest::new(
+            "prelude-provider",
+            prelude::CommandProviderRequest::new("open"),
+        );
+    let prelude_pending_provider_requests: &[prelude::CommandPalettePendingProviderRequest] =
+        prelude_palette_update.pending_provider_requests();
+    if let Some(pending) = prelude_palette_update.pending_provider_request("prelude-provider") {
+        let _prelude_pending_provider_id: &prelude::CommandProviderId = pending.provider_id();
+        let _prelude_pending_request: &prelude::CommandProviderRequest = pending.request();
+    }
+    assert_eq!(prelude_pending_provider_requests.len(), 1);
     let _prelude_provider_state = prelude::CommandProviderState::Loading;
     assert_prelude_provider(
         &(prelude_provider_fn

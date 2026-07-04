@@ -6,6 +6,10 @@ status: active
 
 # Log
 
+- 2026-07-04: Added command palette pending provider request handoff on
+  `feat/command-navigation-polish`. `CommandPaletteControllerUpdate` now exposes
+  `CommandPalettePendingProviderRequest` values for app-owned async providers while preserving
+  `missing_provider_ids()` as a compatibility summary, and public exports/docs/tests were updated.
 - 2026-07-04: Added command palette navigation polish on
   `feat/command-navigation-polish`. `CommandNavigationBehavior` now controls Up/Down loop behavior
   and Alt+Up/Alt+Down group jumps, Home/End are first-class command navigation keys, and the public

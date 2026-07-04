@@ -328,10 +328,13 @@ if let Some(update) = palette_controller.next_query_for_keymap(&mut center, &key
 }
 ```
 
-When a configured provider has no registered synchronous callback, the update records the provider
-id in `missing_provider_ids()`. Applications can then run their own async task and feed the result
-back through `apply_provider_response_for_keymap` or `apply_provider_response_for_window`; stale
-responses keep using the same `CommandCenter` request-id guard and do not replace newer results.
+When a configured provider has no registered synchronous callback, the update records a
+`CommandPalettePendingProviderRequest` in `pending_provider_requests()`. Applications can hand those
+provider/request pairs to their own async task and feed the result back through
+`apply_provider_response_for_keymap` or `apply_provider_response_for_window`; stale responses keep
+using the same `CommandCenter` request-id guard and do not replace newer results.
+`missing_provider_ids()` remains available as a compatibility summary when callers only need to
+know which providers are async-backed.
 
 UI crates can use the provider-only adapter when they only need a refresh projection:
 

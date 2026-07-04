@@ -49,6 +49,8 @@
 * [Open GPUI command palette status items verification](verification/open-gpui-command-palette-status-items-20260704.md) - Verification evidence for status row projection, public exports, and gallery diagnostics rendering.
 * [Open GPUI command navigation polish](progress/2026-07-04-open-gpui-command-navigation-polish.md) - Command palette navigation behavior for loop bounds, Home/End, and Alt group jumps.
 * [Open GPUI command navigation polish verification](verification/open-gpui-command-navigation-polish-20260704.md) - Verification evidence for command runtime navigation, public exports, gallery readouts, and contract scanning.
+* [Open GPUI command palette pending provider requests](progress/2026-07-04-open-gpui-command-palette-pending-provider-requests.md) - UI-side controller update API for app-owned async provider request handoff.
+* [Open GPUI command palette pending provider requests verification](verification/open-gpui-command-palette-pending-provider-requests-20260704.md) - Verification evidence for pending provider requests, public exports, and command controller gates.
 * [Native UI hybrid registry architecture planning](progress/2026-07-02-native-ui-hybrid-registry-architecture-plan.md) - Superseded historical plan for the removed hybrid registry MVP.
 * [Native UI hybrid registry implementation](progress/2026-07-02-native-ui-hybrid-registry-implementation.md) - Superseded implementation history for the removed registry manifest, recipes, artifacts, and scan.
 * [Native UI hybrid registry implementation verification](verification/native-ui-hybrid-registry-implementation-20260702.md) - Superseded verification evidence for the removed hybrid registry work.
