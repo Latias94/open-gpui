@@ -82,6 +82,7 @@ fn public_contract_extraction_blockers_match_allowlist() {
 #[test]
 fn adapter_only_public_surfaces_match_allowlist() {
     let expected = [
+        ("adapter.rs", "GpuiOverlayState"),
         ("focus.rs", "BoxShadow"),
         ("focus.rs", "focus_ring_shadow"),
         ("focus.rs", "focus_ring_shadow_with_theme"),

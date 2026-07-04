@@ -8,7 +8,10 @@ use open_gpui::{
     rgb,
 };
 use open_gpui_ui_components::*;
-use open_gpui_ui_core::{MotionPreference, Orientation, Sizable, Size, ThemeTokens, UiPx};
+use open_gpui_ui_core::{
+    MotionPreference, Orientation, Sizable, Size, TableColumnId, TableTextFilterOperator,
+    ThemeTokens, UiPx,
+};
 
 mod choice;
 mod families;

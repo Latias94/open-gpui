@@ -324,7 +324,7 @@ fn table_behavior_snapshot_preserves_column_width_policies() {
 
     assert_eq!(
         status_column.width_policy(),
-        open_gpui_ui_components::TableColumnWidthPolicy::ContentFit
+        open_gpui_ui_core::TableColumnWidthPolicy::ContentFit
     );
 }
 

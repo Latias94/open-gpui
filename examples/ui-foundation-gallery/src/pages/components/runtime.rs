@@ -2,14 +2,15 @@
 
 use open_gpui::{App, AppContext, BorrowAppContext, Global};
 use open_gpui_ui_components::{
-    TableCellEditApplyOutcome, TableCellEditChange, TableColumnId, TableColumnOrderChange,
-    TableColumnSizing, TableColumnSizingChange, TableColumnVisibilityChange,
-    TableColumnVisibilityOverrides, TableExpansionState, TableFacetedFilterChange,
+    TableCellEditApplyOutcome, TableCellEditChange, TableColumnOrderChange,
+    TableColumnSizingChange, TableColumnVisibilityChange, TableFacetedFilterChange,
     TableGlobalFilterChange, TablePredicateFilterChange, TableRangeFilterChange,
-    TableRowActivation, TableRowChildrenLoadState, TableRowExpansionToggle, TableState,
-    TreeItemDescriptor, TreeMove, apply_tree_move,
+    TableRowActivation, TableRowExpansionToggle, TreeItemDescriptor, TreeMove, apply_tree_move,
 };
-use open_gpui_ui_core::UiPx;
+use open_gpui_ui_core::{
+    TableColumnId, TableColumnSizing, TableColumnVisibilityOverrides, TableExpansionState,
+    TableRowChildrenLoadState, TableState, UiPx,
+};
 use std::collections::BTreeMap;
 
 use super::samples::{TableSample, server_tree_table_state};

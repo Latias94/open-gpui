@@ -1,12 +1,13 @@
 //! Component sample descriptors and resolved-state builders for the foundation gallery.
 
 use open_gpui::{AppContext, ParentElement, Styled, div, rgb};
+use open_gpui_command::CommandContextStack;
 use open_gpui_ui_components::{
     Accordion, AccordionItem, AccordionMode, AccordionState, Avatar, AvatarState, Badge,
     BadgeState, BadgeVariant, Breadcrumb, BreadcrumbItemDescriptor, BreadcrumbState, Button,
     ButtonState, ButtonVariant, Checkbox, CheckboxState, Collapsible, CollapsibleState,
-    ComboboxGroupDescriptor, ComboboxOptionDescriptor, ComboboxState, CommandContextStack,
-    CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
+    ComboboxGroupDescriptor, ComboboxOptionDescriptor, ComboboxState, CommandGroupDescriptor,
+    CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
     CommandKeyBindingCaptureState, CommandKeyBindingEditorFilter,
     CommandKeyBindingEditorPreviewState, CommandKeyBindingEditorState, CommandLoadingState,
     CommandPaletteController, CommandPaletteProjection, CommandQueryMode, CommandSelectionMode,
@@ -18,12 +19,9 @@ use open_gpui_ui_components::{
     SidebarCollapseMode, SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide,
     SidebarState, SidebarVariant, Skeleton, SkeletonState, Slider, SliderState,
     SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState, Switch, SwitchState, Table,
-    TableAggregation, TableBehaviorSnapshot, TableCellValue, TableColumn, TableColumnFacets,
-    TableColumnGroup, TableColumnId, TableColumnPinning, TableColumnSizing, TableFacetValueCount,
-    TableFilter, TablePagination, TableRow, TableRowPinning, TableSelectOption, TableSort,
-    TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState,
-    Tag, TagState, TagVariant, TextInput, TextInputDisplayMode, TextInputState, Textarea,
-    TextareaState, Toast, ToastStack, ToastStackState, Toggle, ToggleGroup, ToggleGroupItem,
+    TableBehaviorSnapshot, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, Tag,
+    TagState, TagVariant, TextInput, TextInputDisplayMode, TextInputState, Textarea, TextareaState,
+    Toast, ToastStack, ToastStackState, Toggle, ToggleGroup, ToggleGroupItem,
     ToggleGroupSelectionMode, ToggleGroupState, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
     ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeBehaviorSnapshot,
     TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListBehaviorSnapshot,
@@ -32,7 +30,11 @@ use open_gpui_ui_components::{
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
-    OverlayPlacementAlignment, OverlayPlacementSide, Sizable, Size, ThemeTokens, UiPx, ui_px,
+    OverlayPlacementAlignment, OverlayPlacementSide, Sizable, Size, TableAggregation,
+    TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId,
+    TableColumnPinning, TableColumnSizing, TableFacetValueCount, TableFilter, TablePagination,
+    TableRow, TableRowPinning, TableSelectOption, TableSort, TableStageMode, TableState,
+    ThemeTokens, UiPx, ui_px,
 };
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;

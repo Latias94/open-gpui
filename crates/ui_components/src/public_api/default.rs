@@ -142,13 +142,8 @@ pub use crate::text_input::{
 };
 pub use crate::textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
 pub use crate::theme::{
-    DARK_THEME_ID, DEFAULT_THEME_ID, HIGH_CONTRAST_THEME_ID, LIGHT_THEME_ID,
-    THEME_JSON_SCHEMA_VERSION, ThemeColor, ThemeContext, ThemeDefinition, ThemeFileField,
-    ThemeLoadError, ThemeMode, ThemeRegistrationDiagnostics, ThemeRegistry, ThemeRegistryEntry,
-    ThemeResolver, ThemeRuntime, ThemeRuntimeError, ThemeSnapshot, ThemeValidationError,
-    current_theme_context, init_theme_runtime, register_theme_json_file, register_theme_json_str,
-    set_active_theme, set_active_theme_mode, theme_definition_from_json_file,
-    theme_definition_from_json_str, theme_id_for_mode, theme_json_schema, try_theme_context,
+    DARK_THEME_ID, DEFAULT_THEME_ID, HIGH_CONTRAST_THEME_ID, LIGHT_THEME_ID, ThemeColor,
+    ThemeContext, ThemeMode, ThemeResolver, ThemeSnapshot,
 };
 pub use crate::toast::{
     Toast, ToastAction, ToastColors, ToastDismiss, ToastDismissReason, ToastIntent, ToastMetrics,
@@ -179,50 +174,4 @@ pub use crate::virtualized_list::{
     VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRowBehaviorSnapshot,
     VirtualizedListScrollStrategy, VirtualizedListState, virtualized_list_navigation_target,
     virtualized_list_scroll_target,
-};
-pub use open_gpui_command::{
-    CommandAvailability, CommandAvailabilityMap, CommandAvailabilityResolver, CommandCenter,
-    CommandContextStack, CommandContribution, CommandDescriptor, CommandDispatchOutcome,
-    CommandHistoryEntry, CommandKeyBinding, CommandKeyBindingConflict,
-    CommandKeyBindingConflictEntry, CommandKeyBindingDiagnostic, CommandKeyBindingDiagnosticKind,
-    CommandKeyBindingEditTarget, CommandKeyBindingEntry, CommandKeyBindingHandle,
-    CommandKeyBindingInstallReport, CommandKeyBindingPatch, CommandKeyBindingPatchOperation,
-    CommandKeyBindingPatchOutcome, CommandKeyBindingPatchPreview, CommandKeyBindingProjectedEntry,
-    CommandKeyBindingProjection, CommandKeyBindingRegistry, CommandKeymapCommandState,
-    CommandKeymapResolution, CommandKeymapResolvedCommand, CommandMenuCommand, CommandMenuEntry,
-    CommandMenuSubmenu, CommandMenuTree, CommandProjectionDiagnostic,
-    CommandProjectionDiagnosticKind, CommandProvider, CommandProviderApplyOutcome,
-    CommandProviderHandle, CommandProviderId, CommandProviderRefreshController,
-    CommandProviderRefreshProjection, CommandProviderRegistration, CommandProviderRequest,
-    CommandProviderRequestId, CommandProviderResponse, CommandProviderSource,
-    CommandProviderStaleResponse, CommandProviderState, CommandProviderStatus, CommandRegistry,
-    CommandRegistryError, CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection,
-    CommandShortcutDiagnostic, CommandShortcutDiagnosticKind, CommandSourceHandle, CommandSourceId,
-    CommandSourceRegistration, CommandUsageHistory, GpuiCommandAction, GpuiCommandActionMap,
-    MemoryCommandHistory, ScopedCommandRegistry, command_effective_availability,
-    parse_command_key_sequence,
-};
-pub use open_gpui_ui_core::{
-    GridViewport2D, TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
-    TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind, TableAggregation,
-    TableCellEditor, TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup,
-    TableColumnGroupId, TableColumnId, TableColumnNode, TableColumnPinning, TableColumnRegion,
-    TableColumnRegions, TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState,
-    TableColumnResizeUpdate, TableColumnSizing, TableColumnVisibilityOverrides,
-    TableColumnWidthPolicy, TableExpansionMode, TableExpansionState, TableFacetRange,
-    TableFacetValueCount, TableFilter, TableFilterKind, TableGlobalFacetSummary, TableGroupRow,
-    TableNumericFilterBound, TableNumericFilterOperator, TablePagination,
-    TableResolvedColumnSizing, TableResolvedColumnSizingRegions, TableResolvedHeaderCell,
-    TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions, TableResolvedHeaderKind,
-    TableResolvedRow, TableResolvedRowKind, TableResolvedState, TableRow,
-    TableRowChildrenLoadState, TableRowId, TableRowModel, TableRowModelStage, TableRowPinning,
-    TableRowPinningPolicy, TableRowRegion, TableRowRegions, TableSelectOption, TableSort,
-    TableSortDirection, TableStageMode, TableState, TableStateCacheKey, TableTextFilterOperator,
-    TableTreeRow, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
-    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
-    drag_table_column_resize, end_table_column_resize, resolve_grid_viewport_2d,
-};
-pub use open_gpui_ui_core::{
-    TableSelectionActivationMode, TableSelectionMode, TableSelectionPolicy, TableSelectionSummary,
-    TableSelectionSummaryState, TableSubRowSelectionPolicy,
 };

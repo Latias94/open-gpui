@@ -3,10 +3,12 @@ use open_gpui_ui_components::{
     A11yContractError, A11yLabelSource, A11yValueKind, A11yValueMetadata, Button,
     COMPONENT_A11Y_EVIDENCE, Checkbox, ComponentA11yContract, Dialog, IconButton, Listbox,
     ListboxOption, Menu, MenuItem, NumberInput, Progress, Slider, Splitter, SplitterPanel,
-    SplitterPanelDescriptor, Table, TableColumn, TableRow, TableState, Tree, TreeItemDescriptor,
-    VirtualizedList, VirtualizedListItemDescriptor,
+    SplitterPanelDescriptor, Table, Tree, TreeItemDescriptor, VirtualizedList,
+    VirtualizedListItemDescriptor,
 };
-use open_gpui_ui_core::{AccessibleAction, Orientation, Role, Toggled, ui_px};
+use open_gpui_ui_core::{
+    AccessibleAction, Orientation, Role, TableColumn, TableRow, TableState, Toggled, ui_px,
+};
 
 #[test]
 fn a11y_contract_validation_reports_required_metadata_failures() {

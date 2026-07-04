@@ -6,10 +6,10 @@ use open_gpui_ui_components::{
     ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Splitter, SplitterPanel,
     SplitterPanelDescriptor, SplitterState, Tree, TreeChildrenLoadState, TreeDropPosition,
     TreeItemDescriptor, TreeMove, TreeMoveTarget, VirtualizedList, VirtualizedListActivation,
-    VirtualizedListItemDescriptor, VirtualizedListScrollStrategy, VirtualizerRange,
-    apply_tree_move, virtualized_list_scroll_target,
+    VirtualizedListItemDescriptor, VirtualizedListScrollStrategy, apply_tree_move,
+    virtualized_list_scroll_target,
 };
-use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ui_px};
+use open_gpui_ui_core::{Orientation, Role, Sizable, Size, VirtualizerRange, ui_px};
 use std::cell::RefCell;
 use std::rc::Rc;
 

@@ -15,12 +15,13 @@ use open_gpui_ui_components::{
     CommandSelectionChange, CommandSelectionMode, CommandShortcutInspectorState,
     CommandStatusIntent, CommandStatusItem, Listbox, ListboxGroup, ListboxGroupDescriptor,
     ListboxOption, ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState,
-    ScrollArea, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, VirtualizerRange,
+    ScrollArea, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection,
     gpui_adapter::init_text_input, listbox_navigation_target,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
-    OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable, Size, ThemeTokens, ui_px,
+    OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable, Size, ThemeTokens,
+    VirtualizerRange, ui_px,
 };
 use std::cell::RefCell;
 use std::rc::Rc;

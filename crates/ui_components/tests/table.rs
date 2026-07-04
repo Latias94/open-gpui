@@ -6,26 +6,26 @@ use open_gpui::{
 };
 use open_gpui_ui_components::{
     PopoverOpenMode, ScrollArea, Table, TableCellEditApplyOutcome, TableCellEditChange,
-    TableCellEditor, TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup,
-    TableColumnId, TableColumnOrderChange, TableColumnOrderPlacement, TableColumnPinning,
-    TableColumnRegion, TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange,
+    TableColumnOrderChange, TableColumnOrderPlacement, TableColumnSizingChange,
     TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
-    TableColumnVisibilityOverrides, TableColumnVisibilityState, TableExpansionMode,
-    TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange, TableFacetedFilterState,
-    TableFilter, TableGlobalFacetSummary, TableGlobalFilter, TableGlobalFilterChange,
-    TableGlobalFilterState, TableHeaderAction, TableNumericFilterOperator, TablePagination,
-    TablePredicateFilter, TablePredicateFilterChange, TablePredicateFilterOperator,
-    TablePredicateFilterOperatorOptionState, TablePredicateFilterState, TableRangeFilter,
-    TableRangeFilterChange, TableRangeFilterState, TableRow, TableRowChildrenLoadState, TableRowId,
-    TableRowMeasureMode, TableRowPinning, TableRowPinningPolicy, TableRowRegion, TableSelectOption,
-    TableSelectionActivationMode, TableSelectionMode, TableSelectionScope, TableSort,
-    TableSortDirection, TableStageMode, TableState, TableTextFilterOperator, TableToolbar,
-    TableToolbarState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
-    VirtualizerSnapshotItem, gpui_adapter::init_text_input,
+    TableColumnVisibilityState, TableFacetedFilter, TableFacetedFilterChange,
+    TableFacetedFilterState, TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState,
+    TableHeaderAction, TablePredicateFilter, TablePredicateFilterChange,
+    TablePredicateFilterOperator, TablePredicateFilterOperatorOptionState,
+    TablePredicateFilterState, TableRangeFilter, TableRangeFilterChange, TableRangeFilterState,
+    TableRowMeasureMode, TableSelectionScope, TableToolbar, TableToolbarState,
+    gpui_adapter::init_text_input,
 };
 use open_gpui_ui_core::{
-    OutsidePressPolicy, OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable, Size, UiPx,
-    ui_px,
+    OutsidePressPolicy, OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable, Size,
+    TableCellEditor, TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup,
+    TableColumnId, TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
+    TableColumnVisibilityOverrides, TableExpansionMode, TableFacetValueCount, TableFilter,
+    TableGlobalFacetSummary, TableNumericFilterOperator, TablePagination, TableRow,
+    TableRowChildrenLoadState, TableRowId, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
+    TableSelectOption, TableSelectionActivationMode, TableSelectionMode, TableSort,
+    TableSortDirection, TableStageMode, TableState, TableTextFilterOperator, UiPx,
+    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem, ui_px,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
