@@ -308,9 +308,35 @@ pub(crate) fn close_overlay_runtime<T: 'static>(
     cx: &mut App,
     close_runtime: impl FnOnce(&mut T),
 ) {
+    close_overlay_runtime_with_after_update(
+        runtime,
+        focus_restore,
+        trigger_focus,
+        defer_focus_restore,
+        on_open_change,
+        window,
+        cx,
+        close_runtime,
+        |_, _| {},
+    );
+}
+
+/// Closes an overlay runtime, runs a post-update hook, and applies the callback/focus tail.
+pub(crate) fn close_overlay_runtime_with_after_update<T: 'static>(
+    runtime: Entity<T>,
+    focus_restore: &FocusRestoreIntent,
+    trigger_focus: FocusHandle,
+    defer_focus_restore: bool,
+    on_open_change: Option<&dyn Fn(bool, &mut Window, &mut App)>,
+    window: &mut Window,
+    cx: &mut App,
+    close_runtime: impl FnOnce(&mut T),
+    after_update: impl FnOnce(&mut Window, &mut App),
+) {
     runtime.update(cx, |runtime, _| {
         close_runtime(runtime);
     });
+    after_update(window, cx);
     emit_overlay_open_change(false, on_open_change, window, cx);
     restore_overlay_focus(
         focus_restore,
