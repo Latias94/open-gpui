@@ -347,11 +347,16 @@ verified_by:
   `cargo run -p xtask -- scan-ui-contract`, followed by public-surface, a11y, theme, or gallery
   focused nextest gates for behavior proof. Docking preview follow-up should start from the native
   example dogfood paths and focused docking nextest gates listed here.
+- Done on `main`: command keymap resolution is now dogfooded in the Components gallery
+  `keymap-resolution` Command sample. The sample shows pending chord state, matched command ids,
+  disabled reasons, hidden commands, and missing-command explanations from the real
+  `CommandCenter::resolve_key_sequence_for_keymap` path.
 - Not current roadmap work: broad splitting of every remaining 1k+ component file and
   `open-gpui-ui-headless` extraction.
 - Blocked: None.
-- Next action: dogfood keymap resolution in a real app-shell or gallery inspector path that shows
-  typed chord state, matched command ids, and disabled/hidden/missing-command explanations.
+- Next action: choose the next Command ecosystem slice. The clearest continuation is a real app-shell
+  shortcut inspector / dispatch preflight that consumes the same keymap-resolution API; otherwise
+  there is no blocking cleanup left from the keymap-resolution slice.
 
 # Citations
 
