@@ -22,9 +22,9 @@ use crate::listbox::{
 };
 use crate::overlay::{
     GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
-    consume_overlay_event, emit_overlay_open_change, gpui_overlay_state,
-    gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
-    set_overlay_open,
+    apply_overlay_open_change, apply_overlay_open_change_with_after_update, consume_overlay_event,
+    gpui_overlay_state, gpui_relative_overlay_layer, outside_press_open_change,
+    resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::theme::{ThemeContext, ThemeResolver};
@@ -810,14 +810,15 @@ impl RenderOnce for Select {
                             let key = event.keystroke.key.as_str();
                             if matches!(key, "enter" | "space" | "down" | "up") {
                                 consume_overlay_event(window, cx);
-                                runtime.update(cx, |runtime, _| {
-                                    set_overlay_open(&mut runtime.open, true);
-                                });
-                                emit_overlay_open_change(
+                                apply_overlay_open_change(
+                                    runtime.clone(),
                                     true,
                                     on_open_change.as_deref(),
                                     window,
                                     cx,
+                                    |runtime| {
+                                        set_overlay_open(&mut runtime.open, true);
+                                    },
                                 );
                             } else if key == "escape" {
                                 consume_overlay_event(window, cx);
@@ -834,14 +835,15 @@ impl RenderOnce for Select {
                             .capture_any_mouse_up(move |_, window, cx| {
                                 consume_overlay_event(window, cx);
                                 let next_open = !open;
-                                runtime.update(cx, |runtime, _| {
-                                    set_overlay_open(&mut runtime.open, next_open);
-                                });
-                                emit_overlay_open_change(
+                                apply_overlay_open_change(
+                                    runtime.clone(),
                                     next_open,
                                     on_open_change.as_deref(),
                                     window,
                                     cx,
+                                    |runtime| {
+                                        set_overlay_open(&mut runtime.open, next_open);
+                                    },
                                 );
                             })
                     })
@@ -912,15 +914,28 @@ fn select_content_element(
         .embedded(true)
         .on_select(move |selection, window, cx| {
             let selection = SelectSelection::from(selection);
-            listbox_runtime.update(cx, |runtime, _| {
-                runtime.selected_value = Some(selection.value().to_owned());
-                runtime.active_value = Some(selection.value().to_owned());
-                set_overlay_open(&mut runtime.open, false);
-            });
-            if let Some(on_select) = listbox_select.as_ref() {
-                on_select(selection, window, cx);
-            }
-            emit_overlay_open_change(false, listbox_open_change.as_deref(), window, cx);
+            let selected_value = selection.value().to_owned();
+            let on_select = listbox_select.clone();
+            apply_overlay_open_change_with_after_update(
+                listbox_runtime.clone(),
+                false,
+                listbox_open_change.as_deref(),
+                window,
+                cx,
+                {
+                    let selected_value = selected_value.clone();
+                    move |runtime| {
+                        runtime.selected_value = Some(selected_value.clone());
+                        runtime.active_value = Some(selected_value);
+                        set_overlay_open(&mut runtime.open, false);
+                    }
+                },
+                move |window, cx| {
+                    if let Some(on_select) = on_select.as_ref() {
+                        on_select(selection, window, cx);
+                    }
+                },
+            );
         });
     let mut listbox = listbox;
     if let Some(selected_value) = selected_value {
@@ -985,8 +1000,14 @@ fn close_select(
     window: &mut Window,
     cx: &mut App,
 ) {
-    runtime.update(cx, |runtime, _| {
-        set_overlay_open(&mut runtime.open, false);
-    });
-    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+    apply_overlay_open_change(
+        runtime,
+        false,
+        on_open_change.as_deref(),
+        window,
+        cx,
+        |runtime| {
+            set_overlay_open(&mut runtime.open, false);
+        },
+    );
 }

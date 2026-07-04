@@ -24,9 +24,9 @@ use crate::listbox::{
 };
 use crate::overlay::{
     GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
-    consume_overlay_event, emit_overlay_open_change, gpui_overlay_state,
-    gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
-    set_overlay_open,
+    apply_overlay_open_change, apply_overlay_open_change_with_after_update, consume_overlay_event,
+    emit_overlay_open_change, gpui_overlay_state, gpui_relative_overlay_layer,
+    outside_press_open_change, resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::text_editing::TextEditingPolicy;
@@ -1171,18 +1171,33 @@ fn combobox_content_element(
                     selection.value().to_owned(),
                     selection.label().to_owned(),
                 );
-                runtime.update(cx, |runtime, _| {
-                    runtime.selected_value = Some(payload.value().to_owned());
-                    runtime.active_value = Some(payload.value().to_owned());
-                    set_overlay_open(&mut runtime.open, false);
-                });
-                input_controller.update(cx, |controller, cx| {
-                    controller.set_value(payload.label().to_owned(), cx);
-                });
-                if let Some(on_select) = on_select.as_ref() {
-                    on_select(payload, window, cx);
-                }
-                emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+                let payload_value = payload.value().to_owned();
+                let payload_label = payload.label().to_owned();
+                let input_controller = input_controller.clone();
+                let on_select = on_select.clone();
+                apply_overlay_open_change_with_after_update(
+                    runtime.clone(),
+                    false,
+                    on_open_change.as_deref(),
+                    window,
+                    cx,
+                    {
+                        let payload_value = payload_value.clone();
+                        move |runtime| {
+                            runtime.selected_value = Some(payload_value.clone());
+                            runtime.active_value = Some(payload_value);
+                            set_overlay_open(&mut runtime.open, false);
+                        }
+                    },
+                    move |window, cx| {
+                        input_controller.update(cx, |controller, cx| {
+                            controller.set_value(payload_label, cx);
+                        });
+                        if let Some(on_select) = on_select.as_ref() {
+                            on_select(payload, window, cx);
+                        }
+                    },
+                );
             }
         });
     let listbox = if let Some(selected_value) = selected_value {
@@ -1249,10 +1264,16 @@ fn close_combobox(
     window: &mut Window,
     cx: &mut App,
 ) {
-    runtime.update(cx, |runtime, _| {
-        set_overlay_open(&mut runtime.open, false);
-    });
-    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+    apply_overlay_open_change(
+        runtime,
+        false,
+        on_open_change.as_deref(),
+        window,
+        cx,
+        |runtime| {
+            set_overlay_open(&mut runtime.open, false);
+        },
+    );
 }
 
 fn flatten_combobox_choice_options(

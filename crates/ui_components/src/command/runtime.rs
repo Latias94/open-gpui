@@ -12,7 +12,8 @@ use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use crate::overlay::{
-    emit_overlay_open_change, escape_open_change, outside_press_open_change, set_overlay_open,
+    apply_overlay_open_change, apply_overlay_open_change_with_after_update, escape_open_change,
+    outside_press_open_change, set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
 use crate::text_input::TextInput;
@@ -893,18 +894,36 @@ fn handle_command_selection(
 ) {
     match selection_mode {
         CommandSelectionMode::Single => {
-            runtime.update(cx, |runtime, _| {
-                runtime.selected_value = Some(selection.value().to_owned());
-                runtime.active_value = Some(selection.value().to_owned());
-                if dialog_enabled {
-                    set_overlay_open(&mut runtime.open, false);
-                }
-            });
-            if let Some(on_select) = on_select.as_ref() {
-                on_select(selection, window, cx);
-            }
             if dialog_enabled {
-                emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+                let selected_value = selection.value().to_owned();
+                apply_overlay_open_change_with_after_update(
+                    runtime.clone(),
+                    false,
+                    on_open_change.as_deref(),
+                    window,
+                    cx,
+                    {
+                        let selected_value = selected_value.clone();
+                        move |runtime| {
+                            runtime.selected_value = Some(selected_value.clone());
+                            runtime.active_value = Some(selected_value);
+                            set_overlay_open(&mut runtime.open, false);
+                        }
+                    },
+                    move |window, cx| {
+                        if let Some(on_select) = on_select.as_ref() {
+                            on_select(selection, window, cx);
+                        }
+                    },
+                );
+            } else {
+                runtime.update(cx, |runtime, _| {
+                    runtime.selected_value = Some(selection.value().to_owned());
+                    runtime.active_value = Some(selection.value().to_owned());
+                });
+                if let Some(on_select) = on_select.as_ref() {
+                    on_select(selection, window, cx);
+                }
             }
         }
         CommandSelectionMode::Multiple => {
@@ -1012,10 +1031,16 @@ pub(super) fn close_command_dialog(
     window: &mut Window,
     cx: &mut App,
 ) {
-    runtime.update(cx, |runtime, _| {
-        set_overlay_open(&mut runtime.open, false);
-    });
-    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+    apply_overlay_open_change(
+        runtime,
+        false,
+        on_open_change.as_deref(),
+        window,
+        cx,
+        |runtime| {
+            set_overlay_open(&mut runtime.open, false);
+        },
+    );
 }
 
 fn command_selection_change_after_toggle(

@@ -297,6 +297,43 @@ pub(crate) fn set_overlay_open(runtime_open: &mut bool, open: bool) {
     *runtime_open = open;
 }
 
+/// Applies an overlay open-state change and emits the bool callback afterward.
+pub(crate) fn apply_overlay_open_change<T: 'static>(
+    runtime: Entity<T>,
+    open: bool,
+    on_open_change: Option<&dyn Fn(bool, &mut Window, &mut App)>,
+    window: &mut Window,
+    cx: &mut App,
+    update_runtime: impl FnOnce(&mut T),
+) {
+    apply_overlay_open_change_with_after_update(
+        runtime,
+        open,
+        on_open_change,
+        window,
+        cx,
+        update_runtime,
+        |_, _| {},
+    );
+}
+
+/// Applies an overlay open-state change, runs a post-update hook, and emits the callback afterward.
+pub(crate) fn apply_overlay_open_change_with_after_update<T: 'static>(
+    runtime: Entity<T>,
+    open: bool,
+    on_open_change: Option<&dyn Fn(bool, &mut Window, &mut App)>,
+    window: &mut Window,
+    cx: &mut App,
+    update_runtime: impl FnOnce(&mut T),
+    after_update: impl FnOnce(&mut Window, &mut App),
+) {
+    runtime.update(cx, |runtime, _| {
+        update_runtime(runtime);
+    });
+    after_update(window, cx);
+    emit_overlay_open_change(open, on_open_change, window, cx);
+}
+
 /// Closes an overlay runtime and applies the shared callback/focus tail.
 pub(crate) fn close_overlay_runtime<T: 'static>(
     runtime: Entity<T>,

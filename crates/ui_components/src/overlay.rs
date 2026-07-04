@@ -14,7 +14,8 @@ pub(crate) use adapter::{
 pub use open_gpui_ui_core::OverlayResolvedState;
 pub use placement::{GpuiOverlayPlacement, gpui_anchor, point_anchor_placement};
 pub(crate) use runtime::{
-    OverlayDisclosureConfig, OverlayDisclosureOpenMode, close_overlay_runtime,
+    OverlayDisclosureConfig, OverlayDisclosureOpenMode, apply_overlay_open_change,
+    apply_overlay_open_change_with_after_update, close_overlay_runtime,
     close_overlay_runtime_with_after_update, consume_overlay_event, emit_overlay_open_change,
     resolve_overlay_open_state, set_overlay_open,
 };
