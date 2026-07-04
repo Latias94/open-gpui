@@ -75,7 +75,7 @@ impl MotionScalarTrack {
     ) -> Self {
         Self {
             model,
-            value: MotionValue::new(from, started_at),
+            value: MotionValue::new(from),
             target,
             initial_velocity,
             started_at,

@@ -38,6 +38,31 @@ fn ui_core_strict_boundary_blockers_match_allowlist() {
     );
 }
 
+#[test]
+fn ui_core_motion_value_stays_private_while_consumed_motion_contracts_stay_public() {
+    let lib_path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs");
+    let lib_source = std::fs::read_to_string(lib_path)
+        .unwrap_or_else(|error| panic!("failed to read {lib_path}: {error}"));
+
+    assert!(
+        lib_source.contains("\nmod motion_value;\n"),
+        "motion_value should remain an internal implementation module"
+    );
+    assert!(
+        !lib_source.contains("\npub mod motion_value;\n"),
+        "MotionValue should not be reachable as open_gpui_ui_core::motion_value::MotionValue"
+    );
+
+    let _track: Option<open_gpui_ui_core::MotionScalarTrack> = None;
+    let _controller: open_gpui_ui_core::MotionScalarController<&'static str> =
+        open_gpui_ui_core::MotionScalarController::new();
+    let demand = open_gpui_ui_core::MotionFrameDemand::Idle;
+    assert!(!demand.needs_frame());
+
+    let _model = open_gpui_ui_core::MotionPreset::Immediate.resolve_model();
+    let _clip: Option<open_gpui_ui_core::MotionProjectionClip> = None;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct SourceBlocker {
     file: String,

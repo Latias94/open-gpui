@@ -792,6 +792,9 @@ the adapter samples `SplitterLayoutTransition` through the same committed-layout
 final-size panel content through overlay clips. `Splitter::motion_preference` controls both
 programmatic committed-layout paths, and reduced motion must complete at the final state without
 scheduling a transition.
+The public motion contract for these paths is `MotionScalarTrack` / `MotionScalarController`,
+`MotionFrameDemand`, `MotionModel`, `MotionPreset`, motion policy validation, and
+`MotionProjectionClip`; the lower-level scalar value state remains private inside `ui_core`.
 Dragging a collapsible panel past its restore threshold clears its collapsed state and resumes
 normal min/max resizing; dragging below that threshold keeps the collapsed fraction stable.
 The adapter may use GPUI layout primitives, cursor styles, drag callbacks, and `Entity` runtime

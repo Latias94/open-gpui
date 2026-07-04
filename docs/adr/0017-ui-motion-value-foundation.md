@@ -37,9 +37,12 @@ The accepted boundary is:
   remains the duration/easing timeline contract and must not be a hidden spring selector.
 - Shared run/sample naming must cover timeline, spring, immediate, cancellation, and future models
   without pretending every sample is timeline-specific.
-- A proof-gated scalar value primitive may own current value, previous value, previous-frame value,
-  velocity, jump/cancel semantics, and one active run owner. It is only public if Splitter or docking
-  consumes it; otherwise it remains private or is deleted.
+- The scalar value primitive remains an internal implementation detail. In the current proof it only
+  stores the sanitized source value consumed by `MotionScalarTrack`; previous-frame velocity
+  bookkeeping, run owners, subscriptions, and public value mutation stay deferred until a
+  first-party adapter proves direct need.
+- `MotionScalarTrack`, `MotionScalarController`, `MotionFrameDemand`, `MotionModel`, presets, policy
+  gates, and projection clips are the public motion contracts consumed by Splitter and docking.
 - Frame demand may carry minimal update/render reason vocabulary, but GPUI frame scheduling,
   measurement/read phases, render lifecycle, cursor state, windows, and platform compositor work
   remain adapter-owned.
@@ -75,9 +78,9 @@ flowchart TB
   Timeline[Timeline model] --> Model
   Spring[Spring model] --> Model
   Immediate[Immediate model] --> Model
-  Model --> Run[Motion run/sample state]
-  Run --> Value[Scalar motion value]
-  Value --> Owner[Single active owner]
+  Model --> Track[MotionScalarTrack]
+  Track --> Run[Motion run/sample state]
+  Track --> Value[Private sanitized scalar value]
   Run --> Demand[Frame-demand reason]
   Policy[Motion policy] --> Model
   Policy --> Run
