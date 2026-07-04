@@ -23,6 +23,8 @@ pending as a chord.
   `CommandCenter::resolve_key_sequence_for_keymap`, using the center's active scopes,
   availability map, and key contexts.
 - Exposed the new API through the `open_gpui_ui_components` default root/prelude surface.
+- Added a Components gallery `keymap-resolution` Command sample that dogfoods pending chord,
+  matched command, disabled, hidden, and missing-command readouts from the real center/keymap path.
 - Documented the keymap resolution boundary in `docs/ui/command-ecosystem.md`.
 
 # Notes
@@ -30,4 +32,3 @@ pending as a chord.
 GPUI remains the dispatch and chord authority. This layer is intentionally a typed projection and
 preflight API: it reports matched commands, command-specific pending continuations, and
 availability state without dispatching actions.
-

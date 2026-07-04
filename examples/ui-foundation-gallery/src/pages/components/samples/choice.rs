@@ -1,8 +1,9 @@
 use super::*;
 use open_gpui::{KeyBinding, KeyContext, Keymap, actions};
 use open_gpui_command::{
-    CommandCenter, CommandContribution, CommandDescriptor, CommandProviderResponse,
-    CommandProviderSource, CommandProviderStatus, CommandShortcutDiagnostic,
+    CommandAvailabilityMap, CommandCenter, CommandContribution, CommandDescriptor,
+    CommandKeyBinding, CommandKeymapResolution, CommandProviderResponse, CommandProviderSource,
+    CommandProviderStatus, CommandShortcutDiagnostic,
 };
 
 /// One switch sample in the gallery.
@@ -138,6 +139,8 @@ pub struct CommandSample {
     pub status_items: Arc<[CommandStatusItem]>,
     /// Latest dynamic provider status retained by the backing command center.
     pub provider_status: Option<CommandProviderStatus>,
+    /// Keymap input resolutions used by command inspector/gallery readouts.
+    pub keymap_resolutions: Arc<[CommandKeymapResolution]>,
     /// Persistent selected values for multi-select samples.
     pub selected_values: Arc<[String]>,
     /// Estimated visible row count for the result viewport.
@@ -705,11 +708,13 @@ actions!(
         OpenRegistryCommand,
         SaveRegistryCommand,
         FormatRegistryCommand,
+        HiddenRegistryCommand,
+        MissingRegistryCommand,
     ]
 );
 
 /// Returns command palette samples backed by real component state.
-pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 8] {
+pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
     let ranked_items: Arc<[CommandItemDescriptor]> = vec![
         CommandItemDescriptor::new("archive", "Archive").keyword("file"),
         CommandItemDescriptor::new("open-file", "Open File").shortcut("Ctrl+O"),
@@ -899,6 +904,87 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 8] {
     );
     let context_shortcut_diagnostics = Arc::from(context_palette.shortcut_diagnostics().to_vec());
     let context_snapshot = context_palette
+        .into_index_snapshot()
+        .mode(CommandIndexSnapshotMode::PreRankedFilter);
+    let mut keymap_resolution_center = CommandCenter::new("gallery-keymap-resolution-center-v1");
+    keymap_resolution_center
+        .register_source(
+            "workspace",
+            "keymap-resolution",
+            [
+                CommandContribution::new(
+                    CommandDescriptor::new("workspace.open", "Open Workspace")
+                        .group("Keymap")
+                        .keyword("keymap")
+                        .keyword("chord"),
+                ),
+                CommandContribution::new(
+                    CommandDescriptor::new("workspace.save", "Save Workspace")
+                        .group("Keymap")
+                        .keyword("keymap")
+                        .keyword("disabled"),
+                ),
+                CommandContribution::new(
+                    CommandDescriptor::new("workspace.hidden", "Hidden Workspace")
+                        .group("Keymap")
+                        .keyword("keymap")
+                        .keyword("hidden"),
+                ),
+            ],
+        )
+        .expect("gallery keymap resolution commands are unique");
+    keymap_resolution_center
+        .set_context_stack(
+            CommandContextStack::new()
+                .scope("workspace")
+                .key_context(KeyContext::parse("Workspace mode=normal").unwrap()),
+        )
+        .set_availability(
+            CommandAvailabilityMap::new()
+                .disabled("workspace.save", "Workspace is read-only")
+                .hidden("workspace.hidden"),
+        )
+        .register_action("workspace.open", OpenRegistryCommand)
+        .register_action("workspace.save", SaveRegistryCommand)
+        .register_action("workspace.hidden", HiddenRegistryCommand)
+        .register_action("workspace.missing", MissingRegistryCommand);
+    keymap_resolution_center.register_key_bindings(
+        "keymap-resolution-shortcuts",
+        [
+            CommandKeyBinding::new("workspace.open", "ctrl-k ctrl-o").context("Workspace"),
+            CommandKeyBinding::new("workspace.save", "ctrl-k ctrl-s").context("Workspace"),
+            CommandKeyBinding::new("workspace.save", "ctrl-s").context("mode == normal"),
+            CommandKeyBinding::new("workspace.hidden", "ctrl-h").context("Workspace"),
+            CommandKeyBinding::new("workspace.missing", "ctrl-m").context("Workspace"),
+        ],
+    );
+    let mut keymap_resolution_keymap = Keymap::default();
+    let keymap_resolution_report =
+        keymap_resolution_center.install_key_bindings(&mut keymap_resolution_keymap);
+    debug_assert!(
+        keymap_resolution_report.is_clean(),
+        "gallery keymap resolution bindings should project cleanly"
+    );
+    let keymap_resolutions: Arc<[CommandKeymapResolution]> =
+        ["ctrl-k", "ctrl-k ctrl-o", "ctrl-s", "ctrl-h", "ctrl-m"]
+            .into_iter()
+            .map(|sequence| {
+                keymap_resolution_center
+                    .resolve_key_sequence_for_keymap(sequence, &keymap_resolution_keymap)
+                    .expect("gallery keymap resolution sequence is valid")
+            })
+            .collect::<Vec<_>>()
+            .into();
+    let keymap_resolution_palette = CommandPaletteProjection::from_center_for_keymap(
+        &keymap_resolution_center,
+        "keymap",
+        &keymap_resolution_keymap,
+    );
+    let keymap_resolution_shortcut_diagnostics =
+        Arc::from(keymap_resolution_palette.shortcut_diagnostics().to_vec());
+    let keymap_resolution_status_items =
+        Arc::from(keymap_resolution_palette.status_items().to_vec());
+    let keymap_resolution_snapshot = keymap_resolution_palette
         .into_index_snapshot()
         .mode(CommandIndexSnapshotMode::PreRankedFilter);
     let mut diagnostics_center = CommandCenter::new("gallery-diagnostics-center-v1");
@@ -1133,6 +1219,35 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 8] {
                 tokens,
             )
         },
+        command_sample_with_status(
+            CommandSample {
+                dispatched_command_id: Some("workspace.open".to_string()),
+                shortcut_diagnostics: keymap_resolution_shortcut_diagnostics,
+                keymap_resolutions,
+                ..command_sample_from_snapshot(
+                    "keymap-resolution",
+                    "CommandCenter keymap resolution exposes typed chord pending state, matched commands, and non-dispatchable command reasons.",
+                    Size::Small,
+                    false,
+                    Some(true),
+                    false,
+                    "Keymap commands",
+                    "Search keymap commands",
+                    "keymap",
+                    CommandSelectionMode::Single,
+                    Some("workspace.open"),
+                    Vec::<String>::new(),
+                    Some("workspace.open"),
+                    keymap_resolution_snapshot,
+                    true,
+                    6,
+                    None,
+                    4,
+                    tokens,
+                )
+            },
+            keymap_resolution_status_items,
+        ),
     ]
 }
 
@@ -1292,6 +1407,7 @@ fn command_sample_from_local(
         shortcut_diagnostics: Arc::from([]),
         status_items: Arc::from([]),
         provider_status: None,
+        keymap_resolutions: Arc::from([]),
         selected_values: selected_values.into(),
         viewport_item_count,
         row_height,
@@ -1357,6 +1473,7 @@ fn command_sample_from_snapshot(
         shortcut_diagnostics: Arc::from([]),
         status_items: Arc::from([]),
         provider_status: None,
+        keymap_resolutions: Arc::from([]),
         selected_values: selected_values.into(),
         viewport_item_count,
         row_height,

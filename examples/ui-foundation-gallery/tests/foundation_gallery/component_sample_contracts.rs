@@ -754,6 +754,7 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     let provider = &commands[5].state;
     let diagnostics = &commands[6].state;
     let context = &commands[7].state;
+    let keymap = &commands[8].state;
 
     assert_eq!(framework.open_mode(), ComboboxOpenMode::Controlled);
     assert!(framework.open());
@@ -959,6 +960,62 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
             "Format Focused Editor".to_string(),
             Some("ctrl-shift-F".to_string())
         ))
+    );
+
+    assert_eq!(commands[8].id, "keymap-resolution");
+    assert_eq!(
+        commands[8].dispatched_command_id.as_deref(),
+        Some("workspace.open")
+    );
+    assert_eq!(
+        keymap.index_revision(),
+        Some("gallery-keymap-resolution-center-v1")
+    );
+    assert_eq!(
+        keymap.index_mode(),
+        CommandIndexSnapshotMode::PreRankedFilter
+    );
+    assert_eq!(keymap.query(), "keymap");
+    assert_eq!(keymap.filtered_item_count(), 2);
+    assert_eq!(
+        keymap
+            .items()
+            .iter()
+            .map(|item| (item.value().to_owned(), item.shortcut().map(str::to_owned)))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "workspace.open".to_string(),
+                Some("ctrl-K ctrl-O".to_string())
+            ),
+            ("workspace.save".to_string(), Some("ctrl-S".to_string())),
+        ]
+    );
+    assert_eq!(commands[8].shortcut_diagnostics.len(), 1);
+    assert_eq!(keymap.status_warning_count(), 1);
+    assert_eq!(commands[8].keymap_resolutions.len(), 5);
+    assert!(commands[8].keymap_resolutions[0].is_pending());
+    assert_eq!(
+        commands[8].keymap_resolutions[1]
+            .primary_dispatchable_command()
+            .map(|command| command.command_id()),
+        Some("workspace.open")
+    );
+    assert_eq!(
+        commands[8].keymap_resolutions[2]
+            .primary_command()
+            .and_then(|command| command.state().reason_ref()),
+        Some("Workspace is read-only")
+    );
+    assert!(
+        commands[8].keymap_resolutions[3]
+            .primary_command()
+            .is_some_and(|command| command.state().is_hidden())
+    );
+    assert!(
+        commands[8].keymap_resolutions[4]
+            .primary_command()
+            .is_some_and(|command| command.state().is_missing_command())
     );
 }
 

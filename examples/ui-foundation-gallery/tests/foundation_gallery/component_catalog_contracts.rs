@@ -607,7 +607,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(comboboxes[2].state.disabled());
     assert!(!comboboxes[2].state.open());
 
-    assert_eq!(commands.len(), 8);
+    assert_eq!(commands.len(), 9);
     assert_eq!(commands[0].id, "ranked-search");
     assert_eq!(commands[0].state.open_mode(), CommandOpenMode::Controlled);
     assert!(commands[0].state.loading().is_none());
@@ -772,6 +772,85 @@ fn components_page_samples_expose_component_metadata() {
             .and_then(|item| item.shortcut()),
         Some("ctrl-shift-F")
     );
+    assert_eq!(commands[8].id, "keymap-resolution");
+    assert_eq!(
+        commands[8].state.index_revision(),
+        Some("gallery-keymap-resolution-center-v1")
+    );
+    assert_eq!(
+        commands[8].state.index_mode(),
+        CommandIndexSnapshotMode::PreRankedFilter
+    );
+    assert_eq!(commands[8].state.query(), "keymap");
+    assert_eq!(commands[8].state.filtered_item_count(), 2);
+    assert_eq!(
+        commands[8].dispatched_command_id.as_deref(),
+        Some("workspace.open")
+    );
+    assert_eq!(commands[8].shortcut_diagnostics.len(), 1);
+    assert_eq!(commands[8].state.status_warning_count(), 1);
+    assert_eq!(commands[8].keymap_resolutions.len(), 5);
+
+    let pending_chord = &commands[8].keymap_resolutions[0];
+    assert_eq!(pending_chord.input_label(), "ctrl-k");
+    assert!(pending_chord.is_pending());
+    assert!(pending_chord.matched_commands().is_empty());
+    assert!(
+        pending_chord
+            .pending_commands()
+            .iter()
+            .any(|command| command.command_id() == "workspace.open" && command.is_dispatchable())
+    );
+    assert!(
+        pending_chord
+            .pending_commands()
+            .iter()
+            .any(
+                |command| command.command_id() == "workspace.save" && command.state().is_disabled()
+            )
+    );
+
+    let open_chord = &commands[8].keymap_resolutions[1];
+    assert_eq!(open_chord.input_label(), "ctrl-k ctrl-o");
+    assert!(!open_chord.is_pending());
+    assert_eq!(
+        open_chord
+            .primary_dispatchable_command()
+            .map(|command| command.command_id()),
+        Some("workspace.open")
+    );
+
+    let disabled_save = commands[8].keymap_resolutions[2]
+        .primary_command()
+        .expect("ctrl-s should resolve to the disabled save command");
+    assert_eq!(disabled_save.command_id(), "workspace.save");
+    assert!(disabled_save.state().is_disabled());
+    assert_eq!(
+        disabled_save.state().reason_ref(),
+        Some("Workspace is read-only")
+    );
+    assert!(
+        commands[8].keymap_resolutions[2]
+            .primary_dispatchable_command()
+            .is_none()
+    );
+
+    let hidden_command = commands[8].keymap_resolutions[3]
+        .primary_command()
+        .expect("ctrl-h should resolve to the hidden command");
+    assert_eq!(hidden_command.command_id(), "workspace.hidden");
+    assert!(hidden_command.state().is_hidden());
+    assert!(
+        commands[8].keymap_resolutions[3]
+            .primary_dispatchable_command()
+            .is_none()
+    );
+
+    let missing_command = commands[8].keymap_resolutions[4]
+        .primary_command()
+        .expect("ctrl-m should resolve to the missing command action");
+    assert_eq!(missing_command.command_id(), "workspace.missing");
+    assert!(missing_command.state().is_missing_command());
 
     assert_eq!(labels.len(), 4);
     assert_eq!(labels[0].state.role(), Role::Label);
@@ -1709,6 +1788,7 @@ fn component_gallery_shell_reads_choice_active_metadata_from_resolved_state() {
     assert!(command_section.contains("if let Some(active) = state.active_value()"));
     assert!(command_section.contains("command = command.active(active);"));
     assert!(command_section.contains("command.status_items(state.status_items().iter().cloned())"));
+    assert!(command_section.contains("component_command_keymap_resolution_rows"));
     assert!(listbox_readout.contains("typeahead_label"));
     assert!(listbox_readout.contains("first_typeahead_target"));
     assert!(select_readout.contains("listbox selected"));
@@ -1716,6 +1796,7 @@ fn component_gallery_shell_reads_choice_active_metadata_from_resolved_state() {
     assert!(command_readout.contains("selected_values {:?}"));
     assert!(command_readout.contains("{} status / {} warnings / {} errors"));
     assert!(command_readout.contains("navigation loop {} / group jump {}"));
+    assert!(command_readout.contains("command_resolution_summary"));
 }
 
 #[test]

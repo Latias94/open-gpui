@@ -10,6 +10,10 @@ status: active
   `CommandCenter` and `GpuiCommandActionMap` can now resolve typed GPUI key sequences into command
   ids, chord pending state, command-specific continuations, and disabled/hidden/missing-command
   preflight state while keeping GPUI as the key dispatch authority.
+- 2026-07-04: Dogfooded command keymap resolution in the Components gallery Command samples.
+  The `keymap-resolution` sample now renders pending chord, matched command, disabled, hidden, and
+  missing-command readouts backed by `CommandCenter::resolve_key_sequence_for_keymap`, with gallery
+  contracts and smoke tests covering the rendered selectors.
 - 2026-07-04: Added command palette pending provider request handoff on
   `feat/command-navigation-polish`. `CommandPaletteControllerUpdate` now exposes
   `CommandPalettePendingProviderRequest` values for app-owned async providers while preserving

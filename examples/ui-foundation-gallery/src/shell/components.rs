@@ -1226,7 +1226,7 @@ pub(crate) fn component_combobox_samples_section(
 }
 
 pub(crate) fn component_command_samples_section(
-    samples: [pages::components::CommandSample; 8],
+    samples: [pages::components::CommandSample; 9],
 
     tokens: ThemeTokens,
 ) -> impl IntoElement {
@@ -1251,6 +1251,8 @@ pub(crate) fn component_command_samples_section(
                     let debug_selector = sample.debug_selector();
 
                     let state = sample.state.clone();
+
+                    let keymap_resolutions = sample.keymap_resolutions.clone();
 
                     let label = state.label().to_owned();
 
@@ -1357,6 +1359,12 @@ pub(crate) fn component_command_samples_section(
                         )
                         .child(command)
                         .child(component_command_state_row(&state))
+                        .when(!keymap_resolutions.is_empty(), |this| {
+                            this.child(component_command_keymap_resolution_rows(
+                                sample_id,
+                                keymap_resolutions,
+                            ))
+                        })
                 })),
         )
 }
@@ -1603,6 +1611,58 @@ fn component_command_state_row(state: &CommandState) -> impl IntoElement {
             state.loop_navigation(),
             state.group_navigation()
         ))
+}
+
+fn component_command_keymap_resolution_rows(
+    sample_id: &'static str,
+    resolutions: std::sync::Arc<[open_gpui_command::CommandKeymapResolution]>,
+) -> impl IntoElement {
+    let selector_sample_id = sample_id.to_owned();
+
+    div()
+        .debug_selector(move || {
+            format!("gallery:component-command-sample:{selector_sample_id}:keymap-resolution")
+        })
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x334155))
+        .children(
+            resolutions
+                .iter()
+                .enumerate()
+                .map(move |(index, resolution)| {
+                    let row_sample_id = sample_id.to_owned();
+                    div()
+                        .debug_selector(move || {
+                            format!(
+                                "gallery:component-command-sample:{row_sample_id}:keymap-resolution:{index}"
+                            )
+                        })
+                        .child(format!(
+                            "{} => matched [{}] / pending {} [{}]",
+                            resolution.input_label(),
+                            command_resolution_summary(resolution.matched_commands()),
+                            resolution.is_pending(),
+                            command_resolution_summary(resolution.pending_commands())
+                        ))
+                }),
+        )
+}
+
+fn command_resolution_summary(
+    commands: &[open_gpui_command::CommandKeymapResolvedCommand],
+) -> String {
+    if commands.is_empty() {
+        return "none".to_owned();
+    }
+
+    commands
+        .iter()
+        .map(|command| format!("{}:{:?}", command.command_id(), command.state()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub(crate) fn component_radio_state_row(
