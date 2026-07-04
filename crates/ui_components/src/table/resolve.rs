@@ -34,7 +34,6 @@ impl Table {
         let virtualizer = if self.row_measure_mode.measured() {
             measured_virtualizer_state(
                 table.center_rows(),
-                self.row_measure_mode,
                 &BTreeMap::new(),
                 metrics.row_height(),
                 metrics.overscan(),
@@ -111,7 +110,6 @@ impl Table {
         let virtualizer = if self.row_measure_mode.measured() {
             measured_virtualizer_state(
                 cache.table.center_rows(),
-                self.row_measure_mode,
                 &runtime.row_measurements,
                 metrics.row_height(),
                 metrics.overscan(),

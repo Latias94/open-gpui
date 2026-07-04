@@ -609,7 +609,6 @@ mod tests {
 
         let resolved = measured_virtualizer_state(
             &rows,
-            TableRowMeasureMode::Measured,
             &measurements,
             ui_px(20.0),
             2,
