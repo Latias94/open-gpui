@@ -34,6 +34,11 @@ impl SplitterPanelDescriptor {
         }
     }
 
+    /// Returns the stable panel id.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
     /// Applies the minimum panel fraction.
     pub fn min_fraction(mut self, min_fraction: f32) -> Self {
         self.min_fraction = min_fraction;

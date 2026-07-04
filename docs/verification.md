@@ -134,9 +134,11 @@ timeline sampling, spring sampling, scalar values, model-neutral scalar samples,
 reasons, explicit model/preset resolution, layout projection data, motion policy validation,
 terminal state, reduced-motion completion, stable-identity retarget matching, and renderer-neutral
 projection clips. `SplitterLayoutTransition::sample` now exposes final-content bounds plus visible
-clip bounds for insert, remove, resize, collapse, and expand transition descriptors, while keeping
-the GPUI Splitter adapter's identity/count changes documented as immediate until that adapter
-renders retained entering/leaving content.
+clip bounds for insert, remove, resize, collapse, and expand transition descriptors. The GPUI
+Splitter adapter consumes those samples for programmatic identity/count/collapse/expand changes via
+an overlay path; leaving panel content is retained when callers use view-backed
+`SplitterPanel::view` panels, while one-shot element-backed panels keep their existing render
+limitations.
 `ui_components::Splitter` uses the scalar controller and explicit committed-layout model for
 programmatic fraction changes while keeping pointer drags immediate and policy-tested. Docking uses
 the same scalar motion model for transition progress, keeps explicit custom timeline specs intact,

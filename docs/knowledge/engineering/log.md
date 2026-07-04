@@ -6,12 +6,16 @@ status: active
 
 # Log
 
+- 2026-07-04: Wired GPUI Splitter structural layout transitions on
+  `feat/ui-motion-projection-clips`. `SplitterRuntime` now stores previous semantic state, runs a
+  separate layout-transition scalar track for identity/count/collapse/expand changes, renders the
+  final flex layout plus a projection-clip overlay, and adds `SplitterPanel::view` as the explicit
+  retained-content path for real leaving-panel content.
 - 2026-07-04: Added shared projection clip sampling on
   `feat/ui-motion-projection-clips`. `MotionProjectionClip` now lives in `ui_core`,
   Docking pane clip execution reuses it for enter/leave/move/resize samples, and
   `SplitterLayoutTransition::sample` exposes final-content bounds plus visible clip bounds for
-  renderer-neutral insert/remove/resize/collapse/expand transition evidence while the GPUI Splitter
-  adapter keeps identity/count changes immediate.
+  renderer-neutral insert/remove/resize/collapse/expand transition evidence.
 - 2026-07-04: Started the UI motion value foundation on
   `feat/ui-motion-value-foundation`. ADR 0017 accepts explicit model/preset resolution,
   proof-gated scalar value/run state, frame-demand reasons, production policy gates, and projection
