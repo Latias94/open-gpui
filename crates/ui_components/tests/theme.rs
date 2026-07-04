@@ -1,16 +1,19 @@
 mod support;
 
 use open_gpui::{ParentElement, div};
+use open_gpui_ui_components::theme::{
+    THEME_JSON_SCHEMA_VERSION, ThemeDefinition, ThemeFileField, ThemeLoadError, ThemeRegistry,
+    ThemeRuntime, ThemeRuntimeError, ThemeValidationError, register_theme_json_file,
+    register_theme_json_str, theme_definition_from_json_file, theme_definition_from_json_str,
+    theme_json_schema,
+};
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogIntent, Avatar, Badge, BadgeVariant, Button, ButtonVariant, Checkbox,
     ColorIntent, ColorState, Combobox, ComboboxOption, Command, CommandItem, EmptyState,
     FeedbackIntent, Field, HoverCard, IconButton, Kbd, Label, Listbox, ListboxOption, Menu,
     MenuItem, Progress, RadioGroup, RadioItem, Select, Separator, Sheet, Skeleton, StatusCue,
-    Switch, THEME_JSON_SCHEMA_VERSION, TableToolbar, TextInput, ThemeColor, ThemeContext,
-    ThemeDefinition, ThemeFileField, ThemeLoadError, ThemeMode, ThemeRegistry, ThemeResolver,
-    ThemeRuntime, ThemeRuntimeError, ThemeSnapshot, ThemeValidationError, Toggle, ToggleVariant,
-    register_theme_json_file, register_theme_json_str, theme_definition_from_json_file,
-    theme_definition_from_json_str, theme_json_schema,
+    Switch, TableToolbar, TextInput, ThemeColor, ThemeContext, ThemeMode, ThemeResolver,
+    ThemeSnapshot, Toggle, ToggleVariant,
 };
 use open_gpui_ui_core::{Sizable, semantic};
 
@@ -531,65 +534,72 @@ fn theme_registry_replaces_existing_definition_by_stable_id() {
 }
 
 #[test]
-fn theme_registry_types_are_exported_from_root_and_prelude() {
-    use open_gpui_ui_components::{self as root, prelude};
+fn theme_registry_types_live_on_explicit_theme_owner_surface() {
+    use open_gpui_ui_components::{self as root, prelude, theme as theme_owner};
 
-    let mut root_registry: root::ThemeRegistry = root::ThemeRegistry::with_builtins();
-    let root_definition: root::ThemeDefinition =
-        root::ThemeDefinition::new("root-brand", "Root brand", root::ThemeMode::Light, 7);
-    let root_entry: root::ThemeRegistryEntry = root_registry
+    let mut root_registry: theme_owner::ThemeRegistry = theme_owner::ThemeRegistry::with_builtins();
+    let root_definition: theme_owner::ThemeDefinition =
+        theme_owner::ThemeDefinition::new("root-brand", "Root brand", root::ThemeMode::Light, 7);
+    let root_entry: theme_owner::ThemeRegistryEntry = root_registry
         .register(root_definition)
-        .expect("root ThemeRegistry should register exported ThemeDefinition")
+        .expect("theme owner ThemeRegistry should register exported ThemeDefinition")
         .clone();
-    let root_diagnostics: root::ThemeRegistrationDiagnostics = root_entry.diagnostics();
-    let root_error: root::ThemeValidationError = root::ThemeValidationError::MissingId;
-    let root_load_error: root::ThemeLoadError =
-        root::theme_definition_from_json_str("{}").unwrap_err();
-    let root_file_field: root::ThemeFileField = root::ThemeFileField::SchemaVersion;
-    let _root_schema = root::theme_json_schema();
+    let root_diagnostics: theme_owner::ThemeRegistrationDiagnostics = root_entry.diagnostics();
+    let root_error: theme_owner::ThemeValidationError =
+        theme_owner::ThemeValidationError::MissingId;
+    let root_load_error: theme_owner::ThemeLoadError =
+        theme_owner::theme_definition_from_json_str("{}").unwrap_err();
+    let root_file_field: theme_owner::ThemeFileField = theme_owner::ThemeFileField::SchemaVersion;
+    let _root_schema = theme_owner::theme_json_schema();
 
-    let mut prelude_registry: prelude::ThemeRegistry = prelude::ThemeRegistry::with_builtins();
-    let prelude_definition: prelude::ThemeDefinition = prelude::ThemeDefinition::new(
+    let mut prelude_registry: theme_owner::ThemeRegistry =
+        theme_owner::ThemeRegistry::with_builtins();
+    let prelude_definition: theme_owner::ThemeDefinition = theme_owner::ThemeDefinition::new(
         "prelude-brand",
         "Prelude brand",
         prelude::ThemeMode::Dark,
         8,
     );
-    let prelude_entry: prelude::ThemeRegistryEntry = prelude_registry
+    let prelude_entry: theme_owner::ThemeRegistryEntry = prelude_registry
         .register(prelude_definition)
-        .expect("prelude ThemeRegistry should register exported ThemeDefinition")
+        .expect("theme owner ThemeRegistry should register exported ThemeDefinition")
         .clone();
-    let prelude_diagnostics: prelude::ThemeRegistrationDiagnostics = prelude_entry.diagnostics();
-    let prelude_error: prelude::ThemeValidationError = prelude::ThemeValidationError::MissingLabel;
-    let prelude_load_error: prelude::ThemeLoadError =
-        prelude::theme_definition_from_json_str("{}").unwrap_err();
-    let prelude_file_field: prelude::ThemeFileField = prelude::ThemeFileField::SchemaVersion;
-    let _prelude_schema = prelude::theme_json_schema();
+    let prelude_diagnostics: theme_owner::ThemeRegistrationDiagnostics =
+        prelude_entry.diagnostics();
+    let prelude_error: theme_owner::ThemeValidationError =
+        theme_owner::ThemeValidationError::MissingLabel;
+    let prelude_load_error: theme_owner::ThemeLoadError =
+        theme_owner::theme_definition_from_json_str("{}").unwrap_err();
+    let prelude_file_field: theme_owner::ThemeFileField =
+        theme_owner::ThemeFileField::SchemaVersion;
+    let _prelude_schema = theme_owner::theme_json_schema();
 
     assert_eq!(root_entry.snapshot().revision(), 7);
     assert_eq!(prelude_entry.snapshot().revision(), 8);
-    assert_eq!(root::THEME_JSON_SCHEMA_VERSION, 1);
-    assert_eq!(prelude::THEME_JSON_SCHEMA_VERSION, 1);
+    assert_eq!(theme_owner::THEME_JSON_SCHEMA_VERSION, 1);
     assert_eq!(root_diagnostics.fallback_mode(), root::ThemeMode::Light);
     assert!(root_diagnostics.fallback_color_count() > 0);
     assert_eq!(
         prelude_diagnostics.fallback_mode(),
         prelude::ThemeMode::Dark
     );
-    assert_eq!(root_error, root::ThemeValidationError::MissingId);
-    assert_eq!(prelude_error, prelude::ThemeValidationError::MissingLabel);
+    assert_eq!(root_error, theme_owner::ThemeValidationError::MissingId);
+    assert_eq!(
+        prelude_error,
+        theme_owner::ThemeValidationError::MissingLabel
+    );
     assert_eq!(
         root_load_error,
-        root::ThemeLoadError::MissingField(root_file_field)
+        theme_owner::ThemeLoadError::MissingField(root_file_field)
     );
     assert_eq!(
         prelude_load_error,
-        prelude::ThemeLoadError::MissingField(prelude_file_field)
+        theme_owner::ThemeLoadError::MissingField(prelude_file_field)
     );
-    root::register_theme_json_str(&mut root_registry, VALID_THEME_JSON)
-        .expect("root register_theme_json_str should register exported loader output");
-    prelude::register_theme_json_str(&mut prelude_registry, VALID_THEME_JSON)
-        .expect("prelude register_theme_json_str should register exported loader output");
+    theme_owner::register_theme_json_str(&mut root_registry, VALID_THEME_JSON)
+        .expect("theme owner register_theme_json_str should register exported loader output");
+    theme_owner::register_theme_json_str(&mut prelude_registry, VALID_THEME_JSON)
+        .expect("theme owner register_theme_json_str should register exported loader output");
 }
 
 #[test]

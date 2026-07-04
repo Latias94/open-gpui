@@ -1,12 +1,12 @@
-use open_gpui::{App, Entity, KeyDownEvent, ScrollHandle, Window, point, px};
+use open_gpui::{App, Entity, KeyDownEvent, ScrollHandle, Window};
 use open_gpui_ui_core::{TableExpansionState, TableResolvedRow, TableRowId, UiPx};
 
-use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
+use crate::scroll_surface::{ScrollSurfaceRevealStrategy, reveal_fixed_row};
 use crate::table::interaction::toggle_table_expansion;
 use crate::table::{
     TableInputModifiers, TableRowAction, TableRowActivation, TableRowActivationHandler,
     TableRowActivationKind, TableRowExpansionHandler, TableRowExpansionToggle, TableRowRenderPlan,
-    TableRuntime, nonnegative_px,
+    TableRuntime,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,26 +169,12 @@ fn scroll_table_row_into_view(
     row_count: usize,
     index: usize,
 ) {
-    let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
-    let row_height = nonnegative_px(row_height);
-    if viewport_extent.as_f32() <= 0.0 || row_height.as_f32() <= 0.0 {
-        return;
-    }
-
-    let total_extent = row_height * row_count as f32;
-    let current_scroll_offset =
-        UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
-    let row_start = row_height * index as f32;
-    let row_end = row_start + row_height;
-    let max_scroll = nonnegative_px(total_extent - viewport_extent);
-    let target = if row_start < current_scroll_offset {
-        row_start
-    } else if row_end > current_scroll_offset + viewport_extent {
-        row_end - viewport_extent
-    } else {
-        current_scroll_offset
-    };
-    let target = target.max(UiPx::ZERO).min(max_scroll);
-
-    scroll_handle.set_offset(point(px(0.0), -gpui_px_from_ui(target)));
+    reveal_fixed_row(
+        scroll_handle,
+        ScrollSurfaceRevealStrategy::Nearest,
+        index,
+        row_count,
+        row_height,
+        None,
+    );
 }

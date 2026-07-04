@@ -1,11 +1,13 @@
 use std::{collections::BTreeMap, time::Instant};
 
-use open_gpui::{Context, FocusHandle, ScrollHandle};
+use open_gpui::{Context, FocusHandle};
+
+use crate::scroll_surface::ScrollSurfaceRuntime;
 
 use super::{TREE_TYPEAHEAD_RESET, TreeState};
 #[derive(Debug, Clone, Default)]
 pub(super) struct TreeRuntime {
-    pub(super) scroll_handle: ScrollHandle,
+    pub(super) scroll_surface: ScrollSurfaceRuntime,
     pub(super) selected_value: Option<String>,
     pub(super) focused_value: Option<String>,
     pub(super) expanded_values: BTreeMap<String, bool>,

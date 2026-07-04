@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, Entity, InteractiveElement, IntoElement, KeyDownEvent,
+    App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
@@ -17,9 +17,10 @@ use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::gpui_px_from_ui;
 use crate::listbox::Listbox;
 use crate::overlay::{
-    GpuiOverlayPlacement, consume_overlay_event, emit_overlay_open_change, gpui_overlay_state,
-    gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
-    set_overlay_open,
+    GpuiOverlayPlacement, OverlayCloseRuntimeRequest, OverlayOpenRuntimeRequest,
+    apply_overlay_open_change, close_overlay_runtime, close_overlay_runtime_with_after_update,
+    consume_overlay_event, gpui_overlay_state, gpui_relative_overlay_layer,
+    outside_press_open_change, resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
 use crate::text_editing::TextEditingPolicy;
@@ -41,6 +42,7 @@ struct ComboboxRuntime {
     open: bool,
     active_value: Option<String>,
     selected_value: Option<String>,
+    trigger_focus: FocusHandle,
 }
 
 /// A concrete GPUI combobox component.
@@ -255,10 +257,11 @@ impl Sizable for Combobox {
 impl RenderOnce for Combobox {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = ThemeResolver::current(cx);
-        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| ComboboxRuntime {
+        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, cx| ComboboxRuntime {
             open: self.default_open,
             active_value: self.active_value.clone(),
             selected_value: self.selected_value.clone(),
+            trigger_focus: cx.focus_handle(),
         });
         let input_state_key: ElementId = (self.id.clone(), "input-state").into();
         let input_controller = window.use_keyed_state(input_state_key, cx, |_, cx| {
@@ -317,6 +320,7 @@ impl RenderOnce for Combobox {
         let open = plan.open;
         let disabled = plan.disabled;
         let toggle_focus_shadow = focus_ring_shadow_with_theme(plan.focus_ring, &theme);
+        let trigger_focus = runtime_state.trigger_focus.clone();
         let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
@@ -355,6 +359,7 @@ impl RenderOnce for Combobox {
                     .items_center()
                     .gap_1()
                     .focusable()
+                    .track_focus(&trigger_focus)
                     .ui_role(plan.input_role)
                     .aria_label(plan.label.clone())
                     .aria_expanded(open)
@@ -364,6 +369,7 @@ impl RenderOnce for Combobox {
                         let input_controller = input_controller.clone();
                         let on_open_change = self.on_open_change.clone();
                         let on_select = self.on_select.clone();
+                        let focus_restore = state.focus_restore_intent().clone();
                         let key_state = state.clone();
                         move |event: &KeyDownEvent, window, cx| match combobox_keyboard_action(
                             &key_state,
@@ -371,54 +377,87 @@ impl RenderOnce for Combobox {
                         ) {
                             ComboboxKeyboardAction::Navigate(value) => {
                                 consume_overlay_event(window, cx);
-                                runtime.update(cx, |runtime, _| {
-                                    set_overlay_open(&mut runtime.open, true);
-                                    runtime.active_value = Some(value);
-                                });
                                 if !key_state.open() {
-                                    emit_overlay_open_change(
-                                        true,
-                                        on_open_change.as_deref(),
+                                    apply_overlay_open_change(
+                                        OverlayOpenRuntimeRequest::new(
+                                            runtime.clone(),
+                                            true,
+                                            on_open_change.as_deref(),
+                                        ),
                                         window,
                                         cx,
+                                        move |runtime| {
+                                            set_overlay_open(&mut runtime.open, true);
+                                            runtime.active_value = Some(value);
+                                        },
                                     );
+                                } else {
+                                    runtime.update(cx, |runtime, _| {
+                                        set_overlay_open(&mut runtime.open, true);
+                                        runtime.active_value = Some(value);
+                                    });
                                 }
                             }
                             ComboboxKeyboardAction::Select(selection) => {
                                 consume_overlay_event(window, cx);
-                                runtime.update(cx, |runtime, _| {
-                                    runtime.selected_value = Some(selection.value().to_owned());
-                                    runtime.active_value = Some(selection.value().to_owned());
-                                    set_overlay_open(&mut runtime.open, false);
-                                });
-                                input_controller.update(cx, |controller, cx| {
-                                    controller.set_value(selection.label().to_owned(), cx);
-                                });
-                                if let Some(on_select) = on_select.as_ref() {
-                                    on_select(selection, window, cx);
-                                }
-                                emit_overlay_open_change(
-                                    false,
-                                    on_open_change.as_deref(),
+                                let selected_value = selection.value().to_owned();
+                                let selected_label = selection.label().to_owned();
+                                let input_controller = input_controller.clone();
+                                let on_select = on_select.clone();
+                                let trigger_focus = runtime.read(cx).trigger_focus.clone();
+                                close_overlay_runtime_with_after_update(
+                                    OverlayCloseRuntimeRequest::new(
+                                        runtime.clone(),
+                                        &focus_restore,
+                                        trigger_focus,
+                                        on_open_change.as_deref(),
+                                    ),
                                     window,
                                     cx,
+                                    {
+                                        let selected_value = selected_value.clone();
+                                        move |runtime| {
+                                            runtime.selected_value = Some(selected_value.clone());
+                                            runtime.active_value = Some(selected_value);
+                                            set_overlay_open(&mut runtime.open, false);
+                                        }
+                                    },
+                                    move |window, cx| {
+                                        input_controller.update(cx, |controller, cx| {
+                                            controller.set_value(selected_label, cx);
+                                        });
+                                        if let Some(on_select) = on_select.as_ref() {
+                                            on_select(selection, window, cx);
+                                        }
+                                    },
                                 );
                             }
                             ComboboxKeyboardAction::Open => {
                                 consume_overlay_event(window, cx);
-                                runtime.update(cx, |runtime, _| {
-                                    set_overlay_open(&mut runtime.open, true);
-                                });
-                                emit_overlay_open_change(
-                                    true,
-                                    on_open_change.as_deref(),
-                                    window,
-                                    cx,
-                                );
+                                if !key_state.open() {
+                                    apply_overlay_open_change(
+                                        OverlayOpenRuntimeRequest::new(
+                                            runtime.clone(),
+                                            true,
+                                            on_open_change.as_deref(),
+                                        ),
+                                        window,
+                                        cx,
+                                        |runtime| {
+                                            set_overlay_open(&mut runtime.open, true);
+                                        },
+                                    );
+                                }
                             }
                             ComboboxKeyboardAction::Close => {
                                 consume_overlay_event(window, cx);
-                                close_combobox(runtime.clone(), on_open_change.clone(), window, cx);
+                                close_combobox(
+                                    runtime.clone(),
+                                    focus_restore.clone(),
+                                    on_open_change.clone(),
+                                    window,
+                                    cx,
+                                );
                             }
                             ComboboxKeyboardAction::Ignore => {}
                         }
@@ -457,19 +496,33 @@ impl RenderOnce for Combobox {
                             .when(!disabled, |this| {
                                 let runtime = runtime.clone();
                                 let on_open_change = self.on_open_change.clone();
+                                let focus_restore = state.focus_restore_intent().clone();
                                 this.cursor_pointer().on_click(
                                     move |_event: &ClickEvent, window, cx| {
                                         cx.stop_propagation();
                                         let next_open = !open;
-                                        runtime.update(cx, |runtime, _| {
-                                            set_overlay_open(&mut runtime.open, next_open);
-                                        });
-                                        emit_overlay_open_change(
-                                            next_open,
-                                            on_open_change.as_deref(),
-                                            window,
-                                            cx,
-                                        );
+                                        if next_open {
+                                            apply_overlay_open_change(
+                                                OverlayOpenRuntimeRequest::new(
+                                                    runtime.clone(),
+                                                    true,
+                                                    on_open_change.as_deref(),
+                                                ),
+                                                window,
+                                                cx,
+                                                |runtime| {
+                                                    set_overlay_open(&mut runtime.open, true);
+                                                },
+                                            );
+                                        } else {
+                                            close_combobox(
+                                                runtime.clone(),
+                                                focus_restore.clone(),
+                                                on_open_change.clone(),
+                                                window,
+                                                cx,
+                                            );
+                                        }
                                     },
                                 )
                             })
@@ -517,6 +570,7 @@ fn combobox_content_element(
     let metrics = state.metrics();
     let colors = state.colors();
     let outside_change = outside_press_open_change(state.overlay().policy());
+    let focus_restore = state.focus_restore_intent().clone();
     let selected_value = state.selected_value().map(str::to_owned);
     let active_value = state.active_value().map(str::to_owned);
     let query = state.query().to_owned();
@@ -543,23 +597,43 @@ fn combobox_content_element(
             let runtime = runtime.clone();
             let on_select = on_select.clone();
             let on_open_change = on_open_change.clone();
+            let focus_restore = focus_restore.clone();
             move |selection, window, cx| {
                 let payload = ComboboxSelection::new(
                     selection.value().to_owned(),
                     selection.label().to_owned(),
                 );
-                runtime.update(cx, |runtime, _| {
-                    runtime.selected_value = Some(payload.value().to_owned());
-                    runtime.active_value = Some(payload.value().to_owned());
-                    set_overlay_open(&mut runtime.open, false);
-                });
-                input_controller.update(cx, |controller, cx| {
-                    controller.set_value(payload.label().to_owned(), cx);
-                });
-                if let Some(on_select) = on_select.as_ref() {
-                    on_select(payload, window, cx);
-                }
-                emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+                let payload_value = payload.value().to_owned();
+                let payload_label = payload.label().to_owned();
+                let input_controller = input_controller.clone();
+                let on_select = on_select.clone();
+                let trigger_focus = runtime.read(cx).trigger_focus.clone();
+                close_overlay_runtime_with_after_update(
+                    OverlayCloseRuntimeRequest::new(
+                        runtime.clone(),
+                        &focus_restore,
+                        trigger_focus,
+                        on_open_change.as_deref(),
+                    ),
+                    window,
+                    cx,
+                    {
+                        let payload_value = payload_value.clone();
+                        move |runtime| {
+                            runtime.selected_value = Some(payload_value.clone());
+                            runtime.active_value = Some(payload_value);
+                            set_overlay_open(&mut runtime.open, false);
+                        }
+                    },
+                    move |window, cx| {
+                        input_controller.update(cx, |controller, cx| {
+                            controller.set_value(payload_label, cx);
+                        });
+                        if let Some(on_select) = on_select.as_ref() {
+                            on_select(payload, window, cx);
+                        }
+                    },
+                );
             }
         });
     let listbox = if let Some(selected_value) = selected_value {
@@ -575,6 +649,7 @@ fn combobox_content_element(
     let scroll_viewport_id = state.scroll_area().viewport_id().to_owned();
     let escape_runtime = runtime.clone();
     let escape_open_change = on_open_change.clone();
+    let escape_focus_restore = focus_restore.clone();
 
     div()
         .id(content_id)
@@ -599,6 +674,7 @@ fn combobox_content_element(
                 consume_overlay_event(window, cx);
                 close_combobox(
                     escape_runtime.clone(),
+                    escape_focus_restore.clone(),
                     escape_open_change.clone(),
                     window,
                     cx,
@@ -608,8 +684,15 @@ fn combobox_content_element(
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
+            let focus_restore = focus_restore.clone();
             this.on_mouse_down_out(move |_, window, cx| {
-                close_combobox(runtime.clone(), on_open_change.clone(), window, cx);
+                close_combobox(
+                    runtime.clone(),
+                    focus_restore.clone(),
+                    on_open_change.clone(),
+                    window,
+                    cx,
+                );
             })
         })
         .child(
@@ -622,12 +705,23 @@ fn combobox_content_element(
 
 fn close_combobox(
     runtime: Entity<ComboboxRuntime>,
+    focus_restore: FocusRestoreIntent,
     on_open_change: Option<ComboboxOpenChangeHandler>,
     window: &mut Window,
     cx: &mut App,
 ) {
-    runtime.update(cx, |runtime, _| {
-        set_overlay_open(&mut runtime.open, false);
-    });
-    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+    let trigger_focus = runtime.read(cx).trigger_focus.clone();
+    close_overlay_runtime(
+        OverlayCloseRuntimeRequest::new(
+            runtime,
+            &focus_restore,
+            trigger_focus,
+            on_open_change.as_deref(),
+        ),
+        window,
+        cx,
+        |runtime| {
+            set_overlay_open(&mut runtime.open, false);
+        },
+    );
 }

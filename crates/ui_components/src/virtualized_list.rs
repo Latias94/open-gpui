@@ -1,14 +1,18 @@
 //! Renderer-neutral state for virtualized list surfaces.
 
 use crate::a11y::UiA11yElementExt;
-use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
+use crate::geometry::gpui_px_from_ui;
 use crate::roving_focus::paged_navigation_target;
 use crate::scroll_area::ScrollArea;
+use crate::scroll_surface::{
+    ScrollSurfaceRevealStrategy, ScrollSurfaceRuntime, fixed_row_scroll_target, reveal_fixed_row,
+    scroll_surface_handle, vertical_scroll_offset, vertical_viewport_extent,
+};
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
-    Window, div, point, px, rgb,
+    Window, div, px, rgb,
 };
 #[cfg(test)]
 use open_gpui_ui_core::ui_px;
@@ -737,7 +741,7 @@ impl VirtualizedListRenderPlan {
 
 #[derive(Debug, Clone)]
 struct VirtualizedListRuntime {
-    scroll_handle: ScrollHandle,
+    scroll_surface: ScrollSurfaceRuntime,
     focus_handle: FocusHandle,
     active_index: Option<usize>,
     selected_index: Option<usize>,
@@ -915,16 +919,16 @@ impl RenderOnce for VirtualizedList {
         let runtime_id = format!("virtualized-list:{}:runtime", self.id);
         let debug_id = self.id.to_string();
         let runtime = window.use_keyed_state(runtime_id, cx, |_, cx| VirtualizedListRuntime {
-            scroll_handle: ScrollHandle::new(),
+            scroll_surface: ScrollSurfaceRuntime::new(None),
             focus_handle: cx.focus_handle(),
             active_index: self.active_index,
             selected_index: self.selected_index,
             pending_scroll_to_active: None,
         });
         let runtime_state = runtime.read(cx).clone();
-        let scroll_handle = runtime_state.scroll_handle.clone();
+        let scroll_handle = scroll_surface_handle(&runtime_state.scroll_surface, None);
         let focus_handle = runtime_state.focus_handle.clone();
-        let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
+        let viewport_extent = vertical_viewport_extent(&scroll_handle);
         let viewport_item_count = resolve_viewport_item_count(
             self.metrics.row_height(),
             viewport_extent,
@@ -939,8 +943,7 @@ impl RenderOnce for VirtualizedList {
                 runtime.pending_scroll_to_active = None;
             });
         }
-        let scroll_offset =
-            UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
+        let scroll_offset = vertical_scroll_offset(&scroll_handle);
         let plan = VirtualizedListRenderPlan::resolve(
             self.id.clone(),
             self.label.to_string(),
@@ -1203,19 +1206,14 @@ fn handle_virtualized_list_key_down(
 }
 
 fn scroll_active_index(scroll_handle: &ScrollHandle, state: &VirtualizedListState, index: usize) {
-    let viewport_extent =
-        resolve_viewport_extent(state, ui_px_from_gpui(scroll_handle.bounds().size.height));
-    let current_scroll_offset =
-        UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
-    let target = virtualized_list_scroll_target(
-        VirtualizedListScrollStrategy::Nearest,
+    reveal_fixed_row(
+        scroll_handle,
+        ScrollSurfaceRevealStrategy::Nearest,
         index,
         state.item_count(),
         state.metrics().row_height(),
-        viewport_extent,
-        current_scroll_offset,
+        Some(state.viewport_extent()),
     );
-    scroll_handle.set_offset(point(px(0.0), -gpui_px_from_ui(target)));
 }
 
 fn resolve_viewport_item_count(row_height: UiPx, viewport_extent: UiPx, fallback: usize) -> usize {
@@ -1259,40 +1257,25 @@ pub fn virtualized_list_scroll_target(
     viewport_extent: UiPx,
     current_scroll_offset: UiPx,
 ) -> UiPx {
-    let row_height = nonnegative_px(row_height);
-    let viewport_extent = nonnegative_px(viewport_extent);
-    if item_count == 0 || row_height.as_f32() <= 0.0 {
-        return UiPx::ZERO;
+    fixed_row_scroll_target(
+        scroll_surface_reveal_strategy(strategy),
+        target_index,
+        item_count,
+        row_height,
+        viewport_extent,
+        current_scroll_offset,
+    )
+}
+
+const fn scroll_surface_reveal_strategy(
+    strategy: VirtualizedListScrollStrategy,
+) -> ScrollSurfaceRevealStrategy {
+    match strategy {
+        VirtualizedListScrollStrategy::Nearest => ScrollSurfaceRevealStrategy::Nearest,
+        VirtualizedListScrollStrategy::Top => ScrollSurfaceRevealStrategy::Top,
+        VirtualizedListScrollStrategy::Center => ScrollSurfaceRevealStrategy::Center,
+        VirtualizedListScrollStrategy::Bottom => ScrollSurfaceRevealStrategy::Bottom,
     }
-
-    let target_index = target_index.min(item_count - 1);
-    let total_size = row_height * item_count as f32;
-    let max_scroll_offset = nonnegative_px(total_size - viewport_extent);
-    let current_scroll_offset = nonnegative_px(current_scroll_offset).min(max_scroll_offset);
-    let row_start = row_height * target_index as f32;
-    let row_end = row_start + row_height;
-    let target = match strategy {
-        VirtualizedListScrollStrategy::Nearest => {
-            let viewport_start = current_scroll_offset;
-            let viewport_end = viewport_start + viewport_extent;
-            if row_start < viewport_start {
-                row_start
-            } else if row_end > viewport_end {
-                row_end - viewport_extent
-            } else {
-                viewport_start
-            }
-        }
-        VirtualizedListScrollStrategy::Top => row_start,
-        VirtualizedListScrollStrategy::Center => {
-            let row_center = row_start + row_height.half();
-            let viewport_center = viewport_extent.half();
-            row_center - viewport_center
-        }
-        VirtualizedListScrollStrategy::Bottom => row_end - viewport_extent,
-    };
-
-    nonnegative_px(target).min(max_scroll_offset)
 }
 
 const fn valid_index(index: usize, item_count: usize) -> Option<usize> {

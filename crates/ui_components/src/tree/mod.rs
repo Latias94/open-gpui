@@ -8,13 +8,17 @@ mod runtime;
 mod style;
 
 use crate::a11y::UiA11yElementExt;
-use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
+use crate::geometry::gpui_px_from_ui;
 use crate::scroll_area::ScrollArea;
+use crate::scroll_surface::{
+    ScrollSurfaceRevealStrategy, ScrollSurfaceRuntime, reveal_fixed_row, scroll_surface_handle,
+    vertical_scroll_offset, vertical_viewport_extent,
+};
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, CursorStyle, Empty, Entity, FocusHandle, InteractiveElement,
     IntoElement, KeyDownEvent, ParentElement, RenderOnce, ScrollHandle, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, point, px, rgb, rgba,
+    StatefulInteractiveElement, Styled, Window, div, px, rgb, rgba,
 };
 use open_gpui_ui_core::{Role, Sizable, Size, UiPx, ui_px};
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
@@ -234,7 +238,7 @@ impl RenderOnce for Tree {
         window.with_id(id.clone(), |window| {
             let debug_id = id.clone();
             let runtime = window.use_keyed_state("runtime", cx, |_, _| TreeRuntime {
-                scroll_handle: ScrollHandle::new(),
+                scroll_surface: ScrollSurfaceRuntime::new(None),
                 selected_value: selected_value.clone(),
                 focused_value: focused_value.clone(),
                 expanded_values: BTreeMap::new(),
@@ -271,12 +275,11 @@ impl RenderOnce for Tree {
             let root_focus_handle = state
                 .focused_index()
                 .and_then(|index| focus_handles.get(index).cloned().flatten());
-            let scroll_handle = runtime.read(cx).scroll_handle.clone();
+            let scroll_handle = scroll_surface_handle(&runtime.read(cx).scroll_surface, None);
             let metrics = state.metrics();
             let content = if virtualized {
-                let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
-                let scroll_offset =
-                    UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
+                let viewport_extent = vertical_viewport_extent(&scroll_handle);
+                let scroll_offset = vertical_scroll_offset(&scroll_handle);
                 let plan = TreeRenderPlan::resolve(
                     debug_id.clone(),
                     label.to_string(),
@@ -909,34 +912,12 @@ fn tree_typeahead_key(event: &KeyDownEvent) -> Option<String> {
 
 fn scroll_tree_item_into_view(scroll_handle: &ScrollHandle, state: &TreeState, index: usize) {
     let row_height = nonnegative_px(state.metrics().row_height());
-    let viewport_extent = resolve_tree_scroll_viewport_extent(scroll_handle, row_height);
-    if viewport_extent.as_f32() <= 0.0 || row_height.as_f32() <= 0.0 {
-        return;
-    }
-
-    let total_extent = row_height * state.items().len() as f32;
-    let current_scroll_offset =
-        UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
-    let row_start = row_height * index as f32;
-    let row_end = row_start + row_height;
-    let max_scroll = nonnegative_px(total_extent - viewport_extent);
-    let target = if row_start < current_scroll_offset {
-        row_start
-    } else if row_end > current_scroll_offset + viewport_extent {
-        row_end - viewport_extent
-    } else {
-        current_scroll_offset
-    };
-    let target = target.max(UiPx::ZERO).min(max_scroll);
-
-    scroll_handle.set_offset(point(px(0.0), -gpui_px_from_ui(target)));
-}
-
-fn resolve_tree_scroll_viewport_extent(scroll_handle: &ScrollHandle, row_height: UiPx) -> UiPx {
-    let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
-    if viewport_extent.as_f32() > 0.0 {
-        viewport_extent
-    } else {
-        row_height * DEFAULT_TREE_VIEWPORT_ITEM_COUNT as f32
-    }
+    reveal_fixed_row(
+        scroll_handle,
+        ScrollSurfaceRevealStrategy::Nearest,
+        index,
+        state.items().len(),
+        row_height,
+        Some(row_height * DEFAULT_TREE_VIEWPORT_ITEM_COUNT as f32),
+    );
 }

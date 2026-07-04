@@ -482,7 +482,9 @@ without mutating earlier contributions.
 
 The lower-level `CommandRegistry`, `ScopedCommandRegistry`, and `GpuiCommandActionMap` remain public
 for tests, specialized hosts, and framework authors. Product code should usually start with
-`CommandCenter`.
+`CommandCenter`. These domain APIs are imported from `open_gpui_command`; `open_gpui_ui_components`
+only re-exports the rendered command component, UI projection/readout types, and palette controller
+helpers through its crate root and prelude.
 
 ## Availability And Menu Projection
 

@@ -321,13 +321,14 @@ helpers that remain public for concrete applications must be reachable through
 `init_text_input`, `focus_ring_shadow_with_theme`, the legacy `focus_ring_shadow` compatibility
 helper, accessibility mapping helpers, geometry conversion helpers, and GPUI overlay scheduling
 helpers. The crate root and prelude default interface are reserved for official components and
-renderer-neutral contracts. Reusable command infrastructure stays under `open_gpui_command`;
-renderer-neutral table, virtualizer, and grid contracts stay under `open_gpui_ui_core`. Component
-examples may consume those owner-crate APIs explicitly, but `open_gpui_ui_components` should not
-re-export them as broad default-surface conveniences. This rule narrows the default surface; it
-does not ban narrow component-module re-exports of component-facing neutral dependencies, and it
-does not expand the small prelude-only convenience allowlist in `prelude.rs` without an explicit
-public-surface test update.
+component-facing state/readout types. Advanced command registry/runtime types live in
+`open_gpui_command`; table-core, virtualizer, and grid-window contracts live in
+`open_gpui_ui_core`; advanced theme registry/runtime and JSON loader APIs live under
+`open_gpui_ui_components::theme`. Component examples may consume those owner-crate APIs
+explicitly, but `open_gpui_ui_components` should not re-export them as broad default-surface
+conveniences. This rule narrows the default surface; it does not ban narrow component-module
+re-exports of component-facing neutral dependencies, and it does not expand the small prelude-only
+convenience allowlist in `prelude.rs` without an explicit public-surface test update.
 
 The current foundation refactor makes these names shipped high-value component families:
 `Accordion`, `Collapsible`, `Slider`, `NumberInput`, `ToggleGroup`, `Link`, `Breadcrumb`, `Tag`,
@@ -361,9 +362,10 @@ A component is official only when it satisfies the current-crate completion cont
 `open_gpui_ui_components::component_contract` owns the current product contract table;
 its source home is the `crates/ui_components/src/component_contract/` module family.
 `component_contract/mod.rs` is only the facade; `component_contract/types.rs` owns row types,
-`component_contract/rows.rs` owns canonical contract rows, `component_contract/projections.rs`
-owns query APIs, `component_contract/source_mapping.rs` owns source-owner projections,
-`component_contract/surfaces.rs` owns adjacent public-surface rows, and
+`component_contract/rows.rs` is the row facade, `component_contract/rows/catalog.rs` owns canonical
+contract rows, `component_contract/rows/lists.rs` owns compatibility and family marker lists,
+`component_contract/projections.rs` owns query APIs, `component_contract/source_mapping.rs` owns
+source-owner projections, `component_contract/surfaces.rs` owns adjacent public-surface rows, and
 `component_contract/api_inventory.rs` owns public API inventory and method baselines. That split is
 a shared fact-source cleanup, not a broad component-file-size cleanup.
 That contract table classifies official components, official recipes, renderer-neutral state contracts,
@@ -416,6 +418,14 @@ Breaking migration notes for the 0.3 UI deepening pass:
 - Replace removed primitive pass-through imports under `open_gpui_ui_components::primitives` with
   their renderer-neutral owners in `open_gpui_ui_core` or with the official component/adapter API
   that owns the GPUI runtime behavior.
+- Runtime overlay adapter helpers are request-object based internally:
+  `OverlayOpenRuntimeRequest` owns open transitions, while `OverlayCloseRuntimeRequest` owns close
+  transitions, callback dispatch, and focus-restore tail behavior. These helpers are crate-private;
+  application code should keep using component builders and renderer-neutral overlay policy types.
+- `Select`, `Combobox`, and dialog `Command` now apply their configured `focus_restore_intent` when
+  selection, Escape dismissal, or outside-press dismissal closes the overlay. Tests that previously
+  assumed focus remained inside an unmounted popup should instead assert focus on the trigger/input
+  row or opt out with `FocusRestoreIntent::None`.
 - Keep reference repositories as references only. This pass does not add dependencies on
   `repo-ref/fret` or `repo-ref/gpui-component`, and it does not preserve compatibility shims around
   APIs that were only exposing old implementation structure.
@@ -472,8 +482,9 @@ app-global owner for the active theme id plus registry, and render code consumes
 non-runtime lookup.
 
 Portable theme files are JSON and versioned by `THEME_JSON_SCHEMA_VERSION`. The public loader
-surface is `theme_json_schema`, `theme_definition_from_json_str`,
-`theme_definition_from_json_file`, `register_theme_json_str`, and `register_theme_json_file`.
+surface is the explicit theme-owner API under `open_gpui_ui_components::theme`:
+`theme_json_schema`, `theme_definition_from_json_str`, `theme_definition_from_json_file`,
+`register_theme_json_str`, and `register_theme_json_file`.
 The reviewable schema artifact for version 1 lives at
 `docs/schemas/open-gpui-theme-v1.schema.json`; regenerate it with
 `cargo run -p open-gpui-ui-components --example export_theme_schema --quiet` when
@@ -754,12 +765,15 @@ indexes keep the same payload shape across pinned and center rows. Combined two-
 details remain adapter-internal; public tests assert the resulting row/column behavior through
 `TableBehaviorSnapshot` and gallery runtime probes instead of inspecting the render plan.
 
-An official Table entry must satisfy the normal component completion gate: `Table` and `TableState`
-exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
-entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests for row
-identity, grouping, source-tree expansion, row interaction payloads, and virtualizer behavior, and
-gallery runtime tests for nested scroll containment, faceted-filter row updates, predicate-filter
-row updates, single-line, multiline, and checkbox value-cell updates, and nested header gallery proof.
+An official Table entry must satisfy the normal component completion gate: `Table`,
+`TableBehaviorSnapshot`, and component-owned table controls export at the crate root and prelude,
+while `TableState`, `TableRow`, `TableColumn`, row-model, virtualizer, and resize math import from
+`open_gpui_ui_core`. The entry also needs matching `SIGNALS` entries, a `COMPONENT_CATALOG`
+official entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests
+for row identity, grouping, source-tree expansion, row interaction payloads, and virtualizer
+behavior, and gallery runtime tests for nested scroll containment, faceted-filter row updates,
+predicate-filter row updates, single-line, multiline, and checkbox value-cell updates, and nested
+header gallery proof.
 Dataset-wide exact autosizing, data-source fetch/cache orchestration, global faceting, dynamic
 editor row measurement, and deeper two-axis grid virtualization beyond the pinned center-column
 window remain follow-up capabilities.

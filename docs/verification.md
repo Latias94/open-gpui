@@ -741,6 +741,11 @@ default surface, `MotionValue` stays private behind consumed motion controller A
 Listbox/Select/Combobox/Command gallery stories expose state readout selectors for public-payload
 assertions.
 
+The overlay runtime request-object pass and choice focus-restore hardening should keep the
+`scroll_surface`, `choice`, `overlay`, `layout`, and `table` focused gates green. The `choice` gate
+is the runtime proof that Select, Combobox, and dialog Command restore focus after selection,
+Escape dismissal, and outside-press dismissal while preserving open-change callback order.
+
 For the deep UI framework module refactor, run the focused ownership gates below before the full
 workspace gate. They cover runtime theme context, typed a11y evidence, removed registry history,
 shared overlay placement, `open_gpui_ui_core::grid_viewport::RowWindow`, gallery story-contract
@@ -753,6 +758,11 @@ cargo check -p open-gpui-ui-components --tests
 cargo check -p open-gpui-ui-foundation-gallery --tests
 cargo nextest run -p open-gpui-ui-core overlay grid_viewport --no-fail-fast
 cargo nextest run -p open-gpui-command --no-fail-fast
+cargo nextest run -p open-gpui-ui-components --lib scroll_surface --no-fail-fast
+cargo nextest run -p open-gpui-ui-components --test choice --no-fail-fast
+cargo nextest run -p open-gpui-ui-components --test overlay --no-fail-fast
+cargo nextest run -p open-gpui-ui-components --test layout --no-fail-fast
+cargo nextest run -p open-gpui-ui-components --test table --no-fail-fast
 cargo nextest run -p open-gpui-ui-components theme a11y menu context_menu command --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command_descriptors --no-fail-fast
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast

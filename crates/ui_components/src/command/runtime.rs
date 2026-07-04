@@ -2,17 +2,18 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, ElementId, Entity, FontWeight, IntoElement, KeyDownEvent,
-    ParentElement, Pixels, ScrollHandle, StatefulInteractiveElement, Styled, Window, div, point,
-    px, rgba,
+    AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, FontWeight, IntoElement,
+    KeyDownEvent, ParentElement, Pixels, ScrollHandle, StatefulInteractiveElement, Styled, Window,
+    div, point, px, rgba,
 };
-use open_gpui_ui_core::{Role, Sizable, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{FocusRestoreIntent, Role, Sizable, ThemeTokens, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use crate::overlay::{
-    emit_overlay_open_change, escape_open_change, outside_press_open_change, set_overlay_open,
+    OverlayCloseRuntimeRequest, close_overlay_runtime, close_overlay_runtime_with_after_update,
+    escape_open_change, outside_press_open_change, set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
 use crate::text_input::TextInput;
@@ -41,6 +42,7 @@ pub(super) struct CommandRuntime {
     pub(super) selected_values: Vec<String>,
     pub(super) scroll_handle: ScrollHandle,
     pub(super) scroll_reset_key: String,
+    pub(super) trigger_focus: FocusHandle,
 }
 
 impl CommandRuntime {
@@ -50,6 +52,7 @@ impl CommandRuntime {
         selected_value: Option<String>,
         selected_values: Vec<String>,
         scroll_reset_key: String,
+        trigger_focus: FocusHandle,
     ) -> Self {
         Self {
             open,
@@ -58,6 +61,7 @@ impl CommandRuntime {
             selected_values,
             scroll_handle: ScrollHandle::new(),
             scroll_reset_key,
+            trigger_focus,
         }
     }
 }
@@ -104,10 +108,21 @@ pub(super) fn command_dialog_layer_element(
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
+            let focus_restore = dialog_state
+                .overlay()
+                .policy()
+                .focus_restore_intent()
+                .clone();
             this.on_click(move |_: &ClickEvent, window, cx| {
                 window.prevent_default();
                 cx.stop_propagation();
-                close_command_dialog(runtime.clone(), on_open_change.clone(), window, cx);
+                close_command_dialog(
+                    runtime.clone(),
+                    focus_restore.clone(),
+                    on_open_change.clone(),
+                    window,
+                    cx,
+                );
             })
         })
         .child(
@@ -188,6 +203,7 @@ pub(super) fn command_content_element(
     let status_items = state.status_items().to_vec();
     let escape_runtime = runtime.clone();
     let on_escape_open_change = on_open_change.clone();
+    let escape_focus_restore = state.focus_restore_intent().clone();
     let key_state = state.clone();
     let key_runtime = runtime.clone();
     let key_on_select = on_select.clone();
@@ -195,6 +211,7 @@ pub(super) fn command_content_element(
     let key_on_selected_values_change = on_selected_values_change.clone();
     let key_selected_values = selected_values.clone();
     let key_dialog_enabled = state.dialog().is_some();
+    let key_focus_restore = state.focus_restore_intent().clone();
     let key_selection_mode = selection_mode;
     let key_scroll_handle = scroll_handle.clone();
     let escape_change = state
@@ -248,6 +265,7 @@ pub(super) fn command_content_element(
                 window.prevent_default();
                 close_command_dialog(
                     escape_runtime.clone(),
+                    escape_focus_restore.clone(),
                     on_escape_open_change.clone(),
                     window,
                     cx,
@@ -275,6 +293,7 @@ pub(super) fn command_content_element(
                         key_runtime.clone(),
                         key_selection_mode,
                         key_dialog_enabled,
+                        key_focus_restore.clone(),
                         &key_selected_values,
                         key_on_select.clone(),
                         key_on_open_change.clone(),
@@ -291,8 +310,15 @@ pub(super) fn command_content_element(
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
+            let focus_restore = state.focus_restore_intent().clone();
             this.on_mouse_down_out(move |_, window, cx| {
-                close_command_dialog(runtime.clone(), on_open_change.clone(), window, cx);
+                close_command_dialog(
+                    runtime.clone(),
+                    focus_restore.clone(),
+                    on_open_change.clone(),
+                    window,
+                    cx,
+                );
             })
         })
         .child(command_input)
@@ -716,6 +742,7 @@ fn command_result_children(
         ];
     }
 
+    let focus_restore = state.focus_restore_intent().clone();
     rows.into_iter()
         .map(|row| {
             render_command_result_row(
@@ -731,6 +758,7 @@ fn command_result_children(
                 on_open_change.clone(),
                 on_selected_values_change.clone(),
                 dialog_enabled,
+                focus_restore.clone(),
                 theme,
             )
             .into_any_element()
@@ -752,6 +780,7 @@ fn render_command_result_row(
     on_open_change: Option<CommandOpenChangeHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     dialog_enabled: bool,
+    focus_restore: FocusRestoreIntent,
     theme: &ThemeContext,
 ) -> impl IntoElement {
     let option_value = row.value().to_owned();
@@ -854,6 +883,7 @@ fn render_command_result_row(
                                 runtime.clone(),
                                 selection_mode,
                                 dialog_enabled,
+                                focus_restore.clone(),
                                 &selected_values,
                                 on_select.clone(),
                                 on_open_change.clone(),
@@ -883,6 +913,7 @@ fn handle_command_selection(
     runtime: Entity<CommandRuntime>,
     selection_mode: CommandSelectionMode,
     dialog_enabled: bool,
+    focus_restore: FocusRestoreIntent,
     selected_values: &[String],
     on_select: Option<CommandSelectionHandler>,
     on_open_change: Option<CommandOpenChangeHandler>,
@@ -893,18 +924,40 @@ fn handle_command_selection(
 ) {
     match selection_mode {
         CommandSelectionMode::Single => {
-            runtime.update(cx, |runtime, _| {
-                runtime.selected_value = Some(selection.value().to_owned());
-                runtime.active_value = Some(selection.value().to_owned());
-                if dialog_enabled {
-                    set_overlay_open(&mut runtime.open, false);
-                }
-            });
-            if let Some(on_select) = on_select.as_ref() {
-                on_select(selection, window, cx);
-            }
             if dialog_enabled {
-                emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+                let selected_value = selection.value().to_owned();
+                let trigger_focus = runtime.read(cx).trigger_focus.clone();
+                close_overlay_runtime_with_after_update(
+                    OverlayCloseRuntimeRequest::new(
+                        runtime.clone(),
+                        &focus_restore,
+                        trigger_focus,
+                        on_open_change.as_deref(),
+                    ),
+                    window,
+                    cx,
+                    {
+                        let selected_value = selected_value.clone();
+                        move |runtime| {
+                            runtime.selected_value = Some(selected_value.clone());
+                            runtime.active_value = Some(selected_value);
+                            set_overlay_open(&mut runtime.open, false);
+                        }
+                    },
+                    move |window, cx| {
+                        if let Some(on_select) = on_select.as_ref() {
+                            on_select(selection, window, cx);
+                        }
+                    },
+                );
+            } else {
+                runtime.update(cx, |runtime, _| {
+                    runtime.selected_value = Some(selection.value().to_owned());
+                    runtime.active_value = Some(selection.value().to_owned());
+                });
+                if let Some(on_select) = on_select.as_ref() {
+                    on_select(selection, window, cx);
+                }
             }
         }
         CommandSelectionMode::Multiple => {
@@ -1008,14 +1061,25 @@ pub(super) fn command_scroll_reset_key(state: &CommandState) -> String {
 
 pub(super) fn close_command_dialog(
     runtime: Entity<CommandRuntime>,
+    focus_restore: FocusRestoreIntent,
     on_open_change: Option<CommandOpenChangeHandler>,
     window: &mut Window,
     cx: &mut App,
 ) {
-    runtime.update(cx, |runtime, _| {
-        set_overlay_open(&mut runtime.open, false);
-    });
-    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+    let trigger_focus = runtime.read(cx).trigger_focus.clone();
+    close_overlay_runtime(
+        OverlayCloseRuntimeRequest::new(
+            runtime,
+            &focus_restore,
+            trigger_focus,
+            on_open_change.as_deref(),
+        ),
+        window,
+        cx,
+        |runtime| {
+            set_overlay_open(&mut runtime.open, false);
+        },
+    );
 }
 
 fn command_selection_change_after_toggle(

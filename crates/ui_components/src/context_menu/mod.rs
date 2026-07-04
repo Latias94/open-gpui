@@ -25,9 +25,10 @@ use crate::menu::{
     visible_menu_items,
 };
 use crate::overlay::{
-    GpuiOverlayPlacement, consume_overlay_event, emit_overlay_open_change, gpui_overlay_state,
+    GpuiOverlayPlacement, OverlayCloseRuntimeRequest, OverlayOpenRuntimeRequest,
+    apply_overlay_open_change, close_overlay_runtime, consume_overlay_event, gpui_overlay_state,
     gpui_positioned_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
-    restore_overlay_focus, set_overlay_open,
+    set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::{ThemeContext, ThemeResolver};
@@ -278,11 +279,20 @@ impl RenderOnce for ContextMenu {
             .cursor_context_menu()
             .on_mouse_down(MouseButton::Right, move |event, window, cx| {
                 consume_overlay_event(window, cx);
-                open_runtime.update(cx, |runtime, _| {
-                    runtime.open_at(event.position);
-                    set_overlay_open(&mut runtime.open, true);
-                });
-                emit_overlay_open_change(true, open_change.as_deref(), window, cx);
+                let anchor_point = event.position;
+                apply_overlay_open_change(
+                    OverlayOpenRuntimeRequest::new(
+                        open_runtime.clone(),
+                        true,
+                        open_change.as_deref(),
+                    ),
+                    window,
+                    cx,
+                    move |runtime| {
+                        runtime.open_at(anchor_point);
+                        set_overlay_open(&mut runtime.open, true);
+                    },
+                );
             })
             .child(
                 div()
@@ -683,12 +693,21 @@ fn close_context_menu(
     window: &mut Window,
     cx: &mut App,
 ) {
-    runtime.update(cx, |runtime, _| {
-        set_overlay_open(&mut runtime.open, false);
-        runtime.reset_closed_state();
-    });
-    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
-    restore_overlay_focus(&focus_restore, Some(trigger_focus), true, window, cx);
+    close_overlay_runtime(
+        OverlayCloseRuntimeRequest::new(
+            runtime,
+            &focus_restore,
+            trigger_focus,
+            on_open_change.as_deref(),
+        )
+        .defer_focus_restore(true),
+        window,
+        cx,
+        |runtime| {
+            set_overlay_open(&mut runtime.open, false);
+            runtime.reset_closed_state();
+        },
+    );
 }
 
 fn context_menu_initial_focus_handle(

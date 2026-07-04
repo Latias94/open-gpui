@@ -17,12 +17,12 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
     PublicSurfaceOwnerEntry {
         name: "GpuiOverlayAdapterConfig",
         owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
-        home: "gpui_adapter",
+        home: "overlay/adapter.rs",
     },
     PublicSurfaceOwnerEntry {
         name: "GpuiOverlayState",
         owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
-        home: "gpui_adapter",
+        home: "overlay/adapter.rs",
     },
     PublicSurfaceOwnerEntry {
         name: "TextInputController",

@@ -1957,7 +1957,11 @@ fn official_component_catalog_entries_have_signals_and_sample_selectors() {
             missing.push(format!("{} official entry has no state type", entry.name));
             continue;
         };
-        let state_signal = format!("open_gpui_ui_components::{state}");
+        let state_owner = match state {
+            "TableState" => "open_gpui_ui_core",
+            _ => "open_gpui_ui_components",
+        };
+        let state_signal = format!("{state_owner}::{state}");
         if !signals.contains(&state_signal.as_str()) {
             missing.push(format!("{} state signal `{state_signal}`", entry.name));
         }

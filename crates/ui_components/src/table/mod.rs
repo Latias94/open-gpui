@@ -24,7 +24,10 @@ mod toolbar;
 mod virtualization;
 
 use crate::a11y::UiA11yElementExt;
-use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
+use crate::geometry::gpui_px_from_ui;
+use crate::scroll_surface::{
+    scroll_surface_handle, vertical_scroll_offset, vertical_viewport_extent,
+};
 use open_gpui::prelude::*;
 use open_gpui::{
     App, DragMoveEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement,
@@ -32,7 +35,7 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{
     Sizable, Size, TableColumnResizeDirection, TableColumnResizeMode, TableExpansionMode,
-    TableRowId, TableState, UiPx, VirtualizerSnapshot, ui_px,
+    TableRowId, TableState, UiPx, VirtualizerSnapshot,
 };
 pub use open_gpui_ui_core::{
     TableResolvedHeaderCell, TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions,
@@ -318,10 +321,12 @@ impl RenderOnce for Table {
         let runtime = window.use_keyed_state(runtime_id, cx, |_, _| {
             TableRuntime::new(default_focused_row)
         });
-        let scroll_handle = runtime.read(cx).scroll_handle.clone();
-        let horizontal_scroll_handle = runtime.read(cx).horizontal_scroll_handle.clone();
-        let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
-        let scroll_offset = ui_px((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
+        let runtime_snapshot = runtime.read(cx).clone();
+        let scroll_handle = scroll_surface_handle(&runtime_snapshot.scroll_surface, None);
+        let horizontal_scroll_handle =
+            scroll_surface_handle(&runtime_snapshot.horizontal_scroll_surface, None);
+        let viewport_extent = vertical_viewport_extent(&scroll_handle);
+        let scroll_offset = vertical_scroll_offset(&scroll_handle);
         let on_sort_requested = self.on_sort_requested.clone();
         let on_column_order_change = self.on_column_order_change.clone();
         let column_resizing_enabled =
@@ -459,7 +464,7 @@ mod tests {
     use super::*;
     use open_gpui_ui_core::{
         TableColumn, TableColumnId, TableColumnPinning, TableColumnRegion, TableColumnSizing,
-        TableRow, TableSort, VirtualizerRange,
+        TableRow, TableSort, VirtualizerRange, ui_px,
     };
 
     #[test]

@@ -712,6 +712,10 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
             .is_none(),
         "enabled popup option click should close the content"
     );
+    assert!(
+        cx.debug_selector_is_focused("select:runtime-select:trigger"),
+        "select selection should restore focus to the trigger"
+    );
 
     let trigger = cx
         .debug_bounds("select:runtime-select:trigger")
@@ -1085,6 +1089,10 @@ fn combobox_runtime_filters_input_and_selects_filtered_option(cx: &mut open_gpui
         cx.debug_bounds("combobox:runtime-combobox:content")
             .is_none(),
         "combobox selection should close popup content"
+    );
+    assert!(
+        cx.debug_selector_is_focused("combobox:runtime-combobox:input-row"),
+        "combobox selection should restore focus to the input row"
     );
 }
 
@@ -3082,6 +3090,10 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
             .is_none(),
         "dialog command selection should close the modal content"
     );
+    assert!(
+        cx.debug_selector_is_focused("command:dialog-runtime-command:trigger"),
+        "dialog command selection should restore focus to the trigger"
+    );
 
     let trigger = cx
         .debug_bounds("command:dialog-runtime-command:trigger")
@@ -3120,6 +3132,10 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
             .is_none(),
         "escape should remove the dialog content"
     );
+    assert!(
+        cx.debug_selector_is_focused("command:dialog-runtime-command:trigger"),
+        "escape should restore focus to the dialog command trigger"
+    );
 
     let trigger = cx
         .debug_bounds("command:dialog-runtime-command:trigger")
@@ -3155,6 +3171,10 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
         cx.debug_bounds("command:dialog-runtime-command:content")
             .is_none(),
         "outside press should remove the dialog content"
+    );
+    assert!(
+        cx.debug_selector_is_focused("command:dialog-runtime-command:trigger"),
+        "outside press should restore focus to the dialog command trigger"
     );
 }
 
