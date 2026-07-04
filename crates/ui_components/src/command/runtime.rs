@@ -9,12 +9,12 @@ use open_gpui::{
 use open_gpui_ui_core::{FocusRestoreIntent, Role, Sizable, ThemeTokens, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
+use crate::choice_overlay_runtime::{
+    ChoiceOverlayRuntimeState, close_choice_overlay, commit_choice_overlay_single_value,
+};
 use crate::color::{ColorIntent, ColorState};
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
-use crate::overlay::{
-    OverlayCloseRuntimeRequest, close_overlay_runtime, close_overlay_runtime_with_after_update,
-    escape_open_change, outside_press_open_change, set_overlay_open,
-};
+use crate::overlay::{escape_open_change, outside_press_open_change};
 use crate::scroll_area::ScrollArea;
 use crate::text_input::TextInput;
 use crate::text_input::adapter::TextInputController;
@@ -63,6 +63,21 @@ impl CommandRuntime {
             scroll_reset_key,
             trigger_focus,
         }
+    }
+}
+
+impl ChoiceOverlayRuntimeState for CommandRuntime {
+    fn open_mut(&mut self) -> &mut bool {
+        &mut self.open
+    }
+
+    fn trigger_focus(&self) -> FocusHandle {
+        self.trigger_focus.clone()
+    }
+
+    fn commit_single_value(&mut self, value: String) {
+        self.selected_value = Some(value.clone());
+        self.active_value = Some(value);
     }
 }
 
@@ -926,24 +941,13 @@ fn handle_command_selection(
         CommandSelectionMode::Single => {
             if dialog_enabled {
                 let selected_value = selection.value().to_owned();
-                let trigger_focus = runtime.read(cx).trigger_focus.clone();
-                close_overlay_runtime_with_after_update(
-                    OverlayCloseRuntimeRequest::new(
-                        runtime.clone(),
-                        &focus_restore,
-                        trigger_focus,
-                        on_open_change.as_deref(),
-                    ),
+                commit_choice_overlay_single_value(
+                    runtime.clone(),
+                    focus_restore,
+                    on_open_change,
+                    selected_value,
                     window,
                     cx,
-                    {
-                        let selected_value = selected_value.clone();
-                        move |runtime| {
-                            runtime.selected_value = Some(selected_value.clone());
-                            runtime.active_value = Some(selected_value);
-                            set_overlay_open(&mut runtime.open, false);
-                        }
-                    },
                     move |window, cx| {
                         if let Some(on_select) = on_select.as_ref() {
                             on_select(selection, window, cx);
@@ -1066,20 +1070,7 @@ pub(super) fn close_command_dialog(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    close_overlay_runtime(
-        OverlayCloseRuntimeRequest::new(
-            runtime,
-            &focus_restore,
-            trigger_focus,
-            on_open_change.as_deref(),
-        ),
-        window,
-        cx,
-        |runtime| {
-            set_overlay_open(&mut runtime.open, false);
-        },
-    );
+    close_choice_overlay(runtime, focus_restore, on_open_change, window, cx);
 }
 
 fn command_selection_change_after_toggle(

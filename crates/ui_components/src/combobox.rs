@@ -1,6 +1,9 @@
 //! Combobox component built from editable text input, overlay, and listbox state.
 
 use crate::choice::{self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
+use crate::choice_overlay_runtime::{
+    ChoiceOverlayRuntimeState, close_choice_overlay, commit_choice_overlay_single_value,
+};
 use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
@@ -23,9 +26,8 @@ use crate::listbox::{
     ListboxState,
 };
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayCloseRuntimeRequest, OverlayDisclosureConfig,
-    OverlayDisclosureOpenMode, OverlayOpenRuntimeRequest, OverlayResolvedState,
-    apply_overlay_open_change, close_overlay_runtime, close_overlay_runtime_with_after_update,
+    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode,
+    OverlayOpenRuntimeRequest, OverlayResolvedState, apply_overlay_open_change,
     consume_overlay_event, gpui_overlay_state, gpui_relative_overlay_layer,
     outside_press_open_change, resolve_overlay_open_state, set_overlay_open,
 };
@@ -622,6 +624,21 @@ struct ComboboxRuntime {
     trigger_focus: FocusHandle,
 }
 
+impl ChoiceOverlayRuntimeState for ComboboxRuntime {
+    fn open_mut(&mut self) -> &mut bool {
+        &mut self.open
+    }
+
+    fn trigger_focus(&self) -> FocusHandle {
+        self.trigger_focus.clone()
+    }
+
+    fn commit_single_value(&mut self, value: String) {
+        self.selected_value = Some(value.clone());
+        self.active_value = Some(value);
+    }
+}
+
 /// A concrete GPUI combobox component.
 #[derive(IntoElement)]
 pub struct Combobox {
@@ -987,24 +1004,13 @@ impl RenderOnce for Combobox {
                                 let selected_label = selection.label().to_owned();
                                 let input_controller = input_controller.clone();
                                 let on_select = on_select.clone();
-                                let trigger_focus = runtime.read(cx).trigger_focus.clone();
-                                close_overlay_runtime_with_after_update(
-                                    OverlayCloseRuntimeRequest::new(
-                                        runtime.clone(),
-                                        &focus_restore,
-                                        trigger_focus,
-                                        on_open_change.as_deref(),
-                                    ),
+                                commit_choice_overlay_single_value(
+                                    runtime.clone(),
+                                    focus_restore.clone(),
+                                    on_open_change.clone(),
+                                    selected_value,
                                     window,
                                     cx,
-                                    {
-                                        let selected_value = selected_value.clone();
-                                        move |runtime| {
-                                            runtime.selected_value = Some(selected_value.clone());
-                                            runtime.active_value = Some(selected_value);
-                                            set_overlay_open(&mut runtime.open, false);
-                                        }
-                                    },
                                     move |window, cx| {
                                         input_controller.update(cx, |controller, cx| {
                                             controller.set_value(selected_label, cx);
@@ -1230,24 +1236,13 @@ fn combobox_content_element(
                 let payload_label = payload.label().to_owned();
                 let input_controller = input_controller.clone();
                 let on_select = on_select.clone();
-                let trigger_focus = runtime.read(cx).trigger_focus.clone();
-                close_overlay_runtime_with_after_update(
-                    OverlayCloseRuntimeRequest::new(
-                        runtime.clone(),
-                        &focus_restore,
-                        trigger_focus,
-                        on_open_change.as_deref(),
-                    ),
+                commit_choice_overlay_single_value(
+                    runtime.clone(),
+                    focus_restore.clone(),
+                    on_open_change.clone(),
+                    payload_value,
                     window,
                     cx,
-                    {
-                        let payload_value = payload_value.clone();
-                        move |runtime| {
-                            runtime.selected_value = Some(payload_value.clone());
-                            runtime.active_value = Some(payload_value);
-                            set_overlay_open(&mut runtime.open, false);
-                        }
-                    },
                     move |window, cx| {
                         input_controller.update(cx, |controller, cx| {
                             controller.set_value(payload_label, cx);
@@ -1333,20 +1328,7 @@ fn close_combobox(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    close_overlay_runtime(
-        OverlayCloseRuntimeRequest::new(
-            runtime,
-            &focus_restore,
-            trigger_focus,
-            on_open_change.as_deref(),
-        ),
-        window,
-        cx,
-        |runtime| {
-            set_overlay_open(&mut runtime.open, false);
-        },
-    );
+    close_choice_overlay(runtime, focus_restore, on_open_change, window, cx);
 }
 
 fn flatten_combobox_choice_options(

@@ -14,6 +14,9 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
+use crate::choice_overlay_runtime::{
+    ChoiceOverlayRuntimeState, close_choice_overlay, commit_choice_overlay_single_value,
+};
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::listbox::{
@@ -21,9 +24,8 @@ use crate::listbox::{
     ListboxState,
 };
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayCloseRuntimeRequest, OverlayDisclosureConfig,
-    OverlayDisclosureOpenMode, OverlayOpenRuntimeRequest, OverlayResolvedState,
-    apply_overlay_open_change, close_overlay_runtime, close_overlay_runtime_with_after_update,
+    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode,
+    OverlayOpenRuntimeRequest, OverlayResolvedState, apply_overlay_open_change,
     consume_overlay_event, gpui_overlay_state, gpui_relative_overlay_layer,
     outside_press_open_change, resolve_overlay_open_state, set_overlay_open,
 };
@@ -474,6 +476,21 @@ struct SelectRuntime {
     active_value: Option<String>,
     selected_value: Option<String>,
     trigger_focus: FocusHandle,
+}
+
+impl ChoiceOverlayRuntimeState for SelectRuntime {
+    fn open_mut(&mut self) -> &mut bool {
+        &mut self.open
+    }
+
+    fn trigger_focus(&self) -> FocusHandle {
+        self.trigger_focus.clone()
+    }
+
+    fn commit_single_value(&mut self, value: String) {
+        self.selected_value = Some(value.clone());
+        self.active_value = Some(value);
+    }
 }
 
 /// A concrete GPUI select component.
@@ -937,24 +954,13 @@ fn select_content_element(
             let selection = SelectSelection::from(selection);
             let selected_value = selection.value().to_owned();
             let on_select = listbox_select.clone();
-            let trigger_focus = listbox_runtime.read(cx).trigger_focus.clone();
-            close_overlay_runtime_with_after_update(
-                OverlayCloseRuntimeRequest::new(
-                    listbox_runtime.clone(),
-                    &listbox_focus_restore,
-                    trigger_focus,
-                    listbox_open_change.as_deref(),
-                ),
+            commit_choice_overlay_single_value(
+                listbox_runtime.clone(),
+                listbox_focus_restore.clone(),
+                listbox_open_change.clone(),
+                selected_value,
                 window,
                 cx,
-                {
-                    let selected_value = selected_value.clone();
-                    move |runtime| {
-                        runtime.selected_value = Some(selected_value.clone());
-                        runtime.active_value = Some(selected_value);
-                        set_overlay_open(&mut runtime.open, false);
-                    }
-                },
                 move |window, cx| {
                     if let Some(on_select) = on_select.as_ref() {
                         on_select(selection, window, cx);
@@ -1034,18 +1040,5 @@ fn close_select(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    close_overlay_runtime(
-        OverlayCloseRuntimeRequest::new(
-            runtime,
-            &focus_restore,
-            trigger_focus,
-            on_open_change.as_deref(),
-        ),
-        window,
-        cx,
-        |runtime| {
-            set_overlay_open(&mut runtime.open, false);
-        },
-    );
+    close_choice_overlay(runtime, focus_restore, on_open_change, window, cx);
 }
