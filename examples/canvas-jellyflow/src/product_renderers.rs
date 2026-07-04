@@ -31,7 +31,7 @@ const CONTROL_ROW_HEIGHT: f32 = 40.0;
 const PROMPT_CONTROL_ROW_HEIGHT: f32 = 48.0;
 const CONTROL_CHIP_HEIGHT: f32 = 34.0;
 const REPEATABLE_CHIP_HEIGHT: f32 = 36.0;
-const REPEATABLE_ROW_HEIGHT: f32 = 38.0;
+const REPEATABLE_ROW_HEIGHT: f32 = 42.0;
 const REPEATABLE_ADD_WIDTH: f32 = 96.0;
 const SECTION_GAP: f32 = 6.0;
 const BODY_TOP: f32 = CARD_PAD + HEADER_HEIGHT + SECTION_GAP;
@@ -1227,10 +1227,12 @@ fn render_repeatable_item_row(
                         .variant(BadgeVariant::Outline)
                         .with_size(Size::XSmall),
                     )
-                    .child(node_component_kit::render_product_text_line(
-                        label.clone(),
-                        rgb(0x334155),
-                        false,
+                    .child(div().flex_1().min_w(px(0.0)).child(
+                        node_component_kit::render_product_text_line(
+                            label.clone(),
+                            rgb(0x334155),
+                            false,
+                        ),
                     )),
             )
             .child(
