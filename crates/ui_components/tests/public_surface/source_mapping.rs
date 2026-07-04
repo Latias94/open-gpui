@@ -145,6 +145,29 @@ fn select_component_source_mapping_tracks_split_owners() {
 }
 
 #[test]
+fn combobox_component_source_mapping_tracks_split_owners() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let combobox_sources = [
+        "combobox/mod.rs",
+        "combobox/descriptor.rs",
+        "combobox/model.rs",
+        "combobox/render_plan.rs",
+        "combobox/runtime.rs",
+        "combobox/style.rs",
+    ];
+
+    assert!(!source_dir.join("combobox.rs").exists());
+    assert_eq!(component_source_inputs("Combobox"), combobox_sources);
+
+    for owner in combobox_sources {
+        assert!(
+            source_dir.join(owner).is_file(),
+            "split Combobox owner `{owner}` should exist"
+        );
+    }
+}
+
+#[test]
 fn table_behavior_source_mapping_tracks_split_owners() {
     let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let behavior_sources = [
