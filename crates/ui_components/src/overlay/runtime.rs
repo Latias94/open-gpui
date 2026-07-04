@@ -6,7 +6,8 @@ use open_gpui_ui_core::{
     OverlayLayerKind, OverlayLayerPolicy, OverlayPresence,
 };
 
-use super::{GpuiOverlayAdapterConfig, OverlayResolvedState};
+use super::OverlayResolvedState;
+use super::adapter::GpuiOverlayAdapterConfig;
 
 /// Resolved open-change request emitted by overlay adapters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
