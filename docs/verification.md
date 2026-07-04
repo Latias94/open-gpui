@@ -133,7 +133,9 @@ The shared motion runtime checks additionally prove that `open_gpui_ui_core` own
 timeline sampling, spring sampling, scalar values, model-neutral scalar samples, frame-demand
 reasons, explicit model/preset resolution, layout projection data, motion policy validation,
 terminal state, reduced-motion completion, stable-identity retarget matching, and renderer-neutral
-projection clips. `SplitterLayoutTransition::sample` now exposes final-content bounds plus visible
+projection clips. The public motion surface is the controller/model/policy/projection layer;
+`motion_value` remains a private implementation module behind `MotionScalarTrack`.
+`SplitterLayoutTransition::sample` now exposes final-content bounds plus visible
 clip bounds for insert, remove, resize, collapse, and expand transition descriptors. The GPUI
 Splitter adapter consumes those samples for programmatic identity/count/collapse/expand changes via
 an overlay path; leaving panel content is retained when callers use view-backed
@@ -485,7 +487,9 @@ That gate checks that every contract-official component has a matching API inven
 overlay families are explicitly listed, that public method baselines catch top-level builder
 drift, that render/controlled/default/policy vocabulary stays consistent, that root/prelude
 default exports match contract intent, and that renderer-neutral resolved state remains free of
-GPUI runtime types.
+GPUI runtime types. The same public-surface tests keep prelude-only conveniences limited to the
+documented allowlist and require command/core infrastructure examples to import from
+`open_gpui_command` or `open_gpui_ui_core` directly.
 
 Accessibility contract coverage now has its own semantic gate. `ComponentA11yContract` validates
 role/name/value/action facts without a live platform backend, while the existing GPUI adapter tests
@@ -714,6 +718,29 @@ aliases, overlay runtime policy, choice/search behavior, the Command ownership s
 behavior-snapshot and internal render-plan boundary, shared row-window projection, theme registry,
 and gallery catalog/conformance/runtime/sample/render module split:
 
+For the non-overlay choice/search, default-surface, motion, and gallery story-contract refactor,
+run this focused subset before broader workspace gates:
+
+```sh
+cargo fmt --all -- --check
+cargo check -p open-gpui-ui-components --tests
+cargo nextest run -p open-gpui-ui-components --test choice --no-fail-fast
+cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
+cargo check -p open-gpui-ui-core --tests
+cargo nextest run -p open-gpui-ui-core motion motion_controller motion_value motion_policy motion_projection --no-fail-fast
+cargo check -p open-gpui-ui-foundation-gallery --tests
+cargo nextest run -p open-gpui-ui-foundation-gallery component --no-fail-fast
+cargo run -p xtask -- scan-ui-contract
+git diff --check
+```
+
+These commands prove that Select and Combobox keep behavior after their
+model/style/render-plan/runtime splits, `choice.rs` remains an internal behavior seam,
+`open_gpui_ui_components` no longer exposes broad command/core infrastructure through the curated
+default surface, `MotionValue` stays private behind consumed motion controller APIs, and
+Listbox/Select/Combobox/Command gallery stories expose state readout selectors for public-payload
+assertions.
+
 For the deep UI framework module refactor, run the focused ownership gates below before the full
 workspace gate. They cover runtime theme context, typed a11y evidence, removed registry history,
 shared overlay placement, `open_gpui_ui_core::grid_viewport::RowWindow`, gallery story-contract
@@ -827,6 +854,8 @@ The binary-level gates above include these focused sentinels:
 `official_component_catalog_entries_have_signals_and_sample_selectors`,
 `state_contract_catalog_entries_have_signals_and_readout_selectors`,
 `gallery_story_contracts_cover_components_state_readouts_and_overlays`,
+`choice_search_story_contracts_expose_state_readouts_and_contract_rows`,
+`components_gallery_smoke_focused_choice_search_state_readouts_render`,
 `components_gallery_smoke_focuses_catalog_family_and_restores_all_mode`, and
 `components_gallery_smoke_focuses_every_focusable_catalog_entry`.
 

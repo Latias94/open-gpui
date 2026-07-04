@@ -8,6 +8,11 @@ The official implementation surface ships as Cargo crates, and the source code p
 `open-gpui-ui-core` owns renderer-neutral primitives such as tokens, sizing, accessibility vocabulary, overlay policy, and table/virtualizer data contracts.
 `open-gpui-ui-components` owns concrete GPUI adapters and official component APIs.
 Applications depend on those crates through Cargo; copied source is not the upgrade or compatibility authority.
+The curated `open_gpui_ui_components` default surface should not masquerade as the owner of command
+runtime or broad renderer-neutral infrastructure. Applications import command infrastructure from
+`open_gpui_command` and shared core table/virtualizer/grid contracts from `open_gpui_ui_core`,
+while component modules may still expose the component-facing state and helper types that make a
+specific official component API coherent.
 
 Open GPUI no longer ships a generated component registry manifest, scaffold recipe manifest, or registry JSON/schema artifact.
 ADR 0014 supersedes the hybrid registry experiment because it duplicated source facts that AI agents and maintainers can read directly from the crate.
@@ -27,6 +32,8 @@ The reusable local checks are:
 
 Gallery selectors and story probes remain owned by `examples/ui-foundation-gallery`.
 Gallery tests may consume typed component contract rows, but `open-gpui-ui-components` must not import gallery selector constants.
+Official choice/search stories should expose both sample selectors and state-readout selectors so
+tests can prove public payloads without relying on renderer internals.
 
 ## Non-Goals
 

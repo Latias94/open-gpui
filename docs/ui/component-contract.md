@@ -324,7 +324,10 @@ helpers. The crate root and prelude default interface are reserved for official 
 renderer-neutral contracts. Reusable command infrastructure stays under `open_gpui_command`;
 renderer-neutral table, virtualizer, and grid contracts stay under `open_gpui_ui_core`. Component
 examples may consume those owner-crate APIs explicitly, but `open_gpui_ui_components` should not
-re-export them as broad default-surface conveniences.
+re-export them as broad default-surface conveniences. This rule narrows the default surface; it
+does not ban narrow component-module re-exports of component-facing neutral dependencies, and it
+does not expand the small prelude-only convenience allowlist in `prelude.rs` without an explicit
+public-surface test update.
 
 The current foundation refactor makes these names shipped high-value component families:
 `Accordion`, `Collapsible`, `Slider`, `NumberInput`, `ToggleGroup`, `Link`, `Breadcrumb`, `Tag`,
@@ -877,6 +880,8 @@ these gates visible:
 - `component_story_contract_for(name)` and `component_story_contracts_for_focus(mode)` are the
   gallery-side authority for focused-section ids, sample selector pairs, state readout selector
   pairs, and focusable catalog traversal;
+- official Listbox, Select, Combobox, and Command stories expose state readout selector pairs so
+  search/choice payloads can be asserted without inspecting renderer internals;
 - gallery samples continue to show real resolved state for each shipped component;
 - all-components and focused component-family modes preserve the catalog, section directory, page
   scroll reset, and nested scroll containment contracts;
@@ -987,6 +992,9 @@ Shared roving-focus helpers now live in
 The choice family now also has a shared internal seam in `open_gpui_ui_components::choice` for flat
 stable-value projection, enabled-item selected/active fallback, typeahead matching, multi-select
 dedupe, and normalized query handling across `Listbox`, `Command`, `Combobox`, and `Select`.
+`Select` and `Combobox` now use split module owners for model, style, render-plan, and runtime
+responsibilities; existing popup rendering continues to call the overlay adapter boundary without
+moving overlay ownership into this choice/search seam.
 `open_gpui_ui_core` now owns `UiPx`, `UiPoint`, `UiSize`, `UiRect`, and `UiEdges`, and
 `ContextMenuState` stores a neutral point anchor plus renderer-neutral `OverlayPlacementInput`.
 `open_gpui_ui_core::overlay::resolve_overlay_placement` resolves side/alignment/fit/safe-bounds
