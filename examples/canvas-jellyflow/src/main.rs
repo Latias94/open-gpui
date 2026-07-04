@@ -100,7 +100,7 @@ mod product_renderers;
 #[cfg(test)]
 mod visual_regression;
 
-use measurement_bridge::{LayoutPassMeasurementConsume, LayoutPassMeasurementNodeInput};
+use measurement_bridge::LayoutPassMeasurementConsume;
 
 const REPEATABLE_ITEM_SNAPSHOTS_FIELD: &str = "jellyflow_repeatable_items";
 #[cfg(test)]
@@ -1185,45 +1185,12 @@ impl JellyflowCanvasView {
 
     fn consume_layout_pass_measurements(&mut self) -> LayoutPassMeasurementConsume {
         let regions = self.measured_regions.regions();
-        let node_ids = self
-            .store
-            .graph()
-            .nodes()
-            .keys()
-            .copied()
-            .collect::<Vec<_>>();
-        let node_inputs = node_ids
-            .into_iter()
-            .filter_map(|node_id| {
-                let node = self.store.graph().nodes().get(&node_id)?;
-                let canvas_node = self
-                    .editor
-                    .document()
-                    .node(&NodeId::from(canvas_node_id(&node_id)))?;
-                let node_size = node.size.unwrap_or(JellySize {
-                    width: canvas_node.size.width.as_f32(),
-                    height: canvas_node.size.height.as_f32(),
-                });
-                let node_view_bounds = self
-                    .editor
-                    .viewport()
-                    .document_bounds_to_view(canvas_node.bounds());
-                Some(LayoutPassMeasurementNodeInput {
-                    node_id,
-                    node_size,
-                    node_view_origin: jellyflow_open_gpui::OpenGpuiViewPoint::new(
-                        node_view_bounds.origin.x.as_f32(),
-                        node_view_bounds.origin.y.as_f32(),
-                    ),
-                    view_to_document_scale: 1.0 / self.editor.viewport().zoom.max(f32::EPSILON),
-                })
-            })
-            .collect::<Vec<_>>();
-        let result = measurement_bridge::consume_layout_pass_measurements(
+        let result = measurement_bridge::consume_layout_pass_measurements_from_document(
             &mut self.store,
             &self.semantic_registry,
             regions,
-            node_inputs,
+            self.editor.document(),
+            &self.editor.viewport(),
             &mut self.measurement_revision,
         );
         self.measurement_coverage = result.coverage;
@@ -5977,7 +5944,7 @@ mod tests {
 
     #[test]
     fn canvas_example_collects_host_product_surface_report() {
-        let report = canvas_host_surface_report();
+        let report = visual_regression::canvas_host_surface_report();
         assert_host_surface_report_contract(&report);
         assert_product_gallery_host_report_gates(&report);
         let visual_report = visual_regression::canvas_host_visual_interaction_report();

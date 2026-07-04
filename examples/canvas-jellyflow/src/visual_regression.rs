@@ -8,7 +8,8 @@ use jellyflow_open_gpui::{
     open_gpui_measured_content_evidence_from_slots, open_gpui_measured_internals_evidence,
     open_gpui_measured_region_kind_evidence,
     testing::{
-        OpenGpuiHostRendererSource, OpenGpuiHostVisualInteractionReport,
+        OpenGpuiHostCapabilityGap, OpenGpuiHostRendererSource, OpenGpuiHostSurfaceReport,
+        OpenGpuiHostSurfaceReportRow, OpenGpuiHostVisualInteractionReport,
         OpenGpuiHostVisualSurfaceRow, OpenGpuiMeasuredInternalsEvidence,
         OpenGpuiMeasuredInternalsEvidenceInput, product_fixture_catalog,
     },
@@ -79,6 +80,115 @@ pub(super) fn canvas_host_visual_interaction_report() -> OpenGpuiHostVisualInter
     report.mark_repeatable_edit_updates_anchors(repeatable_edits_update_anchor_identity());
     report.mark_edge_endpoints_follow_measured_handles(edge_endpoints_follow_measured_handles());
     report
+}
+
+pub(super) fn canvas_host_surface_report() -> OpenGpuiHostSurfaceReport {
+    let catalog = product_fixture_catalog();
+    let renderer_registry = demo_node_renderer_registry();
+    let renderers = demo_custom_node_renderers();
+    let node_kit_registry = NodeKitRegistry::builtin();
+    let semantic_registry = node_kit_registry.node_registry();
+    let mut report = OpenGpuiHostSurfaceReport::default();
+
+    for fixture in catalog {
+        let (store, document, _projection) =
+            project_kit_fixture(&fixture.kit_key, &fixture.fixture_key)
+                .expect("product fixture projects into canvas document");
+        let measurement_projection =
+            measurement_bridge::measurement_store_with_explicit_projection_fallback(
+                &store,
+                &semantic_registry,
+            );
+        let measured_store = measurement_projection.store();
+
+        for canvas_node in document.nodes() {
+            let Some(node_id) = jelly_node_id_from_node(canvas_node) else {
+                continue;
+            };
+            let Some(graph_node) = store.graph().nodes().get(&node_id) else {
+                continue;
+            };
+            let Some(surface) = node_surface_summary_for_node(
+                canvas_node,
+                node_id,
+                graph_node,
+                store.graph(),
+                1.0,
+                false,
+                &semantic_registry,
+                &node_kit_registry,
+                measured_store.node_measurement(node_id),
+            ) else {
+                continue;
+            };
+
+            report.push(host_surface_report_row(
+                &fixture,
+                &renderer_registry,
+                &renderers,
+                &surface,
+                measurement_projection
+                    .evidence()
+                    .node_uses_projection_fallback(node_id),
+            ));
+        }
+    }
+
+    report
+}
+
+fn host_surface_report_row(
+    fixture: &jellyflow_open_gpui::testing::OpenGpuiProductFixtureCase,
+    registry: &OpenGpuiNodeRendererRegistry,
+    renderers: &GpuiNodeRendererTable,
+    surface: &NodeSurfaceSummary,
+    node_uses_projection_fallback: bool,
+) -> OpenGpuiHostSurfaceReportRow {
+    let measurement = surface.measurement.as_ref();
+    let mut row = OpenGpuiHostSurfaceReportRow::new(
+        fixture,
+        surface.node_kind.clone(),
+        surface.renderer_key.clone(),
+        host_renderer_source(registry, renderers, &surface.renderer_context),
+    )
+    .with_measurement(
+        measurement
+            .map(|measurement| measurement.slots.len())
+            .unwrap_or(0),
+        measurement
+            .map(|measurement| measurement.anchors.len())
+            .unwrap_or(0),
+    )
+    .with_style_budget(surface.renderer_context.surface_preset.style.evidence());
+
+    for slot in &surface.slot_descriptors {
+        for control in project_slot_controls(&surface.node_data, slot) {
+            if control.is_partial_stub() {
+                row.capability_gaps
+                    .insert(OpenGpuiHostCapabilityGap::AdvancedControlStub);
+            }
+        }
+    }
+    if surface
+        .repeatable_items
+        .iter()
+        .any(|item| item.dynamic_port_policy == OpenGpuiDynamicPortPolicy::MissingGraphPort)
+    {
+        row.capability_gaps
+            .insert(OpenGpuiHostCapabilityGap::MissingDynamicPort);
+    }
+    if surface.slots.iter().any(|slot| !slot.visible)
+        || surface.projection.slot_limit < surface.slots.len()
+    {
+        row.capability_gaps
+            .insert(OpenGpuiHostCapabilityGap::PartialOrHiddenRegion);
+    }
+    if node_uses_projection_fallback {
+        row.capability_gaps
+            .insert(OpenGpuiHostCapabilityGap::MissingMeasuredRegion);
+    }
+
+    row
 }
 
 fn visual_surface_report_row(

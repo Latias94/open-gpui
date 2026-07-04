@@ -13,6 +13,7 @@ use jellyflow_open_gpui::{
     assign_layout_pass_measurement_revision, layout_pass_measurement_from_regions,
     measured_surface_anchors, project_node_measurement, projected_node_surface_graph_layout,
 };
+use open_gpui_canvas::{CanvasDocument, CanvasViewport, NodeId};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,6 +149,57 @@ pub(crate) fn consume_layout_pass_measurements(
         },
         coverage,
     }
+}
+
+pub(crate) fn consume_layout_pass_measurements_from_document(
+    store: &mut NodeGraphStore,
+    semantic_registry: &NodeRegistry,
+    regions: impl IntoIterator<Item = OpenGpuiMeasuredRegion>,
+    document: &CanvasDocument,
+    viewport: &CanvasViewport,
+    next_revision: &mut u64,
+) -> LayoutPassMeasurementConsumeResult {
+    let node_inputs = layout_pass_measurement_node_inputs_from_document(store, document, viewport);
+    consume_layout_pass_measurements(
+        store,
+        semantic_registry,
+        regions,
+        node_inputs,
+        next_revision,
+    )
+}
+
+pub(crate) fn layout_pass_measurement_node_inputs_from_document(
+    store: &NodeGraphStore,
+    document: &CanvasDocument,
+    viewport: &CanvasViewport,
+) -> Vec<LayoutPassMeasurementNodeInput> {
+    store
+        .graph()
+        .nodes()
+        .iter()
+        .filter_map(|(node_id, node)| {
+            let canvas_node = document.node(&canvas_node_id(node_id))?;
+            let node_size = node.size.unwrap_or(JellySize {
+                width: canvas_node.size.width.as_f32(),
+                height: canvas_node.size.height.as_f32(),
+            });
+            let node_view_bounds = viewport.document_bounds_to_view(canvas_node.bounds());
+            Some(LayoutPassMeasurementNodeInput {
+                node_id: *node_id,
+                node_size,
+                node_view_origin: OpenGpuiViewPoint::new(
+                    node_view_bounds.origin.x.as_f32(),
+                    node_view_bounds.origin.y.as_f32(),
+                ),
+                view_to_document_scale: 1.0 / viewport.zoom.max(f32::EPSILON),
+            })
+        })
+        .collect()
+}
+
+fn canvas_node_id(id: &JellyNodeId) -> NodeId {
+    NodeId::from(id.0.to_string())
 }
 
 pub(crate) fn measurement_store_with_explicit_projection_fallback(
@@ -436,6 +488,37 @@ mod tests {
                 .expect("second measurement")
                 .revision,
             first_revision
+        );
+    }
+
+    #[test]
+    fn layout_pass_node_inputs_follow_canvas_viewport() {
+        let store = crate::make_demo_store();
+        let (document, _) = crate::project_store(&store).expect("demo graph projects");
+        let viewport = crate::initial_viewport_for_document(&document);
+        let inputs =
+            layout_pass_measurement_node_inputs_from_document(&store, &document, &viewport);
+        let transform = JellyNodeId::from_u128(3);
+        let input = inputs
+            .iter()
+            .find(|input| input.node_id == transform)
+            .expect("transform node input should be present");
+        let canvas_node = document
+            .node(&canvas_node_id(&transform))
+            .expect("transform canvas node");
+        let view_bounds = viewport.document_bounds_to_view(canvas_node.bounds());
+
+        assert_eq!(
+            input.node_size,
+            store.graph().nodes()[&transform].size.unwrap()
+        );
+        assert_eq!(
+            input.node_view_origin,
+            OpenGpuiViewPoint::new(view_bounds.origin.x.as_f32(), view_bounds.origin.y.as_f32())
+        );
+        assert_eq!(
+            input.view_to_document_scale,
+            1.0 / viewport.zoom.max(f32::EPSILON)
         );
     }
 }
