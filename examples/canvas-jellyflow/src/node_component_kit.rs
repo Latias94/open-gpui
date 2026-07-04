@@ -603,6 +603,317 @@ pub fn adaptive_repeatable_list_plan(
         )
 }
 
+#[derive(Clone, Copy)]
+pub struct ProductControlRowStyle {
+    pub left: Pixels,
+    pub right: Pixels,
+    pub background: open_gpui::Rgba,
+    pub border: open_gpui::Rgba,
+    pub label: open_gpui::Rgba,
+    pub max_control_width: Pixels,
+}
+
+impl Default for ProductControlRowStyle {
+    fn default() -> Self {
+        Self {
+            left: px(10.0),
+            right: px(10.0),
+            background: rgb(0xffffff),
+            border: rgb(0xcbd5e1),
+            label: rgb(0x334155),
+            max_control_width: px(210.0),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct ProductControlChipStyle {
+    pub height: Pixels,
+    pub max_width: Pixels,
+}
+
+impl Default for ProductControlChipStyle {
+    fn default() -> Self {
+        Self {
+            height: px(34.0),
+            max_width: px(168.0),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct ProductPanelStyle {
+    pub left: Pixels,
+    pub right: Pixels,
+    pub background: open_gpui::Rgba,
+    pub title: open_gpui::Rgba,
+    pub body: open_gpui::Rgba,
+}
+
+impl Default for ProductPanelStyle {
+    fn default() -> Self {
+        Self {
+            left: px(10.0),
+            right: px(10.0),
+            background: rgb(0xffffff),
+            title: rgb(0x0f172a),
+            body: rgb(0x475569),
+        }
+    }
+}
+
+pub fn render_product_text_line(
+    label: impl Into<String>,
+    color: open_gpui::Rgba,
+    strong: bool,
+) -> AnyElement {
+    div()
+        .text_sm()
+        .line_height(px(if strong { 18.0 } else { 16.0 }))
+        .truncate()
+        .min_w(px(0.0))
+        .text_color(color)
+        .child(label.into())
+        .into_any_element()
+}
+
+pub fn product_line_clamp(
+    mode: AdaptiveNodeLayoutMode,
+    full_line_budget: usize,
+    compact_line_budget: usize,
+) -> usize {
+    match mode {
+        AdaptiveNodeLayoutMode::Full => full_line_budget,
+        AdaptiveNodeLayoutMode::Compact => compact_line_budget,
+        AdaptiveNodeLayoutMode::Shell => 1,
+    }
+    .max(1)
+}
+
+pub fn render_product_panel(
+    context: &OpenGpuiNodeRendererContext,
+    slot_key: &str,
+    collector: OpenGpuiBoundsCollector,
+    top: Pixels,
+    height: Pixels,
+    style: ProductPanelStyle,
+    title: impl Into<String>,
+    body: Option<(String, usize)>,
+) -> AnyElement {
+    let mut panel = div()
+        .absolute()
+        .left(style.left)
+        .top(top)
+        .right(style.right)
+        .h(height)
+        .rounded_sm()
+        .bg(style.background)
+        .px_2()
+        .py_1()
+        .overflow_hidden()
+        .child(render_product_text_line(title, style.title, true));
+
+    if let Some((body, line_count)) = body {
+        panel = panel.child(
+            div()
+                .text_xs()
+                .line_height(px(14.0))
+                .line_clamp(line_count)
+                .overflow_hidden()
+                .text_color(style.body)
+                .child(body),
+        );
+    }
+
+    render_measured_region(context.slot_measurement_id(slot_key), collector, panel)
+}
+
+pub fn render_product_control_row(
+    context: &OpenGpuiNodeRendererContext,
+    slot_key: &str,
+    control: Option<&OpenGpuiControlPlan>,
+    index: usize,
+    top: Pixels,
+    height: Pixels,
+    region_mode: AdaptiveNodeLayoutMode,
+    collector: OpenGpuiBoundsCollector,
+    actions: &NodeComponentKitActions,
+) -> AnyElement {
+    let Some(control) = control else {
+        return div().into_any_element();
+    };
+    let style = ProductControlRowStyle::default();
+    let show_shell = region_mode == AdaptiveNodeLayoutMode::Shell;
+
+    render_measured_control_region(
+        context.control_measurement_id(slot_key, control.key.clone()),
+        product_control_drag_exclusion_measurement_id(context, slot_key, &control.key),
+        collector,
+        div()
+            .absolute()
+            .left(style.left)
+            .top(top)
+            .right(style.right)
+            .h(height)
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .rounded_sm()
+            .bg(style.background)
+            .border_1()
+            .border_color(style.border)
+            .px_2()
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .text_xs()
+                    .truncate()
+                    .text_color(style.label)
+                    .child(control.label.clone()),
+            )
+            .child(if show_shell {
+                Badge::new(
+                    format!(
+                        "jellyflow-control-shell:{}:{slot_key}:{index}",
+                        context.node_id.0
+                    ),
+                    "set",
+                )
+                .variant(BadgeVariant::Outline)
+                .with_size(Size::XSmall)
+                .into_any_element()
+            } else {
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .max_w(style.max_control_width)
+                    .overflow_hidden()
+                    .child(render_control_plan(
+                        context.node_id,
+                        "product-row",
+                        control,
+                        index,
+                        actions,
+                    ))
+                    .into_any_element()
+            }),
+    )
+}
+
+pub fn render_product_control_chip(
+    context: &OpenGpuiNodeRendererContext,
+    slot_key: &str,
+    control: Option<&OpenGpuiControlPlan>,
+    index: usize,
+    collector: OpenGpuiBoundsCollector,
+    actions: &NodeComponentKitActions,
+) -> AnyElement {
+    let Some(control) = control else {
+        return div().into_any_element();
+    };
+    let style = ProductControlChipStyle::default();
+
+    render_measured_control_region(
+        context.control_measurement_id(slot_key, control.key.clone()),
+        product_control_drag_exclusion_measurement_id(context, slot_key, &control.key),
+        collector,
+        div()
+            .h(style.height)
+            .flex_1()
+            .min_w(px(0.0))
+            .max_w(style.max_width)
+            .overflow_hidden()
+            .child(render_control_plan(
+                context.node_id,
+                slot_key,
+                control,
+                index,
+                actions,
+            )),
+    )
+}
+
+pub fn render_product_port_rail(
+    context: &OpenGpuiNodeRendererContext,
+    slot_key: &str,
+    label: &'static str,
+    top: Pixels,
+    height: Pixels,
+    collector: OpenGpuiBoundsCollector,
+    fill: open_gpui::Rgba,
+) -> AnyElement {
+    let value = context
+        .surface_slots
+        .iter()
+        .find(|slot| slot.key == slot_key)
+        .map(|slot| slot.value.clone())
+        .unwrap_or_default();
+
+    render_measured_region(
+        context.slot_measurement_id(slot_key),
+        collector,
+        div()
+            .absolute()
+            .left(px(10.0))
+            .top(top)
+            .right(px(10.0))
+            .h(height)
+            .rounded_sm()
+            .bg(fill)
+            .px_2()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .overflow_hidden()
+            .child(render_product_text_line(label, rgb(0xf8fafc), false))
+            .child(render_product_text_line(value, rgb(0xcbd5e1), false)),
+    )
+}
+
+pub fn render_product_overflow_affordance(
+    node_id: JellyNodeId,
+    collection_key: &str,
+    hidden_count: usize,
+    collector: OpenGpuiBoundsCollector,
+) -> AnyElement {
+    if hidden_count == 0 {
+        return div().w(px(0.0)).h(px(0.0)).into_any_element();
+    }
+
+    render_overflow_region(
+        product_repeatable_overflow_measurement_id(node_id, collection_key),
+        collector,
+        Badge::new(
+            format!(
+                "jellyflow-repeatable-overflow:{}:{collection_key}",
+                node_id.0
+            ),
+            format!("+{hidden_count}"),
+        )
+        .variant(BadgeVariant::Secondary)
+        .with_size(Size::XSmall),
+    )
+}
+
+pub(crate) fn product_repeatable_overflow_measurement_id(
+    node_id: JellyNodeId,
+    collection_key: &str,
+) -> OpenGpuiMeasurementId {
+    OpenGpuiMeasurementId::overflow(node_id, collection_key)
+}
+
+fn product_control_drag_exclusion_measurement_id(
+    context: &OpenGpuiNodeRendererContext,
+    slot_key: &str,
+    control_key: &str,
+) -> OpenGpuiMeasurementId {
+    OpenGpuiMeasurementId::drag_exclusion(context.node_id, format!("{slot_key}:{control_key}"))
+}
+
 fn repeatable_visible_items_for_height(
     available_height: f32,
     item_count: usize,
@@ -1128,6 +1439,35 @@ mod tests {
         assert_eq!(plan.visible_items, 0);
         assert_eq!(plan.hidden_items, 3);
         assert_eq!(plan.region.mode, AdaptiveNodeLayoutMode::Shell);
+    }
+
+    #[test]
+    fn product_atoms_keep_stable_measurement_ids() {
+        let node_id = JellyNodeId::from_u128(42);
+
+        let overflow = product_repeatable_overflow_measurement_id(node_id, "shader.inputs");
+        assert_eq!(
+            overflow.element_id(),
+            format!("jellyflow-node:{}:overflow:shader.inputs", node_id.0)
+        );
+
+        let drag_exclusion =
+            OpenGpuiMeasurementId::drag_exclusion(node_id, "field.prompt:control.prompt");
+        assert_eq!(
+            drag_exclusion.element_id(),
+            format!(
+                "jellyflow-node:{}:drag-exclusion:field.prompt:control.prompt",
+                node_id.0
+            )
+        );
+    }
+
+    #[test]
+    fn product_line_clamp_degrades_by_layout_mode() {
+        assert_eq!(product_line_clamp(AdaptiveNodeLayoutMode::Full, 3, 2), 3);
+        assert_eq!(product_line_clamp(AdaptiveNodeLayoutMode::Compact, 3, 2), 2);
+        assert_eq!(product_line_clamp(AdaptiveNodeLayoutMode::Shell, 3, 2), 1);
+        assert_eq!(product_line_clamp(AdaptiveNodeLayoutMode::Full, 0, 0), 1);
     }
 
     #[test]

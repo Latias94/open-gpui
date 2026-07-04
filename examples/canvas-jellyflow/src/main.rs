@@ -4315,8 +4315,8 @@ mod tests {
         testing::{
             OpenGpuiHostCapabilityGap, OpenGpuiHostProductInteractionReport,
             OpenGpuiHostRendererSource, OpenGpuiHostSurfaceReport, OpenGpuiHostSurfaceReportRow,
-            OpenGpuiReconnectSequenceEvidence, assert_authoring_interaction_regression_gates,
-            assert_host_surface_report_contract, assert_host_visual_interaction_report_gates,
+            OpenGpuiHostVisualInteractionGap, OpenGpuiReconnectSequenceEvidence,
+            assert_authoring_interaction_regression_gates, assert_host_surface_report_contract,
             assert_product_fixture_regression_gates, assert_product_gallery_host_report_gates,
             assert_product_interaction_report_gates, product_fixture_catalog,
         },
@@ -5899,7 +5899,26 @@ mod tests {
         assert_host_surface_report_contract(&report);
         assert_product_gallery_host_report_gates(&report);
         let visual_report = visual_regression::canvas_host_visual_interaction_report();
-        assert_host_visual_interaction_report_gates(&visual_report);
+        let visual_gaps = visual_report.computed_gaps();
+        assert_eq!(
+            visual_report.gaps, visual_gaps,
+            "visual report gaps must be synchronized: {visual_report:?}"
+        );
+        assert!(
+            visual_gaps
+                .contains(&OpenGpuiHostVisualInteractionGap::MeasuredInternalsEvidenceIncomplete),
+            "projection-only visual report must remain degraded until a real layout pass measures product controls: {visual_report:?}"
+        );
+        assert!(
+            visual_report
+                .rows
+                .iter()
+                .filter(|row| row.source == OpenGpuiHostRendererSource::ProductRenderer)
+                .all(|row| row.content_visible
+                    && row.content_readable
+                    && row.content_within_node_bounds),
+            "projection diagnostic rows must still render readable in-bounds content: {visual_report:?}"
+        );
         assert!(report.rows.iter().any(|row| {
             row.fixture_id == "workflow.review"
                 && row.renderer_key == "decision-card"

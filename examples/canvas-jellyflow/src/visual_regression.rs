@@ -257,6 +257,7 @@ fn measured_internals_evidence(
         measured_handle_count,
         projected_handle_count: 0,
         readable_region_count,
+        control_region_count: measured_control_regions,
         drag_exclusion_region_count: surface
             .renderer_context
             .surface_preset
@@ -264,6 +265,7 @@ fn measured_internals_evidence(
             .drag_region_count
             .max(measured_control_regions)
             .max(usize::from(projected_controls > 0)),
+        overflow_region_count: repeatable_overflow_indicators,
         stale_region_count,
         component_declared_overflow_count: repeatable_overflow_indicators,
         missing_required_overflow_count,
