@@ -1061,14 +1061,11 @@ fn render_repeatable_item_chip(
 ) -> AnyElement {
     let projection = &item.projection;
     let label = repeatable_item_label(&projection.item_data, &projection.label);
+    let ty = repeatable_item_type_label(&projection.item_data);
     let disabled = projection.remove_disabled_reason.is_some();
+    let port_status = repeatable_port_status_label(projection.dynamic_port_policy);
     let missing_port =
         projection.dynamic_port_policy == OpenGpuiDynamicPortPolicy::MissingGraphPort;
-    let label = if missing_port {
-        format!("{label} no port")
-    } else {
-        label
-    };
     let collection_key = projection.collection_key.clone();
     let item_id = projection.item_id.clone();
     let anchor = projection.anchor.clone();
@@ -1098,10 +1095,21 @@ fn render_repeatable_item_chip(
             })
             .px_1()
             .overflow_hidden()
-            .child(node_component_kit::render_product_text_line(
-                label,
-                rgb(0x111827),
-                false,
+            .child(div().flex_1().min_w(px(0.0)).child(
+                node_component_kit::render_product_text_line(label, rgb(0x111827), false),
+            ))
+            .child(repeatable_type_badge(
+                context,
+                &collection_key,
+                &item_id,
+                &ty,
+            ))
+            .child(repeatable_port_status_badge(
+                context,
+                &collection_key,
+                &item_id,
+                port_status,
+                projection.dynamic_port_policy,
             ))
             .child(node_component_kit::repeatable_action_button(
                 context.node_id,
@@ -1121,6 +1129,51 @@ fn render_repeatable_item_chip(
             ))
             .child(inline_measured_anchor(context, anchor, collector)),
     )
+}
+
+fn repeatable_type_badge(
+    context: &OpenGpuiNodeRendererContext,
+    collection_key: &str,
+    item_id: &str,
+    ty: &str,
+) -> AnyElement {
+    Badge::new(
+        format!(
+            "jellyflow-repeatable-type:{}:{collection_key}:{item_id}",
+            context.node_id.0
+        ),
+        ty.to_owned(),
+    )
+    .variant(BadgeVariant::Outline)
+    .with_size(Size::XSmall)
+    .into_any_element()
+}
+
+fn repeatable_port_status_badge(
+    context: &OpenGpuiNodeRendererContext,
+    collection_key: &str,
+    item_id: &str,
+    label: &'static str,
+    policy: OpenGpuiDynamicPortPolicy,
+) -> AnyElement {
+    if policy == OpenGpuiDynamicPortPolicy::BoundToGraphPort {
+        return div().w(px(0.0)).h(px(0.0)).into_any_element();
+    }
+
+    Badge::new(
+        format!(
+            "jellyflow-repeatable-port-status:{}:{collection_key}:{item_id}",
+            context.node_id.0
+        ),
+        label,
+    )
+    .variant(if policy == OpenGpuiDynamicPortPolicy::MissingGraphPort {
+        BadgeVariant::Destructive
+    } else {
+        BadgeVariant::Secondary
+    })
+    .with_size(Size::XSmall)
+    .into_any_element()
 }
 
 fn render_repeatable_item_row(
@@ -1335,6 +1388,18 @@ fn repeatable_item_label(item_data: &Value, fallback: &str) -> String {
         .unwrap_or_else(|| fallback.to_owned())
 }
 
+fn repeatable_item_type_label(item_data: &Value) -> String {
+    json_path_label(item_data, &["ty"]).unwrap_or_else(|| "value".to_owned())
+}
+
+fn repeatable_port_status_label(policy: OpenGpuiDynamicPortPolicy) -> &'static str {
+    match policy {
+        OpenGpuiDynamicPortPolicy::DisplayOnly => "display",
+        OpenGpuiDynamicPortPolicy::BoundToGraphPort => "port",
+        OpenGpuiDynamicPortPolicy::MissingGraphPort => "no port",
+    }
+}
+
 fn json_path_label(value: &Value, path: &[&str]) -> Option<String> {
     let mut current = value;
     for segment in path {
@@ -1506,6 +1571,30 @@ mod tests {
         assert_eq!(
             shader_visible_repeatable_limit_for_bounds(420.0, 16.0, 4, 4),
             0
+        );
+    }
+
+    #[test]
+    fn shader_repeatable_chip_labels_type_and_port_status() {
+        let item = serde_json::json!({
+            "id": "normal",
+            "name": "Normal",
+            "ty": "vec4",
+            "port": "normal"
+        });
+
+        assert_eq!(repeatable_item_type_label(&item), "vec4");
+        assert_eq!(
+            repeatable_port_status_label(OpenGpuiDynamicPortPolicy::BoundToGraphPort),
+            "port"
+        );
+        assert_eq!(
+            repeatable_port_status_label(OpenGpuiDynamicPortPolicy::MissingGraphPort),
+            "no port"
+        );
+        assert_eq!(
+            repeatable_port_status_label(OpenGpuiDynamicPortPolicy::DisplayOnly),
+            "display"
         );
     }
 
