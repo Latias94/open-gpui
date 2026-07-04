@@ -134,6 +134,8 @@ pub struct CommandSample {
     pub dispatched_command_id: Option<String>,
     /// Shortcut/action/keymap diagnostics for command-center-backed samples.
     pub shortcut_diagnostics: Arc<[CommandShortcutDiagnostic]>,
+    /// UI-ready command status items rendered by the concrete command component.
+    pub status_items: Arc<[CommandStatusItem]>,
     /// Latest dynamic provider status retained by the backing command center.
     pub provider_status: Option<CommandProviderStatus>,
     /// Persistent selected values for multi-select samples.
@@ -707,7 +709,7 @@ actions!(
 );
 
 /// Returns command palette samples backed by real component state.
-pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 7] {
+pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 8] {
     let ranked_items: Arc<[CommandItemDescriptor]> = vec![
         CommandItemDescriptor::new("archive", "Archive").keyword("file"),
         CommandItemDescriptor::new("open-file", "Open File").shortcut("Ctrl+O"),
@@ -899,6 +901,43 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 7] {
     let context_snapshot = context_palette
         .into_index_snapshot()
         .mode(CommandIndexSnapshotMode::PreRankedFilter);
+    let mut diagnostics_center = CommandCenter::new("gallery-diagnostics-center-v1");
+    diagnostics_center
+        .register_source(
+            "workspace",
+            "diagnostics-workspace",
+            [
+                CommandContribution::new(
+                    CommandDescriptor::new("workspace.open", "Open Workspace").group("Workspace"),
+                ),
+                CommandContribution::new(
+                    CommandDescriptor::new("workspace.save", "Save Workspace").group("Workspace"),
+                ),
+            ],
+        )
+        .unwrap();
+    diagnostics_center.register_action("workspace.open", OpenRegistryCommand);
+    let diagnostics_request =
+        diagnostics_center.begin_provider_request("diagnostics-provider", "offline");
+    diagnostics_center
+        .apply_provider_response_for_request(
+            "diagnostics-provider",
+            &diagnostics_request,
+            CommandProviderResponse::failed("Provider unavailable"),
+        )
+        .expect("gallery diagnostics provider response is valid");
+    let diagnostics_palette = CommandPaletteProjection::from_center_for_keymap(
+        &diagnostics_center,
+        "offline",
+        &Keymap::default(),
+    );
+    let diagnostics_status_items = Arc::from(diagnostics_palette.status_items().to_vec());
+    let diagnostics_provider_status = diagnostics_palette.provider_status().cloned();
+    let diagnostics_shortcut_diagnostics =
+        Arc::from(diagnostics_palette.shortcut_diagnostics().to_vec());
+    let diagnostics_snapshot = diagnostics_palette
+        .into_index_snapshot()
+        .mode(CommandIndexSnapshotMode::PreRankedFilter);
 
     [
         command_sample_from_local(
@@ -1041,6 +1080,34 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 7] {
                 tokens,
             )
         },
+        command_sample_with_status(
+            CommandSample {
+                provider_status: diagnostics_provider_status,
+                shortcut_diagnostics: diagnostics_shortcut_diagnostics,
+                ..command_sample_from_snapshot(
+                    "diagnostics-empty",
+                    "Provider failure and shortcut diagnostics render inside the command palette while the query has no results.",
+                    Size::Small,
+                    false,
+                    Some(true),
+                    false,
+                    "Diagnostic commands",
+                    "Search diagnostic commands",
+                    "offline",
+                    CommandSelectionMode::Single,
+                    None,
+                    Vec::<String>::new(),
+                    None,
+                    diagnostics_snapshot,
+                    false,
+                    6,
+                    None,
+                    4,
+                    tokens,
+                )
+            },
+            diagnostics_status_items,
+        ),
         CommandSample {
             dispatched_command_id: Some("workspace.open".to_string()),
             shortcut_diagnostics: context_shortcut_diagnostics,
@@ -1223,6 +1290,7 @@ fn command_sample_from_local(
         index_snapshot: None,
         dispatched_command_id: None,
         shortcut_diagnostics: Arc::from([]),
+        status_items: Arc::from([]),
         provider_status: None,
         selected_values: selected_values.into(),
         viewport_item_count,
@@ -1287,6 +1355,7 @@ fn command_sample_from_snapshot(
         index_snapshot: Some(snapshot),
         dispatched_command_id: None,
         shortcut_diagnostics: Arc::from([]),
+        status_items: Arc::from([]),
         provider_status: None,
         selected_values: selected_values.into(),
         viewport_item_count,
@@ -1294,6 +1363,18 @@ fn command_sample_from_snapshot(
         overscan,
         state,
     }
+}
+
+fn command_sample_with_status(
+    mut sample: CommandSample,
+    status_items: Arc<[CommandStatusItem]>,
+) -> CommandSample {
+    sample.state = sample
+        .state
+        .clone()
+        .with_status_items(status_items.iter().cloned());
+    sample.status_items = status_items;
+    sample
 }
 
 fn listbox_group_descriptor(group: &ListboxGroupSample) -> ListboxGroupDescriptor {

@@ -38,7 +38,7 @@ pub use crate::command::{
     CommandMetrics, CommandOpenMode, CommandPaletteController, CommandPaletteControllerUpdate,
     CommandPaletteProjection, CommandProviderPaletteProjection, CommandQueryMode,
     CommandRowBehaviorSnapshot, CommandSelectedChipState, CommandSelection, CommandSelectionChange,
-    CommandSelectionMode, CommandState,
+    CommandSelectionMode, CommandState, CommandStatusIntent, CommandStatusItem,
 };
 pub use crate::component_contract::{
     COMPONENT_A11Y_EVIDENCE, COMPONENT_CONFORMANCE_GATES, ComponentA11yEvidence,

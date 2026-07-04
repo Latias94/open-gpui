@@ -24,7 +24,7 @@ use super::render_plan::resolve_command_viewport_extent;
 use super::{
     CommandColors, CommandDialogState, CommandMetrics, CommandRenderPlan, CommandRowRenderPlan,
     CommandSelection, CommandSelectionChange, CommandSelectionMode, CommandState,
-    DEFAULT_COMMAND_VIEWPORT_ITEM_COUNT, nonnegative_px,
+    CommandStatusIntent, DEFAULT_COMMAND_VIEWPORT_ITEM_COUNT, nonnegative_px,
 };
 
 pub(super) type CommandOpenChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
@@ -182,8 +182,10 @@ pub(super) fn command_content_element(
     let plan_rows = plan.rows().to_vec();
     let total_size = plan.virtualizer().total_size();
     let loading_id: ElementId = (content_id.clone(), "loading").into();
+    let status_id: ElementId = (content_id.clone(), "status").into();
     let chips_id: ElementId = (content_id.clone(), "selected-chips").into();
     let selected_chips = state.selected_chips().to_vec();
+    let status_items = state.status_items().to_vec();
     let escape_runtime = runtime.clone();
     let on_escape_open_change = on_open_change.clone();
     let key_state = state.clone();
@@ -326,6 +328,42 @@ pub(super) fn command_content_element(
                     .ui_role(loading.role())
                     .aria_label(loading.message().to_owned())
                     .child(loading.message().to_owned()),
+            )
+        })
+        .when(!status_items.is_empty(), |this| {
+            let status_debug_id = debug_id.clone();
+            this.child(
+                status_items.into_iter().enumerate().fold(
+                    div()
+                        .id(status_id)
+                        .debug_selector(move || format!("command:{status_debug_id}:status"))
+                        .flex()
+                        .flex_col()
+                        .gap_1(),
+                    |list, (index, item)| {
+                        let foreground =
+                            theme.resolve(command_status_foreground(item.intent(), colors, tokens));
+                        let item_debug_id = debug_id.clone();
+                        let message = item.message().to_owned();
+                        list.child(
+                            div()
+                                .id(format!("command-status:{index}"))
+                                .debug_selector(move || {
+                                    format!("command:{item_debug_id}:status:{index}")
+                                })
+                                .px(gpui_px_from_ui(metrics.padding()))
+                                .py(px(2.0))
+                                .rounded(gpui_px_from_ui(state.size().control_radius()))
+                                .border_1()
+                                .border_color(foreground)
+                                .text_xs()
+                                .text_color(foreground)
+                                .ui_role(item.role())
+                                .aria_label(message.clone())
+                                .child(message),
+                        )
+                    },
+                ),
             )
         })
         .h(gpui_px_from_ui(metrics.max_height()))
@@ -815,6 +853,22 @@ fn command_row_background(active: bool, selected: bool, colors: CommandColors) -
 
 fn command_row_hover_background(colors: CommandColors) -> ColorIntent {
     ColorIntent::with_state(colors.surface().token(), ColorState::Hover, 0xf1f5ee)
+}
+
+fn command_status_foreground(
+    intent: CommandStatusIntent,
+    colors: CommandColors,
+    tokens: ThemeTokens,
+) -> ColorIntent {
+    match intent {
+        CommandStatusIntent::Info => colors.muted_foreground(),
+        CommandStatusIntent::Warning => {
+            ColorIntent::with_state(tokens.text_muted, ColorState::Message, 0xbf8700)
+        }
+        CommandStatusIntent::Error => {
+            ColorIntent::with_state(tokens.destructive, ColorState::Invalid, 0xb42318)
+        }
+    }
 }
 
 const fn state_option_padding_x(metrics: CommandMetrics) -> UiPx {

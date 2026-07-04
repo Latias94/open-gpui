@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-04T00:10:27+08:00
+timestamp: 2026-07-04T08:39:45+08:00
 git_branch: main
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
@@ -88,6 +88,15 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_choice_samples_expose_listbox_and_select_contracts --no-fail-fast
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_search_samples_expose_combobox_and_command_contracts --no-fail-fast
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components command_palette_projection_builds_status_items_from_provider_failures_and_diagnostics command_state_accepts_explicit_status_items --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_search_samples_expose_combobox_and_command_contracts component_gallery_shell_reads_choice_active_metadata_from_resolved_state --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focused_command_samples_cover_depth_behaviors --no-fail-fast
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --check
+  - cargo check -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --tests
+  - cargo nextest run -p open-gpui-ui-components command --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery command --no-fail-fast
+  - cargo run -p xtask -- scan-ui-contract
   - cargo fmt -p open-gpui-command -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --check
   - python C:\Users\Frankorz\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
   - cargo run -p xtask -- scan-theme-drift
@@ -217,6 +226,11 @@ verified_by:
   diagnostic-only compatibility meaning; strict validation uses `has_conflicts()` or
   `is_strictly_clean()`. The design deliberately does not claim source-level removal from external
   GPUI keymaps; plugin hosts should rebuild their command-owned keymap layer before reinstalling.
+- Done on `feat/command-palette-polish`: command palette projections now adapt provider failures
+  and shortcut/action/keymap drift diagnostics into `CommandStatusItem` rows. `CommandState` and
+  `Command` expose status item builders plus warning/error counters, the runtime renders status
+  rows before result rows, and the gallery `diagnostics-empty` sample proves failed-provider,
+  warning-diagnostic, and empty-state rendering in one component surface.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default
@@ -301,9 +315,8 @@ verified_by:
 - Not current roadmap work: broad splitting of every remaining 1k+ component file and
   `open-gpui-ui-headless` extraction.
 - Blocked: None.
-- Next action: after the main merge, the next independent fearless-refactor candidate is still the
-  large gallery render ownership surface, especially
-  `examples/ui-foundation-gallery/src/pages/components/render/sections.rs`.
+- Next action: continue command ecosystem hardening with either async provider UX or palette
+  navigation polish.
 
 # Citations
 
@@ -331,3 +344,5 @@ verified_by:
 - [Native UI framework research handoff](sessions/2026-07-02-native-ui-framework-design-research-handoff.md)
 - [Docking flat motion runtime progress](progress/2026-07-02-docking-flat-motion-runtime-plan.md)
 - [UI motion runtime foundation progress](progress/2026-07-02-ui-motion-runtime-foundation.md)
+- [Open GPUI command palette status items](progress/2026-07-04-open-gpui-command-palette-status-items.md)
+- [Open GPUI command palette status items verification](verification/open-gpui-command-palette-status-items-20260704.md)

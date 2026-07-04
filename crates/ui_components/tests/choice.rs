@@ -9,11 +9,11 @@ use open_gpui_ui_components::{
     CommandGroup, CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode,
     CommandItem, CommandItemDescriptor, CommandLoadingState, CommandMatchSource, CommandOpenMode,
     CommandPaletteController, CommandPaletteProjection, CommandProviderPaletteProjection,
-    CommandQueryMode, CommandSelection, CommandSelectionChange, CommandSelectionMode, Listbox,
-    ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
-    ListboxOptionKind, ListboxSelection, ListboxState, ScrollArea, ScrollResetPolicy, Select,
-    SelectOpenMode, SelectSelection, VirtualizerRange, gpui_adapter::init_text_input,
-    listbox_navigation_target,
+    CommandQueryMode, CommandSelection, CommandSelectionChange, CommandSelectionMode,
+    CommandStatusIntent, CommandStatusItem, Listbox, ListboxGroup, ListboxGroupDescriptor,
+    ListboxOption, ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState,
+    ScrollArea, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, VirtualizerRange,
+    gpui_adapter::init_text_input, listbox_navigation_target,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -1753,6 +1753,102 @@ fn command_palette_projection_adapts_center_query_shortcuts_providers_and_diagno
             Some("ctrl-alt-O".to_string())
         )]
     );
+}
+
+#[test]
+fn command_palette_projection_builds_status_items_from_provider_failures_and_diagnostics() {
+    let mut center = open_gpui_command::CommandCenter::new("palette-status-center-v1");
+    center
+        .register_source(
+            "workspace",
+            "workspace-core",
+            [
+                open_gpui_command::CommandContribution::new(
+                    open_gpui_command::CommandDescriptor::new("workspace.open", "Open Workspace")
+                        .group("Workspace"),
+                ),
+                open_gpui_command::CommandContribution::new(
+                    open_gpui_command::CommandDescriptor::new("workspace.save", "Save Workspace")
+                        .group("Workspace"),
+                ),
+            ],
+        )
+        .unwrap();
+    center.register_action("workspace.open", OpenPaletteCommand);
+    let request = center.begin_provider_request("recent-provider", "alpha");
+    center
+        .apply_provider_response_for_request(
+            "recent-provider",
+            &request,
+            open_gpui_command::CommandProviderResponse::failed("Provider unavailable"),
+        )
+        .unwrap();
+
+    let projection = CommandPaletteProjection::from_center_for_keymap(
+        &center,
+        "alpha",
+        &open_gpui::Keymap::default(),
+    );
+
+    assert_eq!(projection.status_error_count(), 1);
+    assert_eq!(projection.status_warning_count(), 2);
+    assert!(projection.has_status_items());
+    assert_eq!(
+        projection.status_items()[0].intent(),
+        CommandStatusIntent::Error
+    );
+    assert!(
+        projection.status_items()[0]
+            .message()
+            .contains("recent-provider")
+    );
+    assert!(
+        projection.status_items()[0]
+            .message()
+            .contains("Provider unavailable")
+    );
+    assert!(
+        projection
+            .status_items()
+            .iter()
+            .any(|item| item.intent() == CommandStatusIntent::Warning
+                && item.message().contains("workspace.open")
+                && item.message().contains("shortcut"))
+    );
+    assert!(
+        projection
+            .status_items()
+            .iter()
+            .any(|item| item.intent() == CommandStatusIntent::Warning
+                && item.message().contains("workspace.save")
+                && item.message().contains("action"))
+    );
+
+    let state = Command::new("palette-status-command", "Palette status")
+        .palette_projection(&projection)
+        .state();
+
+    assert_eq!(state.status_items(), projection.status_items());
+    assert_eq!(state.status_error_count(), 1);
+    assert_eq!(state.status_warning_count(), 2);
+}
+
+#[test]
+fn command_state_accepts_explicit_status_items() {
+    let state = Command::new("explicit-status-command", "Commands")
+        .status_item(CommandStatusItem::warning("Shortcut Ctrl+P is shared"))
+        .status_item(CommandStatusItem::info("   "))
+        .status_item(CommandStatusItem::info("Two providers returned results"))
+        .status_item(CommandStatusItem::error("Provider failed"))
+        .item(CommandItem::new("open-file", "Open File"))
+        .state();
+
+    assert!(state.has_status_items());
+    assert_eq!(state.status_items().len(), 3);
+    assert_eq!(state.status_warning_count(), 1);
+    assert_eq!(state.status_error_count(), 1);
+    assert_eq!(state.status_items()[1].intent(), CommandStatusIntent::Info);
+    assert_eq!(state.status_items()[1].role(), Role::Label);
 }
 
 #[test]

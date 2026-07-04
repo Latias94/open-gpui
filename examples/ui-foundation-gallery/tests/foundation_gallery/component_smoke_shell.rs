@@ -356,6 +356,7 @@ fn components_gallery_smoke_focused_command_samples_cover_depth_behaviors(
         "gallery:component-command-sample:multi-select",
         "gallery:component-command-sample:virtualized-index",
         "gallery:component-command-sample:indexed-loading",
+        "gallery:component-command-sample:diagnostics-empty",
     ] {
         assert!(
             cx.debug_bounds(selector).is_some(),
@@ -377,6 +378,26 @@ fn components_gallery_smoke_focused_command_samples_cover_depth_behaviors(
         cx.debug_bounds("command:component-command:indexed-loading:content")
             .is_some(),
         "expected indexed/loading Command sample to render inline content"
+    );
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "gallery:component-command-sample:diagnostics-empty",
+    );
+    assert!(
+        cx.debug_bounds("command:component-command:diagnostics-empty:status")
+            .is_some(),
+        "expected diagnostics Command sample to render component-owned status list"
+    );
+    assert!(
+        cx.debug_bounds("command:component-command:diagnostics-empty:status:0")
+            .is_some(),
+        "expected diagnostics Command sample to render a provider error status item"
+    );
+    assert!(
+        cx.debug_bounds("listbox:component-command:diagnostics-empty-listbox:empty")
+            .is_some(),
+        "expected diagnostics Command sample to render the empty state inside the command list"
     );
 
     let virtualized_sample = bounds(cx, "gallery:component-command-sample:virtualized-index");

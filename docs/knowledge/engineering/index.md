@@ -45,6 +45,8 @@
 * [Open GPUI command keybinding registry verification](verification/open-gpui-command-keybinding-registry-20260703.md) - Verification evidence for keybinding projection, diagnostics, public exports, and GPUI chord/context semantics.
 * [Open GPUI command keybinding conflicts](progress/2026-07-04-open-gpui-command-keybinding-conflicts.md) - Same-context shortcut conflict reporting and explicit install reports for command keybinding sources.
 * [Open GPUI command keybinding conflicts verification](verification/open-gpui-command-keybinding-conflicts-20260704.md) - Verification evidence for conflict reporting, append-only install reports, and public exports.
+* [Open GPUI command palette status items](progress/2026-07-04-open-gpui-command-palette-status-items.md) - UI-side command palette status rows for provider failures and shortcut diagnostics.
+* [Open GPUI command palette status items verification](verification/open-gpui-command-palette-status-items-20260704.md) - Verification evidence for status row projection, public exports, and gallery diagnostics rendering.
 * [Native UI hybrid registry architecture planning](progress/2026-07-02-native-ui-hybrid-registry-architecture-plan.md) - Superseded historical plan for the removed hybrid registry MVP.
 * [Native UI hybrid registry implementation](progress/2026-07-02-native-ui-hybrid-registry-implementation.md) - Superseded implementation history for the removed registry manifest, recipes, artifacts, and scan.
 * [Native UI hybrid registry implementation verification](verification/native-ui-hybrid-registry-implementation-20260702.md) - Superseded verification evidence for the removed hybrid registry work.

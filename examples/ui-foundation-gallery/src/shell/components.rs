@@ -1226,7 +1226,7 @@ pub(crate) fn component_combobox_samples_section(
 }
 
 pub(crate) fn component_command_samples_section(
-    samples: [pages::components::CommandSample; 7],
+    samples: [pages::components::CommandSample; 8],
 
     tokens: ThemeTokens,
 ) -> impl IntoElement {
@@ -1255,40 +1255,6 @@ pub(crate) fn component_command_samples_section(
                     let label = state.label().to_owned();
 
                     let title = label.clone();
-                    let provider_status_summary = sample.provider_status.as_ref().map(|status| {
-                        let request_id = status
-                            .request_id()
-                            .map(|request_id| request_id.to_string())
-                            .unwrap_or_else(|| "untracked".to_string());
-                        let query = status.query().unwrap_or("none");
-                        format!(
-                            "provider {} / request {} / query {} / {:?} / {} sources / {} commands",
-                            status.provider_id().as_str(),
-                            request_id,
-                            query,
-                            status.state(),
-                            status.source_count(),
-                            status.command_count()
-                        )
-                    });
-                    let shortcut_diagnostics_summary = (!sample.shortcut_diagnostics.is_empty())
-                        .then(|| {
-                            sample
-                                .shortcut_diagnostics
-                                .iter()
-                                .map(|diagnostic| match diagnostic.shortcut() {
-                                    Some(shortcut) => {
-                                        format!("{:?} {}", diagnostic.kind(), shortcut)
-                                    }
-                                    None => format!(
-                                        "{:?} {}",
-                                        diagnostic.kind(),
-                                        diagnostic.command_id().unwrap_or("unknown")
-                                    ),
-                                })
-                                .collect::<Vec<_>>()
-                                .join("; ")
-                        });
 
                     // Keep the gallery sample closed on mount so the page stays scrollable.
 
@@ -1334,6 +1300,8 @@ pub(crate) fn component_command_samples_section(
                     if let Some(loading) = state.loading() {
                         command = command.loading(loading.message(), loading.progress_percent());
                     }
+
+                    command = command.status_items(state.status_items().iter().cloned());
 
                     command = match state.open_mode() {
                         CommandOpenMode::Controlled => command.open(GALLERY_SAMPLE_MOUNT_OPEN),
@@ -1389,12 +1357,6 @@ pub(crate) fn component_command_samples_section(
                         )
                         .child(command)
                         .child(component_command_state_row(&state))
-                        .when_some(shortcut_diagnostics_summary, |this, summary| {
-                            this.child(div().text_xs().text_color(rgb(0x5a6472)).child(summary))
-                        })
-                        .when_some(provider_status_summary, |this, summary| {
-                            this.child(div().text_xs().text_color(rgb(0x5a6472)).child(summary))
-                        })
                 })),
         )
 }
@@ -1629,6 +1591,12 @@ fn component_command_state_row(state: &CommandState) -> impl IntoElement {
             state.index_mode(),
             selected_count,
             state.selected_values()
+        ))
+        .child(format!(
+            "{} status / {} warnings / {} errors",
+            state.status_items().len(),
+            state.status_warning_count(),
+            state.status_error_count()
         ))
 }
 
