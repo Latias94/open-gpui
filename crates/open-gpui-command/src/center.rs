@@ -3,18 +3,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use open_gpui::{Action, App, KeyContext, Keymap, Window};
+use open_gpui::{Action, App, InvalidKeystrokeError, KeyContext, Keymap, Keystroke, Window};
 
 use crate::{
     CommandAvailabilityMap, CommandContextStack, CommandContribution, CommandDispatchOutcome,
     CommandKeyBinding, CommandKeyBindingHandle, CommandKeyBindingInstallReport,
-    CommandKeyBindingProjection, CommandKeyBindingRegistry, CommandMenuTree,
-    CommandProjectionDiagnostic, CommandProvider, CommandProviderApplyOutcome, CommandProviderId,
-    CommandProviderRequest, CommandProviderRequestId, CommandProviderResponse,
+    CommandKeyBindingProjection, CommandKeyBindingRegistry, CommandKeymapResolution,
+    CommandMenuTree, CommandProjectionDiagnostic, CommandProvider, CommandProviderApplyOutcome,
+    CommandProviderId, CommandProviderRequest, CommandProviderRequestId, CommandProviderResponse,
     CommandProviderSource, CommandProviderStaleResponse, CommandProviderStatus,
     CommandRegistryError, CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection,
     CommandShortcutDiagnostic, CommandShortcutDiagnosticKind, CommandSourceId, CommandUsageHistory,
-    GpuiCommandActionMap, MemoryCommandHistory, ScopedCommandRegistry,
+    GpuiCommandActionMap, MemoryCommandHistory, ScopedCommandRegistry, parse_command_key_sequence,
 };
 
 /// Handle for a registered command source within one command scope.
@@ -622,6 +622,32 @@ impl CommandCenter {
         self.key_bindings.install_in_app(&self.actions, cx)
     }
 
+    /// Resolves typed keystrokes against the center's active scopes and key contexts.
+    pub fn resolve_key_input_for_keymap(
+        &self,
+        input: &[Keystroke],
+        keymap: &Keymap,
+    ) -> CommandKeymapResolution {
+        let registry = self.scope_projection().into_snapshot();
+        self.actions.resolve_keymap_input(
+            &registry,
+            &self.availability,
+            keymap,
+            self.context_stack.key_contexts(),
+            input,
+        )
+    }
+
+    /// Parses and resolves a whitespace-separated GPUI key sequence.
+    pub fn resolve_key_sequence_for_keymap(
+        &self,
+        sequence: &str,
+        keymap: &Keymap,
+    ) -> Result<CommandKeymapResolution, InvalidKeystrokeError> {
+        let input = parse_command_key_sequence(sequence)?;
+        Ok(self.resolve_key_input_for_keymap(&input, keymap))
+    }
+
     /// Projects active scopes before availability, shortcut, or history ranking.
     pub fn scope_projection(&self) -> CommandScopeProjection {
         if self.context_stack.scope_ids().is_empty() {
@@ -1112,6 +1138,79 @@ mod tests {
                     .is_none_or(|command| command.command_id() != "workspace.save")
             }),
             "hidden command should not be present in the center menu"
+        );
+    }
+
+    #[test]
+    fn center_resolves_keymap_input_for_active_context_stack() {
+        let mut center = CommandCenter::new("center-v1");
+        center
+            .register_source(
+                "workspace",
+                "core",
+                [
+                    CommandContribution::new(CommandDescriptor::new(
+                        "workspace.open",
+                        "Open Workspace",
+                    )),
+                    CommandContribution::new(CommandDescriptor::new(
+                        "workspace.save",
+                        "Save Workspace",
+                    )),
+                ],
+            )
+            .unwrap();
+        center
+            .register_action("workspace.open", OpenWorkspace)
+            .register_action("workspace.save", SaveWorkspace);
+        center
+            .set_context_stack(
+                CommandContextStack::new()
+                    .scope("workspace")
+                    .key_context(KeyContext::parse("Workspace mode=normal").unwrap()),
+            )
+            .register_key_bindings(
+                "workspace-shortcuts",
+                [
+                    CommandKeyBinding::new("workspace.open", "ctrl-k ctrl-o").context("Workspace"),
+                    CommandKeyBinding::new("workspace.save", "ctrl-s").context("mode == normal"),
+                ],
+            );
+
+        let mut keymap = Keymap::default();
+        center.install_key_bindings(&mut keymap);
+
+        let pending = center
+            .resolve_key_sequence_for_keymap("ctrl-k", &keymap)
+            .unwrap();
+        assert!(pending.is_pending());
+        assert_eq!(
+            pending
+                .pending_commands()
+                .iter()
+                .map(|command| command.command_id())
+                .collect::<Vec<_>>(),
+            ["workspace.open"]
+        );
+
+        let matched = center
+            .resolve_key_sequence_for_keymap("ctrl-k ctrl-o", &keymap)
+            .unwrap();
+        assert_eq!(
+            matched
+                .primary_dispatchable_command()
+                .map(|command| command.command_id()),
+            Some("workspace.open")
+        );
+
+        let mode_match = center
+            .resolve_key_sequence_for_keymap("ctrl-s", &keymap)
+            .unwrap();
+        assert_eq!(
+            mode_match
+                .primary_command()
+                .map(|command| command.command_id()),
+            Some("workspace.save")
         );
     }
 

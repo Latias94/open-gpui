@@ -160,6 +160,14 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_key_binding_report: root::CommandKeyBindingInstallReport = root_key_binding_registry
         .install_into_keymap(root_command_center.actions(), &mut root_keymap);
     assert_eq!(root_key_binding_report.installed_count(), 2);
+    let _root_key_sequence = root::parse_command_key_sequence("ctrl-o").unwrap();
+    let root_keymap_resolution: root::CommandKeymapResolution = root_command_center
+        .resolve_key_sequence_for_keymap("ctrl-o", &root_keymap)
+        .unwrap();
+    let root_keymap_command: &root::CommandKeymapResolvedCommand = root_keymap_resolution
+        .primary_dispatchable_command()
+        .unwrap();
+    let _root_keymap_command_state: &root::CommandKeymapCommandState = root_keymap_command.state();
     let _root_key_binding_diagnostic: &root::CommandKeyBindingDiagnostic =
         &root_key_binding_projection.diagnostics()[0];
     let _root_key_binding_diagnostic_kind: root::CommandKeyBindingDiagnosticKind =
@@ -442,6 +450,15 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_key_binding_registry
             .install_into_keymap(prelude_command_center.actions(), &mut prelude_keymap);
     assert_eq!(prelude_key_binding_report.installed_count(), 2);
+    let _prelude_key_sequence = prelude::parse_command_key_sequence("ctrl-o").unwrap();
+    let prelude_keymap_resolution: prelude::CommandKeymapResolution = prelude_command_center
+        .resolve_key_sequence_for_keymap("ctrl-o", &prelude_keymap)
+        .unwrap();
+    let prelude_keymap_command: &prelude::CommandKeymapResolvedCommand = prelude_keymap_resolution
+        .primary_dispatchable_command()
+        .unwrap();
+    let _prelude_keymap_command_state: &prelude::CommandKeymapCommandState =
+        prelude_keymap_command.state();
     let prelude_key_binding_diagnostic: &prelude::CommandKeyBindingDiagnostic =
         &prelude_key_binding_projection.diagnostics()[0];
     let _prelude_key_binding_diagnostic_kind: prelude::CommandKeyBindingDiagnosticKind =

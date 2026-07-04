@@ -218,6 +218,36 @@ keystroke sequences, context/mode checks still use GPUI key binding predicates s
 `Workspace && mode == normal`, and focused-window precedence still comes from
 `Window::highest_precedence_binding_for_action`.
 
+## Keymap Resolution
+
+Use `CommandCenter::resolve_key_sequence_for_keymap` when an app shell, command inspector, or
+custom input surface needs to ask what a typed key sequence means before dispatching it. The
+resolver keeps GPUI as the keymap authority, then maps the matched GPUI actions back to command ids:
+
+```rust
+let resolution = center.resolve_key_sequence_for_keymap("ctrl-k ctrl-o", &keymap)?;
+
+if let Some(command) = resolution.primary_dispatchable_command() {
+    center.dispatch_in_app(command.command_id(), current_query.as_str(), cx);
+}
+```
+
+`CommandKeymapResolution` exposes:
+
+- `matched_commands()` in GPUI dispatch precedence order;
+- `is_pending()` for GPUI's chord continuation state;
+- `pending_commands()` for command-specific chord continuations;
+- `primary_dispatchable_command()` after active scope and availability checks.
+
+Each `CommandKeymapResolvedCommand` carries the command id, the full projected shortcut label, and a
+`CommandKeymapCommandState`: `Dispatchable`, `Disabled`, `Hidden`, or `MissingCommand`. This lets
+plugin hosts and shortcut editors explain why a key sequence did not dispatch without duplicating
+the command center's scope and availability rules.
+
+Lower-level framework code can call `GpuiCommandActionMap::resolve_keymap_sequence` directly with an
+explicit registry snapshot, availability resolver, keymap, and `KeyContext` stack. `parse_command_key_sequence`
+is also public for callers that want to keep parsed `Keystroke` buffers between key events.
+
 ## Dynamic Providers
 
 Dynamic providers are for command results that depend on query text, current scopes, async indexes,

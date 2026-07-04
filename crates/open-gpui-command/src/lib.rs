@@ -37,7 +37,8 @@ pub use keybinding::{
     CommandKeyBinding, CommandKeyBindingConflict, CommandKeyBindingConflictEntry,
     CommandKeyBindingDiagnostic, CommandKeyBindingDiagnosticKind, CommandKeyBindingEntry,
     CommandKeyBindingHandle, CommandKeyBindingInstallReport, CommandKeyBindingProjection,
-    CommandKeyBindingRegistry,
+    CommandKeyBindingRegistry, CommandKeymapCommandState, CommandKeymapResolution,
+    CommandKeymapResolvedCommand, parse_command_key_sequence,
 };
 pub use menu::{CommandMenuCommand, CommandMenuEntry, CommandMenuSubmenu, CommandMenuTree};
 pub use provider::{

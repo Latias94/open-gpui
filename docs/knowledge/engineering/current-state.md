@@ -2,8 +2,8 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-04T09:56:04+08:00
-git_branch: feat/command-navigation-polish
+timestamp: 2026-07-04T10:26:22+08:00
+git_branch: feat/command-keymap-scopes
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
   - docs/plans/2026-07-01-002-refactor-ui-public-gallery-boundaries-plan.md
@@ -124,13 +124,18 @@ verified_by:
   - python -m py_compile native-ui-framework-design-research/generate_report.py
   - python C:\Users\Frankorz\.codex\skills\research\validate_json.py -f native-ui-framework-design-research\fields.yaml -d native-ui-framework-design-research\results
   - python $HOME/.codex/skills/engineering-wiki-memory/scripts/wiki_memory.py validate --root docs/knowledge/engineering
+  - cargo nextest run -p open-gpui-command keymap_resolution --no-fail-fast
+  - cargo nextest run -p open-gpui-command center_resolves_keymap_input_for_active_context_stack --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
+  - cargo nextest run -p open-gpui-command --no-fail-fast
+  - cargo fmt -p open-gpui-command -p open-gpui-ui-components --check
+  - cargo check -p open-gpui-command -p open-gpui-ui-components --tests
 ---
 
 # Current State
 
-- Branch: `feat/command-navigation-polish`; this state includes the current command navigation
-  polish slice on top of the merged docking render authority convergence and UI framework
-  deep-module refactor work.
+- Branch: `feat/command-keymap-scopes`; this state includes the command keymap resolution slice on
+  top of the merged command navigation and pending-provider work.
 - Done on `refactor/ui-framework-deepening`: component render paths now resolve color intents from
   `ThemeResolver::current(cx)` / `ThemeContext` or an explicit snapshot. Direct
   `ThemeResolver::resolve(...)` is documented as default-light compatibility only, and `rg -n
@@ -239,6 +244,12 @@ verified_by:
   diagnostic-only compatibility meaning; strict validation uses `has_conflicts()` or
   `is_strictly_clean()`. The design deliberately does not claim source-level removal from external
   GPUI keymaps; plugin hosts should rebuild their command-owned keymap layer before reinstalling.
+- Done on `feat/command-keymap-scopes`: `open_gpui_command` now exposes
+  `CommandKeymapResolution`, `CommandKeymapResolvedCommand`, `CommandKeymapCommandState`, and
+  `parse_command_key_sequence`. `CommandCenter` can resolve a typed GPUI key sequence through the
+  active command scopes, availability map, and key contexts, returning matched commands, chord
+  pending state, command-specific pending continuations, and a dispatchability preflight without
+  replacing GPUI's key dispatch engine.
 - Done on `feat/command-palette-polish`: command palette projections now adapt provider failures
   and shortcut/action/keymap drift diagnostics into `CommandStatusItem` rows. `CommandState` and
   `Command` expose status item builders plus warning/error counters, the runtime renders status
@@ -339,8 +350,8 @@ verified_by:
 - Not current roadmap work: broad splitting of every remaining 1k+ component file and
   `open-gpui-ui-headless` extraction.
 - Blocked: None.
-- Next action: commit the pending provider request slice, then dogfood it in a real app-shell or
-  gallery runtime path that schedules async work and applies a later response.
+- Next action: dogfood keymap resolution in a real app-shell or gallery inspector path that shows
+  typed chord state, matched command ids, and disabled/hidden/missing-command explanations.
 
 # Citations
 
@@ -374,3 +385,5 @@ verified_by:
 - [Open GPUI command navigation polish verification](verification/open-gpui-command-navigation-polish-20260704.md)
 - [Open GPUI command palette pending provider requests](progress/2026-07-04-open-gpui-command-palette-pending-provider-requests.md)
 - [Open GPUI command palette pending provider requests verification](verification/open-gpui-command-palette-pending-provider-requests-20260704.md)
+- [Open GPUI command keymap resolution](progress/2026-07-04-open-gpui-command-keymap-resolution.md)
+- [Open GPUI command keymap resolution verification](verification/open-gpui-command-keymap-resolution-20260704.md)

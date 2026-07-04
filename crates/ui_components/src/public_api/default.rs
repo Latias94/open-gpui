@@ -182,7 +182,8 @@ pub use open_gpui_command::{
     CommandHistoryEntry, CommandKeyBinding, CommandKeyBindingConflict,
     CommandKeyBindingConflictEntry, CommandKeyBindingDiagnostic, CommandKeyBindingDiagnosticKind,
     CommandKeyBindingEntry, CommandKeyBindingHandle, CommandKeyBindingInstallReport,
-    CommandKeyBindingProjection, CommandKeyBindingRegistry, CommandMenuCommand, CommandMenuEntry,
+    CommandKeyBindingProjection, CommandKeyBindingRegistry, CommandKeymapCommandState,
+    CommandKeymapResolution, CommandKeymapResolvedCommand, CommandMenuCommand, CommandMenuEntry,
     CommandMenuSubmenu, CommandMenuTree, CommandProjectionDiagnostic,
     CommandProjectionDiagnosticKind, CommandProvider, CommandProviderApplyOutcome,
     CommandProviderHandle, CommandProviderId, CommandProviderRefreshController,
@@ -193,6 +194,7 @@ pub use open_gpui_command::{
     CommandShortcutDiagnostic, CommandShortcutDiagnosticKind, CommandSourceHandle, CommandSourceId,
     CommandSourceRegistration, CommandUsageHistory, GpuiCommandAction, GpuiCommandActionMap,
     MemoryCommandHistory, ScopedCommandRegistry, command_effective_availability,
+    parse_command_key_sequence,
 };
 pub use open_gpui_ui_core::{
     GridViewport2D, TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
