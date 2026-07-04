@@ -4,8 +4,8 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ElementId, IntoElement, KeyDownEvent, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div,
+    App, ElementId, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
+    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayAnchorInput,
@@ -21,11 +21,11 @@ use crate::listbox::{
     ListboxState,
 };
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode,
-    OverlayOpenRuntimeRequest, OverlayResolvedState, apply_overlay_open_change,
-    apply_overlay_open_change_with_after_update, consume_overlay_event, gpui_overlay_state,
-    gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
-    set_overlay_open,
+    GpuiOverlayPlacement, OverlayCloseRuntimeRequest, OverlayDisclosureConfig,
+    OverlayDisclosureOpenMode, OverlayOpenRuntimeRequest, OverlayResolvedState,
+    apply_overlay_open_change, close_overlay_runtime, close_overlay_runtime_with_after_update,
+    consume_overlay_event, gpui_overlay_state, gpui_relative_overlay_layer,
+    outside_press_open_change, resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::theme::{ThemeContext, ThemeResolver};
@@ -473,6 +473,7 @@ struct SelectRuntime {
     open: bool,
     active_value: Option<String>,
     selected_value: Option<String>,
+    trigger_focus: FocusHandle,
 }
 
 /// A concrete GPUI select component.
@@ -679,10 +680,11 @@ impl Sizable for Select {
 impl RenderOnce for Select {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = ThemeResolver::current(cx);
-        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| SelectRuntime {
+        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, cx| SelectRuntime {
             open: self.default_open,
             active_value: self.active_value.clone(),
             selected_value: self.selected_value.clone(),
+            trigger_focus: cx.focus_handle(),
         });
         let runtime_state = runtime.read(cx).clone();
         let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
@@ -742,6 +744,7 @@ impl RenderOnce for Select {
         });
         let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
         let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+        let trigger_focus = runtime_state.trigger_focus.clone();
         let trigger_label = state.trigger_label().to_owned();
         let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
@@ -797,6 +800,7 @@ impl RenderOnce for Select {
                     .text_size(gpui_px_from_ui(metrics.text_size()))
                     .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
+                    .track_focus(&trigger_focus)
                     .tab_stop(!disabled)
                     .ui_role(state.trigger_role())
                     .aria_label(state.label().to_owned())
@@ -807,6 +811,7 @@ impl RenderOnce for Select {
                     .on_key_down({
                         let runtime = runtime.clone();
                         let on_open_change = self.on_open_change.clone();
+                        let focus_restore = state.focus_restore_intent().clone();
                         move |event: &KeyDownEvent, window, cx| {
                             let key = event.keystroke.key.as_str();
                             if matches!(key, "enter" | "space" | "down" | "up") {
@@ -827,7 +832,13 @@ impl RenderOnce for Select {
                                 }
                             } else if key == "escape" {
                                 consume_overlay_event(window, cx);
-                                close_select(runtime.clone(), on_open_change.clone(), window, cx);
+                                close_select(
+                                    runtime.clone(),
+                                    focus_restore.clone(),
+                                    on_open_change.clone(),
+                                    window,
+                                    cx,
+                                );
                             }
                         }
                     })
@@ -902,11 +913,14 @@ fn select_content_element(
     let metrics = state.metrics();
     let colors = state.colors();
     let outside_change = outside_press_open_change(state.overlay().policy());
+    let focus_restore = state.focus_restore_intent().clone();
     let escape_runtime = runtime.clone();
     let escape_open_change = on_open_change.clone();
+    let escape_focus_restore = focus_restore.clone();
     let listbox_runtime = runtime.clone();
     let listbox_open_change = on_open_change.clone();
     let listbox_select = on_select.clone();
+    let listbox_focus_restore = focus_restore.clone();
     let selected_value = state.selected_value().map(str::to_owned);
     let label = state.label().to_owned();
     let listbox = options
@@ -923,10 +937,12 @@ fn select_content_element(
             let selection = SelectSelection::from(selection);
             let selected_value = selection.value().to_owned();
             let on_select = listbox_select.clone();
-            apply_overlay_open_change_with_after_update(
-                OverlayOpenRuntimeRequest::new(
+            let trigger_focus = listbox_runtime.read(cx).trigger_focus.clone();
+            close_overlay_runtime_with_after_update(
+                OverlayCloseRuntimeRequest::new(
                     listbox_runtime.clone(),
-                    false,
+                    &listbox_focus_restore,
+                    trigger_focus,
                     listbox_open_change.as_deref(),
                 ),
                 window,
@@ -982,6 +998,7 @@ fn select_content_element(
                 consume_overlay_event(window, cx);
                 close_select(
                     escape_runtime.clone(),
+                    escape_focus_restore.clone(),
                     escape_open_change.clone(),
                     window,
                     cx,
@@ -991,8 +1008,15 @@ fn select_content_element(
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
+            let focus_restore = focus_restore.clone();
             this.on_mouse_down_out(move |_, window, cx| {
-                close_select(runtime.clone(), on_open_change.clone(), window, cx);
+                close_select(
+                    runtime.clone(),
+                    focus_restore.clone(),
+                    on_open_change.clone(),
+                    window,
+                    cx,
+                );
             })
         })
         .child(
@@ -1005,12 +1029,19 @@ fn select_content_element(
 
 fn close_select(
     runtime: open_gpui::Entity<SelectRuntime>,
+    focus_restore: FocusRestoreIntent,
     on_open_change: Option<SelectOpenChangeHandler>,
     window: &mut Window,
     cx: &mut App,
 ) {
-    apply_overlay_open_change(
-        OverlayOpenRuntimeRequest::new(runtime, false, on_open_change.as_deref()),
+    let trigger_focus = runtime.read(cx).trigger_focus.clone();
+    close_overlay_runtime(
+        OverlayCloseRuntimeRequest::new(
+            runtime,
+            &focus_restore,
+            trigger_focus,
+            on_open_change.as_deref(),
+        ),
         window,
         cx,
         |runtime| {

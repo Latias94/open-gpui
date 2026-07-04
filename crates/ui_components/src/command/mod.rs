@@ -11,8 +11,8 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, point, px,
+    App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, point, px,
 };
 use open_gpui_command::CommandDescriptor;
 use open_gpui_ui_core::{
@@ -578,13 +578,14 @@ impl RenderOnce for Command {
             .selected_values
             .clone()
             .unwrap_or_else(|| self.selected_value.iter().cloned().collect());
-        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| {
+        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, cx| {
             CommandRuntime::new(
                 self.default_open,
                 self.active_value.clone(),
                 self.selected_value.clone(),
                 initial_selected_values.clone(),
                 initial_query.clone(),
+                cx.focus_handle(),
             )
         });
         let input_state_key: ElementId = (self.id.clone(), "input-state").into();
@@ -683,6 +684,7 @@ impl RenderOnce for Command {
         let on_selected_values_change = self.on_selected_values_change;
         let tokens = self.tokens;
         let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+        let trigger_focus = runtime_state.trigger_focus.clone();
 
         div()
             .id(id)
@@ -716,6 +718,7 @@ impl RenderOnce for Command {
                         .bg(theme.resolve(colors.surface()))
                         .text_color(theme.resolve(colors.foreground()))
                         .focusable()
+                        .track_focus(&trigger_focus)
                         .tab_stop(!disabled)
                         .ui_role(Role::Button)
                         .aria_label(trigger_label.clone())
