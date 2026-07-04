@@ -9,52 +9,14 @@ use jellyflow::{
 };
 use jellyflow_open_gpui::{
     OpenGpuiMeasuredRegion, OpenGpuiMeasurementContext, OpenGpuiMeasurementCoverage,
-    OpenGpuiViewPoint, layout_pass_measurement_from_regions, measured_surface_anchors,
-    project_node_measurement, projected_node_surface_graph_layout,
+    OpenGpuiProjectionFallbackStoreEvidence, OpenGpuiViewPoint,
+    layout_pass_measurement_from_regions, measured_surface_anchors, project_node_measurement,
+    projected_node_surface_graph_layout,
 };
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct ProjectionFallbackStoreSummary {
-    pub(crate) fresh_live_measurements: usize,
-    pub(crate) projection_fallback_measurements: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProjectionFallbackMeasurementSource {
-    FreshLayoutPass,
-    ProjectionFallback,
-    Missing,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct ProjectionFallbackStoreEvidence {
-    pub(crate) summary: ProjectionFallbackStoreSummary,
-    pub(crate) fresh_nodes: Vec<JellyNodeId>,
-    pub(crate) fallback_nodes: Vec<JellyNodeId>,
-}
-
-impl ProjectionFallbackStoreEvidence {
-    pub(crate) fn node_uses_projection_fallback(&self, node_id: JellyNodeId) -> bool {
-        self.fallback_nodes.contains(&node_id)
-    }
-
-    pub(crate) fn node_measurement_source(
-        &self,
-        node_id: JellyNodeId,
-    ) -> ProjectionFallbackMeasurementSource {
-        if self.fresh_nodes.contains(&node_id) {
-            ProjectionFallbackMeasurementSource::FreshLayoutPass
-        } else if self.fallback_nodes.contains(&node_id) {
-            ProjectionFallbackMeasurementSource::ProjectionFallback
-        } else {
-            ProjectionFallbackMeasurementSource::Missing
-        }
-    }
-}
 
 pub(crate) struct ProjectionFallbackStore {
     store: NodeGraphStore,
-    evidence: ProjectionFallbackStoreEvidence,
+    evidence: OpenGpuiProjectionFallbackStoreEvidence,
 }
 
 impl ProjectionFallbackStore {
@@ -62,7 +24,7 @@ impl ProjectionFallbackStore {
         &self.store
     }
 
-    pub(crate) fn evidence(&self) -> &ProjectionFallbackStoreEvidence {
+    pub(crate) fn evidence(&self) -> &OpenGpuiProjectionFallbackStoreEvidence {
         &self.evidence
     }
 
@@ -103,7 +65,7 @@ pub(crate) fn measurement_store_with_explicit_projection_fallback(
         store.view_state().clone(),
         NodeGraphEditorConfig::default(),
     );
-    let mut evidence = ProjectionFallbackStoreEvidence::default();
+    let mut evidence = OpenGpuiProjectionFallbackStoreEvidence::default();
 
     let existing_measurements = store
         .graph()
@@ -116,11 +78,10 @@ pub(crate) fn measurement_store_with_explicit_projection_fallback(
         .collect::<Vec<_>>();
 
     for measurement in existing_measurements {
-        evidence.fresh_nodes.push(measurement.node);
+        evidence.record_fresh_live_measurement(measurement.node);
         measured_store
             .report_node_measurement(measurement)
             .expect("live GPUI measurement should match the graph");
-        evidence.summary.fresh_live_measurements += 1;
     }
 
     let measurements = measured_store
@@ -141,9 +102,8 @@ pub(crate) fn measurement_store_with_explicit_projection_fallback(
         })
         .collect::<Vec<_>>();
 
-    evidence.summary.projection_fallback_measurements = measurements.len();
     for measurement in measurements {
-        evidence.fallback_nodes.push(measurement.node);
+        evidence.record_projection_fallback_measurement(measurement.node);
         measured_store
             .report_node_measurement(measurement)
             .expect("projected GPUI measurement should match the graph");
@@ -170,7 +130,10 @@ mod tests {
         },
         runtime::schema::NodeKitRegistry,
     };
-    use jellyflow_open_gpui::{OpenGpuiMeasurementId, OpenGpuiViewBounds, OpenGpuiViewSize};
+    use jellyflow_open_gpui::{
+        OpenGpuiMeasurementId, OpenGpuiProjectionMeasurementSource, OpenGpuiViewBounds,
+        OpenGpuiViewSize,
+    };
 
     fn demo_registry() -> NodeRegistry {
         NodeKitRegistry::builtin().node_registry()
@@ -215,7 +178,7 @@ mod tests {
         assert_eq!(evidence_store.evidence().summary.fresh_live_measurements, 1);
         assert_eq!(
             evidence_store.evidence().node_measurement_source(transform),
-            ProjectionFallbackMeasurementSource::FreshLayoutPass
+            OpenGpuiProjectionMeasurementSource::FreshLayoutPass
         );
         assert!(
             !evidence_store
@@ -266,7 +229,7 @@ mod tests {
         assert_eq!(evidence_store.evidence().summary.fresh_live_measurements, 0);
         assert_eq!(
             evidence_store.evidence().node_measurement_source(transform),
-            ProjectionFallbackMeasurementSource::ProjectionFallback
+            OpenGpuiProjectionMeasurementSource::ProjectionFallback
         );
         assert!(
             evidence_store
