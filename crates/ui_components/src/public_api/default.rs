@@ -68,7 +68,7 @@ pub use crate::link::{Link, LinkActivation, LinkColors, LinkMetrics, LinkState};
 pub use crate::listbox::{
     Listbox, ListboxColors, ListboxGroup, ListboxGroupDescriptor, ListboxGroupState,
     ListboxMetrics, ListboxOption, ListboxOptionDescriptor, ListboxOptionKind, ListboxOptionState,
-    ListboxSelection, ListboxState, listbox_navigation_target,
+    ListboxSelection, ListboxState,
 };
 pub use crate::menu::{
     Menu, MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuItemState, MenuMetrics,

@@ -845,6 +845,69 @@ mod tests {
     }
 
     #[test]
+    fn collection_policies_cover_real_choice_consumers() {
+        let items = vec![
+            ChoiceItemProjection::new(0, None, "alpha", "Alpha", false, ()),
+            ChoiceItemProjection::new(1, None, "bravo", "Bravo", true, ()),
+            ChoiceItemProjection::new(2, None, "charlie", "Charlie", false, ()),
+        ];
+
+        let single_optional = ChoiceCollection::resolve(
+            false,
+            items.clone(),
+            Some("missing"),
+            None,
+            ChoiceInteractionPolicy::single_optional(Orientation::Horizontal),
+        );
+        assert_eq!(single_optional.selected_index(), None);
+        assert_eq!(single_optional.active_index(), Some(0));
+        assert_eq!(
+            single_optional
+                .navigation_target("right")
+                .map(ChoiceItemProjection::value),
+            Some("charlie")
+        );
+
+        let single_required = ChoiceCollection::resolve(
+            false,
+            items.clone(),
+            Some("missing"),
+            None,
+            ChoiceInteractionPolicy::single_required(Orientation::Vertical),
+        );
+        assert_eq!(single_required.selected_value(), Some("alpha"));
+        assert_eq!(single_required.active_value(), Some("alpha"));
+
+        let multiple = ChoiceCollection::resolve(
+            false,
+            items.clone(),
+            Some("charlie"),
+            Some("missing"),
+            ChoiceInteractionPolicy::multiple(Orientation::Vertical),
+        );
+        assert_eq!(multiple.selected_value(), Some("charlie"));
+        assert_eq!(
+            next_selected_values(
+                ChoiceSelectionMode::Multiple,
+                false,
+                &["alpha".to_string()],
+                "charlie",
+            ),
+            vec!["alpha".to_string(), "charlie".to_string()]
+        );
+
+        let roving = ChoiceCollection::resolve(
+            false,
+            items,
+            Some("charlie"),
+            Some("missing"),
+            ChoiceInteractionPolicy::roving(Orientation::Vertical),
+        );
+        assert_eq!(roving.selected_value(), None);
+        assert_eq!(roving.active_value(), Some("alpha"));
+    }
+
+    #[test]
     fn collection_policy_controls_typeahead_and_disabled_items() {
         let items = vec![
             ChoiceItemProjection::new(0, None, "alpha", "Alpha", false, ()),

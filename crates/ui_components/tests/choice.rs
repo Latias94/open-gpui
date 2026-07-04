@@ -16,7 +16,7 @@ use open_gpui_ui_components::{
     CommandStatusIntent, CommandStatusItem, Listbox, ListboxGroup, ListboxGroupDescriptor,
     ListboxOption, ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState,
     ScrollArea, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, VirtualizerRange,
-    gpui_adapter::init_text_input, listbox_navigation_target,
+    gpui_adapter::init_text_input,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -93,12 +93,8 @@ fn listbox_state_resolves_grouped_options_navigation_and_typeahead() {
         Some("bravo".to_string())
     );
     assert_eq!(
-        listbox_navigation_target(
-            "down",
-            state.active_index().unwrap(),
-            &[false, true, false, true, false]
-        ),
-        Some(0)
+        state.navigation_target("up").map(|option| option.value()),
+        Some("charlie")
     );
 }
 

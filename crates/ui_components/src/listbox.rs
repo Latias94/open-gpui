@@ -747,11 +747,6 @@ impl ListboxState {
     }
 }
 
-/// Resolves a listbox active descendant target from an APG-style key name.
-pub fn listbox_navigation_target(key: &str, current: usize, disabled: &[bool]) -> Option<usize> {
-    ChoiceInteractionPolicy::listbox().navigation_target_index(key, current, disabled)
-}
-
 /// A concrete GPUI listbox option.
 #[derive(Clone)]
 pub struct ListboxOption {
