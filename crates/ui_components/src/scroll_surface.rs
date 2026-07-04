@@ -197,6 +197,7 @@ const fn nonnegative_px(value: UiPx) -> UiPx {
 
 #[cfg(test)]
 mod tests {
+    use open_gpui::{point, px};
     use open_gpui_ui_core::ui_px;
 
     use super::*;
@@ -240,5 +241,96 @@ mod tests {
             Some("before"),
             Some("after")
         ));
+    }
+
+    #[test]
+    fn fixed_row_scroll_target_supports_explicit_alignment_strategies() {
+        let row_height = ui_px(20.0);
+        let viewport_extent = ui_px(100.0);
+
+        assert_eq!(
+            fixed_row_scroll_target(
+                ScrollSurfaceRevealStrategy::Top,
+                10,
+                100,
+                row_height,
+                viewport_extent,
+                ui_px(0.0),
+            ),
+            ui_px(200.0)
+        );
+        assert_eq!(
+            fixed_row_scroll_target(
+                ScrollSurfaceRevealStrategy::Center,
+                10,
+                100,
+                row_height,
+                viewport_extent,
+                ui_px(0.0),
+            ),
+            ui_px(160.0)
+        );
+        assert_eq!(
+            fixed_row_scroll_target(
+                ScrollSurfaceRevealStrategy::Bottom,
+                10,
+                100,
+                row_height,
+                viewport_extent,
+                ui_px(0.0),
+            ),
+            ui_px(120.0)
+        );
+    }
+
+    #[test]
+    fn fixed_row_scroll_target_clamps_to_scrollable_range() {
+        assert_eq!(
+            fixed_row_scroll_target(
+                ScrollSurfaceRevealStrategy::Top,
+                usize::MAX,
+                10,
+                ui_px(20.0),
+                ui_px(100.0),
+                ui_px(0.0),
+            ),
+            ui_px(100.0)
+        );
+        assert_eq!(
+            fixed_row_scroll_target(
+                ScrollSurfaceRevealStrategy::Bottom,
+                0,
+                10,
+                ui_px(20.0),
+                ui_px(100.0),
+                ui_px(0.0),
+            ),
+            ui_px(0.0)
+        );
+    }
+
+    #[test]
+    fn set_vertical_scroll_offset_preserves_horizontal_offset() {
+        let scroll_handle = ScrollHandle::new();
+        scroll_handle.set_offset(point(px(42.0), px(-12.0)));
+
+        set_vertical_scroll_offset(&scroll_handle, ui_px(64.0));
+
+        assert_eq!(scroll_handle.offset().x, px(42.0));
+        assert_eq!(vertical_scroll_offset(&scroll_handle), ui_px(64.0));
+    }
+
+    #[test]
+    fn reveal_fixed_row_noops_when_target_is_visible() {
+        let scroll_handle = ScrollHandle::new();
+        assert!(!reveal_fixed_row(
+            &scroll_handle,
+            ScrollSurfaceRevealStrategy::Nearest,
+            0,
+            10,
+            ui_px(32.0),
+            Some(ui_px(96.0)),
+        ));
+        assert_eq!(vertical_scroll_offset(&scroll_handle), ui_px(0.0));
     }
 }

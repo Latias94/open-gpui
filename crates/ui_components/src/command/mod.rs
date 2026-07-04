@@ -23,8 +23,8 @@ use open_gpui_ui_core::{
 use crate::a11y::UiA11yElementExt;
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::overlay::{
-    apply_overlay_open_change, gpui_full_window_overlay_layer, gpui_overlay_state,
-    resolve_overlay_open_state, set_overlay_open,
+    OverlayOpenRuntimeRequest, apply_overlay_open_change, gpui_full_window_overlay_layer,
+    gpui_overlay_state, resolve_overlay_open_state, set_overlay_open,
 };
 use crate::text_editing::TextEditingPolicy;
 use crate::text_input::TextInputDisplayMode;
@@ -729,9 +729,11 @@ impl RenderOnce for Command {
                                     cx.stop_propagation();
                                     if !open {
                                         apply_overlay_open_change(
-                                            runtime.clone(),
-                                            true,
-                                            on_open_change.as_deref(),
+                                            OverlayOpenRuntimeRequest::new(
+                                                runtime.clone(),
+                                                true,
+                                                on_open_change.as_deref(),
+                                            ),
                                             window,
                                             cx,
                                             |runtime| {

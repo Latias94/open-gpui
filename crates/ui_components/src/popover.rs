@@ -19,7 +19,8 @@ use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
+    GpuiOverlayPlacement, OverlayCloseRuntimeRequest, OverlayDisclosureConfig,
+    OverlayDisclosureOpenMode, OverlayOpenRuntimeRequest, OverlayResolvedState,
     apply_overlay_open_change_with_after_update, close_overlay_runtime, consume_overlay_event,
     escape_open_change, gpui_overlay_state, gpui_relative_overlay_layer, outside_press_open_change,
     resolve_overlay_open_state, set_overlay_open,
@@ -643,9 +644,11 @@ impl RenderOnce for Popover {
                                 let focus_runtime = runtime.clone();
                                 let initial_focus = initial_focus.clone();
                                 apply_overlay_open_change_with_after_update(
-                                    runtime.clone(),
-                                    next_open,
-                                    on_open_change.as_deref(),
+                                    OverlayOpenRuntimeRequest::new(
+                                        runtime.clone(),
+                                        next_open,
+                                        on_open_change.as_deref(),
+                                    ),
                                     window,
                                     cx,
                                     |runtime| {
@@ -770,11 +773,13 @@ fn close_popover(
 ) {
     let trigger_focus = runtime.read(cx).trigger_focus.clone();
     close_overlay_runtime(
-        runtime,
-        &focus_restore,
-        trigger_focus,
-        true,
-        on_open_change.as_deref(),
+        OverlayCloseRuntimeRequest::new(
+            runtime,
+            &focus_restore,
+            trigger_focus,
+            on_open_change.as_deref(),
+        )
+        .defer_focus_restore(true),
         window,
         cx,
         |runtime| {

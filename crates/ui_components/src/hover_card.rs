@@ -19,9 +19,10 @@ use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
-    apply_overlay_open_change, consume_overlay_event, escape_open_change, gpui_overlay_state,
-    gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
+    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode,
+    OverlayOpenRuntimeRequest, OverlayResolvedState, apply_overlay_open_change,
+    consume_overlay_event, escape_open_change, gpui_overlay_state, gpui_relative_overlay_layer,
+    outside_press_open_change, resolve_overlay_open_state,
 };
 use crate::theme::{ThemeContext, ThemeResolver};
 
@@ -1174,9 +1175,7 @@ fn set_hover_card_open(
     let changed = runtime.read(cx).open != open;
     if changed {
         apply_overlay_open_change(
-            runtime,
-            open,
-            on_open_change.as_deref(),
+            OverlayOpenRuntimeRequest::new(runtime, open, on_open_change.as_deref()),
             window,
             cx,
             |runtime| {

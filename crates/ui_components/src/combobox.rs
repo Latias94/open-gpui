@@ -23,10 +23,11 @@ use crate::listbox::{
     ListboxState,
 };
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
-    apply_overlay_open_change, apply_overlay_open_change_with_after_update, consume_overlay_event,
-    gpui_overlay_state, gpui_relative_overlay_layer, outside_press_open_change,
-    resolve_overlay_open_state, set_overlay_open,
+    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode,
+    OverlayOpenRuntimeRequest, OverlayResolvedState, apply_overlay_open_change,
+    apply_overlay_open_change_with_after_update, consume_overlay_event, gpui_overlay_state,
+    gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
+    set_overlay_open,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::text_editing::TextEditingPolicy;
@@ -956,9 +957,11 @@ impl RenderOnce for Combobox {
                                 consume_overlay_event(window, cx);
                                 if !key_state.open() {
                                     apply_overlay_open_change(
-                                        runtime.clone(),
-                                        true,
-                                        on_open_change.as_deref(),
+                                        OverlayOpenRuntimeRequest::new(
+                                            runtime.clone(),
+                                            true,
+                                            on_open_change.as_deref(),
+                                        ),
                                         window,
                                         cx,
                                         move |runtime| {
@@ -980,9 +983,11 @@ impl RenderOnce for Combobox {
                                 let input_controller = input_controller.clone();
                                 let on_select = on_select.clone();
                                 apply_overlay_open_change_with_after_update(
-                                    runtime.clone(),
-                                    false,
-                                    on_open_change.as_deref(),
+                                    OverlayOpenRuntimeRequest::new(
+                                        runtime.clone(),
+                                        false,
+                                        on_open_change.as_deref(),
+                                    ),
                                     window,
                                     cx,
                                     {
@@ -1007,9 +1012,11 @@ impl RenderOnce for Combobox {
                                 consume_overlay_event(window, cx);
                                 if !key_state.open() {
                                     apply_overlay_open_change(
-                                        runtime.clone(),
-                                        true,
-                                        on_open_change.as_deref(),
+                                        OverlayOpenRuntimeRequest::new(
+                                            runtime.clone(),
+                                            true,
+                                            on_open_change.as_deref(),
+                                        ),
                                         window,
                                         cx,
                                         |runtime| {
@@ -1064,9 +1071,11 @@ impl RenderOnce for Combobox {
                                         cx.stop_propagation();
                                         let next_open = !open;
                                         apply_overlay_open_change(
-                                            runtime.clone(),
-                                            next_open,
-                                            on_open_change.as_deref(),
+                                            OverlayOpenRuntimeRequest::new(
+                                                runtime.clone(),
+                                                next_open,
+                                                on_open_change.as_deref(),
+                                            ),
                                             window,
                                             cx,
                                             |runtime| {
@@ -1196,9 +1205,11 @@ fn combobox_content_element(
                 let input_controller = input_controller.clone();
                 let on_select = on_select.clone();
                 apply_overlay_open_change_with_after_update(
-                    runtime.clone(),
-                    false,
-                    on_open_change.as_deref(),
+                    OverlayOpenRuntimeRequest::new(
+                        runtime.clone(),
+                        false,
+                        on_open_change.as_deref(),
+                    ),
                     window,
                     cx,
                     {
@@ -1285,9 +1296,7 @@ fn close_combobox(
     cx: &mut App,
 ) {
     apply_overlay_open_change(
-        runtime,
-        false,
-        on_open_change.as_deref(),
+        OverlayOpenRuntimeRequest::new(runtime, false, on_open_change.as_deref()),
         window,
         cx,
         |runtime| {

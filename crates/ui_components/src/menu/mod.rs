@@ -27,10 +27,10 @@ use crate::a11y::UiA11yElementExt;
 use crate::focus::focus_ring_shadow_with_theme;
 
 use crate::overlay::{
-    GpuiOverlayPlacement, GpuiOverlayState, apply_overlay_open_change, close_overlay_runtime,
-    consume_overlay_event, gpui_overlay_state, gpui_positioned_overlay_layer,
-    gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
-    set_overlay_open,
+    GpuiOverlayPlacement, GpuiOverlayState, OverlayCloseRuntimeRequest, OverlayOpenRuntimeRequest,
+    apply_overlay_open_change, close_overlay_runtime, consume_overlay_event, gpui_overlay_state,
+    gpui_positioned_overlay_layer, gpui_relative_overlay_layer, outside_press_open_change,
+    resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::{ThemeContext, ThemeResolver};
@@ -790,9 +790,11 @@ impl RenderOnce for Menu {
                                 cx.stop_propagation();
                                 let next_open = !open;
                                 apply_overlay_open_change(
-                                    runtime.clone(),
-                                    next_open,
-                                    on_open_change.as_deref(),
+                                    OverlayOpenRuntimeRequest::new(
+                                        runtime.clone(),
+                                        next_open,
+                                        on_open_change.as_deref(),
+                                    ),
                                     window,
                                     cx,
                                     |runtime| {
@@ -1296,11 +1298,13 @@ fn close_menu(
     cx: &mut App,
 ) {
     close_overlay_runtime(
-        runtime,
-        &focus_restore,
-        trigger_focus,
-        true,
-        on_open_change.as_deref(),
+        OverlayCloseRuntimeRequest::new(
+            runtime,
+            &focus_restore,
+            trigger_focus,
+            on_open_change.as_deref(),
+        )
+        .defer_focus_restore(true),
         window,
         cx,
         |runtime| {

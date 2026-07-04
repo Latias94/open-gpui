@@ -293,88 +293,113 @@ pub(crate) fn set_overlay_open(runtime_open: &mut bool, open: bool) {
     *runtime_open = open;
 }
 
-/// Applies an overlay open-state change and emits the bool callback afterward.
-pub(crate) fn apply_overlay_open_change<T: 'static>(
+/// Runtime request for applying an overlay open-state transition.
+pub(crate) struct OverlayOpenRuntimeRequest<'a, T: 'static> {
     runtime: Entity<T>,
     open: bool,
-    on_open_change: Option<&dyn Fn(bool, &mut Window, &mut App)>,
+    on_open_change: Option<&'a dyn Fn(bool, &mut Window, &mut App)>,
+}
+
+impl<'a, T: 'static> OverlayOpenRuntimeRequest<'a, T> {
+    /// Creates an open-state transition request.
+    pub(crate) fn new(
+        runtime: Entity<T>,
+        open: bool,
+        on_open_change: Option<&'a dyn Fn(bool, &mut Window, &mut App)>,
+    ) -> Self {
+        Self {
+            runtime,
+            open,
+            on_open_change,
+        }
+    }
+}
+
+/// Runtime request for applying an overlay close transition.
+pub(crate) struct OverlayCloseRuntimeRequest<'a, T: 'static> {
+    runtime: Entity<T>,
+    focus_restore: &'a FocusRestoreIntent,
+    trigger_focus: FocusHandle,
+    defer_focus_restore: bool,
+    on_open_change: Option<&'a dyn Fn(bool, &mut Window, &mut App)>,
+}
+
+impl<'a, T: 'static> OverlayCloseRuntimeRequest<'a, T> {
+    /// Creates a close transition request.
+    pub(crate) fn new(
+        runtime: Entity<T>,
+        focus_restore: &'a FocusRestoreIntent,
+        trigger_focus: FocusHandle,
+        on_open_change: Option<&'a dyn Fn(bool, &mut Window, &mut App)>,
+    ) -> Self {
+        Self {
+            runtime,
+            focus_restore,
+            trigger_focus,
+            defer_focus_restore: false,
+            on_open_change,
+        }
+    }
+
+    /// Applies deferred focus restore for close paths that cannot move focus immediately.
+    pub(crate) const fn defer_focus_restore(mut self, defer_focus_restore: bool) -> Self {
+        self.defer_focus_restore = defer_focus_restore;
+        self
+    }
+}
+
+/// Applies an overlay open-state change and emits the bool callback afterward.
+pub(crate) fn apply_overlay_open_change<T: 'static>(
+    request: OverlayOpenRuntimeRequest<'_, T>,
     window: &mut Window,
     cx: &mut App,
     update_runtime: impl FnOnce(&mut T),
 ) {
-    apply_overlay_open_change_with_after_update(
-        runtime,
-        open,
-        on_open_change,
-        window,
-        cx,
-        update_runtime,
-        |_, _| {},
-    );
+    apply_overlay_open_change_with_after_update(request, window, cx, update_runtime, |_, _| {});
 }
 
 /// Applies an overlay open-state change, runs a post-update hook, and emits the callback afterward.
 pub(crate) fn apply_overlay_open_change_with_after_update<T: 'static>(
-    runtime: Entity<T>,
-    open: bool,
-    on_open_change: Option<&dyn Fn(bool, &mut Window, &mut App)>,
+    request: OverlayOpenRuntimeRequest<'_, T>,
     window: &mut Window,
     cx: &mut App,
     update_runtime: impl FnOnce(&mut T),
     after_update: impl FnOnce(&mut Window, &mut App),
 ) {
-    runtime.update(cx, |runtime, _| {
+    request.runtime.update(cx, |runtime, _| {
         update_runtime(runtime);
     });
     after_update(window, cx);
-    emit_overlay_open_change(open, on_open_change, window, cx);
+    emit_overlay_open_change(request.open, request.on_open_change, window, cx);
 }
 
 /// Closes an overlay runtime and applies the shared callback/focus tail.
 pub(crate) fn close_overlay_runtime<T: 'static>(
-    runtime: Entity<T>,
-    focus_restore: &FocusRestoreIntent,
-    trigger_focus: FocusHandle,
-    defer_focus_restore: bool,
-    on_open_change: Option<&dyn Fn(bool, &mut Window, &mut App)>,
+    request: OverlayCloseRuntimeRequest<'_, T>,
     window: &mut Window,
     cx: &mut App,
     close_runtime: impl FnOnce(&mut T),
 ) {
-    close_overlay_runtime_with_after_update(
-        runtime,
-        focus_restore,
-        trigger_focus,
-        defer_focus_restore,
-        on_open_change,
-        window,
-        cx,
-        close_runtime,
-        |_, _| {},
-    );
+    close_overlay_runtime_with_after_update(request, window, cx, close_runtime, |_, _| {});
 }
 
 /// Closes an overlay runtime, runs a post-update hook, and applies the callback/focus tail.
 pub(crate) fn close_overlay_runtime_with_after_update<T: 'static>(
-    runtime: Entity<T>,
-    focus_restore: &FocusRestoreIntent,
-    trigger_focus: FocusHandle,
-    defer_focus_restore: bool,
-    on_open_change: Option<&dyn Fn(bool, &mut Window, &mut App)>,
+    request: OverlayCloseRuntimeRequest<'_, T>,
     window: &mut Window,
     cx: &mut App,
     close_runtime: impl FnOnce(&mut T),
     after_update: impl FnOnce(&mut Window, &mut App),
 ) {
-    runtime.update(cx, |runtime, _| {
+    request.runtime.update(cx, |runtime, _| {
         close_runtime(runtime);
     });
     after_update(window, cx);
-    emit_overlay_open_change(false, on_open_change, window, cx);
+    emit_overlay_open_change(false, request.on_open_change, window, cx);
     restore_overlay_focus(
-        focus_restore,
-        Some(trigger_focus),
-        defer_focus_restore,
+        request.focus_restore,
+        Some(request.trigger_focus),
+        request.defer_focus_restore,
         window,
         cx,
     );

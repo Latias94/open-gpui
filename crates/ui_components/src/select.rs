@@ -21,10 +21,11 @@ use crate::listbox::{
     ListboxState,
 };
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
-    apply_overlay_open_change, apply_overlay_open_change_with_after_update, consume_overlay_event,
-    gpui_overlay_state, gpui_relative_overlay_layer, outside_press_open_change,
-    resolve_overlay_open_state, set_overlay_open,
+    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode,
+    OverlayOpenRuntimeRequest, OverlayResolvedState, apply_overlay_open_change,
+    apply_overlay_open_change_with_after_update, consume_overlay_event, gpui_overlay_state,
+    gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
+    set_overlay_open,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::theme::{ThemeContext, ThemeResolver};
@@ -812,9 +813,11 @@ impl RenderOnce for Select {
                                 consume_overlay_event(window, cx);
                                 if !open {
                                     apply_overlay_open_change(
-                                        runtime.clone(),
-                                        true,
-                                        on_open_change.as_deref(),
+                                        OverlayOpenRuntimeRequest::new(
+                                            runtime.clone(),
+                                            true,
+                                            on_open_change.as_deref(),
+                                        ),
                                         window,
                                         cx,
                                         |runtime| {
@@ -838,9 +841,11 @@ impl RenderOnce for Select {
                                 consume_overlay_event(window, cx);
                                 let next_open = !open;
                                 apply_overlay_open_change(
-                                    runtime.clone(),
-                                    next_open,
-                                    on_open_change.as_deref(),
+                                    OverlayOpenRuntimeRequest::new(
+                                        runtime.clone(),
+                                        next_open,
+                                        on_open_change.as_deref(),
+                                    ),
                                     window,
                                     cx,
                                     |runtime| {
@@ -919,9 +924,11 @@ fn select_content_element(
             let selected_value = selection.value().to_owned();
             let on_select = listbox_select.clone();
             apply_overlay_open_change_with_after_update(
-                listbox_runtime.clone(),
-                false,
-                listbox_open_change.as_deref(),
+                OverlayOpenRuntimeRequest::new(
+                    listbox_runtime.clone(),
+                    false,
+                    listbox_open_change.as_deref(),
+                ),
                 window,
                 cx,
                 {
@@ -1003,9 +1010,7 @@ fn close_select(
     cx: &mut App,
 ) {
     apply_overlay_open_change(
-        runtime,
-        false,
-        on_open_change.as_deref(),
+        OverlayOpenRuntimeRequest::new(runtime, false, on_open_change.as_deref()),
         window,
         cx,
         |runtime| {

@@ -12,8 +12,9 @@ use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use crate::overlay::{
-    apply_overlay_open_change, apply_overlay_open_change_with_after_update, escape_open_change,
-    outside_press_open_change, set_overlay_open,
+    OverlayOpenRuntimeRequest, apply_overlay_open_change,
+    apply_overlay_open_change_with_after_update, escape_open_change, outside_press_open_change,
+    set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
 use crate::text_input::TextInput;
@@ -897,9 +898,11 @@ fn handle_command_selection(
             if dialog_enabled {
                 let selected_value = selection.value().to_owned();
                 apply_overlay_open_change_with_after_update(
-                    runtime.clone(),
-                    false,
-                    on_open_change.as_deref(),
+                    OverlayOpenRuntimeRequest::new(
+                        runtime.clone(),
+                        false,
+                        on_open_change.as_deref(),
+                    ),
                     window,
                     cx,
                     {
@@ -1032,9 +1035,7 @@ pub(super) fn close_command_dialog(
     cx: &mut App,
 ) {
     apply_overlay_open_change(
-        runtime,
-        false,
-        on_open_change.as_deref(),
+        OverlayOpenRuntimeRequest::new(runtime, false, on_open_change.as_deref()),
         window,
         cx,
         |runtime| {

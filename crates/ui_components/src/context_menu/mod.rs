@@ -25,9 +25,10 @@ use crate::menu::{
     visible_menu_items,
 };
 use crate::overlay::{
-    GpuiOverlayPlacement, apply_overlay_open_change, close_overlay_runtime, consume_overlay_event,
-    gpui_overlay_state, gpui_positioned_overlay_layer, outside_press_open_change,
-    resolve_overlay_open_state, set_overlay_open,
+    GpuiOverlayPlacement, OverlayCloseRuntimeRequest, OverlayOpenRuntimeRequest,
+    apply_overlay_open_change, close_overlay_runtime, consume_overlay_event, gpui_overlay_state,
+    gpui_positioned_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
+    set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::{ThemeContext, ThemeResolver};
@@ -280,9 +281,11 @@ impl RenderOnce for ContextMenu {
                 consume_overlay_event(window, cx);
                 let anchor_point = event.position;
                 apply_overlay_open_change(
-                    open_runtime.clone(),
-                    true,
-                    open_change.as_deref(),
+                    OverlayOpenRuntimeRequest::new(
+                        open_runtime.clone(),
+                        true,
+                        open_change.as_deref(),
+                    ),
                     window,
                     cx,
                     move |runtime| {
@@ -691,11 +694,13 @@ fn close_context_menu(
     cx: &mut App,
 ) {
     close_overlay_runtime(
-        runtime,
-        &focus_restore,
-        trigger_focus,
-        true,
-        on_open_change.as_deref(),
+        OverlayCloseRuntimeRequest::new(
+            runtime,
+            &focus_restore,
+            trigger_focus,
+            on_open_change.as_deref(),
+        )
+        .defer_focus_restore(true),
         window,
         cx,
         |runtime| {
