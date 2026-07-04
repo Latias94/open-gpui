@@ -367,7 +367,7 @@ impl Render for JellyflowCanvasView {
             + self.editor.selection().selected_edges().count();
         let options = CanvasPaintOptions {
             include_handles: true,
-            connection_preview_route: CanvasConnectionPreviewRoute::Orthogonal,
+            connection_preview_route: product_connection_preview_route(),
             ..CanvasPaintOptions::default()
         };
         let theme = CanvasPaintTheme {
@@ -3703,6 +3703,10 @@ fn initial_viewport_for_document(document: &CanvasDocument) -> CanvasViewport {
     fit_viewport_for_document(document, default_canvas_view_size())
 }
 
+fn product_connection_preview_route() -> CanvasConnectionPreviewRoute {
+    CanvasConnectionPreviewRoute::Orthogonal
+}
+
 fn default_canvas_view_size() -> open_gpui::Size<Pixels> {
     canvas_view_size_from_window_size(size(px(CANVAS_WIDTH), px(CANVAS_HEIGHT)))
 }
@@ -6280,6 +6284,14 @@ mod tests {
         );
     }
 
+    #[test]
+    fn product_connection_preview_route_matches_projected_edge_route_policy() {
+        assert!(
+            product_connection_preview_route_matches_projected_edge_route_probe(),
+            "shader product preview routes should match projected committed edge routes"
+        );
+    }
+
     fn product_connection_store_sync_probe() -> bool {
         let mut store = make_demo_store();
         let Ok((document, _projection)) = project_store(&store) else {
@@ -6892,6 +6904,81 @@ mod tests {
             && store.graph().edges().len() == before_edges + 1
     }
 
+    fn product_connection_preview_route_matches_projected_edge_route_probe() -> bool {
+        let Ok((_store, document, _projection)) =
+            project_kit_fixture("shader.blueprint", "shader.material_mix")
+        else {
+            return false;
+        };
+        let Some(committed_edge) = document
+            .edges()
+            .find(|edge| {
+                edge.route.kind.as_str() == open_gpui_canvas::CanvasEdgeRouteKind::ORTHOGONAL
+            })
+            .cloned()
+        else {
+            return false;
+        };
+        let Ok(mut editor) = editor_for_document(document) else {
+            return false;
+        };
+        if editor.set_tool(CanvasTool::Connect).is_err() {
+            return false;
+        }
+
+        let Some(source_handle_id) = committed_edge.source.handle_id.as_ref() else {
+            return false;
+        };
+        let source_document_position = {
+            let Some(source_node) = editor.document().node(&committed_edge.source.node_id) else {
+                return false;
+            };
+            let Some(source_handle) = source_node.handle(Some(source_handle_id)) else {
+                return false;
+            };
+            source_node.position + source_handle.position
+        };
+        let source_view = editor.viewport().document_to_view(source_document_position);
+        let preview_view = editor.viewport().document_to_view(point(
+            source_document_position.x + px(160.0),
+            source_document_position.y + px(52.0),
+        ));
+        if editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: source_view,
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .is_err()
+            || editor
+                .handle_event(CanvasEvent::PointerMove {
+                    position: preview_view,
+                    modifiers: CanvasKeyModifiers::default(),
+                })
+                .is_err()
+            || editor.connection_drag_state().is_none()
+        {
+            return false;
+        }
+
+        let model = CanvasPaintModel::from(&editor);
+        let frame = open_gpui_canvas::collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), default_canvas_view_size()),
+            CanvasPaintOptions {
+                connection_preview_route: product_connection_preview_route(),
+                ..CanvasPaintOptions::default()
+            },
+        );
+        let Some(preview) = frame.interaction.connection_preview else {
+            return false;
+        };
+
+        preview.route_kind == committed_edge.route.kind
+            && preview.route_kind.as_str() == open_gpui_canvas::CanvasEdgeRouteKind::ORTHOGONAL
+            && preview.edge_geometry.view_path.document_points().len() >= 4
+    }
+
     fn product_port_hotspot_path_probe() -> bool {
         let (measured_store, transform, prompt, _) = measured_transform_store();
         let Ok((document, _projection)) = project_store(&measured_store) else {
@@ -7172,6 +7259,8 @@ mod tests {
         let reconnect_affordance_visible = product_reconnect_affordance_probe();
         let reconnect_sequence_evidence = product_reconnect_sequence_evidence();
         let dropped_wire_gesture_connected = product_dropped_wire_gesture_probe();
+        let preview_route_matches_committed =
+            product_connection_preview_route_matches_projected_edge_route_probe();
         let dense_surface_evidence = product_dense_surface_interaction_evidence();
 
         let mut report = OpenGpuiHostProductInteractionReport::default();
@@ -7192,7 +7281,11 @@ mod tests {
         report.mark_reconnect_affordance_visible(reconnect_affordance_visible);
         report.mark_reconnect_sequence_evidence(reconnect_sequence_evidence);
         report.mark_dropped_wire_gesture_connected(dropped_wire_gesture_connected);
-        if let Some(evidence) = graph_affordance_evidence {
+        if let Some(mut evidence) = graph_affordance_evidence {
+            if !preview_route_matches_committed {
+                evidence.connection_preview_policy =
+                    OpenGpuiConnectionPreviewPolicyEvidence::DirectLineFallback;
+            }
             report.mark_graph_affordance_evidence(evidence);
         }
         report.mark_repeatable_overflow(hidden_repeatable_overflow, repeatable_overflow_indicators);
