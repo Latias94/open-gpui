@@ -4,7 +4,7 @@ use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, FontWeight, IntoElement,
     KeyDownEvent, ParentElement, Pixels, ScrollHandle, StatefulInteractiveElement, Styled, Window,
-    div, point, px, rgba,
+    div, px, rgba,
 };
 use open_gpui_ui_core::{FocusRestoreIntent, Role, Sizable, ThemeTokens, UiPx, ui_px};
 
@@ -13,13 +13,13 @@ use crate::choice_overlay_runtime::{
     ChoiceOverlayRuntimeState, close_choice_overlay, commit_choice_overlay_single_value,
 };
 use crate::color::{ColorIntent, ColorState};
-use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
+use crate::geometry::gpui_px_from_ui;
 use crate::overlay::{escape_open_change, outside_press_open_change};
 use crate::scroll_area::ScrollArea;
+use crate::scroll_surface::{ScrollSurfaceRevealStrategy, ScrollSurfaceRuntime, reveal_fixed_row};
 use crate::text_input::TextInput;
 use crate::text_input::adapter::TextInputController;
 use crate::theme::ThemeContext;
-use crate::virtualized_list::{VirtualizedListScrollStrategy, virtualized_list_scroll_target};
 
 use super::render_plan::resolve_command_viewport_extent;
 use super::{
@@ -40,8 +40,7 @@ pub(super) struct CommandRuntime {
     pub(super) active_value: Option<String>,
     pub(super) selected_value: Option<String>,
     pub(super) selected_values: Vec<String>,
-    pub(super) scroll_handle: ScrollHandle,
-    pub(super) scroll_reset_key: String,
+    pub(super) scroll_surface: ScrollSurfaceRuntime,
     pub(super) trigger_focus: FocusHandle,
 }
 
@@ -59,8 +58,7 @@ impl CommandRuntime {
             active_value,
             selected_value,
             selected_values,
-            scroll_handle: ScrollHandle::new(),
-            scroll_reset_key,
+            scroll_surface: ScrollSurfaceRuntime::new(Some(scroll_reset_key)),
             trigger_focus,
         }
     }
@@ -978,22 +976,14 @@ fn handle_command_selection(
 }
 
 fn scroll_command_item_into_view(scroll_handle: &ScrollHandle, state: &CommandState, index: usize) {
-    let viewport_extent = resolve_command_viewport_extent(
-        state.metrics(),
-        ui_px_from_gpui(scroll_handle.bounds().size.height),
-    );
-    let current_scroll_offset =
-        UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
-    let target = virtualized_list_scroll_target(
-        VirtualizedListScrollStrategy::Nearest,
+    reveal_fixed_row(
+        scroll_handle,
+        ScrollSurfaceRevealStrategy::Nearest,
         index,
         state.items().len(),
         state.metrics().row_height(),
-        viewport_extent,
-        current_scroll_offset,
+        Some(resolve_command_viewport_extent(state.metrics(), UiPx::ZERO)),
     );
-
-    scroll_handle.set_offset(point(px(0.0), -gpui_px_from_ui(target)));
 }
 
 fn command_row_background(active: bool, selected: bool, colors: CommandColors) -> ColorIntent {

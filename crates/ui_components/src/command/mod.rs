@@ -6,13 +6,13 @@ mod render_plan;
 mod runtime;
 mod style;
 
-use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
+use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    SharedString, StatefulInteractiveElement, Styled, Window, div, point, px,
+    SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_command::CommandDescriptor;
 use open_gpui_ui_core::{
@@ -25,6 +25,10 @@ use crate::focus::focus_ring_shadow_with_theme;
 use crate::overlay::{
     OverlayOpenRuntimeRequest, apply_overlay_open_change, gpui_full_window_overlay_layer,
     gpui_overlay_state, resolve_overlay_open_state, set_overlay_open,
+};
+use crate::scroll_surface::{
+    scroll_surface_handle, set_vertical_scroll_offset, vertical_scroll_offset,
+    vertical_viewport_extent,
 };
 use crate::text_editing::TextEditingPolicy;
 use crate::text_input::TextInputDisplayMode;
@@ -569,7 +573,7 @@ impl RenderOnce for Command {
             input
         });
         let runtime_state = runtime.read(cx).clone();
-        let scroll_handle = runtime_state.scroll_handle.clone();
+        let scroll_handle = scroll_surface_handle(&runtime_state.scroll_surface, None);
         let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
         let resolved_open = open_state.open();
         if open_state.runtime_changed() {
@@ -611,10 +615,10 @@ impl RenderOnce for Command {
             active_value,
         );
         let scroll_reset_key = command_scroll_reset_key(&state);
-        if runtime_state.scroll_reset_key != scroll_reset_key {
-            scroll_handle.set_offset(point(px(0.0), px(0.0)));
+        if runtime_state.scroll_surface.reset_key() != Some(scroll_reset_key.as_str()) {
+            set_vertical_scroll_offset(&scroll_handle, UiPx::ZERO);
             runtime.update(cx, |runtime, _| {
-                runtime.scroll_reset_key = scroll_reset_key.clone();
+                runtime.scroll_surface.set_reset_key(Some(scroll_reset_key));
             });
         }
         let query_change_handler = self.on_query_change.clone();
@@ -636,9 +640,8 @@ impl RenderOnce for Command {
         let input_id: ElementId = (id.clone(), "input").into();
         let content_id: ElementId = (id.clone(), "content").into();
         let listbox_id: ElementId = (id.clone(), "listbox").into();
-        let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
-        let scroll_offset =
-            UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
+        let viewport_extent = vertical_viewport_extent(&scroll_handle);
+        let scroll_offset = vertical_scroll_offset(&scroll_handle);
         let metrics = state.metrics();
         let colors = state.colors();
         let disabled = state.disabled();
