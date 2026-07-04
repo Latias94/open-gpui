@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Internal overlay runtime helpers now accept explicit open/close request objects, keeping shared
+  callback and focus-restore sequencing consistent across rendered overlay adapters.
+
+### Fixed
+
+- Select, Combobox, and dialog Command overlays now honor `focus_restore_intent` on selection,
+  Escape dismissal, and outside-press dismissal.
+
 ## [0.1.0] - 2026-06-09
 
 ### Added

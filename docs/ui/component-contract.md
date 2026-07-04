@@ -414,6 +414,14 @@ Breaking migration notes for the 0.3 UI deepening pass:
 - Replace removed primitive pass-through imports under `open_gpui_ui_components::primitives` with
   their renderer-neutral owners in `open_gpui_ui_core` or with the official component/adapter API
   that owns the GPUI runtime behavior.
+- Runtime overlay adapter helpers are request-object based internally:
+  `OverlayOpenRuntimeRequest` owns open transitions, while `OverlayCloseRuntimeRequest` owns close
+  transitions, callback dispatch, and focus-restore tail behavior. These helpers are crate-private;
+  application code should keep using component builders and renderer-neutral overlay policy types.
+- `Select`, `Combobox`, and dialog `Command` now apply their configured `focus_restore_intent` when
+  selection, Escape dismissal, or outside-press dismissal closes the overlay. Tests that previously
+  assumed focus remained inside an unmounted popup should instead assert focus on the trigger/input
+  row or opt out with `FocusRestoreIntent::None`.
 - Keep reference repositories as references only. This pass does not add dependencies on
   `repo-ref/fret` or `repo-ref/gpui-component`, and it does not preserve compatibility shims around
   APIs that were only exposing old implementation structure.
