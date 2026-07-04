@@ -458,6 +458,34 @@ fn components_gallery_smoke_focused_command_samples_cover_depth_behaviors(
         .is_some(),
         "expected keymap Command sample to render keybinding editor diagnostics"
     );
+    assert!(
+        cx.debug_bounds(
+            "gallery:component-command-sample:keymap-resolution:keybinding-editor-preview"
+        )
+        .is_some(),
+        "expected keymap Command sample to render keybinding edit preview"
+    );
+    assert!(
+        cx.debug_bounds(
+            "gallery:component-command-sample:keymap-resolution:keybinding-editor-preview:capture"
+        )
+        .is_some(),
+        "expected keymap Command sample to render captured keybinding input"
+    );
+    assert!(
+        cx.debug_bounds(
+            "gallery:component-command-sample:keymap-resolution:keybinding-editor-preview:patch"
+        )
+        .is_some(),
+        "expected keymap Command sample to render keybinding patch preview"
+    );
+    assert!(
+        cx.debug_bounds(
+            "gallery:component-command-sample:keymap-resolution:keybinding-editor-preview:row:0"
+        )
+        .is_some(),
+        "expected keymap Command sample to render keybinding preview rows"
+    );
 
     let virtualized_sample = bounds(cx, "gallery:component-command-sample:virtualized-index");
     let command_viewport = bounds(cx, "scroll-area:Virtualized commands:command-list-scroll");

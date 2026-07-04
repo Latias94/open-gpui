@@ -35,10 +35,12 @@ pub use gpui::{
 pub use history::{CommandHistoryEntry, CommandUsageHistory, MemoryCommandHistory};
 pub use keybinding::{
     CommandKeyBinding, CommandKeyBindingConflict, CommandKeyBindingConflictEntry,
-    CommandKeyBindingDiagnostic, CommandKeyBindingDiagnosticKind, CommandKeyBindingEntry,
-    CommandKeyBindingHandle, CommandKeyBindingInstallReport, CommandKeyBindingProjectedEntry,
-    CommandKeyBindingProjection, CommandKeyBindingRegistry, CommandKeymapCommandState,
-    CommandKeymapResolution, CommandKeymapResolvedCommand, parse_command_key_sequence,
+    CommandKeyBindingDiagnostic, CommandKeyBindingDiagnosticKind, CommandKeyBindingEditTarget,
+    CommandKeyBindingEntry, CommandKeyBindingHandle, CommandKeyBindingInstallReport,
+    CommandKeyBindingPatch, CommandKeyBindingPatchOperation, CommandKeyBindingPatchOutcome,
+    CommandKeyBindingPatchPreview, CommandKeyBindingProjectedEntry, CommandKeyBindingProjection,
+    CommandKeyBindingRegistry, CommandKeymapCommandState, CommandKeymapResolution,
+    CommandKeymapResolvedCommand, parse_command_key_sequence,
 };
 pub use menu::{CommandMenuCommand, CommandMenuEntry, CommandMenuSubmenu, CommandMenuTree};
 pub use provider::{

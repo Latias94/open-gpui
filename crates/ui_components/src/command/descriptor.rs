@@ -3,14 +3,16 @@
 use crate::choice::{self, ChoiceItemProjection, ChoiceSelectionMode};
 use crate::listbox::ListboxOptionDescriptor;
 use crate::overlay::OverlayDisclosureOpenMode;
-use open_gpui::{InvalidKeystrokeError, Keymap, Window};
+use open_gpui::{InvalidKeystrokeError, Keymap, Keystroke, Window};
 use open_gpui_command::{
     CommandCenter, CommandDescriptor, CommandKeyBindingConflict, CommandKeyBindingDiagnostic,
-    CommandKeyBindingProjectedEntry, CommandKeyBindingProjection, CommandKeymapCommandState,
-    CommandKeymapResolution, CommandKeymapResolvedCommand, CommandProviderId,
-    CommandProviderRefreshController, CommandProviderRefreshProjection, CommandProviderRequest,
-    CommandProviderResponse, CommandProviderState, CommandProviderStatus, CommandRegistryError,
-    CommandRegistrySnapshot, CommandShortcutDiagnostic, CommandShortcutDiagnosticKind,
+    CommandKeyBindingEditTarget, CommandKeyBindingPatch, CommandKeyBindingPatchOperation,
+    CommandKeyBindingPatchOutcome, CommandKeyBindingPatchPreview, CommandKeyBindingProjectedEntry,
+    CommandKeyBindingProjection, CommandKeymapCommandState, CommandKeymapResolution,
+    CommandKeymapResolvedCommand, CommandProviderId, CommandProviderRefreshController,
+    CommandProviderRefreshProjection, CommandProviderRequest, CommandProviderResponse,
+    CommandProviderState, CommandProviderStatus, CommandRegistryError, CommandRegistrySnapshot,
+    CommandShortcutDiagnostic, CommandShortcutDiagnosticKind, parse_command_key_sequence,
 };
 use open_gpui_ui_core::Role;
 
@@ -951,11 +953,76 @@ impl CommandKeyBindingEditorFilter {
     }
 }
 
+/// Captured keybinding input state before it becomes a patch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandKeyBindingCaptureState {
+    raw_sequence: String,
+    input_label: Option<String>,
+    error: Option<String>,
+}
+
+impl CommandKeyBindingCaptureState {
+    /// Parses a raw key sequence captured by a keybinding input surface.
+    pub fn from_sequence(sequence: impl Into<String>) -> Self {
+        let raw_sequence = sequence.into();
+        if raw_sequence.trim().is_empty() {
+            return Self {
+                raw_sequence,
+                input_label: None,
+                error: None,
+            };
+        }
+
+        match parse_command_key_sequence(&raw_sequence) {
+            Ok(input) => Self {
+                raw_sequence,
+                input_label: Some(
+                    input
+                        .iter()
+                        .map(Keystroke::unparse)
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                ),
+                error: None,
+            },
+            Err(error) => Self {
+                raw_sequence,
+                input_label: None,
+                error: Some(error.to_string()),
+            },
+        }
+    }
+
+    /// Returns the raw captured sequence.
+    pub fn raw_sequence(&self) -> &str {
+        &self.raw_sequence
+    }
+
+    /// Returns the normalized display label when parsing succeeded.
+    pub fn input_label(&self) -> Option<&str> {
+        self.input_label.as_deref()
+    }
+
+    /// Returns the parse error when the captured sequence is invalid.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    /// Returns whether the capture has no keystrokes yet.
+    pub fn is_empty(&self) -> bool {
+        self.input_label.is_none() && self.error.is_none()
+    }
+
+    /// Returns whether the captured sequence can be used in a keybinding patch.
+    pub fn is_valid(&self) -> bool {
+        self.input_label.is_some() && self.error.is_none()
+    }
+}
+
 /// One valid binding row in the command keybinding editor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandKeyBindingEditorRow {
-    source_id: String,
-    command_id: String,
+    edit_target: CommandKeyBindingEditTarget,
     keystrokes: String,
     context: Option<String>,
     conflict_count: usize,
@@ -979,8 +1046,7 @@ impl CommandKeyBindingEditorRow {
             .count();
 
         Self {
-            source_id: entry.source_id().as_str().to_owned(),
-            command_id: entry.command_id().to_owned(),
+            edit_target: entry.edit_target(),
             keystrokes: entry.keystrokes().to_owned(),
             context: entry.context_ref().map(str::to_owned),
             conflict_count,
@@ -989,12 +1055,12 @@ impl CommandKeyBindingEditorRow {
 
     /// Returns the lifecycle source id for this binding.
     pub fn source_id(&self) -> &str {
-        &self.source_id
+        self.edit_target.source_id().as_str()
     }
 
     /// Returns the command id for this binding.
     pub fn command_id(&self) -> &str {
-        &self.command_id
+        self.edit_target.command_id()
     }
 
     /// Returns the canonical shortcut label.
@@ -1002,9 +1068,24 @@ impl CommandKeyBindingEditorRow {
         &self.keystrokes
     }
 
+    /// Returns the raw source keystroke sequence for persistence patches.
+    pub fn raw_keystrokes(&self) -> &str {
+        self.edit_target.keystrokes()
+    }
+
     /// Returns the normalized context predicate.
     pub fn context_ref(&self) -> Option<&str> {
         self.context.as_deref()
+    }
+
+    /// Returns the raw source context predicate for persistence patches.
+    pub fn raw_context_ref(&self) -> Option<&str> {
+        self.edit_target.context_ref()
+    }
+
+    /// Returns the patch target represented by this row.
+    pub const fn edit_target(&self) -> &CommandKeyBindingEditTarget {
+        &self.edit_target
     }
 
     /// Returns the number of conflicts involving this binding row.
@@ -1015,6 +1096,58 @@ impl CommandKeyBindingEditorRow {
     /// Returns whether this row participates in at least one conflict.
     pub const fn has_conflict(&self) -> bool {
         self.conflict_count > 0
+    }
+}
+
+/// UI-ready preview of a keybinding patch candidate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandKeyBindingEditorPreviewState {
+    patch: CommandKeyBindingPatch,
+    outcome: CommandKeyBindingPatchOutcome,
+    editor: CommandKeyBindingEditorState,
+}
+
+impl CommandKeyBindingEditorPreviewState {
+    /// Projects editor preview state from a command keybinding patch preview.
+    pub fn from_patch_preview(
+        preview: &CommandKeyBindingPatchPreview,
+        filter: CommandKeyBindingEditorFilter,
+    ) -> Self {
+        Self {
+            patch: preview.patch().clone(),
+            outcome: preview.outcome(),
+            editor: CommandKeyBindingEditorState::from_projection(preview.projection(), filter),
+        }
+    }
+
+    /// Returns the previewed patch.
+    pub const fn patch(&self) -> &CommandKeyBindingPatch {
+        &self.patch
+    }
+
+    /// Returns the patch operation.
+    pub const fn operation(&self) -> CommandKeyBindingPatchOperation {
+        self.patch.operation()
+    }
+
+    /// Returns the patch application outcome.
+    pub const fn outcome(&self) -> CommandKeyBindingPatchOutcome {
+        self.outcome
+    }
+
+    /// Returns whether the candidate registry changed.
+    pub const fn changed(&self) -> bool {
+        self.outcome.changed()
+    }
+
+    /// Returns the editor state after applying the candidate patch.
+    pub const fn editor(&self) -> &CommandKeyBindingEditorState {
+        &self.editor
+    }
+
+    /// Returns whether the candidate edit changed the registry and has no diagnostics or conflicts.
+    pub fn is_strictly_clean(&self) -> bool {
+        self.changed() && !self.editor.has_diagnostics() && !self.editor.has_conflicts()
     }
 }
 

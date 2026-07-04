@@ -273,6 +273,18 @@ turns that projection into filterable rows, conflict counts, conflicts, and skip
 diagnostics. The editor state is intentionally projection-only: callers still own persistence,
 source priority policy, user keymap file writes, and any edit/rollback workflow.
 
+For editable keybinding UIs, build a `CommandKeyBindingPatch` from a
+`CommandKeyBindingEditTarget` and a replacement `CommandKeyBinding`, then call
+`CommandKeyBindingRegistry::preview_patch` or `CommandCenter::preview_key_binding_patch`. The
+preview clones the registry, applies the patch to the candidate copy, and returns a
+`CommandKeyBindingPatchPreview` with the patch outcome plus the candidate projection. UI code can
+wrap that with `CommandKeyBindingEditorPreviewState` and show whether the edit resolves or creates
+conflicts before handing the app-owned patch back to the caller for persistence.
+
+`CommandKeyBindingCaptureState` is the UI-side parser for a captured key sequence. It normalizes a
+valid sequence into the same GPUI display syntax used by projection rows and carries parse errors as
+strings so key capture widgets do not need to expose GPUI parser internals in their visual state.
+
 Lower-level framework code can call `GpuiCommandActionMap::resolve_keymap_sequence` directly with an
 explicit registry snapshot, availability resolver, keymap, and `KeyContext` stack. `parse_command_key_sequence`
 is also public for callers that want to keep parsed `Keystroke` buffers between key events.

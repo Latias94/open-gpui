@@ -2,8 +2,9 @@ use super::*;
 use open_gpui::{KeyBinding, KeyContext, Keymap, actions};
 use open_gpui_command::{
     CommandAvailabilityMap, CommandCenter, CommandContribution, CommandDescriptor,
-    CommandKeyBinding, CommandKeyBindingRegistry, CommandKeymapResolution, CommandProviderResponse,
-    CommandProviderSource, CommandProviderStatus, CommandShortcutDiagnostic,
+    CommandKeyBinding, CommandKeyBindingPatch, CommandKeyBindingRegistry, CommandKeymapResolution,
+    CommandProviderResponse, CommandProviderSource, CommandProviderStatus,
+    CommandShortcutDiagnostic,
 };
 
 /// One switch sample in the gallery.
@@ -145,6 +146,10 @@ pub struct CommandSample {
     pub shortcut_inspector: Option<CommandShortcutInspectorState>,
     /// Keybinding editor state for conflict and diagnostic readout samples.
     pub keybinding_editor: Option<CommandKeyBindingEditorState>,
+    /// Candidate keybinding edit preview for conflict resolution samples.
+    pub keybinding_edit_preview: Option<CommandKeyBindingEditorPreviewState>,
+    /// Captured keybinding input used by edit preview samples.
+    pub keybinding_capture: Option<CommandKeyBindingCaptureState>,
     /// Persistent selected values for multi-select samples.
     pub selected_values: Arc<[String]>,
     /// Estimated visible row count for the result viewport.
@@ -1017,6 +1022,31 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
             .query("workspace")
             .conflicts_only(),
     );
+    let keybinding_capture = CommandKeyBindingCaptureState::from_sequence("ctrl-k ctrl-s");
+    let keybinding_edit_target = keybinding_editor_projection
+        .projected_entries()
+        .iter()
+        .find(|entry| {
+            entry.source_id().as_str() == "gallery-plugin" && entry.command_id() == "workspace.save"
+        })
+        .expect("gallery keybinding editor save binding should project")
+        .edit_target();
+    let keybinding_edit_patch = CommandKeyBindingPatch::replace(
+        keybinding_edit_target,
+        CommandKeyBinding::new(
+            "workspace.save",
+            keybinding_capture
+                .input_label()
+                .expect("gallery capture should parse"),
+        )
+        .context("Workspace"),
+    );
+    let keybinding_edit_preview = keybinding_editor_registry
+        .preview_patch(keymap_resolution_center.actions(), keybinding_edit_patch);
+    let keybinding_edit_preview = CommandKeyBindingEditorPreviewState::from_patch_preview(
+        &keybinding_edit_preview,
+        CommandKeyBindingEditorFilter::new().query("workspace"),
+    );
     let keymap_resolution_palette = CommandPaletteProjection::from_center_for_keymap(
         &keymap_resolution_center,
         "keymap",
@@ -1268,9 +1298,11 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
                 keymap_resolutions,
                 shortcut_inspector: Some(shortcut_inspector),
                 keybinding_editor: Some(keybinding_editor),
+                keybinding_edit_preview: Some(keybinding_edit_preview),
+                keybinding_capture: Some(keybinding_capture),
                 ..command_sample_from_snapshot(
                     "keymap-resolution",
-                    "CommandCenter keymap resolution and palette preflight expose typed chord state, dispatch candidates, and keybinding editor conflicts.",
+                    "CommandCenter keymap resolution, palette preflight, and keybinding edit preview expose typed chord state, dispatch candidates, and conflict repair.",
                     Size::Small,
                     false,
                     Some(true),
@@ -1454,6 +1486,8 @@ fn command_sample_from_local(
         keymap_resolutions: Arc::from([]),
         shortcut_inspector: None,
         keybinding_editor: None,
+        keybinding_edit_preview: None,
+        keybinding_capture: None,
         selected_values: selected_values.into(),
         viewport_item_count,
         row_height,
@@ -1522,6 +1556,8 @@ fn command_sample_from_snapshot(
         keymap_resolutions: Arc::from([]),
         shortcut_inspector: None,
         keybinding_editor: None,
+        keybinding_edit_preview: None,
+        keybinding_capture: None,
         selected_values: selected_values.into(),
         viewport_item_count,
         row_height,

@@ -1255,6 +1255,8 @@ pub(crate) fn component_command_samples_section(
                     let keymap_resolutions = sample.keymap_resolutions.clone();
                     let shortcut_inspector = sample.shortcut_inspector.clone();
                     let keybinding_editor = sample.keybinding_editor.clone();
+                    let keybinding_capture = sample.keybinding_capture.clone();
+                    let keybinding_edit_preview = sample.keybinding_edit_preview.clone();
 
                     let label = state.label().to_owned();
 
@@ -1374,6 +1376,13 @@ pub(crate) fn component_command_samples_section(
                         })
                         .when_some(keybinding_editor, |this, editor| {
                             this.child(component_command_keybinding_editor_rows(sample_id, editor))
+                        })
+                        .when_some(keybinding_edit_preview, move |this, preview| {
+                            this.child(component_command_keybinding_editor_preview_rows(
+                                sample_id,
+                                keybinding_capture,
+                                preview,
+                            ))
                         })
                 })),
         )
@@ -1803,6 +1812,91 @@ fn component_command_keybinding_editor_rows(
                     diagnostic.message().unwrap_or("none")
                 ))
         }))
+}
+
+fn component_command_keybinding_editor_preview_rows(
+    sample_id: &'static str,
+    capture: Option<open_gpui_ui_components::CommandKeyBindingCaptureState>,
+    preview: open_gpui_ui_components::CommandKeyBindingEditorPreviewState,
+) -> impl IntoElement {
+    let selector_sample_id = sample_id.to_owned();
+
+    div()
+        .debug_selector(move || {
+            format!(
+                "gallery:component-command-sample:{selector_sample_id}:keybinding-editor-preview"
+            )
+        })
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x334155))
+        .child(format!(
+            "{:?} => {:?} / changed {} / clean {}",
+            preview.operation(),
+            preview.outcome(),
+            preview.changed(),
+            preview.is_strictly_clean()
+        ))
+        .when_some(capture, move |this, capture| {
+            let capture_sample_id = sample_id.to_owned();
+            this.child(
+                div()
+                    .debug_selector(move || {
+                        format!(
+                            "gallery:component-command-sample:{capture_sample_id}:keybinding-editor-preview:capture"
+                        )
+                    })
+                    .child(format!(
+                        "capture {} => {}",
+                        capture.raw_sequence(),
+                        capture.input_label().unwrap_or("invalid")
+                    )),
+            )
+        })
+        .child({
+            let patch_sample_id = sample_id.to_owned();
+            div()
+                .debug_selector(move || {
+                    format!(
+                        "gallery:component-command-sample:{patch_sample_id}:keybinding-editor-preview:patch"
+                    )
+                })
+                .child(format!(
+                    "patch {:?} {} {}",
+                    preview.patch().operation(),
+                    preview.patch().source_id().as_str(),
+                    preview
+                        .patch()
+                        .binding()
+                        .map(|binding| binding.command_id())
+                        .unwrap_or("remove")
+                ))
+        })
+        .children(
+            preview
+                .editor()
+                .rows()
+                .iter()
+                .enumerate()
+                .map(move |(index, row)| {
+                    let row_sample_id = sample_id.to_owned();
+                    div()
+                        .debug_selector(move || {
+                            format!(
+                                "gallery:component-command-sample:{row_sample_id}:keybinding-editor-preview:row:{index}"
+                            )
+                        })
+                        .child(format!(
+                            "{} {} => {} [{}]",
+                            row.source_id(),
+                            row.keystrokes(),
+                            row.command_id(),
+                            row.context_ref().unwrap_or("global")
+                        ))
+                }),
+        )
 }
 
 fn command_resolution_summary(

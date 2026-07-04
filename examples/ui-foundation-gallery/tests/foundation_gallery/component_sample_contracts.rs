@@ -1042,6 +1042,26 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     assert_eq!(keybinding_editor.filtered_binding_count(), 2);
     assert_eq!(keybinding_editor.conflicts().len(), 1);
     assert_eq!(keybinding_editor.diagnostics().len(), 2);
+
+    let keybinding_capture = commands[8]
+        .keybinding_capture
+        .as_ref()
+        .expect("keymap sample should expose captured keybinding input");
+    assert_eq!(keybinding_capture.input_label(), Some("ctrl-k ctrl-s"));
+
+    let keybinding_edit_preview = commands[8]
+        .keybinding_edit_preview
+        .as_ref()
+        .expect("keymap sample should expose keybinding edit preview");
+    assert_eq!(
+        keybinding_edit_preview.operation(),
+        CommandKeyBindingPatchOperation::Replace
+    );
+    assert_eq!(
+        keybinding_edit_preview.outcome(),
+        CommandKeyBindingPatchOutcome::Replaced
+    );
+    assert!(keybinding_edit_preview.editor().conflicts().is_empty());
 }
 
 #[test]

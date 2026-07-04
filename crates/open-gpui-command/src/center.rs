@@ -8,9 +8,10 @@ use open_gpui::{Action, App, InvalidKeystrokeError, KeyContext, Keymap, Keystrok
 use crate::{
     CommandAvailabilityMap, CommandContextStack, CommandContribution, CommandDispatchOutcome,
     CommandKeyBinding, CommandKeyBindingHandle, CommandKeyBindingInstallReport,
-    CommandKeyBindingProjection, CommandKeyBindingRegistry, CommandKeymapResolution,
-    CommandMenuTree, CommandProjectionDiagnostic, CommandProvider, CommandProviderApplyOutcome,
-    CommandProviderId, CommandProviderRequest, CommandProviderRequestId, CommandProviderResponse,
+    CommandKeyBindingPatch, CommandKeyBindingPatchPreview, CommandKeyBindingProjection,
+    CommandKeyBindingRegistry, CommandKeymapResolution, CommandMenuTree,
+    CommandProjectionDiagnostic, CommandProvider, CommandProviderApplyOutcome, CommandProviderId,
+    CommandProviderRequest, CommandProviderRequestId, CommandProviderResponse,
     CommandProviderSource, CommandProviderStaleResponse, CommandProviderStatus,
     CommandRegistryError, CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection,
     CommandShortcutDiagnostic, CommandShortcutDiagnosticKind, CommandSourceId, CommandUsageHistory,
@@ -622,6 +623,14 @@ impl CommandCenter {
         self.key_bindings.install_in_app(&self.actions, cx)
     }
 
+    /// Previews a keybinding patch without mutating the center's keybinding registry.
+    pub fn preview_key_binding_patch(
+        &self,
+        patch: CommandKeyBindingPatch,
+    ) -> CommandKeyBindingPatchPreview {
+        self.key_bindings.preview_patch(&self.actions, patch)
+    }
+
     /// Resolves typed keystrokes against the center's active scopes and key contexts.
     pub fn resolve_key_input_for_keymap(
         &self,
@@ -1041,7 +1050,8 @@ mod tests {
     use crate::{
         CommandAvailabilityMap, CommandCenter, CommandContextStack, CommandContribution,
         CommandDescriptor, CommandDispatchOutcome, CommandKeyBinding,
-        CommandKeyBindingDiagnosticKind, CommandMenuEntry, CommandProjectionDiagnosticKind,
+        CommandKeyBindingDiagnosticKind, CommandKeyBindingEditTarget, CommandKeyBindingPatch,
+        CommandKeyBindingPatchOutcome, CommandMenuEntry, CommandProjectionDiagnosticKind,
         CommandProviderApplyOutcome, CommandProviderRequest, CommandProviderResponse,
         CommandProviderSource, CommandProviderState, CommandProviderStatus, CommandUsageHistory,
     };
@@ -1532,7 +1542,9 @@ mod tests {
                         entry.source_id().as_str(),
                         entry.command_id(),
                         entry.keystrokes(),
+                        entry.raw_keystrokes(),
                         entry.context_ref(),
+                        entry.raw_context_ref(),
                     )
                 })
                 .collect::<Vec<_>>(),
@@ -1541,12 +1553,16 @@ mod tests {
                     "workspace-shortcuts",
                     "workspace.open",
                     display_shortcut("ctrl-k ctrl-o").as_str(),
+                    "ctrl-k ctrl-o",
+                    Some("Workspace"),
                     Some("Workspace"),
                 ),
                 (
                     "workspace-shortcuts",
                     "workspace.save",
                     display_shortcut("ctrl-s").as_str(),
+                    "ctrl-s",
+                    Some("Workspace && mode == normal"),
                     Some("Workspace && mode == normal"),
                 ),
             ]
@@ -1680,6 +1696,88 @@ mod tests {
         assert_eq!(bindings.len(), 2);
         assert!(bindings[0].action().partial_eq(&SaveWorkspace));
         assert!(bindings[1].action().partial_eq(&OpenWorkspace));
+    }
+
+    #[test]
+    fn center_previews_key_binding_patch_without_mutating_registry() {
+        let mut center = CommandCenter::new("center-v1");
+        center
+            .register_action("workspace.open", OpenWorkspace)
+            .register_action("workspace.save", SaveWorkspace);
+        center.register_key_bindings(
+            "workspace-defaults",
+            [
+                CommandKeyBinding::new("workspace.open", "ctrl-p").context("Workspace"),
+                CommandKeyBinding::new("workspace.save", "ctrl-s").context("Workspace"),
+            ],
+        );
+
+        let before = center.key_binding_projection();
+        assert!(before.conflicts().is_empty());
+        let target = before
+            .projected_entries()
+            .iter()
+            .find(|entry| entry.command_id() == "workspace.save")
+            .expect("save binding")
+            .edit_target();
+
+        let preview = center.preview_key_binding_patch(CommandKeyBindingPatch::replace(
+            target,
+            CommandKeyBinding::new("workspace.save", "ctrl-p").context("Workspace"),
+        ));
+
+        assert_eq!(preview.outcome(), CommandKeyBindingPatchOutcome::Replaced);
+        assert!(preview.changed());
+        assert!(!preview.is_strictly_clean());
+        assert!(preview.projection().diagnostics().is_empty());
+        assert_eq!(preview.projection().conflicts().len(), 1);
+        assert_eq!(
+            preview.projection().conflicts()[0]
+                .entries()
+                .iter()
+                .map(|entry| entry.command_id())
+                .collect::<Vec<_>>(),
+            ["workspace.open", "workspace.save"]
+        );
+
+        let after = center.key_binding_projection();
+        assert!(after.conflicts().is_empty());
+        assert_eq!(
+            after
+                .projected_entries()
+                .iter()
+                .find(|entry| entry.command_id() == "workspace.save")
+                .map(|entry| entry.raw_keystrokes()),
+            Some("ctrl-s")
+        );
+    }
+
+    #[test]
+    fn center_reports_missing_key_binding_patch_target() {
+        let mut center = CommandCenter::new("center-v1");
+        center.register_action("workspace.open", OpenWorkspace);
+        center.register_key_bindings(
+            "workspace-defaults",
+            [CommandKeyBinding::new("workspace.open", "ctrl-p").context("Workspace")],
+        );
+
+        let preview = center.preview_key_binding_patch(CommandKeyBindingPatch::remove(
+            CommandKeyBindingEditTarget::new(
+                "workspace-defaults",
+                "workspace.open",
+                "ctrl-missing",
+            )
+            .context("Workspace"),
+        ));
+
+        assert_eq!(
+            preview.outcome(),
+            CommandKeyBindingPatchOutcome::TargetMissing
+        );
+        assert!(!preview.changed());
+        assert!(!preview.is_strictly_clean());
+        assert_eq!(preview.projection().projected_entries().len(), 1);
+        assert!(preview.projection().is_strictly_clean());
     }
 
     #[test]

@@ -7,8 +7,9 @@ use open_gpui::{
 use open_gpui_ui_components::{
     Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command,
     CommandGroup, CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode,
-    CommandItem, CommandItemDescriptor, CommandKeyBindingEditorFilter,
-    CommandKeyBindingEditorFilterMode, CommandKeyBindingEditorState, CommandLoadingState,
+    CommandItem, CommandItemDescriptor, CommandKeyBindingCaptureState,
+    CommandKeyBindingEditorFilter, CommandKeyBindingEditorFilterMode,
+    CommandKeyBindingEditorPreviewState, CommandKeyBindingEditorState, CommandLoadingState,
     CommandMatchSource, CommandOpenMode, CommandPaletteController, CommandPaletteKeymapPreflight,
     CommandPaletteProjection, CommandProviderPaletteProjection, CommandQueryMode, CommandSelection,
     CommandSelectionChange, CommandSelectionMode, CommandShortcutInspectorState,
@@ -2108,6 +2109,87 @@ fn command_keybinding_editor_state_filters_conflicts_and_keeps_diagnostics() {
             .map(|diagnostic| diagnostic.command_id())
             .collect::<Vec<_>>(),
         ["workspace.save", "workspace.missing"]
+    );
+}
+
+#[test]
+fn command_keybinding_capture_and_preview_state_model_edit_patch() {
+    let capture = CommandKeyBindingCaptureState::from_sequence("ctrl-k ctrl-s");
+    assert_eq!(capture.raw_sequence(), "ctrl-k ctrl-s");
+    assert_eq!(capture.input_label(), Some("ctrl-k ctrl-s"));
+    assert!(capture.is_valid());
+    assert!(!capture.is_empty());
+
+    let empty = CommandKeyBindingCaptureState::from_sequence("   ");
+    assert!(empty.is_empty());
+    assert!(!empty.is_valid());
+
+    let invalid = CommandKeyBindingCaptureState::from_sequence("ctrl-x-y");
+    assert!(invalid.error().is_some());
+    assert!(!invalid.is_valid());
+
+    let mut center = open_gpui_command::CommandCenter::new("keybinding-preview-v1");
+    center
+        .register_action("workspace.open", OpenPaletteCommand)
+        .register_action("workspace.save", RevealPaletteCommand);
+    center.register_key_bindings(
+        "workspace-defaults",
+        [
+            open_gpui_command::CommandKeyBinding::new("workspace.open", "ctrl-p")
+                .context("Workspace"),
+            open_gpui_command::CommandKeyBinding::new("workspace.save", "ctrl-s")
+                .context("Workspace"),
+        ],
+    );
+
+    let editor = CommandKeyBindingEditorState::from_projection(
+        &center.key_binding_projection(),
+        CommandKeyBindingEditorFilter::new().query("workspace"),
+    );
+    let target = editor
+        .rows()
+        .iter()
+        .find(|row| row.command_id() == "workspace.save")
+        .expect("save row")
+        .edit_target()
+        .clone();
+    assert_eq!(target.keystrokes(), "ctrl-s");
+
+    let preview =
+        center.preview_key_binding_patch(open_gpui_command::CommandKeyBindingPatch::replace(
+            target,
+            open_gpui_command::CommandKeyBinding::new(
+                "workspace.save",
+                capture.input_label().expect("valid capture label"),
+            )
+            .context("Workspace"),
+        ));
+    let preview_state = CommandKeyBindingEditorPreviewState::from_patch_preview(
+        &preview,
+        CommandKeyBindingEditorFilter::new().query("workspace"),
+    );
+
+    assert_eq!(
+        preview_state.operation(),
+        open_gpui_command::CommandKeyBindingPatchOperation::Replace
+    );
+    assert_eq!(
+        preview_state.outcome(),
+        open_gpui_command::CommandKeyBindingPatchOutcome::Replaced
+    );
+    assert!(preview_state.changed());
+    assert!(preview_state.is_strictly_clean());
+    assert_eq!(
+        preview_state
+            .editor()
+            .rows()
+            .iter()
+            .map(|row| (row.command_id().to_owned(), row.raw_keystrokes().to_owned()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("workspace.open".to_string(), "ctrl-p".to_string()),
+            ("workspace.save".to_string(), "ctrl-k ctrl-s".to_string()),
+        ]
     );
 }
 

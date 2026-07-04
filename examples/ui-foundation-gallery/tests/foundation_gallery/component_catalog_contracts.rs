@@ -911,6 +911,40 @@ fn components_page_samples_expose_component_metadata() {
         ]
     );
 
+    let keybinding_capture = commands[8]
+        .keybinding_capture
+        .as_ref()
+        .expect("keymap sample should expose captured keybinding input");
+    assert_eq!(keybinding_capture.raw_sequence(), "ctrl-k ctrl-s");
+    assert_eq!(keybinding_capture.input_label(), Some("ctrl-k ctrl-s"));
+    assert!(keybinding_capture.is_valid());
+
+    let keybinding_edit_preview = commands[8]
+        .keybinding_edit_preview
+        .as_ref()
+        .expect("keymap sample should expose keybinding edit preview");
+    assert_eq!(
+        keybinding_edit_preview.operation(),
+        CommandKeyBindingPatchOperation::Replace
+    );
+    assert_eq!(
+        keybinding_edit_preview.outcome(),
+        CommandKeyBindingPatchOutcome::Replaced
+    );
+    assert!(keybinding_edit_preview.changed());
+    assert!(!keybinding_edit_preview.is_strictly_clean());
+    assert!(keybinding_edit_preview.editor().conflicts().is_empty());
+    assert_eq!(keybinding_edit_preview.editor().diagnostics().len(), 2);
+    assert_eq!(
+        keybinding_edit_preview
+            .editor()
+            .rows()
+            .iter()
+            .find(|row| row.command_id() == "workspace.save")
+            .map(|row| row.raw_keystrokes()),
+        Some("ctrl-k ctrl-s")
+    );
+
     assert_eq!(labels.len(), 4);
     assert_eq!(labels[0].state.role(), Role::Label);
     assert_eq!(labels[0].state.control_id(), Some("email-input"));

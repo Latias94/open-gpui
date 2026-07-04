@@ -159,6 +159,22 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_projected_entry: &root::CommandKeyBindingProjectedEntry =
         &root_key_binding_projection.projected_entries()[0];
     assert_eq!(root_projected_entry.command_id(), "root.open");
+    assert_eq!(root_projected_entry.raw_keystrokes(), "ctrl-o");
+    let root_edit_target: root::CommandKeyBindingEditTarget = root_projected_entry.edit_target();
+    let root_key_binding_patch: root::CommandKeyBindingPatch =
+        root::CommandKeyBindingPatch::replace(
+            root_edit_target.clone(),
+            root::CommandKeyBinding::new("root.open", "ctrl-shift-o").context("Root"),
+        );
+    let _root_patch_operation: root::CommandKeyBindingPatchOperation =
+        root_key_binding_patch.operation();
+    let root_key_binding_patch_preview: root::CommandKeyBindingPatchPreview =
+        root_key_binding_registry.preview_patch(
+            root_command_center.actions(),
+            root_key_binding_patch.clone(),
+        );
+    let _root_patch_outcome: root::CommandKeyBindingPatchOutcome =
+        root_key_binding_patch_preview.outcome();
     let mut root_keymap = open_gpui::Keymap::default();
     let root_key_binding_report: root::CommandKeyBindingInstallReport = root_key_binding_registry
         .install_into_keymap(root_command_center.actions(), &mut root_keymap);
@@ -257,6 +273,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_keybinding_editor.mode();
     let _root_keybinding_editor_row: Option<&root::CommandKeyBindingEditorRow> =
         root_keybinding_editor.rows().first();
+    let _root_keybinding_capture: root::CommandKeyBindingCaptureState =
+        root::CommandKeyBindingCaptureState::from_sequence("ctrl-shift-o");
+    let _root_keybinding_preview: root::CommandKeyBindingEditorPreviewState =
+        root::CommandKeyBindingEditorPreviewState::from_patch_preview(
+            &root_key_binding_patch_preview,
+            root::CommandKeyBindingEditorFilter::new(),
+        );
     let _root_pending_provider_request: root::CommandPalettePendingProviderRequest =
         root::CommandPalettePendingProviderRequest::new(
             "root-provider",
@@ -473,6 +496,23 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_projected_entry: &prelude::CommandKeyBindingProjectedEntry =
         &prelude_key_binding_projection.projected_entries()[0];
     assert_eq!(prelude_projected_entry.command_id(), "prelude.open");
+    assert_eq!(prelude_projected_entry.raw_keystrokes(), "ctrl-o");
+    let prelude_edit_target: prelude::CommandKeyBindingEditTarget =
+        prelude_projected_entry.edit_target();
+    let prelude_key_binding_patch: prelude::CommandKeyBindingPatch =
+        prelude::CommandKeyBindingPatch::replace(
+            prelude_edit_target.clone(),
+            prelude::CommandKeyBinding::new("prelude.open", "ctrl-shift-o").context("Prelude"),
+        );
+    let _prelude_patch_operation: prelude::CommandKeyBindingPatchOperation =
+        prelude_key_binding_patch.operation();
+    let prelude_key_binding_patch_preview: prelude::CommandKeyBindingPatchPreview =
+        prelude_key_binding_registry.preview_patch(
+            prelude_command_center.actions(),
+            prelude_key_binding_patch.clone(),
+        );
+    let _prelude_patch_outcome: prelude::CommandKeyBindingPatchOutcome =
+        prelude_key_binding_patch_preview.outcome();
     let mut prelude_keymap = open_gpui::Keymap::default();
     let prelude_key_binding_report: prelude::CommandKeyBindingInstallReport =
         prelude_key_binding_registry
@@ -582,6 +622,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_keybinding_editor.mode();
     let _prelude_keybinding_editor_row: Option<&prelude::CommandKeyBindingEditorRow> =
         prelude_keybinding_editor.rows().first();
+    let _prelude_keybinding_capture: prelude::CommandKeyBindingCaptureState =
+        prelude::CommandKeyBindingCaptureState::from_sequence("ctrl-shift-o");
+    let _prelude_keybinding_preview: prelude::CommandKeyBindingEditorPreviewState =
+        prelude::CommandKeyBindingEditorPreviewState::from_patch_preview(
+            &prelude_key_binding_patch_preview,
+            prelude::CommandKeyBindingEditorFilter::new(),
+        );
     let _prelude_pending_provider_request: prelude::CommandPalettePendingProviderRequest =
         prelude::CommandPalettePendingProviderRequest::new(
             "prelude-provider",

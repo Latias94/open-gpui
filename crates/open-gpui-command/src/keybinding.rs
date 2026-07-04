@@ -374,7 +374,9 @@ struct ProjectedCommandKeyBinding {
     source_id: CommandSourceId,
     command_id: String,
     keystrokes: String,
+    raw_keystrokes: String,
     context: Option<String>,
+    raw_context: Option<String>,
     index: usize,
 }
 
@@ -384,7 +386,9 @@ pub struct CommandKeyBindingProjectedEntry {
     source_id: CommandSourceId,
     command_id: String,
     keystrokes: String,
+    raw_keystrokes: String,
     context: Option<String>,
+    raw_context: Option<String>,
 }
 
 impl CommandKeyBindingProjectedEntry {
@@ -392,13 +396,17 @@ impl CommandKeyBindingProjectedEntry {
         source_id: CommandSourceId,
         command_id: String,
         keystrokes: String,
+        raw_keystrokes: String,
         context: Option<String>,
+        raw_context: Option<String>,
     ) -> Self {
         Self {
             source_id,
             command_id,
             keystrokes,
+            raw_keystrokes,
             context,
+            raw_context,
         }
     }
 
@@ -417,9 +425,280 @@ impl CommandKeyBindingProjectedEntry {
         &self.keystrokes
     }
 
+    /// Returns the raw source keystroke sequence before GPUI display normalization.
+    pub fn raw_keystrokes(&self) -> &str {
+        &self.raw_keystrokes
+    }
+
     /// Returns the normalized GPUI context predicate, when present.
     pub fn context_ref(&self) -> Option<&str> {
         self.context.as_deref()
+    }
+
+    /// Returns the raw source context predicate before GPUI normalization.
+    pub fn raw_context_ref(&self) -> Option<&str> {
+        self.raw_context.as_deref()
+    }
+
+    /// Returns a stable edit target for this projected binding.
+    pub fn edit_target(&self) -> CommandKeyBindingEditTarget {
+        CommandKeyBindingEditTarget::from_projected_entry(self)
+    }
+}
+
+/// Source binding identity used by keybinding edit patches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandKeyBindingEditTarget {
+    source_id: CommandSourceId,
+    command_id: String,
+    keystrokes: String,
+    context: Option<String>,
+}
+
+impl CommandKeyBindingEditTarget {
+    /// Creates an edit target from source id, command id, and raw keystrokes.
+    pub fn new(
+        source_id: impl Into<CommandSourceId>,
+        command_id: impl Into<String>,
+        keystrokes: impl Into<String>,
+    ) -> Self {
+        Self {
+            source_id: source_id.into(),
+            command_id: command_id.into(),
+            keystrokes: keystrokes.into(),
+            context: None,
+        }
+    }
+
+    /// Sets the raw source context predicate for this target.
+    pub fn context(mut self, context: impl Into<String>) -> Self {
+        self.context = Some(context.into());
+        self
+    }
+
+    /// Creates a target from one projected binding entry.
+    pub fn from_projected_entry(entry: &CommandKeyBindingProjectedEntry) -> Self {
+        Self {
+            source_id: entry.source_id().clone(),
+            command_id: entry.command_id().to_owned(),
+            keystrokes: entry.raw_keystrokes().to_owned(),
+            context: entry.raw_context_ref().map(str::to_owned),
+        }
+    }
+
+    /// Returns the lifecycle source id that owns the binding.
+    pub const fn source_id(&self) -> &CommandSourceId {
+        &self.source_id
+    }
+
+    /// Returns the command id referenced by the source binding.
+    pub fn command_id(&self) -> &str {
+        &self.command_id
+    }
+
+    /// Returns the raw source keystroke sequence.
+    pub fn keystrokes(&self) -> &str {
+        &self.keystrokes
+    }
+
+    /// Returns the raw source context predicate, when present.
+    pub fn context_ref(&self) -> Option<&str> {
+        self.context.as_deref()
+    }
+
+    fn matches_entry(&self, entry: &CommandKeyBindingEntry) -> bool {
+        let binding = entry.binding();
+        entry.source_id() == &self.source_id
+            && binding.command_id() == self.command_id
+            && binding.keystrokes() == self.keystrokes
+            && binding.context_ref() == self.context_ref()
+    }
+}
+
+/// Operation represented by a command keybinding patch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandKeyBindingPatchOperation {
+    /// Add a binding to a source.
+    Add,
+    /// Replace one target binding.
+    Replace,
+    /// Remove one target binding.
+    Remove,
+}
+
+/// Result of applying a keybinding patch to a candidate registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandKeyBindingPatchOutcome {
+    /// The binding was appended to the candidate registry.
+    Added,
+    /// The target binding was replaced in the candidate registry.
+    Replaced,
+    /// The target binding was removed from the candidate registry.
+    Removed,
+    /// The target binding was not found, so the candidate registry was not changed.
+    TargetMissing,
+}
+
+impl CommandKeyBindingPatchOutcome {
+    /// Returns whether the candidate registry was changed by the patch.
+    pub const fn changed(self) -> bool {
+        matches!(self, Self::Added | Self::Replaced | Self::Removed)
+    }
+}
+
+/// App-owned keybinding edit patch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandKeyBindingPatch {
+    /// Add a binding to the source.
+    Add {
+        /// Source that should receive the binding.
+        source_id: CommandSourceId,
+        /// Binding to append.
+        binding: CommandKeyBinding,
+    },
+    /// Replace one target binding.
+    Replace {
+        /// Existing source binding identity.
+        target: CommandKeyBindingEditTarget,
+        /// Replacement binding.
+        binding: CommandKeyBinding,
+    },
+    /// Remove one target binding.
+    Remove {
+        /// Existing source binding identity.
+        target: CommandKeyBindingEditTarget,
+    },
+}
+
+impl CommandKeyBindingPatch {
+    /// Creates an add patch.
+    pub fn add(source_id: impl Into<CommandSourceId>, binding: CommandKeyBinding) -> Self {
+        Self::Add {
+            source_id: source_id.into(),
+            binding,
+        }
+    }
+
+    /// Creates a replace patch.
+    pub fn replace(target: CommandKeyBindingEditTarget, binding: CommandKeyBinding) -> Self {
+        Self::Replace { target, binding }
+    }
+
+    /// Creates a remove patch.
+    pub fn remove(target: CommandKeyBindingEditTarget) -> Self {
+        Self::Remove { target }
+    }
+
+    /// Returns the patch operation.
+    pub const fn operation(&self) -> CommandKeyBindingPatchOperation {
+        match self {
+            Self::Add { .. } => CommandKeyBindingPatchOperation::Add,
+            Self::Replace { .. } => CommandKeyBindingPatchOperation::Replace,
+            Self::Remove { .. } => CommandKeyBindingPatchOperation::Remove,
+        }
+    }
+
+    /// Returns the source id affected by this patch.
+    pub const fn source_id(&self) -> &CommandSourceId {
+        match self {
+            Self::Add { source_id, .. } => source_id,
+            Self::Replace { target, .. } | Self::Remove { target } => target.source_id(),
+        }
+    }
+
+    /// Returns the target binding for replace or remove operations.
+    pub const fn target(&self) -> Option<&CommandKeyBindingEditTarget> {
+        match self {
+            Self::Add { .. } => None,
+            Self::Replace { target, .. } | Self::Remove { target } => Some(target),
+        }
+    }
+
+    /// Returns the added or replacement binding.
+    pub const fn binding(&self) -> Option<&CommandKeyBinding> {
+        match self {
+            Self::Add { binding, .. } | Self::Replace { binding, .. } => Some(binding),
+            Self::Remove { .. } => None,
+        }
+    }
+
+    fn apply_to_entries(
+        &self,
+        entries: &mut Vec<CommandKeyBindingEntry>,
+    ) -> CommandKeyBindingPatchOutcome {
+        match self {
+            Self::Add { source_id, binding } => {
+                entries.push(CommandKeyBindingEntry::new(
+                    source_id.clone(),
+                    binding.clone(),
+                ));
+                CommandKeyBindingPatchOutcome::Added
+            }
+            Self::Replace { target, binding } => {
+                let Some(entry) = entries.iter_mut().find(|entry| target.matches_entry(entry))
+                else {
+                    return CommandKeyBindingPatchOutcome::TargetMissing;
+                };
+                *entry = CommandKeyBindingEntry::new(target.source_id().clone(), binding.clone());
+                CommandKeyBindingPatchOutcome::Replaced
+            }
+            Self::Remove { target } => {
+                let before = entries.len();
+                entries.retain(|entry| !target.matches_entry(entry));
+                if entries.len() == before {
+                    CommandKeyBindingPatchOutcome::TargetMissing
+                } else {
+                    CommandKeyBindingPatchOutcome::Removed
+                }
+            }
+        }
+    }
+}
+
+/// Candidate result of applying a keybinding patch without mutating the source registry.
+#[derive(Debug, Clone)]
+pub struct CommandKeyBindingPatchPreview {
+    patch: CommandKeyBindingPatch,
+    outcome: CommandKeyBindingPatchOutcome,
+    projection: CommandKeyBindingProjection,
+}
+
+impl CommandKeyBindingPatchPreview {
+    fn new(
+        patch: CommandKeyBindingPatch,
+        outcome: CommandKeyBindingPatchOutcome,
+        projection: CommandKeyBindingProjection,
+    ) -> Self {
+        Self {
+            patch,
+            outcome,
+            projection,
+        }
+    }
+
+    /// Returns the patch that was previewed.
+    pub const fn patch(&self) -> &CommandKeyBindingPatch {
+        &self.patch
+    }
+
+    /// Returns the candidate patch outcome.
+    pub const fn outcome(&self) -> CommandKeyBindingPatchOutcome {
+        self.outcome
+    }
+
+    /// Returns whether the patch changed the candidate registry.
+    pub const fn changed(&self) -> bool {
+        self.outcome.changed()
+    }
+
+    /// Returns the candidate keybinding projection.
+    pub const fn projection(&self) -> &CommandKeyBindingProjection {
+        &self.projection
+    }
+
+    /// Returns whether the candidate projection has no errors or conflicts.
+    pub fn is_strictly_clean(&self) -> bool {
+        self.changed() && self.projection.is_strictly_clean()
     }
 }
 
@@ -495,10 +774,12 @@ impl CommandKeyBindingRegistry {
             ) {
                 Ok(key_binding) => projected.push(ProjectedCommandKeyBinding {
                     keystrokes: command_shortcut_label(&key_binding),
+                    raw_keystrokes: binding.keystrokes().to_owned(),
                     key_binding,
                     source_id: entry.source_id().clone(),
                     command_id: binding.command_id().to_owned(),
                     context: normalized_context,
+                    raw_context: binding.context_ref().map(str::to_owned),
                     index,
                 }),
                 Err(error) => diagnostics.push(CommandKeyBindingDiagnostic::invalid_keystrokes(
@@ -516,7 +797,9 @@ impl CommandKeyBindingRegistry {
                     binding.source_id.clone(),
                     binding.command_id.clone(),
                     binding.keystrokes.clone(),
+                    binding.raw_keystrokes.clone(),
                     binding.context.clone(),
+                    binding.raw_context.clone(),
                 )
             })
             .collect();
@@ -557,6 +840,18 @@ impl CommandKeyBindingRegistry {
         let projection = self.project(actions);
         cx.bind_keys(projection.key_bindings().iter().cloned());
         CommandKeyBindingInstallReport::new(projection)
+    }
+
+    /// Previews a keybinding patch without mutating this registry.
+    pub fn preview_patch(
+        &self,
+        actions: &GpuiCommandActionMap,
+        patch: CommandKeyBindingPatch,
+    ) -> CommandKeyBindingPatchPreview {
+        let mut entries = self.entries.clone();
+        let outcome = patch.apply_to_entries(&mut entries);
+        let candidate = Self { entries };
+        CommandKeyBindingPatchPreview::new(patch, outcome, candidate.project(actions))
     }
 }
 
