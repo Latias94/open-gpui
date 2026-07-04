@@ -242,3 +242,23 @@ fn components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_com
         "expected full-page vertical Tabs sample to scroll its tab rail; before={tab_before:?} after={tab_after:?}"
     );
 }
+
+#[open_gpui::test]
+fn components_gallery_smoke_splitter_motion_demo_retains_panel_views(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+
+    jump_components_directory_to(cx, "gallery:component-page-jump:splitter");
+    scroll_page_selector_into_view(&shell, cx, "gallery:component-splitter-motion-demo");
+    let inspector_before = bounds(cx, "splitter-panel:motion-inspector");
+
+    click(cx, "gallery:component-splitter-motion-toggle-count");
+
+    let overlay = bounds(cx, "splitter:transition-overlay");
+    let retained_inspector = bounds(cx, "splitter:transition-panel:motion-inspector");
+    assert!(
+        overlay.contains(&retained_inspector.center()),
+        "expected Splitter motion demo to retain the removed inspector pane inside the transition overlay; inspector_before={inspector_before:?} overlay={overlay:?} retained={retained_inspector:?}"
+    );
+}

@@ -21,7 +21,7 @@ path = "src/main.rs"
 # jellyflow = { path = "../../../jellyflow/crates/jellyflow" }
 open_gpui.workspace = true
 open_gpui_canvas.workspace = true
-open_gpui_platform.workspace = true
+open_gpui_platform = { workspace = true, features = ["font-kit"] }
 open_gpui_ui_components.workspace = true
 open_gpui_ui_core.workspace = true
 serde_json.workspace = true

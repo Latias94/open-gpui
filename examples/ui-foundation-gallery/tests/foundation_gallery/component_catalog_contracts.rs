@@ -1802,6 +1802,8 @@ fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
     let samples_source = include_str!("../../src/pages/components/samples.rs");
     let layout_samples_source = include_str!("../../src/pages/components/samples/layout.rs");
     let render_sections_source = include_str!("../../src/pages/components/render/sections.rs");
+    let splitter_motion_source =
+        include_str!("../../src/pages/components/render/splitter_motion.rs");
     let splitter_struct_start = layout_samples_source
         .find("pub struct SplitterSample {")
         .expect("expected SplitterSample struct to exist");
@@ -1825,6 +1827,10 @@ fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
     assert!(splitter_section.contains(".with_size(state.size())"));
     assert!(!splitter_section.contains(".orientation(sample.orientation)"));
     assert!(!splitter_section.contains(".with_size(sample.size)"));
+    assert!(render_sections_source.contains("SplitterMotionDemo::new"));
+    assert!(splitter_motion_source.contains("pub(super) struct SplitterMotionDemo"));
+    assert!(splitter_motion_source.contains("SplitterPanel::view("));
+    assert!(splitter_motion_source.contains(".motion_preference(MotionPreference::Animated)"));
 }
 
 #[test]
@@ -2391,4 +2397,14 @@ fn gallery_story_contracts_reference_component_contract_rows() {
             story.owner_name()
         );
     }
+}
+
+#[test]
+fn native_gallery_enables_platform_font_backend() {
+    let manifest = include_str!("../../Cargo.toml");
+
+    assert!(
+        manifest.contains(r#"open_gpui_platform = { workspace = true, features = ["font-kit"] }"#),
+        "native gallery must enable open_gpui_platform/font-kit; without it macOS uses NoopTextSystem and text lays out but does not render"
+    );
 }

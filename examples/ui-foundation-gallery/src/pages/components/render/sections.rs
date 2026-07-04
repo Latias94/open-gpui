@@ -5,24 +5,32 @@ fn render_grouped_components_section(
     parent_id: &'static str,
     focused_id: &'static str,
     snapshot: GalleryShellSnapshot,
+    window: &mut Window,
     cx: &mut Context<GalleryShell>,
 ) -> AnyElement {
     let mut snapshot = snapshot;
     snapshot.components_focus = pages::components::ComponentFocusMode::Section(focused_id);
-    render_components_section(shell, component_page_jump_for_id(parent_id), snapshot, cx)
+    render_components_section(
+        shell,
+        component_page_jump_for_id(parent_id),
+        snapshot,
+        window,
+        cx,
+    )
 }
 
 pub(super) fn render_components_section(
     shell: &mut GalleryShell,
     section: pages::components::ComponentPageJump,
     snapshot: GalleryShellSnapshot,
+    window: &mut Window,
     cx: &mut Context<GalleryShell>,
 ) -> AnyElement {
     let focus_mode = snapshot.components_focus;
 
     match section.id {
         "tabs" | "table" | "virtualized-list" | "signals" => {
-            render_grouped_components_section(shell, "field", section.id, snapshot, cx)
+            render_grouped_components_section(shell, "field", section.id, snapshot, window, cx)
         }
         "catalog" => render_component_catalog_section(snapshot, cx),
         "primitives" => component_page_section("primitives")
@@ -355,112 +363,136 @@ pub(super) fn render_components_section(
                     ),
             )
             .into_any_element(),
-        "splitter" => component_page_section("splitter")
-            .when(!show_component_section(focus_mode, "splitter"), |this| {
-                this.hidden()
-            })
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(open_gpui::FontWeight::BOLD)
-                            .child("Splitter"),
-                    )
-                    .child(
-                        div().flex().gap_3().flex_wrap().children(
-                            pages::components::splitter_samples(snapshot.tokens)
-                                .into_iter()
-                                .map(|sample| {
-                                    let debug_selector = sample.debug_selector();
-                                    let state = sample.state.clone();
-                                    let splitter = sample.panels.into_iter().fold(
-                                        Splitter::new(format!("component-splitter:{}", sample.id))
-                                            .orientation(state.orientation())
-                                            .with_size(state.size()),
-                                        |splitter, panel| {
-                                            splitter.panel(SplitterPanel::new(
-                                                panel.descriptor,
-                                                div()
-                                                    .size_full()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .gap_1()
-                                                    .bg(rgb(0xf8f9f3))
-                                                    .px_3()
-                                                    .py_2()
-                                                    .child(
-                                                        div()
-                                                            .text_xs()
-                                                            .font_weight(
-                                                                open_gpui::FontWeight::BOLD,
-                                                            )
-                                                            .text_color(rgb(0x3f4a57))
-                                                            .child(panel.title),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_xs()
-                                                            .text_color(rgb(0x5a6472))
-                                                            .child(panel.body),
-                                                    ),
-                                            ))
-                                        },
-                                    );
+        "splitter" => {
+            let motion_demo =
+                window.use_keyed_state("component-splitter-motion-demo-runtime", cx, |_, cx| {
+                    SplitterMotionDemo::new(cx)
+                });
 
-                                    div()
-                                        .id(format!("component-splitter-sample:{}", sample.id))
-                                        .debug_selector(move || debug_selector)
-                                        .w(px(520.0))
-                                        .flex()
-                                        .flex_col()
-                                        .gap_2()
-                                        .rounded_sm()
-                                        .border_1()
-                                        .border_color(rgb(0xd6d8ce))
-                                        .bg(rgb(0xffffff))
-                                        .p_3()
-                                        .child(
+            component_page_section("splitter")
+                .when(!show_component_section(focus_mode, "splitter"), |this| {
+                    this.hidden()
+                })
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(open_gpui::FontWeight::BOLD)
+                                .child("Splitter"),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .gap_3()
+                                .flex_wrap()
+                                .child(motion_demo)
+                                .children(
+                                    pages::components::splitter_samples(snapshot.tokens)
+                                        .into_iter()
+                                        .map(|sample| {
+                                            let debug_selector = sample.debug_selector();
+                                            let state = sample.state.clone();
+                                            let splitter = sample.panels.into_iter().fold(
+                                                Splitter::new(format!(
+                                                    "component-splitter:{}",
+                                                    sample.id
+                                                ))
+                                                .orientation(state.orientation())
+                                                .with_size(state.size()),
+                                                |splitter, panel| {
+                                                    splitter.panel(SplitterPanel::new(
+                                                        panel.descriptor,
+                                                        div()
+                                                            .size_full()
+                                                            .flex()
+                                                            .flex_col()
+                                                            .gap_1()
+                                                            .bg(rgb(0xf8f9f3))
+                                                            .px_3()
+                                                            .py_2()
+                                                            .child(
+                                                                div()
+                                                                    .text_xs()
+                                                                    .font_weight(
+                                                                        open_gpui::FontWeight::BOLD,
+                                                                    )
+                                                                    .text_color(rgb(0x3f4a57))
+                                                                    .child(panel.title),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .text_xs()
+                                                                    .text_color(rgb(0x5a6472))
+                                                                    .child(panel.body),
+                                                            ),
+                                                    ))
+                                                },
+                                            );
+
                                             div()
+                                                .id(format!(
+                                                    "component-splitter-sample:{}",
+                                                    sample.id
+                                                ))
+                                                .debug_selector(move || debug_selector)
+                                                .w(px(520.0))
                                                 .flex()
-                                                .items_center()
-                                                .justify_between()
+                                                .flex_col()
                                                 .gap_2()
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .font_weight(open_gpui::FontWeight::BOLD)
-                                                        .child(sample.title),
-                                                )
-                                                .child(label_pill(match state.orientation() {
-                                                    Orientation::Horizontal => "horizontal",
-                                                    Orientation::Vertical => "vertical",
-                                                })),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(rgb(0x5a6472))
-                                                .child(sample.summary),
-                                        )
-                                        .child(
-                                            div()
-                                                .h(px(164.0))
                                                 .rounded_sm()
                                                 .border_1()
-                                                .border_color(rgb(0xe2e4dc))
-                                                .bg(rgb(0xfcfcf8))
-                                                .child(splitter),
-                                        )
-                                        .child(component_splitter_state_row(&state))
-                                }),
+                                                .border_color(rgb(0xd6d8ce))
+                                                .bg(rgb(0xffffff))
+                                                .p_3()
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_between()
+                                                        .gap_2()
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .font_weight(
+                                                                    open_gpui::FontWeight::BOLD,
+                                                                )
+                                                                .child(sample.title),
+                                                        )
+                                                        .child(label_pill(
+                                                            match state.orientation() {
+                                                                Orientation::Horizontal => {
+                                                                    "horizontal"
+                                                                }
+                                                                Orientation::Vertical => "vertical",
+                                                            },
+                                                        )),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(rgb(0x5a6472))
+                                                        .child(sample.summary),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .h(px(164.0))
+                                                        .rounded_sm()
+                                                        .border_1()
+                                                        .border_color(rgb(0xe2e4dc))
+                                                        .bg(rgb(0xfcfcf8))
+                                                        .child(splitter),
+                                                )
+                                                .child(component_splitter_state_row(&state))
+                                        }),
+                                ),
                         ),
-                    ),
-            )
-            .into_any_element(),
+                )
+                .into_any_element()
+        }
         "scroll-area" => render_component_scroll_area_section(focus_mode, snapshot.tokens),
         "badge" => component_page_section("badge")
             .when(!show_component_section(focus_mode, "badge"), |this| {

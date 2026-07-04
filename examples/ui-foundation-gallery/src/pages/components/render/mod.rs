@@ -3,9 +3,12 @@
 use crate::pages;
 use crate::shell::*;
 use open_gpui::prelude::*;
-use open_gpui::{AnyElement, Context, IntoElement, ListSizingBehavior, div, list, px, rgb};
+use open_gpui::{
+    AnyElement, Context, Entity, IntoElement, ListSizingBehavior, Render, Window, div, list, px,
+    rgb,
+};
 use open_gpui_ui_components::*;
-use open_gpui_ui_core::{Orientation, Sizable, Size, ThemeTokens, UiPx};
+use open_gpui_ui_core::{MotionPreference, Orientation, Sizable, Size, ThemeTokens, UiPx};
 
 mod choice;
 mod families;
@@ -15,6 +18,7 @@ mod layout;
 mod metadata;
 mod readouts;
 mod sections;
+mod splitter_motion;
 mod support;
 
 use choice::*;
@@ -25,6 +29,7 @@ use layout::*;
 use metadata::*;
 use readouts::*;
 use sections::*;
+use splitter_motion::*;
 use support::*;
 const SWITCH_SECTION_IDS: &[&str] = &["switch", "checkbox", "radio-group", "toggle"];
 
@@ -170,11 +175,11 @@ pub(crate) fn render_components_page(
                 .child(
                     list(
                         list_state,
-                        cx.processor(move |this, index, _window, cx| {
+                        cx.processor(move |this, index, window, cx| {
                             let Some(section) = sections.get(index).copied() else {
                                 return div().h_0().into_any_element();
                             };
-                            render_components_section(this, section, snapshot, cx)
+                            render_components_section(this, section, snapshot, window, cx)
                         }),
                     )
                     .with_sizing_behavior(ListSizingBehavior::Auto)
