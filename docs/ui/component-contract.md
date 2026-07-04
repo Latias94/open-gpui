@@ -270,10 +270,8 @@ width as neutral `UiPx`, and documents that it does not change layout.
 The GPUI adapter should apply the ring inside `focus_visible` using
 `open_gpui_ui_components::gpui_adapter::focus_ring_shadow_with_theme` and the render-time
 `ThemeContext`. This paints an outer box shadow, so keyboard focus visibility does not resize or
-move the focused component. `focus_ring_shadow` remains a default-light compatibility helper and
-must not be used by production component render paths. Both helpers are available only through
-`open_gpui_ui_components::gpui_adapter` because their `BoxShadow` return type is
-renderer-specific.
+move the focused component. The helper is available only through
+`open_gpui_ui_components::gpui_adapter` because its `BoxShadow` return type is renderer-specific.
 
 ## Public API
 
@@ -318,10 +316,10 @@ curated surface, while prelude-only additions remain local to `prelude.rs`. Do n
 public re-exports in component crates except for that curated default-surface hop. GPUI-specific
 helpers that remain public for concrete applications must be reachable through
 `open_gpui_ui_components::gpui_adapter`; current examples include `TextInputController`,
-`init_text_input`, `focus_ring_shadow_with_theme`, the legacy `focus_ring_shadow` compatibility
-helper, accessibility mapping helpers, geometry conversion helpers, and GPUI overlay scheduling
-helpers. The crate root and prelude default interface are reserved for official components and
-component-facing state/readout types. Advanced command registry/runtime types live in
+`init_text_input`, `focus_ring_shadow_with_theme`, accessibility mapping helpers, geometry
+conversion helpers, and GPUI overlay scheduling helpers. The crate root and prelude default
+interface are reserved for official components and component-facing state/readout types. Advanced
+command registry/runtime types live in
 `open_gpui_command`; table-core, virtualizer, and grid-window contracts live in
 `open_gpui_ui_core`; advanced theme registry/runtime and JSON loader APIs live under
 `open_gpui_ui_components::theme`.
@@ -359,11 +357,11 @@ A component is official only when it satisfies the current-crate completion cont
 its source home is the `crates/ui_components/src/component_contract/` module family.
 `component_contract/mod.rs` is only the facade; `component_contract/types.rs` owns row types,
 `component_contract/rows.rs` is the row facade, `component_contract/rows/catalog.rs` owns canonical
-contract rows, `component_contract/rows/lists.rs` owns compatibility and family marker lists,
-`component_contract/projections.rs` owns query APIs, `component_contract/source_mapping.rs` owns
-source-owner projections, `component_contract/surfaces.rs` owns adjacent public-surface rows, and
-`component_contract/api_inventory.rs` owns public API inventory and method baselines. That split is
-a shared fact-source cleanup, not a broad component-file-size cleanup.
+contract rows, `component_contract/projections.rs` owns query APIs, including derived overlay and
+recipe row queries, `component_contract/source_mapping.rs` owns source-owner projections,
+`component_contract/surfaces.rs` owns adjacent public-surface rows, and
+`component_contract/api_inventory.rs` owns public API inventory and method baselines. That split
+keeps marker lists derived from the canonical rows instead of preserving a second fact source.
 That contract table classifies official components, official recipes, renderer-neutral state contracts,
 GPUI adapter helpers, public anatomy, diagnostics, and removed compatibility targets. It also
 records API inventory rows, source homes, docs tokens, gallery status, and default-export intent.
@@ -942,9 +940,8 @@ Before extraction, keep these boundary rules explicit:
 - component resolved state now exposes `OverlayResolvedState` for overlay policy/presence/focus
   data. `GpuiOverlayState` remains a GPUI adapter helper for deferred priority, snap margins, and
   renderer scheduling, and should not be stored in public `*State` contracts;
-- `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow_with_theme`, the
-  legacy `focus_ring_shadow` helper, and GPUI overlay scheduling helpers are adapter-only public
-  surfaces. They are intentionally grouped under
+- `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow_with_theme`, and
+  GPUI overlay scheduling helpers are adapter-only public surfaces. They are intentionally grouped under
   `open_gpui_ui_components::gpui_adapter`; a future headless crate needs smaller neutral models or
   an explicit rule that these capabilities remain framework-specific.
 
@@ -975,8 +972,8 @@ adapter. Field composition can wrap either `TextInput` or `Textarea` without own
 Password reveal toggles, credential-manager affordances, textarea auto-grow/drag-resize, undo/redo,
 completion, validation engines, rich text, and code-editor behavior remain out of scope. `Field`
 still stays separate from the editing controller and remains composition-only.
-`focus_ring_shadow_with_theme` and the legacy `focus_ring_shadow` helper are GPUI-adapter code and
-should stay out of a future headless crate if `FocusRing` is extracted.
+`focus_ring_shadow_with_theme` is GPUI-adapter code and should stay out of a future headless crate
+if `FocusRing` is extracted.
 ADR 0008 keeps current-crate productization as the active roadmap. ADR 0006 keeps the strict
 boundary checkpoint as future extraction evidence, not active work, and ADR 0007 records the
 post-boundary extraction design without creating the behavior crate.
@@ -989,9 +986,9 @@ semantic facades with GPUI adapter mapping exposed through
 state now uses neutral `OverlayResolvedState`; `GpuiOverlayState` is adapter-only scheduling
 state. Extraction is no longer blocked by UI-core GPUI dependencies or `UiPx` style conversion
 impls; the remaining non-headless surfaces are GPUI-owned adapter APIs such as
-`TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow_with_theme`, the
-legacy `focus_ring_shadow` helper, adapter geometry conversion helpers, and GPUI overlay scheduling
-helpers. These public adapter APIs are now grouped under `open_gpui_ui_components::gpui_adapter`.
+`TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow_with_theme`, adapter
+geometry conversion helpers, and GPUI overlay scheduling helpers. These public adapter APIs are now
+grouped under `open_gpui_ui_components::gpui_adapter`.
 Shared roving-focus helpers now live in
 `open_gpui_ui_components::roving_focus`, with `Tabs` preserving compatibility re-exports.
 The choice family now also has a shared internal seam in `open_gpui_ui_components::choice` for flat

@@ -3,7 +3,8 @@ mod support;
 use open_gpui::{AppContext, Context, IntoElement, ParentElement, Render, Styled, Window, div, px};
 use open_gpui_ui_components::{
     Button, DEFAULT_FOCUS_RING_WIDTH, FocusRing, TextInput, TextInputDisplayMode, Textarea,
-    gpui_adapter::{TextInputController, focus_ring_shadow, init_text_input},
+    ThemeContext,
+    gpui_adapter::{TextInputController, focus_ring_shadow_with_theme, init_text_input},
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, semantic, ui_px};
 use std::cell::RefCell;
@@ -121,7 +122,7 @@ fn invalid_text_input_uses_destructive_border_token() {
 #[test]
 fn focus_ring_preserves_token_intent_without_layout_shift() {
     let ring = FocusRing::from_color(Button::new("save", "Save").state().colors().focus_ring());
-    let shadow = focus_ring_shadow(ring);
+    let shadow = focus_ring_shadow_with_theme(ring, &ThemeContext::light());
 
     assert_eq!(ring.color().token(), semantic::FOCUS_RING);
     assert_eq!(ring.width(), DEFAULT_FOCUS_RING_WIDTH);

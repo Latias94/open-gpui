@@ -966,17 +966,6 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         source_home: "gpui_adapter",
     },
     ComponentContractEntry {
-        name: "focus_ring_shadow",
-        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
-        family: None,
-        gallery_status: SurfaceGalleryStatus::NotInGallery,
-        docs_status: SurfaceDocsStatus::ComponentContract,
-        docs_token: Some("open_gpui_ui_components::gpui_adapter"),
-        default_export: false,
-        source_inputs: &["gpui_adapter"],
-        source_home: "gpui_adapter",
-    },
-    ComponentContractEntry {
         name: "focus_ring_shadow_with_theme",
         owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
         family: None,

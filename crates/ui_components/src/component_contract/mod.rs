@@ -22,9 +22,10 @@ pub use projections::{
     component_contract_default_export, component_contract_docs_status,
     component_contract_docs_token, component_contract_entry, component_contract_family,
     component_contract_gallery_status, component_contract_source_home,
-    component_inventory_default_export, public_surface_default_export,
+    component_inventory_default_export, component_recipe_component_rows,
+    official_overlay_component_rows, public_surface_default_export,
 };
-pub use rows::{COMPONENT_CONTRACT_ROWS, COMPONENT_RECIPE_COMPONENTS, OFFICIAL_OVERLAY_COMPONENTS};
+pub use rows::COMPONENT_CONTRACT_ROWS;
 pub use source_mapping::{
     component_source_home, component_source_inputs, table_render_owner_files,
 };

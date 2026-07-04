@@ -31,8 +31,6 @@ pub struct ComponentApiInventoryEntry {
     pub controlled_inputs: &'static [&'static str],
     /// Default-state seed methods and their runtime-owned values.
     pub default_seeds: &'static [DefaultSeedApi],
-    /// Legacy seed inputs that still require an explicit migration decision.
-    pub legacy_seed_inputs: &'static [&'static str],
     /// Policy/configuration knobs that shape behavior without owning state.
     pub policy_hints: &'static [&'static str],
     /// Callback methods and payload types.
@@ -49,7 +47,6 @@ impl ComponentApiInventoryEntry {
         !component_render_inputs(self.component).is_empty()
             || !self.controlled_inputs.is_empty()
             || !self.default_seeds.is_empty()
-            || !self.legacy_seed_inputs.is_empty()
             || !self.policy_hints.is_empty()
             || !self.callbacks.is_empty()
             || self.no_interaction_note.is_some()

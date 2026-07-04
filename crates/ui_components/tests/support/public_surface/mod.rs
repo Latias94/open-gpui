@@ -1,11 +1,12 @@
 use open_gpui_ui_components::component_contract::{
-    COMPONENT_API_INVENTORY, COMPONENT_CONTRACT_ROWS, COMPONENT_RECIPE_COMPONENTS,
-    ComponentApiInventoryEntry, OFFICIAL_OVERLAY_COMPONENTS, PUBLIC_SURFACE_OWNER_MAP,
-    PublicSurfaceOwnerClass, SurfaceDocsStatus, SurfaceGalleryStatus,
+    COMPONENT_API_INVENTORY, COMPONENT_CONTRACT_ROWS, ComponentApiInventoryEntry,
+    PUBLIC_SURFACE_OWNER_MAP, PublicSurfaceOwnerClass, SurfaceDocsStatus, SurfaceGalleryStatus,
     component_contract_default_export, component_contract_docs_status,
     component_contract_docs_token, component_contract_entry, component_contract_family,
-    component_contract_gallery_status, component_contract_source_home, component_public_methods,
-    component_source_inputs, public_owner_for_component_inventory, table_render_owner_files,
+    component_contract_gallery_status, component_contract_source_home,
+    component_recipe_component_rows, component_public_methods, component_source_inputs,
+    official_overlay_component_rows, public_owner_for_component_inventory,
+    table_render_owner_files,
 };
 use open_gpui_ui_components::{ColorIntent, FocusRing, gpui_adapter::gpui_role_from_ui};
 use open_gpui_ui_core::{

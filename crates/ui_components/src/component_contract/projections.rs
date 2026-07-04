@@ -1,8 +1,9 @@
 //! Projection APIs over canonical component contract rows.
 
 use super::{
-    COMPONENT_CONTRACT_ROWS, ComponentApiInventoryEntry, ComponentContractEntry,
-    PublicSurfaceOwnerEntry, SurfaceDocsStatus, SurfaceGalleryStatus,
+    COMPONENT_API_INVENTORY, COMPONENT_CONTRACT_ROWS, ComponentApiInventoryEntry,
+    ComponentContractEntry, PublicSurfaceOwnerClass, PublicSurfaceOwnerEntry, SurfaceDocsStatus,
+    SurfaceGalleryStatus,
 };
 
 /// Returns the canonical product metadata row for a public surface token.
@@ -26,6 +27,23 @@ pub fn component_inventory_default_export(entry: &ComponentApiInventoryEntry) ->
 /// Returns whether an adjacent public surface is intended for root/prelude defaults.
 pub fn public_surface_default_export(entry: &PublicSurfaceOwnerEntry) -> bool {
     component_contract_entry(entry.name).is_some_and(|entry| entry.default_export)
+}
+
+/// Returns official overlay rows derived from the canonical contract table.
+pub fn official_overlay_component_rows() -> impl Iterator<Item = &'static ComponentContractEntry> {
+    COMPONENT_CONTRACT_ROWS
+        .iter()
+        .filter(|entry| entry.gallery_status == SurfaceGalleryStatus::OfficialOverlay)
+}
+
+/// Returns component recipe rows that also have public API inventory entries.
+pub fn component_recipe_component_rows() -> impl Iterator<Item = &'static ComponentContractEntry> {
+    COMPONENT_CONTRACT_ROWS.iter().filter(|entry| {
+        entry.owner == PublicSurfaceOwnerClass::OfficialComponentRecipe
+            && COMPONENT_API_INVENTORY
+                .iter()
+                .any(|inventory| inventory.component == entry.name)
+    })
 }
 
 /// Returns the contract-owned gallery status for a component or adjacent surface.
