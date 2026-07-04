@@ -834,6 +834,8 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     assert_eq!(registry.groups()[0].label(), "Workspace");
     assert_eq!(registry.items()[0].shortcut(), Some("ctrl-shift-P"));
     assert_eq!(registry.items()[1].shortcut(), Some("ctrl-S"));
+    assert!(registry.loop_navigation());
+    assert!(registry.group_navigation());
 
     let provider_status = commands[5]
         .provider_status

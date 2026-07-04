@@ -6,6 +6,11 @@ status: active
 
 # Log
 
+- 2026-07-04: Added command palette navigation polish on
+  `feat/command-navigation-polish`. `CommandNavigationBehavior` now controls Up/Down loop behavior
+  and Alt+Up/Alt+Down group jumps, Home/End are first-class command navigation keys, and the public
+  API inventory, docs, gallery readouts, and focused runtime/public-surface/gallery tests were
+  updated together.
 - 2026-07-04: Started the UI motion value foundation on
   `feat/ui-motion-value-foundation`. ADR 0017 accepts explicit model/preset resolution,
   proof-gated scalar value/run state, frame-demand reasons, production policy gates, and projection

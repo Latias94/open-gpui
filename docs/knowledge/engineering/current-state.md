@@ -2,8 +2,8 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-04T08:39:45+08:00
-git_branch: main
+timestamp: 2026-07-04T09:15:19+08:00
+git_branch: feat/command-navigation-polish
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
   - docs/plans/2026-07-01-002-refactor-ui-public-gallery-boundaries-plan.md
@@ -92,6 +92,14 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_search_samples_expose_combobox_and_command_contracts component_gallery_shell_reads_choice_active_metadata_from_resolved_state --no-fail-fast
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focused_command_samples_cover_depth_behaviors --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components command::runtime::tests --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components command::runtime::tests roving_focus --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components command --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery command --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery component_gallery_shell_reads_choice_active_metadata_from_resolved_state components_page_search_samples_expose_combobox_and_command_contracts --no-fail-fast
+  - cargo check -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --tests
+  - cargo run -p xtask -- scan-ui-contract
   - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --check
   - cargo check -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --tests
   - cargo nextest run -p open-gpui-ui-components command --no-fail-fast
@@ -116,8 +124,9 @@ verified_by:
 
 # Current State
 
-- Branch: `main`; this state includes the merged docking render authority convergence and UI
-  framework deep-module refactor work.
+- Branch: `feat/command-navigation-polish`; this state includes the current command navigation
+  polish slice on top of the merged docking render authority convergence and UI framework
+  deep-module refactor work.
 - Done on `refactor/ui-framework-deepening`: component render paths now resolve color intents from
   `ThemeResolver::current(cx)` / `ThemeContext` or an explicit snapshot. Direct
   `ThemeResolver::resolve(...)` is documented as default-light compatibility only, and `rg -n
@@ -231,6 +240,12 @@ verified_by:
   `Command` expose status item builders plus warning/error counters, the runtime renders status
   rows before result rows, and the gallery `diagnostics-empty` sample proves failed-provider,
   warning-diagnostic, and empty-state rendering in one component surface.
+- Done on `feat/command-navigation-polish`: command palette navigation now has explicit
+  `CommandNavigationBehavior` policy. Up/Down wrap by default but can be bounded with
+  `loop_navigation(false)`, Home/End jump to first/last focusable rows, and Alt+Up/Alt+Down jump to
+  the first focusable command in the previous/next rendered group when group navigation is enabled.
+  The builder API, resolved state getters, public exports, API inventory, docs, gallery readouts,
+  and focused runtime tests were updated together.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default
@@ -315,8 +330,8 @@ verified_by:
 - Not current roadmap work: broad splitting of every remaining 1k+ component file and
   `open-gpui-ui-headless` extraction.
 - Blocked: None.
-- Next action: continue command ecosystem hardening with either async provider UX or palette
-  navigation polish.
+- Next action: commit or merge the command navigation polish slice, then continue command ecosystem
+  hardening with async provider UX or real app-shell dogfood around `CommandPaletteController`.
 
 # Citations
 
@@ -346,3 +361,5 @@ verified_by:
 - [UI motion runtime foundation progress](progress/2026-07-02-ui-motion-runtime-foundation.md)
 - [Open GPUI command palette status items](progress/2026-07-04-open-gpui-command-palette-status-items.md)
 - [Open GPUI command palette status items verification](verification/open-gpui-command-palette-status-items-20260704.md)
+- [Open GPUI command navigation polish](progress/2026-07-04-open-gpui-command-navigation-polish.md)
+- [Open GPUI command navigation polish verification](verification/open-gpui-command-navigation-polish-20260704.md)

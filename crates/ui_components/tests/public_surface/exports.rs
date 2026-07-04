@@ -83,6 +83,12 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_command_status_item: root::CommandStatusItem =
         root::CommandStatusItem::warning("Shortcut diagnostics");
     let _root_command_status_intent: root::CommandStatusIntent = root_command_status_item.intent();
+    let root_command_navigation: root::CommandNavigationBehavior =
+        root::CommandNavigationBehavior::new()
+            .with_loop_navigation(false)
+            .with_group_navigation(true);
+    assert!(!root_command_navigation.loop_navigation());
+    assert!(root_command_navigation.group_navigation());
     let root_core_command = root::CommandDescriptor::new("root.open", "Open").shortcut("Ctrl+O");
     let mut root_command_registry = root::CommandRegistry::new("root-registry-v1");
     root_command_registry
@@ -249,6 +255,11 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let _root_status_command_state = root::Command::new("root-status-plan", "Status")
         .status_item(root_command_status_item)
         .state();
+    let _root_navigation_command_state = root::Command::new("root-navigation-plan", "Navigation")
+        .navigation_behavior(root_command_navigation)
+        .loop_navigation(true)
+        .group_navigation(true)
+        .state();
     let _root_command_row: Option<&root::CommandRowBehaviorSnapshot> =
         root_command_snapshot.rows().first();
     let root_menu_state = root::Menu::new("root-menu", "Menu")
@@ -331,6 +342,12 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude::CommandStatusItem::error("Provider failed");
     let _prelude_command_status_intent: prelude::CommandStatusIntent =
         prelude_command_status_item.intent();
+    let prelude_command_navigation: prelude::CommandNavigationBehavior =
+        prelude::CommandNavigationBehavior::new()
+            .with_loop_navigation(false)
+            .with_group_navigation(true);
+    assert!(!prelude_command_navigation.loop_navigation());
+    assert!(prelude_command_navigation.group_navigation());
     let prelude_core_command =
         prelude::CommandDescriptor::new("prelude.open", "Open").shortcut("Ctrl+O");
     let prelude_registry_snapshot = prelude::CommandRegistrySnapshot::new(
@@ -518,6 +535,12 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let _prelude_status_command_state = prelude::Command::new("prelude-status-plan", "Status")
         .status_item(prelude_command_status_item)
         .state();
+    let _prelude_navigation_command_state =
+        prelude::Command::new("prelude-navigation-plan", "Navigation")
+            .navigation_behavior(prelude_command_navigation)
+            .loop_navigation(true)
+            .group_navigation(true)
+            .state();
     let _prelude_command_row: Option<&prelude::CommandRowBehaviorSnapshot> =
         prelude_command_snapshot.rows().first();
     let prelude_menu_state = prelude::Menu::new("prelude-menu", "Menu")

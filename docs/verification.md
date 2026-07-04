@@ -402,6 +402,8 @@ no-context bindings that overlap concrete context bindings under GPUI runtime pr
 The UI component command tests now also cover `CommandPaletteProjection`, which adapts a
 `CommandCenter` query/keymap projection into a `PreFiltered` `CommandIndexSnapshot`, provider
 statuses, shortcut diagnostics, and UI-ready status rows for failed providers plus shortcut drift;
+the Command runtime navigation layer, which supports Home/End, configurable Up/Down loop
+navigation, Vim-style control aliases, PageUp/PageDown, and Alt+Up/Alt+Down group jumps;
 `CommandPaletteController`, which coordinates palette query
 changes across provider refresh controllers, refreshes registered synchronous providers, exposes
 missing-provider ids for app-owned async tasks, ignores stale async responses through the existing
@@ -416,6 +418,7 @@ Run the focused proof with:
 
 ```powershell
 cargo nextest run -p open-gpui-ui-components command
+cargo nextest run -p open-gpui-ui-components command::runtime::tests --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command_palette_projection_builds_status_items_from_provider_failures_and_diagnostics command_state_accepts_explicit_status_items --no-fail-fast
 cargo nextest run -p open-gpui-ui-components command_palette_controller --no-fail-fast
 cargo nextest run -p open-gpui-command --no-fail-fast

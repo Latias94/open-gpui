@@ -46,6 +46,9 @@ and plugin-like command metadata contribution.
 `open_gpui_ui_components` owns presentation:
 
 - `Command` renders inline or dialog command palettes.
+  `CommandNavigationBehavior` keeps keyboard traversal explicit: Up/Down wraps by default for
+  command-palette ergonomics, `loop_navigation(false)` makes boundaries stop, and Alt+Up/Alt+Down
+  jumps to the first focusable command in the previous or next rendered group.
 - `CommandPaletteController` owns UI-side palette query/provider refresh lifecycle and emits
   `CommandPaletteProjection` updates without taking ownership of `CommandCenter`, dispatch, or
   async scheduling. It also wraps command-center query history navigation for palette surfaces:

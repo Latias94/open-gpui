@@ -214,9 +214,12 @@ It records controlled versus uncontrolled open and query modes, default-open/def
 state, single-select or multi-select behavior, selected and active command values, query text,
 filtered and total command counts, standalone/grouped command anatomy, shortcut labels, disabled
 command state, deterministic match source/score metadata, app-owned index revision/mode metadata,
-empty-state label, provider/shortcut status items, Escape policy, focus restoration intent,
-resolved metrics, token intents, non-modal inline overlay state, and modal dialog overlay state
-when dialog presentation is enabled.
+empty-state label, provider/shortcut status items, keyboard navigation behavior, Escape policy,
+focus restoration intent, resolved metrics, token intents, non-modal inline overlay state, and
+modal dialog overlay state when dialog presentation is enabled. `CommandNavigationBehavior` makes
+the palette-specific keyboard layer explicit: Home/End target the first/last focusable command,
+Up/Down loop by default but can be bounded with `loop_navigation(false)`, and Alt+Up/Alt+Down move
+between rendered command groups.
 `CommandIndexSnapshot` lets applications pass indexed, pre-ranked, or pre-filtered descriptor
 snapshots with loading metadata, while keeping command discovery, global registries, keybinding
 resolution, dispatch, enablement policy, and async task ownership outside `ui_components`. The GPUI

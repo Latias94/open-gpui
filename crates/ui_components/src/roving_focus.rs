@@ -15,11 +15,21 @@ pub fn last_enabled(disabled: &[bool]) -> Option<usize> {
 /// Returns the next enabled index from the current item.
 pub fn next_enabled(disabled: &[bool], current: usize, forward: bool, wrap: bool) -> Option<usize> {
     let len = disabled.len();
+    let is_disabled = |idx: usize| disabled.get(idx).copied().unwrap_or(false);
+    next_matching_index(len, current, forward, wrap, |idx| !is_disabled(idx))
+}
+
+/// Returns the next matching index from the current item.
+pub(crate) fn next_matching_index(
+    len: usize,
+    current: usize,
+    forward: bool,
+    wrap: bool,
+    is_match: impl Fn(usize) -> bool,
+) -> Option<usize> {
     if len == 0 || current >= len {
         return None;
     }
-
-    let is_disabled = |idx: usize| disabled.get(idx).copied().unwrap_or(false);
 
     if wrap {
         for step in 1..=len {
@@ -28,15 +38,15 @@ pub fn next_enabled(disabled: &[bool], current: usize, forward: bool, wrap: bool
             } else {
                 (current + len - (step % len)) % len
             };
-            if !is_disabled(idx) {
+            if is_match(idx) {
                 return Some(idx);
             }
         }
         None
     } else if forward {
-        ((current + 1)..len).find(|&index| !is_disabled(index))
+        ((current + 1)..len).find(|&index| is_match(index))
     } else if current > 0 {
-        (0..current).rev().find(|&index| !is_disabled(index))
+        (0..current).rev().find(|&index| is_match(index))
     } else {
         None
     }

@@ -37,8 +37,8 @@ pub use descriptor::{
     CommandQueryMode, CommandSelectionMode, CommandStatusIntent, CommandStatusItem,
 };
 pub use model::{
-    CommandDialogState, CommandGroupState, CommandItemState, CommandSelectedChipState,
-    CommandSelection, CommandSelectionChange, CommandState,
+    CommandDialogState, CommandGroupState, CommandItemState, CommandNavigationBehavior,
+    CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandState,
 };
 pub use render_plan::{CommandBehaviorSnapshot, CommandRowBehaviorSnapshot};
 pub(crate) use render_plan::{CommandRenderPlan, CommandRowRenderPlan};
@@ -65,6 +65,7 @@ pub struct Command {
     open: Option<bool>,
     default_open: bool,
     dialog_enabled: bool,
+    navigation_behavior: CommandNavigationBehavior,
     query: Option<String>,
     default_query: String,
     selection_mode: CommandSelectionMode,
@@ -106,6 +107,7 @@ impl Command {
             open: None,
             default_open: false,
             dialog_enabled: false,
+            navigation_behavior: CommandNavigationBehavior::default(),
             query: None,
             default_query: String::new(),
             selection_mode: CommandSelectionMode::Single,
@@ -233,6 +235,24 @@ impl Command {
     /// Applies optional dialog description text.
     pub fn dialog_description(mut self, description: impl Into<String>) -> Self {
         self.dialog_description = Some(description.into());
+        self
+    }
+
+    /// Applies command keyboard navigation behavior.
+    pub fn navigation_behavior(mut self, behavior: CommandNavigationBehavior) -> Self {
+        self.navigation_behavior = behavior;
+        self
+    }
+
+    /// Enables or disables loop navigation across the first and last command rows.
+    pub fn loop_navigation(mut self, enabled: bool) -> Self {
+        self.navigation_behavior = self.navigation_behavior.with_loop_navigation(enabled);
+        self
+    }
+
+    /// Enables or disables group-jump navigation aliases.
+    pub fn group_navigation(mut self, enabled: bool) -> Self {
+        self.navigation_behavior = self.navigation_behavior.with_group_navigation(enabled);
         self
     }
 
@@ -529,6 +549,7 @@ impl Command {
 
         state
             .with_metrics(self.metrics)
+            .with_navigation_behavior(self.navigation_behavior)
             .with_status_items(self.status_items.clone())
     }
 }

@@ -444,24 +444,39 @@ fn command_navigation_target<'a>(
     viewport_extent: UiPx,
 ) -> Option<&'a crate::listbox::ListboxOptionState> {
     let key = command_navigation_key(key);
-    if let Some(target) = state.listbox().navigation_target(key) {
-        return Some(target);
-    }
-
     let current = state.listbox().active_index()?;
-    let item_count = state.listbox().options().len();
-    if item_count == 0 {
+    let options = state.listbox().options();
+    if current >= options.len() {
         return None;
     }
 
-    let page_step = command_page_step(state, viewport_extent).max(1);
-    let target = match key {
-        "pageup" => current.saturating_sub(page_step),
-        "pagedown" => (current + page_step).min(item_count - 1),
-        _ => return None,
-    };
-
-    command_focusable_option_near(state.listbox().options(), target, matches!(key, "pagedown"))
+    match key {
+        "home" => command_first_focusable_option(options),
+        "end" => command_last_focusable_option(options),
+        "up" => command_adjacent_focusable_option(options, current, false, state.loop_navigation()),
+        "down" => {
+            command_adjacent_focusable_option(options, current, true, state.loop_navigation())
+        }
+        "pageup" => {
+            let page_step = command_page_step(state, viewport_extent).max(1);
+            command_focusable_option_near(options, current.saturating_sub(page_step), false)
+        }
+        "pagedown" => {
+            let page_step = command_page_step(state, viewport_extent).max(1);
+            command_focusable_option_near(
+                options,
+                current.saturating_add(page_step).min(options.len() - 1),
+                true,
+            )
+        }
+        "alt-up" if state.group_navigation() => {
+            command_group_navigation_target(options, current, false, state.loop_navigation())
+        }
+        "alt-down" if state.group_navigation() => {
+            command_group_navigation_target(options, current, true, state.loop_navigation())
+        }
+        _ => None,
+    }
 }
 
 fn command_navigation_key(key: &str) -> &str {
@@ -486,7 +501,90 @@ fn command_key_down_event_key(event: &KeyDownEvent) -> &str {
             _ => key,
         };
     }
+    if modifiers.alt && modifiers.number_of_modifiers() == 1 {
+        return match key {
+            "up" => "alt-up",
+            "down" => "alt-down",
+            _ => key,
+        };
+    }
     key
+}
+
+fn command_first_focusable_option(
+    options: &[crate::listbox::ListboxOptionState],
+) -> Option<&crate::listbox::ListboxOptionState> {
+    options.iter().find(|option| option.focusable())
+}
+
+fn command_last_focusable_option(
+    options: &[crate::listbox::ListboxOptionState],
+) -> Option<&crate::listbox::ListboxOptionState> {
+    options.iter().rev().find(|option| option.focusable())
+}
+
+fn command_adjacent_focusable_option(
+    options: &[crate::listbox::ListboxOptionState],
+    current: usize,
+    forward: bool,
+    loop_navigation: bool,
+) -> Option<&crate::listbox::ListboxOptionState> {
+    let target = crate::roving_focus::next_matching_index(
+        options.len(),
+        current,
+        forward,
+        loop_navigation,
+        |index| {
+            options
+                .get(index)
+                .is_some_and(crate::listbox::ListboxOptionState::focusable)
+        },
+    )?;
+    options.get(target)
+}
+
+fn command_group_navigation_target(
+    options: &[crate::listbox::ListboxOptionState],
+    current: usize,
+    forward: bool,
+    loop_navigation: bool,
+) -> Option<&crate::listbox::ListboxOptionState> {
+    let current_group = options.get(current)?.group_index();
+    let target_group = if forward {
+        options
+            .iter()
+            .skip(current + 1)
+            .find(|option| option.focusable() && option.group_index() != current_group)
+            .or_else(|| {
+                loop_navigation
+                    .then(|| {
+                        options.iter().take(current).find(|option| {
+                            option.focusable() && option.group_index() != current_group
+                        })
+                    })
+                    .flatten()
+            })
+    } else {
+        options
+            .iter()
+            .take(current)
+            .rev()
+            .find(|option| option.focusable() && option.group_index() != current_group)
+            .or_else(|| {
+                loop_navigation
+                    .then(|| {
+                        options.iter().skip(current + 1).rev().find(|option| {
+                            option.focusable() && option.group_index() != current_group
+                        })
+                    })
+                    .flatten()
+            })
+    }?
+    .group_index();
+
+    options
+        .iter()
+        .find(|option| option.focusable() && option.group_index() == target_group)
 }
 
 fn command_focusable_option_near(
@@ -971,6 +1069,27 @@ mod tests {
             .state()
     }
 
+    fn grouped_keyboard_state(active: &str) -> CommandState {
+        grouped_keyboard_command(active).state()
+    }
+
+    fn grouped_keyboard_command(active: &str) -> Command {
+        Command::new("grouped-palette", "Command palette")
+            .open(true)
+            .active(active)
+            .item(CommandItem::new("global-open", "Global Open"))
+            .group(
+                CommandGroup::new("file", "File")
+                    .item(CommandItem::new("new-file", "New File"))
+                    .item(CommandItem::new("close-window", "Close Window")),
+            )
+            .group(
+                CommandGroup::new("view", "View")
+                    .item(CommandItem::new("view-sidebar", "View Sidebar"))
+                    .item(CommandItem::new("zoom-in", "Zoom In")),
+            )
+    }
+
     #[test]
     fn keyboard_action_moves_and_selects_active_command() {
         let state = keyboard_state(false);
@@ -1012,6 +1131,116 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_action_supports_home_end_and_configurable_looping() {
+        let looping_last = paged_keyboard_state("close-window");
+        assert_eq!(
+            command_keyboard_action(&looping_last, "down", ui_px(40.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 0,
+                value: "open-file".to_string()
+            })
+        );
+        assert_eq!(
+            command_keyboard_action(&looping_last, "home", ui_px(40.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 0,
+                value: "open-file".to_string()
+            })
+        );
+        let looping_first = paged_keyboard_state("open-file");
+        assert_eq!(
+            command_keyboard_action(&looping_first, "end", ui_px(40.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 3,
+                value: "close-window".to_string()
+            })
+        );
+
+        let bounded_last = Command::new("bounded-palette", "Command palette")
+            .open(true)
+            .loop_navigation(false)
+            .selected("close-window")
+            .item(CommandItem::new("open-file", "Open File"))
+            .item(CommandItem::new("disabled-one", "Disabled One").disabled(true))
+            .item(CommandItem::new("close-window", "Close Window"))
+            .state();
+        assert_eq!(
+            command_keyboard_action(&bounded_last, "down", ui_px(40.0)),
+            CommandKeyboardAction::Ignore
+        );
+        assert_eq!(
+            command_keyboard_action(&bounded_last, "home", ui_px(40.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 0,
+                value: "open-file".to_string()
+            })
+        );
+
+        let bounded_first = Command::new("bounded-palette", "Command palette")
+            .open(true)
+            .loop_navigation(false)
+            .selected("open-file")
+            .item(CommandItem::new("open-file", "Open File"))
+            .item(CommandItem::new("close-window", "Close Window"))
+            .state();
+        assert_eq!(
+            command_keyboard_action(&bounded_first, "up", ui_px(40.0)),
+            CommandKeyboardAction::Ignore
+        );
+
+        let single = Command::new("single-palette", "Command palette")
+            .open(true)
+            .item(CommandItem::new("open-file", "Open File"))
+            .state();
+        let current = CommandKeyboardAction::Navigate(CommandNavigationTarget {
+            index: 0,
+            value: "open-file".to_string(),
+        });
+        assert_eq!(
+            command_keyboard_action(&single, "down", ui_px(40.0)),
+            current
+        );
+        assert_eq!(command_keyboard_action(&single, "up", ui_px(40.0)), current);
+    }
+
+    #[test]
+    fn keyboard_action_supports_group_navigation_aliases() {
+        let file_state = grouped_keyboard_state("new-file");
+        assert_eq!(
+            command_keyboard_action(&file_state, "alt-down", ui_px(224.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 3,
+                value: "view-sidebar".to_string()
+            })
+        );
+
+        let view_state = grouped_keyboard_state("zoom-in");
+        assert_eq!(
+            command_keyboard_action(&view_state, "alt-up", ui_px(224.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 1,
+                value: "new-file".to_string()
+            })
+        );
+
+        let disabled_group_down = grouped_keyboard_command("new-file")
+            .group_navigation(false)
+            .state();
+        assert_eq!(
+            command_keyboard_action(&disabled_group_down, "alt-down", ui_px(224.0)),
+            CommandKeyboardAction::Ignore
+        );
+
+        let disabled_group_up = grouped_keyboard_command("zoom-in")
+            .group_navigation(false)
+            .state();
+        assert_eq!(
+            command_keyboard_action(&disabled_group_up, "alt-up", ui_px(224.0)),
+            CommandKeyboardAction::Ignore
+        );
+    }
+
+    #[test]
     fn keyboard_event_key_normalizes_control_navigation_aliases() {
         let event = KeyDownEvent {
             keystroke: Keystroke {
@@ -1027,6 +1256,37 @@ mod tests {
         };
 
         assert_eq!(command_key_down_event_key(&event), "down");
+    }
+
+    #[test]
+    fn keyboard_event_key_names_group_navigation_aliases() {
+        let down = KeyDownEvent {
+            keystroke: Keystroke {
+                modifiers: Modifiers {
+                    alt: true,
+                    ..Modifiers::none()
+                },
+                key: "down".to_string(),
+                key_char: None,
+            },
+            is_held: false,
+            prefer_character_input: false,
+        };
+        assert_eq!(command_key_down_event_key(&down), "alt-down");
+
+        let up = KeyDownEvent {
+            keystroke: Keystroke {
+                modifiers: Modifiers {
+                    alt: true,
+                    ..Modifiers::none()
+                },
+                key: "up".to_string(),
+                key_char: None,
+            },
+            is_held: false,
+            prefer_character_input: false,
+        };
+        assert_eq!(command_key_down_event_key(&up), "alt-up");
     }
 
     #[test]

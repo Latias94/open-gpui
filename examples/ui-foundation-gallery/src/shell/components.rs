@@ -1598,6 +1598,11 @@ fn component_command_state_row(state: &CommandState) -> impl IntoElement {
             state.status_warning_count(),
             state.status_error_count()
         ))
+        .child(format!(
+            "navigation loop {} / group jump {}",
+            state.loop_navigation(),
+            state.group_navigation()
+        ))
 }
 
 pub(crate) fn component_radio_state_row(

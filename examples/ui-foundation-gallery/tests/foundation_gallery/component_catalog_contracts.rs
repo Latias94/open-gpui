@@ -1715,6 +1715,7 @@ fn component_gallery_shell_reads_choice_active_metadata_from_resolved_state() {
     assert!(combobox_readout.contains("visible {} of {} / typeahead"));
     assert!(command_readout.contains("selected_values {:?}"));
     assert!(command_readout.contains("{} status / {} warnings / {} errors"));
+    assert!(command_readout.contains("navigation loop {} / group jump {}"));
 }
 
 #[test]

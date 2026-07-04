@@ -20,6 +20,52 @@ use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
     Role, Size, ThemeTokens,
 };
+
+/// Keyboard navigation behavior for a command surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandNavigationBehavior {
+    loop_navigation: bool,
+    group_navigation: bool,
+}
+
+impl CommandNavigationBehavior {
+    /// Creates default command navigation behavior.
+    pub const fn new() -> Self {
+        Self {
+            loop_navigation: true,
+            group_navigation: true,
+        }
+    }
+
+    /// Returns the same behavior with loop navigation enabled or disabled.
+    pub const fn with_loop_navigation(mut self, enabled: bool) -> Self {
+        self.loop_navigation = enabled;
+        self
+    }
+
+    /// Returns the same behavior with group navigation enabled or disabled.
+    pub const fn with_group_navigation(mut self, enabled: bool) -> Self {
+        self.group_navigation = enabled;
+        self
+    }
+
+    /// Returns whether Up/Down navigation wraps across list boundaries.
+    pub const fn loop_navigation(self) -> bool {
+        self.loop_navigation
+    }
+
+    /// Returns whether group-jump key aliases are enabled.
+    pub const fn group_navigation(self) -> bool {
+        self.group_navigation
+    }
+}
+
+impl Default for CommandNavigationBehavior {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Selection payload emitted by a command surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSelection {
@@ -396,6 +442,7 @@ pub struct CommandState {
     open: bool,
     default_open: bool,
     open_mode: CommandOpenMode,
+    navigation_behavior: CommandNavigationBehavior,
     selection_mode: CommandSelectionMode,
     overlay: OverlayResolvedState,
     dialog: Option<CommandDialogState>,
@@ -845,6 +892,7 @@ impl CommandState {
             open,
             default_open,
             open_mode,
+            navigation_behavior: CommandNavigationBehavior::default(),
             selection_mode,
             overlay,
             dialog,
@@ -923,6 +971,21 @@ impl CommandState {
     /// Returns open-state ownership.
     pub const fn open_mode(&self) -> CommandOpenMode {
         self.open_mode
+    }
+
+    /// Returns keyboard navigation behavior.
+    pub const fn navigation_behavior(&self) -> CommandNavigationBehavior {
+        self.navigation_behavior
+    }
+
+    /// Returns whether Up/Down navigation wraps across list boundaries.
+    pub const fn loop_navigation(&self) -> bool {
+        self.navigation_behavior.loop_navigation()
+    }
+
+    /// Returns whether group-jump key aliases are enabled.
+    pub const fn group_navigation(&self) -> bool {
+        self.navigation_behavior.group_navigation()
     }
 
     /// Returns selection behavior.
@@ -1111,6 +1174,12 @@ impl CommandState {
     /// Returns the same state with an adjusted metric bundle.
     pub const fn with_metrics(mut self, metrics: CommandMetrics) -> Self {
         self.metrics = metrics;
+        self
+    }
+
+    /// Returns the same state with adjusted keyboard navigation behavior.
+    pub const fn with_navigation_behavior(mut self, behavior: CommandNavigationBehavior) -> Self {
+        self.navigation_behavior = behavior;
         self
     }
 
