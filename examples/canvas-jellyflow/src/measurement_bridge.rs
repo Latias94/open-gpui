@@ -10,9 +10,37 @@ use jellyflow::{
 use jellyflow_open_gpui::{
     OpenGpuiMeasuredRegion, OpenGpuiMeasurementContext, OpenGpuiMeasurementCoverage,
     OpenGpuiProjectionFallbackStoreEvidence, OpenGpuiViewPoint,
-    layout_pass_measurement_from_regions, measured_surface_anchors, project_node_measurement,
-    projected_node_surface_graph_layout,
+    assign_layout_pass_measurement_revision, layout_pass_measurement_from_regions,
+    measured_surface_anchors, project_node_measurement, projected_node_surface_graph_layout,
 };
+use std::collections::BTreeMap;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LayoutPassMeasurementConsume {
+    NoRegions,
+    Unchanged,
+    Changed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct LayoutPassMeasurementNodeInput {
+    pub(crate) node_id: JellyNodeId,
+    pub(crate) node_size: JellySize,
+    pub(crate) node_view_origin: OpenGpuiViewPoint,
+    pub(crate) view_to_document_scale: f32,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct LayoutPassMeasurementConsumeResult {
+    pub(crate) outcome: LayoutPassMeasurementConsume,
+    pub(crate) coverage: BTreeMap<JellyNodeId, OpenGpuiMeasurementCoverage>,
+}
+
+impl Default for LayoutPassMeasurementConsume {
+    fn default() -> Self {
+        Self::NoRegions
+    }
+}
 
 pub(crate) struct ProjectionFallbackStore {
     store: NodeGraphStore,
@@ -54,6 +82,72 @@ pub(crate) fn layout_pass_measurement_for_node(
     )
     .with_revision(0);
     layout_pass_measurement_from_regions(context, node_regions, fallback_anchors)
+}
+
+pub(crate) fn consume_layout_pass_measurements(
+    store: &mut NodeGraphStore,
+    semantic_registry: &NodeRegistry,
+    regions: impl IntoIterator<Item = OpenGpuiMeasuredRegion>,
+    node_inputs: impl IntoIterator<Item = LayoutPassMeasurementNodeInput>,
+    next_revision: &mut u64,
+) -> LayoutPassMeasurementConsumeResult {
+    let regions = regions.into_iter().collect::<Vec<_>>();
+    if regions.is_empty() {
+        return LayoutPassMeasurementConsumeResult {
+            outcome: LayoutPassMeasurementConsume::NoRegions,
+            coverage: BTreeMap::new(),
+        };
+    }
+
+    let mut changed = false;
+    let mut coverage = BTreeMap::new();
+
+    for input in node_inputs {
+        let Some(node) = store.graph().nodes().get(&input.node_id).cloned() else {
+            continue;
+        };
+        let node_regions = regions
+            .iter()
+            .filter(|region| region.node == Some(input.node_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if node_regions.is_empty() {
+            continue;
+        }
+        let Some(descriptor) = semantic_registry.view_descriptor(&node.kind) else {
+            continue;
+        };
+        let (mut measurement, node_coverage) = layout_pass_measurement_for_node(
+            input.node_id,
+            &node,
+            store.graph(),
+            &descriptor,
+            input.node_size,
+            input.node_view_origin,
+            input.view_to_document_scale,
+            node_regions,
+        );
+        let existing = store.node_measurement(input.node_id);
+        assign_layout_pass_measurement_revision(
+            store.node_measurement_status(input.node_id),
+            existing.as_ref(),
+            &mut measurement,
+            next_revision,
+        );
+        if let Ok(outcome) = store.report_node_measurement(measurement) {
+            coverage.insert(input.node_id, node_coverage);
+            changed |= outcome.changed();
+        }
+    }
+
+    LayoutPassMeasurementConsumeResult {
+        outcome: if changed {
+            LayoutPassMeasurementConsume::Changed
+        } else {
+            LayoutPassMeasurementConsume::Unchanged
+        },
+        coverage,
+    }
 }
 
 pub(crate) fn measurement_store_with_explicit_projection_fallback(
@@ -278,5 +372,70 @@ mod tests {
         assert_eq!(coverage.layout_pass_regions, 1);
         assert!(coverage.projection_fallback_regions > 0);
         assert!(!coverage.is_full_layout_pass());
+    }
+
+    #[test]
+    fn layout_pass_consume_reports_changed_then_unchanged_with_cached_revision() {
+        let mut store = crate::make_demo_store();
+        let registry = demo_registry();
+        let transform = JellyNodeId::from_u128(3);
+        let node = store
+            .graph()
+            .nodes()
+            .get(&transform)
+            .expect("transform node");
+        let node_pos = node.pos;
+        let node_size = node.size.expect("node size");
+        let slot_key = "prompt";
+        let regions = || {
+            vec![
+                OpenGpuiMeasurementId::slot(transform, slot_key).into_region(
+                    OpenGpuiViewBounds::new(
+                        OpenGpuiViewPoint::new(node_pos.x + 12.0, node_pos.y + 20.0),
+                        OpenGpuiViewSize::new(96.0, 24.0),
+                    ),
+                ),
+            ]
+        };
+        let inputs = || {
+            vec![LayoutPassMeasurementNodeInput {
+                node_id: transform,
+                node_size,
+                node_view_origin: OpenGpuiViewPoint::new(node_pos.x, node_pos.y),
+                view_to_document_scale: 1.0,
+            }]
+        };
+        let mut next_revision = 0;
+
+        let first = consume_layout_pass_measurements(
+            &mut store,
+            &registry,
+            regions(),
+            inputs(),
+            &mut next_revision,
+        );
+        assert_eq!(first.outcome, LayoutPassMeasurementConsume::Changed);
+        assert_eq!(first.coverage[&transform].measured_slots, 1);
+        let first_revision = store
+            .node_measurement(transform)
+            .expect("first measurement")
+            .revision;
+
+        let second = consume_layout_pass_measurements(
+            &mut store,
+            &registry,
+            regions(),
+            inputs(),
+            &mut next_revision,
+        );
+        assert_eq!(second.outcome, LayoutPassMeasurementConsume::Unchanged);
+        assert_eq!(second.coverage[&transform].measured_slots, 1);
+        assert_eq!(
+            store
+                .node_measurement(transform)
+                .expect("second measurement")
+                .revision,
+            first_revision
+        );
     }
 }

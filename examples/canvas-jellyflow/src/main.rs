@@ -100,6 +100,8 @@ mod product_renderers;
 #[cfg(test)]
 mod visual_regression;
 
+use measurement_bridge::{LayoutPassMeasurementConsume, LayoutPassMeasurementNodeInput};
+
 const REPEATABLE_ITEM_SNAPSHOTS_FIELD: &str = "jellyflow_repeatable_items";
 #[cfg(test)]
 const INITIAL_SELECTION: u128 = 2;
@@ -228,13 +230,6 @@ struct JellyflowCanvasView {
     deferred_editor_refresh: bool,
     last_canvas_view_size: Option<open_gpui::Size<Pixels>>,
     last_canvas_bounds: Option<Bounds<Pixels>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LayoutPassMeasurementConsume {
-    NoRegions,
-    Unchanged,
-    Changed,
 }
 
 #[derive(Clone)]
@@ -1190,13 +1185,6 @@ impl JellyflowCanvasView {
 
     fn consume_layout_pass_measurements(&mut self) -> LayoutPassMeasurementConsume {
         let regions = self.measured_regions.regions();
-        if regions.is_empty() {
-            self.measurement_coverage.clear();
-            return LayoutPassMeasurementConsume::NoRegions;
-        }
-
-        let mut changed = false;
-        let mut next_coverage = BTreeMap::new();
         let node_ids = self
             .store
             .graph()
@@ -1204,76 +1192,55 @@ impl JellyflowCanvasView {
             .keys()
             .copied()
             .collect::<Vec<_>>();
+        let node_inputs = node_ids
+            .into_iter()
+            .filter_map(|node_id| {
+                let node = self.store.graph().nodes().get(&node_id)?;
+                let canvas_node = self
+                    .editor
+                    .document()
+                    .node(&NodeId::from(canvas_node_id(&node_id)))?;
+                let node_size = node.size.unwrap_or(JellySize {
+                    width: canvas_node.size.width.as_f32(),
+                    height: canvas_node.size.height.as_f32(),
+                });
+                let node_view_bounds = self
+                    .editor
+                    .viewport()
+                    .document_bounds_to_view(canvas_node.bounds());
+                Some(LayoutPassMeasurementNodeInput {
+                    node_id,
+                    node_size,
+                    node_view_origin: jellyflow_open_gpui::OpenGpuiViewPoint::new(
+                        node_view_bounds.origin.x.as_f32(),
+                        node_view_bounds.origin.y.as_f32(),
+                    ),
+                    view_to_document_scale: 1.0 / self.editor.viewport().zoom.max(f32::EPSILON),
+                })
+            })
+            .collect::<Vec<_>>();
+        let result = measurement_bridge::consume_layout_pass_measurements(
+            &mut self.store,
+            &self.semantic_registry,
+            regions,
+            node_inputs,
+            &mut self.measurement_revision,
+        );
+        self.measurement_coverage = result.coverage;
 
-        for node_id in node_ids {
-            let Some(node) = self.store.graph().nodes().get(&node_id).cloned() else {
-                continue;
-            };
-            let node_regions = regions
-                .iter()
-                .filter(|region| region.node == Some(node_id))
-                .cloned()
-                .collect::<Vec<_>>();
-            if node_regions.is_empty() {
-                continue;
+        match result.outcome {
+            LayoutPassMeasurementConsume::NoRegions | LayoutPassMeasurementConsume::Unchanged => {
+                result.outcome
             }
-
-            let Some(canvas_node) = self
-                .editor
-                .document()
-                .node(&NodeId::from(canvas_node_id(&node_id)))
-            else {
-                continue;
-            };
-            let Some(descriptor) = self.semantic_registry.view_descriptor(&node.kind) else {
-                continue;
-            };
-            let node_size = node.size.unwrap_or(JellySize {
-                width: canvas_node.size.width.as_f32(),
-                height: canvas_node.size.height.as_f32(),
-            });
-            let node_view_bounds = self
-                .editor
-                .viewport()
-                .document_bounds_to_view(canvas_node.bounds());
-            let (mut measurement, coverage) = measurement_bridge::layout_pass_measurement_for_node(
-                node_id,
-                &node,
-                self.store.graph(),
-                &descriptor,
-                node_size,
-                jellyflow_open_gpui::OpenGpuiViewPoint::new(
-                    node_view_bounds.origin.x.as_f32(),
-                    node_view_bounds.origin.y.as_f32(),
-                ),
-                1.0 / self.editor.viewport().zoom.max(f32::EPSILON),
-                node_regions,
-            );
-            let existing = self.store.node_measurement(node_id);
-            assign_layout_pass_measurement_revision(
-                self.store.node_measurement_status(node_id),
-                existing.as_ref(),
-                &mut measurement,
-                &mut self.measurement_revision,
-            );
-            let outcome = self.store.report_node_measurement(measurement);
-            if let Ok(outcome) = outcome {
-                next_coverage.insert(node_id, coverage);
-                changed |= outcome.changed();
+            LayoutPassMeasurementConsume::Changed => {
+                if self.is_pointer_interacting() {
+                    self.deferred_editor_refresh = true;
+                } else {
+                    self.refresh_editor_from_store();
+                    self.deferred_editor_refresh = false;
+                }
+                result.outcome
             }
-        }
-        self.measurement_coverage = next_coverage;
-
-        if changed {
-            if self.is_pointer_interacting() {
-                self.deferred_editor_refresh = true;
-            } else {
-                self.refresh_editor_from_store();
-                self.deferred_editor_refresh = false;
-            }
-            LayoutPassMeasurementConsume::Changed
-        } else {
-            LayoutPassMeasurementConsume::Unchanged
         }
     }
 
