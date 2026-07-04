@@ -123,6 +123,28 @@ fn tree_component_source_mapping_tracks_split_owners() {
 }
 
 #[test]
+fn select_component_source_mapping_tracks_split_owners() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let select_sources = [
+        "select/mod.rs",
+        "select/model.rs",
+        "select/render_plan.rs",
+        "select/runtime.rs",
+        "select/style.rs",
+    ];
+
+    assert!(!source_dir.join("select.rs").exists());
+    assert_eq!(component_source_inputs("Select"), select_sources);
+
+    for owner in select_sources {
+        assert!(
+            source_dir.join(owner).is_file(),
+            "split Select owner `{owner}` should exist"
+        );
+    }
+}
+
+#[test]
 fn table_behavior_source_mapping_tracks_split_owners() {
     let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let behavior_sources = [

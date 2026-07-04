@@ -264,8 +264,14 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentCatalog,
         docs_token: Some("Select"),
         default_export: true,
-        source_inputs: &["select.rs"],
-        source_home: "select.rs",
+        source_inputs: &[
+            "select/mod.rs",
+            "select/model.rs",
+            "select/render_plan.rs",
+            "select/runtime.rs",
+            "select/style.rs",
+        ],
+        source_home: "select/mod.rs",
     },
     ComponentContractEntry {
         name: "Combobox",
