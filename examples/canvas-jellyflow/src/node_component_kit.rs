@@ -9,15 +9,19 @@ use jellyflow::{
 };
 use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiBoundsCollector, OpenGpuiControlEventValue, OpenGpuiControlPlan,
-    OpenGpuiControlPrimitive, OpenGpuiMeasurementId, OpenGpuiMenuPlan, OpenGpuiNodeRendererContext,
-    OpenGpuiNodeRendererHostContext, OpenGpuiRepeatableActionPlan, OpenGpuiViewBounds,
-    OpenGpuiViewPoint, OpenGpuiViewSize, control_option_key, control_selected_option_key,
-    open_gpui_action_button_element_id, open_gpui_action_menu_element_id,
-    open_gpui_control_element_id, open_gpui_slot_action_button_element_id,
+    OpenGpuiControlPrimitive, OpenGpuiDynamicPortPolicy, OpenGpuiMeasurementId, OpenGpuiMenuPlan,
+    OpenGpuiNodeRendererContext, OpenGpuiNodeRendererHostContext, OpenGpuiRepeatableActionPlan,
+    OpenGpuiRepeatableItemLayout, OpenGpuiViewBounds, OpenGpuiViewPoint, OpenGpuiViewSize,
+    control_option_key, control_selected_option_key, open_gpui_action_button_element_id,
+    open_gpui_action_menu_element_id, open_gpui_control_element_id,
+    open_gpui_custom_renderer_badge_element_id, open_gpui_custom_repeatables_badge_element_id,
+    open_gpui_custom_slots_badge_element_id, open_gpui_repeatable_item_element_id,
+    open_gpui_repeatable_remove_action_element_id, open_gpui_repeatable_reorder_action_element_id,
+    open_gpui_slot_action_button_element_id,
 };
 use open_gpui::{
-    AnyElement, App, Bounds, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Window, div,
-    measured_element, prelude::*, px, rgb,
+    AnyElement, App, Bounds, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, WeakEntity, Window,
+    div, measured_element, prelude::*, px, rgb,
 };
 use open_gpui_ui_components::prelude::Sizable;
 use open_gpui_ui_components::{
@@ -26,6 +30,21 @@ use open_gpui_ui_components::{
 };
 use open_gpui_ui_core::Size;
 use serde_json::Value;
+
+pub const PRODUCT_CARD_PAD: f32 = 10.0;
+pub const PRODUCT_HEADER_HEIGHT: f32 = 24.0;
+pub const PRODUCT_TITLE_ROW_HEIGHT: f32 = 36.0;
+pub const PRODUCT_PREVIEW_ROW_HEIGHT: f32 = 54.0;
+pub const PRODUCT_PORT_RAIL_HEIGHT: f32 = 26.0;
+pub const PRODUCT_CONTROL_ROW_HEIGHT: f32 = 40.0;
+pub const PRODUCT_PROMPT_CONTROL_ROW_HEIGHT: f32 = 48.0;
+pub const PRODUCT_CONTROL_CHIP_HEIGHT: f32 = 34.0;
+pub const PRODUCT_REPEATABLE_CHIP_HEIGHT: f32 = 36.0;
+pub const PRODUCT_REPEATABLE_ROW_HEIGHT: f32 = 42.0;
+pub const PRODUCT_REPEATABLE_ADD_WIDTH: f32 = 96.0;
+pub const PRODUCT_SECTION_GAP: f32 = 6.0;
+pub const PRODUCT_BODY_TOP: f32 = PRODUCT_CARD_PAD + PRODUCT_HEADER_HEIGHT + PRODUCT_SECTION_GAP;
+pub const PRODUCT_ANCHOR_TOP: f32 = PRODUCT_BODY_TOP + PRODUCT_SECTION_GAP;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct OpenGpuiNodeComponentProps {
@@ -632,6 +651,46 @@ pub fn adaptive_repeatable_list_plan(
 }
 
 #[derive(Clone, Copy)]
+pub struct ProductLayoutRegion {
+    pub top: Pixels,
+    pub height: Pixels,
+    pub mode: AdaptiveNodeLayoutMode,
+}
+
+impl ProductLayoutRegion {
+    pub fn from_adaptive(region: AdaptiveNodeLayoutRegion) -> Self {
+        Self {
+            top: px(region.top),
+            height: px(region.height),
+            mode: region.mode,
+        }
+    }
+
+    pub fn bottom(self) -> f32 {
+        self.top.as_f32() + self.height.as_f32()
+    }
+}
+
+pub fn product_layout_stack(node_size: CanvasSize, footer_height: f32) -> AdaptiveNodeLayoutStack {
+    AdaptiveNodeLayoutStack::new(
+        node_size,
+        PRODUCT_CARD_PAD,
+        PRODUCT_HEADER_HEIGHT,
+        footer_height,
+        PRODUCT_SECTION_GAP,
+    )
+}
+
+pub fn reserve_product_region(
+    layout: &mut AdaptiveNodeLayoutStack,
+    key: &'static str,
+    full_height: f32,
+    compact_height: f32,
+) -> ProductLayoutRegion {
+    ProductLayoutRegion::from_adaptive(layout.reserve_region(key, full_height, compact_height))
+}
+
+#[derive(Clone, Copy)]
 pub struct ProductControlRowStyle {
     pub left: Pixels,
     pub right: Pixels,
@@ -703,6 +762,168 @@ pub fn render_product_text_line(
         .text_color(color)
         .child(label.into())
         .into_any_element()
+}
+
+pub fn render_product_badge(
+    id: impl Into<String>,
+    label: impl Into<String>,
+    variant: BadgeVariant,
+) -> AnyElement {
+    Badge::new(id.into(), label.into())
+        .variant(variant)
+        .with_size(Size::XSmall)
+        .into_any_element()
+}
+
+pub fn product_header_measurement_id(node_id: JellyNodeId) -> OpenGpuiMeasurementId {
+    OpenGpuiMeasurementId::readable(node_id, "header.chrome")
+}
+
+pub fn product_footer_measurement_id(node_id: JellyNodeId) -> OpenGpuiMeasurementId {
+    OpenGpuiMeasurementId::readable(node_id, "footer.chrome")
+}
+
+pub fn render_product_card(
+    context: &OpenGpuiNodeRendererContext,
+    accent: open_gpui::Rgba,
+    fill: open_gpui::Rgba,
+    view: WeakEntity<crate::JellyflowCanvasView>,
+) -> open_gpui::Div {
+    div()
+        .size_full()
+        .relative()
+        .rounded_sm()
+        .border_1()
+        .border_color(if context.state.selected {
+            rgb(0x2563eb)
+        } else {
+            accent
+        })
+        .bg(fill)
+        .overflow_hidden()
+        .shadow_sm()
+        .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+            if crate::dispatch_node_drag_surface_mouse_down(view.clone(), event, cx) {
+                cx.stop_propagation();
+            }
+        })
+}
+
+pub fn render_product_header(
+    context: &OpenGpuiNodeRendererContext,
+    family: &'static str,
+    status: &'static str,
+    accent: open_gpui::Rgba,
+    collector: OpenGpuiBoundsCollector,
+    view: WeakEntity<crate::JellyflowCanvasView>,
+) -> AnyElement {
+    render_readable_region(
+        product_header_measurement_id(context.node_id),
+        collector,
+        div()
+            .absolute()
+            .left(px(PRODUCT_CARD_PAD))
+            .top(px(PRODUCT_CARD_PAD))
+            .right(px(PRODUCT_CARD_PAD))
+            .h(px(PRODUCT_HEADER_HEIGHT))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .overflow_hidden()
+            .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+                if crate::dispatch_node_drag_surface_mouse_down(view.clone(), event, cx) {
+                    cx.stop_propagation();
+                }
+            })
+            .child(render_product_badge(
+                open_gpui_custom_renderer_badge_element_id(context.node_id, &context.renderer_key),
+                family,
+                BadgeVariant::Default,
+            ))
+            .child(
+                div()
+                    .text_xs()
+                    .truncate()
+                    .min_w(px(0.0))
+                    .text_color(accent)
+                    .child(status),
+            ),
+    )
+}
+
+pub fn render_product_footer(
+    context: &OpenGpuiNodeRendererContext,
+    collector: OpenGpuiBoundsCollector,
+) -> AnyElement {
+    render_readable_region(
+        product_footer_measurement_id(context.node_id),
+        collector,
+        div()
+            .absolute()
+            .left(px(PRODUCT_CARD_PAD))
+            .bottom(px(PRODUCT_CARD_PAD))
+            .right(px(PRODUCT_CARD_PAD))
+            .h(px(PRODUCT_PORT_RAIL_HEIGHT))
+            .flex()
+            .items_center()
+            .gap_1()
+            .overflow_hidden()
+            .child(render_product_badge(
+                open_gpui_custom_slots_badge_element_id(context.node_id),
+                format!("{} slots", context.surface_layout.slots.len()),
+                BadgeVariant::Secondary,
+            ))
+            .child(render_product_badge(
+                open_gpui_custom_repeatables_badge_element_id(context.node_id),
+                format!("{} repeatables", context.repeatable_items.len()),
+                BadgeVariant::Outline,
+            )),
+    )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProductNodeAnchorSide {
+    Left,
+    Right,
+}
+
+pub fn render_product_side_anchor(
+    context: &OpenGpuiNodeRendererContext,
+    anchor_key: &str,
+    collector: OpenGpuiBoundsCollector,
+    side: ProductNodeAnchorSide,
+) -> AnyElement {
+    let anchor = render_handle_region(
+        context.anchor_measurement_id(anchor_key),
+        collector,
+        match side {
+            ProductNodeAnchorSide::Left => OpenGpuiNodeAnchorPlacement::LeftRail,
+            ProductNodeAnchorSide::Right => OpenGpuiNodeAnchorPlacement::RightRail,
+        },
+    );
+    let positioned = div()
+        .absolute()
+        .top(px(PRODUCT_ANCHOR_TOP))
+        .w(px(8.0))
+        .h(px(20.0));
+
+    match side {
+        ProductNodeAnchorSide::Left => positioned.left(px(0.0)).child(anchor).into_any_element(),
+        ProductNodeAnchorSide::Right => positioned.right(px(0.0)).child(anchor).into_any_element(),
+    }
+}
+
+pub fn render_product_inline_anchor(
+    context: &OpenGpuiNodeRendererContext,
+    anchor_key: String,
+    collector: OpenGpuiBoundsCollector,
+) -> AnyElement {
+    render_handle_region(
+        context.anchor_measurement_id(anchor_key),
+        collector,
+        OpenGpuiNodeAnchorPlacement::Inline,
+    )
 }
 
 pub fn product_line_clamp(
@@ -932,6 +1153,253 @@ pub(crate) fn product_repeatable_overflow_measurement_id(
     collection_key: &str,
 ) -> OpenGpuiMeasurementId {
     OpenGpuiMeasurementId::overflow(node_id, collection_key)
+}
+
+pub fn render_product_repeatable_chip(
+    context: &OpenGpuiNodeRendererContext,
+    item: &OpenGpuiRepeatableItemLayout,
+    collector: OpenGpuiBoundsCollector,
+    actions: &NodeComponentKitActions,
+) -> AnyElement {
+    let projection = &item.projection;
+    let label = repeatable_item_label(&projection.item_data, &projection.label);
+    let ty = repeatable_item_type_label(&projection.item_data);
+    let disabled = projection.remove_disabled_reason.is_some();
+    let port_status = repeatable_port_status_label(projection.dynamic_port_policy);
+    let missing_port =
+        projection.dynamic_port_policy == OpenGpuiDynamicPortPolicy::MissingGraphPort;
+    let collection_key = projection.collection_key.clone();
+    let item_id = projection.item_id.clone();
+    let anchor = projection.anchor.clone();
+
+    render_measured_region(
+        context.repeatable_item_measurement_id(projection.slot_key.clone(), item_id.clone()),
+        collector.clone(),
+        div()
+            .h(px(PRODUCT_REPEATABLE_CHIP_HEIGHT))
+            .min_w(px(84.0))
+            .flex_1()
+            .max_w(px(132.0))
+            .flex()
+            .items_center()
+            .gap_1()
+            .rounded_sm()
+            .bg(if missing_port {
+                rgb(0xfffbeb)
+            } else {
+                rgb(0xede9fe)
+            })
+            .border_1()
+            .border_color(if missing_port {
+                rgb(0xf59e0b)
+            } else {
+                rgb(0xa78bfa)
+            })
+            .px_1()
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .child(render_product_text_line(label, rgb(0x111827), false)),
+            )
+            .child(render_repeatable_type_badge(
+                context,
+                &collection_key,
+                &item_id,
+                &ty,
+            ))
+            .child(render_repeatable_port_status_badge(
+                context,
+                &collection_key,
+                &item_id,
+                port_status,
+                projection.dynamic_port_policy,
+            ))
+            .child(repeatable_action_button(
+                context.node_id,
+                open_gpui_repeatable_remove_action_element_id(
+                    context.node_id,
+                    &collection_key,
+                    &item_id,
+                ),
+                "Del",
+                ButtonVariant::Destructive,
+                disabled,
+                OpenGpuiRepeatableActionPlan::Remove {
+                    collection_key,
+                    item_id: item_id.clone(),
+                },
+                actions,
+            ))
+            .child(render_product_inline_anchor(context, anchor, collector)),
+    )
+}
+
+pub fn render_product_repeatable_row(
+    context: &OpenGpuiNodeRendererContext,
+    item: &OpenGpuiRepeatableItemLayout,
+    collector: OpenGpuiBoundsCollector,
+    actions: &NodeComponentKitActions,
+) -> AnyElement {
+    let projection = &item.projection;
+    let label = repeatable_item_label(&projection.item_data, &projection.label);
+    let ty = json_path_label(&projection.item_data, &["ty"]).unwrap_or_else(|| "field".to_owned());
+    let collection_key = projection.collection_key.clone();
+    let item_id = projection.item_id.clone();
+    let disabled = projection.remove_disabled_reason.is_some();
+    let item_index = projection.item_index;
+    let anchor = projection.anchor.clone();
+    let dynamic_port_policy = projection.dynamic_port_policy;
+
+    render_measured_region(
+        context.repeatable_item_measurement_id(projection.slot_key.clone(), item_id.clone()),
+        collector.clone(),
+        div()
+            .h(px(PRODUCT_REPEATABLE_ROW_HEIGHT))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_1()
+            .rounded_sm()
+            .bg(rgb(0xffffff))
+            .border_1()
+            .border_color(rgb(0xcbd5e1))
+            .px_2()
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .items_center()
+                    .gap_1()
+                    .min_w(px(0.0))
+                    .overflow_hidden()
+                    .child(render_product_badge(
+                        open_gpui_repeatable_item_element_id(
+                            context.node_id,
+                            &projection.collection_key,
+                            &projection.item_id,
+                        ),
+                        ty,
+                        BadgeVariant::Outline,
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child(render_product_text_line(label, rgb(0x334155), false)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap_1()
+                    .child(render_repeatable_port_policy_badge(
+                        context,
+                        &collection_key,
+                        &item_id,
+                        dynamic_port_policy,
+                    ))
+                    .child(repeatable_action_button(
+                        context.node_id,
+                        open_gpui_repeatable_reorder_action_element_id(
+                            context.node_id,
+                            &collection_key,
+                            &item_id,
+                        ),
+                        "Up",
+                        ButtonVariant::Secondary,
+                        item_index == 0,
+                        OpenGpuiRepeatableActionPlan::Reorder {
+                            collection_key: collection_key.clone(),
+                            item_id: item_id.clone(),
+                            to_index: item_index.saturating_sub(1),
+                        },
+                        actions,
+                    ))
+                    .child(repeatable_action_button(
+                        context.node_id,
+                        open_gpui_repeatable_remove_action_element_id(
+                            context.node_id,
+                            &collection_key,
+                            &item_id,
+                        ),
+                        "Del",
+                        ButtonVariant::Destructive,
+                        disabled,
+                        OpenGpuiRepeatableActionPlan::Remove {
+                            collection_key,
+                            item_id: item_id.clone(),
+                        },
+                        actions,
+                    )),
+            )
+            .child(render_product_inline_anchor(context, anchor, collector)),
+    )
+}
+
+fn render_repeatable_type_badge(
+    context: &OpenGpuiNodeRendererContext,
+    collection_key: &str,
+    item_id: &str,
+    ty: &str,
+) -> AnyElement {
+    render_product_badge(
+        format!(
+            "jellyflow-repeatable-type:{}:{collection_key}:{item_id}",
+            context.node_id.0
+        ),
+        ty.to_owned(),
+        BadgeVariant::Outline,
+    )
+}
+
+fn render_repeatable_port_status_badge(
+    context: &OpenGpuiNodeRendererContext,
+    collection_key: &str,
+    item_id: &str,
+    label: &'static str,
+    policy: OpenGpuiDynamicPortPolicy,
+) -> AnyElement {
+    if policy == OpenGpuiDynamicPortPolicy::BoundToGraphPort {
+        return div().w(px(0.0)).h(px(0.0)).into_any_element();
+    }
+
+    render_product_badge(
+        format!(
+            "jellyflow-repeatable-port-status:{}:{collection_key}:{item_id}",
+            context.node_id.0
+        ),
+        label,
+        if policy == OpenGpuiDynamicPortPolicy::MissingGraphPort {
+            BadgeVariant::Destructive
+        } else {
+            BadgeVariant::Secondary
+        },
+    )
+}
+
+fn render_repeatable_port_policy_badge(
+    context: &OpenGpuiNodeRendererContext,
+    collection_key: &str,
+    item_id: &str,
+    policy: OpenGpuiDynamicPortPolicy,
+) -> AnyElement {
+    if policy != OpenGpuiDynamicPortPolicy::MissingGraphPort {
+        return div().w(px(0.0)).h(px(0.0)).into_any_element();
+    }
+
+    render_product_badge(
+        format!(
+            "jellyflow-repeatable-port-policy:{}:{collection_key}:{item_id}",
+            context.node_id.0
+        ),
+        "no port",
+        BadgeVariant::Destructive,
+    )
 }
 
 fn product_control_drag_exclusion_measurement_id(
@@ -1391,6 +1859,37 @@ fn json_value_label(value: &Value) -> String {
     }
 }
 
+pub(crate) fn repeatable_item_label(item_data: &Value, fallback: &str) -> String {
+    json_path_label(item_data, &["name"])
+        .or_else(|| json_path_label(item_data, &["title"]))
+        .unwrap_or_else(|| fallback.to_owned())
+}
+
+pub(crate) fn repeatable_item_type_label(item_data: &Value) -> String {
+    json_path_label(item_data, &["ty"]).unwrap_or_else(|| "value".to_owned())
+}
+
+pub(crate) fn repeatable_port_status_label(policy: OpenGpuiDynamicPortPolicy) -> &'static str {
+    match policy {
+        OpenGpuiDynamicPortPolicy::DisplayOnly => "display",
+        OpenGpuiDynamicPortPolicy::BoundToGraphPort => "port",
+        OpenGpuiDynamicPortPolicy::MissingGraphPort => "no port",
+    }
+}
+
+pub(crate) fn json_path_label(value: &Value, path: &[&str]) -> Option<String> {
+    let mut current = value;
+    for segment in path {
+        current = current.get(*segment)?;
+    }
+    match current {
+        Value::String(text) => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        Value::Bool(value) => Some(value.to_string()),
+        Value::Null | Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
 fn action_button_variant(action: &OpenGpuiActionPlan, index: usize) -> ButtonVariant {
     if action.danger {
         ButtonVariant::Destructive
@@ -1473,6 +1972,15 @@ mod tests {
     fn product_atoms_keep_stable_measurement_ids() {
         let node_id = JellyNodeId::from_u128(42);
 
+        assert_eq!(
+            product_header_measurement_id(node_id).element_id(),
+            format!("jellyflow-node:{}:readable:header.chrome", node_id.0)
+        );
+        assert_eq!(
+            product_footer_measurement_id(node_id).element_id(),
+            format!("jellyflow-node:{}:readable:footer.chrome", node_id.0)
+        );
+
         let overflow = product_repeatable_overflow_measurement_id(node_id, "shader.inputs");
         assert_eq!(
             overflow.element_id(),
@@ -1487,6 +1995,31 @@ mod tests {
                 "jellyflow-node:{}:drag-exclusion:field.prompt:control.prompt",
                 node_id.0
             )
+        );
+    }
+
+    #[test]
+    fn repeatable_atoms_label_type_and_dynamic_port_status() {
+        let item = serde_json::json!({
+            "id": "normal",
+            "name": "Normal",
+            "ty": "vec4",
+            "port": "normal"
+        });
+
+        assert_eq!(repeatable_item_label(&item, "fallback"), "Normal");
+        assert_eq!(repeatable_item_type_label(&item), "vec4");
+        assert_eq!(
+            repeatable_port_status_label(OpenGpuiDynamicPortPolicy::BoundToGraphPort),
+            "port"
+        );
+        assert_eq!(
+            repeatable_port_status_label(OpenGpuiDynamicPortPolicy::MissingGraphPort),
+            "no port"
+        );
+        assert_eq!(
+            repeatable_port_status_label(OpenGpuiDynamicPortPolicy::DisplayOnly),
+            "display"
         );
     }
 

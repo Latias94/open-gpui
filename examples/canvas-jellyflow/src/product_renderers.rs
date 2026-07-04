@@ -5,76 +5,23 @@ use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiBoundsCollector, OpenGpuiDynamicPortPolicy, OpenGpuiMenuPlan,
     OpenGpuiNodeRendererContext, OpenGpuiNodeRendererHostContext, OpenGpuiNodeRendererRegistry,
     OpenGpuiRepeatableActionPlan, OpenGpuiRepeatableItemLayout, OpenGpuiRepeatableSurfaceLayout,
-    open_gpui_custom_action_missing_element_id, open_gpui_custom_renderer_badge_element_id,
-    open_gpui_custom_repeatables_badge_element_id, open_gpui_custom_slots_badge_element_id,
-    open_gpui_repeatable_add_action_element_id, open_gpui_repeatable_item_element_id,
-    open_gpui_repeatable_remove_action_element_id, open_gpui_repeatable_reorder_action_element_id,
+    open_gpui_custom_action_missing_element_id, open_gpui_custom_repeatables_badge_element_id,
+    open_gpui_custom_slots_badge_element_id, open_gpui_repeatable_add_action_element_id,
 };
-use open_gpui::{AnyElement, MouseButton, Pixels, WeakEntity, div, prelude::*, px, rgb};
-use open_gpui_ui_components::prelude::Sizable;
-use open_gpui_ui_components::{Badge, BadgeVariant, ButtonVariant};
-use open_gpui_ui_core::Size;
-use serde_json::Value;
+use open_gpui::{AnyElement, Pixels, div, prelude::*, px, rgb};
+use open_gpui_ui_components::{BadgeVariant, ButtonVariant};
 
 use crate::{
-    GpuiNodeRendererServices, GpuiNodeRendererTable, JellyflowCanvasView, demo_repeatable_add_item,
-    dispatch_node_drag_surface_mouse_down, node_component_kit,
-    node_component_kit::NodeComponentKitActions,
+    GpuiNodeRendererServices, GpuiNodeRendererTable, demo_repeatable_add_item,
+    node_component_kit::{
+        self, NodeComponentKitActions, PRODUCT_BODY_TOP, PRODUCT_CARD_PAD,
+        PRODUCT_CONTROL_CHIP_HEIGHT, PRODUCT_CONTROL_ROW_HEIGHT, PRODUCT_PORT_RAIL_HEIGHT,
+        PRODUCT_PREVIEW_ROW_HEIGHT, PRODUCT_PROMPT_CONTROL_ROW_HEIGHT,
+        PRODUCT_REPEATABLE_ADD_WIDTH, PRODUCT_REPEATABLE_CHIP_HEIGHT,
+        PRODUCT_REPEATABLE_ROW_HEIGHT, PRODUCT_SECTION_GAP, PRODUCT_TITLE_ROW_HEIGHT,
+        ProductLayoutRegion, ProductNodeAnchorSide, product_layout_stack, reserve_product_region,
+    },
 };
-
-const CARD_PAD: f32 = 10.0;
-const HEADER_HEIGHT: f32 = 24.0;
-const TITLE_ROW_HEIGHT: f32 = 36.0;
-const PREVIEW_ROW_HEIGHT: f32 = 54.0;
-const PORT_RAIL_HEIGHT: f32 = 26.0;
-const CONTROL_ROW_HEIGHT: f32 = 40.0;
-const PROMPT_CONTROL_ROW_HEIGHT: f32 = 48.0;
-const CONTROL_CHIP_HEIGHT: f32 = 34.0;
-const REPEATABLE_CHIP_HEIGHT: f32 = 36.0;
-const REPEATABLE_ROW_HEIGHT: f32 = 42.0;
-const REPEATABLE_ADD_WIDTH: f32 = 96.0;
-const SECTION_GAP: f32 = 6.0;
-const BODY_TOP: f32 = CARD_PAD + HEADER_HEIGHT + SECTION_GAP;
-const ANCHOR_TOP: f32 = BODY_TOP + SECTION_GAP;
-
-#[derive(Clone, Copy)]
-struct ProductLayoutRegion {
-    top: Pixels,
-    height: Pixels,
-    mode: node_component_kit::AdaptiveNodeLayoutMode,
-}
-
-impl ProductLayoutRegion {
-    fn from_adaptive(region: node_component_kit::AdaptiveNodeLayoutRegion) -> Self {
-        Self {
-            top: px(region.top),
-            height: px(region.height),
-            mode: region.mode,
-        }
-    }
-}
-
-fn product_layout_stack(
-    node_size: CanvasSize,
-    footer_height: f32,
-) -> node_component_kit::AdaptiveNodeLayoutStack {
-    node_component_kit::AdaptiveNodeLayoutStack::new(
-        node_size,
-        CARD_PAD,
-        HEADER_HEIGHT,
-        footer_height,
-        SECTION_GAP,
-    )
-}
-
-fn reserve_product_region(
-    layout: &mut node_component_kit::AdaptiveNodeLayoutStack,
-    key: &'static str,
-    full_height: f32,
-    compact_height: f32,
-) -> ProductLayoutRegion {
-    ProductLayoutRegion::from_adaptive(layout.reserve_region(key, full_height, compact_height))
-}
 
 struct DecisionCardLayout {
     preview: ProductLayoutRegion,
@@ -84,22 +31,27 @@ struct DecisionCardLayout {
 }
 
 fn decision_card_layout(node_size: CanvasSize) -> DecisionCardLayout {
-    let mut layout = product_layout_stack(node_size, PORT_RAIL_HEIGHT);
+    let mut layout = product_layout_stack(node_size, PRODUCT_PORT_RAIL_HEIGHT);
     DecisionCardLayout {
-        preview: reserve_product_region(&mut layout, "preview", PREVIEW_ROW_HEIGHT, 36.0),
+        preview: reserve_product_region(&mut layout, "preview", PRODUCT_PREVIEW_ROW_HEIGHT, 36.0),
         prompt_control: reserve_product_region(
             &mut layout,
             "prompt-control",
-            PROMPT_CONTROL_ROW_HEIGHT,
+            PRODUCT_PROMPT_CONTROL_ROW_HEIGHT,
             32.0,
         ),
         model_control: reserve_product_region(
             &mut layout,
             "model-control",
-            CONTROL_ROW_HEIGHT,
+            PRODUCT_CONTROL_ROW_HEIGHT,
             30.0,
         ),
-        chip_row: reserve_product_region(&mut layout, "chip-row", CONTROL_CHIP_HEIGHT, 24.0),
+        chip_row: reserve_product_region(
+            &mut layout,
+            "chip-row",
+            PRODUCT_CONTROL_CHIP_HEIGHT,
+            24.0,
+        ),
     }
 }
 
@@ -114,16 +66,31 @@ struct ShaderCardLayout {
 fn shader_card_layout(node_size: CanvasSize) -> ShaderCardLayout {
     let mut layout = product_layout_stack(node_size, 0.0);
     ShaderCardLayout {
-        title: reserve_product_region(&mut layout, "title", TITLE_ROW_HEIGHT, 28.0),
-        input_rail: reserve_product_region(&mut layout, "input-rail", PORT_RAIL_HEIGHT, 20.0),
+        title: reserve_product_region(&mut layout, "title", PRODUCT_TITLE_ROW_HEIGHT, 28.0),
+        input_rail: reserve_product_region(
+            &mut layout,
+            "input-rail",
+            PRODUCT_PORT_RAIL_HEIGHT,
+            20.0,
+        ),
         input_chips: reserve_product_region(
             &mut layout,
             "input-chips",
-            REPEATABLE_CHIP_HEIGHT,
+            PRODUCT_REPEATABLE_CHIP_HEIGHT,
             24.0,
         ),
-        control_row: reserve_product_region(&mut layout, "control-row", CONTROL_CHIP_HEIGHT, 24.0),
-        output_rail: reserve_product_region(&mut layout, "output-rail", PORT_RAIL_HEIGHT, 20.0),
+        control_row: reserve_product_region(
+            &mut layout,
+            "control-row",
+            PRODUCT_CONTROL_CHIP_HEIGHT,
+            24.0,
+        ),
+        output_rail: reserve_product_region(
+            &mut layout,
+            "output-rail",
+            PRODUCT_PORT_RAIL_HEIGHT,
+            20.0,
+        ),
     }
 }
 
@@ -136,14 +103,18 @@ struct TableCardLayout {
 
 fn table_card_layout(node_size: CanvasSize) -> TableCardLayout {
     let mut layout = product_layout_stack(node_size, 0.0);
-    let title = reserve_product_region(&mut layout, "title", TITLE_ROW_HEIGHT, 28.0);
-    let primary_control =
-        reserve_product_region(&mut layout, "primary-control", CONTROL_ROW_HEIGHT, 30.0);
-    let chip_row = reserve_product_region(&mut layout, "chip-row", CONTROL_CHIP_HEIGHT, 24.0);
-    let columns_top = px(layout
-        .regions()
-        .last()
-        .map_or(BODY_TOP, |region| region.top + region.height + SECTION_GAP));
+    let title = reserve_product_region(&mut layout, "title", PRODUCT_TITLE_ROW_HEIGHT, 28.0);
+    let primary_control = reserve_product_region(
+        &mut layout,
+        "primary-control",
+        PRODUCT_CONTROL_ROW_HEIGHT,
+        30.0,
+    );
+    let chip_row =
+        reserve_product_region(&mut layout, "chip-row", PRODUCT_CONTROL_CHIP_HEIGHT, 24.0);
+    let columns_top = px(layout.regions().last().map_or(PRODUCT_BODY_TOP, |region| {
+        region.top + region.height + PRODUCT_SECTION_GAP
+    }));
     TableCardLayout {
         title,
         primary_control,
@@ -161,17 +132,17 @@ struct TopicCardLayout {
 fn topic_card_layout(node_size: CanvasSize) -> TopicCardLayout {
     let mut layout = product_layout_stack(node_size, 0.0);
     TopicCardLayout {
-        title: reserve_product_region(&mut layout, "title", TITLE_ROW_HEIGHT, 28.0),
+        title: reserve_product_region(&mut layout, "title", PRODUCT_TITLE_ROW_HEIGHT, 28.0),
         title_control: reserve_product_region(
             &mut layout,
             "title-control",
-            CONTROL_ROW_HEIGHT,
+            PRODUCT_CONTROL_ROW_HEIGHT,
             30.0,
         ),
         summary_control: reserve_product_region(
             &mut layout,
             "summary-control",
-            CONTROL_ROW_HEIGHT,
+            PRODUCT_CONTROL_ROW_HEIGHT,
             30.0,
         ),
     }
@@ -186,17 +157,17 @@ struct SourceCardLayout {
 fn source_card_layout(node_size: CanvasSize) -> SourceCardLayout {
     let mut layout = product_layout_stack(node_size, 0.0);
     SourceCardLayout {
-        preview: reserve_product_region(&mut layout, "preview", PREVIEW_ROW_HEIGHT, 36.0),
+        preview: reserve_product_region(&mut layout, "preview", PRODUCT_PREVIEW_ROW_HEIGHT, 36.0),
         title_control: reserve_product_region(
             &mut layout,
             "title-control",
-            CONTROL_ROW_HEIGHT,
+            PRODUCT_CONTROL_ROW_HEIGHT,
             30.0,
         ),
         asset_control: reserve_product_region(
             &mut layout,
             "asset-control",
-            CONTROL_ROW_HEIGHT,
+            PRODUCT_CONTROL_ROW_HEIGHT,
             30.0,
         ),
     }
@@ -325,12 +296,13 @@ fn render_decision_card(
         .find(|action| action.key == "action.llm.run")
         .or_else(|| context.toolbar_menu.actions.first());
 
-    product_card(context, rgb(0x0f766e), rgb(0xf8fafc), view.clone())
-        .child(product_header(
+    node_component_kit::render_product_card(context, rgb(0x0f766e), rgb(0xf8fafc), view.clone())
+        .child(node_component_kit::render_product_header(
             context,
             "Dify node",
             "workflow",
             rgb(0x0f766e),
+            collector.clone(),
             view,
         ))
         .child(node_component_kit::render_product_panel(
@@ -348,17 +320,17 @@ fn render_decision_card(
             context.title.clone(),
             Some((summary, summary_lines)),
         ))
-        .child(measured_anchor(
+        .child(node_component_kit::render_product_side_anchor(
             context,
             "field.prompt",
             collector.clone(),
-            true,
+            ProductNodeAnchorSide::Left,
         ))
-        .child(measured_anchor(
+        .child(node_component_kit::render_product_side_anchor(
             context,
             "field.completion",
             collector.clone(),
-            false,
+            ProductNodeAnchorSide::Right,
         ))
         .child(node_component_kit::render_product_control_row(
             context,
@@ -385,9 +357,9 @@ fn render_decision_card(
         .child(
             div()
                 .absolute()
-                .left(px(CARD_PAD))
+                .left(px(PRODUCT_CARD_PAD))
                 .top(layout.chip_row.top)
-                .right(px(CARD_PAD))
+                .right(px(PRODUCT_CARD_PAD))
                 .h(layout.chip_row.height)
                 .flex()
                 .items_center()
@@ -407,7 +379,7 @@ fn render_decision_card(
                     "config.model",
                     stream_control.as_ref(),
                     3,
-                    collector,
+                    collector.clone(),
                     &actions,
                 ))
                 .child(render_primary_action(
@@ -417,7 +389,9 @@ fn render_decision_card(
                     &actions,
                 )),
         )
-        .child(product_footer(context))
+        .child(node_component_kit::render_product_footer(
+            context, collector,
+        ))
         .into_any_element()
 }
 
@@ -440,8 +414,8 @@ fn render_shader_card(
         })
         .count();
 
-    product_card(context, rgb(0x7c3aed), rgb(0x111827), view.clone())
-        .child(product_header(
+    node_component_kit::render_product_card(context, rgb(0x7c3aed), rgb(0x111827), view.clone())
+        .child(node_component_kit::render_product_header(
             context,
             "Shader graph",
             if missing_ports == 0 {
@@ -450,14 +424,15 @@ fn render_shader_card(
                 "missing ports"
             },
             rgb(0xa78bfa),
+            collector.clone(),
             view,
         ))
         .child(
             div()
                 .absolute()
-                .left(px(CARD_PAD))
+                .left(px(PRODUCT_CARD_PAD))
                 .top(layout.title.top)
-                .right(px(CARD_PAD))
+                .right(px(PRODUCT_CARD_PAD))
                 .h(layout.title.height)
                 .flex()
                 .items_center()
@@ -469,14 +444,11 @@ fn render_shader_card(
                     rgb(0xf8fafc),
                     true,
                 ))
-                .child(
-                    Badge::new(
-                        open_gpui_custom_slots_badge_element_id(context.node_id),
-                        format!("{} dyn", shader_inputs.len()),
-                    )
-                    .variant(BadgeVariant::Default)
-                    .with_size(Size::XSmall),
-                ),
+                .child(node_component_kit::render_product_badge(
+                    open_gpui_custom_slots_badge_element_id(context.node_id),
+                    format!("{} dyn", shader_inputs.len()),
+                    BadgeVariant::Default,
+                )),
         )
         .child(node_component_kit::render_product_port_rail(
             context,
@@ -498,9 +470,9 @@ fn render_shader_card(
         .child(
             div()
                 .absolute()
-                .left(px(CARD_PAD))
+                .left(px(PRODUCT_CARD_PAD))
                 .top(layout.control_row.top)
-                .right(px(CARD_PAD))
+                .right(px(PRODUCT_CARD_PAD))
                 .h(layout.control_row.height)
                 .flex()
                 .items_center()
@@ -557,20 +529,21 @@ fn render_table_card(
     let foreign_key = context.control("control.foreign_key.binding");
     let layout = table_card_layout(context.node_size);
 
-    product_card(context, rgb(0x2563eb), rgb(0xf8fafc), view.clone())
-        .child(product_header(
+    node_component_kit::render_product_card(context, rgb(0x2563eb), rgb(0xf8fafc), view.clone())
+        .child(node_component_kit::render_product_header(
             context,
             "ERD table",
             "schema",
             rgb(0x2563eb),
+            collector.clone(),
             view,
         ))
         .child(
             div()
                 .absolute()
-                .left(px(CARD_PAD))
+                .left(px(PRODUCT_CARD_PAD))
                 .top(layout.title.top)
-                .right(px(CARD_PAD))
+                .right(px(PRODUCT_CARD_PAD))
                 .h(layout.title.height)
                 .flex()
                 .items_center()
@@ -582,14 +555,11 @@ fn render_table_card(
                     rgb(0x111827),
                     true,
                 ))
-                .child(
-                    Badge::new(
-                        open_gpui_custom_repeatables_badge_element_id(context.node_id),
-                        format!("{} columns", columns.len()),
-                    )
-                    .variant(BadgeVariant::Secondary)
-                    .with_size(Size::XSmall),
-                ),
+                .child(node_component_kit::render_product_badge(
+                    open_gpui_custom_repeatables_badge_element_id(context.node_id),
+                    format!("{} columns", columns.len()),
+                    BadgeVariant::Secondary,
+                )),
         )
         .child(node_component_kit::render_product_control_row(
             context,
@@ -605,9 +575,9 @@ fn render_table_card(
         .child(
             div()
                 .absolute()
-                .left(px(CARD_PAD))
+                .left(px(PRODUCT_CARD_PAD))
                 .top(layout.chip_row.top)
-                .right(px(CARD_PAD))
+                .right(px(PRODUCT_CARD_PAD))
                 .h(layout.chip_row.height)
                 .flex()
                 .items_center()
@@ -667,12 +637,13 @@ fn render_topic_card(
     let summary_control = context.control("control.topic.summary");
     let layout = topic_card_layout(context.node_size);
 
-    product_card(context, rgb(0x8b5cf6), rgb(0xf5f3ff), view.clone())
-        .child(product_header(
+    node_component_kit::render_product_card(context, rgb(0x8b5cf6), rgb(0xf5f3ff), view.clone())
+        .child(node_component_kit::render_product_header(
             context,
             "Mind map",
             "topic",
             rgb(0x7c3aed),
+            collector.clone(),
             view,
         ))
         .child(node_component_kit::render_product_panel(
@@ -711,7 +682,12 @@ fn render_topic_card(
             collector.clone(),
             &actions,
         ))
-        .child(measured_anchor(context, "body.summary", collector, false))
+        .child(node_component_kit::render_product_side_anchor(
+            context,
+            "body.summary",
+            collector,
+            ProductNodeAnchorSide::Right,
+        ))
         .into_any_element()
 }
 
@@ -725,16 +701,17 @@ fn render_source_card(
     let title_control = context.control("control.source.title");
     let asset_control = context.control("control.source.asset");
     let layout = source_card_layout(context.node_size);
-    let preview = json_path_label(&context.node_data, &["preview"])
+    let preview = node_component_kit::json_path_label(&context.node_data, &["preview"])
         .unwrap_or_else(|| "No preview".to_owned());
     let preview_lines = node_component_kit::product_line_clamp(layout.preview.mode, 2, 1);
 
-    product_card(context, rgb(0x0891b2), rgb(0xecfeff), view.clone())
-        .child(product_header(
+    node_component_kit::render_product_card(context, rgb(0x0891b2), rgb(0xecfeff), view.clone())
+        .child(node_component_kit::render_product_header(
             context,
             "Knowledge",
             "source",
             rgb(0x0e7490),
+            collector.clone(),
             view,
         ))
         .child(node_component_kit::render_product_panel(
@@ -774,7 +751,12 @@ fn render_source_card(
             collector.clone(),
             &actions,
         ))
-        .child(measured_anchor(context, "preview.main", collector, false))
+        .child(node_component_kit::render_product_side_anchor(
+            context,
+            "preview.main",
+            collector,
+            ProductNodeAnchorSide::Right,
+        ))
         .into_any_element()
 }
 
@@ -782,104 +764,6 @@ fn actions_for_component(
     component: &node_component_kit::OpenGpuiNodeComponentContext<'_, GpuiNodeRendererServices>,
 ) -> NodeComponentKitActions {
     component.actions()
-}
-
-fn product_card(
-    context: &OpenGpuiNodeRendererContext,
-    accent: open_gpui::Rgba,
-    fill: open_gpui::Rgba,
-    view: WeakEntity<JellyflowCanvasView>,
-) -> open_gpui::Div {
-    div()
-        .size_full()
-        .relative()
-        .rounded_sm()
-        .border_1()
-        .border_color(if context.state.selected {
-            rgb(0x2563eb)
-        } else {
-            accent
-        })
-        .bg(fill)
-        .overflow_hidden()
-        .shadow_sm()
-        .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
-            if dispatch_node_drag_surface_mouse_down(view.clone(), event, cx) {
-                cx.stop_propagation();
-            }
-        })
-}
-
-fn product_header(
-    context: &OpenGpuiNodeRendererContext,
-    family: &'static str,
-    status: &'static str,
-    accent: open_gpui::Rgba,
-    view: WeakEntity<JellyflowCanvasView>,
-) -> AnyElement {
-    div()
-        .absolute()
-        .left(px(CARD_PAD))
-        .top(px(CARD_PAD))
-        .right(px(CARD_PAD))
-        .h(px(HEADER_HEIGHT))
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap_2()
-        .overflow_hidden()
-        .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
-            if dispatch_node_drag_surface_mouse_down(view.clone(), event, cx) {
-                cx.stop_propagation();
-            }
-        })
-        .child(
-            Badge::new(
-                open_gpui_custom_renderer_badge_element_id(context.node_id, &context.renderer_key),
-                family,
-            )
-            .variant(BadgeVariant::Default)
-            .with_size(Size::XSmall),
-        )
-        .child(
-            div()
-                .text_xs()
-                .truncate()
-                .min_w(px(0.0))
-                .text_color(accent)
-                .child(status),
-        )
-        .into_any_element()
-}
-
-fn product_footer(context: &OpenGpuiNodeRendererContext) -> AnyElement {
-    div()
-        .absolute()
-        .left(px(CARD_PAD))
-        .bottom(px(CARD_PAD))
-        .right(px(CARD_PAD))
-        .h(px(PORT_RAIL_HEIGHT))
-        .flex()
-        .items_center()
-        .gap_1()
-        .overflow_hidden()
-        .child(
-            Badge::new(
-                open_gpui_custom_slots_badge_element_id(context.node_id),
-                format!("{} slots", context.surface_layout.slots.len()),
-            )
-            .variant(BadgeVariant::Secondary)
-            .with_size(Size::XSmall),
-        )
-        .child(
-            Badge::new(
-                open_gpui_custom_repeatables_badge_element_id(context.node_id),
-                format!("{} repeatables", context.repeatable_items.len()),
-            )
-            .variant(BadgeVariant::Outline)
-            .with_size(Size::XSmall),
-        )
-        .into_any_element()
 }
 
 fn render_primary_action(
@@ -899,13 +783,11 @@ fn render_primary_action(
             )
         })
         .unwrap_or_else(|| {
-            Badge::new(
+            node_component_kit::render_product_badge(
                 open_gpui_custom_action_missing_element_id(node_id),
                 "no action",
+                BadgeVariant::Outline,
             )
-            .variant(BadgeVariant::Outline)
-            .with_size(Size::XSmall)
-            .into_any_element()
         })
 }
 
@@ -927,22 +809,24 @@ fn render_shader_inputs(
 
     div()
         .absolute()
-        .left(px(CARD_PAD))
+        .left(px(PRODUCT_CARD_PAD))
         .top(top)
-        .right(px(CARD_PAD))
+        .right(px(PRODUCT_CARD_PAD))
         .h(height)
         .flex()
         .items_center()
         .gap_1()
         .overflow_hidden()
-        .children(
-            items
-                .iter()
-                .take(visible_limit)
-                .map(|item| render_repeatable_item_chip(context, item, collector.clone(), actions)),
-        )
-        .child(render_repeatable_overflow_indicator(
-            context,
+        .children(items.iter().take(visible_limit).map(|item| {
+            node_component_kit::render_product_repeatable_chip(
+                context,
+                item,
+                collector.clone(),
+                actions,
+            )
+        }))
+        .child(node_component_kit::render_product_overflow_affordance(
+            context.node_id,
             "shader.inputs",
             hidden_count,
             collector,
@@ -956,16 +840,16 @@ fn shader_visible_repeatable_limit_for_bounds(
     item_count: usize,
     budget_limit: usize,
 ) -> usize {
-    let width_budget = (node_width - CARD_PAD * 2.0).max(1.0);
+    let width_budget = (node_width - PRODUCT_CARD_PAD * 2.0).max(1.0);
     let max_by_width = (width_budget / 104.0).floor().max(1.0) as usize;
     node_component_kit::adaptive_repeatable_list_plan(
         "shader.inputs",
         available_height,
         item_count,
         budget_limit.min(max_by_width),
-        REPEATABLE_CHIP_HEIGHT,
+        PRODUCT_REPEATABLE_CHIP_HEIGHT,
         4.0,
-        CONTROL_CHIP_HEIGHT,
+        PRODUCT_CONTROL_CHIP_HEIGHT,
     )
     .visible_items
     .min(max_by_width)
@@ -983,22 +867,24 @@ fn render_table_columns(
 
     div()
         .absolute()
-        .left(px(CARD_PAD))
+        .left(px(PRODUCT_CARD_PAD))
         .top(top)
-        .right(px(CARD_PAD))
-        .bottom(px(CARD_PAD))
+        .right(px(PRODUCT_CARD_PAD))
+        .bottom(px(PRODUCT_CARD_PAD))
         .flex()
         .flex_col()
         .gap_1()
         .overflow_hidden()
-        .children(
-            items
-                .iter()
-                .take(visible_limit)
-                .map(|item| render_repeatable_item_row(context, item, collector.clone(), actions)),
-        )
-        .child(render_repeatable_overflow_indicator(
-            context,
+        .children(items.iter().take(visible_limit).map(|item| {
+            node_component_kit::render_product_repeatable_row(
+                context,
+                item,
+                collector.clone(),
+                actions,
+            )
+        }))
+        .child(node_component_kit::render_product_overflow_affordance(
+            context.node_id,
             "table.columns",
             hidden_count,
             collector,
@@ -1026,285 +912,17 @@ fn table_visible_repeatable_limit_for_height(
     budget_limit: usize,
     item_count: usize,
 ) -> usize {
-    let available_height = (node_height - top - CARD_PAD).max(0.0);
+    let available_height = (node_height - top - PRODUCT_CARD_PAD).max(0.0);
     node_component_kit::adaptive_repeatable_list_plan(
         "table.columns",
         available_height,
         item_count,
         budget_limit,
-        REPEATABLE_ROW_HEIGHT,
+        PRODUCT_REPEATABLE_ROW_HEIGHT,
         4.0,
-        CONTROL_CHIP_HEIGHT,
+        PRODUCT_CONTROL_CHIP_HEIGHT,
     )
     .visible_items
-}
-
-fn render_repeatable_overflow_indicator(
-    context: &OpenGpuiNodeRendererContext,
-    collection_key: &str,
-    hidden_count: usize,
-    collector: OpenGpuiBoundsCollector,
-) -> AnyElement {
-    node_component_kit::render_product_overflow_affordance(
-        context.node_id,
-        collection_key,
-        hidden_count,
-        collector,
-    )
-}
-
-fn render_repeatable_item_chip(
-    context: &OpenGpuiNodeRendererContext,
-    item: &OpenGpuiRepeatableItemLayout,
-    collector: OpenGpuiBoundsCollector,
-    actions: &NodeComponentKitActions,
-) -> AnyElement {
-    let projection = &item.projection;
-    let label = repeatable_item_label(&projection.item_data, &projection.label);
-    let ty = repeatable_item_type_label(&projection.item_data);
-    let disabled = projection.remove_disabled_reason.is_some();
-    let port_status = repeatable_port_status_label(projection.dynamic_port_policy);
-    let missing_port =
-        projection.dynamic_port_policy == OpenGpuiDynamicPortPolicy::MissingGraphPort;
-    let collection_key = projection.collection_key.clone();
-    let item_id = projection.item_id.clone();
-    let anchor = projection.anchor.clone();
-
-    node_component_kit::render_measured_region(
-        context.repeatable_item_measurement_id(projection.slot_key.clone(), item_id.clone()),
-        collector.clone(),
-        div()
-            .h(px(REPEATABLE_CHIP_HEIGHT))
-            .min_w(px(84.0))
-            .flex_1()
-            .max_w(px(132.0))
-            .flex()
-            .items_center()
-            .gap_1()
-            .rounded_sm()
-            .bg(if missing_port {
-                rgb(0xfffbeb)
-            } else {
-                rgb(0xede9fe)
-            })
-            .border_1()
-            .border_color(if missing_port {
-                rgb(0xf59e0b)
-            } else {
-                rgb(0xa78bfa)
-            })
-            .px_1()
-            .overflow_hidden()
-            .child(div().flex_1().min_w(px(0.0)).child(
-                node_component_kit::render_product_text_line(label, rgb(0x111827), false),
-            ))
-            .child(repeatable_type_badge(
-                context,
-                &collection_key,
-                &item_id,
-                &ty,
-            ))
-            .child(repeatable_port_status_badge(
-                context,
-                &collection_key,
-                &item_id,
-                port_status,
-                projection.dynamic_port_policy,
-            ))
-            .child(node_component_kit::repeatable_action_button(
-                context.node_id,
-                open_gpui_repeatable_remove_action_element_id(
-                    context.node_id,
-                    &collection_key,
-                    &item_id,
-                ),
-                "Del",
-                ButtonVariant::Destructive,
-                disabled,
-                OpenGpuiRepeatableActionPlan::Remove {
-                    collection_key,
-                    item_id: item_id.clone(),
-                },
-                actions,
-            ))
-            .child(inline_measured_anchor(context, anchor, collector)),
-    )
-}
-
-fn repeatable_type_badge(
-    context: &OpenGpuiNodeRendererContext,
-    collection_key: &str,
-    item_id: &str,
-    ty: &str,
-) -> AnyElement {
-    Badge::new(
-        format!(
-            "jellyflow-repeatable-type:{}:{collection_key}:{item_id}",
-            context.node_id.0
-        ),
-        ty.to_owned(),
-    )
-    .variant(BadgeVariant::Outline)
-    .with_size(Size::XSmall)
-    .into_any_element()
-}
-
-fn repeatable_port_status_badge(
-    context: &OpenGpuiNodeRendererContext,
-    collection_key: &str,
-    item_id: &str,
-    label: &'static str,
-    policy: OpenGpuiDynamicPortPolicy,
-) -> AnyElement {
-    if policy == OpenGpuiDynamicPortPolicy::BoundToGraphPort {
-        return div().w(px(0.0)).h(px(0.0)).into_any_element();
-    }
-
-    Badge::new(
-        format!(
-            "jellyflow-repeatable-port-status:{}:{collection_key}:{item_id}",
-            context.node_id.0
-        ),
-        label,
-    )
-    .variant(if policy == OpenGpuiDynamicPortPolicy::MissingGraphPort {
-        BadgeVariant::Destructive
-    } else {
-        BadgeVariant::Secondary
-    })
-    .with_size(Size::XSmall)
-    .into_any_element()
-}
-
-fn render_repeatable_item_row(
-    context: &OpenGpuiNodeRendererContext,
-    item: &OpenGpuiRepeatableItemLayout,
-    collector: OpenGpuiBoundsCollector,
-    actions: &NodeComponentKitActions,
-) -> AnyElement {
-    let projection = &item.projection;
-    let label = repeatable_item_label(&projection.item_data, &projection.label);
-    let ty = json_path_label(&projection.item_data, &["ty"]).unwrap_or_else(|| "field".to_owned());
-    let collection_key = projection.collection_key.clone();
-    let item_id = projection.item_id.clone();
-    let disabled = projection.remove_disabled_reason.is_some();
-    let item_index = projection.item_index;
-    let anchor = projection.anchor.clone();
-    let dynamic_port_policy = projection.dynamic_port_policy;
-
-    node_component_kit::render_measured_region(
-        context.repeatable_item_measurement_id(projection.slot_key.clone(), item_id.clone()),
-        collector.clone(),
-        div()
-            .h(px(REPEATABLE_ROW_HEIGHT))
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_1()
-            .rounded_sm()
-            .bg(rgb(0xffffff))
-            .border_1()
-            .border_color(rgb(0xcbd5e1))
-            .px_2()
-            .overflow_hidden()
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .items_center()
-                    .gap_1()
-                    .min_w(px(0.0))
-                    .overflow_hidden()
-                    .child(
-                        Badge::new(
-                            open_gpui_repeatable_item_element_id(
-                                context.node_id,
-                                &projection.collection_key,
-                                &projection.item_id,
-                            ),
-                            ty,
-                        )
-                        .variant(BadgeVariant::Outline)
-                        .with_size(Size::XSmall),
-                    )
-                    .child(div().flex_1().min_w(px(0.0)).child(
-                        node_component_kit::render_product_text_line(
-                            label.clone(),
-                            rgb(0x334155),
-                            false,
-                        ),
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .gap_1()
-                    .child(repeatable_port_policy_badge(
-                        context,
-                        &collection_key,
-                        &item_id,
-                        dynamic_port_policy,
-                    ))
-                    .child(node_component_kit::repeatable_action_button(
-                        context.node_id,
-                        open_gpui_repeatable_reorder_action_element_id(
-                            context.node_id,
-                            &collection_key,
-                            &item_id,
-                        ),
-                        "Up",
-                        ButtonVariant::Secondary,
-                        item_index == 0,
-                        OpenGpuiRepeatableActionPlan::Reorder {
-                            collection_key: collection_key.clone(),
-                            item_id: item_id.clone(),
-                            to_index: item_index.saturating_sub(1),
-                        },
-                        actions,
-                    ))
-                    .child(node_component_kit::repeatable_action_button(
-                        context.node_id,
-                        open_gpui_repeatable_remove_action_element_id(
-                            context.node_id,
-                            &collection_key,
-                            &item_id,
-                        ),
-                        "Del",
-                        ButtonVariant::Destructive,
-                        disabled,
-                        OpenGpuiRepeatableActionPlan::Remove {
-                            collection_key,
-                            item_id: item_id.clone(),
-                        },
-                        actions,
-                    )),
-            )
-            .child(inline_measured_anchor(context, anchor, collector)),
-    )
-}
-
-fn repeatable_port_policy_badge(
-    context: &OpenGpuiNodeRendererContext,
-    collection_key: &str,
-    item_id: &str,
-    policy: OpenGpuiDynamicPortPolicy,
-) -> AnyElement {
-    if policy != OpenGpuiDynamicPortPolicy::MissingGraphPort {
-        return div().w(px(0.0)).h(px(0.0)).into_any_element();
-    }
-
-    Badge::new(
-        format!(
-            "jellyflow-repeatable-port-policy:{}:{collection_key}:{item_id}",
-            context.node_id.0
-        ),
-        "no port",
-    )
-    .variant(BadgeVariant::Destructive)
-    .with_size(Size::XSmall)
-    .into_any_element()
 }
 
 fn render_repeatable_add(
@@ -1320,7 +938,7 @@ fn render_repeatable_add(
     let item = demo_repeatable_add_item(&collection_key, repeatable.projection.item_count);
 
     div()
-        .max_w(px(REPEATABLE_ADD_WIDTH))
+        .max_w(px(PRODUCT_REPEATABLE_ADD_WIDTH))
         .overflow_hidden()
         .child(node_component_kit::repeatable_action_button(
             context.node_id,
@@ -1337,42 +955,6 @@ fn render_repeatable_add(
         .into_any_element()
 }
 
-fn measured_anchor(
-    context: &OpenGpuiNodeRendererContext,
-    anchor_key: &str,
-    collector: OpenGpuiBoundsCollector,
-    left: bool,
-) -> AnyElement {
-    let anchor = node_component_kit::render_handle_region(
-        context.anchor_measurement_id(anchor_key),
-        collector,
-        if left {
-            node_component_kit::OpenGpuiNodeAnchorPlacement::LeftRail
-        } else {
-            node_component_kit::OpenGpuiNodeAnchorPlacement::RightRail
-        },
-    );
-    let positioned = div().absolute().top(px(ANCHOR_TOP)).w(px(8.0)).h(px(20.0));
-
-    if left {
-        positioned.left(px(0.0)).child(anchor).into_any_element()
-    } else {
-        positioned.right(px(0.0)).child(anchor).into_any_element()
-    }
-}
-
-fn inline_measured_anchor(
-    context: &OpenGpuiNodeRendererContext,
-    anchor_key: String,
-    collector: OpenGpuiBoundsCollector,
-) -> AnyElement {
-    node_component_kit::render_handle_region(
-        context.anchor_measurement_id(anchor_key),
-        collector,
-        node_component_kit::OpenGpuiNodeAnchorPlacement::Inline,
-    )
-}
-
 fn repeatable_items_for<'a>(
     context: &'a OpenGpuiNodeRendererContext,
     collection_key: &str,
@@ -1382,37 +964,6 @@ fn repeatable_items_for<'a>(
         .iter()
         .filter(|item| item.projection.collection_key == collection_key)
         .collect()
-}
-
-fn repeatable_item_label(item_data: &Value, fallback: &str) -> String {
-    json_path_label(item_data, &["name"])
-        .or_else(|| json_path_label(item_data, &["title"]))
-        .unwrap_or_else(|| fallback.to_owned())
-}
-
-fn repeatable_item_type_label(item_data: &Value) -> String {
-    json_path_label(item_data, &["ty"]).unwrap_or_else(|| "value".to_owned())
-}
-
-fn repeatable_port_status_label(policy: OpenGpuiDynamicPortPolicy) -> &'static str {
-    match policy {
-        OpenGpuiDynamicPortPolicy::DisplayOnly => "display",
-        OpenGpuiDynamicPortPolicy::BoundToGraphPort => "port",
-        OpenGpuiDynamicPortPolicy::MissingGraphPort => "no port",
-    }
-}
-
-fn json_path_label(value: &Value, path: &[&str]) -> Option<String> {
-    let mut current = value;
-    for segment in path {
-        current = current.get(*segment)?;
-    }
-    match current {
-        Value::String(text) => Some(text.clone()),
-        Value::Number(number) => Some(number.to_string()),
-        Value::Bool(value) => Some(value.to_string()),
-        Value::Null | Value::Array(_) | Value::Object(_) => None,
-    }
 }
 
 #[cfg(test)]
@@ -1491,27 +1042,30 @@ mod tests {
 
     fn decision_card_required_height() -> f32 {
         let layout = decision_card_layout(layout_probe_size(320.0));
-        region_bottom(layout.chip_row) + SECTION_GAP + PORT_RAIL_HEIGHT + CARD_PAD
+        region_bottom(layout.chip_row)
+            + PRODUCT_SECTION_GAP
+            + PRODUCT_PORT_RAIL_HEIGHT
+            + PRODUCT_CARD_PAD
     }
 
     fn shader_card_required_height() -> f32 {
         let layout = shader_card_layout(layout_probe_size(340.0));
-        region_bottom(layout.output_rail) + CARD_PAD
+        region_bottom(layout.output_rail) + PRODUCT_CARD_PAD
     }
 
     fn table_card_required_height() -> f32 {
         let layout = table_card_layout(layout_probe_size(396.0));
-        layout.columns_top.as_f32() + (REPEATABLE_ROW_HEIGHT + 4.0) * 3.0 + CARD_PAD
+        layout.columns_top.as_f32() + (PRODUCT_REPEATABLE_ROW_HEIGHT + 4.0) * 3.0 + PRODUCT_CARD_PAD
     }
 
     fn topic_card_required_height() -> f32 {
         let layout = topic_card_layout(layout_probe_size(304.0));
-        region_bottom(layout.summary_control) + CARD_PAD
+        region_bottom(layout.summary_control) + PRODUCT_CARD_PAD
     }
 
     fn source_card_required_height() -> f32 {
         let layout = source_card_layout(layout_probe_size(312.0));
-        region_bottom(layout.asset_control) + CARD_PAD
+        region_bottom(layout.asset_control) + PRODUCT_CARD_PAD
     }
 
     fn assert_preset_fits_renderer(kind: &str, required: CanvasSize) {
@@ -1543,7 +1097,8 @@ mod tests {
         let columns_top = table_card_layout(layout_probe_size(396.0))
             .columns_top
             .as_f32();
-        let reduced_height = columns_top + CARD_PAD + REPEATABLE_ROW_HEIGHT * 2.0 + 4.0;
+        let reduced_height =
+            columns_top + PRODUCT_CARD_PAD + PRODUCT_REPEATABLE_ROW_HEIGHT * 2.0 + 4.0;
 
         assert_eq!(
             table_visible_repeatable_limit_for_height(reduced_height, columns_top, 4, 5),
@@ -1551,7 +1106,7 @@ mod tests {
         );
         assert_eq!(
             table_visible_repeatable_limit_for_height(
-                columns_top + CARD_PAD + (REPEATABLE_ROW_HEIGHT + 4.0) * 4.0,
+                columns_top + PRODUCT_CARD_PAD + (PRODUCT_REPEATABLE_ROW_HEIGHT + 4.0) * 4.0,
                 columns_top,
                 4,
                 4,
@@ -1573,30 +1128,6 @@ mod tests {
         assert_eq!(
             shader_visible_repeatable_limit_for_bounds(420.0, 16.0, 4, 4),
             0
-        );
-    }
-
-    #[test]
-    fn shader_repeatable_chip_labels_type_and_port_status() {
-        let item = serde_json::json!({
-            "id": "normal",
-            "name": "Normal",
-            "ty": "vec4",
-            "port": "normal"
-        });
-
-        assert_eq!(repeatable_item_type_label(&item), "vec4");
-        assert_eq!(
-            repeatable_port_status_label(OpenGpuiDynamicPortPolicy::BoundToGraphPort),
-            "port"
-        );
-        assert_eq!(
-            repeatable_port_status_label(OpenGpuiDynamicPortPolicy::MissingGraphPort),
-            "no port"
-        );
-        assert_eq!(
-            repeatable_port_status_label(OpenGpuiDynamicPortPolicy::DisplayOnly),
-            "display"
         );
     }
 
@@ -1625,7 +1156,7 @@ mod tests {
         };
         assert_layout_stays_inside(
             decision_card_layout(decision_size),
-            decision_size.height - CARD_PAD - PORT_RAIL_HEIGHT,
+            decision_size.height - PRODUCT_CARD_PAD - PRODUCT_PORT_RAIL_HEIGHT,
         );
         let shader_size = CanvasSize {
             width: 340.0,
@@ -1633,25 +1164,31 @@ mod tests {
         };
         assert_layout_stays_inside(
             shader_card_layout(shader_size),
-            shader_size.height - CARD_PAD,
+            shader_size.height - PRODUCT_CARD_PAD,
         );
         let table_size = CanvasSize {
             width: 396.0,
             height: 184.0,
         };
-        assert_layout_stays_inside(table_card_layout(table_size), table_size.height - CARD_PAD);
+        assert_layout_stays_inside(
+            table_card_layout(table_size),
+            table_size.height - PRODUCT_CARD_PAD,
+        );
         let topic_size = CanvasSize {
             width: 304.0,
             height: 132.0,
         };
-        assert_layout_stays_inside(topic_card_layout(topic_size), topic_size.height - CARD_PAD);
+        assert_layout_stays_inside(
+            topic_card_layout(topic_size),
+            topic_size.height - PRODUCT_CARD_PAD,
+        );
         let source_size = CanvasSize {
             width: 312.0,
             height: 144.0,
         };
         assert_layout_stays_inside(
             source_card_layout(source_size),
-            source_size.height - CARD_PAD,
+            source_size.height - PRODUCT_CARD_PAD,
         );
     }
 
@@ -1702,7 +1239,7 @@ mod tests {
 
     fn assert_layout_stays_inside(layout: impl ProductLayoutRegions, bottom_y: f32) {
         for region in layout.regions() {
-            assert!(region.top.as_f32() >= BODY_TOP);
+            assert!(region.top.as_f32() >= PRODUCT_BODY_TOP);
             assert!(region.height.as_f32() >= 0.0);
             assert!(region_bottom(region).is_finite());
             assert!(region_bottom(region) <= bottom_y + 0.01);
