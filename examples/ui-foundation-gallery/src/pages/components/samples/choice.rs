@@ -965,13 +965,19 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
         keymap_resolution_report.is_clean(),
         "gallery keymap resolution bindings should project cleanly"
     );
+    let keymap_resolution_controller = CommandPaletteController::new().with_query("keymap");
     let keymap_resolutions: Arc<[CommandKeymapResolution]> =
         ["ctrl-k", "ctrl-k ctrl-o", "ctrl-s", "ctrl-h", "ctrl-m"]
             .into_iter()
             .map(|sequence| {
-                keymap_resolution_center
-                    .resolve_key_sequence_for_keymap(sequence, &keymap_resolution_keymap)
+                keymap_resolution_controller
+                    .preflight_key_sequence_for_keymap(
+                        &keymap_resolution_center,
+                        sequence,
+                        &keymap_resolution_keymap,
+                    )
                     .expect("gallery keymap resolution sequence is valid")
+                    .into_resolution()
             })
             .collect::<Vec<_>>()
             .into();

@@ -8,12 +8,12 @@ use open_gpui_ui_components::{
     Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command,
     CommandGroup, CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode,
     CommandItem, CommandItemDescriptor, CommandLoadingState, CommandMatchSource, CommandOpenMode,
-    CommandPaletteController, CommandPaletteProjection, CommandProviderPaletteProjection,
-    CommandQueryMode, CommandSelection, CommandSelectionChange, CommandSelectionMode,
-    CommandStatusIntent, CommandStatusItem, Listbox, ListboxGroup, ListboxGroupDescriptor,
-    ListboxOption, ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState,
-    ScrollArea, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, VirtualizerRange,
-    gpui_adapter::init_text_input, listbox_navigation_target,
+    CommandPaletteController, CommandPaletteKeymapPreflight, CommandPaletteProjection,
+    CommandProviderPaletteProjection, CommandQueryMode, CommandSelection, CommandSelectionChange,
+    CommandSelectionMode, CommandStatusIntent, CommandStatusItem, Listbox, ListboxGroup,
+    ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor, ListboxOptionKind,
+    ListboxSelection, ListboxState, ScrollArea, ScrollResetPolicy, Select, SelectOpenMode,
+    SelectSelection, VirtualizerRange, gpui_adapter::init_text_input, listbox_navigation_target,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -1926,6 +1926,87 @@ fn command_palette_controller_refreshes_registered_provider_into_command_project
         state.group_items(0).next().and_then(|item| item.shortcut()),
         Some("ctrl-alt-O")
     );
+}
+
+#[test]
+fn command_palette_controller_preflights_keymap_dispatch_with_query() {
+    let mut center = open_gpui_command::CommandCenter::new("controller-preflight-v1");
+    center
+        .register_source(
+            "workspace",
+            "workspace-core",
+            [
+                open_gpui_command::CommandContribution::new(
+                    open_gpui_command::CommandDescriptor::new("workspace.open", "Open Workspace"),
+                ),
+                open_gpui_command::CommandContribution::new(
+                    open_gpui_command::CommandDescriptor::new("workspace.save", "Save Workspace"),
+                ),
+            ],
+        )
+        .unwrap();
+    center
+        .register_action("workspace.open", OpenPaletteCommand)
+        .register_action("workspace.save", RevealPaletteCommand)
+        .set_availability(
+            open_gpui_command::CommandAvailabilityMap::new()
+                .disabled("workspace.save", "Workspace is read-only"),
+        )
+        .register_key_bindings(
+            "workspace-shortcuts",
+            [
+                open_gpui_command::CommandKeyBinding::new("workspace.open", "ctrl-k ctrl-o"),
+                open_gpui_command::CommandKeyBinding::new("workspace.save", "ctrl-s"),
+            ],
+        );
+    let mut keymap = open_gpui::Keymap::default();
+    let report = center.install_key_bindings(&mut keymap);
+    assert!(report.is_clean());
+    let controller = CommandPaletteController::new().with_query("open workspace");
+
+    let pending: CommandPaletteKeymapPreflight = controller
+        .preflight_key_sequence_for_keymap(&center, "ctrl-k", &keymap)
+        .unwrap();
+    assert_eq!(pending.query(), "open workspace");
+    assert_eq!(pending.input_label(), "ctrl-k");
+    assert!(pending.is_pending());
+    assert!(pending.matched_commands().is_empty());
+    assert!(
+        pending
+            .pending_commands()
+            .iter()
+            .any(|command| command.command_id() == "workspace.open" && command.is_dispatchable())
+    );
+
+    let matched = controller
+        .preflight_key_sequence_for_keymap(&center, "ctrl-k ctrl-o", &keymap)
+        .unwrap();
+    assert_eq!(matched.query(), "open workspace");
+    assert_eq!(
+        matched.primary_dispatchable_command_id(),
+        Some("workspace.open")
+    );
+    assert_eq!(
+        matched
+            .primary_command()
+            .map(|command| (command.command_id(), command.shortcut())),
+        Some(("workspace.open", "ctrl-K ctrl-O"))
+    );
+
+    let disabled = controller
+        .preflight_key_sequence_for_keymap(&center, "ctrl-s", &keymap)
+        .unwrap();
+    assert_eq!(disabled.query(), "open workspace");
+    assert_eq!(disabled.primary_dispatchable_command_id(), None);
+    assert_eq!(
+        disabled
+            .primary_command()
+            .and_then(|command| command.state().reason_ref()),
+        Some("Workspace is read-only")
+    );
+
+    let resolution = disabled.clone().into_resolution();
+    assert_eq!(disabled.resolution(), &resolution);
 }
 
 #[test]

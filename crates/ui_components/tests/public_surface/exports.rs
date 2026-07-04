@@ -232,6 +232,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         .unwrap();
     let _root_palette_update_projection: &root::CommandPaletteProjection =
         root_palette_update.palette_projection();
+    let root_palette_preflight: root::CommandPaletteKeymapPreflight = root_palette_controller
+        .preflight_key_sequence_for_keymap(&root_command_center, "ctrl-o", &root_keymap)
+        .unwrap();
+    let _root_palette_preflight_resolution: &root::CommandKeymapResolution =
+        root_palette_preflight.resolution();
+    let _root_palette_preflight_command: Option<&root::CommandKeymapResolvedCommand> =
+        root_palette_preflight.primary_dispatchable_command();
     let _root_pending_provider_request: root::CommandPalettePendingProviderRequest =
         root::CommandPalettePendingProviderRequest::new(
             "root-provider",
@@ -531,6 +538,14 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             .unwrap();
     let _prelude_palette_update_projection: &prelude::CommandPaletteProjection =
         prelude_palette_update.palette_projection();
+    let prelude_palette_preflight: prelude::CommandPaletteKeymapPreflight =
+        prelude_palette_controller
+            .preflight_key_sequence_for_keymap(&prelude_command_center, "ctrl-o", &prelude_keymap)
+            .unwrap();
+    let _prelude_palette_preflight_resolution: &prelude::CommandKeymapResolution =
+        prelude_palette_preflight.resolution();
+    let _prelude_palette_preflight_command: Option<&prelude::CommandKeymapResolvedCommand> =
+        prelude_palette_preflight.primary_dispatchable_command();
     let _prelude_pending_provider_request: prelude::CommandPalettePendingProviderRequest =
         prelude::CommandPalettePendingProviderRequest::new(
             "prelude-provider",

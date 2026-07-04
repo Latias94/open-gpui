@@ -3,12 +3,13 @@
 use crate::choice::{self, ChoiceItemProjection, ChoiceSelectionMode};
 use crate::listbox::ListboxOptionDescriptor;
 use crate::overlay::OverlayDisclosureOpenMode;
-use open_gpui::{Keymap, Window};
+use open_gpui::{InvalidKeystrokeError, Keymap, Window};
 use open_gpui_command::{
-    CommandCenter, CommandDescriptor, CommandProviderId, CommandProviderRefreshController,
-    CommandProviderRefreshProjection, CommandProviderRequest, CommandProviderResponse,
-    CommandProviderState, CommandProviderStatus, CommandRegistryError, CommandRegistrySnapshot,
-    CommandShortcutDiagnostic, CommandShortcutDiagnosticKind,
+    CommandCenter, CommandDescriptor, CommandKeymapResolution, CommandKeymapResolvedCommand,
+    CommandProviderId, CommandProviderRefreshController, CommandProviderRefreshProjection,
+    CommandProviderRequest, CommandProviderResponse, CommandProviderState, CommandProviderStatus,
+    CommandRegistryError, CommandRegistrySnapshot, CommandShortcutDiagnostic,
+    CommandShortcutDiagnosticKind,
 };
 use open_gpui_ui_core::Role;
 
@@ -419,6 +420,23 @@ impl CommandPaletteController {
         CommandPaletteProjection::from_center_for_window(center, self.query.as_str(), window)
     }
 
+    /// Resolves one app-level key sequence for shortcut inspectors and dispatch preflight.
+    ///
+    /// This does not dispatch. It keeps GPUI and `CommandCenter` as the keymap authority, then
+    /// carries the controller query alongside the typed keymap resolution so app shells can use the
+    /// same query when they later call command dispatch.
+    pub fn preflight_key_sequence_for_keymap(
+        &self,
+        center: &CommandCenter,
+        sequence: &str,
+        keymap: &Keymap,
+    ) -> Result<CommandPaletteKeymapPreflight, InvalidKeystrokeError> {
+        Ok(CommandPaletteKeymapPreflight::new(
+            self.query.clone(),
+            center.resolve_key_sequence_for_keymap(sequence, keymap)?,
+        ))
+    }
+
     /// Sets query, refreshes configured providers, and projects app-level keymap state.
     pub fn set_query_for_keymap(
         &mut self,
@@ -712,6 +730,74 @@ impl CommandPaletteController {
             .iter_mut()
             .find(|candidate| candidate.provider_id() == &provider_id)?;
         Some(controller.apply_response(center, request, response))
+    }
+}
+
+/// A command palette keymap lookup enriched with the query that would accompany dispatch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPaletteKeymapPreflight {
+    query: String,
+    resolution: CommandKeymapResolution,
+}
+
+impl CommandPaletteKeymapPreflight {
+    /// Creates a preflight value from a controller query and command-aware keymap resolution.
+    pub fn new(query: impl Into<String>, resolution: CommandKeymapResolution) -> Self {
+        Self {
+            query: query.into(),
+            resolution,
+        }
+    }
+
+    /// Returns the controller query captured when this preflight was produced.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// Returns the underlying command-aware keymap resolution.
+    pub const fn resolution(&self) -> &CommandKeymapResolution {
+        &self.resolution
+    }
+
+    /// Consumes the preflight and returns the underlying keymap resolution.
+    pub fn into_resolution(self) -> CommandKeymapResolution {
+        self.resolution
+    }
+
+    /// Returns the normalized input sequence as one whitespace-separated label.
+    pub fn input_label(&self) -> String {
+        self.resolution.input_label()
+    }
+
+    /// Returns matched commands in GPUI dispatch precedence order.
+    pub fn matched_commands(&self) -> &[CommandKeymapResolvedCommand] {
+        self.resolution.matched_commands()
+    }
+
+    /// Returns whether the GPUI keymap has any pending continuation for this input.
+    pub const fn is_pending(&self) -> bool {
+        self.resolution.is_pending()
+    }
+
+    /// Returns pending command continuations in GPUI precedence order.
+    pub fn pending_commands(&self) -> &[CommandKeymapResolvedCommand] {
+        self.resolution.pending_commands()
+    }
+
+    /// Returns the first matched command in GPUI dispatch precedence order.
+    pub fn primary_command(&self) -> Option<&CommandKeymapResolvedCommand> {
+        self.resolution.primary_command()
+    }
+
+    /// Returns the first matched command that is visible and dispatchable.
+    pub fn primary_dispatchable_command(&self) -> Option<&CommandKeymapResolvedCommand> {
+        self.resolution.primary_dispatchable_command()
+    }
+
+    /// Returns the first dispatchable command id, if this key sequence can dispatch now.
+    pub fn primary_dispatchable_command_id(&self) -> Option<&str> {
+        self.primary_dispatchable_command()
+            .map(CommandKeymapResolvedCommand::command_id)
     }
 }
 

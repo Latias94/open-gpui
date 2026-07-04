@@ -232,6 +232,23 @@ if let Some(command) = resolution.primary_dispatchable_command() {
 }
 ```
 
+When the lookup is owned by a command palette controller, use
+`CommandPaletteController::preflight_key_sequence_for_keymap` instead. It returns a
+`CommandPaletteKeymapPreflight`, which keeps the controller query beside the keymap resolution so
+an app shell can dispatch with the same query that produced the visible palette state:
+
+```rust
+let preflight = controller.preflight_key_sequence_for_keymap(
+    &center,
+    "ctrl-k ctrl-o",
+    &keymap,
+)?;
+
+if let Some(command_id) = preflight.primary_dispatchable_command_id() {
+    center.dispatch_in_app(command_id, preflight.query(), cx);
+}
+```
+
 `CommandKeymapResolution` exposes:
 
 - `matched_commands()` in GPUI dispatch precedence order;

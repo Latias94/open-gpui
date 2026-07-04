@@ -33,7 +33,8 @@ use crate::theme::ThemeResolver;
 pub use descriptor::{
     CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
     CommandLoadingState, CommandMatchSource, CommandOpenMode, CommandPaletteController,
-    CommandPaletteControllerUpdate, CommandPalettePendingProviderRequest, CommandPaletteProjection,
+    CommandPaletteControllerUpdate, CommandPaletteKeymapPreflight,
+    CommandPalettePendingProviderRequest, CommandPaletteProjection,
     CommandProviderPaletteProjection, CommandQueryMode, CommandSelectionMode, CommandStatusIntent,
     CommandStatusItem,
 };
