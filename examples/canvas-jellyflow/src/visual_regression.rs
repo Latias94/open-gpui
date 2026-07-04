@@ -27,7 +27,12 @@ pub(super) fn canvas_host_visual_interaction_report() -> OpenGpuiHostVisualInter
             project_kit_fixture(&fixture.kit_key, &fixture.fixture_key)
                 .expect("product fixture projects into canvas document");
         report.add_node_bounds_overlap_count(node_bounds_overlap_count(&document));
-        let measured_store = measurement_store_with_projection_fallback(&store, &semantic_registry);
+        let measurement_projection =
+            measurement_bridge::measurement_store_with_explicit_projection_fallback(
+                &store,
+                &semantic_registry,
+            );
+        let measured_store = measurement_projection.store();
 
         for canvas_node in document.nodes() {
             let Some(node_id) = jelly_node_id_from_node(canvas_node) else {
@@ -58,6 +63,9 @@ pub(super) fn canvas_host_visual_interaction_report() -> OpenGpuiHostVisualInter
                 &measured_store,
                 node_id,
                 &surface,
+                measurement_projection
+                    .evidence()
+                    .node_measurement_source(node_id),
             ));
         }
     }
@@ -77,6 +85,7 @@ fn visual_surface_report_row(
     measured_store: &NodeGraphStore,
     node_id: JellyNodeId,
     surface: &NodeSurfaceSummary,
+    measurement_source: measurement_bridge::ProjectionFallbackMeasurementSource,
 ) -> OpenGpuiHostVisualSurfaceRow {
     let source = host_renderer_source(registry, renderers, &surface.renderer_context);
     let content_visible = !surface.title.is_empty()
@@ -96,7 +105,6 @@ fn visual_surface_report_row(
     let content_readable = within_node_bounds
         && measured_content.text_overflow_count == 0
         && measured_content.clipped_control_count == 0;
-    let projected_controls = projected_control_count(surface);
     let stale_regions = if measured_store.node_measurement_status(node_id).is_fresh() {
         0
     } else {
@@ -133,7 +141,7 @@ fn visual_surface_report_row(
         measured_store,
         node_id,
         source,
-        projected_controls,
+        measurement_source,
         measured_content.readable_region_count,
         measured_content.control_region_count,
         hidden_repeatable_overflow,
@@ -194,14 +202,6 @@ fn rect_inside_canvas_node(rect: JellyRect, canvas_node: &CanvasNode) -> bool {
         && rect.size.height > 0.0
 }
 
-fn projected_control_count(surface: &NodeSurfaceSummary) -> usize {
-    surface
-        .slot_descriptors
-        .iter()
-        .map(|slot| project_slot_controls(&surface.node_data, slot).len())
-        .sum()
-}
-
 fn hidden_repeatable_overflow_count(surface: &NodeSurfaceSummary) -> usize {
     let visible_items = surface
         .renderer_context
@@ -227,7 +227,7 @@ fn measured_internals_evidence(
     measured_store: &NodeGraphStore,
     node_id: JellyNodeId,
     source: OpenGpuiHostRendererSource,
-    projected_controls: usize,
+    measurement_source: measurement_bridge::ProjectionFallbackMeasurementSource,
     measured_readable_regions: usize,
     measured_control_regions: usize,
     hidden_repeatable_overflow: usize,
@@ -240,6 +240,20 @@ fn measured_internals_evidence(
         usize::from(!measured_store.node_measurement_status(node_id).is_fresh());
     let missing_required_overflow_count =
         usize::from(hidden_repeatable_overflow > 0 && repeatable_overflow_indicators == 0);
+    let node_bounds_source = match measurement_source {
+        measurement_bridge::ProjectionFallbackMeasurementSource::FreshLayoutPass
+            if node_bounds_present =>
+        {
+            OpenGpuiMeasuredInternalsSource::LayoutPass
+        }
+        measurement_bridge::ProjectionFallbackMeasurementSource::ProjectionFallback => {
+            OpenGpuiMeasuredInternalsSource::ProjectionFallback
+        }
+        measurement_bridge::ProjectionFallbackMeasurementSource::Missing
+        | measurement_bridge::ProjectionFallbackMeasurementSource::FreshLayoutPass => {
+            OpenGpuiMeasuredInternalsSource::Missing
+        }
+    };
     let readable_region_count = if source == OpenGpuiHostRendererSource::ProductRenderer {
         measured_readable_regions
     } else {
@@ -247,24 +261,14 @@ fn measured_internals_evidence(
     };
 
     OpenGpuiMeasuredInternalsEvidence {
-        node_bounds_source: if node_bounds_present {
-            OpenGpuiMeasuredInternalsSource::CanvasDocument
-        } else {
-            OpenGpuiMeasuredInternalsSource::Missing
-        },
+        node_bounds_source,
         node_bounds_present,
         handle_bounds_present: measured_handle_count > 0,
         measured_handle_count,
         projected_handle_count: 0,
         readable_region_count,
         control_region_count: measured_control_regions,
-        drag_exclusion_region_count: surface
-            .renderer_context
-            .surface_preset
-            .graph_affordance
-            .drag_region_count
-            .max(measured_control_regions)
-            .max(usize::from(projected_controls > 0)),
+        drag_exclusion_region_count: 0,
         overflow_region_count: repeatable_overflow_indicators,
         stale_region_count,
         component_declared_overflow_count: repeatable_overflow_indicators,

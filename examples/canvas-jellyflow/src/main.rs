@@ -5981,6 +5981,45 @@ mod tests {
     }
 
     #[test]
+    fn projection_visual_report_does_not_infer_drag_exclusion_from_controls() {
+        let visual_report = visual_regression::canvas_host_visual_interaction_report();
+        let product_rows = visual_report
+            .rows
+            .iter()
+            .filter(|row| row.source == OpenGpuiHostRendererSource::ProductRenderer)
+            .collect::<Vec<_>>();
+
+        assert!(
+            !product_rows.is_empty(),
+            "projection diagnostic must include product renderer rows: {visual_report:?}"
+        );
+        assert!(
+            product_rows.iter().all(|row| row
+                .measured_internals_evidence
+                .is_some_and(|evidence| evidence.drag_exclusion_region_count == 0)),
+            "projection diagnostic must not infer drag exclusion from controls or presets: {visual_report:?}"
+        );
+        assert!(
+            product_rows.iter().all(|row| row
+                .measured_internals_evidence
+                .is_some_and(|evidence| evidence.uses_projection_fallback())),
+            "projection diagnostic rows must explicitly label fallback internals evidence: {visual_report:?}"
+        );
+        assert!(
+            visual_report
+                .computed_gaps()
+                .contains(&OpenGpuiHostVisualInteractionGap::MeasuredInternalsEvidenceIncomplete),
+            "projection diagnostic must remain degraded until real layout-pass drag exclusion regions are measured: {visual_report:?}"
+        );
+        assert!(
+            visual_report
+                .computed_gaps()
+                .contains(&OpenGpuiHostVisualInteractionGap::MeasuredInternalsProjectionFallback),
+            "projection diagnostic must surface projection fallback as a separate gap: {visual_report:?}"
+        );
+    }
+
+    #[test]
     fn canvas_example_characterizes_current_product_interaction_gaps() {
         let report = canvas_host_product_interaction_report();
         assert_product_interaction_report_gates(&report);
