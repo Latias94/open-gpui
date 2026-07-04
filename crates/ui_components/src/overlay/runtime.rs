@@ -2,8 +2,8 @@
 
 use open_gpui::{App, Entity, FocusHandle, Window};
 use open_gpui_ui_core::{
-    DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    OverlayLayerKind, OverlayLayerPolicy, OverlayPresence,
+    ControllableState, DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent,
+    OutsidePressPolicy, OverlayLayerKind, OverlayLayerPolicy, OverlayPresence,
 };
 
 use super::OverlayResolvedState;
@@ -145,13 +145,13 @@ impl OverlayDisclosureConfig {
 
     /// Resolves disclosure state.
     pub(crate) fn resolve(self) -> OverlayDisclosureState {
-        let open_mode = if self.controlled_open.is_some() {
+        let requested_open = ControllableState::resolve(self.controlled_open, || self.default_open);
+        let open_mode = if requested_open.is_controlled() {
             OverlayDisclosureOpenMode::Controlled
         } else {
             OverlayDisclosureOpenMode::Uncontrolled
         };
-        let requested_open = self.controlled_open.unwrap_or(self.default_open);
-        let open = requested_open && !self.disabled && self.openable;
+        let open = *requested_open.value() && !self.disabled && self.openable;
         let presence = OverlayPresence::from_open(open);
         let mut config = GpuiOverlayAdapterConfig::new(self.layer_kind, presence);
         if let Some(outside_press_policy) = self.outside_press_policy {
@@ -274,21 +274,17 @@ impl OverlayRuntimeState {
 }
 
 /// Resolves controlled/uncontrolled open state without emitting callbacks.
-pub(crate) const fn resolve_overlay_open_state(
+pub(crate) fn resolve_overlay_open_state(
     controlled_open: Option<bool>,
     runtime_open: bool,
 ) -> OverlayRuntimeState {
-    match controlled_open {
-        Some(open) => OverlayRuntimeState {
-            open,
-            controlled: true,
-            runtime_changed: runtime_open != open,
-        },
-        None => OverlayRuntimeState {
-            open: runtime_open,
-            controlled: false,
-            runtime_changed: false,
-        },
+    let open_state = ControllableState::resolve(controlled_open, || runtime_open);
+    let open = *open_state.value();
+    let controlled = open_state.is_controlled();
+    OverlayRuntimeState {
+        open,
+        controlled,
+        runtime_changed: controlled && runtime_open != open,
     }
 }
 

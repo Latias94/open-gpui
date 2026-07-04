@@ -810,16 +810,18 @@ impl RenderOnce for Select {
                             let key = event.keystroke.key.as_str();
                             if matches!(key, "enter" | "space" | "down" | "up") {
                                 consume_overlay_event(window, cx);
-                                apply_overlay_open_change(
-                                    runtime.clone(),
-                                    true,
-                                    on_open_change.as_deref(),
-                                    window,
-                                    cx,
-                                    |runtime| {
-                                        set_overlay_open(&mut runtime.open, true);
-                                    },
-                                );
+                                if !open {
+                                    apply_overlay_open_change(
+                                        runtime.clone(),
+                                        true,
+                                        on_open_change.as_deref(),
+                                        window,
+                                        cx,
+                                        |runtime| {
+                                            set_overlay_open(&mut runtime.open, true);
+                                        },
+                                    );
+                                }
                             } else if key == "escape" {
                                 consume_overlay_event(window, cx);
                                 close_select(runtime.clone(), on_open_change.clone(), window, cx);

@@ -1005,16 +1005,18 @@ impl RenderOnce for Combobox {
                             }
                             ComboboxKeyboardAction::Open => {
                                 consume_overlay_event(window, cx);
-                                apply_overlay_open_change(
-                                    runtime.clone(),
-                                    true,
-                                    on_open_change.as_deref(),
-                                    window,
-                                    cx,
-                                    |runtime| {
-                                        set_overlay_open(&mut runtime.open, true);
-                                    },
-                                );
+                                if !key_state.open() {
+                                    apply_overlay_open_change(
+                                        runtime.clone(),
+                                        true,
+                                        on_open_change.as_deref(),
+                                        window,
+                                        cx,
+                                        |runtime| {
+                                            set_overlay_open(&mut runtime.open, true);
+                                        },
+                                    );
+                                }
                             }
                             ComboboxKeyboardAction::Close => {
                                 consume_overlay_event(window, cx);

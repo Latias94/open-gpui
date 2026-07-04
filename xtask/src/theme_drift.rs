@@ -33,7 +33,8 @@ fn scan_theme_recipe_coverage(root: &Path, failures: &mut Vec<String>) {
         return;
     };
 
-    let recipe_definitions = recipe_definitions(&recipes);
+    let recipe_definitions_source = theme_recipe_definition_source(&theme_dir, &recipes, failures);
+    let recipe_definitions = recipe_definitions(&recipe_definitions_source);
     let recipe_calls = theme_recipe_calls(root);
     let recipe_catalog = theme_recipe_catalog(&recipes);
 
@@ -75,6 +76,48 @@ fn scan_theme_recipe_coverage(root: &Path, failures: &mut Vec<String>) {
             ));
         }
     }
+}
+
+fn theme_recipe_definition_source(
+    theme_dir: &Path,
+    recipes: &str,
+    failures: &mut Vec<String>,
+) -> String {
+    let mut source = String::from(recipes);
+    let recipes_dir = theme_dir.join("recipes");
+    if !recipes_dir.is_dir() {
+        return source;
+    }
+
+    let mut recipe_files = match fs::read_dir(&recipes_dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .collect::<Vec<_>>(),
+        Err(error) => {
+            failures.push(format!(
+                "crates/ui_components/src/theme/recipes: failed to read directory: {error}"
+            ));
+            return source;
+        }
+    };
+    recipe_files.sort();
+
+    for path in recipe_files {
+        match fs::read_to_string(&path) {
+            Ok(contents) => {
+                source.push('\n');
+                source.push_str(&contents);
+            }
+            Err(error) => failures.push(format!(
+                "{}: failed to read file: {error}",
+                display_path(theme_dir, &path)
+            )),
+        }
+    }
+
+    source
 }
 
 fn scan_theme_palette_coverage(root: &Path, failures: &mut Vec<String>) {
@@ -285,6 +328,53 @@ impl ThemeResolver {
             theme_recipe_catalog(contents),
             BTreeSet::from(["button_colors".to_string()])
         );
+    }
+
+    #[test]
+    fn theme_recipe_scan_reads_recipe_submodules() {
+        let root = std::env::temp_dir().join(format!(
+            "open_gpui_theme_recipe_scan_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let theme_dir = root.join("crates/ui_components/src/theme");
+        std::fs::create_dir_all(theme_dir.join("recipes")).unwrap();
+        std::fs::write(
+            theme_dir.join("recipes.rs"),
+            r#"
+const THEME_RECIPE_CATALOG: &[&str] = &[
+    "button_colors",
+];
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            theme_dir.join("recipes/action.rs"),
+            r#"
+impl ThemeResolver {
+    pub(crate) const fn button_colors(tokens: ThemeTokens) -> ButtonColors {
+        Self::accent_button_colors(tokens)
+    }
+}
+"#,
+        )
+        .unwrap();
+
+        let recipes = std::fs::read_to_string(theme_dir.join("recipes.rs")).unwrap();
+        let mut failures = Vec::new();
+        let definition_source = theme_recipe_definition_source(&theme_dir, &recipes, &mut failures);
+
+        assert!(failures.is_empty());
+        assert_eq!(
+            recipe_definitions(&definition_source),
+            BTreeSet::from(["button_colors".to_string()])
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

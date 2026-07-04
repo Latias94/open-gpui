@@ -71,8 +71,9 @@ pub(crate) fn vertical_scroll_offset(scroll_handle: &ScrollHandle) -> UiPx {
 }
 
 pub(crate) fn set_vertical_scroll_offset(scroll_handle: &ScrollHandle, scroll_offset: UiPx) {
+    let current = scroll_handle.offset();
     scroll_handle.set_offset(point(
-        px(0.0),
+        current.x,
         -gpui_px_from_ui(nonnegative_px(scroll_offset)),
     ));
 }
@@ -134,14 +135,19 @@ pub(crate) fn reveal_fixed_row(
         return false;
     }
 
+    let current = vertical_scroll_offset(scroll_handle);
     let target = fixed_row_scroll_target(
         strategy,
         target_index,
         item_count,
         row_height,
         viewport_extent,
-        vertical_scroll_offset(scroll_handle),
+        current,
     );
+    if target == current {
+        return false;
+    }
+
     set_vertical_scroll_offset(scroll_handle, target);
     true
 }

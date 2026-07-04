@@ -699,6 +699,7 @@ impl RenderOnce for Command {
                 let runtime = runtime.clone();
                 let on_open_change = on_open_change.clone();
                 let trigger_label = trigger_label.clone();
+                let open = state.open();
                 this.child(
                     div()
                         .id(trigger_id)
@@ -718,7 +719,7 @@ impl RenderOnce for Command {
                         .tab_stop(!disabled)
                         .ui_role(Role::Button)
                         .aria_label(trigger_label.clone())
-                        .aria_expanded(state.open())
+                        .aria_expanded(open)
                         .aria_disabled(disabled)
                         .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                         .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
@@ -726,16 +727,18 @@ impl RenderOnce for Command {
                             this.cursor_pointer().on_click(
                                 move |_event: &ClickEvent, window, cx| {
                                     cx.stop_propagation();
-                                    apply_overlay_open_change(
-                                        runtime.clone(),
-                                        true,
-                                        on_open_change.as_deref(),
-                                        window,
-                                        cx,
-                                        |runtime| {
-                                            set_overlay_open(&mut runtime.open, true);
-                                        },
-                                    );
+                                    if !open {
+                                        apply_overlay_open_change(
+                                            runtime.clone(),
+                                            true,
+                                            on_open_change.as_deref(),
+                                            window,
+                                            cx,
+                                            |runtime| {
+                                                set_overlay_open(&mut runtime.open, true);
+                                            },
+                                        );
+                                    }
                                 },
                             )
                         })

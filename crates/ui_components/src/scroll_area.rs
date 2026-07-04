@@ -161,14 +161,11 @@ impl ScrollAreaState {
 
     /// Returns whether the adapter should reset because the reset key changed.
     pub fn should_reset_for_key_change(&self, previous_reset_key: Option<&str>) -> bool {
-        if self.reset_policy != ScrollResetPolicy::ResetOnKeyChange {
-            return false;
-        }
-
-        match (previous_reset_key, self.reset_key()) {
-            (Some(previous), Some(current)) => previous != current,
-            _ => false,
-        }
+        should_reset_scroll_surface(
+            self.reset_policy == ScrollResetPolicy::ResetOnKeyChange,
+            previous_reset_key,
+            self.reset_key(),
+        )
     }
 }
 
@@ -279,11 +276,7 @@ impl RenderOnce for ScrollArea {
         let previous_reset_key = runtime_snapshot.reset_key().map(str::to_owned);
         let scroll_handle = scroll_surface_handle(&runtime_snapshot, self.scroll_handle.as_ref());
 
-        if should_reset_scroll_surface(
-            state.reset_policy() == ScrollResetPolicy::ResetOnKeyChange,
-            previous_reset_key.as_deref(),
-            state.reset_key(),
-        ) {
+        if state.should_reset_for_key_change(previous_reset_key.as_deref()) {
             scroll_handle.set_offset(point(px(0.0), px(0.0)));
         }
 
