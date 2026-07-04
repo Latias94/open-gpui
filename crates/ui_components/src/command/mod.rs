@@ -27,8 +27,8 @@ use crate::overlay::{
     gpui_overlay_state, resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_surface::{
-    scroll_surface_handle, set_vertical_scroll_offset, vertical_scroll_offset,
-    vertical_viewport_extent,
+    scroll_surface_handle, set_vertical_scroll_offset, should_reset_scroll_surface,
+    vertical_scroll_offset, vertical_viewport_extent,
 };
 use crate::text_editing::TextEditingPolicy;
 use crate::text_input::TextInputDisplayMode;
@@ -562,7 +562,6 @@ impl RenderOnce for Command {
                 self.active_value.clone(),
                 self.selected_value.clone(),
                 initial_selected_values.clone(),
-                initial_query.clone(),
                 cx.focus_handle(),
             )
         });
@@ -615,8 +614,16 @@ impl RenderOnce for Command {
             active_value,
         );
         let scroll_reset_key = command_scroll_reset_key(&state);
-        if runtime_state.scroll_surface.reset_key() != Some(scroll_reset_key.as_str()) {
+        let previous_scroll_reset_key = runtime_state.scroll_surface.reset_key();
+        let reset_key_changed = previous_scroll_reset_key != Some(scroll_reset_key.as_str());
+        if should_reset_scroll_surface(
+            true,
+            previous_scroll_reset_key,
+            Some(scroll_reset_key.as_str()),
+        ) {
             set_vertical_scroll_offset(&scroll_handle, UiPx::ZERO);
+        }
+        if reset_key_changed {
             runtime.update(cx, |runtime, _| {
                 runtime.scroll_surface.set_reset_key(Some(scroll_reset_key));
             });

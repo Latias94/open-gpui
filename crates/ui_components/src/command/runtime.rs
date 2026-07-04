@@ -50,7 +50,6 @@ impl CommandRuntime {
         active_value: Option<String>,
         selected_value: Option<String>,
         selected_values: Vec<String>,
-        scroll_reset_key: String,
         trigger_focus: FocusHandle,
     ) -> Self {
         Self {
@@ -58,7 +57,7 @@ impl CommandRuntime {
             active_value,
             selected_value,
             selected_values,
-            scroll_surface: ScrollSurfaceRuntime::new(Some(scroll_reset_key)),
+            scroll_surface: ScrollSurfaceRuntime::new(None),
             trigger_focus,
         }
     }
@@ -1133,6 +1132,43 @@ mod tests {
                     .item(CommandItem::new("view-sidebar", "View Sidebar"))
                     .item(CommandItem::new("zoom-in", "Zoom In")),
             )
+    }
+
+    #[test]
+    fn scroll_reset_key_tracks_query_not_selection_navigation() {
+        let base = Command::new("palette", "Command palette")
+            .open(true)
+            .default_query("file")
+            .selected("open-file")
+            .active("open-file")
+            .item(CommandItem::new("open-file", "Open File"))
+            .item(CommandItem::new("close-file", "Close File"))
+            .state();
+        let selection_changed = Command::new("palette", "Command palette")
+            .open(true)
+            .default_query("file")
+            .selected("close-file")
+            .active("close-file")
+            .item(CommandItem::new("open-file", "Open File"))
+            .item(CommandItem::new("close-file", "Close File"))
+            .state();
+        let query_changed = Command::new("palette", "Command palette")
+            .open(true)
+            .default_query("close")
+            .selected("close-file")
+            .active("close-file")
+            .item(CommandItem::new("open-file", "Open File"))
+            .item(CommandItem::new("close-file", "Close File"))
+            .state();
+
+        assert_eq!(
+            command_scroll_reset_key(&base),
+            command_scroll_reset_key(&selection_changed)
+        );
+        assert_ne!(
+            command_scroll_reset_key(&base),
+            command_scroll_reset_key(&query_changed)
+        );
     }
 
     #[test]
