@@ -8,17 +8,9 @@ fn component_api_inventory_covers_official_gallery_catalog() {
         .iter()
         .map(|entry| entry.component.to_string())
         .collect::<BTreeSet<_>>();
-    let contract_official_names = COMPONENT_API_INVENTORY
-        .iter()
-        .filter(|entry| {
-            component_contract_entry(entry.component).is_some_and(|contract| {
-                matches!(
-                    contract.gallery_status,
-                    SurfaceGalleryStatus::OfficialComponent | SurfaceGalleryStatus::OfficialOverlay
-                )
-            })
-        })
-        .map(|entry| entry.component.to_string())
+    let contract_official_names = official_component_rows()
+        .chain(official_overlay_component_rows())
+        .map(|entry| entry.name.to_string())
         .collect::<BTreeSet<_>>();
 
     let missing = contract_official_names
@@ -29,14 +21,6 @@ fn component_api_inventory_covers_official_gallery_catalog() {
         missing.is_empty(),
         "contract official component entries need public API inventory rows: {missing:?}"
     );
-
-    for overlay in official_overlay_component_rows() {
-        assert!(
-            inventory_names.contains(overlay.name),
-            "overlay component `{}` needs a public API inventory row",
-            overlay.name
-        );
-    }
 }
 
 #[test]
@@ -220,7 +204,6 @@ fn component_contract_queries_derive_overlay_and_recipe_rows() {
     let expected_recipes = COMPONENT_CONTRACT_ROWS
         .iter()
         .filter(|entry| entry.owner == PublicSurfaceOwnerClass::OfficialComponentRecipe)
-        .filter(|entry| inventory.contains(entry.name))
         .map(|entry| entry.name)
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(

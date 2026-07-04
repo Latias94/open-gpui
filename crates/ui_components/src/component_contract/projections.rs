@@ -1,8 +1,7 @@
 //! Projection APIs over canonical component contract rows.
 
 use super::{
-    COMPONENT_API_INVENTORY, COMPONENT_CONTRACT_ROWS, ComponentContractEntry,
-    PublicSurfaceOwnerClass, SurfaceGalleryStatus,
+    COMPONENT_CONTRACT_ROWS, ComponentContractEntry, PublicSurfaceOwnerClass, SurfaceGalleryStatus,
 };
 
 /// Returns the canonical product metadata row for a public surface token.
@@ -46,14 +45,11 @@ pub fn official_overlay_component_rows() -> impl Iterator<Item = &'static Compon
         .filter(|entry| entry.gallery_status == SurfaceGalleryStatus::OfficialOverlay)
 }
 
-/// Returns component recipe rows that also have public API inventory entries.
+/// Returns component recipe rows derived from the canonical contract table.
 pub fn component_recipe_component_rows() -> impl Iterator<Item = &'static ComponentContractEntry> {
-    COMPONENT_CONTRACT_ROWS.iter().filter(|entry| {
-        entry.owner == PublicSurfaceOwnerClass::OfficialComponentRecipe
-            && COMPONENT_API_INVENTORY
-                .iter()
-                .any(|inventory| inventory.component == entry.name)
-    })
+    COMPONENT_CONTRACT_ROWS
+        .iter()
+        .filter(|entry| entry.owner == PublicSurfaceOwnerClass::OfficialComponentRecipe)
 }
 
 const fn token_eq(left: &str, right: &str) -> bool {

@@ -48,7 +48,7 @@ pub use descriptor::{
 pub use model::{
     CommandDialogState, CommandGroupState, CommandItemState, CommandNavigationBehavior,
     CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandState,
-    CommandStateRequest,
+    CommandStateDataSource, CommandStateRequest,
 };
 pub use render_plan::{CommandBehaviorSnapshot, CommandRowBehaviorSnapshot};
 pub(crate) use render_plan::{CommandRenderPlan, CommandRowRenderPlan};
@@ -520,9 +520,15 @@ impl Command {
             empty_label: self.empty_label.to_string(),
             dialog_title: self.dialog_title.clone(),
             dialog_description: self.dialog_description.clone(),
-            groups: self.groups.iter().map(CommandGroup::descriptor).collect(),
-            items: self.items.iter().map(CommandItem::descriptor).collect(),
-            index_snapshot: self.index_snapshot.clone(),
+            data_source: self.index_snapshot.clone().map_or_else(
+                || {
+                    CommandStateDataSource::local(
+                        self.groups.iter().map(CommandGroup::descriptor),
+                        self.items.iter().map(CommandItem::descriptor),
+                    )
+                },
+                CommandStateDataSource::snapshot,
+            ),
             outside_press_policy: self.outside_press_policy,
             escape_key_policy: self.escape_key_policy,
             initial_focus_intent: self.initial_focus_intent.clone(),

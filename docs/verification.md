@@ -473,7 +473,8 @@ source strings for shipped status. The component crate root and prelude both re-
 namespaced under `open_gpui_ui_components::gpui_adapter`. Key sentinels include
 `component_api_inventory_covers_official_gallery_catalog`,
 `component_api_inventory_uses_stable_ownership_vocabulary`, and
-`component_contract_projection_functions_delegate_to_contract_rows`,
+`component_contract_entry_returns_canonical_rows`,
+`component_contract_queries_derive_overlay_and_recipe_rows`,
 `component_contract_rows_are_split_by_responsibility`, and
 `root_and_prelude_exports_match_contract_default_surface_intent`. Run the focused proof with:
 

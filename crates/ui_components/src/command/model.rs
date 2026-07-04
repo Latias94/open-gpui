@@ -430,6 +430,45 @@ impl CommandDataSource {
     }
 }
 
+/// Command result descriptors supplied to [`CommandStateRequest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandStateDataSource {
+    /// Locally supplied grouped and standalone command descriptors.
+    Local {
+        /// Local grouped command descriptors.
+        groups: Vec<CommandGroupDescriptor>,
+        /// Local standalone command descriptors.
+        items: Vec<CommandItemDescriptor>,
+    },
+    /// Caller-owned indexed command snapshot.
+    Snapshot(CommandIndexSnapshot),
+}
+
+impl CommandStateDataSource {
+    /// Creates a local command data source.
+    pub fn local(
+        groups: impl IntoIterator<Item = CommandGroupDescriptor>,
+        items: impl IntoIterator<Item = CommandItemDescriptor>,
+    ) -> Self {
+        Self::Local {
+            groups: groups.into_iter().collect(),
+            items: items.into_iter().collect(),
+        }
+    }
+
+    /// Creates a snapshot-backed command data source.
+    pub fn snapshot(snapshot: CommandIndexSnapshot) -> Self {
+        Self::Snapshot(snapshot)
+    }
+
+    fn into_private(self) -> CommandDataSource {
+        match self {
+            Self::Local { groups, items } => CommandDataSource::local(groups, items),
+            Self::Snapshot(snapshot) => CommandDataSource::snapshot(snapshot),
+        }
+    }
+}
+
 /// Resolved command state used by tests, demos, and rendering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommandState {
@@ -504,12 +543,8 @@ pub struct CommandStateRequest {
     pub dialog_title: Option<String>,
     /// Dialog description when dialog mode is enabled.
     pub dialog_description: Option<String>,
-    /// Local grouped command descriptors.
-    pub groups: Vec<CommandGroupDescriptor>,
-    /// Local standalone command descriptors.
-    pub items: Vec<CommandItemDescriptor>,
-    /// Optional caller-owned indexed command snapshot.
-    pub index_snapshot: Option<CommandIndexSnapshot>,
+    /// Command descriptors or indexed snapshot used to resolve results.
+    pub data_source: CommandStateDataSource,
     /// Outside press dismissal policy.
     pub outside_press_policy: OutsidePressPolicy,
     /// Escape key dismissal policy.
@@ -543,19 +578,13 @@ impl CommandState {
             empty_label,
             dialog_title,
             dialog_description,
-            groups,
-            items,
-            index_snapshot,
+            data_source,
             outside_press_policy,
             escape_key_policy,
             initial_focus_intent,
             focus_restore_intent,
             tokens,
         } = request;
-        let data_source = match index_snapshot {
-            Some(index_snapshot) => CommandDataSource::snapshot(index_snapshot),
-            None => CommandDataSource::local(groups, items),
-        };
 
         Self::resolve_from_data_source(
             size,
@@ -575,7 +604,7 @@ impl CommandState {
             empty_label,
             dialog_title,
             dialog_description,
-            data_source,
+            data_source.into_private(),
             outside_press_policy,
             escape_key_policy,
             initial_focus_intent,
