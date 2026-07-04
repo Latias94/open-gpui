@@ -5,11 +5,12 @@ use crate::listbox::ListboxOptionDescriptor;
 use crate::overlay::OverlayDisclosureOpenMode;
 use open_gpui::{InvalidKeystrokeError, Keymap, Window};
 use open_gpui_command::{
-    CommandCenter, CommandDescriptor, CommandKeymapResolution, CommandKeymapResolvedCommand,
-    CommandProviderId, CommandProviderRefreshController, CommandProviderRefreshProjection,
-    CommandProviderRequest, CommandProviderResponse, CommandProviderState, CommandProviderStatus,
-    CommandRegistryError, CommandRegistrySnapshot, CommandShortcutDiagnostic,
-    CommandShortcutDiagnosticKind,
+    CommandCenter, CommandDescriptor, CommandKeyBindingConflict, CommandKeyBindingDiagnostic,
+    CommandKeyBindingProjectedEntry, CommandKeyBindingProjection, CommandKeymapCommandState,
+    CommandKeymapResolution, CommandKeymapResolvedCommand, CommandProviderId,
+    CommandProviderRefreshController, CommandProviderRefreshProjection, CommandProviderRequest,
+    CommandProviderResponse, CommandProviderState, CommandProviderStatus, CommandRegistryError,
+    CommandRegistrySnapshot, CommandShortcutDiagnostic, CommandShortcutDiagnosticKind,
 };
 use open_gpui_ui_core::Role;
 
@@ -799,6 +800,326 @@ impl CommandPaletteKeymapPreflight {
         self.primary_dispatchable_command()
             .map(CommandKeymapResolvedCommand::command_id)
     }
+}
+
+/// One command row shown by a shortcut inspector.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandShortcutInspectorCommand {
+    command_id: String,
+    shortcut: String,
+    state: CommandKeymapCommandState,
+}
+
+impl CommandShortcutInspectorCommand {
+    fn from_resolved(command: &CommandKeymapResolvedCommand) -> Self {
+        Self {
+            command_id: command.command_id().to_owned(),
+            shortcut: command.shortcut().to_owned(),
+            state: command.state().clone(),
+        }
+    }
+
+    /// Returns the stable command id.
+    pub fn command_id(&self) -> &str {
+        &self.command_id
+    }
+
+    /// Returns the full shortcut label that matched or can continue from the inspected input.
+    pub fn shortcut(&self) -> &str {
+        &self.shortcut
+    }
+
+    /// Returns the command state after scope and availability checks.
+    pub const fn state(&self) -> &CommandKeymapCommandState {
+        &self.state
+    }
+
+    /// Returns whether this command can be dispatched.
+    pub const fn is_dispatchable(&self) -> bool {
+        self.state.is_dispatchable()
+    }
+}
+
+/// UI-ready shortcut inspector state for command palettes and app shells.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandShortcutInspectorState {
+    query: String,
+    input_label: String,
+    pending: bool,
+    primary_dispatchable_command_id: Option<String>,
+    matched_commands: Vec<CommandShortcutInspectorCommand>,
+    pending_commands: Vec<CommandShortcutInspectorCommand>,
+}
+
+impl CommandShortcutInspectorState {
+    /// Creates shortcut inspector state from palette controller preflight output.
+    pub fn from_preflight(preflight: &CommandPaletteKeymapPreflight) -> Self {
+        Self {
+            query: preflight.query().to_owned(),
+            input_label: preflight.input_label(),
+            pending: preflight.is_pending(),
+            primary_dispatchable_command_id: preflight
+                .primary_dispatchable_command_id()
+                .map(str::to_owned),
+            matched_commands: preflight
+                .matched_commands()
+                .iter()
+                .map(CommandShortcutInspectorCommand::from_resolved)
+                .collect(),
+            pending_commands: preflight
+                .pending_commands()
+                .iter()
+                .map(CommandShortcutInspectorCommand::from_resolved)
+                .collect(),
+        }
+    }
+
+    /// Returns the palette query captured during keymap preflight.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// Returns the normalized inspected input sequence.
+    pub fn input_label(&self) -> &str {
+        &self.input_label
+    }
+
+    /// Returns whether the inspected sequence is waiting for more chord input.
+    pub const fn is_pending(&self) -> bool {
+        self.pending
+    }
+
+    /// Returns the first dispatchable command id, if the inspected sequence can dispatch now.
+    pub fn primary_dispatchable_command_id(&self) -> Option<&str> {
+        self.primary_dispatchable_command_id.as_deref()
+    }
+
+    /// Returns commands that match the inspected input now.
+    pub fn matched_commands(&self) -> &[CommandShortcutInspectorCommand] {
+        &self.matched_commands
+    }
+
+    /// Returns command continuations if the inspected input is a pending chord.
+    pub fn pending_commands(&self) -> &[CommandShortcutInspectorCommand] {
+        &self.pending_commands
+    }
+}
+
+/// Filter mode for command keybinding editor projections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CommandKeyBindingEditorFilterMode {
+    /// Show every projected valid binding that matches the query.
+    #[default]
+    All,
+    /// Show only bindings that participate in a same-context command conflict.
+    ConflictsOnly,
+}
+
+/// Filtering applied to a keybinding editor state projection.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CommandKeyBindingEditorFilter {
+    query: String,
+    mode: CommandKeyBindingEditorFilterMode,
+}
+
+impl CommandKeyBindingEditorFilter {
+    /// Creates an empty all-bindings filter.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the editor query.
+    pub fn query(mut self, query: impl Into<String>) -> Self {
+        self.query = query.into();
+        self
+    }
+
+    /// Shows only conflicting key bindings.
+    pub fn conflicts_only(mut self) -> Self {
+        self.mode = CommandKeyBindingEditorFilterMode::ConflictsOnly;
+        self
+    }
+
+    /// Returns the query.
+    pub fn query_ref(&self) -> &str {
+        &self.query
+    }
+
+    /// Returns the filter mode.
+    pub const fn mode(&self) -> CommandKeyBindingEditorFilterMode {
+        self.mode
+    }
+}
+
+/// One valid binding row in the command keybinding editor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandKeyBindingEditorRow {
+    source_id: String,
+    command_id: String,
+    keystrokes: String,
+    context: Option<String>,
+    conflict_count: usize,
+}
+
+impl CommandKeyBindingEditorRow {
+    fn from_projected_entry(
+        entry: &CommandKeyBindingProjectedEntry,
+        conflicts: &[CommandKeyBindingConflict],
+    ) -> Self {
+        let conflict_count = conflicts
+            .iter()
+            .filter(|conflict| {
+                conflict.keystrokes() == entry.keystrokes()
+                    && conflict.context_ref() == entry.context_ref()
+                    && conflict.entries().iter().any(|conflict_entry| {
+                        conflict_entry.source_id() == entry.source_id()
+                            && conflict_entry.command_id() == entry.command_id()
+                    })
+            })
+            .count();
+
+        Self {
+            source_id: entry.source_id().as_str().to_owned(),
+            command_id: entry.command_id().to_owned(),
+            keystrokes: entry.keystrokes().to_owned(),
+            context: entry.context_ref().map(str::to_owned),
+            conflict_count,
+        }
+    }
+
+    /// Returns the lifecycle source id for this binding.
+    pub fn source_id(&self) -> &str {
+        &self.source_id
+    }
+
+    /// Returns the command id for this binding.
+    pub fn command_id(&self) -> &str {
+        &self.command_id
+    }
+
+    /// Returns the canonical shortcut label.
+    pub fn keystrokes(&self) -> &str {
+        &self.keystrokes
+    }
+
+    /// Returns the normalized context predicate.
+    pub fn context_ref(&self) -> Option<&str> {
+        self.context.as_deref()
+    }
+
+    /// Returns the number of conflicts involving this binding row.
+    pub const fn conflict_count(&self) -> usize {
+        self.conflict_count
+    }
+
+    /// Returns whether this row participates in at least one conflict.
+    pub const fn has_conflict(&self) -> bool {
+        self.conflict_count > 0
+    }
+}
+
+/// UI-ready command keybinding editor state derived from a keybinding projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandKeyBindingEditorState {
+    query: String,
+    mode: CommandKeyBindingEditorFilterMode,
+    total_binding_count: usize,
+    rows: Vec<CommandKeyBindingEditorRow>,
+    conflicts: Vec<CommandKeyBindingConflict>,
+    diagnostics: Vec<CommandKeyBindingDiagnostic>,
+}
+
+impl CommandKeyBindingEditorState {
+    /// Projects valid binding rows, conflicts, and diagnostics for a keybinding editor UI.
+    pub fn from_projection(
+        projection: &CommandKeyBindingProjection,
+        filter: CommandKeyBindingEditorFilter,
+    ) -> Self {
+        let query = filter.query.trim().to_lowercase();
+        let rows = projection
+            .projected_entries()
+            .iter()
+            .map(|entry| {
+                CommandKeyBindingEditorRow::from_projected_entry(entry, projection.conflicts())
+            })
+            .filter(|row| row_matches_keybinding_editor_filter(row, &query, filter.mode))
+            .collect();
+
+        Self {
+            query: filter.query,
+            mode: filter.mode,
+            total_binding_count: projection.projected_entries().len(),
+            rows,
+            conflicts: projection.conflicts().to_vec(),
+            diagnostics: projection.diagnostics().to_vec(),
+        }
+    }
+
+    /// Returns the query used to filter editor rows.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// Returns the active filter mode.
+    pub const fn mode(&self) -> CommandKeyBindingEditorFilterMode {
+        self.mode
+    }
+
+    /// Returns all valid binding rows before filtering.
+    pub const fn total_binding_count(&self) -> usize {
+        self.total_binding_count
+    }
+
+    /// Returns valid binding rows after query and mode filtering.
+    pub fn rows(&self) -> &[CommandKeyBindingEditorRow] {
+        &self.rows
+    }
+
+    /// Returns the filtered valid binding count.
+    pub fn filtered_binding_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Returns projection conflicts in canonical command projection form.
+    pub fn conflicts(&self) -> &[CommandKeyBindingConflict] {
+        &self.conflicts
+    }
+
+    /// Returns projection diagnostics for invalid or unresolved bindings.
+    pub fn diagnostics(&self) -> &[CommandKeyBindingDiagnostic] {
+        &self.diagnostics
+    }
+
+    /// Returns whether the projected keymap has command conflicts.
+    pub fn has_conflicts(&self) -> bool {
+        !self.conflicts.is_empty()
+    }
+
+    /// Returns whether the projected keymap has invalid binding diagnostics.
+    pub fn has_diagnostics(&self) -> bool {
+        !self.diagnostics.is_empty()
+    }
+}
+
+fn row_matches_keybinding_editor_filter(
+    row: &CommandKeyBindingEditorRow,
+    normalized_query: &str,
+    mode: CommandKeyBindingEditorFilterMode,
+) -> bool {
+    if matches!(mode, CommandKeyBindingEditorFilterMode::ConflictsOnly) && !row.has_conflict() {
+        return false;
+    }
+
+    if normalized_query.is_empty() {
+        return true;
+    }
+
+    row.command_id().to_lowercase().contains(normalized_query)
+        || row.source_id().to_lowercase().contains(normalized_query)
+        || row.keystrokes().to_lowercase().contains(normalized_query)
+        || row
+            .context_ref()
+            .is_some_and(|context| context.to_lowercase().contains(normalized_query))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

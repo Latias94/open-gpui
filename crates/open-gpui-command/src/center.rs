@@ -1524,6 +1524,34 @@ mod tests {
         );
         assert_eq!(projection.key_bindings().len(), 2);
         assert_eq!(
+            projection
+                .projected_entries()
+                .iter()
+                .map(|entry| {
+                    (
+                        entry.source_id().as_str(),
+                        entry.command_id(),
+                        entry.keystrokes(),
+                        entry.context_ref(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            [
+                (
+                    "workspace-shortcuts",
+                    "workspace.open",
+                    display_shortcut("ctrl-k ctrl-o").as_str(),
+                    Some("Workspace"),
+                ),
+                (
+                    "workspace-shortcuts",
+                    "workspace.save",
+                    display_shortcut("ctrl-s").as_str(),
+                    Some("Workspace && mode == normal"),
+                ),
+            ]
+        );
+        assert_eq!(
             crate::command_shortcut_label_from_keymap_in_context(
                 &keymap,
                 &OpenWorkspace,
@@ -1617,6 +1645,7 @@ mod tests {
 
         assert!(projection.diagnostics().is_empty());
         assert_eq!(projection.key_bindings().len(), 3);
+        assert_eq!(projection.projected_entries().len(), 3);
         assert_eq!(projection.conflicts().len(), 1);
         assert!(projection.is_clean());
         assert!(!projection.is_strictly_clean());

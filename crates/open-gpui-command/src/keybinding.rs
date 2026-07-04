@@ -378,6 +378,51 @@ struct ProjectedCommandKeyBinding {
     index: usize,
 }
 
+/// One valid command key binding after GPUI parsing and context normalization.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandKeyBindingProjectedEntry {
+    source_id: CommandSourceId,
+    command_id: String,
+    keystrokes: String,
+    context: Option<String>,
+}
+
+impl CommandKeyBindingProjectedEntry {
+    fn new(
+        source_id: CommandSourceId,
+        command_id: String,
+        keystrokes: String,
+        context: Option<String>,
+    ) -> Self {
+        Self {
+            source_id,
+            command_id,
+            keystrokes,
+            context,
+        }
+    }
+
+    /// Returns the lifecycle source that contributed this valid binding.
+    pub const fn source_id(&self) -> &CommandSourceId {
+        &self.source_id
+    }
+
+    /// Returns the command id referenced by this binding.
+    pub fn command_id(&self) -> &str {
+        &self.command_id
+    }
+
+    /// Returns the canonical GPUI display keystroke sequence.
+    pub fn keystrokes(&self) -> &str {
+        &self.keystrokes
+    }
+
+    /// Returns the normalized GPUI context predicate, when present.
+    pub fn context_ref(&self) -> Option<&str> {
+        self.context.as_deref()
+    }
+}
+
 impl CommandKeyBindingRegistry {
     /// Creates an empty command key binding registry.
     pub fn new() -> Self {
@@ -464,12 +509,23 @@ impl CommandKeyBindingRegistry {
         }
 
         let conflicts = key_binding_conflicts(&projected);
+        let projected_entries = projected
+            .iter()
+            .map(|binding| {
+                CommandKeyBindingProjectedEntry::new(
+                    binding.source_id.clone(),
+                    binding.command_id.clone(),
+                    binding.keystrokes.clone(),
+                    binding.context.clone(),
+                )
+            })
+            .collect();
         let key_bindings = projected
             .into_iter()
             .map(|projected| projected.key_binding)
             .collect();
 
-        CommandKeyBindingProjection::new(key_bindings, diagnostics, conflicts)
+        CommandKeyBindingProjection::new(key_bindings, projected_entries, diagnostics, conflicts)
     }
 
     /// Adds valid projected GPUI key bindings to an app keymap and returns the projection.
@@ -732,6 +788,7 @@ impl CommandKeyBindingDiagnostic {
 #[derive(Debug, Clone)]
 pub struct CommandKeyBindingProjection {
     key_bindings: Vec<KeyBinding>,
+    projected_entries: Vec<CommandKeyBindingProjectedEntry>,
     diagnostics: Vec<CommandKeyBindingDiagnostic>,
     conflicts: Vec<CommandKeyBindingConflict>,
 }
@@ -739,11 +796,13 @@ pub struct CommandKeyBindingProjection {
 impl CommandKeyBindingProjection {
     fn new(
         key_bindings: Vec<KeyBinding>,
+        projected_entries: Vec<CommandKeyBindingProjectedEntry>,
         diagnostics: Vec<CommandKeyBindingDiagnostic>,
         conflicts: Vec<CommandKeyBindingConflict>,
     ) -> Self {
         Self {
             key_bindings,
+            projected_entries,
             diagnostics,
             conflicts,
         }
@@ -752,6 +811,11 @@ impl CommandKeyBindingProjection {
     /// Returns valid GPUI key bindings in registry order.
     pub fn key_bindings(&self) -> &[KeyBinding] {
         &self.key_bindings
+    }
+
+    /// Returns valid projected command binding metadata in registry order.
+    pub fn projected_entries(&self) -> &[CommandKeyBindingProjectedEntry] {
+        &self.projected_entries
     }
 
     /// Returns diagnostics for skipped bindings.

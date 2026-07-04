@@ -1017,6 +1017,31 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
             .primary_command()
             .is_some_and(|command| command.state().is_missing_command())
     );
+
+    let shortcut_inspector = commands[8]
+        .shortcut_inspector
+        .as_ref()
+        .expect("keymap sample should expose shortcut inspector state");
+    assert_eq!(shortcut_inspector.query(), "keymap");
+    assert_eq!(shortcut_inspector.input_label(), "ctrl-k ctrl-o");
+    assert_eq!(
+        shortcut_inspector.primary_dispatchable_command_id(),
+        Some("workspace.open")
+    );
+    assert_eq!(shortcut_inspector.matched_commands().len(), 1);
+
+    let keybinding_editor = commands[8]
+        .keybinding_editor
+        .as_ref()
+        .expect("keymap sample should expose keybinding editor state");
+    assert_eq!(
+        keybinding_editor.mode(),
+        CommandKeyBindingEditorFilterMode::ConflictsOnly
+    );
+    assert_eq!(keybinding_editor.total_binding_count(), 2);
+    assert_eq!(keybinding_editor.filtered_binding_count(), 2);
+    assert_eq!(keybinding_editor.conflicts().len(), 1);
+    assert_eq!(keybinding_editor.diagnostics().len(), 2);
 }
 
 #[test]

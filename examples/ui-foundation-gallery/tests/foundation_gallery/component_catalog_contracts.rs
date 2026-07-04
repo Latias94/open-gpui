@@ -852,6 +852,65 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(missing_command.command_id(), "workspace.missing");
     assert!(missing_command.state().is_missing_command());
 
+    let shortcut_inspector = commands[8]
+        .shortcut_inspector
+        .as_ref()
+        .expect("keymap sample should expose shortcut inspector state");
+    assert_eq!(shortcut_inspector.query(), "keymap");
+    assert_eq!(shortcut_inspector.input_label(), "ctrl-k ctrl-o");
+    assert!(!shortcut_inspector.is_pending());
+    assert_eq!(
+        shortcut_inspector.primary_dispatchable_command_id(),
+        Some("workspace.open")
+    );
+    assert_eq!(shortcut_inspector.matched_commands().len(), 1);
+    assert!(shortcut_inspector.pending_commands().is_empty());
+
+    let keybinding_editor = commands[8]
+        .keybinding_editor
+        .as_ref()
+        .expect("keymap sample should expose keybinding editor state");
+    assert_eq!(
+        keybinding_editor.mode(),
+        CommandKeyBindingEditorFilterMode::ConflictsOnly
+    );
+    assert_eq!(keybinding_editor.query(), "workspace");
+    assert_eq!(keybinding_editor.total_binding_count(), 2);
+    assert_eq!(keybinding_editor.filtered_binding_count(), 2);
+    assert_eq!(keybinding_editor.conflicts().len(), 1);
+    assert_eq!(keybinding_editor.diagnostics().len(), 2);
+    assert_eq!(
+        keybinding_editor
+            .rows()
+            .iter()
+            .map(|row| {
+                (
+                    row.source_id().to_owned(),
+                    row.command_id().to_owned(),
+                    row.keystrokes().to_owned(),
+                    row.context_ref().map(str::to_owned),
+                    row.conflict_count(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "gallery-defaults".to_string(),
+                "workspace.open".to_string(),
+                "ctrl-P".to_string(),
+                Some("Workspace".to_string()),
+                1,
+            ),
+            (
+                "gallery-plugin".to_string(),
+                "workspace.save".to_string(),
+                "ctrl-P".to_string(),
+                Some("Workspace".to_string()),
+                1,
+            ),
+        ]
+    );
+
     assert_eq!(labels.len(), 4);
     assert_eq!(labels[0].state.role(), Role::Label);
     assert_eq!(labels[0].state.control_id(), Some("email-input"));

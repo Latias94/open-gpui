@@ -7,13 +7,15 @@ use open_gpui::{
 use open_gpui_ui_components::{
     Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command,
     CommandGroup, CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode,
-    CommandItem, CommandItemDescriptor, CommandLoadingState, CommandMatchSource, CommandOpenMode,
-    CommandPaletteController, CommandPaletteKeymapPreflight, CommandPaletteProjection,
-    CommandProviderPaletteProjection, CommandQueryMode, CommandSelection, CommandSelectionChange,
-    CommandSelectionMode, CommandStatusIntent, CommandStatusItem, Listbox, ListboxGroup,
-    ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor, ListboxOptionKind,
-    ListboxSelection, ListboxState, ScrollArea, ScrollResetPolicy, Select, SelectOpenMode,
-    SelectSelection, VirtualizerRange, gpui_adapter::init_text_input, listbox_navigation_target,
+    CommandItem, CommandItemDescriptor, CommandKeyBindingEditorFilter,
+    CommandKeyBindingEditorFilterMode, CommandKeyBindingEditorState, CommandLoadingState,
+    CommandMatchSource, CommandOpenMode, CommandPaletteController, CommandPaletteKeymapPreflight,
+    CommandPaletteProjection, CommandProviderPaletteProjection, CommandQueryMode, CommandSelection,
+    CommandSelectionChange, CommandSelectionMode, CommandShortcutInspectorState,
+    CommandStatusIntent, CommandStatusItem, Listbox, ListboxGroup, ListboxGroupDescriptor,
+    ListboxOption, ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState,
+    ScrollArea, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, VirtualizerRange,
+    gpui_adapter::init_text_input, listbox_navigation_target,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -1981,6 +1983,7 @@ fn command_palette_controller_preflights_keymap_dispatch_with_query() {
     let matched = controller
         .preflight_key_sequence_for_keymap(&center, "ctrl-k ctrl-o", &keymap)
         .unwrap();
+    let inspector = CommandShortcutInspectorState::from_preflight(&matched);
     assert_eq!(matched.query(), "open workspace");
     assert_eq!(
         matched.primary_dispatchable_command_id(),
@@ -1992,6 +1995,14 @@ fn command_palette_controller_preflights_keymap_dispatch_with_query() {
             .map(|command| (command.command_id(), command.shortcut())),
         Some(("workspace.open", "ctrl-K ctrl-O"))
     );
+    assert_eq!(inspector.query(), "open workspace");
+    assert_eq!(inspector.input_label(), "ctrl-k ctrl-o");
+    assert_eq!(
+        inspector.primary_dispatchable_command_id(),
+        Some("workspace.open")
+    );
+    assert_eq!(inspector.matched_commands().len(), 1);
+    assert!(inspector.pending_commands().is_empty());
 
     let disabled = controller
         .preflight_key_sequence_for_keymap(&center, "ctrl-s", &keymap)
@@ -2007,6 +2018,97 @@ fn command_palette_controller_preflights_keymap_dispatch_with_query() {
 
     let resolution = disabled.clone().into_resolution();
     assert_eq!(disabled.resolution(), &resolution);
+}
+
+#[test]
+fn command_keybinding_editor_state_filters_conflicts_and_keeps_diagnostics() {
+    let mut center = open_gpui_command::CommandCenter::new("keybinding-editor-v1");
+    center
+        .register_action("workspace.open", OpenPaletteCommand)
+        .register_action("workspace.save", RevealPaletteCommand);
+    center.register_key_bindings(
+        "workspace-defaults",
+        [
+            open_gpui_command::CommandKeyBinding::new("workspace.open", "ctrl-p")
+                .context("Workspace"),
+            open_gpui_command::CommandKeyBinding::new("workspace.save", "ctrl-s")
+                .context("Workspace &&"),
+        ],
+    );
+    center.register_key_bindings(
+        "workspace-plugin",
+        [
+            open_gpui_command::CommandKeyBinding::new("workspace.save", "ctrl-p")
+                .context("Workspace"),
+            open_gpui_command::CommandKeyBinding::new("workspace.missing", "ctrl-m")
+                .context("Workspace"),
+        ],
+    );
+
+    let projection = center.key_binding_projection();
+    let editor = CommandKeyBindingEditorState::from_projection(
+        &projection,
+        CommandKeyBindingEditorFilter::new()
+            .query("workspace")
+            .conflicts_only(),
+    );
+
+    assert_eq!(editor.query(), "workspace");
+    assert_eq!(
+        editor.mode(),
+        CommandKeyBindingEditorFilterMode::ConflictsOnly
+    );
+    assert_eq!(editor.total_binding_count(), 2);
+    assert_eq!(editor.filtered_binding_count(), 2);
+    assert!(editor.has_conflicts());
+    assert!(editor.has_diagnostics());
+    assert_eq!(editor.conflicts().len(), 1);
+    assert_eq!(editor.diagnostics().len(), 2);
+    assert_eq!(
+        editor
+            .rows()
+            .iter()
+            .map(|row| {
+                (
+                    row.source_id().to_owned(),
+                    row.command_id().to_owned(),
+                    row.keystrokes().to_owned(),
+                    row.context_ref().map(str::to_owned),
+                    row.conflict_count(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "workspace-defaults".to_string(),
+                "workspace.open".to_string(),
+                "ctrl-P".to_string(),
+                Some("Workspace".to_string()),
+                1,
+            ),
+            (
+                "workspace-plugin".to_string(),
+                "workspace.save".to_string(),
+                "ctrl-P".to_string(),
+                Some("Workspace".to_string()),
+                1,
+            ),
+        ]
+    );
+
+    let all = CommandKeyBindingEditorState::from_projection(
+        &projection,
+        CommandKeyBindingEditorFilter::new().query("ctrl-m"),
+    );
+    assert_eq!(all.mode(), CommandKeyBindingEditorFilterMode::All);
+    assert_eq!(all.filtered_binding_count(), 0);
+    assert_eq!(
+        all.diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.command_id())
+            .collect::<Vec<_>>(),
+        ["workspace.save", "workspace.missing"]
+    );
 }
 
 #[test]

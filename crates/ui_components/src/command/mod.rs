@@ -32,10 +32,12 @@ use crate::text_input::adapter::TextInputController;
 use crate::theme::ThemeResolver;
 pub use descriptor::{
     CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
-    CommandLoadingState, CommandMatchSource, CommandOpenMode, CommandPaletteController,
-    CommandPaletteControllerUpdate, CommandPaletteKeymapPreflight,
+    CommandKeyBindingEditorFilter, CommandKeyBindingEditorFilterMode, CommandKeyBindingEditorRow,
+    CommandKeyBindingEditorState, CommandLoadingState, CommandMatchSource, CommandOpenMode,
+    CommandPaletteController, CommandPaletteControllerUpdate, CommandPaletteKeymapPreflight,
     CommandPalettePendingProviderRequest, CommandPaletteProjection,
-    CommandProviderPaletteProjection, CommandQueryMode, CommandSelectionMode, CommandStatusIntent,
+    CommandProviderPaletteProjection, CommandQueryMode, CommandSelectionMode,
+    CommandShortcutInspectorCommand, CommandShortcutInspectorState, CommandStatusIntent,
     CommandStatusItem,
 };
 pub use model::{

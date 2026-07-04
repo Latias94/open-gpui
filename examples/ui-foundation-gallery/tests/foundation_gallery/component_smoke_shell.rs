@@ -420,6 +420,44 @@ fn components_gallery_smoke_focused_command_samples_cover_depth_behaviors(
             .is_some(),
         "expected keymap Command sample to render the missing command readout"
     );
+    assert!(
+        cx.debug_bounds("gallery:component-command-sample:keymap-resolution:shortcut-inspector")
+            .is_some(),
+        "expected keymap Command sample to render shortcut inspector state"
+    );
+    assert!(
+        cx.debug_bounds(
+            "gallery:component-command-sample:keymap-resolution:shortcut-inspector:matched:0"
+        )
+        .is_some(),
+        "expected keymap Command sample to render the matched shortcut inspector command"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-command-sample:keymap-resolution:keybinding-editor")
+            .is_some(),
+        "expected keymap Command sample to render keybinding editor state"
+    );
+    assert!(
+        cx.debug_bounds(
+            "gallery:component-command-sample:keymap-resolution:keybinding-editor:row:0"
+        )
+        .is_some(),
+        "expected keymap Command sample to render keybinding editor rows"
+    );
+    assert!(
+        cx.debug_bounds(
+            "gallery:component-command-sample:keymap-resolution:keybinding-editor:conflict:0"
+        )
+        .is_some(),
+        "expected keymap Command sample to render keybinding editor conflicts"
+    );
+    assert!(
+        cx.debug_bounds(
+            "gallery:component-command-sample:keymap-resolution:keybinding-editor:diagnostic:0"
+        )
+        .is_some(),
+        "expected keymap Command sample to render keybinding editor diagnostics"
+    );
 
     let virtualized_sample = bounds(cx, "gallery:component-command-sample:virtualized-index");
     let command_viewport = bounds(cx, "scroll-area:Virtualized commands:command-list-scroll");

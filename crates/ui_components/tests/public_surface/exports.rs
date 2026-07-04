@@ -156,6 +156,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_key_binding_conflict_entry: &root::CommandKeyBindingConflictEntry =
         &root_key_binding_conflict.entries()[0];
     assert_eq!(root_key_binding_conflict_entry.command_id(), "root.open");
+    let root_projected_entry: &root::CommandKeyBindingProjectedEntry =
+        &root_key_binding_projection.projected_entries()[0];
+    assert_eq!(root_projected_entry.command_id(), "root.open");
     let mut root_keymap = open_gpui::Keymap::default();
     let root_key_binding_report: root::CommandKeyBindingInstallReport = root_key_binding_registry
         .install_into_keymap(root_command_center.actions(), &mut root_keymap);
@@ -239,6 +242,21 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_palette_preflight.resolution();
     let _root_palette_preflight_command: Option<&root::CommandKeymapResolvedCommand> =
         root_palette_preflight.primary_dispatchable_command();
+    let root_shortcut_inspector: root::CommandShortcutInspectorState =
+        root::CommandShortcutInspectorState::from_preflight(&root_palette_preflight);
+    let _root_shortcut_inspector_command: Option<&root::CommandShortcutInspectorCommand> =
+        root_shortcut_inspector.matched_commands().first();
+    let root_keybinding_editor: root::CommandKeyBindingEditorState =
+        root::CommandKeyBindingEditorState::from_projection(
+            &root_key_binding_projection,
+            root::CommandKeyBindingEditorFilter::new()
+                .query("root")
+                .conflicts_only(),
+        );
+    let _root_keybinding_editor_mode: root::CommandKeyBindingEditorFilterMode =
+        root_keybinding_editor.mode();
+    let _root_keybinding_editor_row: Option<&root::CommandKeyBindingEditorRow> =
+        root_keybinding_editor.rows().first();
     let _root_pending_provider_request: root::CommandPalettePendingProviderRequest =
         root::CommandPalettePendingProviderRequest::new(
             "root-provider",
@@ -452,6 +470,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_key_binding_conflict_entry.command_id(),
         "prelude.open"
     );
+    let prelude_projected_entry: &prelude::CommandKeyBindingProjectedEntry =
+        &prelude_key_binding_projection.projected_entries()[0];
+    assert_eq!(prelude_projected_entry.command_id(), "prelude.open");
     let mut prelude_keymap = open_gpui::Keymap::default();
     let prelude_key_binding_report: prelude::CommandKeyBindingInstallReport =
         prelude_key_binding_registry
@@ -546,6 +567,21 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_palette_preflight.resolution();
     let _prelude_palette_preflight_command: Option<&prelude::CommandKeymapResolvedCommand> =
         prelude_palette_preflight.primary_dispatchable_command();
+    let prelude_shortcut_inspector: prelude::CommandShortcutInspectorState =
+        prelude::CommandShortcutInspectorState::from_preflight(&prelude_palette_preflight);
+    let _prelude_shortcut_inspector_command: Option<&prelude::CommandShortcutInspectorCommand> =
+        prelude_shortcut_inspector.matched_commands().first();
+    let prelude_keybinding_editor: prelude::CommandKeyBindingEditorState =
+        prelude::CommandKeyBindingEditorState::from_projection(
+            &prelude_key_binding_projection,
+            prelude::CommandKeyBindingEditorFilter::new()
+                .query("prelude")
+                .conflicts_only(),
+        );
+    let _prelude_keybinding_editor_mode: prelude::CommandKeyBindingEditorFilterMode =
+        prelude_keybinding_editor.mode();
+    let _prelude_keybinding_editor_row: Option<&prelude::CommandKeyBindingEditorRow> =
+        prelude_keybinding_editor.rows().first();
     let _prelude_pending_provider_request: prelude::CommandPalettePendingProviderRequest =
         prelude::CommandPalettePendingProviderRequest::new(
             "prelude-provider",

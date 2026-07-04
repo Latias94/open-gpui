@@ -2,8 +2,8 @@ use super::*;
 use open_gpui::{KeyBinding, KeyContext, Keymap, actions};
 use open_gpui_command::{
     CommandAvailabilityMap, CommandCenter, CommandContribution, CommandDescriptor,
-    CommandKeyBinding, CommandKeymapResolution, CommandProviderResponse, CommandProviderSource,
-    CommandProviderStatus, CommandShortcutDiagnostic,
+    CommandKeyBinding, CommandKeyBindingRegistry, CommandKeymapResolution, CommandProviderResponse,
+    CommandProviderSource, CommandProviderStatus, CommandShortcutDiagnostic,
 };
 
 /// One switch sample in the gallery.
@@ -141,6 +141,10 @@ pub struct CommandSample {
     pub provider_status: Option<CommandProviderStatus>,
     /// Keymap input resolutions used by command inspector/gallery readouts.
     pub keymap_resolutions: Arc<[CommandKeymapResolution]>,
+    /// Shortcut inspector state for app-shell key capture/readout samples.
+    pub shortcut_inspector: Option<CommandShortcutInspectorState>,
+    /// Keybinding editor state for conflict and diagnostic readout samples.
+    pub keybinding_editor: Option<CommandKeyBindingEditorState>,
     /// Persistent selected values for multi-select samples.
     pub selected_values: Arc<[String]>,
     /// Estimated visible row count for the result viewport.
@@ -966,6 +970,15 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
         "gallery keymap resolution bindings should project cleanly"
     );
     let keymap_resolution_controller = CommandPaletteController::new().with_query("keymap");
+    let shortcut_inspector_preflight = keymap_resolution_controller
+        .preflight_key_sequence_for_keymap(
+            &keymap_resolution_center,
+            "ctrl-k ctrl-o",
+            &keymap_resolution_keymap,
+        )
+        .expect("gallery shortcut inspector sequence is valid");
+    let shortcut_inspector =
+        CommandShortcutInspectorState::from_preflight(&shortcut_inspector_preflight);
     let keymap_resolutions: Arc<[CommandKeymapResolution]> =
         ["ctrl-k", "ctrl-k ctrl-o", "ctrl-s", "ctrl-h", "ctrl-m"]
             .into_iter()
@@ -981,6 +994,29 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
             })
             .collect::<Vec<_>>()
             .into();
+    let mut keybinding_editor_registry = CommandKeyBindingRegistry::new();
+    keybinding_editor_registry.register(
+        "gallery-defaults",
+        [
+            CommandKeyBinding::new("workspace.open", "ctrl-p").context("Workspace"),
+            CommandKeyBinding::new("workspace.save", "ctrl-s").context("Workspace &&"),
+        ],
+    );
+    keybinding_editor_registry.register(
+        "gallery-plugin",
+        [
+            CommandKeyBinding::new("workspace.save", "ctrl-p").context("Workspace"),
+            CommandKeyBinding::new("workspace.unknown", "ctrl-u").context("Workspace"),
+        ],
+    );
+    let keybinding_editor_projection =
+        keybinding_editor_registry.project(keymap_resolution_center.actions());
+    let keybinding_editor = CommandKeyBindingEditorState::from_projection(
+        &keybinding_editor_projection,
+        CommandKeyBindingEditorFilter::new()
+            .query("workspace")
+            .conflicts_only(),
+    );
     let keymap_resolution_palette = CommandPaletteProjection::from_center_for_keymap(
         &keymap_resolution_center,
         "keymap",
@@ -1230,9 +1266,11 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
                 dispatched_command_id: Some("workspace.open".to_string()),
                 shortcut_diagnostics: keymap_resolution_shortcut_diagnostics,
                 keymap_resolutions,
+                shortcut_inspector: Some(shortcut_inspector),
+                keybinding_editor: Some(keybinding_editor),
                 ..command_sample_from_snapshot(
                     "keymap-resolution",
-                    "CommandCenter keymap resolution exposes typed chord pending state, matched commands, and non-dispatchable command reasons.",
+                    "CommandCenter keymap resolution and palette preflight expose typed chord state, dispatch candidates, and keybinding editor conflicts.",
                     Size::Small,
                     false,
                     Some(true),
@@ -1414,6 +1452,8 @@ fn command_sample_from_local(
         status_items: Arc::from([]),
         provider_status: None,
         keymap_resolutions: Arc::from([]),
+        shortcut_inspector: None,
+        keybinding_editor: None,
         selected_values: selected_values.into(),
         viewport_item_count,
         row_height,
@@ -1480,6 +1520,8 @@ fn command_sample_from_snapshot(
         status_items: Arc::from([]),
         provider_status: None,
         keymap_resolutions: Arc::from([]),
+        shortcut_inspector: None,
+        keybinding_editor: None,
         selected_values: selected_values.into(),
         viewport_item_count,
         row_height,

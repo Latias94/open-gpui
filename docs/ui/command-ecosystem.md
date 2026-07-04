@@ -261,6 +261,18 @@ Each `CommandKeymapResolvedCommand` carries the command id, the full projected s
 plugin hosts and shortcut editors explain why a key sequence did not dispatch without duplicating
 the command center's scope and availability rules.
 
+For app-shell shortcut inspectors, `CommandShortcutInspectorState::from_preflight` turns a
+`CommandPaletteKeymapPreflight` into a UI-ready read model with the inspected input label, query,
+matched commands, pending chord continuations, and primary dispatchable command id. This mirrors the
+Zed-style split: the palette/controller owns query and dispatch preflight, while the inspector only
+renders the result.
+
+For keybinding editor surfaces, `CommandKeyBindingProjection::projected_entries()` exposes valid
+command-id bindings after GPUI parsing and context normalization. `CommandKeyBindingEditorState`
+turns that projection into filterable rows, conflict counts, conflicts, and skipped-entry
+diagnostics. The editor state is intentionally projection-only: callers still own persistence,
+source priority policy, user keymap file writes, and any edit/rollback workflow.
+
 Lower-level framework code can call `GpuiCommandActionMap::resolve_keymap_sequence` directly with an
 explicit registry snapshot, availability resolver, keymap, and `KeyContext` stack. `parse_command_key_sequence`
 is also public for callers that want to keep parsed `Keystroke` buffers between key events.

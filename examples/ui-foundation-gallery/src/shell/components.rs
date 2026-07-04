@@ -1253,6 +1253,8 @@ pub(crate) fn component_command_samples_section(
                     let state = sample.state.clone();
 
                     let keymap_resolutions = sample.keymap_resolutions.clone();
+                    let shortcut_inspector = sample.shortcut_inspector.clone();
+                    let keybinding_editor = sample.keybinding_editor.clone();
 
                     let label = state.label().to_owned();
 
@@ -1364,6 +1366,14 @@ pub(crate) fn component_command_samples_section(
                                 sample_id,
                                 keymap_resolutions,
                             ))
+                        })
+                        .when_some(shortcut_inspector, |this, inspector| {
+                            this.child(component_command_shortcut_inspector_row(
+                                sample_id, inspector,
+                            ))
+                        })
+                        .when_some(keybinding_editor, |this, editor| {
+                            this.child(component_command_keybinding_editor_rows(sample_id, editor))
                         })
                 })),
         )
@@ -1649,6 +1659,150 @@ fn component_command_keymap_resolution_rows(
                         ))
                 }),
         )
+}
+
+fn component_command_shortcut_inspector_row(
+    sample_id: &'static str,
+    inspector: open_gpui_ui_components::CommandShortcutInspectorState,
+) -> impl IntoElement {
+    let selector_sample_id = sample_id.to_owned();
+
+    div()
+        .debug_selector(move || {
+            format!("gallery:component-command-sample:{selector_sample_id}:shortcut-inspector")
+        })
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x334155))
+        .child(format!(
+            "{} query '{}' pending {} dispatch {}",
+            inspector.input_label(),
+            inspector.query(),
+            inspector.is_pending(),
+            inspector.primary_dispatchable_command_id().unwrap_or("none")
+        ))
+        .children(
+            inspector
+                .matched_commands()
+                .iter()
+                .enumerate()
+                .map(move |(index, command)| {
+                    let row_sample_id = sample_id.to_owned();
+                    div()
+                        .debug_selector(move || {
+                            format!(
+                                "gallery:component-command-sample:{row_sample_id}:shortcut-inspector:matched:{index}"
+                            )
+                        })
+                        .child(format!(
+                            "matched {} => {}:{:?}",
+                            command.shortcut(),
+                            command.command_id(),
+                            command.state()
+                        ))
+                }),
+        )
+        .children(
+            inspector
+                .pending_commands()
+                .iter()
+                .enumerate()
+                .map(move |(index, command)| {
+                    let row_sample_id = sample_id.to_owned();
+                    div()
+                        .debug_selector(move || {
+                            format!(
+                                "gallery:component-command-sample:{row_sample_id}:shortcut-inspector:pending:{index}"
+                            )
+                        })
+                        .child(format!(
+                            "pending {} => {}:{:?}",
+                            command.shortcut(),
+                            command.command_id(),
+                            command.state()
+                        ))
+                }),
+        )
+}
+
+fn component_command_keybinding_editor_rows(
+    sample_id: &'static str,
+    editor: open_gpui_ui_components::CommandKeyBindingEditorState,
+) -> impl IntoElement {
+    let selector_sample_id = sample_id.to_owned();
+
+    div()
+        .debug_selector(move || {
+            format!("gallery:component-command-sample:{selector_sample_id}:keybinding-editor")
+        })
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x334155))
+        .child(format!(
+            "{:?} query '{}' => {} of {} bindings / {} conflicts / {} diagnostics",
+            editor.mode(),
+            editor.query(),
+            editor.filtered_binding_count(),
+            editor.total_binding_count(),
+            editor.conflicts().len(),
+            editor.diagnostics().len()
+        ))
+        .children(editor.rows().iter().enumerate().map(move |(index, row)| {
+            let row_sample_id = sample_id.to_owned();
+            div()
+                .debug_selector(move || {
+                    format!(
+                        "gallery:component-command-sample:{row_sample_id}:keybinding-editor:row:{index}"
+                    )
+                })
+                .child(format!(
+                    "{} {} => {} [{}] conflicts {}",
+                    row.source_id(),
+                    row.keystrokes(),
+                    row.command_id(),
+                    row.context_ref().unwrap_or("global"),
+                    row.conflict_count()
+                ))
+        }))
+        .children(editor.conflicts().iter().enumerate().map(move |(index, conflict)| {
+            let row_sample_id = sample_id.to_owned();
+            div()
+                .debug_selector(move || {
+                    format!(
+                        "gallery:component-command-sample:{row_sample_id}:keybinding-editor:conflict:{index}"
+                    )
+                })
+                .child(format!(
+                    "conflict {} [{}] => {}",
+                    conflict.keystrokes(),
+                    conflict.context_ref().unwrap_or("global"),
+                    conflict
+                        .entries()
+                        .iter()
+                        .map(|entry| format!("{}:{}", entry.source_id().as_str(), entry.command_id()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+        }))
+        .children(editor.diagnostics().iter().enumerate().map(move |(index, diagnostic)| {
+            let row_sample_id = sample_id.to_owned();
+            div()
+                .debug_selector(move || {
+                    format!(
+                        "gallery:component-command-sample:{row_sample_id}:keybinding-editor:diagnostic:{index}"
+                    )
+                })
+                .child(format!(
+                    "diagnostic {:?} {} {}",
+                    diagnostic.kind(),
+                    diagnostic.command_id(),
+                    diagnostic.message().unwrap_or("none")
+                ))
+        }))
 }
 
 fn command_resolution_summary(
