@@ -157,6 +157,83 @@ pub struct MotionProjectionSample {
     scale_correction: MotionProjectionScale,
 }
 
+/// Sampled clip for rendering final-size content through a moving or revealing viewport.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MotionProjectionClip {
+    content_bounds: UiRect,
+    visible_bounds: UiRect,
+    occlusion_bounds: UiRect,
+    progress: f32,
+}
+
+impl MotionProjectionClip {
+    /// Creates a sampled clip from explicit final-content, visible, and occlusion bounds.
+    pub fn new(
+        content_bounds: UiRect,
+        visible_bounds: UiRect,
+        occlusion_bounds: UiRect,
+        progress: f32,
+    ) -> Self {
+        Self {
+            content_bounds,
+            visible_bounds,
+            occlusion_bounds,
+            progress: progress.clamp(0.0, 1.0),
+        }
+    }
+
+    /// Creates a projection clip from previous geometry to final semantic geometry.
+    pub fn from_projection(projection: MotionProjection, progress: f32) -> Self {
+        Self::from_projection_with_preference(projection, progress, MotionPreference::Animated)
+    }
+
+    /// Creates a projection clip while honoring reduced-motion final-state semantics.
+    pub fn from_projection_with_preference(
+        projection: MotionProjection,
+        progress: f32,
+        preference: MotionPreference,
+    ) -> Self {
+        let sample = projection.sample_with_preference(progress, preference);
+        Self::new(
+            sample.target_bounds(),
+            sample.visual_bounds(),
+            sample.target_bounds(),
+            sample.progress(),
+        )
+    }
+
+    /// Creates a reveal clip inside final content bounds from the chosen edge.
+    pub fn reveal(content_bounds: UiRect, edge: MotionEdge, progress: f32) -> Self {
+        let progress = progress.clamp(0.0, 1.0);
+        Self::new(
+            content_bounds,
+            reveal_rect_from_edge(content_bounds, edge, progress),
+            content_bounds,
+            progress,
+        )
+    }
+
+    /// Returns the final-size content bounds.
+    pub const fn content_bounds(self) -> UiRect {
+        self.content_bounds
+    }
+
+    /// Returns the sampled visible viewport bounds.
+    pub const fn visible_bounds(self) -> UiRect {
+        self.visible_bounds
+    }
+
+    /// Returns the occlusion bounds that cover the snapped final scene underneath.
+    pub const fn occlusion_bounds(self) -> UiRect {
+        self.occlusion_bounds
+    }
+
+    /// Returns clamped clip progress.
+    pub const fn progress(self) -> f32 {
+        self.progress
+    }
+}
+
 impl MotionProjectionSample {
     /// Creates a projection sample from explicit values.
     pub const fn new(
@@ -312,6 +389,34 @@ mod tests {
         assert_eq!(end.visual_bounds(), rect(30.0, 60.0, 200.0, 100.0));
         assert_eq!(end.translation(), ui_point(UiPx::ZERO, UiPx::ZERO));
         assert_eq!(end.scale(), MotionProjectionScale::IDENTITY);
+    }
+
+    #[test]
+    fn projection_clip_keeps_final_content_bounds_and_samples_visible_bounds() {
+        let projection = MotionProjection::between(
+            rect(10.0, 20.0, 100.0, 50.0),
+            rect(30.0, 60.0, 200.0, 100.0),
+        );
+
+        let start = MotionProjectionClip::from_projection(projection, 0.0);
+        assert_eq!(start.content_bounds(), rect(30.0, 60.0, 200.0, 100.0));
+        assert_eq!(start.visible_bounds(), rect(10.0, 20.0, 100.0, 50.0));
+        assert_eq!(start.occlusion_bounds(), rect(30.0, 60.0, 200.0, 100.0));
+
+        let end = MotionProjectionClip::from_projection(projection, 1.0);
+        assert_eq!(end.content_bounds(), rect(30.0, 60.0, 200.0, 100.0));
+        assert_eq!(end.visible_bounds(), rect(30.0, 60.0, 200.0, 100.0));
+    }
+
+    #[test]
+    fn reveal_clip_samples_visible_bounds_inside_final_content() {
+        let clip =
+            MotionProjectionClip::reveal(rect(10.0, 20.0, 100.0, 50.0), MotionEdge::Left, 0.25);
+
+        assert_eq!(clip.content_bounds(), rect(10.0, 20.0, 100.0, 50.0));
+        assert_eq!(clip.visible_bounds(), rect(10.0, 20.0, 25.0, 50.0));
+        assert_eq!(clip.occlusion_bounds(), rect(10.0, 20.0, 100.0, 50.0));
+        assert_eq!(clip.progress(), 0.25);
     }
 
     #[test]

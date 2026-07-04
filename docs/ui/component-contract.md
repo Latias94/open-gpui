@@ -767,10 +767,13 @@ feed to renderers, overlays, hit maps, accessibility descriptors, or motion plan
 consumes those resolved handle rectangles and owns handle/junction precedence; component and
 docking adapters should not carry their own handle hit solvers once the scene is available.
 The core split module also owns renderer-neutral transition diff descriptors for comparing two
-resolved scenes. Those descriptors are intentionally not part of the default component exports until
-the GPUI adapter executes insert, remove, collapse, and expand transitions. Today the concrete
-`Splitter` adapter only animates programmatic fraction changes when the ordered panel ids are stable;
-panel identity or count changes snap to the final state.
+resolved scenes and sampling them into projection clips. A sampled split transition keeps panel
+content at final semantic bounds while `MotionProjectionClip` describes the visible viewport for
+entering, leaving, moving, resizing, collapsing, and expanding panels. Those sampled descriptors are
+intentionally not part of the default component exports until the GPUI adapter executes insert,
+remove, collapse, and expand transitions. Today the concrete `Splitter` adapter only animates
+programmatic fraction changes when the ordered panel ids are stable; panel identity or count changes
+snap to the final state.
 
 The GPUI `Splitter` adapter renders resolved panel fractions and resize handles from that state and
 wires pointer dragging through keyed runtime state. Drag move events use the root splitter bounds to

@@ -132,7 +132,11 @@ bounds, orientation, selected state, disabled state, and actions.
 The shared motion runtime checks additionally prove that `open_gpui_ui_core` owns deterministic
 timeline sampling, spring sampling, scalar values, model-neutral scalar samples, frame-demand
 reasons, explicit model/preset resolution, layout projection data, motion policy validation,
-terminal state, reduced-motion completion, and stable-identity retarget matching.
+terminal state, reduced-motion completion, stable-identity retarget matching, and renderer-neutral
+projection clips. `SplitterLayoutTransition::sample` now exposes final-content bounds plus visible
+clip bounds for insert, remove, resize, collapse, and expand transition descriptors, while keeping
+the GPUI Splitter adapter's identity/count changes documented as immediate until that adapter
+renders retained entering/leaving content.
 `ui_components::Splitter` uses the scalar controller and explicit committed-layout model for
 programmatic fraction changes while keeping pointer drags immediate and policy-tested. Docking uses
 the same scalar motion model for transition progress, keeps explicit custom timeline specs intact,

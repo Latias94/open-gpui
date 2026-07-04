@@ -1,6 +1,9 @@
 //! Renderer-neutral split layout primitives.
 
-use crate::{MotionSpec, Orientation, Size, UiPx, UiRect, ui_point, ui_px, ui_rect, ui_size};
+use crate::{
+    MotionEdge, MotionProjection, MotionProjectionClip, MotionSpec, Orientation, Size, UiPx,
+    UiRect, reveal_rect_from_edge, ui_point, ui_px, ui_rect, ui_size,
+};
 use std::collections::HashMap;
 
 const EPSILON: f32 = 0.000_1;
@@ -996,6 +999,31 @@ pub struct SplitterLayoutTransition {
     handles: Vec<SplitterHandleTransition>,
 }
 
+/// Sampled split layout transition frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitterLayoutTransitionSample {
+    progress: f32,
+    panels: Vec<SplitterPanelTransitionSample>,
+    handles: Vec<SplitterHandleTransitionSample>,
+}
+
+/// Sampled split panel transition frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitterPanelTransitionSample {
+    id: String,
+    kind: SplitterPanelTransitionKind,
+    clip: Option<MotionProjectionClip>,
+}
+
+/// Sampled split handle transition frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitterHandleTransitionSample {
+    group_id: String,
+    index: usize,
+    kind: SplitterHandleTransitionKind,
+    bounds: Option<UiRect>,
+}
+
 impl SplitterLayoutTransition {
     /// Resolves a transition between two flat split layout scenes.
     pub fn between(
@@ -1042,6 +1070,36 @@ impl SplitterLayoutTransition {
         self.spec.is_immediate()
     }
 
+    /// Samples renderer-neutral panel and handle transition geometry at unit progress.
+    pub fn sample(&self, progress: f32) -> SplitterLayoutTransitionSample {
+        let progress = if self.spec.preference().is_immediate() {
+            1.0
+        } else {
+            progress.clamp(0.0, 1.0)
+        };
+        SplitterLayoutTransitionSample {
+            progress,
+            panels: self
+                .panels
+                .iter()
+                .map(|panel| {
+                    SplitterPanelTransitionSample::from_transition(
+                        panel,
+                        self.to.bounds(),
+                        self.to.orientation(),
+                        progress,
+                        self.spec.preference(),
+                    )
+                })
+                .collect(),
+            handles: self
+                .handles
+                .iter()
+                .map(|handle| SplitterHandleTransitionSample::from_transition(handle, progress))
+                .collect(),
+        }
+    }
+
     /// Returns panel transition descriptors.
     pub fn panels(&self) -> &[SplitterPanelTransition] {
         &self.panels
@@ -1056,6 +1114,234 @@ impl SplitterLayoutTransition {
     pub fn panel(&self, id: &str) -> Option<&SplitterPanelTransition> {
         self.panels.iter().find(|panel| panel.id == id)
     }
+}
+
+impl SplitterLayoutTransitionSample {
+    /// Returns clamped transition progress.
+    pub const fn progress(&self) -> f32 {
+        self.progress
+    }
+
+    /// Returns sampled panel transitions.
+    pub fn panels(&self) -> &[SplitterPanelTransitionSample] {
+        &self.panels
+    }
+
+    /// Returns sampled handle transitions.
+    pub fn handles(&self) -> &[SplitterHandleTransitionSample] {
+        &self.handles
+    }
+
+    /// Returns the sampled transition for a panel id.
+    pub fn panel(&self, id: &str) -> Option<&SplitterPanelTransitionSample> {
+        self.panels.iter().find(|panel| panel.id == id)
+    }
+}
+
+impl SplitterPanelTransitionSample {
+    fn from_transition(
+        transition: &SplitterPanelTransition,
+        scene_bounds: UiRect,
+        orientation: Orientation,
+        progress: f32,
+        preference: crate::MotionPreference,
+    ) -> Self {
+        let clip = match (transition.kind, transition.from, transition.to) {
+            (SplitterPanelTransitionKind::Entering, _, Some(to)) => Some(splitter_enter_clip(
+                to,
+                scene_bounds,
+                orientation,
+                progress,
+                preference,
+            )),
+            (SplitterPanelTransitionKind::Leaving, Some(from), _) => Some(splitter_leave_clip(
+                from,
+                scene_bounds,
+                orientation,
+                progress,
+                preference,
+            )),
+            (
+                SplitterPanelTransitionKind::Moving
+                | SplitterPanelTransitionKind::Resizing
+                | SplitterPanelTransitionKind::Collapsing
+                | SplitterPanelTransitionKind::Expanding,
+                Some(from),
+                Some(to),
+            ) => Some(MotionProjectionClip::from_projection_with_preference(
+                MotionProjection::between(from, to),
+                progress,
+                preference,
+            )),
+            _ => None,
+        };
+        Self {
+            id: transition.id.clone(),
+            kind: transition.kind,
+            clip,
+        }
+    }
+
+    /// Returns the stable panel id.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Returns the transition kind.
+    pub const fn kind(&self) -> SplitterPanelTransitionKind {
+        self.kind
+    }
+
+    /// Returns the sampled clip for panels that need transition rendering.
+    pub const fn clip(&self) -> Option<MotionProjectionClip> {
+        self.clip
+    }
+}
+
+impl SplitterHandleTransitionSample {
+    fn from_transition(transition: &SplitterHandleTransition, progress: f32) -> Self {
+        let progress = progress.clamp(0.0, 1.0);
+        let bounds = match (transition.from, transition.to) {
+            (Some(from), Some(to)) => Some(lerp_ui_rect(from, to, progress)),
+            (None, Some(to)) => Some(to),
+            (Some(from), None) => Some(from),
+            (None, None) => None,
+        };
+        Self {
+            group_id: transition.group_id.clone(),
+            index: transition.index,
+            kind: transition.kind,
+            bounds,
+        }
+    }
+
+    /// Returns the split group id.
+    pub fn group_id(&self) -> &str {
+        &self.group_id
+    }
+
+    /// Returns the handle index within the split group.
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Returns the transition kind.
+    pub const fn kind(&self) -> SplitterHandleTransitionKind {
+        self.kind
+    }
+
+    /// Returns sampled handle bounds.
+    pub const fn bounds(&self) -> Option<UiRect> {
+        self.bounds
+    }
+}
+
+fn splitter_enter_clip(
+    to: UiRect,
+    scene_bounds: UiRect,
+    orientation: Orientation,
+    progress: f32,
+    preference: crate::MotionPreference,
+) -> MotionProjectionClip {
+    let progress = if preference.is_immediate() {
+        1.0
+    } else {
+        progress.clamp(0.0, 1.0)
+    };
+    MotionProjectionClip::reveal(
+        to,
+        splitter_reveal_edge(to, scene_bounds, orientation),
+        progress,
+    )
+}
+
+fn splitter_leave_clip(
+    from: UiRect,
+    scene_bounds: UiRect,
+    orientation: Orientation,
+    progress: f32,
+    preference: crate::MotionPreference,
+) -> MotionProjectionClip {
+    let progress = if preference.is_immediate() {
+        1.0
+    } else {
+        progress.clamp(0.0, 1.0)
+    };
+    MotionProjectionClip::new(
+        from,
+        reveal_rect_from_edge(
+            from,
+            splitter_reveal_edge(from, scene_bounds, orientation),
+            1.0 - progress,
+        ),
+        from,
+        progress,
+    )
+}
+
+fn splitter_reveal_edge(
+    bounds: UiRect,
+    scene_bounds: UiRect,
+    orientation: Orientation,
+) -> MotionEdge {
+    match orientation {
+        Orientation::Horizontal => {
+            if rect_center_x(bounds) <= rect_center_x(scene_bounds) {
+                MotionEdge::Left
+            } else {
+                MotionEdge::Right
+            }
+        }
+        Orientation::Vertical => {
+            if rect_center_y(bounds) <= rect_center_y(scene_bounds) {
+                MotionEdge::Top
+            } else {
+                MotionEdge::Bottom
+            }
+        }
+    }
+}
+
+fn lerp_ui_rect(from: UiRect, to: UiRect, progress: f32) -> UiRect {
+    let progress = progress.clamp(0.0, 1.0);
+    ui_rect(
+        ui_point(
+            ui_px(lerp_f32(
+                from.origin.x.as_f32(),
+                to.origin.x.as_f32(),
+                progress,
+            )),
+            ui_px(lerp_f32(
+                from.origin.y.as_f32(),
+                to.origin.y.as_f32(),
+                progress,
+            )),
+        ),
+        ui_size(
+            ui_px(lerp_f32(
+                from.size.width.as_f32(),
+                to.size.width.as_f32(),
+                progress,
+            )),
+            ui_px(lerp_f32(
+                from.size.height.as_f32(),
+                to.size.height.as_f32(),
+                progress,
+            )),
+        ),
+    )
+}
+
+fn lerp_f32(from: f32, to: f32, progress: f32) -> f32 {
+    from + (to - from) * progress
+}
+
+fn rect_center_x(bounds: UiRect) -> f32 {
+    bounds.origin.x.as_f32() + bounds.size.width.as_f32() / 2.0
+}
+
+fn rect_center_y(bounds: UiRect) -> f32 {
+    bounds.origin.y.as_f32() + bounds.size.height.as_f32() / 2.0
 }
 
 /// Resolved layout for one split leaf panel.
@@ -2091,6 +2377,49 @@ mod tests {
                 .any(|handle| handle.kind() == SplitterHandleTransitionKind::Entering)
         );
 
+        let insert_start = insert.sample(0.0);
+        assert_eq!(insert_start.progress(), 0.0);
+        let center_to = insert
+            .panel("center")
+            .and_then(SplitterPanelTransition::to)
+            .expect("inserted panel should have final bounds");
+        let center_start = insert_start
+            .panel("center")
+            .expect("inserted panel should be sampled");
+        assert_eq!(center_start.kind(), SplitterPanelTransitionKind::Entering);
+        let center_clip = center_start
+            .clip()
+            .expect("entering panel should provide a reveal clip");
+        assert_eq!(center_clip.content_bounds(), center_to);
+        assert_eq!(center_clip.occlusion_bounds(), center_to);
+        assert_eq!(center_clip.visible_bounds().size.width, ui_px(0.0));
+        assert_eq!(
+            center_clip.visible_bounds().size.height,
+            center_to.size.height
+        );
+
+        let left_transition = insert
+            .panel("left")
+            .expect("left panel should have a resize transition");
+        let left_from = left_transition
+            .from()
+            .expect("resizing panel should have previous bounds");
+        let left_to = left_transition
+            .to()
+            .expect("resizing panel should have final bounds");
+        let left_start_clip = insert_start
+            .panel("left")
+            .and_then(SplitterPanelTransitionSample::clip)
+            .expect("resizing panel should provide a projection clip");
+        assert_eq!(left_start_clip.content_bounds(), left_to);
+        assert_eq!(left_start_clip.visible_bounds(), left_from);
+        let left_end_clip = insert
+            .sample(1.0)
+            .panel("left")
+            .and_then(SplitterPanelTransitionSample::clip)
+            .expect("resizing panel should finish at final bounds");
+        assert_eq!(left_end_clip.visible_bounds(), left_to);
+
         let remove = SplitterLayoutTransition::between(
             SplitterTransitionIntent::Remove,
             to_scene,
@@ -2100,6 +2429,29 @@ mod tests {
         assert_eq!(
             remove.panel("center").map(SplitterPanelTransition::kind),
             Some(SplitterPanelTransitionKind::Leaving)
+        );
+
+        let center_from = remove
+            .panel("center")
+            .and_then(SplitterPanelTransition::from)
+            .expect("removed panel should have previous bounds");
+        let remove_start_clip = remove
+            .sample(0.0)
+            .panel("center")
+            .and_then(SplitterPanelTransitionSample::clip)
+            .expect("leaving panel should provide a reveal clip");
+        assert_eq!(remove_start_clip.content_bounds(), center_from);
+        assert_eq!(remove_start_clip.visible_bounds(), center_from);
+        let remove_end_clip = remove
+            .sample(1.0)
+            .panel("center")
+            .and_then(SplitterPanelTransitionSample::clip)
+            .expect("leaving panel should shrink its visible bounds");
+        assert_eq!(remove_end_clip.content_bounds(), center_from);
+        assert_eq!(remove_end_clip.visible_bounds().size.width, ui_px(0.0));
+        assert_eq!(
+            remove_end_clip.visible_bounds().size.height,
+            center_from.size.height
         );
     }
 
@@ -2196,5 +2548,17 @@ mod tests {
             transition.panel("left").map(SplitterPanelTransition::kind),
             Some(SplitterPanelTransitionKind::Resizing)
         );
+        let reduced_start = transition.sample(0.0);
+        assert_eq!(reduced_start.progress(), 1.0);
+        let left_to = transition
+            .panel("left")
+            .and_then(SplitterPanelTransition::to)
+            .expect("resizing panel should have final bounds");
+        let left_clip = reduced_start
+            .panel("left")
+            .and_then(SplitterPanelTransitionSample::clip)
+            .expect("reduced-motion resize should still expose final clip geometry");
+        assert_eq!(left_clip.content_bounds(), left_to);
+        assert_eq!(left_clip.visible_bounds(), left_to);
     }
 }
