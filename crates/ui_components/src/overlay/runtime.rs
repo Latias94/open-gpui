@@ -1,6 +1,6 @@
 //! GPUI runtime helpers for overlay-like component adapters.
 
-use open_gpui::{App, FocusHandle, Window};
+use open_gpui::{App, Entity, FocusHandle, Window};
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
     OverlayLayerKind, OverlayLayerPolicy, OverlayPresence,
@@ -295,6 +295,30 @@ pub(crate) const fn resolve_overlay_open_state(
 /// Updates runtime open state without invoking component callbacks.
 pub(crate) fn set_overlay_open(runtime_open: &mut bool, open: bool) {
     *runtime_open = open;
+}
+
+/// Closes an overlay runtime and applies the shared callback/focus tail.
+pub(crate) fn close_overlay_runtime<T: 'static>(
+    runtime: Entity<T>,
+    focus_restore: &FocusRestoreIntent,
+    trigger_focus: FocusHandle,
+    defer_focus_restore: bool,
+    on_open_change: Option<&dyn Fn(bool, &mut Window, &mut App)>,
+    window: &mut Window,
+    cx: &mut App,
+    close_runtime: impl FnOnce(&mut T),
+) {
+    runtime.update(cx, |runtime, _| {
+        close_runtime(runtime);
+    });
+    emit_overlay_open_change(false, on_open_change, window, cx);
+    restore_overlay_focus(
+        focus_restore,
+        Some(trigger_focus),
+        defer_focus_restore,
+        window,
+        cx,
+    );
 }
 
 /// Emits the bool open-change callback after runtime state has been updated.

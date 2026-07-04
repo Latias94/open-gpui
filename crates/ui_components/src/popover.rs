@@ -20,9 +20,9 @@ use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
     GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
-    consume_overlay_event, emit_overlay_open_change, escape_open_change, gpui_overlay_state,
-    gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
-    restore_overlay_focus, set_overlay_open,
+    close_overlay_runtime, consume_overlay_event, emit_overlay_open_change, escape_open_change,
+    gpui_overlay_state, gpui_relative_overlay_layer, outside_press_open_change,
+    resolve_overlay_open_state, set_overlay_open,
 };
 use crate::theme::{ThemeContext, ThemeResolver};
 
@@ -759,11 +759,18 @@ fn close_popover(
     cx: &mut App,
 ) {
     let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    runtime.update(cx, |runtime, _| {
-        set_overlay_open(&mut runtime.open, false);
-    });
-    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
-    restore_overlay_focus(&focus_restore, Some(trigger_focus), true, window, cx);
+    close_overlay_runtime(
+        runtime,
+        &focus_restore,
+        trigger_focus,
+        true,
+        on_open_change.as_deref(),
+        window,
+        cx,
+        |runtime| {
+            set_overlay_open(&mut runtime.open, false);
+        },
+    );
 }
 
 fn popover_initial_focus_handle(

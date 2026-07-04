@@ -27,9 +27,10 @@ use crate::a11y::UiA11yElementExt;
 use crate::focus::focus_ring_shadow_with_theme;
 
 use crate::overlay::{
-    GpuiOverlayPlacement, GpuiOverlayState, consume_overlay_event, emit_overlay_open_change,
-    gpui_overlay_state, gpui_positioned_overlay_layer, gpui_relative_overlay_layer,
-    outside_press_open_change, resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
+    GpuiOverlayPlacement, GpuiOverlayState, close_overlay_runtime, consume_overlay_event,
+    emit_overlay_open_change, gpui_overlay_state, gpui_positioned_overlay_layer,
+    gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
+    set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::{ThemeContext, ThemeResolver};
@@ -1293,12 +1294,19 @@ fn close_menu(
     window: &mut Window,
     cx: &mut App,
 ) {
-    runtime.update(cx, |runtime, _| {
-        set_overlay_open(&mut runtime.open, false);
-        runtime.reset_closed_state();
-    });
-    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
-    restore_overlay_focus(&focus_restore, Some(trigger_focus), true, window, cx);
+    close_overlay_runtime(
+        runtime,
+        &focus_restore,
+        trigger_focus,
+        true,
+        on_open_change.as_deref(),
+        window,
+        cx,
+        |runtime| {
+            set_overlay_open(&mut runtime.open, false);
+            runtime.reset_closed_state();
+        },
+    );
 }
 
 fn menu_initial_focus_handle(
