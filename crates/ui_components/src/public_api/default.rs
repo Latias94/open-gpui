@@ -44,7 +44,7 @@ pub use crate::command::{
     CommandProviderPaletteProjection, CommandQueryMode, CommandRowBehaviorSnapshot,
     CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandSelectionMode,
     CommandShortcutInspectorCommand, CommandShortcutInspectorState, CommandState,
-    CommandStatusIntent, CommandStatusItem,
+    CommandStateRequest, CommandStatusIntent, CommandStatusItem,
 };
 pub use crate::component_contract::{
     COMPONENT_A11Y_EVIDENCE, COMPONENT_CONFORMANCE_GATES, ComponentA11yEvidence,

@@ -44,6 +44,7 @@ pub use descriptor::{
 pub use model::{
     CommandDialogState, CommandGroupState, CommandItemState, CommandNavigationBehavior,
     CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandState,
+    CommandStateRequest,
 };
 pub use render_plan::{CommandBehaviorSnapshot, CommandRowBehaviorSnapshot};
 pub(crate) use render_plan::{CommandRenderPlan, CommandRowRenderPlan};
@@ -497,60 +498,33 @@ impl Command {
         selected_values: impl IntoIterator<Item = impl Into<String>>,
         active_value: Option<&str>,
     ) -> CommandState {
-        let state = if let Some(index_snapshot) = self.index_snapshot.clone() {
-            CommandState::resolve_from_index_snapshot(
-                self.size,
-                self.disabled,
-                open,
-                self.default_open,
-                self.dialog_enabled,
-                self.label.to_string(),
-                self.placeholder.to_string(),
-                query,
-                query_mode,
-                self.selection_mode,
-                selected_value,
-                selected_values,
-                active_value,
-                self.loading_state.clone(),
-                self.empty_label.to_string(),
-                self.dialog_title.clone(),
-                self.dialog_description.clone(),
-                index_snapshot,
-                self.outside_press_policy,
-                self.escape_key_policy,
-                self.initial_focus_intent.clone(),
-                self.focus_restore_intent.clone(),
-                self.tokens,
-            )
-        } else {
-            CommandState::resolve(
-                self.size,
-                self.disabled,
-                open,
-                self.default_open,
-                self.dialog_enabled,
-                self.label.to_string(),
-                self.placeholder.to_string(),
-                query,
-                query_mode,
-                self.selection_mode,
-                selected_value,
-                selected_values,
-                active_value,
-                self.loading_state.clone(),
-                self.empty_label.to_string(),
-                self.dialog_title.clone(),
-                self.dialog_description.clone(),
-                self.groups.iter().map(CommandGroup::descriptor),
-                self.items.iter().map(CommandItem::descriptor),
-                self.outside_press_policy,
-                self.escape_key_policy,
-                self.initial_focus_intent.clone(),
-                self.focus_restore_intent.clone(),
-                self.tokens,
-            )
-        };
+        let state = CommandState::resolve(CommandStateRequest {
+            size: self.size,
+            disabled: self.disabled,
+            open,
+            default_open: self.default_open,
+            dialog_enabled: self.dialog_enabled,
+            label: self.label.to_string(),
+            placeholder: self.placeholder.to_string(),
+            query: query.to_string(),
+            query_mode,
+            selection_mode: self.selection_mode,
+            selected_value: selected_value.map(str::to_owned),
+            selected_values: selected_values.into_iter().map(Into::into).collect(),
+            active_value: active_value.map(str::to_owned),
+            loading_state: self.loading_state.clone(),
+            empty_label: self.empty_label.to_string(),
+            dialog_title: self.dialog_title.clone(),
+            dialog_description: self.dialog_description.clone(),
+            groups: self.groups.iter().map(CommandGroup::descriptor).collect(),
+            items: self.items.iter().map(CommandItem::descriptor).collect(),
+            index_snapshot: self.index_snapshot.clone(),
+            outside_press_policy: self.outside_press_policy,
+            escape_key_policy: self.escape_key_policy,
+            initial_focus_intent: self.initial_focus_intent.clone(),
+            focus_restore_intent: self.focus_restore_intent.clone(),
+            tokens: self.tokens,
+        });
 
         state
             .with_metrics(self.metrics)

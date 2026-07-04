@@ -223,6 +223,9 @@ modal dialog overlay state when dialog presentation is enabled. `CommandNavigati
 the palette-specific keyboard layer explicit: Home/End target the first/last focusable command,
 Up/Down loop by default but can be bounded with `loop_navigation(false)`, and Alt+Up/Alt+Down move
 between rendered command groups.
+`CommandState::resolve` takes a `CommandStateRequest` so query ownership, selection inputs, local
+descriptors, indexed snapshots, overlay policy, and theme tokens stay grouped at the module
+interface instead of leaking parallel resolver signatures.
 `CommandIndexSnapshot` lets applications pass indexed, pre-ranked, or pre-filtered descriptor
 snapshots with loading metadata, while keeping command discovery, global registries, keybinding
 resolution, dispatch, enablement policy, and async task ownership outside `ui_components`. The GPUI
