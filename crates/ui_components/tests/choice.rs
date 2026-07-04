@@ -31,6 +31,15 @@ actions!(
     [OpenPaletteCommand, RevealPaletteCommand]
 );
 
+fn display_shortcut(keystrokes: &str) -> String {
+    open_gpui::KeyBinding::new(keystrokes, OpenPaletteCommand, None)
+        .keystrokes()
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[test]
 fn listbox_state_resolves_grouped_options_navigation_and_typeahead() {
     let state = ListboxState::resolve(
@@ -230,6 +239,74 @@ fn listbox_select_and_combobox_project_equivalent_choice_semantics() {
 
     assert_eq!(select.trigger_label(), "Bravo");
     assert_eq!(combobox.selected_value(), Some("bravo"));
+}
+
+#[test]
+fn listbox_navigation_skips_separators_and_disabled_rows_across_groups() {
+    let state = ListboxState::resolve(
+        Size::Small,
+        false,
+        "Grouped navigation",
+        Some("group-beta"),
+        Some("group-beta"),
+        None,
+        "No choices",
+        [ListboxGroupDescriptor::new("first", "First")
+            .option(ListboxOptionDescriptor::option(
+                "group-alpha",
+                "Group Alpha",
+            ))
+            .option(ListboxOptionDescriptor::separator("group-separator"))
+            .option(
+                ListboxOptionDescriptor::option("group-disabled", "Group Disabled").disabled(true),
+            )
+            .option(ListboxOptionDescriptor::option("group-beta", "Group Beta"))],
+        [
+            ListboxOptionDescriptor::separator("standalone-separator"),
+            ListboxOptionDescriptor::option("standalone-alpha", "Standalone Alpha"),
+            ListboxOptionDescriptor::option("standalone-disabled", "Standalone Disabled")
+                .disabled(true),
+        ],
+        ThemeTokens::default(),
+    );
+
+    assert_eq!(
+        state
+            .options()
+            .iter()
+            .map(|option| (
+                option.value().to_owned(),
+                option.focusable(),
+                option.position_in_set(),
+                option.size_of_set(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("standalone-separator".to_string(), false, None, 5),
+            ("standalone-alpha".to_string(), true, Some(1), 5),
+            ("standalone-disabled".to_string(), false, Some(2), 5),
+            ("group-alpha".to_string(), true, Some(3), 5),
+            ("group-separator".to_string(), false, None, 5),
+            ("group-disabled".to_string(), false, Some(4), 5),
+            ("group-beta".to_string(), true, Some(5), 5),
+        ]
+    );
+    assert_eq!(
+        state.navigation_target("down").map(|option| option.value()),
+        Some("standalone-alpha")
+    );
+    assert_eq!(
+        state.navigation_target("up").map(|option| option.value()),
+        Some("group-alpha")
+    );
+    assert_eq!(
+        state.navigation_target("home").map(|option| option.value()),
+        Some("standalone-alpha")
+    );
+    assert_eq!(
+        state.navigation_target("end").map(|option| option.value()),
+        Some("group-beta")
+    );
 }
 
 #[test]
@@ -760,6 +837,54 @@ fn combobox_state_filters_query_without_clearing_selection() {
         OverlayLayerKind::NonModalDismissible
     );
     assert_eq!(state.input().placeholder(), Some("Search frameworks"));
+}
+
+#[test]
+fn combobox_filtering_matches_value_label_and_keyword_without_clearing_selected_identity() {
+    let by_value = Combobox::new("value-combobox", "Framework")
+        .default_query("solid-js")
+        .selected("react")
+        .option(ComboboxOption::new("solid-js", "Solid"))
+        .option(ComboboxOption::new("react", "React"))
+        .state();
+    let by_label = Combobox::new("label-combobox", "Framework")
+        .default_query("relay")
+        .selected("react")
+        .option(ComboboxOption::new("react", "React"))
+        .group(
+            ComboboxGroup::new("meta", "Meta")
+                .option(ComboboxOption::new("graphql-client", "Relay")),
+        )
+        .state();
+    let by_keyword = Combobox::new("keyword-combobox", "Framework")
+        .default_query("graphql")
+        .selected("react")
+        .option(ComboboxOption::new("react", "React"))
+        .group(
+            ComboboxGroup::new("meta", "Meta")
+                .option(ComboboxOption::new("relay", "Relay").keyword("graphql")),
+        )
+        .state();
+
+    assert_eq!(by_value.selected_value(), Some("react"));
+    assert_eq!(by_value.filtered_option_count(), 1);
+    assert_eq!(by_value.active_value(), Some("solid-js"));
+    assert_eq!(by_value.listbox().selected_value(), None);
+    assert_eq!(
+        by_value.listbox().options()[0].value(),
+        "solid-js",
+        "value matches should become the filtered active option"
+    );
+
+    assert_eq!(by_label.selected_value(), Some("react"));
+    assert_eq!(by_label.filtered_option_count(), 1);
+    assert_eq!(by_label.active_value(), Some("graphql-client"));
+    assert_eq!(by_label.listbox().options()[0].label(), "Relay");
+
+    assert_eq!(by_keyword.selected_value(), Some("react"));
+    assert_eq!(by_keyword.filtered_option_count(), 1);
+    assert_eq!(by_keyword.active_value(), Some("relay"));
+    assert_eq!(by_keyword.listbox().options()[0].value(), "relay");
 }
 
 #[test]
@@ -1753,7 +1878,7 @@ fn command_palette_projection_adapts_center_query_shortcuts_providers_and_diagno
             .collect::<Vec<_>>(),
         vec![(
             "provider.open.alpha".to_string(),
-            Some("ctrl-alt-O".to_string())
+            Some(display_shortcut("ctrl-alt-o"))
         )]
     );
 }
@@ -1926,8 +2051,12 @@ fn command_palette_controller_refreshes_registered_provider_into_command_project
     assert_eq!(state.index_mode(), CommandIndexSnapshotMode::PreFiltered);
     assert_eq!(state.filtered_item_count(), 1);
     assert_eq!(
-        state.group_items(0).next().and_then(|item| item.shortcut()),
-        Some("ctrl-alt-O")
+        state
+            .group_items(0)
+            .next()
+            .and_then(|item| item.shortcut())
+            .map(str::to_owned),
+        Some(display_shortcut("ctrl-alt-o"))
     );
 }
 
@@ -1993,8 +2122,8 @@ fn command_palette_controller_preflights_keymap_dispatch_with_query() {
     assert_eq!(
         matched
             .primary_command()
-            .map(|command| (command.command_id(), command.shortcut())),
-        Some(("workspace.open", "ctrl-K ctrl-O"))
+            .map(|command| (command.command_id(), command.shortcut().to_owned())),
+        Some(("workspace.open", display_shortcut("ctrl-k ctrl-o")))
     );
     assert_eq!(inspector.query(), "open workspace");
     assert_eq!(inspector.input_label(), "ctrl-k ctrl-o");
@@ -2065,6 +2194,7 @@ fn command_keybinding_editor_state_filters_conflicts_and_keeps_diagnostics() {
     assert!(editor.has_diagnostics());
     assert_eq!(editor.conflicts().len(), 1);
     assert_eq!(editor.diagnostics().len(), 2);
+    let duplicate_shortcut = display_shortcut("ctrl-p");
     assert_eq!(
         editor
             .rows()
@@ -2083,14 +2213,14 @@ fn command_keybinding_editor_state_filters_conflicts_and_keeps_diagnostics() {
             (
                 "workspace-defaults".to_string(),
                 "workspace.open".to_string(),
-                "ctrl-P".to_string(),
+                duplicate_shortcut.clone(),
                 Some("Workspace".to_string()),
                 1,
             ),
             (
                 "workspace-plugin".to_string(),
                 "workspace.save".to_string(),
-                "ctrl-P".to_string(),
+                duplicate_shortcut,
                 Some("Workspace".to_string()),
                 1,
             ),
@@ -2385,8 +2515,12 @@ fn command_palette_controller_tracks_async_provider_requests_and_stale_responses
     assert_eq!(state.query(), "beta");
     assert_eq!(state.filtered_item_count(), 1);
     assert_eq!(
-        state.group_items(0).next().and_then(|item| item.shortcut()),
-        Some("ctrl-alt-B")
+        state
+            .group_items(0)
+            .next()
+            .and_then(|item| item.shortcut())
+            .map(str::to_owned),
+        Some(display_shortcut("ctrl-alt-b"))
     );
 }
 
