@@ -771,19 +771,24 @@ feed to renderers, overlays, hit maps, accessibility descriptors, or motion plan
 consumes those resolved handle rectangles and owns handle/junction precedence; component and
 docking adapters should not carry their own handle hit solvers once the scene is available.
 The core split module also owns renderer-neutral transition diff descriptors for comparing two
-resolved scenes. Those descriptors are intentionally not part of the default component exports until
-the GPUI adapter executes insert, remove, collapse, and expand transitions. Today the concrete
-`Splitter` adapter only animates programmatic fraction changes when the ordered panel ids are stable;
-panel identity or count changes snap to the final state.
+resolved scenes and sampling them into projection clips. A sampled split transition keeps panel
+content at final semantic bounds while `MotionProjectionClip` describes the visible viewport for
+entering, leaving, moving, resizing, collapsing, and expanding panels. The GPUI `Splitter` adapter
+now consumes those samples for programmatic identity, count, collapse, and expand changes through an
+absolute transition overlay while the semantic flex layout snaps to the final state. Plain
+element-backed panels remain one-shot GPUI elements; `SplitterPanel::view` is the retained-content
+path for panels that must render real leaving content after the caller removes them.
 
 The GPUI `Splitter` adapter renders resolved panel fractions and resize handles from that state and
 wires pointer dragging through keyed runtime state. Drag move events use the root splitter bounds to
 translate pixels into fraction deltas, then feed those deltas through `SplitterState::resized_by`.
 For programmatic changes that keep the same ordered panel ids, the adapter animates from the current
 runtime fractions to the new resolved fractions with committed layout motion; pointer dragging stays
-immediate and cancels any in-flight programmatic transition.
-`Splitter::motion_preference` controls that programmatic committed-layout motion and reduced motion
-must complete at the final state without scheduling a transition.
+immediate and cancels any in-flight programmatic transition. For structural programmatic changes,
+the adapter samples `SplitterLayoutTransition` through the same committed-layout model and renders
+final-size panel content through overlay clips. `Splitter::motion_preference` controls both
+programmatic committed-layout paths, and reduced motion must complete at the final state without
+scheduling a transition.
 Dragging a collapsible panel past its restore threshold clears its collapsed state and resumes
 normal min/max resizing; dragging below that threshold keeps the collapsed fraction stable.
 The adapter may use GPUI layout primitives, cursor styles, drag callbacks, and `Entity` runtime

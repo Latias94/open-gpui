@@ -12,8 +12,8 @@ use crate::{
 use open_gpui::{Bounds, Pixels, Window, point, size};
 use open_gpui_ui_core::{
     MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPolicyReport, MotionProjection,
-    MotionScalarSample, MotionScalarTrack, MotionSnapshot, MotionSpec, motion_source_rect,
-    preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
+    MotionProjectionClip, MotionScalarSample, MotionScalarTrack, MotionSnapshot, MotionSpec,
+    motion_source_rect, preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
     validate_motion_policy,
 };
 use std::time::{Duration, Instant};
@@ -392,36 +392,54 @@ fn pane_clip_sample(transition: &DockPaneTransition, progress: f32) -> Option<Do
     match transition.kind {
         DockPaneTransitionKind::Entering => {
             let slide = transition.slide.as_ref()?;
-            Some(DockPaneClipSample {
-                node: transition.node,
-                content_bounds: slide.final_bounds,
-                visible_bounds: reveal_bounds(slide.final_bounds, slide.edge, progress),
-                occlusion_bounds: slide.occlusion_bounds,
-                progress,
-            })
+            Some(dock_pane_clip_sample(
+                transition.node,
+                MotionProjectionClip::new(
+                    ui_rect_from_bounds(slide.final_bounds),
+                    ui_rect_from_bounds(reveal_bounds(slide.final_bounds, slide.edge, progress)),
+                    ui_rect_from_bounds(slide.occlusion_bounds),
+                    progress,
+                ),
+            ))
         }
         DockPaneTransitionKind::Leaving => {
             let slide = transition.slide.as_ref()?;
-            Some(DockPaneClipSample {
-                node: transition.node,
-                content_bounds: slide.final_bounds,
-                visible_bounds: reveal_bounds(slide.final_bounds, slide.edge, 1.0 - progress),
-                occlusion_bounds: slide.occlusion_bounds,
-                progress,
-            })
+            Some(dock_pane_clip_sample(
+                transition.node,
+                MotionProjectionClip::new(
+                    ui_rect_from_bounds(slide.final_bounds),
+                    ui_rect_from_bounds(reveal_bounds(
+                        slide.final_bounds,
+                        slide.edge,
+                        1.0 - progress,
+                    )),
+                    ui_rect_from_bounds(slide.occlusion_bounds),
+                    progress,
+                ),
+            ))
         }
         DockPaneTransitionKind::Moving | DockPaneTransitionKind::Resizing => {
             let from = transition.from?;
             let to = transition.to?;
-            Some(DockPaneClipSample {
-                node: transition.node,
-                content_bounds: to,
-                visible_bounds: projected_visual_bounds(from, to, progress),
-                occlusion_bounds: to,
-                progress,
-            })
+            Some(dock_pane_clip_sample(
+                transition.node,
+                MotionProjectionClip::from_projection(
+                    MotionProjection::between(ui_rect_from_bounds(from), ui_rect_from_bounds(to)),
+                    progress,
+                ),
+            ))
         }
         DockPaneTransitionKind::Unchanged => None,
+    }
+}
+
+fn dock_pane_clip_sample(node: DockNodeId, clip: MotionProjectionClip) -> DockPaneClipSample {
+    DockPaneClipSample {
+        node,
+        content_bounds: bounds_from_ui_rect(clip.content_bounds()),
+        visible_bounds: bounds_from_ui_rect(clip.visible_bounds()),
+        occlusion_bounds: bounds_from_ui_rect(clip.occlusion_bounds()),
+        progress: clip.progress(),
     }
 }
 

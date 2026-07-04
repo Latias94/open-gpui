@@ -3,17 +3,24 @@
 use crate::geometry::gpui_px_from_ui;
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, Context, CursorStyle, DefiniteLength, DragMoveEvent, ElementId, Empty, Entity,
-    IntoElement, ParentElement, Pixels, Point, Render, RenderOnce, Styled, Window, div, px,
-    relative, rgb,
+    AnyElement, AnyView, App, Context, CursorStyle, DefiniteLength, DragMoveEvent, ElementId,
+    Empty, Entity, IntoElement, ParentElement, Pixels, Point, Render, RenderOnce, Styled, Window,
+    div, px, relative, rgb,
+};
+use open_gpui_ui_core::split::{
+    SplitterLayoutTransition, SplitterLayoutTransitionSample, SplitterPanelTransitionSample,
+    SplitterTransitionIntent,
 };
 use open_gpui_ui_core::{
     MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPreference, MotionPreset,
-    MotionScalarController, Orientation, Sizable, Size, validate_motion_policy,
+    MotionProjectionClip, MotionScalarController, MotionScalarTrack, MotionSpec, Orientation,
+    Sizable, Size, UiRect, ui_point, ui_px, ui_rect, ui_size, validate_motion_policy,
 };
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 const EPSILON: f32 = 0.000_1;
+const TRANSITION_SCENE_EXTENT: f32 = 1000.0;
 
 pub use open_gpui_ui_core::{
     SplitterHandleLayout, SplitterHandleState, SplitterHitMap, SplitterHitTarget,
@@ -27,11 +34,26 @@ struct SplitterRuntime {
     panel_ids: Vec<String>,
     state_fractions: Vec<f32>,
     panel_fractions: Vec<f32>,
+    last_state: Option<SplitterState>,
     drag_start: Option<SplitterDragStart>,
     transition: Option<SplitterRuntimeTransition>,
+    layout_transition: Option<SplitterRuntimeLayoutTransition>,
+    retained_views: HashMap<String, AnyView>,
 }
 
 impl SplitterRuntime {
+    fn retain_panel_views(&mut self, panel_views: impl IntoIterator<Item = (String, AnyView)>) {
+        self.retained_views.extend(panel_views);
+    }
+
+    fn prune_retained_views_to_current_panels(&mut self) {
+        if self.layout_transition.is_some() {
+            return;
+        }
+        let current = self.panel_ids.iter().collect::<HashSet<_>>();
+        self.retained_views.retain(|id, _| current.contains(id));
+    }
+
     #[cfg(test)]
     fn sync_at(&mut self, state: &SplitterState, now: Instant) -> bool {
         self.sync_at_with_model(
@@ -58,12 +80,14 @@ impl SplitterRuntime {
             .map(SplitterPanelState::fraction)
             .collect::<Vec<_>>();
 
-        if self.panel_ids.is_empty()
-            || self.panel_ids != panel_ids
-            || self.panel_fractions.len() != target_fractions.len()
-        {
+        if self.panel_ids.is_empty() {
             self.sync_immediate(panel_ids, target_fractions);
+            self.last_state = Some(state.clone());
             return false;
+        }
+
+        if self.layout_transition_should_run(state, &panel_ids, &target_fractions) {
+            return self.sync_layout_transition(state, panel_ids, target_fractions, now, model);
         }
 
         if let Some(transition) = self.transition.as_ref()
@@ -71,11 +95,15 @@ impl SplitterRuntime {
             && fractions_equal(&transition.to_fractions, &target_fractions)
         {
             let complete = self.sample_transition(now);
+            if complete {
+                self.last_state = Some(state.clone());
+            }
             return !complete;
         }
 
         if fractions_equal(&self.state_fractions, &target_fractions) {
             self.transition = None;
+            self.last_state = Some(state.clone());
             return false;
         }
 
@@ -88,6 +116,7 @@ impl SplitterRuntime {
             self.state_fractions = target_fractions;
             self.panel_fractions = from_fractions;
             self.transition = None;
+            self.last_state = Some(state.clone());
             return false;
         }
         let policy_report = validate_motion_policy(
@@ -99,6 +128,8 @@ impl SplitterRuntime {
             self.state_fractions = target_fractions.clone();
             self.panel_fractions = target_fractions;
             self.transition = None;
+            self.layout_transition = None;
+            self.last_state = Some(state.clone());
             return false;
         }
         self.panel_fractions = from_fractions.clone();
@@ -114,6 +145,7 @@ impl SplitterRuntime {
                 model,
             ),
         });
+        self.last_state = Some(state.clone());
         true
     }
 
@@ -123,6 +155,7 @@ impl SplitterRuntime {
         self.panel_fractions = panel_fractions;
         self.drag_start = None;
         self.transition = None;
+        self.layout_transition = None;
     }
 
     fn sync_drag_state(&mut self, state: &SplitterState) {
@@ -139,10 +172,87 @@ impl SplitterRuntime {
 
         if self.panel_ids != panel_ids || self.panel_fractions.len() != panel_fractions.len() {
             self.sync_immediate(panel_ids, panel_fractions);
+            self.last_state = Some(state.clone());
             return;
         }
 
         self.transition = None;
+        self.layout_transition = None;
+        self.last_state = Some(state.clone());
+    }
+
+    fn layout_transition_should_run(
+        &self,
+        state: &SplitterState,
+        panel_ids: &[String],
+        target_fractions: &[f32],
+    ) -> bool {
+        if self.layout_transition.is_some() {
+            return true;
+        }
+        if self.panel_ids != panel_ids || self.panel_fractions.len() != target_fractions.len() {
+            return true;
+        }
+
+        self.last_state
+            .as_ref()
+            .is_some_and(|previous| collapsed_states_changed(previous, state))
+    }
+
+    fn sync_layout_transition(
+        &mut self,
+        state: &SplitterState,
+        panel_ids: Vec<String>,
+        target_fractions: Vec<f32>,
+        now: Instant,
+        model: MotionModel,
+    ) -> bool {
+        if let Some(transition) = self.layout_transition.as_ref()
+            && transition.target_state == *state
+        {
+            let complete = self.sample_layout_transition(now);
+            if complete {
+                self.last_state = Some(state.clone());
+            }
+            return !complete;
+        }
+
+        let from_state = self
+            .last_state
+            .as_ref()
+            .map(|state| state.with_panel_fractions(&self.panel_fractions))
+            .unwrap_or_else(|| state.clone());
+        let intent = transition_intent(&from_state, state);
+        let policy_report = validate_motion_policy(
+            MotionPolicyInput::new(MotionPolicyContext::CommittedLayout, model)
+                .with_spatial_motion(!model.is_immediate())
+                .with_reduced_motion_final_state(true),
+        );
+        if model.is_immediate() || !policy_report.is_ok() {
+            self.sync_immediate(panel_ids, target_fractions);
+            self.last_state = Some(state.clone());
+            return false;
+        }
+
+        let transition = SplitterLayoutTransition::between(
+            intent,
+            SplitterLayoutScene::from_state(&from_state, transition_scene_bounds()),
+            SplitterLayoutScene::from_state(state, transition_scene_bounds()),
+            MotionSpec::committed_layout(model.preference()),
+        );
+        self.panel_ids = panel_ids;
+        self.state_fractions = target_fractions.clone();
+        self.panel_fractions = target_fractions;
+        self.drag_start = None;
+        self.transition = None;
+        self.layout_transition = Some(SplitterRuntimeLayoutTransition {
+            target_state: state.clone(),
+            transition,
+            started_at: now,
+            track: MotionScalarTrack::start(model, 0.0, 1.0, 0.0, Duration::ZERO),
+        });
+        self.last_state = Some(state.clone());
+        true
     }
 
     fn sample_transition(&mut self, now: Instant) -> bool {
@@ -159,6 +269,28 @@ impl SplitterRuntime {
             self.transition = None;
         }
         complete
+    }
+
+    fn sample_layout_transition(&mut self, now: Instant) -> bool {
+        let Some(transition) = self.layout_transition.as_ref() else {
+            return true;
+        };
+        let sample = transition
+            .track
+            .sample_at(now.saturating_duration_since(transition.started_at));
+        let complete = sample.reached_final_state();
+        if complete {
+            self.layout_transition = None;
+        }
+        complete
+    }
+
+    fn layout_transition_sample(&self, now: Instant) -> Option<SplitterLayoutTransitionSample> {
+        let transition = self.layout_transition.as_ref()?;
+        let sample = transition
+            .track
+            .sample_at(now.saturating_duration_since(transition.started_at));
+        Some(transition.transition.sample(sample.value()))
     }
 
     fn sampled_transition_fractions(&self, now: Instant) -> Vec<f32> {
@@ -178,6 +310,14 @@ struct SplitterRuntimeTransition {
     to_fractions: Vec<f32>,
     started_at: Instant,
     controller: MotionScalarController<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct SplitterRuntimeLayoutTransition {
+    target_state: SplitterState,
+    transition: SplitterLayoutTransition,
+    started_at: Instant,
+    track: MotionScalarTrack,
 }
 
 fn fractions_equal(left: &[f32], right: &[f32]) -> bool {
@@ -218,6 +358,66 @@ fn fraction_samples_for_transition(
         .collect()
 }
 
+fn collapsed_states_changed(previous: &SplitterState, next: &SplitterState) -> bool {
+    previous.panels().len() == next.panels().len()
+        && previous
+            .panels()
+            .iter()
+            .zip(next.panels())
+            .any(|(previous, next)| {
+                previous.id() == next.id() && previous.collapsed() != next.collapsed()
+            })
+}
+
+fn transition_intent(previous: &SplitterState, next: &SplitterState) -> SplitterTransitionIntent {
+    let previous_ids = previous
+        .panels()
+        .iter()
+        .map(SplitterPanelState::id)
+        .collect::<Vec<_>>();
+    let next_ids = next
+        .panels()
+        .iter()
+        .map(SplitterPanelState::id)
+        .collect::<Vec<_>>();
+
+    if previous_ids == next_ids {
+        if previous
+            .panels()
+            .iter()
+            .zip(next.panels())
+            .any(|(previous, next)| !previous.collapsed() && next.collapsed())
+        {
+            return SplitterTransitionIntent::Collapse;
+        }
+        if previous
+            .panels()
+            .iter()
+            .zip(next.panels())
+            .any(|(previous, next)| previous.collapsed() && !next.collapsed())
+        {
+            return SplitterTransitionIntent::Expand;
+        }
+        return SplitterTransitionIntent::Resize;
+    }
+
+    match next.panels().len().cmp(&previous.panels().len()) {
+        std::cmp::Ordering::Greater => SplitterTransitionIntent::Insert,
+        std::cmp::Ordering::Less => SplitterTransitionIntent::Remove,
+        std::cmp::Ordering::Equal => SplitterTransitionIntent::Replace,
+    }
+}
+
+fn transition_scene_bounds() -> UiRect {
+    ui_rect(
+        ui_point(ui_px(0.0), ui_px(0.0)),
+        ui_size(
+            ui_px(TRANSITION_SCENE_EXTENT),
+            ui_px(TRANSITION_SCENE_EXTENT),
+        ),
+    )
+}
+
 #[derive(Debug, Clone)]
 struct SplitterDragStart {
     origin: Point<Pixels>,
@@ -244,7 +444,28 @@ impl Render for SplitterDragPreview {
 #[derive(IntoElement)]
 pub struct SplitterPanel {
     descriptor: SplitterPanelDescriptor,
-    content: AnyElement,
+    content: SplitterPanelContent,
+}
+
+enum SplitterPanelContent {
+    Element(AnyElement),
+    View(AnyView),
+}
+
+impl SplitterPanelContent {
+    fn into_any_element(self) -> AnyElement {
+        match self {
+            Self::Element(element) => element,
+            Self::View(view) => view.into_any_element(),
+        }
+    }
+
+    fn view(&self) -> Option<AnyView> {
+        match self {
+            Self::Element(_) => None,
+            Self::View(view) => Some(view.clone()),
+        }
+    }
 }
 
 impl SplitterPanel {
@@ -252,7 +473,19 @@ impl SplitterPanel {
     pub fn new(descriptor: SplitterPanelDescriptor, content: impl IntoElement) -> Self {
         Self {
             descriptor,
-            content: content.into_any_element(),
+            content: SplitterPanelContent::Element(content.into_any_element()),
+        }
+    }
+
+    /// Creates a splitter panel from a retained view handle.
+    ///
+    /// View-backed panels can participate in insert/remove layout transitions because their
+    /// content can be rendered again from a stable entity handle. Plain element-backed panels keep
+    /// the existing one-shot render behavior.
+    pub fn view(descriptor: SplitterPanelDescriptor, view: impl Into<AnyView>) -> Self {
+        Self {
+            descriptor,
+            content: SplitterPanelContent::View(view.into()),
         }
     }
 
@@ -260,11 +493,21 @@ impl SplitterPanel {
     pub fn descriptor(&self) -> SplitterPanelDescriptor {
         self.descriptor.clone()
     }
+
+    fn retained_view(&self) -> Option<(String, AnyView)> {
+        self.content
+            .view()
+            .map(|view| (self.descriptor.id().to_owned(), view))
+    }
+
+    fn into_content(self) -> AnyElement {
+        self.content.into_any_element()
+    }
 }
 
 impl RenderOnce for SplitterPanel {
     fn render(self, _: &mut open_gpui::Window, _: &mut open_gpui::App) -> impl IntoElement {
-        self.content
+        self.into_content()
     }
 }
 
@@ -353,29 +596,68 @@ impl RenderOnce for Splitter {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let base_state = self.state();
         let motion_model = MotionPreset::committed_layout(self.motion_preference).resolve_model();
+        let now = Instant::now();
+        let panel_views = self
+            .panels
+            .iter()
+            .filter_map(SplitterPanel::retained_view)
+            .collect::<Vec<_>>();
         let runtime =
             window.use_keyed_state(self.id.clone(), cx, |_, _| SplitterRuntime::default());
         let needs_frame = runtime.update(cx, |runtime, _| {
-            runtime.sync_at_with_model(&base_state, Instant::now(), motion_model)
+            runtime.retain_panel_views(panel_views);
+            let needs_frame = runtime.sync_at_with_model(&base_state, now, motion_model);
+            runtime.prune_retained_views_to_current_panels();
+            needs_frame
         });
         if needs_frame {
             window.request_animation_frame();
         }
         let runtime_snapshot = runtime.read(cx).clone();
+        let layout_sample = runtime_snapshot.layout_transition_sample(now);
         let state = base_state.with_panel_fractions(&runtime_snapshot.panel_fractions);
         let is_vertical = matches!(state.orientation(), Orientation::Vertical);
         let metrics = state.metrics();
         let handles = state.handles().to_vec();
         let panels = self.panels;
+        let mut panel_slots = panels.into_iter().map(Some).collect::<Vec<_>>();
+        let panel_index_by_id = state
+            .panels()
+            .iter()
+            .enumerate()
+            .map(|(index, panel)| (panel.id().to_owned(), index))
+            .collect::<HashMap<_, _>>();
+        let overlay_panel_ids = transition_overlay_panel_ids(&layout_sample);
         let runtime_for_drag = runtime.clone();
         let drag_state = state.clone();
 
-        div()
+        let mut children = Vec::new();
+        for (index, panel_slot) in panel_slots.iter_mut().enumerate() {
+            let panel_state = state.panels()[index].clone();
+            if overlay_panel_ids.contains(panel_state.id()) {
+                children.push(render_panel_placeholder(panel_state, is_vertical));
+            } else if let Some(panel) = panel_slot.take() {
+                children.push(render_panel(panel_state, panel, is_vertical));
+            }
+
+            if let Some(handle) = handles.get(index) {
+                children.push(render_handle(
+                    state.clone(),
+                    handle.clone(),
+                    runtime.clone(),
+                    metrics,
+                    is_vertical,
+                ));
+            }
+        }
+
+        let mut root = div()
             .id(self.id)
             .size_full()
             .min_w(px(0.0))
             .min_h(px(0.0))
             .flex()
+            .relative()
             .overflow_hidden()
             .rounded(gpui_px_from_ui(metrics.radius()))
             .when(is_vertical, |this| this.flex_col())
@@ -430,32 +712,36 @@ impl RenderOnce for Splitter {
                 });
                 window.refresh();
             })
-            .children(
-                panels
-                    .into_iter()
-                    .enumerate()
-                    .flat_map(move |(index, panel)| {
-                        let panel_state = state.panels()[index].clone();
-                        let mut elements = Vec::with_capacity(2);
-                        elements.push(render_panel(panel_state, panel, is_vertical));
-                        if let Some(handle) = handles.get(index) {
-                            elements.push(render_handle(
-                                state.clone(),
-                                handle.clone(),
-                                runtime.clone(),
-                                metrics,
-                                is_vertical,
-                            ));
-                        }
-                        elements
-                    }),
-            )
+            .children(children);
+
+        if let Some(sample) = layout_sample {
+            root = root.child(render_layout_transition_overlay(
+                sample,
+                &mut panel_slots,
+                &panel_index_by_id,
+                &runtime_snapshot.retained_views,
+            ));
+        }
+
+        root
     }
 }
 
 fn render_panel(state: SplitterPanelState, panel: SplitterPanel, is_vertical: bool) -> AnyElement {
+    render_panel_content(state, Some(panel.into_content()), is_vertical)
+}
+
+fn render_panel_placeholder(state: SplitterPanelState, is_vertical: bool) -> AnyElement {
+    render_panel_content(state, None, is_vertical)
+}
+
+fn render_panel_content(
+    state: SplitterPanelState,
+    content: Option<AnyElement>,
+    is_vertical: bool,
+) -> AnyElement {
     let panel_selector = format!("splitter-panel:{}", state.id());
-    div()
+    let mut panel = div()
         .id(format!("splitter-panel:{}", state.id()))
         .debug_selector(move || panel_selector)
         .min_w(px(0.0))
@@ -468,9 +754,111 @@ fn render_panel(state: SplitterPanelState, panel: SplitterPanel, is_vertical: bo
         .flex_basis(DefiniteLength::from(relative(state.fraction())))
         .when(state.collapsed(), |this| this.opacity(0.0))
         .when(is_vertical, |this| this.w_full())
-        .when(!is_vertical, |this| this.h_full())
-        .child(panel)
+        .when(!is_vertical, |this| this.h_full());
+
+    if let Some(content) = content {
+        panel = panel.child(content);
+    }
+
+    panel.into_any_element()
+}
+
+fn transition_overlay_panel_ids(
+    sample: &Option<SplitterLayoutTransitionSample>,
+) -> HashSet<String> {
+    sample
+        .as_ref()
+        .map(|sample| {
+            sample
+                .panels()
+                .iter()
+                .filter(|panel| panel.clip().is_some())
+                .map(|panel| panel.id().to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn render_layout_transition_overlay(
+    sample: SplitterLayoutTransitionSample,
+    panel_slots: &mut [Option<SplitterPanel>],
+    panel_index_by_id: &HashMap<String, usize>,
+    retained_views: &HashMap<String, AnyView>,
+) -> AnyElement {
+    let mut overlay = div()
+        .id("splitter-transition-overlay")
+        .debug_selector(|| "splitter:transition-overlay".to_string())
+        .absolute()
+        .inset_0()
+        .overflow_hidden();
+
+    for panel in sample.panels() {
+        let Some(clip) = panel.clip() else {
+            continue;
+        };
+        let Some(content) =
+            transition_panel_content(panel, panel_slots, panel_index_by_id, retained_views)
+        else {
+            continue;
+        };
+        overlay = overlay.child(render_transition_clip(panel.id(), clip, content));
+    }
+
+    overlay.into_any_element()
+}
+
+fn transition_panel_content(
+    panel: &SplitterPanelTransitionSample,
+    panel_slots: &mut [Option<SplitterPanel>],
+    panel_index_by_id: &HashMap<String, usize>,
+    retained_views: &HashMap<String, AnyView>,
+) -> Option<AnyElement> {
+    if let Some(index) = panel_index_by_id.get(panel.id()).copied()
+        && let Some(panel) = panel_slots.get_mut(index).and_then(Option::take)
+    {
+        return Some(panel.into_content());
+    }
+
+    retained_views
+        .get(panel.id())
+        .cloned()
+        .map(IntoElement::into_any_element)
+}
+
+fn render_transition_clip(id: &str, clip: MotionProjectionClip, content: AnyElement) -> AnyElement {
+    let visible = clip.visible_bounds();
+    let content_bounds = clip.content_bounds();
+    let content_left =
+        relative_fraction(content_bounds.origin.x.as_f32() - visible.origin.x.as_f32());
+    let content_top =
+        relative_fraction(content_bounds.origin.y.as_f32() - visible.origin.y.as_f32());
+
+    div()
+        .id(format!("splitter-transition-panel:{id}"))
+        .debug_selector({
+            let id = id.to_owned();
+            move || format!("splitter:transition-panel:{id}")
+        })
+        .absolute()
+        .left(relative_fraction(visible.origin.x.as_f32()))
+        .top(relative_fraction(visible.origin.y.as_f32()))
+        .w(relative_fraction(visible.size.width.as_f32()))
+        .h(relative_fraction(visible.size.height.as_f32()))
+        .overflow_hidden()
+        .child(
+            div()
+                .absolute()
+                .left(content_left)
+                .top(content_top)
+                .w(relative_fraction(content_bounds.size.width.as_f32()))
+                .h(relative_fraction(content_bounds.size.height.as_f32()))
+                .child(content),
+        )
         .into_any_element()
+}
+
+fn relative_fraction(value: f32) -> DefiniteLength {
+    relative(value / TRANSITION_SCENE_EXTENT)
 }
 
 fn render_handle(
@@ -639,7 +1027,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_panel_identity_changes_sync_immediately() {
+    fn runtime_panel_identity_changes_create_layout_transition() {
         let start = Instant::now();
         let from = state(0.3, 0.7);
         let replaced = SplitterState::resolve(
@@ -656,7 +1044,7 @@ mod tests {
         let mut runtime = SplitterRuntime::default();
 
         runtime.sync_at(&from, start);
-        assert!(!runtime.sync_at(&replaced, start + Duration::from_millis(16)));
+        assert!(runtime.sync_at(&replaced, start + Duration::from_millis(16)));
 
         assert_eq!(
             runtime.panel_ids,
@@ -668,6 +1056,58 @@ mod tests {
         );
         assert!(fractions_equal(&runtime.panel_fractions, &[0.2, 0.3, 0.5]));
         assert!(runtime.transition.is_none());
+        assert!(runtime.layout_transition.is_some());
+
+        let sample = runtime
+            .layout_transition_sample(start + Duration::from_millis(16))
+            .expect("identity change should expose a layout transition sample");
+        let center = sample
+            .panel("center")
+            .expect("inserted panel should be sampled");
+        let center_clip = center
+            .clip()
+            .expect("inserted panel should expose a reveal clip");
+        assert_eq!(center_clip.visible_bounds().size.width, ui_px(0.0));
+
+        assert!(!runtime.sync_at(&replaced, start + Duration::from_millis(900)));
+        assert!(runtime.layout_transition.is_none());
+    }
+
+    #[test]
+    fn runtime_reduced_motion_identity_change_completes_without_layout_transition() {
+        let start = Instant::now();
+        let from = state(0.3, 0.7);
+        let replaced = SplitterState::resolve(
+            "runtime-motion",
+            Orientation::Horizontal,
+            Size::Medium,
+            false,
+            [
+                SplitterPanelDescriptor::new("left", 0.2),
+                SplitterPanelDescriptor::new("center", 0.3),
+                SplitterPanelDescriptor::new("right", 0.5),
+            ],
+        );
+        let mut runtime = SplitterRuntime::default();
+
+        runtime.sync_at(&from, start);
+        assert!(!runtime.sync_at_with_model(
+            &replaced,
+            start + Duration::from_millis(16),
+            MotionPreset::committed_layout(MotionPreference::Reduced).resolve_model()
+        ));
+
+        assert_eq!(
+            runtime.panel_ids,
+            [
+                "left".to_string(),
+                "center".to_string(),
+                "right".to_string()
+            ]
+        );
+        assert!(fractions_equal(&runtime.panel_fractions, &[0.2, 0.3, 0.5]));
+        assert!(runtime.transition.is_none());
+        assert!(runtime.layout_transition.is_none());
     }
 
     #[test]

@@ -24,7 +24,9 @@ pub use crate::{
         MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
         MotionPolicyReport, MotionPreviewTargetPolicy, validate_motion_policy,
     },
-    motion_projection::{MotionProjection, MotionProjectionSample, MotionProjectionScale},
+    motion_projection::{
+        MotionProjection, MotionProjectionClip, MotionProjectionSample, MotionProjectionScale,
+    },
     motion_runtime::{
         MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionRunState, MotionSnapshot,
         MotionTimeline, MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
