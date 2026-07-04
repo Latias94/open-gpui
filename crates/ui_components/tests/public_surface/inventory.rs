@@ -114,6 +114,8 @@ fn component_contract_rows_are_split_by_responsibility() {
     let expected_owners = [
         "types.rs",
         "rows.rs",
+        "rows/catalog.rs",
+        "rows/lists.rs",
         "projections.rs",
         "surfaces.rs",
         "api_inventory.rs",
@@ -144,8 +146,25 @@ fn component_contract_rows_are_split_by_responsibility() {
         );
     }
 
+    let rows_facade = read_source_file(&contract_dir.join("rows.rs"));
+    for stale_single_file_fact in [
+        "ComponentContractEntry {",
+        "pub const OFFICIAL_OVERLAY_COMPONENTS",
+        "pub const COMPONENT_RECIPE_COMPONENTS",
+    ] {
+        assert!(
+            !rows_facade.contains(stale_single_file_fact),
+            "component_contract/rows.rs should stay a facade, not own `{stale_single_file_fact}`"
+        );
+    }
+
     let rows = read_source_file(&contract_dir.join("rows.rs"));
     assert!(rows.contains("COMPONENT_CONTRACT_ROWS"));
+    let row_catalog = read_source_file(&contract_dir.join("rows").join("catalog.rs"));
+    assert!(row_catalog.contains("ComponentContractEntry {"));
+    let row_lists = read_source_file(&contract_dir.join("rows").join("lists.rs"));
+    assert!(row_lists.contains("OFFICIAL_OVERLAY_COMPONENTS"));
+    assert!(row_lists.contains("COMPONENT_RECIPE_COMPONENTS"));
     let inventory = read_source_file(&contract_dir.join("api_inventory.rs"));
     assert!(inventory.contains("COMPONENT_API_INVENTORY"));
     assert!(inventory.contains("component_public_methods"));

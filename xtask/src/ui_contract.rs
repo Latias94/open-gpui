@@ -71,14 +71,13 @@ pub(crate) fn scan_ui_contract(root: &Path) -> Result<(), ()> {
 fn ui_contract_failures(root: &Path) -> Vec<String> {
     let mut failures = Vec::new();
     let source_dir = root.join("crates/ui_components/src");
-    let rows_path = source_dir.join("component_contract/rows.rs");
     let evidence_path = source_dir.join("component_contract/evidence.rs");
     let conformance_path =
         root.join("examples/ui-foundation-gallery/src/pages/components/conformance.rs");
     let component_contract_docs_path = root.join("docs/ui/component-contract.md");
     let verification_docs_path = root.join("docs/verification.md");
 
-    let rows_source = read_to_string(&rows_path, &mut failures);
+    let row_sources = contract_row_sources(&source_dir, &mut failures);
     let evidence_source = read_to_string(&evidence_path, &mut failures);
     let conformance_source = read_to_string(&conformance_path, &mut failures);
     let component_contract_docs = read_to_string(&component_contract_docs_path, &mut failures);
@@ -86,9 +85,9 @@ fn ui_contract_failures(root: &Path) -> Vec<String> {
     let root_exports = default_reexport_tokens(&source_dir, "lib.rs", &mut failures);
     let prelude_exports = default_reexport_tokens(&source_dir, "prelude.rs", &mut failures);
 
-    let Some(rows_source) = rows_source else {
+    if row_sources.is_empty() {
         return failures;
-    };
+    }
     let Some(evidence_source) = evidence_source else {
         return failures;
     };
@@ -102,12 +101,16 @@ fn ui_contract_failures(root: &Path) -> Vec<String> {
         return failures;
     };
 
-    let (entries, parse_failures) = contract_rows_from_source(&rows_source);
-    failures.extend(
-        parse_failures.into_iter().map(|failure| {
-            format!("crates/ui_components/src/component_contract/rows.rs: {failure}")
-        }),
-    );
+    let mut entries = Vec::new();
+    for (source_path, source) in &row_sources {
+        let (mut source_entries, parse_failures) = contract_rows_from_source(source);
+        failures.extend(
+            parse_failures
+                .into_iter()
+                .map(|failure| format!("{source_path}: {failure}")),
+        );
+        entries.append(&mut source_entries);
+    }
 
     let docs = Docs {
         component_contract: &component_contract_docs,
@@ -128,6 +131,51 @@ fn ui_contract_failures(root: &Path) -> Vec<String> {
     failures.extend(theme_schema_failures(root));
 
     failures
+}
+
+fn contract_row_sources(source_dir: &Path, failures: &mut Vec<String>) -> Vec<(String, String)> {
+    let mut sources = Vec::new();
+    let rows_path = source_dir.join("component_contract/rows.rs");
+    if let Some(source) = read_to_string(&rows_path, failures) {
+        sources.push((
+            "crates/ui_components/src/component_contract/rows.rs".to_owned(),
+            source,
+        ));
+    }
+
+    let rows_dir = source_dir.join("component_contract/rows");
+    if !rows_dir.is_dir() {
+        return sources;
+    }
+
+    let mut row_files = match fs::read_dir(&rows_dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .collect::<Vec<_>>(),
+        Err(error) => {
+            failures.push(format!(
+                "failed to read crates/ui_components/src/component_contract/rows: {error}"
+            ));
+            return sources;
+        }
+    };
+    row_files.sort();
+
+    for path in row_files {
+        let label = path
+            .strip_prefix(source_dir)
+            .ok()
+            .and_then(|relative| relative.to_str())
+            .map(|relative| format!("crates/ui_components/src/{}", relative.replace('\\', "/")))
+            .unwrap_or_else(|| path.display().to_string());
+        if let Some(source) = read_to_string(&path, failures) {
+            sources.push((label, source));
+        }
+    }
+
+    sources
 }
 
 fn read_to_string(path: &Path, failures: &mut Vec<String>) -> Option<String> {
