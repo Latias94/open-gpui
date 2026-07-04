@@ -25,8 +25,8 @@ use crate::listbox::{
 use crate::overlay::{
     GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
     apply_overlay_open_change, apply_overlay_open_change_with_after_update, consume_overlay_event,
-    emit_overlay_open_change, gpui_overlay_state, gpui_relative_overlay_layer,
-    outside_press_open_change, resolve_overlay_open_state, set_overlay_open,
+    gpui_overlay_state, gpui_relative_overlay_layer, outside_press_open_change,
+    resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::text_editing::TextEditingPolicy;
@@ -954,49 +954,66 @@ impl RenderOnce for Combobox {
                         ) {
                             ComboboxKeyboardAction::Navigate(value) => {
                                 consume_overlay_event(window, cx);
-                                runtime.update(cx, |runtime, _| {
-                                    set_overlay_open(&mut runtime.open, true);
-                                    runtime.active_value = Some(value);
-                                });
                                 if !key_state.open() {
-                                    emit_overlay_open_change(
+                                    apply_overlay_open_change(
+                                        runtime.clone(),
                                         true,
                                         on_open_change.as_deref(),
                                         window,
                                         cx,
+                                        move |runtime| {
+                                            set_overlay_open(&mut runtime.open, true);
+                                            runtime.active_value = Some(value);
+                                        },
                                     );
+                                } else {
+                                    runtime.update(cx, |runtime, _| {
+                                        set_overlay_open(&mut runtime.open, true);
+                                        runtime.active_value = Some(value);
+                                    });
                                 }
                             }
                             ComboboxKeyboardAction::Select(selection) => {
                                 consume_overlay_event(window, cx);
-                                runtime.update(cx, |runtime, _| {
-                                    runtime.selected_value = Some(selection.value().to_owned());
-                                    runtime.active_value = Some(selection.value().to_owned());
-                                    set_overlay_open(&mut runtime.open, false);
-                                });
-                                input_controller.update(cx, |controller, cx| {
-                                    controller.set_value(selection.label().to_owned(), cx);
-                                });
-                                if let Some(on_select) = on_select.as_ref() {
-                                    on_select(selection, window, cx);
-                                }
-                                emit_overlay_open_change(
+                                let selected_value = selection.value().to_owned();
+                                let selected_label = selection.label().to_owned();
+                                let input_controller = input_controller.clone();
+                                let on_select = on_select.clone();
+                                apply_overlay_open_change_with_after_update(
+                                    runtime.clone(),
                                     false,
                                     on_open_change.as_deref(),
                                     window,
                                     cx,
+                                    {
+                                        let selected_value = selected_value.clone();
+                                        move |runtime| {
+                                            runtime.selected_value = Some(selected_value.clone());
+                                            runtime.active_value = Some(selected_value);
+                                            set_overlay_open(&mut runtime.open, false);
+                                        }
+                                    },
+                                    move |window, cx| {
+                                        input_controller.update(cx, |controller, cx| {
+                                            controller.set_value(selected_label, cx);
+                                        });
+                                        if let Some(on_select) = on_select.as_ref() {
+                                            on_select(selection, window, cx);
+                                        }
+                                    },
                                 );
                             }
                             ComboboxKeyboardAction::Open => {
                                 consume_overlay_event(window, cx);
-                                runtime.update(cx, |runtime, _| {
-                                    set_overlay_open(&mut runtime.open, true);
-                                });
-                                emit_overlay_open_change(
+                                apply_overlay_open_change(
+                                    runtime.clone(),
                                     true,
                                     on_open_change.as_deref(),
                                     window,
                                     cx,
+                                    |runtime| {
+                                        set_overlay_open(&mut runtime.open, true);
+                                    },
                                 );
                             }
                             ComboboxKeyboardAction::Close => {
@@ -1044,14 +1061,15 @@ impl RenderOnce for Combobox {
                                     move |_event: &ClickEvent, window, cx| {
                                         cx.stop_propagation();
                                         let next_open = !open;
-                                        runtime.update(cx, |runtime, _| {
-                                            set_overlay_open(&mut runtime.open, next_open);
-                                        });
-                                        emit_overlay_open_change(
+                                        apply_overlay_open_change(
+                                            runtime.clone(),
                                             next_open,
                                             on_open_change.as_deref(),
                                             window,
                                             cx,
+                                            |runtime| {
+                                                set_overlay_open(&mut runtime.open, next_open);
+                                            },
                                         );
                                     },
                                 )
