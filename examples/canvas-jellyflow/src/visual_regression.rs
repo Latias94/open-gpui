@@ -511,7 +511,7 @@ fn dropped_wire_menu_stays_inside_canvas_bounds() -> bool {
             .any(|action| action.key == "action.insert.llm" && action.dispatchable())
 }
 
-fn repeatable_edits_update_anchor_identity() -> bool {
+pub(super) fn repeatable_edits_update_anchor_identity() -> bool {
     let Ok((mut store, _document, _projection, node_id)) = project_schema_node("demo.shader.mix")
     else {
         return false;

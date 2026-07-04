@@ -38,9 +38,10 @@ use jellyflow_open_gpui::OpenGpuiNodeRendererResolution;
 use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiAdapter, OpenGpuiAuthoringController,
     OpenGpuiAuthoringOutcome, OpenGpuiAuthoringSkipReason, OpenGpuiBlackboardPlan,
-    OpenGpuiBoundsCollector, OpenGpuiConnectionPreviewPolicyEvidence, OpenGpuiConnectionSyncError,
-    OpenGpuiConnectionSyncRequest, OpenGpuiControlEditPlan, OpenGpuiControlEventValue,
-    OpenGpuiControlPlan, OpenGpuiDroppedWireInsertError, OpenGpuiDynamicPortPolicy,
+    OpenGpuiBoundsCollector, OpenGpuiConnectionPreviewPolicyEvidence,
+    OpenGpuiConnectionReleaseEvidence, OpenGpuiConnectionSyncError, OpenGpuiConnectionSyncRequest,
+    OpenGpuiControlEditPlan, OpenGpuiControlEventValue, OpenGpuiControlPlan,
+    OpenGpuiDroppedWireInsertError, OpenGpuiDynamicPortPolicy, OpenGpuiFirstPointerEvidence,
     OpenGpuiGraphAffordanceEvidence, OpenGpuiInspectorPlan, OpenGpuiInspectorSurface,
     OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource, OpenGpuiMeasurementCoverage,
     OpenGpuiMeasurementId, OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
@@ -48,7 +49,7 @@ use jellyflow_open_gpui::{
     OpenGpuiNodeRendererRegistry, OpenGpuiNodeRendererState, OpenGpuiNodeRendererTable,
     OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout, OpenGpuiNodeTransformSnapshot,
-    OpenGpuiProductSurfacePreset, OpenGpuiRepeatableActionPlan,
+    OpenGpuiPortHandleEvidence, OpenGpuiProductSurfacePreset, OpenGpuiRepeatableActionPlan,
     OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
     OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
     OpenGpuiRepeatableSurfaceLayout as NodeRepeatableSurfaceLayout,
@@ -79,8 +80,6 @@ use open_gpui_canvas::{
     CanvasViewport, DocumentError, HandleRole, HitTarget, NodeId, PointerButton,
     canvas_editor_view_with_frame,
 };
-#[cfg(test)]
-use open_gpui_canvas::{CanvasTransaction, DocumentCommand};
 use open_gpui_platform::application;
 use open_gpui_ui_components::gpui_adapter::init_text_input;
 use open_gpui_ui_components::prelude::Sizable;
@@ -4296,7 +4295,7 @@ mod tests {
     use open_gpui::{MouseMoveEvent, MouseUpEvent};
     use open_gpui_canvas::{
         CanvasConnectionEndpointRole, CanvasEditorInputMapper, CanvasGeometryFacts, CanvasRuntime,
-        connection_hit_options,
+        CanvasTransaction, DocumentCommand, connection_hit_options,
     };
 
     #[test]
@@ -7145,6 +7144,454 @@ mod tests {
                 })
     }
 
+    fn product_port_handle_evidence() -> OpenGpuiPortHandleEvidence {
+        let (measured_store, transform, prompt, completion) = measured_transform_store();
+        let Ok((document, _projection)) = project_store(&measured_store) else {
+            return OpenGpuiPortHandleEvidence::default();
+        };
+        let registry = jellyflow_kind_registry();
+        let runtime = CanvasRuntime::rebuild_with_kind_registry(&document, &registry);
+        let facts = CanvasGeometryFacts::with_kind_registry(&document, &registry);
+        let Some(node) = document.node(&NodeId::from(canvas_node_id(&transform))) else {
+            return OpenGpuiPortHandleEvidence::default();
+        };
+        let Some(measurement) = measured_store.node_measurement(transform) else {
+            return OpenGpuiPortHandleEvidence::default();
+        };
+        let node_size = JellySize {
+            width: node.size.width.as_f32(),
+            height: node.size.height.as_f32(),
+        };
+        let mut evidence = OpenGpuiPortHandleEvidence {
+            minimum_hit_width: u32::MAX,
+            minimum_hit_height: u32::MAX,
+            ..OpenGpuiPortHandleEvidence::default()
+        };
+
+        for port in [prompt, completion] {
+            let Some(port_record) = measured_store.graph().ports().get(&port) else {
+                continue;
+            };
+            let Some(anchor) = measurement
+                .anchors
+                .iter()
+                .find(|anchor| anchor.port == Some(port) && anchor.is_visible())
+            else {
+                continue;
+            };
+            evidence.visible_port_marker_count += 1;
+            evidence.measured_anchor_count += 1;
+            let handle_id = open_gpui_canvas::HandleId::from(canvas_port_id(&port));
+            let Some(handle) = node.handle(Some(&handle_id)) else {
+                continue;
+            };
+            evidence.canvas_handle_count += 1;
+            evidence.minimum_hit_width = evidence
+                .minimum_hit_width
+                .min(handle.size.width.as_f32().round() as u32);
+            evidence.minimum_hit_height = evidence
+                .minimum_hit_height
+                .min(handle.size.height.as_f32().round() as u32);
+            let expected = handle_position_from_bounds(
+                HandleBounds {
+                    rect: anchor.rect,
+                    position: anchor.position,
+                },
+                node_size,
+            );
+            if handle.position == point(px(expected.x), px(expected.y)) {
+                evidence.anchor_handle_match_count += 1;
+            }
+            let endpoint_role = match port_record.dir {
+                PortDirection::In => CanvasConnectionEndpointRole::Target,
+                PortDirection::Out => CanvasConnectionEndpointRole::Source,
+            };
+            let records = runtime
+                .precise_hit_test_with_kind_registry(
+                    &document,
+                    &registry,
+                    node.position + handle.position,
+                    connection_hit_options(),
+                )
+                .collect::<Vec<_>>();
+            if facts
+                .connection_endpoint_at(records, endpoint_role)
+                .is_some_and(|endpoint| {
+                    endpoint.node_id == node.id
+                        && endpoint
+                            .handle_id
+                            .as_ref()
+                            .is_some_and(|hit_handle| hit_handle == &handle_id)
+                })
+            {
+                evidence.hit_test_endpoint_match_count += 1;
+            }
+        }
+
+        evidence.edge_endpoint_match_count = product_edge_endpoint_alignment_count(&document);
+        if evidence.minimum_hit_width == u32::MAX {
+            evidence.minimum_hit_width = 0;
+        }
+        if evidence.minimum_hit_height == u32::MAX {
+            evidence.minimum_hit_height = 0;
+        }
+        evidence.stale_or_projected_port_count = usize::from(!matches!(
+            measured_store.node_measurement_status(transform),
+            NodeMeasurementStatus::Fresh { .. }
+        ));
+        evidence.disabled_or_missing_ports_non_connectable_checked =
+            product_disabled_or_missing_ports_non_connectable_probe();
+        evidence
+    }
+
+    fn product_edge_endpoint_alignment_count(document: &CanvasDocument) -> usize {
+        document
+            .edges()
+            .flat_map(|edge| [&edge.source, &edge.target])
+            .filter(|endpoint| {
+                let Some(handle_id) = endpoint.handle_id.as_ref() else {
+                    return false;
+                };
+                document
+                    .node(&endpoint.node_id)
+                    .is_some_and(|node| node.handle(Some(handle_id)).is_some())
+            })
+            .count()
+    }
+
+    fn product_invalid_connection_hover_probe() -> bool {
+        let (measured_store, transform, _, completion) = measured_transform_store();
+        let Ok((document, _projection)) = project_store(&measured_store) else {
+            return false;
+        };
+        let registry = jellyflow_kind_registry();
+        let runtime = CanvasRuntime::rebuild_with_kind_registry(&document, &registry);
+        let facts = CanvasGeometryFacts::with_kind_registry(&document, &registry);
+        let Some(node) = document.node(&NodeId::from(canvas_node_id(&transform))) else {
+            return false;
+        };
+        let Some(handle) = node.handle(Some(&open_gpui_canvas::HandleId::from(canvas_port_id(
+            &completion,
+        )))) else {
+            return false;
+        };
+        let position = node.position + handle.position;
+        let records = runtime
+            .precise_hit_test_with_kind_registry(
+                &document,
+                &registry,
+                position,
+                connection_hit_options(),
+            )
+            .collect::<Vec<_>>();
+
+        records.iter().any(|record| {
+            record.target
+                == HitTarget::Handle {
+                    node_id: node.id.clone(),
+                    handle_id: open_gpui_canvas::HandleId::from(canvas_port_id(&completion)),
+                }
+        }) && facts
+            .connection_endpoint_at(records, CanvasConnectionEndpointRole::Target)
+            .is_none()
+    }
+
+    fn product_disabled_or_missing_ports_non_connectable_probe() -> bool {
+        let Ok(mut graph) = make_demo_graph() else {
+            return false;
+        };
+        let transform = JellyNodeId::from_u128(3);
+        let prompt_port = JellyPortId::from_u128(30);
+        let completion_port = JellyPortId::from_u128(31);
+        let disabled_port = JellyPortId::from_u128(330);
+        let mut disabled = make_port(transform, "disabled", PortDirection::In);
+        disabled.connectable = Some(false);
+
+        if GraphTransaction::from_ops([
+            GraphOp::AddPort {
+                id: disabled_port,
+                port: disabled,
+            },
+            GraphOp::SetNodePorts {
+                id: transform,
+                from: vec![prompt_port, completion_port],
+                to: vec![prompt_port, completion_port, disabled_port],
+            },
+        ])
+        .apply_to(&mut graph)
+        .is_err()
+        {
+            return false;
+        }
+
+        let store = NodeGraphStore::new(
+            graph,
+            NodeGraphViewState::default(),
+            NodeGraphEditorConfig::default(),
+        );
+        let Ok((document, _projection)) = project_store(&store) else {
+            return false;
+        };
+        let Some(node) = document.node(&NodeId::from(canvas_node_id(&transform))) else {
+            return false;
+        };
+        let disabled_handle = open_gpui_canvas::HandleId::from(canvas_port_id(&disabled_port));
+        let missing_handle = open_gpui_canvas::HandleId::from("missing.product.port");
+        let Some(handle) = node.handle(Some(&disabled_handle)) else {
+            return false;
+        };
+
+        let registry = jellyflow_kind_registry();
+        let runtime = CanvasRuntime::rebuild_with_kind_registry(&document, &registry);
+        let facts = CanvasGeometryFacts::with_kind_registry(&document, &registry);
+        let records = runtime
+            .precise_hit_test_with_kind_registry(
+                &document,
+                &registry,
+                node.position + handle.position,
+                connection_hit_options(),
+            )
+            .collect::<Vec<_>>();
+        let disabled_handle_rejected_as_endpoint = facts
+            .connection_endpoint_at(records, CanvasConnectionEndpointRole::Target)
+            .is_none();
+
+        !handle.connectable
+            && !handle.is_pickable_connection_endpoint(CanvasConnectionEndpointRole::Target)
+            && disabled_handle_rejected_as_endpoint
+            && node.handle(Some(&missing_handle)).is_none()
+    }
+
+    fn product_first_pointer_evidence() -> OpenGpuiFirstPointerEvidence {
+        let catalog = product_fixture_catalog();
+        let fixture_count = catalog.len();
+        let mut evidence = OpenGpuiFirstPointerEvidence {
+            fixture_count,
+            ..OpenGpuiFirstPointerEvidence::default()
+        };
+
+        for fixture in catalog {
+            let Ok((store, document, _projection)) =
+                project_kit_fixture(&fixture.kit_key, &fixture.fixture_key)
+            else {
+                continue;
+            };
+            if product_fixture_ready_without_pointer_movement(&store, &document) {
+                evidence.no_pointer_readiness_count += 1;
+            }
+            if first_source_handle_starts_connection(document.clone()) {
+                evidence.handle_first_connection_count += 1;
+            }
+            if first_node_body_drag_translates(document) {
+                evidence.node_body_drag_count += 1;
+                evidence.node_body_connection_suppression_count += 1;
+            }
+        }
+
+        evidence.control_shield_count = product_drag_exclusion_measurement_probe();
+        evidence.dynamic_handle_freshness_count =
+            usize::from(visual_regression::repeatable_edits_update_anchor_identity());
+        evidence
+    }
+
+    fn product_fixture_ready_without_pointer_movement(
+        store: &NodeGraphStore,
+        document: &CanvasDocument,
+    ) -> bool {
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let renderer_registry = demo_node_renderer_registry();
+        let renderers = demo_custom_node_renderers();
+        let measurement_projection =
+            measurement_bridge::measurement_store_with_explicit_projection_fallback(
+                store,
+                &semantic_registry,
+            );
+        let measured_store = measurement_projection.store();
+        let mut product_nodes = 0;
+        let mut ready_nodes = 0;
+
+        for canvas_node in document.nodes() {
+            let Some(node_id) = jelly_node_id_from_node(canvas_node) else {
+                continue;
+            };
+            let Some(graph_node) = store.graph().nodes().get(&node_id) else {
+                continue;
+            };
+            let Some(surface) = node_surface_summary_for_node(
+                canvas_node,
+                node_id,
+                graph_node,
+                store.graph(),
+                1.0,
+                false,
+                &semantic_registry,
+                &node_kit_registry,
+                measured_store.node_measurement(node_id),
+            ) else {
+                continue;
+            };
+            if host_renderer_source(&renderer_registry, &renderers, &surface.renderer_context)
+                != OpenGpuiHostRendererSource::ProductRenderer
+            {
+                continue;
+            }
+
+            product_nodes += 1;
+            let visible_handle_count = canvas_node
+                .handles
+                .iter()
+                .filter(|handle| !handle.hidden)
+                .count();
+            if visible_handle_count == graph_node.ports.len()
+                && matches!(
+                    measured_store.node_measurement_status(node_id),
+                    NodeMeasurementStatus::Fresh { .. }
+                )
+            {
+                ready_nodes += 1;
+            }
+        }
+
+        product_nodes > 0 && ready_nodes == product_nodes
+    }
+
+    fn first_source_handle_starts_connection(document: CanvasDocument) -> bool {
+        let Some(source_position) = first_source_handle_document_position(&document) else {
+            return false;
+        };
+        let Ok(mut editor) = editor_for_document(document) else {
+            return false;
+        };
+        let source_view = editor.viewport().document_to_view(source_position);
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: source_view,
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .is_ok()
+            && editor.connection_drag_state().is_some()
+    }
+
+    fn first_source_handle_document_position(
+        document: &CanvasDocument,
+    ) -> Option<open_gpui::Point<open_gpui::Pixels>> {
+        document.nodes().find_map(|node| {
+            node.handles
+                .iter()
+                .find(|handle| {
+                    handle.is_pickable_connection_endpoint(CanvasConnectionEndpointRole::Source)
+                })
+                .map(|handle| node.position + handle.position)
+        })
+    }
+
+    fn first_node_body_drag_translates(document: CanvasDocument) -> bool {
+        let Some((node_id, down_position, initial_position)) =
+            first_node_body_drag_probe(&document)
+        else {
+            return false;
+        };
+        let Ok(mut editor) = editor_for_document(document) else {
+            return false;
+        };
+        let down_view = editor.viewport().document_to_view(down_position);
+        let move_view = editor
+            .viewport()
+            .document_to_view(down_position + point(px(44.0), px(22.0)));
+        if editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: down_view,
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .is_err()
+            || editor.connection_drag_state().is_some()
+            || editor
+                .handle_event(CanvasEvent::PointerMove {
+                    position: move_view,
+                    modifiers: CanvasKeyModifiers::default(),
+                })
+                .is_err()
+        {
+            return false;
+        }
+        editor
+            .document()
+            .node(&node_id)
+            .is_some_and(|node| node.position != initial_position)
+            && editor.connection_drag_state().is_none()
+    }
+
+    fn first_node_body_drag_probe(
+        document: &CanvasDocument,
+    ) -> Option<(
+        NodeId,
+        open_gpui::Point<open_gpui::Pixels>,
+        open_gpui::Point<open_gpui::Pixels>,
+    )> {
+        document.nodes().next().map(|node| {
+            let y_offset = px(24.0).min(node.size.height * 0.5);
+            (
+                node.id.clone(),
+                node.position + point(node.size.width * 0.5, y_offset),
+                node.position,
+            )
+        })
+    }
+
+    fn product_connection_release_evidence() -> OpenGpuiConnectionReleaseEvidence {
+        OpenGpuiConnectionReleaseEvidence {
+            valid_hover_feedback_checked: product_port_hotspot_path_probe(),
+            invalid_hover_feedback_checked: product_invalid_connection_hover_probe(),
+            dropped_wire_release_from_handle_count: usize::from(
+                product_dropped_wire_gesture_probe(),
+            ),
+            dropped_wire_release_from_body_count: usize::from(
+                !product_node_body_does_not_emit_dropped_wire_release(),
+            ),
+            dropped_wire_menu_action_count: usize::from(
+                product_dropped_wire_menu_surface_dispatchable(),
+            ),
+        }
+    }
+
+    fn product_node_body_does_not_emit_dropped_wire_release() -> bool {
+        let store = make_demo_store();
+        let Ok((document, _projection)) = project_store(&store) else {
+            return false;
+        };
+        let Some((_node_id, down_position, _initial_position)) =
+            first_node_body_drag_probe(&document)
+        else {
+            return false;
+        };
+        let Ok(mut editor) = editor_for_document(document) else {
+            return false;
+        };
+        let down_view = editor.viewport().document_to_view(down_position);
+        let up_view = editor
+            .viewport()
+            .document_to_view(down_position + point(px(32.0), px(0.0)));
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: down_view,
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .is_ok()
+            && editor.connection_drag_state().is_none()
+            && editor
+                .handle_event(CanvasEvent::PointerUp {
+                    position: up_view,
+                    button: PointerButton::Primary,
+                    modifiers: CanvasKeyModifiers::default(),
+                })
+                .is_ok()
+            && editor.take_connection_release().is_none()
+    }
+
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     struct ProductDenseSurfaceInteractionEvidence {
         surface_count: usize,
@@ -7384,10 +7831,13 @@ mod tests {
             product_surface_drag_sequence_probe(ProductSurfaceDragProbeEnd::CommitOutsideCanvas)
                 && product_surface_drag_sequence_probe(ProductSurfaceDragProbeEnd::Cancel);
         let connect_flow_store_synced = product_connection_store_sync_probe();
+        let port_handle_evidence = product_port_handle_evidence();
         let port_hotspot_path_checked = product_port_hotspot_path_probe();
+        let first_pointer_evidence = product_first_pointer_evidence();
         let reconnect_affordance_visible = product_reconnect_affordance_probe();
         let reconnect_sequence_evidence = product_reconnect_sequence_evidence();
         let dropped_wire_gesture_connected = product_dropped_wire_gesture_probe();
+        let connection_release_evidence = product_connection_release_evidence();
         let preview_route_matches_committed =
             product_connection_preview_route_matches_projected_edge_route_probe();
         let dense_surface_evidence = product_dense_surface_interaction_evidence();
@@ -7404,12 +7854,15 @@ mod tests {
             dense_surface_evidence.keyboard_focus_checked,
             dense_surface_evidence.graph_menu_absence_checked,
         );
+        report.mark_port_handle_evidence(port_handle_evidence);
         report.mark_port_hotspot_path_checked(port_hotspot_path_checked);
+        report.mark_first_pointer_evidence(first_pointer_evidence);
         report.mark_tool_switcher_visible(product_tool_switcher_visible());
         report.mark_connect_flow_store_synced(connect_flow_store_synced);
         report.mark_reconnect_affordance_visible(reconnect_affordance_visible);
         report.mark_reconnect_sequence_evidence(reconnect_sequence_evidence);
         report.mark_dropped_wire_gesture_connected(dropped_wire_gesture_connected);
+        report.mark_connection_release_evidence(connection_release_evidence);
         if let Some(mut evidence) = graph_affordance_evidence {
             if !preview_route_matches_committed {
                 evidence.connection_preview_policy =
