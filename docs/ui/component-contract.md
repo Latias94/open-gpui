@@ -185,9 +185,11 @@ handles, focus handles, callbacks, or GPUI element ids.
 nested `ListboxState`. It records controlled versus uncontrolled open mode, default-open state,
 placeholder and selected trigger label, selected and active option values, placement preference,
 outside-press policy, initial focus intent, focus restoration intent, resolved metrics, token
-intents, and the listbox content role. The GPUI `Select` adapter owns trigger/content rendering,
-keyed runtime open/selected/active state, callbacks, outside-press and Escape wiring, deferred
-anchored rendering, and concrete focus handles.
+intents, and the listbox content role. `SelectState::resolve` takes a `SelectStateRequest` so
+callers group overlay policy, selection inputs, descriptors, and theme tokens explicitly. The GPUI
+`Select` adapter owns trigger/content rendering, keyed runtime open/selected/active state,
+callbacks, outside-press and Escape wiring, deferred anchored rendering, and concrete focus
+handles.
 
 `choice.rs` owns the shared stable-value seam for the choice family. It projects flat item
 identity, normalizes query text, filters disabled or missing selected values, deduplicates
@@ -204,9 +206,10 @@ value, filtered and total option counts, empty-state label, placement preference
 policy, initial focus intent, focus restoration intent, resolved metrics, token intents, and
 editable-combobox/listbox roles. Filtering controls only the visible list: the selected value is
 resolved from the unfiltered descriptors and is not cleared just because the current query hides
-that option. The GPUI adapter owns the `TextInputController`, keyed runtime query/open/selection
-state, callbacks, outside-press and Escape wiring, deferred anchored rendering, scroll handles, and
-concrete focus handles.
+that option. `ComboboxState::resolve` takes a `ComboboxStateRequest` so query, selection, filtering
+inputs, overlay policy, and theme tokens stay grouped at the module interface. The GPUI adapter
+owns the `TextInputController`, keyed runtime query/open/selection state, callbacks, outside-press
+and Escape wiring, deferred anchored rendering, scroll handles, and concrete focus handles.
 
 `CommandState` composes a search text input, ranked grouped command results, optional dialog
 wrapper, loading metadata, selected chips, a virtualized result window, and nested `ListboxState`.

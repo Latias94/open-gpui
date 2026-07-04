@@ -1365,24 +1365,24 @@ fn select_state(
     groups: &[ListboxGroupSample],
     tokens: ThemeTokens,
 ) -> SelectState {
-    SelectState::resolve(
+    SelectState::resolve(SelectStateRequest {
         size,
         disabled,
         open,
         default_open,
-        label,
-        placeholder,
-        selected,
-        active,
-        groups.iter().map(listbox_group_descriptor),
-        options.iter().map(listbox_option_descriptor),
-        OverlayPlacementSide::Bottom,
-        OverlayPlacementAlignment::Start,
-        OutsidePressPolicy::DismissAndConsume,
-        InitialFocusIntent::FirstFocusable,
-        FocusRestoreIntent::Trigger,
+        label: label.to_owned(),
+        placeholder: placeholder.to_owned(),
+        selected_value: selected.map(str::to_owned),
+        active_value: active.map(str::to_owned),
+        groups: groups.iter().map(listbox_group_descriptor).collect(),
+        options: options.iter().map(listbox_option_descriptor).collect(),
+        placement_side: OverlayPlacementSide::Bottom,
+        placement_alignment: OverlayPlacementAlignment::Start,
+        outside_press_policy: OutsidePressPolicy::DismissAndConsume,
+        initial_focus_intent: InitialFocusIntent::FirstFocusable,
+        focus_restore_intent: FocusRestoreIntent::Trigger,
         tokens,
-    )
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1400,27 +1400,27 @@ fn combobox_state(
     groups: &[ListboxGroupSample],
     tokens: ThemeTokens,
 ) -> ComboboxState {
-    ComboboxState::resolve(
+    ComboboxState::resolve(ComboboxStateRequest {
         size,
         disabled,
-        false,
+        required: false,
         open,
         default_open,
-        label,
-        placeholder,
-        query,
-        selected,
-        active,
-        "No results",
-        groups.iter().map(combobox_group_descriptor),
-        options.iter().map(combobox_option_descriptor),
-        OverlayPlacementSide::Bottom,
-        OverlayPlacementAlignment::Start,
-        OutsidePressPolicy::DismissAndConsume,
-        InitialFocusIntent::None,
-        FocusRestoreIntent::Trigger,
+        label: label.to_owned(),
+        placeholder: placeholder.to_owned(),
+        query: query.to_owned(),
+        selected_value: selected.map(str::to_owned),
+        active_value: active.map(str::to_owned),
+        empty_label: "No results".to_owned(),
+        groups: groups.iter().map(combobox_group_descriptor).collect(),
+        options: options.iter().map(combobox_option_descriptor).collect(),
+        placement_side: OverlayPlacementSide::Bottom,
+        placement_alignment: OverlayPlacementAlignment::Start,
+        outside_press_policy: OutsidePressPolicy::DismissAndConsume,
+        initial_focus_intent: InitialFocusIntent::None,
+        focus_restore_intent: FocusRestoreIntent::Trigger,
         tokens,
-    )
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
