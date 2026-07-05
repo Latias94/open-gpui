@@ -2,8 +2,8 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-04T10:26:22+08:00
-git_branch: feat/command-keymap-scopes
+timestamp: 2026-07-05T20:24:03+08:00
+git_branch: refactor/ui-framework-non-overlay-depth
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
   - docs/plans/2026-07-01-002-refactor-ui-public-gallery-boundaries-plan.md
@@ -134,8 +134,17 @@ verified_by:
 
 # Current State
 
-- Branch: `feat/command-keymap-scopes`; this state includes the command keymap resolution slice on
-  top of the merged command navigation and pending-provider work.
+- Branch: `refactor/ui-framework-non-overlay-depth`; this state includes the UI framework
+  layer/motion/conformance work plus the workspace dependency upgrade and verification-gate recovery
+  commits.
+- Done on `refactor/ui-framework-non-overlay-depth`: workspace dependencies were upgraded in
+  `50f7cfc`, and verification fallout was fixed in `05f63de`. The remaining direct outdated root
+  dependencies are `core-graphics` and `core-text`, intentionally held because the current
+  `open-gpui-font-kit` native handles still use the older CoreGraphics/CoreText FFI type line.
+- Local nextest list-stage stalls on macOS were diagnosed as dyld/Gatekeeper validation of newly
+  built test binaries, not scheduler/UI test logic. Rebuilding affected test binaries restored
+  normal execution; the durable verification note is
+  `docs/knowledge/engineering/verification/dependency-upgrade-verification-20260705.md`.
 - Done on `refactor/ui-framework-deepening`: component render paths now resolve color intents from
   `ThemeResolver::current(cx)` / `ThemeContext` or an explicit snapshot. Direct
   `ThemeResolver::resolve(...)` is documented as default-light compatibility only, and `rg -n

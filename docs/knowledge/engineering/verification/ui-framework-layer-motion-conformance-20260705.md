@@ -42,17 +42,22 @@ the low-level `roving_focus` module.
 - `cargo run -p xtask -- scan-ui-contract`: passed.
 - `cargo fmt --all --check`: passed before the final memory write.
 - `git diff --check`: passed before the final memory write.
+- Follow-up dependency-upgrade verification in
+  `docs/knowledge/engineering/verification/dependency-upgrade-verification-20260705.md`: passed
+  scheduler, ui-components, foundation-gallery, xtask, scan, format, and diff gates after the
+  dependency upgrade.
 
 # Environment Notes
 
 - `cargo nextest run -p open-gpui-ui-components -E 'test(/overlay|choice|navigation|public_surface/)' --no-fail-fast`
   was initially interrupted after `choice` and `overlay` test binaries appeared to remain in
   `--list --format terse` for several minutes.
-- Follow-up diagnosis could not reproduce the hang: direct overlay listing, direct overlay
-  single-threaded execution, cargo overlay test execution, and the full ui-components aggregate
-  nextest gate all passed in the same working tree.
-- The initial interruption is therefore treated as a transient local test-runner/process state, not
-  a failed assertion or remaining code defect.
+- Follow-up diagnosis after the dependency upgrade traced the repeated list-stage stalls to macOS
+  dyld/Gatekeeper validation rather than Rust test code. Sampled test binaries were stopped at
+  `_dyld_start` before test harness entry, and rebuilding the affected binaries restored normal
+  nextest execution.
+- The interruption is therefore treated as a local macOS test-binary startup condition, not a failed
+  assertion or remaining code defect.
 
 # Commits In Scope
 
@@ -67,6 +72,8 @@ the low-level `roving_focus` module.
 - `718ee02` - `refactor(ui-components): route tree navigation through choice`
 - `61abcb3` - `refactor(ui-components): deepen component contract projections`
 - `a92e625` - `refactor(ui-components): narrow roving focus public surface`
+- `50f7cfc` - `build(deps): upgrade workspace dependencies`
+- `05f63de` - `test(verification): restore gates after dependency upgrade`
 
 # Citations
 
