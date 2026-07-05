@@ -19,10 +19,8 @@ use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
     OverlayCloseRuntimeRequest, OverlayDisclosureConfig, OverlayDisclosureOpenMode,
-    OverlayOpenRuntimeRequest, OverlayResolvedState, apply_overlay_open_change_with_after_update,
-    close_overlay_runtime, consume_overlay_event, escape_open_change,
-    gpui_full_window_overlay_layer, gpui_overlay_state, outside_press_open_change,
-    resolve_overlay_open_state, set_overlay_open,
+    OverlayLayerHost, OverlayOpenRuntimeRequest, OverlayResolvedState, resolve_overlay_open_state,
+    set_overlay_open,
 };
 use crate::theme::{ThemeContext, ThemeResolver};
 
@@ -586,7 +584,7 @@ impl RenderOnce for Dialog {
         let open = state.open();
         let trigger_focus = runtime.read(cx).trigger_focus.clone();
         let surface_focus = runtime.read(cx).surface_focus.clone();
-        let overlay_adapter = gpui_overlay_state(state.overlay());
+        let overlay_host = OverlayLayerHost::resolve(state.overlay());
 
         div()
             .id(id.clone())
@@ -631,13 +629,14 @@ impl RenderOnce for Dialog {
                         let runtime = runtime.clone();
                         let on_escape_close = on_escape_close.clone();
                         let focus_restore = state.focus_restore_intent().clone();
-                        let escape_policy = state.overlay().policy().clone();
+                        let overlay_host = overlay_host.clone();
                         this.on_key_down(move |event: &KeyDownEvent, window, cx| {
                             if event.keystroke.key.as_str() == "escape"
-                                && escape_open_change(&escape_policy).is_some()
+                                && overlay_host.escape_open_change().is_some()
                             {
-                                consume_overlay_event(window, cx);
+                                overlay_host.consume_event(window, cx);
                                 close_dialog(
+                                    overlay_host.clone(),
                                     runtime.clone(),
                                     focus_restore.clone(),
                                     on_escape_close.clone(),
@@ -652,6 +651,7 @@ impl RenderOnce for Dialog {
                         let runtime = runtime.clone();
                         let on_open_change = on_open_change.clone();
                         let initial_focus = state.initial_focus_intent().clone();
+                        let overlay_host = overlay_host.clone();
                         this.cursor_pointer()
                             .hover(move |style| style.bg(trigger_hover_background))
                             .on_click(move |_event: &ClickEvent, window, cx| {
@@ -659,7 +659,7 @@ impl RenderOnce for Dialog {
                                 let next_open = !open;
                                 let focus_runtime = runtime.clone();
                                 let initial_focus = initial_focus.clone();
-                                apply_overlay_open_change_with_after_update(
+                                overlay_host.apply_open_change_with_after_update(
                                     OverlayOpenRuntimeRequest::new(
                                         runtime.clone(),
                                         next_open,
@@ -689,21 +689,20 @@ impl RenderOnce for Dialog {
                     .child(trigger_label),
             )
             .when(open, |this| {
-                this.child(gpui_full_window_overlay_layer(
-                    &overlay_adapter,
-                    dialog_layer_element(
-                        content,
-                        content_id.clone(),
-                        debug_id.clone(),
-                        state.clone(),
-                        &theme,
-                        viewport,
-                        runtime.clone(),
-                        surface_focus.clone(),
-                        on_escape_close.clone(),
-                        on_open_change.clone(),
-                    ),
-                ))
+                let overlay_host = overlay_host.clone();
+                this.child(overlay_host.full_window_layer(dialog_layer_element(
+                    content,
+                    content_id.clone(),
+                    debug_id.clone(),
+                    state.clone(),
+                    overlay_host.clone(),
+                    &theme,
+                    viewport,
+                    runtime.clone(),
+                    surface_focus.clone(),
+                    on_escape_close.clone(),
+                    on_open_change.clone(),
+                )))
             })
     }
 }
@@ -713,6 +712,7 @@ fn dialog_layer_element(
     content_id: ElementId,
     debug_id: String,
     state: DialogState,
+    overlay_host: OverlayLayerHost,
     theme: &ThemeContext,
     viewport: open_gpui::Size<Pixels>,
     runtime: Entity<DialogRuntime>,
@@ -722,11 +722,13 @@ fn dialog_layer_element(
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
-    let outside_change = outside_press_open_change(state.overlay().policy());
-    let escape_change = escape_open_change(state.overlay().policy());
+    let outside_change = overlay_host.outside_press_open_change();
+    let escape_change = overlay_host.escape_open_change();
     let escape_runtime = runtime.clone();
     let escape_open_change = on_escape_close.clone();
     let escape_focus_restore = state.focus_restore_intent().clone();
+    let key_overlay_host = overlay_host.clone();
+    let barrier_overlay_host = overlay_host.clone();
     let barrier = theme.resolve(colors.barrier());
     let border = theme.resolve(colors.border());
     let surface = theme.resolve(colors.surface());
@@ -751,16 +753,18 @@ fn dialog_layer_element(
         .h(viewport.height)
         .bg(barrier)
         .occlude()
-        .on_any_mouse_down(|_, window, cx| {
-            consume_overlay_event(window, cx);
+        .on_any_mouse_down(move |_, window, cx| {
+            barrier_overlay_host.consume_event(window, cx);
         })
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
             let focus_restore = state.focus_restore_intent().clone();
+            let overlay_host = overlay_host.clone();
             this.on_click(move |_: &ClickEvent, window, cx| {
-                consume_overlay_event(window, cx);
+                overlay_host.consume_event(window, cx);
                 close_dialog(
+                    overlay_host.clone(),
                     runtime.clone(),
                     focus_restore.clone(),
                     on_open_change.clone(),
@@ -801,8 +805,9 @@ fn dialog_layer_element(
                 .aria_label(state.title().to_owned())
                 .on_key_down(move |event: &KeyDownEvent, window, cx| {
                     if event.keystroke.key.as_str() == "escape" && escape_change.is_some() {
-                        consume_overlay_event(window, cx);
+                        key_overlay_host.consume_event(window, cx);
                         close_dialog(
+                            key_overlay_host.clone(),
                             escape_runtime.clone(),
                             escape_focus_restore.clone(),
                             escape_open_change.clone(),
@@ -829,6 +834,7 @@ fn dialog_layer_element(
 }
 
 fn close_dialog(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<DialogRuntime>,
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
@@ -836,7 +842,7 @@ fn close_dialog(
     cx: &mut App,
 ) {
     let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    close_overlay_runtime(
+    overlay_host.close_runtime(
         OverlayCloseRuntimeRequest::new(
             runtime,
             &focus_restore,

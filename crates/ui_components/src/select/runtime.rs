@@ -16,10 +16,8 @@ use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::gpui_px_from_ui;
 use crate::listbox::{Listbox, ListboxGroup, ListboxOption};
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayCloseRuntimeRequest, OverlayOpenRuntimeRequest,
-    apply_overlay_open_change, close_overlay_runtime, close_overlay_runtime_with_after_update,
-    consume_overlay_event, gpui_overlay_state, gpui_relative_overlay_layer,
-    outside_press_open_change, resolve_overlay_open_state, set_overlay_open,
+    GpuiOverlayPlacement, OverlayCloseRuntimeRequest, OverlayLayerHost, OverlayOpenRuntimeRequest,
+    resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::{ThemeContext, ThemeResolver};
@@ -298,7 +296,7 @@ impl RenderOnce for Select {
         let trigger_focus_shadow = focus_ring_shadow_with_theme(plan.focus_ring, &theme);
         let trigger_focus = runtime_state.trigger_focus.clone();
         let open = plan.open;
-        let overlay_adapter = gpui_overlay_state(state.overlay());
+        let overlay_host = OverlayLayerHost::resolve(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 OverlayAnchorInput::from_layout_bounds(rect(
@@ -310,7 +308,7 @@ impl RenderOnce for Select {
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
             .with_offset(ui_px(4.0)),
-            overlay_adapter.snap_margin(),
+            overlay_host.adapter().snap_margin(),
         );
 
         div()
@@ -364,12 +362,13 @@ impl RenderOnce for Select {
                         let runtime = runtime.clone();
                         let on_open_change = self.on_open_change.clone();
                         let focus_restore = state.focus_restore_intent().clone();
+                        let overlay_host = overlay_host.clone();
                         move |event: &KeyDownEvent, window, cx| {
                             let key = event.keystroke.key.as_str();
                             if matches!(key, "enter" | "space" | "down" | "up") {
-                                consume_overlay_event(window, cx);
+                                overlay_host.consume_event(window, cx);
                                 if !open {
-                                    apply_overlay_open_change(
+                                    overlay_host.apply_open_change(
                                         OverlayOpenRuntimeRequest::new(
                                             runtime.clone(),
                                             true,
@@ -383,8 +382,9 @@ impl RenderOnce for Select {
                                     );
                                 }
                             } else if key == "escape" {
-                                consume_overlay_event(window, cx);
+                                overlay_host.consume_event(window, cx);
                                 close_select(
+                                    overlay_host.clone(),
                                     runtime.clone(),
                                     focus_restore.clone(),
                                     on_open_change.clone(),
@@ -401,12 +401,13 @@ impl RenderOnce for Select {
                         let runtime = runtime.clone();
                         let on_open_change = self.on_open_change.clone();
                         let open = plan.open;
+                        let overlay_host = overlay_host.clone();
                         this.cursor_pointer()
                             .hover(move |style| style.bg(trigger_hover_background))
                             .capture_any_mouse_up(move |_, window, cx| {
-                                consume_overlay_event(window, cx);
+                                overlay_host.consume_event(window, cx);
                                 let next_open = !open;
-                                apply_overlay_open_change(
+                                overlay_host.apply_open_change(
                                     OverlayOpenRuntimeRequest::new(
                                         runtime.clone(),
                                         next_open,
@@ -430,13 +431,14 @@ impl RenderOnce for Select {
                     .child(div().child(if plan.open { "^" } else { "v" })),
             )
             .when(plan.open, |this| {
-                this.child(gpui_relative_overlay_layer(
-                    &overlay_adapter,
+                let overlay_host = overlay_host.clone();
+                this.child(overlay_host.relative_layer(
                     &placement,
                     select_content_element(
                         plan.content_id.clone(),
                         plan.listbox_id.clone(),
                         state.clone(),
+                        overlay_host.clone(),
                         explicit_active_value.clone(),
                         self.options,
                         self.groups,
@@ -456,6 +458,7 @@ fn select_content_element(
     content_id: ElementId,
     listbox_id: ElementId,
     state: SelectState,
+    overlay_host: OverlayLayerHost,
     explicit_active_value: Option<String>,
     options: Vec<ListboxOption>,
     groups: Vec<ListboxGroup>,
@@ -467,7 +470,7 @@ fn select_content_element(
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
-    let outside_change = outside_press_open_change(state.overlay().policy());
+    let outside_change = overlay_host.outside_press_open_change();
     let focus_restore = state.focus_restore_intent().clone();
     let escape_runtime = runtime.clone();
     let escape_open_change = on_open_change.clone();
@@ -476,6 +479,8 @@ fn select_content_element(
     let listbox_open_change = on_open_change.clone();
     let listbox_select = on_select.clone();
     let listbox_focus_restore = focus_restore.clone();
+    let listbox_overlay_host = overlay_host.clone();
+    let key_overlay_host = overlay_host.clone();
     let selected_value = state.selected_value().map(str::to_owned);
     let label = state.label().to_owned();
     let listbox = options
@@ -493,7 +498,7 @@ fn select_content_element(
             let selected_value = selection.value().to_owned();
             let on_select = listbox_select.clone();
             let trigger_focus = listbox_runtime.read(cx).trigger_focus.clone();
-            close_overlay_runtime_with_after_update(
+            listbox_overlay_host.close_runtime_with_after_update(
                 OverlayCloseRuntimeRequest::new(
                     listbox_runtime.clone(),
                     &listbox_focus_restore,
@@ -550,8 +555,9 @@ fn select_content_element(
         .occlude()
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             if event.keystroke.key.as_str() == "escape" {
-                consume_overlay_event(window, cx);
+                key_overlay_host.consume_event(window, cx);
                 close_select(
+                    key_overlay_host.clone(),
                     escape_runtime.clone(),
                     escape_focus_restore.clone(),
                     escape_open_change.clone(),
@@ -564,8 +570,10 @@ fn select_content_element(
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
             let focus_restore = focus_restore.clone();
+            let overlay_host = overlay_host.clone();
             this.on_mouse_down_out(move |_, window, cx| {
                 close_select(
+                    overlay_host.clone(),
                     runtime.clone(),
                     focus_restore.clone(),
                     on_open_change.clone(),
@@ -583,6 +591,7 @@ fn select_content_element(
 }
 
 fn close_select(
+    overlay_host: OverlayLayerHost,
     runtime: open_gpui::Entity<SelectRuntime>,
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<SelectOpenChangeHandler>,
@@ -590,7 +599,7 @@ fn close_select(
     cx: &mut App,
 ) {
     let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    close_overlay_runtime(
+    overlay_host.close_runtime(
         OverlayCloseRuntimeRequest::new(
             runtime,
             &focus_restore,

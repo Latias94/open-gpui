@@ -20,10 +20,8 @@ use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
     OverlayCloseRuntimeRequest, OverlayDisclosureConfig, OverlayDisclosureOpenMode,
-    OverlayOpenRuntimeRequest, OverlayResolvedState, apply_overlay_open_change_with_after_update,
-    close_overlay_runtime, consume_overlay_event, escape_open_change,
-    gpui_full_window_overlay_layer, gpui_overlay_state, outside_press_open_change,
-    resolve_overlay_open_state, set_overlay_open,
+    OverlayLayerHost, OverlayOpenRuntimeRequest, OverlayResolvedState, resolve_overlay_open_state,
+    set_overlay_open,
 };
 use crate::theme::{ThemeContext, ThemeResolver};
 
@@ -908,7 +906,7 @@ impl RenderOnce for AlertDialog {
         let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
         let disabled = state.disabled();
         let open = state.open();
-        let overlay_adapter = gpui_overlay_state(state.overlay());
+        let overlay_host = OverlayLayerHost::resolve(state.overlay());
         let trigger_focus = runtime.read(cx).trigger_focus.clone();
         let cancel_focus = runtime.read(cx).cancel_focus.clone();
         let action_focus = runtime.read(cx).action_focus.clone();
@@ -959,13 +957,14 @@ impl RenderOnce for AlertDialog {
                         let runtime = runtime.clone();
                         let on_open_change = on_open_change.clone();
                         let focus_restore = state.focus_restore_intent().clone();
-                        let escape_policy = state.overlay().policy().clone();
+                        let overlay_host = overlay_host.clone();
                         this.on_key_down(move |event: &KeyDownEvent, window, cx| {
                             if event.keystroke.key.as_str() == "escape"
-                                && escape_open_change(&escape_policy).is_some()
+                                && overlay_host.escape_open_change().is_some()
                             {
-                                consume_overlay_event(window, cx);
+                                overlay_host.consume_event(window, cx);
                                 close_alert_dialog(
+                                    overlay_host.clone(),
                                     runtime.clone(),
                                     focus_restore.clone(),
                                     on_open_change.clone(),
@@ -981,6 +980,7 @@ impl RenderOnce for AlertDialog {
                         let on_open_change = on_open_change.clone();
                         let initial_focus = state.initial_focus_intent().clone();
                         let focus_state = state.clone();
+                        let overlay_host = overlay_host.clone();
                         this.cursor_pointer()
                             .hover(move |style| style.bg(trigger_hover_background))
                             .on_click(move |_event: &ClickEvent, window, cx| {
@@ -989,7 +989,7 @@ impl RenderOnce for AlertDialog {
                                 let focus_runtime = runtime.clone();
                                 let focus_state = focus_state.clone();
                                 let initial_focus = initial_focus.clone();
-                                apply_overlay_open_change_with_after_update(
+                                overlay_host.apply_open_change_with_after_update(
                                     OverlayOpenRuntimeRequest::new(
                                         runtime.clone(),
                                         next_open,
@@ -1020,22 +1020,21 @@ impl RenderOnce for AlertDialog {
                     .child(trigger_label),
             )
             .when(open, |this| {
-                this.child(gpui_full_window_overlay_layer(
-                    &overlay_adapter,
-                    alert_dialog_layer_element(
-                        content_id.clone(),
-                        debug_id.clone(),
-                        state.clone(),
-                        &theme,
-                        viewport,
-                        runtime.clone(),
-                        cancel_focus.clone(),
-                        action_focus.clone(),
-                        on_cancel.clone(),
-                        on_action.clone(),
-                        on_open_change.clone(),
-                    ),
-                ))
+                let overlay_host = overlay_host.clone();
+                this.child(overlay_host.full_window_layer(alert_dialog_layer_element(
+                    content_id.clone(),
+                    debug_id.clone(),
+                    state.clone(),
+                    overlay_host.clone(),
+                    &theme,
+                    viewport,
+                    runtime.clone(),
+                    cancel_focus.clone(),
+                    action_focus.clone(),
+                    on_cancel.clone(),
+                    on_action.clone(),
+                    on_open_change.clone(),
+                )))
             })
     }
 }
@@ -1044,6 +1043,7 @@ fn alert_dialog_layer_element(
     content_id: ElementId,
     debug_id: String,
     state: AlertDialogState,
+    overlay_host: OverlayLayerHost,
     theme: &ThemeContext,
     viewport: open_gpui::Size<Pixels>,
     runtime: Entity<AlertDialogRuntime>,
@@ -1055,8 +1055,9 @@ fn alert_dialog_layer_element(
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
-    let outside_change = outside_press_open_change(state.overlay().policy());
-    let escape_change = escape_open_change(state.overlay().policy());
+    let outside_change = overlay_host.outside_press_open_change();
+    let escape_change = overlay_host.escape_open_change();
+    let barrier_overlay_host = overlay_host.clone();
     let barrier = theme.resolve(colors.barrier());
     let border = theme.resolve(colors.border());
     let surface = theme.resolve(colors.surface());
@@ -1078,16 +1079,18 @@ fn alert_dialog_layer_element(
         .h(viewport.height)
         .bg(barrier)
         .occlude()
-        .on_any_mouse_down(|_, window, cx| {
-            consume_overlay_event(window, cx);
+        .on_any_mouse_down(move |_, window, cx| {
+            barrier_overlay_host.consume_event(window, cx);
         })
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
             let focus_restore = state.focus_restore_intent().clone();
+            let overlay_host = overlay_host.clone();
             this.on_click(move |_: &ClickEvent, window, cx| {
-                consume_overlay_event(window, cx);
+                overlay_host.consume_event(window, cx);
                 close_alert_dialog(
+                    overlay_host.clone(),
                     runtime.clone(),
                     focus_restore.clone(),
                     on_open_change.clone(),
@@ -1132,10 +1135,12 @@ fn alert_dialog_layer_element(
                     let runtime = runtime.clone();
                     let on_open_change = on_open_change.clone();
                     let focus_restore = state.focus_restore_intent().clone();
+                    let overlay_host = overlay_host.clone();
                     move |event: &KeyDownEvent, window, cx| {
                         if event.keystroke.key.as_str() == "escape" && escape_change.is_some() {
-                            consume_overlay_event(window, cx);
+                            overlay_host.consume_event(window, cx);
                             close_alert_dialog(
+                                overlay_host.clone(),
                                 runtime.clone(),
                                 focus_restore.clone(),
                                 on_open_change.clone(),
@@ -1168,6 +1173,7 @@ fn alert_dialog_layer_element(
                             theme,
                             runtime.clone(),
                             cancel_focus.clone(),
+                            overlay_host.clone(),
                             debug_id.clone(),
                             on_cancel,
                             on_open_change.clone(),
@@ -1177,6 +1183,7 @@ fn alert_dialog_layer_element(
                             theme,
                             runtime.clone(),
                             action_focus.clone(),
+                            overlay_host.clone(),
                             debug_id.clone(),
                             on_action,
                             on_open_change,
@@ -1190,6 +1197,7 @@ fn alert_dialog_cancel_button(
     theme: &ThemeContext,
     runtime: Entity<AlertDialogRuntime>,
     cancel_focus: FocusHandle,
+    overlay_host: OverlayLayerHost,
     debug_id: String,
     on_cancel: Option<ActionHandler>,
     on_open_change: Option<OpenChangeHandler>,
@@ -1243,6 +1251,7 @@ fn alert_dialog_cancel_button(
                         on_cancel(window, cx);
                     }
                     close_alert_dialog(
+                        overlay_host.clone(),
                         runtime.clone(),
                         focus_restore.clone(),
                         on_open_change.clone(),
@@ -1259,6 +1268,7 @@ fn alert_dialog_action_button(
     theme: &ThemeContext,
     runtime: Entity<AlertDialogRuntime>,
     action_focus: FocusHandle,
+    overlay_host: OverlayLayerHost,
     debug_id: String,
     on_action: Option<ActionHandler>,
     on_open_change: Option<OpenChangeHandler>,
@@ -1312,6 +1322,7 @@ fn alert_dialog_action_button(
                         on_action(window, cx);
                     }
                     close_alert_dialog(
+                        overlay_host.clone(),
                         runtime.clone(),
                         focus_restore.clone(),
                         on_open_change.clone(),
@@ -1324,6 +1335,7 @@ fn alert_dialog_action_button(
 }
 
 fn close_alert_dialog(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<AlertDialogRuntime>,
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<OpenChangeHandler>,
@@ -1331,7 +1343,7 @@ fn close_alert_dialog(
     cx: &mut App,
 ) {
     let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    close_overlay_runtime(
+    overlay_host.close_runtime(
         OverlayCloseRuntimeRequest::new(
             runtime,
             &focus_restore,
