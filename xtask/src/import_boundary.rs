@@ -55,7 +55,7 @@ fn scan_dependency_files(root: &Path, failures: &mut Vec<String>) {
 }
 
 fn scan_manifest_dependencies(relative: &str, contents: &str, failures: &mut Vec<String>) {
-    let document = match contents.parse::<toml::Value>() {
+    let document = match toml::from_str::<toml::Value>(contents) {
         Ok(document) => document,
         Err(error) => {
             failures.push(format!("{relative}: failed to parse TOML: {error}"));
@@ -148,7 +148,7 @@ fn scan_manifest_dependency_table(
 }
 
 fn scan_lock_dependencies(relative: &str, contents: &str, failures: &mut Vec<String>) {
-    let document = match contents.parse::<toml::Value>() {
+    let document = match toml::from_str::<toml::Value>(contents) {
         Ok(document) => document,
         Err(error) => {
             failures.push(format!("{relative}: failed to parse TOML: {error}"));

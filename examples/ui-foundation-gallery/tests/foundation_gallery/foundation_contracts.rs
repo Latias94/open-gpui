@@ -64,7 +64,7 @@ fn package_manifest_stays_foundation_scoped() {
     assert!(manifest.contains("open_gpui.workspace = true"));
     assert!(manifest.contains("open_gpui_ui_core.workspace = true"));
     assert!(manifest.contains("open_gpui_ui_components.workspace = true"));
-    assert!(manifest.contains("open_gpui_platform.workspace = true"));
+    assert!(manifest.contains("open_gpui_platform = { workspace = true"));
     assert!(!manifest.contains("open_gpui_canvas"));
     assert!(!manifest.contains("open_gpui_docking"));
     assert!(!manifest.contains("open_gpui_ui ="));
