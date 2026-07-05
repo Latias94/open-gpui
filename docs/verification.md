@@ -32,6 +32,24 @@ git diff --check
 The Windows Job Object process-tree tests ran on the host. The Darwin custom-`PATH` command tests
 compiled for `x86_64-apple-darwin`; runtime execution still requires a macOS runner.
 
+For the 2026-07 Zed GPUI upstream-sync SVG renderer slice, the focused U8 verification on the
+Windows host was:
+
+```powershell
+cargo nextest run -p open-gpui -E "test(text_with_split_glyph_clusters_in_mixed_fonts_does_not_panic) or test(svg_renderer)"
+cargo check -p open-gpui --locked
+cargo run -p xtask -- renderer-smoke
+cargo run -p xtask -- scan-import-boundary
+cargo audit
+git diff --check
+```
+
+`cargo audit` reported pre-existing lockfile advisories outside the `resvg`/`usvg` upgrade
+(`quick-xml 0.39.4`, `quinn-proto 0.11.14`) plus allowed warning-class advisories. The updated SVG
+stack crates reviewed in this slice (`resvg 0.46.0`, `usvg 0.46.0`, `imagesize 0.14.0`,
+`kurbo 0.13.1`, `polycool 0.4.0`, `roxmltree 0.21.1`, `svgtypes 0.16.1`) are crates.io packages
+with MIT and/or Apache-2.0 licenses.
+
 For focused `open-gpui-canvas` work, run:
 
 ```sh

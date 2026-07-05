@@ -77,13 +77,13 @@ raw-window-handle = "0.6"
 regex.workspace = true
 open_gpui_refineable.workspace = true
 open_gpui_scheduler.workspace = true
-resvg = { version = "0.45.0", default-features = false, features = [
+resvg = { version = "0.46.0", default-features = false, features = [
     "text",
     "system-fonts",
     "memmap-fonts",
     "raster-images"
 ] }
-usvg = { version = "0.45.0", default-features = false }
+usvg = { version = "0.46.0", default-features = false }
 ttf-parser = "0.25"
 open_gpui_util_macros.workspace = true
 schemars.workspace = true
