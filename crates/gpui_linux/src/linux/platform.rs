@@ -11,6 +11,8 @@ use std::{io::Read as _, os::fd::AsRawFd};
 
 use anyhow::{Context as _, anyhow};
 use calloop::LoopSignal;
+#[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+use calloop::channel::Sender;
 use futures::channel::oneshot;
 use open_gpui_util::ResultExt as _;
 use open_gpui_util::command::{new_command, new_std_command};
@@ -118,6 +120,7 @@ pub(crate) struct PlatformHandlers {
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
+    pub(crate) system_wake: Option<Box<dyn FnMut()>>,
 }
 
 pub(crate) struct LinuxCommon {
@@ -130,11 +133,23 @@ pub(crate) struct LinuxCommon {
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
+    #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+    wake_sender: Sender<()>,
+    wake_listener_started: bool,
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, PriorityQueueCalloopReceiver<RunnableVariant>) {
+    pub fn new(
+        signal: LoopSignal,
+    ) -> (
+        Self,
+        PriorityQueueCalloopReceiver<RunnableVariant>,
+        calloop::channel::Channel<()>,
+    ) {
         let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
+        let (wake_sender, wake_receiver) = calloop::channel::channel();
+        #[cfg(not(all(target_os = "linux", any(feature = "wayland", feature = "x11"))))]
+        let _ = wake_sender;
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::linux::CosmicTextSystem::new("IBM Plex Sans"));
@@ -157,10 +172,64 @@ impl LinuxCommon {
             callbacks,
             signal,
             menus: Vec::new(),
+            #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+            wake_sender,
+            wake_listener_started: false,
         };
 
-        (common, main_receiver)
+        (common, main_receiver, wake_receiver)
     }
+
+    pub(crate) fn start_wake_listener(&mut self) {
+        if self.wake_listener_started {
+            return;
+        }
+
+        #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+        smol::spawn({
+            let wake_sender = self.wake_sender.clone();
+            async move {
+                if let Err(error) = listen_for_system_wake(wake_sender).await {
+                    log::debug!("failed to listen for system wake events: {error:?}");
+                }
+            }
+        })
+        .detach();
+
+        self.wake_listener_started = true;
+    }
+
+    pub(crate) fn handle_system_wake(&mut self) {
+        let Some(mut callback) = self.callbacks.system_wake.take() else {
+            return;
+        };
+        callback();
+        self.callbacks.system_wake = Some(callback);
+    }
+}
+
+#[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+async fn listen_for_system_wake(wake_sender: Sender<()>) -> anyhow::Result<()> {
+    use futures::StreamExt as _;
+
+    let connection = ashpd::zbus::Connection::system().await?;
+    let proxy = ashpd::zbus::Proxy::new(
+        &connection,
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+    )
+    .await?;
+    let mut sleep_events = proxy.receive_signal("PrepareForSleep").await?;
+
+    while let Some(message) = sleep_events.next().await {
+        let sleeping = message.body().deserialize::<bool>()?;
+        if !sleeping {
+            wake_sender.send(()).ok();
+        }
+    }
+
+    Ok(())
 }
 
 pub(crate) struct LinuxPlatform<P> {
@@ -506,6 +575,13 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
         self.inner.with_common(|common| {
             common.callbacks.reopen = Some(callback);
+        });
+    }
+
+    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
+        self.inner.with_common(|common| {
+            common.callbacks.system_wake = Some(callback);
+            common.start_wake_listener();
         });
     }
 

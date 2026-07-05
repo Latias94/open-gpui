@@ -41,6 +41,7 @@ pub(crate) struct TestPlatform {
     pub opened_url: RefCell<Option<String>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
     pub expect_restart: RefCell<Option<oneshot::Sender<Option<PathBuf>>>>,
+    system_wake_callback: RefCell<Option<Box<dyn FnMut()>>>,
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
     weak: Weak<Self>,
 }
@@ -139,6 +140,7 @@ impl TestPlatform {
             window_stack: Default::default(),
             no_input_windows: RefCell::new(true),
             expect_restart: Default::default(),
+            system_wake_callback: Default::default(),
             current_clipboard_item: Mutex::new(None),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             current_primary_item: Mutex::new(None),
@@ -348,6 +350,14 @@ impl TestPlatform {
         }
     }
 
+    pub(crate) fn simulate_system_wake(&self) {
+        let Some(mut callback) = self.system_wake_callback.take() else {
+            return;
+        };
+        callback();
+        self.system_wake_callback.replace(Some(callback));
+    }
+
     pub(crate) fn did_prompt_for_new_path(&self) -> bool {
         !self.prompts.borrow().new_path.is_empty()
     }
@@ -377,6 +387,10 @@ impl Platform for TestPlatform {
     fn on_keyboard_layout_change(&self, _: Box<dyn FnMut()>) {}
 
     fn on_thermal_state_change(&self, _: Box<dyn FnMut()>) {}
+
+    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
+        self.system_wake_callback.replace(Some(callback));
+    }
 
     fn thermal_state(&self) -> ThermalState {
         ThermalState::Nominal
