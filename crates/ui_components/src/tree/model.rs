@@ -1,6 +1,6 @@
-use open_gpui_ui_core::{Role, Size, UiPx};
+use open_gpui_ui_core::{Orientation, Role, Size, UiPx};
 
-use crate::roving_focus::{first_enabled, typeahead_target, vertical_roving_navigation_target};
+use crate::choice::{ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
 
 use super::{
     TreeChildrenLoadState, TreeDropPosition, TreeItemDescriptor, TreeMetrics, TreeMove,
@@ -270,14 +270,15 @@ impl TreeState {
         let descriptors = items.into_iter().collect::<Vec<_>>();
         let mut flattened = Vec::new();
         flatten_tree_items(&descriptors, None, 0, &mut flattened);
-        let disabled = flattened
-            .iter()
-            .map(|item| item.disabled)
-            .collect::<Vec<_>>();
-        let selected_index = find_focusable_value(&flattened, selected_value);
-        let focused_index = find_focusable_value(&flattened, focused_value)
-            .or(selected_index)
-            .or_else(|| first_enabled(&disabled));
+        let collection = ChoiceCollection::resolve(
+            false,
+            tree_choice_items(&flattened),
+            selected_value,
+            focused_value,
+            tree_choice_policy(),
+        );
+        let selected_index = collection.selected_item().map(|item| *item.item());
+        let focused_index = collection.active_item().map(|item| *item.item());
         let focusable_count = flattened.iter().filter(|item| !item.disabled).count();
         let mut position = 0usize;
         let items = flattened
@@ -381,25 +382,18 @@ impl TreeState {
 
     /// Returns the target item for Up, Down, Home, or End.
     pub fn navigation_target(&self, key: &str) -> Option<&TreeItemState> {
-        let disabled = self
-            .items
-            .iter()
-            .map(|item| !item.focusable())
-            .collect::<Vec<_>>();
-        let target = tree_navigation_target(key, self.focused_index?, &disabled)?;
-
-        self.items.get(target)
+        let collection = self.choice_collection();
+        collection
+            .navigation_target(key)
+            .and_then(|target| self.items.get(*target.item()))
     }
 
     /// Resolves a typeahead target for a caller-owned text buffer.
     pub fn typeahead_target(&self, query: &str) -> Option<&TreeItemState> {
-        typeahead_target(
-            self.items.as_slice(),
-            self.focused_index,
-            query,
-            TreeItemState::focusable,
-            TreeItemState::label,
-        )
+        let collection = self.choice_collection();
+        collection
+            .typeahead_target(query)
+            .and_then(|target| self.items.get(*target.item()))
     }
 
     /// Resolves a keyboard action from the current focused item.
@@ -488,11 +482,22 @@ impl TreeState {
 
         false
     }
+
+    fn choice_collection(&self) -> ChoiceCollection<usize> {
+        ChoiceCollection::resolve(
+            false,
+            tree_choice_items(&self.items),
+            self.selected_value(),
+            self.focused_value(),
+            tree_choice_policy(),
+        )
+    }
 }
 
 /// Resolves tree navigation for APG-style key names.
 pub fn tree_navigation_target(key: &str, current: usize, disabled: &[bool]) -> Option<usize> {
-    vertical_roving_navigation_target(key, current, disabled)
+    ChoiceInteractionPolicy::roving(Orientation::Vertical)
+        .navigation_target_index(key, current, disabled)
 }
 
 pub(crate) const fn nonnegative_px(value: UiPx) -> UiPx {
@@ -501,14 +506,6 @@ pub(crate) const fn nonnegative_px(value: UiPx) -> UiPx {
     } else {
         value
     }
-}
-
-fn find_focusable_value(items: &[TreeItemState], value: Option<&str>) -> Option<usize> {
-    value.and_then(|value| {
-        items
-            .iter()
-            .position(|item| item.value() == value && item.focusable())
-    })
 }
 
 fn flatten_tree_items(
@@ -545,6 +542,27 @@ fn flatten_tree_items(
             );
         }
     }
+}
+
+fn tree_choice_policy() -> ChoiceInteractionPolicy {
+    ChoiceInteractionPolicy::single_optional(Orientation::Vertical).with_typeahead(true)
+}
+
+fn tree_choice_items(items: &[TreeItemState]) -> Vec<ChoiceItemProjection<usize>> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            ChoiceItemProjection::new(
+                index,
+                None,
+                item.value(),
+                item.label(),
+                !item.focusable(),
+                index,
+            )
+        })
+        .collect()
 }
 
 pub(crate) fn tree_children_load_hint(state: &TreeChildrenLoadState) -> Option<String> {
