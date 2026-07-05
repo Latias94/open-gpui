@@ -1,5 +1,8 @@
 use std::{
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     thread::{ThreadId, current},
     time::Duration,
 };
@@ -51,10 +54,11 @@ impl WindowsDispatcher {
 
     fn dispatch_on_threadpool(&self, priority: WorkItemPriority, runnable: RunnableVariant) {
         let handler = {
-            let mut task_wrapper = Some(runnable);
+            let task_wrapper = Mutex::new(Some(runnable));
             WorkItemHandler::new(move |_| {
-                let runnable = task_wrapper.take().unwrap();
-                Self::execute_runnable(runnable);
+                if let Some(runnable) = Self::take_threadpool_runnable(&task_wrapper) {
+                    Self::execute_runnable(runnable);
+                }
                 Ok(())
             })
         };
@@ -64,14 +68,24 @@ impl WindowsDispatcher {
 
     fn dispatch_on_threadpool_after(&self, runnable: RunnableVariant, duration: Duration) {
         let handler = {
-            let mut task_wrapper = Some(runnable);
+            let task_wrapper = Mutex::new(Some(runnable));
             TimerElapsedHandler::new(move |_| {
-                let runnable = task_wrapper.take().unwrap();
-                Self::execute_runnable(runnable);
+                if let Some(runnable) = Self::take_threadpool_runnable(&task_wrapper) {
+                    Self::execute_runnable(runnable);
+                }
                 Ok(())
             })
         };
         ThreadPoolTimer::CreateTimer(&handler, duration.into()).log_err();
+    }
+
+    fn take_threadpool_runnable(
+        task_wrapper: &Mutex<Option<RunnableVariant>>,
+    ) -> Option<RunnableVariant> {
+        match task_wrapper.lock() {
+            Ok(mut task_wrapper) => task_wrapper.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
+        }
     }
 
     #[inline(always)]
