@@ -47,6 +47,8 @@ pub struct DockViewportRuntimeStatus {
 /// Platform capability snapshot relevant to multi-viewport docking.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DockViewportPlatformCapabilityRecord {
+    /// Independent application viewport windows can be opened for docking tear-off.
+    pub platform_viewport_windows: bool,
     /// Window bounds are reported in a shared desktop coordinate space.
     pub global_window_bounds: bool,
     /// The platform can report application windows in front-to-back order.
@@ -218,6 +220,8 @@ pub enum DockViewportRouteSelectionRecord {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DockViewportReleaseUnavailableRecord {
+    /// Platform viewport windows are disabled by the current backend capability contract.
+    PlatformViewportWindowsUnsupported,
     /// The pointer was inside a viewport window that could not provide a current host target.
     BlockedByViewportWindow,
     /// A viewport or host target existed, but no trusted current route selection chose it.
@@ -748,6 +752,7 @@ impl From<DockViewportRestoreReadiness> for DockViewportRestoreReadinessRecord {
 impl From<PlatformViewportCapabilities> for DockViewportPlatformCapabilityRecord {
     fn from(capabilities: PlatformViewportCapabilities) -> Self {
         Self {
+            platform_viewport_windows: capabilities.platform_viewport_windows,
             global_window_bounds: capabilities.global_window_bounds,
             window_stack: capabilities.window_stack,
             display_work_area: capabilities.display_work_area,
@@ -774,6 +779,9 @@ impl From<PlatformViewportFlagCapabilities> for DockViewportPlatformFlagCapabili
 impl From<DockViewportDropRouteUnavailableReason> for DockViewportReleaseUnavailableRecord {
     fn from(reason: DockViewportDropRouteUnavailableReason) -> Self {
         match reason {
+            DockViewportDropRouteUnavailableReason::PlatformViewportWindowsUnsupported => {
+                Self::PlatformViewportWindowsUnsupported
+            }
             DockViewportDropRouteUnavailableReason::BlockedByViewportWindow => {
                 Self::BlockedByViewportWindow
             }
@@ -1123,6 +1131,7 @@ mod tests {
     #[test]
     fn runtime_status_attaches_platform_capability_snapshot() {
         let capabilities = PlatformViewportCapabilities {
+            platform_viewport_windows: true,
             global_window_bounds: true,
             window_stack: true,
             display_work_area: false,
@@ -1137,6 +1146,7 @@ mod tests {
         assert_eq!(
             status.platform_capabilities,
             Some(DockViewportPlatformCapabilityRecord {
+                platform_viewport_windows: true,
                 global_window_bounds: true,
                 window_stack: true,
                 display_work_area: false,

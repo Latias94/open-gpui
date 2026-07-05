@@ -576,7 +576,8 @@ fn route_capability_summary(capabilities: Option<&DockViewportPlatformCapability
     capabilities
         .map(|capabilities| {
             format!(
-                "bounds={}, stack={}, hover-through-no-input={}",
+                "platform-windows={}, bounds={}, stack={}, hover-through-no-input={}",
+                capability_flag(capabilities.platform_viewport_windows),
                 capability_flag(capabilities.global_window_bounds),
                 capability_flag(capabilities.window_stack),
                 capability_flag(capabilities.hovered_window_ignores_no_input),
@@ -622,6 +623,9 @@ fn route_unavailable_summary(
     reason: Option<&DockViewportReleaseUnavailableRecord>,
 ) -> &'static str {
     match reason {
+        Some(DockViewportReleaseUnavailableRecord::PlatformViewportWindowsUnsupported) => {
+            "platform-windows-unsupported"
+        }
         Some(DockViewportReleaseUnavailableRecord::BlockedByViewportWindow) => "blocked-window",
         Some(DockViewportReleaseUnavailableRecord::NoViewportRouteSelection) => {
             "no-route-selection"
@@ -2307,6 +2311,7 @@ mod tests {
     #[test]
     fn runtime_status_panel_formats_platform_capabilities() {
         let capabilities = DockViewportPlatformCapabilityRecord {
+            platform_viewport_windows: true,
             global_window_bounds: true,
             window_stack: false,
             display_work_area: true,
@@ -2325,7 +2330,7 @@ mod tests {
 
         assert_eq!(
             route_capability_summary(Some(&capabilities)),
-            "bounds=yes, stack=no, hover-through-no-input=yes"
+            "platform-windows=yes, bounds=yes, stack=no, hover-through-no-input=yes"
         );
         assert_eq!(
             placement_capability_summary(Some(&capabilities)),
@@ -2344,6 +2349,12 @@ mod tests {
                 &DockViewportReleaseUnavailableRecord::BlockedByViewportWindow
             )),
             "blocked-window"
+        );
+        assert_eq!(
+            route_unavailable_summary(Some(
+                &DockViewportReleaseUnavailableRecord::PlatformViewportWindowsUnsupported
+            )),
+            "platform-windows-unsupported"
         );
         assert_eq!(coordinate_status_summary(&[]), "none");
         assert_eq!(

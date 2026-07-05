@@ -86,6 +86,8 @@ pub(crate) struct DockViewportPlatformSignals {
     window_stack: DockViewportFrontToBackWindowStack,
     /// Window bounds are reported in a shared desktop coordinate space.
     global_window_bounds: bool,
+    /// Independent application viewport windows can be opened for docking tear-off.
+    platform_viewport_windows: bool,
     /// Target arbitration signals came from an explicit snapshot or the live app backend.
     target_context_resampling: DockViewportTargetContextResampling,
     /// ImGui-style focused-window stamp fallback policy for this platform snapshot.
@@ -111,6 +113,7 @@ impl DockViewportPlatformSignals {
             event_receiver_window: None,
             window_stack,
             global_window_bounds: capabilities.global_window_bounds,
+            platform_viewport_windows: capabilities.platform_viewport_windows,
             target_context_resampling: DockViewportTargetContextResampling::LiveAppBackend,
             focus_stamp_fallback_policy: DockViewportFocusStampFallbackPolicy::LiveBackendAllowed,
         }
@@ -130,6 +133,7 @@ impl DockViewportPlatformSignals {
         let current = Self::from_app(cx);
         self.trusted_hovered_signal = current.trusted_hovered_signal;
         self.window_stack = current.window_stack;
+        self.platform_viewport_windows = current.platform_viewport_windows;
         self
     }
 
@@ -204,6 +208,10 @@ impl DockViewportPlatformSignals {
         self.global_window_bounds
     }
 
+    pub(crate) fn supports_platform_viewport_windows(&self) -> bool {
+        self.platform_viewport_windows
+    }
+
     pub(crate) fn event_receiver_window(&self) -> Option<WindowId> {
         self.event_receiver_window
     }
@@ -243,6 +251,7 @@ impl DockViewportPlatformSignals {
             event_receiver_window: None,
             window_stack: window_signals.window_stack,
             global_window_bounds: true,
+            platform_viewport_windows: true,
             target_context_resampling: DockViewportTargetContextResampling::FrozenSnapshot,
             focus_stamp_fallback_policy: DockViewportFocusStampFallbackPolicy::Disabled,
         }

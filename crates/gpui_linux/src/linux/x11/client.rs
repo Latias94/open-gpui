@@ -1865,6 +1865,7 @@ impl LinuxClient for X11Client {
 
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities {
+            platform_viewport_windows: true,
             global_window_bounds: true,
             // XInput enter/leave tracks cached pointer focus, not a current global hit-test.
             window_stack: true,

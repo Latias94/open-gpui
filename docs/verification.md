@@ -18,6 +18,17 @@ The gate runs:
 - `cargo run -p xtask -- scan-import-boundary`
 - `cargo run -p xtask -- scan-ui-contract`
 
+The GitHub Actions `Verify` workflow also runs stable wasm surface checks on the Linux matrix:
+
+```sh
+cargo check -p open-gpui-web --target wasm32-unknown-unknown --locked -j 1
+cargo check -p open-gpui-platform --target wasm32-unknown-unknown --locked -j 1
+cargo check -p open-gpui-wgpu --target wasm32-unknown-unknown --locked -j 1
+```
+
+These are stable, single-threaded wasm gates. Nightly shared-memory/atomics checks for
+`hello_web` remain optional verification, not CI requirements.
+
 For focused `open-gpui-canvas` work, run:
 
 ```sh
@@ -1229,6 +1240,17 @@ Manual native docking dogfood should use the same example after the automated ch
 
 Current docking multi-viewport capability states:
 
+- Platform viewport windows require two gates. `DockPolicy::allow_platform_viewports` is the
+  workspace/app opt-in, while `PlatformViewportCapabilities::platform_viewport_windows` is the
+  backend fact that independent application viewport windows exist. The capability defaults to
+  false; macOS, Windows, X11, and the test platform opt in, while Web and Wayland fail closed.
+  When policy allows tear-off but the backend capability is false, outside-viewport route preview
+  records `PlatformViewportWindowsUnsupported`, and explicit `open_viewport` / tear-off runtime
+  opens return `Unsupported` before creating a GPUI window. Single-window docking and in-window
+  split/merge/floating interactions remain available on web. Automated owners:
+  `viewport_runtime_handle_drop_route_fails_closed_when_platform_viewport_windows_unsupported`,
+  `viewport_runtime_open_viewport_fails_closed_when_platform_viewport_windows_unsupported`, and
+  `viewport_runtime_tear_off_fails_closed_when_platform_viewport_windows_unsupported`.
 - Coordinate facts are explicit runtime state. `DockViewportCoordinateStatusRecord` reports whether
   each registered viewport is using shared global-screen bounds or receiver-local window bounds, and
   the runtime panel exposes that generation next to the route selection source. Mixed-DPI and

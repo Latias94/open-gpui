@@ -512,6 +512,11 @@ impl TestAppContext {
         self.test_platform.set_no_input_windows(supported);
     }
 
+    /// Overrides whether the test platform can open independent platform viewport windows.
+    pub fn set_platform_viewport_windows(&self, supported: bool) {
+        self.test_platform.set_platform_viewport_windows(supported);
+    }
+
     /// Simulate dispatching an action to the currently focused node in the window.
     pub fn dispatch_action<A>(&mut self, window: AnyWindowHandle, action: A)
     where

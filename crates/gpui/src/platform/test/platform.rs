@@ -27,6 +27,7 @@ pub(crate) struct TestPlatform {
     pub(crate) hovered_window_available: RefCell<bool>,
     pub(crate) hovered_window: RefCell<Option<TestWindow>>,
     window_stack: RefCell<Option<Vec<TestWindow>>>,
+    platform_viewport_windows: RefCell<bool>,
     no_input_windows: RefCell<bool>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
@@ -137,6 +138,7 @@ impl TestPlatform {
             hovered_window_available: RefCell::new(true),
             hovered_window: Default::default(),
             window_stack: Default::default(),
+            platform_viewport_windows: RefCell::new(true),
             no_input_windows: RefCell::new(true),
             expect_restart: Default::default(),
             current_clipboard_item: Mutex::new(None),
@@ -153,6 +155,10 @@ impl TestPlatform {
 
     pub(crate) fn set_no_input_windows(&self, supported: bool) {
         *self.no_input_windows.borrow_mut() = supported;
+    }
+
+    pub(crate) fn set_platform_viewport_windows(&self, supported: bool) {
+        *self.platform_viewport_windows.borrow_mut() = supported;
     }
 
     pub(crate) fn simulate_new_path_selection(
@@ -474,6 +480,7 @@ impl Platform for TestPlatform {
 
     fn viewport_capabilities(&self) -> crate::PlatformViewportCapabilities {
         crate::PlatformViewportCapabilities {
+            platform_viewport_windows: *self.platform_viewport_windows.borrow(),
             global_window_bounds: true,
             window_stack: self.window_stack.borrow().is_some(),
             display_work_area: true,

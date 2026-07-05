@@ -525,6 +525,7 @@ impl Platform for WindowsPlatform {
 
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities {
+            platform_viewport_windows: true,
             global_window_bounds: true,
             display_work_area: true,
             dpi_scale: true,

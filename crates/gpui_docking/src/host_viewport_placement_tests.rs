@@ -96,6 +96,58 @@ mod runtime_suite {
     }
 
     #[open_gpui::test]
+    fn viewport_runtime_open_viewport_fails_closed_when_platform_viewport_windows_unsupported(
+        cx: &mut TestAppContext,
+    ) {
+        cx.set_platform_viewport_windows(false);
+
+        let primary_space = DockSpaceId::from("primary");
+        let secondary_space = DockSpaceId::from("secondary");
+        let mut graph = DockGraph::new();
+        let primary_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        let secondary_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        graph.set_root(primary_space.clone(), primary_tabs);
+        graph.set_root(secondary_space.clone(), secondary_tabs);
+
+        let mut workspace = DockWorkspace::new(primary_space, graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller);
+        let before_windows = cx.windows().len();
+
+        let error = cx
+            .update(|app| {
+                runtime.open_viewport(
+                    secondary_space.clone(),
+                    viewport_window_options(360.0, 220.0),
+                    app,
+                )
+            })
+            .expect_err("unsupported backend should reject viewport open before window creation");
+
+        let io_error = error
+            .downcast_ref::<std::io::Error>()
+            .expect("unsupported viewport open should be reported as an io error");
+        assert_eq!(io_error.kind(), std::io::ErrorKind::Unsupported);
+        assert_eq!(
+            runtime
+                .borrow()
+                .adapter()
+                .window_for_space(&secondary_space),
+            None
+        );
+        assert_eq!(cx.windows().len(), before_windows);
+    }
+
+    #[open_gpui::test]
     fn viewport_runtime_tear_off_opens_viewport_then_moves_item(cx: &mut TestAppContext) {
         let primary_space = DockSpaceId::from("primary");
         let detached_space = DockSpaceId::from("detached");
@@ -142,6 +194,70 @@ mod runtime_suite {
             assert_eq!(
                 controller.graph().collect_items_in_space(&detached_space),
                 vec![item("a")]
+            );
+        });
+    }
+
+    #[open_gpui::test]
+    fn viewport_runtime_tear_off_fails_closed_when_platform_viewport_windows_unsupported(
+        cx: &mut TestAppContext,
+    ) {
+        cx.set_platform_viewport_windows(false);
+
+        let primary_space = DockSpaceId::from("primary");
+        let detached_space = DockSpaceId::from("detached");
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a"), item("b")],
+            selected: Some(item("a")),
+        });
+        graph.set_root(primary_space.clone(), source_tabs);
+
+        let mut workspace = DockWorkspace::new(primary_space.clone(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+        let before_windows = cx.windows().len();
+
+        let error = cx
+            .update(|app| {
+                runtime.open_tear_off_viewport(
+                    tear_off_request(primary_space.clone(), source_tabs, item("a")),
+                    detached_space.clone(),
+                    viewport_window_options(360.0, 220.0),
+                    app,
+                )
+            })
+            .expect_err("unsupported backend should reject tear-off before window creation");
+
+        let io_error = error
+            .downcast_ref::<std::io::Error>()
+            .expect("unsupported tear-off should be reported as an io error");
+        assert_eq!(io_error.kind(), std::io::ErrorKind::Unsupported);
+        assert_eq!(
+            runtime.borrow().pending_tear_off_len(),
+            0,
+            "failed tear-off should cancel pending state"
+        );
+        assert_eq!(
+            runtime.borrow().adapter().window_for_space(&detached_space),
+            None
+        );
+        cx.run_until_parked();
+        cx.update(|app| app.refresh_windows());
+        assert_eq!(cx.windows().len(), before_windows);
+        cx.read_entity(&controller, |controller, _| {
+            assert_eq!(
+                controller.graph().collect_items_in_space(&primary_space),
+                vec![item("a"), item("b")]
+            );
+            assert!(
+                controller
+                    .graph()
+                    .collect_items_in_space(&detached_space)
+                    .is_empty()
             );
         });
     }

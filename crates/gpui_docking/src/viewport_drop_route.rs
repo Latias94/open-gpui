@@ -44,6 +44,8 @@ pub(crate) enum DockViewportDropRoute {
 /// Why a route resolved to `DockViewportDropRoute::Unavailable`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockViewportDropRouteUnavailableReason {
+    /// Platform viewport windows are disabled by the current backend capability contract.
+    PlatformViewportWindowsUnsupported,
     /// The pointer is inside a registered viewport window, but that window cannot currently provide
     /// a host target. The release must not borrow an underlay preview through this opaque window.
     BlockedByViewportWindow,
@@ -78,12 +80,21 @@ impl DockViewportDropRoutePlan {
         Self::Unavailable(reason)
     }
 
-    fn into_resolution(self, policy: &DockPolicy) -> DockViewportDropRouteResolution {
+    fn into_resolution(
+        self,
+        policy: &DockPolicy,
+        supports_platform_viewport_windows: bool,
+    ) -> DockViewportDropRouteResolution {
         match self {
             Self::Route(route) => DockViewportDropRouteResolution::route(route),
             Self::Unavailable(reason) => DockViewportDropRouteResolution::unavailable(reason),
             Self::OutsideRegisteredViewport => match policy.validate_platform_viewports() {
-                Ok(()) => DockViewportDropRouteResolution::route(DockViewportDropRoute::TearOff),
+                Ok(()) if supports_platform_viewport_windows => {
+                    DockViewportDropRouteResolution::route(DockViewportDropRoute::TearOff)
+                }
+                Ok(()) => DockViewportDropRouteResolution::unavailable(
+                    DockViewportDropRouteUnavailableReason::PlatformViewportWindowsUnsupported,
+                ),
                 Err(reason) => {
                     DockViewportDropRouteResolution::route(DockViewportDropRoute::Rejected(reason))
                 }
@@ -473,6 +484,10 @@ impl DockViewportDropRouteRequest {
         self.platform_signals.allows_focus_stamp_fallback()
     }
 
+    pub(crate) fn supports_platform_viewport_windows(&self) -> bool {
+        self.platform_signals.supports_platform_viewport_windows()
+    }
+
     pub(crate) fn coordinate_space(&self) -> DockViewportPointerCoordinateSpace {
         self.coordinate_space
     }
@@ -585,7 +600,7 @@ impl DockViewportAdapter {
     ) -> DockViewportDropRouteResolution {
         let target_context = self.normalize_target_context(target_context);
         self.resolve_payload_drop_route_plan(request, &target_context)
-            .into_resolution(policy)
+            .into_resolution(policy, request.supports_platform_viewport_windows())
     }
 
     fn normalize_target_context(

@@ -2,8 +2,8 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-05T20:24:03+08:00
-git_branch: refactor/ui-framework-non-overlay-depth
+timestamp: 2026-07-05T21:52:13+08:00
+git_branch: refactor/web-docking-capability-gates
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
   - docs/plans/2026-07-01-002-refactor-ui-public-gallery-boundaries-plan.md
@@ -19,6 +19,7 @@ related_plan:
   - docs/plans/2026-07-03-001-refactor-docking-visual-affordance-runtime-plan.md
   - docs/plans/2026-07-03-002-refactor-docking-affordance-authority-cleanup-plan.md
   - docs/plans/2026-07-03-003-feat-command-center-runtime-plan.md
+  - docs/plans/2026-07-05-002-refactor-web-docking-viewport-capability-gates-plan.md
 related_research:
   - native-ui-framework-design-research/report.md
 related_adr:
@@ -130,15 +131,21 @@ verified_by:
   - cargo nextest run -p open-gpui-command --no-fail-fast
   - cargo fmt -p open-gpui-command -p open-gpui-ui-components --check
   - cargo check -p open-gpui-command -p open-gpui-ui-components --tests
-  - cargo check -p open-gpui-web --target wasm32-unknown-unknown -j 1
-  - cargo check -p open-gpui-platform --target wasm32-unknown-unknown -j 1
-  - cargo check -p open-gpui-wgpu --target wasm32-unknown-unknown -j 1
+  - cargo check -p open-gpui-web --target wasm32-unknown-unknown --locked -j 1
+  - cargo check -p open-gpui-platform --target wasm32-unknown-unknown --locked -j 1
+  - cargo check -p open-gpui-wgpu --target wasm32-unknown-unknown --locked -j 1
   - (cd crates/gpui_web/examples/hello_web && cargo check --target wasm32-unknown-unknown -j 1)
+  - cargo check -p open-gpui-docking --tests --locked
+  - cargo nextest run -p open-gpui-docking host_viewport_route --no-fail-fast
+  - cargo nextest run -p open-gpui-docking host_viewport_platform_capability --no-fail-fast
+  - cargo nextest run -p open-gpui-docking host_viewport_lifecycle --no-fail-fast
+  - cargo nextest run -p open-gpui-docking host_viewport_placement --no-fail-fast
+  - cargo check -p open-gpui-docking-native --tests --locked
 ---
 
 # Current State
 
-- Branch: `refactor/ui-framework-non-overlay-depth`; this state includes the UI framework
+- Branch: `refactor/web-docking-capability-gates`; this state includes the UI framework
   layer/motion/conformance work plus the workspace dependency upgrade and verification-gate recovery
   commits.
 - Done on `refactor/ui-framework-non-overlay-depth`: workspace dependencies were upgraded in
@@ -151,6 +158,14 @@ verified_by:
   nightly/shared-memory path because `wasm_thread 0.3.3` enables `stdarch_wasm_atomic_wait`.
   `open-gpui-platform` exposes `web-multithreaded`, and `hello_web` compile-checks on nightly with
   that feature plus its shared-memory wasm rustflags.
+- Done on `refactor/web-docking-capability-gates`: stable wasm checks for `open-gpui-web`,
+  `open-gpui-platform`, and `open-gpui-wgpu` are now encoded in `.github/workflows/verify.yml` on
+  the Linux matrix. Docking platform viewport windows are guarded by both
+  `DockPolicy::allow_platform_viewports` and
+  `PlatformViewportCapabilities::platform_viewport_windows`; Web and Wayland fail closed for
+  platform-window tear-off/multi-viewport while preserving single-window docking behavior. Durable
+  evidence is recorded in
+  `docs/knowledge/engineering/verification/web-docking-viewport-capability-gates-20260705.md`.
 - Local nextest list-stage stalls on macOS were diagnosed as dyld/Gatekeeper validation of newly
   built test binaries, not scheduler/UI test logic. Rebuilding affected test binaries restored
   normal execution; the durable verification note is

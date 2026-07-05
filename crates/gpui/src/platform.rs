@@ -86,6 +86,8 @@ pub use visual_test::VisualTestPlatform;
 /// Platform support relevant to ImGui-style multi-viewport docking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PlatformViewportCapabilities {
+    /// Independent application viewport windows can be opened for docking tear-off.
+    pub platform_viewport_windows: bool,
     /// Window bounds are reported in a shared desktop coordinate space.
     pub global_window_bounds: bool,
     /// The platform can report application windows in front-to-back order.

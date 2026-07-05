@@ -49,6 +49,17 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Install stable wasm target
+        if: matrix.name == 'linux'
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Check stable wasm surfaces
+        if: matrix.name == 'linux'
+        run: |
+          cargo check -p open-gpui-web --target wasm32-unknown-unknown --locked -j 1
+          cargo check -p open-gpui-platform --target wasm32-unknown-unknown --locked -j 1
+          cargo check -p open-gpui-wgpu --target wasm32-unknown-unknown --locked -j 1
+
       - name: Install Linux system dependencies
         if: matrix.name == 'linux'
         run: |

@@ -436,6 +436,18 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow_mut().set_close_policy(close_policy);
     }
 
+    fn ensure_platform_viewport_windows_supported(&self, cx: &App) -> Result<()> {
+        if cx.viewport_capabilities().platform_viewport_windows {
+            return Ok(());
+        }
+
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "platform viewport windows are not supported by this backend",
+        )
+        .into())
+    }
+
     /// Opens or reuses a controller-backed viewport window for a logical dock space.
     ///
     /// The handle installs a should-close hook that consults the shared runtime at close time, so
@@ -446,6 +458,7 @@ impl DockViewportRuntimeHandle {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportOpenOutcome> {
+        self.ensure_platform_viewport_windows_supported(cx)?;
         self.ensure_window_closed_observer(cx);
 
         let space = space.into();
@@ -527,6 +540,7 @@ impl DockViewportRuntimeHandle {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<AnyWindowHandle> {
+        self.ensure_platform_viewport_windows_supported(cx)?;
         self.ensure_window_closed_observer(cx);
 
         let controller = self.runtime.borrow().controller_entity();

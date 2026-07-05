@@ -206,10 +206,10 @@ mod runtime_suite {
         DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportFocusCommand,
         DockViewportFocusRequest, DockViewportInputStatus, DockViewportOpenStatus,
         DockViewportPlatformSyncAction, DockViewportPlatformSyncRequest,
-        DockViewportPlatformSyncSkippedReason, DockViewportResolvedDropRoute,
-        DockViewportRouteStatus, DockViewportRouteTarget, DockViewportRuntime,
-        DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportTargetContext,
-        DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
+        DockViewportPlatformSyncSkippedReason, DockViewportReleaseUnavailableRecord,
+        DockViewportResolvedDropRoute, DockViewportRouteStatus, DockViewportRouteTarget,
+        DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
+        DockViewportTargetContext, DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
         DockViewportTearOffPlacementSource, DockViewportTearOffRequest,
         DockViewportWindowActivation, DockViewportWindowFacts, DockWorkspace, SplitAxis,
         drag::{DockDragPayload, DockDragTearOffGeometry},
@@ -1636,10 +1636,11 @@ mod handle_suite {
         DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
         DockViewportDropRouteRequest, DockViewportFocusCommand, DockViewportFocusRequest,
         DockViewportInputStatus, DockViewportOpenStatus, DockViewportPlatformSignals,
-        DockViewportRouteStatus, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
-        DockViewportStaleStatusReason, DockViewportTargetContext, DockViewportTearOffBeginOutcome,
-        DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome,
-        DockViewportTearOffRequest, DockViewportWindowFacts, DockWorkspace, DropZone, SplitAxis,
+        DockViewportReleaseUnavailableRecord, DockViewportRouteStatus, DockViewportRuntimeHandle,
+        DockViewportShouldCloseStatus, DockViewportStaleStatusReason, DockViewportTargetContext,
+        DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
+        DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockViewportWindowFacts,
+        DockWorkspace, DropZone, SplitAxis,
         debug::DockDebugRegion,
         drag::DockDragPayload,
         drop_preview::DockDropRoutePreviewKind,
@@ -1909,6 +1910,56 @@ mod handle_suite {
             .expect("runtime status should record the tear-off route")
             .target;
         assert_eq!(target.release_position(), Some(release_position));
+    }
+
+    #[open_gpui::test]
+    fn viewport_runtime_handle_drop_route_fails_closed_when_platform_viewport_windows_unsupported(
+        cx: &mut TestAppContext,
+    ) {
+        cx.set_platform_viewport_windows(false);
+
+        let source_space = DockSpaceId::from("source");
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        graph.set_root(source_space.clone(), source_tabs);
+
+        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller);
+        let release_position = point(px(900.0), px(900.0));
+
+        let request = cx.update(|app| {
+            DockViewportDropRouteRequest::from_platform_signals(
+                source_space,
+                source_tabs,
+                DockViewportDropPayload::Item(item("a")),
+                release_position,
+                None,
+                DockViewportPlatformSignals::from_app(app),
+            )
+        });
+
+        let route = cx.update(|app| {
+            runtime
+                .resolve_payload_drop_delivery(&request, app)
+                .route()
+                .clone()
+        });
+
+        assert_eq!(route, DockViewportDropRoute::Unavailable);
+        let route_record = runtime
+            .runtime_status()
+            .last_route
+            .expect("runtime status should record the unavailable route");
+        assert_eq!(
+            route_record.unavailable_reason,
+            Some(DockViewportReleaseUnavailableRecord::PlatformViewportWindowsUnsupported)
+        );
     }
 
     #[open_gpui::test]
