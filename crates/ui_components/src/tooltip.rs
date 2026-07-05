@@ -19,8 +19,7 @@ use open_gpui_ui_core::{
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, gpui_overlay_state,
-    gpui_relative_overlay_layer,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayLayerHost, OverlayResolvedState,
 };
 use crate::theme::{ThemeContext, ThemeResolver};
 
@@ -556,7 +555,7 @@ impl RenderOnce for Tooltip {
         let accessible_label = accessible_label_for_content(&self.content);
         let children = children_from_content(self.content);
         let content_id: ElementId = (id.clone(), "content").into();
-        let overlay_adapter = gpui_overlay_state(state.overlay());
+        let overlay_host = OverlayLayerHost::resolve(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 OverlayAnchorInput::from_layout_bounds(rect(
@@ -571,7 +570,7 @@ impl RenderOnce for Tooltip {
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
             .with_offset(ui_px(4.0)),
-            overlay_adapter.snap_margin(),
+            overlay_host.adapter().snap_margin(),
         );
 
         div()
@@ -581,20 +580,22 @@ impl RenderOnce for Tooltip {
                 move || format!("tooltip:{debug_id}:root")
             })
             .relative()
-            .when(overlay_adapter.should_render_deferred_layer(), |this| {
-                this.child(gpui_relative_overlay_layer(
-                    &overlay_adapter,
-                    &placement,
-                    tooltip_surface_element(
-                        content_id,
-                        debug_id,
-                        state,
-                        accessible_label,
-                        children,
-                        &theme,
-                    ),
-                ))
-            })
+            .when(
+                overlay_host.adapter().should_render_deferred_layer(),
+                |this| {
+                    this.child(overlay_host.relative_layer(
+                        &placement,
+                        tooltip_surface_element(
+                            content_id,
+                            debug_id,
+                            state,
+                            accessible_label,
+                            children,
+                            &theme,
+                        ),
+                    ))
+                },
+            )
     }
 }
 
