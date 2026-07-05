@@ -736,6 +736,10 @@ impl Platform for WindowsPlatform {
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
+        if let Err(err) = validate_credential_blob_size(password.len()) {
+            return Task::ready(Err(err));
+        }
+
         let password = password.to_vec();
         let mut username = username.encode_utf16().chain(Some(0)).collect_vec();
         let mut target_name = windows_credentials_target_name(url)
@@ -1327,6 +1331,16 @@ fn handle_gpu_device_lost(
     Ok(())
 }
 
+fn validate_credential_blob_size(size: usize) -> Result<()> {
+    if size > CRED_MAX_CREDENTIAL_BLOB_SIZE as usize {
+        anyhow::bail!(
+            "credential blob is {size} bytes, which exceeds the Windows Credential Manager limit of {CRED_MAX_CREDENTIAL_BLOB_SIZE} bytes"
+        );
+    }
+
+    Ok(())
+}
+
 const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("Zed::PlatformWindow");
 
 fn register_platform_window_class() {
@@ -1418,5 +1432,24 @@ mod tests {
         let item = ClipboardItem::new_string_with_json_metadata("abcdef".to_string(), vec![3, 4]);
         write_to_clipboard(item.clone());
         assert_eq!(read_from_clipboard(), Some(item));
+    }
+
+    #[test]
+    fn credential_blob_size_error_omits_secret_context() {
+        let secret_url = "https://example.test/callback?token=secret-token";
+        let username = "secret-user@example.test";
+        let password = b"secret-password";
+        let oversized = super::CRED_MAX_CREDENTIAL_BLOB_SIZE as usize + 1;
+
+        super::validate_credential_blob_size(password.len()).unwrap();
+
+        let error = super::validate_credential_blob_size(oversized).unwrap_err();
+        let message = error.to_string();
+
+        assert!(message.contains(&oversized.to_string()));
+        assert!(message.contains(&super::CRED_MAX_CREDENTIAL_BLOB_SIZE.to_string()));
+        assert!(!message.contains(secret_url));
+        assert!(!message.contains(username));
+        assert!(!message.contains("secret-password"));
     }
 }
