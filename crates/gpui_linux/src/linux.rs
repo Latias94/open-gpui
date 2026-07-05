@@ -52,6 +52,8 @@ pub fn current_platform(headless: bool) -> Rc<dyn open_gpui::Platform> {
         "Headless" => Rc::new(LinuxPlatform {
             inner: HeadlessClient::new(),
         }),
-        _ => unreachable!(),
+        _ => unreachable!(
+            r#"At least one of the "wayland" or "x11" features must be enabled on open-gpui-linux or open-gpui-platform."#
+        ),
     }
 }
