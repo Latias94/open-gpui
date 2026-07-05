@@ -1,11 +1,12 @@
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
-    OverlayPlacementAlignment, OverlayPlacementSide, Rect, Role, Size, ThemeTokens, Toggled, UiPx,
+    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
+    OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementSide, Rect, Role, Size,
+    ThemeTokens, Toggled, UiPx,
 };
 
+use crate::choice::{ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
 use crate::focus::FocusRing;
 use crate::overlay::{OverlayDisclosureConfig, OverlayResolvedState};
-use crate::roving_focus::{typeahead_target, vertical_roving_navigation_target};
 use crate::theme::ThemeResolver;
 
 use super::{
@@ -696,21 +697,18 @@ impl MenuState {
 
     /// Resolves a focus target for an APG-style menu navigation key.
     pub fn navigation_target(&self, key: &str) -> Option<&MenuItemState> {
-        let current = self.focused_index?;
-        let disabled = self.disabled_map();
-        menu_navigation_target(key, current, &disabled)
-            .and_then(|index| self.visible_items.get(index))
+        let collection = self.choice_collection();
+        collection
+            .navigation_target(key)
+            .and_then(|target| self.visible_items.get(*target.item()))
     }
 
     /// Resolves a typeahead target for a caller-owned text buffer.
     pub fn typeahead_target(&self, query: &str) -> Option<&MenuItemState> {
-        typeahead_target(
-            self.visible_items.as_slice(),
-            self.focused_index,
-            query,
-            MenuItemState::focusable,
-            MenuItemState::label,
-        )
+        let collection = self.choice_collection();
+        collection
+            .typeahead_target(query)
+            .and_then(|target| self.visible_items.get(*target.item()))
     }
 
     /// Resolves an activation payload for an APG-style activation key.
@@ -831,15 +829,37 @@ impl MenuState {
         &self.overlay
     }
 
-    fn disabled_map(&self) -> Vec<bool> {
-        self.visible_items
-            .iter()
-            .map(|item| !item.focusable())
-            .collect()
+    fn choice_collection(&self) -> ChoiceCollection<usize> {
+        let active_value = self.focused_path_key();
+        ChoiceCollection::resolve(
+            self.disabled || !self.open,
+            menu_choice_items(&self.visible_items),
+            None,
+            active_value.as_deref(),
+            ChoiceInteractionPolicy::roving(Orientation::Vertical).with_typeahead(true),
+        )
     }
 }
 
 /// Resolves a menu roving-focus target from an APG-style key name.
 pub fn menu_navigation_target(key: &str, current: usize, disabled: &[bool]) -> Option<usize> {
-    vertical_roving_navigation_target(key, current, disabled)
+    ChoiceInteractionPolicy::roving(Orientation::Vertical)
+        .navigation_target_index(key, current, disabled)
+}
+
+fn menu_choice_items(items: &[MenuItemState]) -> Vec<ChoiceItemProjection<usize>> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            ChoiceItemProjection::new(
+                index,
+                None,
+                item.path_key(),
+                item.label(),
+                !item.focusable(),
+                index,
+            )
+        })
+        .collect()
 }

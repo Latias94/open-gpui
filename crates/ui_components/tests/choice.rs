@@ -15,7 +15,7 @@ use open_gpui_ui_components::{
     CommandSelectionChange, CommandSelectionMode, CommandShortcutInspectorState,
     CommandStatusIntent, CommandStatusItem, Listbox, ListboxGroup, ListboxGroupDescriptor,
     ListboxOption, ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState,
-    ScrollArea, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection,
+    Menu, MenuItem, ScrollArea, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection,
     gpui_adapter::init_text_input,
 };
 use open_gpui_ui_core::{
@@ -169,6 +169,33 @@ fn choice_surfaces_share_stable_value_resolution_and_query_normalization() {
     assert_eq!(command.selected_value(), None);
     assert_eq!(command.active_value(), Some("alpha"));
     assert_eq!(command.listbox().typeahead_query(), Some("al"));
+}
+
+#[test]
+fn menu_state_uses_shared_choice_navigation_and_typeahead() {
+    let state = Menu::new("shared-menu-choice", "Menu")
+        .default_open(true)
+        .default_focused_value("alpha")
+        .item(MenuItem::action("alpha", "Alpha"))
+        .item(MenuItem::action("bravo", "Bravo").disabled(true))
+        .item(MenuItem::separator("separator"))
+        .item(MenuItem::action("charlie", "Charlie"))
+        .state();
+
+    assert_eq!(state.focused_value(), Some("alpha"));
+    assert_eq!(
+        state.navigation_target("down").map(|item| item.value()),
+        Some("charlie")
+    );
+    assert_eq!(
+        state.navigation_target("up").map(|item| item.value()),
+        Some("charlie")
+    );
+    assert_eq!(
+        state.typeahead_target(" CH ").map(|item| item.value()),
+        Some("charlie")
+    );
+    assert!(state.typeahead_target("br").is_none());
 }
 
 #[test]
