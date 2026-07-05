@@ -8,8 +8,9 @@ use open_gpui_ui_components::{
     SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Tabs, TabsActivationMode,
     TabsItem, TabsItemDescriptor, TabsSelection, TabsState, ToggleGroup, ToggleGroupItem, Toolbar,
     ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    active_index_from_str_keys, first_enabled, last_enabled, next_enabled,
-    sidebar_navigation_target, toolbar_navigation_target,
+    sidebar_navigation_target,
+    tabs::{active_index_from_str_keys, first_enabled, last_enabled, next_enabled},
+    toolbar_navigation_target,
 };
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, Toggled, ui_px};
 use std::cell::RefCell;

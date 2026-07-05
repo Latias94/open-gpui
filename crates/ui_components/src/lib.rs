@@ -40,7 +40,7 @@ pub mod primitives;
 pub mod progress;
 mod public_api;
 pub mod radio;
-pub mod roving_focus;
+mod roving_focus;
 pub mod scroll_area;
 mod scroll_surface;
 pub mod select;

@@ -1002,8 +1002,9 @@ impls; the remaining non-headless surfaces are GPUI-owned adapter APIs such as
 `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow_with_theme`, the
 legacy `focus_ring_shadow` helper, adapter geometry conversion helpers, and GPUI overlay scheduling
 helpers. These public adapter APIs are now grouped under `open_gpui_ui_components::gpui_adapter`.
-Shared roving-focus helpers now live in
-`open_gpui_ui_components::roving_focus`, with `Tabs` preserving compatibility re-exports.
+Shared roving-focus helpers now live behind the private `roving_focus` implementation module;
+explicit low-level consumers use `open_gpui_ui_components::primitives::roving_focus_group`, while
+`Tabs` preserves compatibility re-exports.
 The choice family now also has a shared internal seam in `open_gpui_ui_components::choice` for flat
 stable-value projection, enabled-item selected/active fallback, typeahead matching, multi-select
 dedupe, and normalized query handling across `Listbox`, `Command`, `Combobox`, and `Select`.
@@ -1097,9 +1098,11 @@ as branches but do not emit repeat toggle requests while the caller reports load
 focusable row list; the GPUI adapter owns the printable-key buffer and reset timing, then moves
 focus without selecting the matched row. Typeahead intentionally does not search collapsed,
 unloaded, or virtualized descendants.
-`roving_focus.rs` now owns the shared vertical, paged, and typeahead target helpers used by
-`Listbox`, `Tabs`, `RadioGroup`, `Menu`, `Sidebar`, `Toolbar`, `Tree`, and `VirtualizedList`, so
-the component-specific adapters keep only their own branch and activation rules.
+The private `roving_focus` implementation module now owns the shared vertical, paged, and
+typeahead target helpers used by `Listbox`, `Tabs`, `RadioGroup`, `Menu`, `Sidebar`, `Toolbar`,
+`Tree`, and `VirtualizedList`; public low-level consumers use
+`primitives::roving_focus_group`, and the component-specific adapters keep only their own branch
+and activation rules.
 `VirtualizedList` is now an official rendered component. Its adapter keeps the render plan
 crate-private, exposes `VirtualizedListBehaviorSnapshot` for diagnostics, owns a keyed GPUI
 runtime plus persistent `ScrollHandle`, and keeps row rendering inside its viewport.

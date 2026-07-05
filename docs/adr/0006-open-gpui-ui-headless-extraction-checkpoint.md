@@ -136,9 +136,10 @@ Revisit crate creation when all of the following are true:
 
 ## Follow-Up Work
 
-- Completed 2026-06-16: generic roving-focus helpers moved out of `tabs.rs` into
-  `open_gpui_ui_components::roving_focus`; `Tabs` keeps compatibility re-exports while `Menu` and
-  `RadioGroup` depend on the neutral module.
+- Completed 2026-06-16 and narrowed 2026-07-05: generic roving-focus helpers moved out of
+  `tabs.rs`; the implementation module is private, explicit low-level consumers use
+  `open_gpui_ui_components::primitives::roving_focus_group`, and `Tabs` keeps compatibility
+  re-exports while choice-like components depend on the shared internal behavior path.
 - Completed 2026-06-16: `ContextMenuState` now stores renderer-neutral `OverlayPlacementInput`;
   GPUI placement is resolved only inside the adapter/render boundary.
 - Completed 2026-06-16: added window-free overlay stack ordering tests for outside press and focus
