@@ -4587,6 +4587,7 @@ dependencies = [
  "url",
  "walkdir",
  "which",
+ "windows 0.61.3",
 ]
 
 [[package]]

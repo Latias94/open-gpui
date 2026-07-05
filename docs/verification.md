@@ -18,6 +18,20 @@ The gate runs:
 - `cargo run -p xtask -- scan-import-boundary`
 - `cargo run -p xtask -- scan-ui-contract`
 
+For the 2026-07 Zed GPUI upstream-sync utility slice, the focused U7 verification on the Windows
+host was:
+
+```powershell
+cargo nextest run -p open-gpui-util
+cargo check -p open-gpui-util --locked
+cargo check -p open-gpui-util --target x86_64-apple-darwin --locked
+cargo run -p xtask -- scan-import-boundary
+git diff --check
+```
+
+The Windows Job Object process-tree tests ran on the host. The Darwin custom-`PATH` command tests
+compiled for `x86_64-apple-darwin`; runtime execution still requires a macOS runner.
+
 For focused `open-gpui-canvas` work, run:
 
 ```sh
