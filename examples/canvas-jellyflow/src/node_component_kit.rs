@@ -384,25 +384,6 @@ pub fn render_overflow_region(
     render_measured_region(id, collector, child)
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OpenGpuiProductInteractionRole {
-    SurfacePointer,
-    ControlShield,
-    PortHandle,
-    ReadableContent,
-    OverflowAction,
-}
-
-pub fn product_interaction_roles() -> [OpenGpuiProductInteractionRole; 5] {
-    [
-        OpenGpuiProductInteractionRole::SurfacePointer,
-        OpenGpuiProductInteractionRole::ControlShield,
-        OpenGpuiProductInteractionRole::PortHandle,
-        OpenGpuiProductInteractionRole::ReadableContent,
-        OpenGpuiProductInteractionRole::OverflowAction,
-    ]
-}
-
 pub fn render_drag_exclusion_region(
     id: OpenGpuiMeasurementId,
     collector: OpenGpuiBoundsCollector,
@@ -1937,6 +1918,7 @@ fn action_menu_item_label(action: &OpenGpuiActionPlan) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jellyflow_open_gpui::{OpenGpuiInteractionRegionRole, open_gpui_interaction_region_roles};
 
     #[test]
     fn adaptive_layout_stack_downgrades_regions_before_overflowing_node() {
@@ -2052,13 +2034,13 @@ mod tests {
 
     #[test]
     fn product_interaction_roles_cover_graph_and_widget_boundaries() {
-        let roles = product_interaction_roles();
+        let roles = open_gpui_interaction_region_roles();
 
-        assert!(roles.contains(&OpenGpuiProductInteractionRole::SurfacePointer));
-        assert!(roles.contains(&OpenGpuiProductInteractionRole::ControlShield));
-        assert!(roles.contains(&OpenGpuiProductInteractionRole::PortHandle));
-        assert!(roles.contains(&OpenGpuiProductInteractionRole::ReadableContent));
-        assert!(roles.contains(&OpenGpuiProductInteractionRole::OverflowAction));
+        assert!(roles.contains(&OpenGpuiInteractionRegionRole::SurfacePointer));
+        assert!(roles.contains(&OpenGpuiInteractionRegionRole::ControlShield));
+        assert!(roles.contains(&OpenGpuiInteractionRegionRole::PortHandle));
+        assert!(roles.contains(&OpenGpuiInteractionRegionRole::ReadableContent));
+        assert!(roles.contains(&OpenGpuiInteractionRegionRole::OverflowAction));
     }
 
     #[test]

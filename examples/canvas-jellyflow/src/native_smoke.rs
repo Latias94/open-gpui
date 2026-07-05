@@ -26,6 +26,7 @@ pub(super) fn product_gallery_native_lifecycle_evidence(
             measurement_revision: 1,
             measurement_refresh_requested: false,
             measurement_frame_pending: false,
+            measurement_frame_generation: 0,
             auto_fit_viewport: true,
             deferred_editor_refresh: false,
             last_canvas_view_size: None,

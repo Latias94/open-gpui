@@ -4218,6 +4218,46 @@ mod tests {
     }
 
     #[test]
+    fn pointer_owner_prioritizes_source_handle_before_node_drag() {
+        use crate::{CanvasHandle, HandleRole};
+
+        let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut source_handle = CanvasHandle::new("out", point(px(100.0), px(50.0)));
+        source_handle.role = HandleRole::Source;
+        source.handles.push(source_handle);
+
+        let document = document_fixture().node(source).build();
+        let editor = CanvasEditor::new(document);
+
+        assert_eq!(
+            editor
+                .reducer_context()
+                .pointer_owner_at(point(px(100.0), px(50.0))),
+            context::CanvasPointerOwner::ConnectionSource(CanvasEndpoint::new("a", Some("out"))),
+        );
+    }
+
+    #[test]
+    fn pointer_owner_classifies_node_body_and_empty_pane() {
+        let node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let document = document_fixture().node(node).build();
+        let editor = CanvasEditor::new(document);
+
+        assert_eq!(
+            editor
+                .reducer_context()
+                .pointer_owner_at(point(px(50.0), px(50.0))),
+            context::CanvasPointerOwner::NodeDrag(HitTarget::Node(NodeId::from("a"))),
+        );
+        assert_eq!(
+            editor
+                .reducer_context()
+                .pointer_owner_at(point(px(150.0), px(150.0))),
+            context::CanvasPointerOwner::Pane,
+        );
+    }
+
+    #[test]
     fn select_tool_starts_connection_from_source_handle_before_node_drag() {
         use crate::{CanvasHandle, HandleId, HandleRole};
 

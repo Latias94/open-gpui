@@ -8,7 +8,7 @@ mod view;
 pub use frame::*;
 pub use input::*;
 pub use model::*;
-pub use painter::paint_canvas_frame;
+pub use painter::{paint_canvas_frame, paint_canvas_scene_phase};
 pub use view::*;
 
 #[cfg(test)]
@@ -826,6 +826,137 @@ mod tests {
             overlay.placements[0].document_bounds,
             Bounds::new(point(px(5.0), px(5.0)), size(px(30.0), px(30.0)))
         );
+    }
+
+    #[test]
+    fn scene_record_groups_keep_node_widgets_atomic_with_z_order() {
+        let mut low = CanvasNode::new("low", point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
+        low.z_index = 1;
+        let mut high =
+            CanvasNode::new("high", point(px(20.0), px(10.0)), size(px(100.0), px(80.0)));
+        high.z_index = 10;
+        let document = document_fixture().node(low).node(high).build();
+        let model = CanvasPaintModel::new(document, CanvasViewport::default());
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(160.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        let scene = CanvasSceneFrame::from_paint_frame(&frame);
+        let layers = scene.ordered_layer_items();
+        let low_widget = scene_layer_index(
+            &layers,
+            HitTarget::Node(crate::NodeId::from("low")),
+            CanvasSceneLayerPhase::RecordWidget,
+        );
+        let high_body = scene_layer_index(
+            &layers,
+            HitTarget::Node(crate::NodeId::from("high")),
+            CanvasSceneLayerPhase::RecordBody,
+        );
+        let high_chrome = scene_layer_index(
+            &layers,
+            HitTarget::Node(crate::NodeId::from("high")),
+            CanvasSceneLayerPhase::RecordChrome,
+        );
+
+        assert!(
+            low_widget < high_body,
+            "a lower z node widget must not render above a higher z node body"
+        );
+        assert!(
+            high_body < high_chrome,
+            "node-local chrome must stay inside the same record group above body/widget"
+        );
+    }
+
+    #[test]
+    fn scene_preserves_canvas_only_record_ordering() {
+        let mut low = CanvasNode::new("low", point(px(0.0), px(0.0)), size(px(40.0), px(30.0)));
+        low.z_index = 1;
+        let mut middle = CanvasShape::new(
+            "middle",
+            Bounds::new(point(px(50.0), px(0.0)), size(px(40.0), px(30.0))),
+        );
+        middle.z_index = 3;
+        let mut high = CanvasNode::new("high", point(px(100.0), px(0.0)), size(px(40.0), px(30.0)));
+        high.z_index = 5;
+        let document = document_fixture()
+            .node(high)
+            .shape(middle)
+            .node(low)
+            .build();
+        let model = CanvasPaintModel::new(document, CanvasViewport::default());
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(80.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        let scene = CanvasSceneFrame::from_paint_frame(&frame);
+        let record_targets = scene
+            .record_groups()
+            .iter()
+            .map(|group| group.target.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            record_targets,
+            vec![
+                HitTarget::Node(crate::NodeId::from("low")),
+                HitTarget::Shape(crate::ShapeId::from("middle")),
+                HitTarget::Node(crate::NodeId::from("high")),
+            ]
+        );
+    }
+
+    #[test]
+    fn scene_exposes_selected_node_chrome_and_tool_chrome_separately() {
+        let node = CanvasNode::new(
+            "selected",
+            point(px(10.0), px(10.0)),
+            size(px(80.0), px(60.0)),
+        );
+        let document = document_fixture().node(node).build();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Node(
+                crate::NodeId::from("selected"),
+            )))
+            .unwrap();
+        let model = CanvasPaintModel::from(&editor);
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(160.0), px(120.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        let scene = CanvasSceneFrame::from_paint_frame(&frame);
+        let selected = scene
+            .record_groups()
+            .iter()
+            .find(|group| group.target == HitTarget::Node(crate::NodeId::from("selected")))
+            .unwrap();
+
+        assert!(selected.has_phase(CanvasSceneLayerPhase::RecordBody));
+        assert!(selected.has_phase(CanvasSceneLayerPhase::RecordWidget));
+        assert!(selected.has_phase(CanvasSceneLayerPhase::RecordChrome));
+        assert!(
+            !scene.tool_chrome().transform_handles.is_empty(),
+            "transform handles remain explicit tool chrome instead of being hidden behind widgets"
+        );
+    }
+
+    fn scene_layer_index(
+        layers: &[CanvasSceneLayerItem],
+        target: HitTarget,
+        phase: CanvasSceneLayerPhase,
+    ) -> usize {
+        layers
+            .iter()
+            .position(|item| item.target == target && item.phase == phase)
+            .expect("scene layer item")
     }
 
     #[test]

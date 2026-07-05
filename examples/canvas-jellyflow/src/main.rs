@@ -47,7 +47,7 @@ use jellyflow_open_gpui::{
     OpenGpuiMeasurementId, OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
     OpenGpuiMenuPlan, OpenGpuiNodeRendererContext, OpenGpuiNodeRendererOutputSource,
     OpenGpuiNodeRendererRegistry, OpenGpuiNodeRendererState, OpenGpuiNodeRendererTable,
-    OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
+    OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout, OpenGpuiNodeSurfacePlan,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout, OpenGpuiNodeTransformSnapshot,
     OpenGpuiPortHandleEvidence, OpenGpuiProductSurfacePreset, OpenGpuiRepeatableActionPlan,
     OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
@@ -76,9 +76,10 @@ use open_gpui_canvas::{
     CanvasConnectionPreviewRoute, CanvasConnectionRelease, CanvasDocument, CanvasEditor,
     CanvasEditorInputHandler, CanvasEvent, CanvasHandle, CanvasKeyModifiers, CanvasKindLabel,
     CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeRenderPolicy,
-    CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasTool, CanvasToolIntent,
-    CanvasViewport, DocumentError, HandleRole, HitTarget, NodeId, PointerButton,
-    canvas_editor_view_with_frame,
+    CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasSceneFrame,
+    CanvasSceneLayerPhase, CanvasTool, CanvasToolIntent, CanvasViewport, DocumentError, HandleRole,
+    HitTarget, NodeId, PointerButton, canvas_editor_scene_view_with_frame, canvas_scene_view,
+    collect_visible_records,
 };
 use open_gpui_platform::application;
 use open_gpui_ui_components::gpui_adapter::init_text_input;
@@ -226,6 +227,7 @@ struct JellyflowCanvasView {
     measurement_revision: u64,
     measurement_refresh_requested: bool,
     measurement_frame_pending: bool,
+    measurement_frame_generation: u64,
     auto_fit_viewport: bool,
     deferred_editor_refresh: bool,
     last_canvas_view_size: Option<open_gpui::Size<Pixels>>,
@@ -273,6 +275,7 @@ struct NodeSurfaceSummary {
     menus: usize,
     action_menus: Vec<OpenGpuiMenuPlan>,
     toolbar_menu: OpenGpuiMenuPlan,
+    surface_plan: OpenGpuiNodeSurfacePlan,
     renderer_context: OpenGpuiNodeRendererContext,
     inspectors: usize,
     blackboards: usize,
@@ -359,6 +362,7 @@ impl Render for JellyflowCanvasView {
 
         let model = CanvasPaintModel::from(&self.editor);
         let render_model = model.clone();
+        let chrome_model = model.clone();
         let selected = self.selected_node_summary();
         let selection_count = self.editor.selection().selected_nodes().count()
             + self.editor.selection().selected_edges().count();
@@ -394,20 +398,38 @@ impl Render for JellyflowCanvasView {
                             .flex_1()
                             .overflow_hidden()
                             .child(
-                                canvas_editor_view_with_frame(
+                                canvas_editor_scene_view_with_frame(
                                     model,
                                     cx.entity(),
                                     self.focus_handle.clone(),
                                     Self::canvas_input_handler(),
                                     options,
                                     theme,
+                                    canvas_base_scene_phases(),
                                     |this, bounds, _frame, cx| {
                                         this.update_canvas_viewport_from_bounds(bounds, cx);
                                     },
                                 )
                                 .size_full(),
                             )
-                            .children(self.render_node_surfaces(&render_model, cx)),
+                            .children(self.render_node_surfaces(&render_model, options, cx))
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left(px(0.0))
+                                    .top(px(0.0))
+                                    .right(px(0.0))
+                                    .bottom(px(0.0))
+                                    .child(
+                                        canvas_scene_view(
+                                            chrome_model,
+                                            options,
+                                            theme,
+                                            canvas_tool_scene_phases(),
+                                        )
+                                        .size_full(),
+                                    ),
+                            ),
                     ),
             )
             .child(self.render_sidebar(selected, cx.weak_entity()))
@@ -746,15 +768,15 @@ impl JellyflowCanvasView {
     fn render_node_surfaces(
         &self,
         model: &CanvasPaintModel,
+        options: CanvasPaintOptions,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let zoom = model.viewport().zoom;
         let collector = self.measured_regions.clone();
         let renderer_registry = demo_node_renderer_registry();
         let renderers = demo_custom_node_renderers();
-        self.editor
-            .document()
-            .nodes()
+        self.surface_render_nodes_for_scene(model, options)
+            .into_iter()
             .filter_map(|node| {
                 let surface = self.node_surface_summary(node, zoom)?;
                 let jelly_node = jelly_node_id_from_node(node)?;
@@ -773,6 +795,24 @@ impl JellyflowCanvasView {
                 )
             })
             .collect()
+    }
+
+    fn surface_render_nodes_for_scene(
+        &self,
+        model: &CanvasPaintModel,
+        options: CanvasPaintOptions,
+    ) -> Vec<&CanvasNode> {
+        let document = self.editor.document();
+        if let Some(bounds) = self.last_canvas_bounds {
+            let frame = collect_visible_records(model, bounds, options);
+            let scene = CanvasSceneFrame::from_paint_frame(&frame);
+            let nodes = surface_render_nodes_for_scene(document, &scene);
+            if !nodes.is_empty() {
+                return nodes;
+            }
+        }
+
+        surface_render_nodes(document).collect()
     }
 
     fn node_surface_summary(&self, node: &CanvasNode, zoom: f32) -> Option<NodeSurfaceSummary> {
@@ -958,6 +998,9 @@ impl JellyflowCanvasView {
                 self.measurement_coverage.clear();
                 self.measurement_revision = 1;
                 self.measurement_refresh_requested = false;
+                self.measurement_frame_generation =
+                    self.measurement_frame_generation.wrapping_add(1);
+                self.measurement_frame_pending = false;
                 self.auto_fit_viewport = true;
                 self.deferred_editor_refresh = false;
                 self.last_canvas_view_size = None;
@@ -977,7 +1020,11 @@ impl JellyflowCanvasView {
             return;
         }
         self.measurement_frame_pending = true;
-        cx.on_next_frame(window, |this, window, cx| {
+        let generation = self.measurement_frame_generation;
+        cx.on_next_frame(window, move |this, window, cx| {
+            if this.measurement_frame_generation != generation {
+                return;
+            }
             this.measurement_frame_pending = false;
             window.refresh();
             cx.notify();
@@ -1793,7 +1840,7 @@ fn render_node_surface(
 ) -> impl IntoElement {
     let services = GpuiNodeRendererServices { collector, view };
     let rendered = registry.render_with_host(
-        &surface.renderer_context,
+        surface.surface_plan.renderer_context(),
         &services,
         renderers,
         |host, _fallback| {
@@ -1828,26 +1875,22 @@ fn render_open_gpui_node_wrapper(
     surface: &NodeSurfaceSummary,
     chrome: OpenGpuiNodeWrapperChrome,
 ) -> open_gpui::Stateful<open_gpui::Div> {
-    let zoom = surface.zoom;
-    let pad = if zoom >= 1.0 { px(10.0) } else { px(8.0) };
-    let top = bounds.top() + pad;
-    let left = bounds.left() + pad;
-    let inner_width = (bounds.size.width - pad * 2.0).max(px(0.0));
-    let inner_height = (bounds.size.height - pad * 2.0).max(px(0.0));
+    let bounds = node_surface_wrapper_bounds(bounds);
 
     let wrapper = div()
         .absolute()
-        .left(left)
-        .top(top)
-        .w(inner_width)
-        .h(inner_height)
+        .left(bounds.left())
+        .top(bounds.top())
+        .w(bounds.size.width)
+        .h(bounds.size.height)
         .flex_shrink_0()
         .min_w(px(0.0))
         .min_h(px(0.0))
         .overflow_hidden();
 
+    let wrapper = wrapper.bg(node_surface_wrapper_backplate_fill(chrome));
     let wrapper = match chrome {
-        OpenGpuiNodeWrapperChrome::Custom => wrapper,
+        OpenGpuiNodeWrapperChrome::Custom => wrapper.rounded_sm().shadow_sm(),
         OpenGpuiNodeWrapperChrome::Fallback => {
             let accent = if surface.selected {
                 rgb(0x2563eb)
@@ -1859,15 +1902,52 @@ fn render_open_gpui_node_wrapper(
                 .rounded_sm()
                 .border_1()
                 .border_color(accent)
-                .bg(rgb(0xffffff))
                 .shadow_sm()
         }
     };
 
     wrapper.id(open_gpui_node_surface_wrapper_element_id(
-        surface.renderer_context.node_id,
-        &surface.renderer_context.renderer_key,
+        surface.surface_plan.renderer_context().node_id,
+        &surface.surface_plan.renderer_context().renderer_key,
     ))
+}
+
+fn node_surface_wrapper_bounds(bounds: Bounds<Pixels>) -> Bounds<Pixels> {
+    Bounds::new(
+        bounds.origin,
+        size(
+            bounds.size.width.max(px(0.0)),
+            bounds.size.height.max(px(0.0)),
+        ),
+    )
+}
+
+fn node_surface_wrapper_backplate_fill(_chrome: OpenGpuiNodeWrapperChrome) -> open_gpui::Rgba {
+    rgb(0xffffff)
+}
+
+fn surface_render_nodes(document: &CanvasDocument) -> impl Iterator<Item = &CanvasNode> {
+    let mut nodes = document.nodes().enumerate().collect::<Vec<_>>();
+    nodes.sort_by(|(left_ordinal, left), (right_ordinal, right)| {
+        left.z_index
+            .cmp(&right.z_index)
+            .then_with(|| left_ordinal.cmp(right_ordinal))
+    });
+    nodes.into_iter().map(|(_, node)| node)
+}
+
+fn surface_render_nodes_for_scene<'a>(
+    document: &'a CanvasDocument,
+    scene: &CanvasSceneFrame,
+) -> Vec<&'a CanvasNode> {
+    scene
+        .record_groups()
+        .iter()
+        .filter_map(|group| match &group.target {
+            HitTarget::Node(id) => document.node(id),
+            _ => None,
+        })
+        .collect()
 }
 
 fn render_descriptor_fallback_node_content(
@@ -2097,6 +2177,7 @@ fn node_surface_summary_for_node(
         projection.clone(),
         slots.clone(),
     );
+    let surface_plan = OpenGpuiNodeSurfacePlan::new(renderer_context.clone(), measurement.clone());
     let inspector_target = if selected {
         project_inspectors_for_surface(
             &descriptor,
@@ -2127,6 +2208,7 @@ fn node_surface_summary_for_node(
         menus: descriptor.menus.len(),
         action_menus,
         toolbar_menu,
+        surface_plan,
         renderer_context,
         inspectors: descriptor.inspectors.len(),
         blackboards: descriptor.blackboards.len(),
@@ -3728,6 +3810,21 @@ fn product_connection_preview_route() -> CanvasConnectionPreviewRoute {
     CanvasConnectionPreviewRoute::Orthogonal
 }
 
+fn canvas_base_scene_phases() -> [CanvasSceneLayerPhase; 3] {
+    [
+        CanvasSceneLayerPhase::DocumentUnderlay,
+        CanvasSceneLayerPhase::EdgeBehindNodes,
+        CanvasSceneLayerPhase::RecordBody,
+    ]
+}
+
+fn canvas_tool_scene_phases() -> [CanvasSceneLayerPhase; 2] {
+    [
+        CanvasSceneLayerPhase::EdgeAboveNodes,
+        CanvasSceneLayerPhase::ToolChrome,
+    ]
+}
+
 fn default_canvas_view_size() -> open_gpui::Size<Pixels> {
     canvas_view_size_from_window_size(size(px(CANVAS_WIDTH), px(CANVAS_HEIGHT)))
 }
@@ -4257,6 +4354,7 @@ fn main() {
                     measurement_revision: 1,
                     measurement_refresh_requested: false,
                     measurement_frame_pending: false,
+                    measurement_frame_generation: 0,
                     auto_fit_viewport: true,
                     deferred_editor_refresh: false,
                     last_canvas_view_size: None,
@@ -4286,8 +4384,9 @@ mod tests {
     };
     use jellyflow_open_gpui::{
         control_option_key, open_gpui_action_button_element_id, open_gpui_action_menu_element_id,
-        open_gpui_control_element_id, plan_action_dispatch, plan_dropped_wire_insert,
-        project_dropped_wire_menu, projected_node_surface_component_layout,
+        open_gpui_control_element_id, open_gpui_port_handle_plans, plan_action_dispatch,
+        plan_dropped_wire_insert, project_dropped_wire_menu,
+        projected_node_surface_component_layout,
         testing::{
             OpenGpuiHostCapabilityGap, OpenGpuiHostProductInteractionReport,
             OpenGpuiHostRendererSource, OpenGpuiHostSurfaceReport, OpenGpuiHostSurfaceReportRow,
@@ -4530,6 +4629,7 @@ mod tests {
             measurement_revision: 1,
             measurement_refresh_requested: false,
             measurement_frame_pending: false,
+            measurement_frame_generation: 0,
             auto_fit_viewport: false,
             deferred_editor_refresh: false,
             last_canvas_view_size: None,
@@ -4671,6 +4771,7 @@ mod tests {
                 measurement_revision: 1,
                 measurement_refresh_requested: false,
                 measurement_frame_pending: false,
+                measurement_frame_generation: 0,
                 auto_fit_viewport: true,
                 deferred_editor_refresh: false,
                 last_canvas_view_size: Some(default_canvas_view_size()),
@@ -4700,6 +4801,7 @@ mod tests {
                 assert!(this.measured_regions.regions().is_empty());
                 assert!(this.measurement_coverage.is_empty());
                 assert_eq!(this.measurement_revision, 1);
+                assert_eq!(this.measurement_frame_generation, 1);
                 assert!(this.last_canvas_view_size.is_none());
                 assert!(this.last_canvas_bounds.is_none());
             })
@@ -4707,7 +4809,9 @@ mod tests {
     }
 
     #[open_gpui::test]
-    fn product_gallery_switch_reuses_pending_measurement_frame(cx: &mut open_gpui::TestAppContext) {
+    fn product_gallery_switch_replaces_stale_pending_measurement_frame(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
         let (gallery, store, editor, projection) = product_gallery_state();
         let node_kit_registry = NodeKitRegistry::builtin();
         let semantic_registry = node_kit_registry.node_registry();
@@ -4726,6 +4830,7 @@ mod tests {
                 measurement_revision: 1,
                 measurement_refresh_requested: false,
                 measurement_frame_pending: true,
+                measurement_frame_generation: 41,
                 auto_fit_viewport: true,
                 deferred_editor_refresh: false,
                 last_canvas_view_size: Some(default_canvas_view_size()),
@@ -4753,10 +4858,14 @@ mod tests {
                 assert_eq!(this.gallery.active_id(), target);
                 assert!(
                     this.measurement_frame_pending,
-                    "fixture switch must reuse the pending measurement frame instead of clearing it"
+                    "fixture switch must leave a fresh measurement frame pending"
+                );
+                assert_eq!(
+                    this.measurement_frame_generation, 42,
+                    "fixture switch must invalidate callbacks from the previous document"
                 );
             })
-            .expect("product gallery pending-frame test window updates");
+            .expect("product gallery stale pending-frame test window updates");
     }
 
     #[test]
@@ -4764,17 +4873,25 @@ mod tests {
         let workflow_surface = product_gallery_surface("workflow.review", "decision-card");
         let erd_surface = product_gallery_surface("erd.customer_orders", "table-card");
         let workflow_wrapper_id = open_gpui_node_surface_wrapper_element_id(
-            workflow_surface.renderer_context.node_id,
-            &workflow_surface.renderer_context.renderer_key,
+            workflow_surface.surface_plan.renderer_context().node_id,
+            &workflow_surface
+                .surface_plan
+                .renderer_context()
+                .renderer_key,
         );
         let erd_wrapper_id = open_gpui_node_surface_wrapper_element_id(
-            erd_surface.renderer_context.node_id,
-            &erd_surface.renderer_context.renderer_key,
+            erd_surface.surface_plan.renderer_context().node_id,
+            &erd_surface.surface_plan.renderer_context().renderer_key,
         );
 
         assert_ne!(
             workflow_wrapper_id, erd_wrapper_id,
             "surface wrapper id must change when the gallery switches renderer families"
+        );
+        assert_eq!(
+            erd_surface.surface_plan.renderer_context(),
+            &erd_surface.renderer_context,
+            "summary compatibility fields must keep using the adapter surface plan facts"
         );
 
         let wrapper = render_open_gpui_node_wrapper(
@@ -4788,6 +4905,91 @@ mod tests {
                 .to_string(),
             erd_wrapper_id
         );
+    }
+
+    #[test]
+    fn node_surface_wrapper_covers_full_canvas_node_bounds() {
+        let bounds = Bounds::new(point(px(12.0), px(18.0)), size(px(240.0), px(140.0)));
+
+        assert_eq!(
+            node_surface_wrapper_bounds(bounds),
+            bounds,
+            "node UI must be an atomic node-layer surface; an inset wrapper leaves canvas-only gaps where another node UI can bleed through"
+        );
+    }
+
+    #[test]
+    fn node_surface_wrapper_always_has_an_opaque_backplate() {
+        assert_eq!(
+            node_surface_wrapper_backplate_fill(OpenGpuiNodeWrapperChrome::Custom),
+            rgb(0xffffff),
+            "custom renderers must not be able to bypass the atomic node backplate"
+        );
+        assert_eq!(
+            node_surface_wrapper_backplate_fill(OpenGpuiNodeWrapperChrome::Fallback),
+            rgb(0xffffff),
+            "fallback renderers must use the same atomic node backplate contract"
+        );
+    }
+
+    #[test]
+    fn node_surfaces_render_in_canvas_z_order() {
+        let mut high = CanvasNode::new("high", point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
+        high.z_index = 10;
+        let mut equal_a = CanvasNode::new(
+            "equal-a",
+            point(px(120.0), px(0.0)),
+            size(px(100.0), px(80.0)),
+        );
+        equal_a.z_index = 5;
+        let mut low = CanvasNode::new("low", point(px(240.0), px(0.0)), size(px(100.0), px(80.0)));
+        low.z_index = 1;
+        let mut equal_b = CanvasNode::new(
+            "equal-b",
+            point(px(360.0), px(0.0)),
+            size(px(100.0), px(80.0)),
+        );
+        equal_b.z_index = 5;
+
+        let mut builder = CanvasDocument::builder();
+        builder.add_node(high).unwrap();
+        builder.add_node(equal_a).unwrap();
+        builder.add_node(low).unwrap();
+        builder.add_node(equal_b).unwrap();
+        let document = builder.build().unwrap();
+
+        let order = surface_render_nodes(&document)
+            .map(|node| node.id.as_str().to_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(order, ["low", "equal-a", "equal-b", "high"]);
+    }
+
+    #[test]
+    fn node_surfaces_render_from_scene_record_groups() {
+        let mut high = CanvasNode::new("high", point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
+        high.z_index = 10;
+        let mut low = CanvasNode::new("low", point(px(20.0), px(10.0)), size(px(100.0), px(80.0)));
+        low.z_index = 1;
+
+        let mut builder = CanvasDocument::builder();
+        builder.add_node(high).unwrap();
+        builder.add_node(low).unwrap();
+        let document = builder.build().unwrap();
+        let model = CanvasPaintModel::new(document.clone(), CanvasViewport::default());
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(140.0))),
+            CanvasPaintOptions::default(),
+        );
+        let scene = CanvasSceneFrame::from_paint_frame(&frame);
+
+        let order = surface_render_nodes_for_scene(&document, &scene)
+            .into_iter()
+            .map(|node| node.id.as_str().to_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(order, ["low", "high"]);
     }
 
     fn product_gallery_surface(fixture_id: &str, renderer_key: &str) -> NodeSurfaceSummary {
@@ -4850,6 +5052,7 @@ mod tests {
             measurement_revision: 1,
             measurement_refresh_requested: false,
             measurement_frame_pending: false,
+            measurement_frame_generation: 0,
             auto_fit_viewport: false,
             deferred_editor_refresh: false,
             last_canvas_view_size: None,
@@ -6406,6 +6609,7 @@ mod tests {
             measurement_revision: 1,
             measurement_refresh_requested: false,
             measurement_frame_pending: false,
+            measurement_frame_generation: 0,
             auto_fit_viewport: false,
             deferred_editor_refresh: false,
             last_canvas_view_size: None,
@@ -7242,18 +7446,19 @@ mod tests {
             minimum_hit_height: u32::MAX,
             ..OpenGpuiPortHandleEvidence::default()
         };
+        let port_plans = open_gpui_port_handle_plans(transform, measurement.anchors.clone());
 
         for port in [prompt, completion] {
             let Some(port_record) = measured_store.graph().ports().get(&port) else {
                 continue;
             };
-            let Some(anchor) = measurement
-                .anchors
+            let Some(port_plan) = port_plans
                 .iter()
-                .find(|anchor| anchor.port == Some(port) && anchor.is_visible())
+                .find(|plan| plan.port == Some(port) && plan.connectable)
             else {
                 continue;
             };
+            let anchor = &port_plan.measured_anchor;
             evidence.visible_port_marker_count += 1;
             evidence.measured_anchor_count += 1;
             let handle_id = open_gpui_canvas::HandleId::from(canvas_port_id(&port));

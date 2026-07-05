@@ -2,12 +2,12 @@ use super::builtin::{
     begin_connection_from_source, cancel_connection, finish_connection_from_source,
     update_connection_from_source,
 };
-use super::context::CanvasConnectionHit;
+use super::context::{CanvasConnectionHit, CanvasPointerOwner};
 use super::*;
 use crate::{
     CanvasConnectionEndpointRole, CanvasConnectionRejectReason, CanvasConnectionRelease,
     CanvasDroppedReconnectRelease, CanvasReconnectedRelease, CanvasRejectedConnectionRelease,
-    CanvasResizeHandle, CanvasViewport, HitOptions,
+    CanvasResizeHandle, CanvasViewport,
 };
 use open_gpui::Axis;
 
@@ -242,7 +242,10 @@ impl SelectToolStateMachine {
         modifiers: CanvasKeyModifiers,
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
         let document_position = context.viewport().view_to_document(position);
-        if let Some(target) = context.selected_reconnect_target_at(document_position) {
+        let owner = context.pointer_owner_at(document_position);
+
+        if let CanvasPointerOwner::Reconnect(target) = &owner {
+            let target = target.clone();
             return Ok(vec![
                 CanvasToolEffect::SetConnectionRelease(None),
                 CanvasToolEffect::SetState(ToolState::Reconnecting {
@@ -254,14 +257,14 @@ impl SelectToolStateMachine {
             ]);
         }
 
-        if let CanvasConnectionHit::Valid(source) =
-            context.connection_hit_at(document_position, CanvasConnectionEndpointRole::Source)
-            && source.handle_id.is_some()
-        {
-            return Ok(begin_connection_from_source(source, document_position));
+        if let CanvasPointerOwner::ConnectionSource(source) = &owner {
+            return Ok(begin_connection_from_source(
+                source.clone(),
+                document_position,
+            ));
         }
 
-        if let Some(handle) = context.transform_handle_at(document_position) {
+        if let CanvasPointerOwner::Transform(handle) = &owner {
             let resize_scope = context.resize_selection_scope();
             return Ok(vec![
                 CanvasToolEffect::BeginGesture,
@@ -278,28 +281,17 @@ impl SelectToolStateMachine {
             ]);
         }
 
-        let hit = context
-            .runtime()
-            .precise_hit_test_with_kind_registry(
-                context.document(),
-                context.kind_registry(),
-                document_position,
-                HitOptions::default(),
-            )
-            .map(|record| record.target.clone())
-            .next();
-
         if modifiers.shift
-            && let Some(target) = hit
+            && let Some(target) = selection_target_for_pointer_owner(&owner)
         {
-            return Ok(vec![CanvasToolEffect::ToggleSelection(target)]);
+            return Ok(vec![CanvasToolEffect::ToggleSelection(target.clone())]);
         }
 
-        Ok(match hit {
-            Some(target @ (HitTarget::Node(_) | HitTarget::Shape(_))) => {
+        Ok(match owner {
+            CanvasPointerOwner::NodeDrag(target) => {
                 self.begin_translation_from_hit(context, document_position, target)
             }
-            Some(target) => {
+            CanvasPointerOwner::Record(target) => {
                 vec![
                     CanvasToolEffect::ReplaceSelection(target),
                     CanvasToolEffect::SetState(ToolState::Pointing {
@@ -309,7 +301,14 @@ impl SelectToolStateMachine {
                     }),
                 ]
             }
-            None => self.begin_blank_pointing(context, document_position, modifiers),
+            CanvasPointerOwner::Pane => {
+                self.begin_blank_pointing(context, document_position, modifiers)
+            }
+            CanvasPointerOwner::Reconnect(_)
+            | CanvasPointerOwner::ConnectionSource(_)
+            | CanvasPointerOwner::Transform(_) => unreachable!(
+                "pointer owner priority branches must be handled before selection fallback"
+            ),
         })
     }
 
@@ -585,6 +584,16 @@ fn selection_bounds(origin: Point<Pixels>, current: Point<Pixels>) -> Bounds<Pix
         Point::new(origin.x.min(current.x), origin.y.min(current.y)),
         Point::new(origin.x.max(current.x), origin.y.max(current.y)),
     )
+}
+
+fn selection_target_for_pointer_owner(owner: &CanvasPointerOwner) -> Option<&HitTarget> {
+    match owner {
+        CanvasPointerOwner::NodeDrag(target) | CanvasPointerOwner::Record(target) => Some(target),
+        CanvasPointerOwner::Reconnect(_)
+        | CanvasPointerOwner::ConnectionSource(_)
+        | CanvasPointerOwner::Transform(_)
+        | CanvasPointerOwner::Pane => None,
+    }
 }
 
 fn translation_drag_threshold_exceeded(
