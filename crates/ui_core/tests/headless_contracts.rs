@@ -59,7 +59,20 @@ fn ui_core_motion_value_stays_private_while_consumed_motion_contracts_stay_publi
     let demand = open_gpui_ui_core::MotionFrameDemand::Idle;
     assert!(!demand.needs_frame());
 
-    let _model = open_gpui_ui_core::MotionPreset::Immediate.resolve_model();
+    let model = open_gpui_ui_core::MotionPreset::Immediate.resolve_model();
+    let plan = open_gpui_ui_core::MotionExecutionPlan::resolve(
+        open_gpui_ui_core::MotionPolicyInput::new(
+            open_gpui_ui_core::MotionPolicyContext::CommittedLayout,
+            model,
+        )
+        .with_reduced_motion_final_state(true),
+    );
+    assert_eq!(
+        plan.state(),
+        open_gpui_ui_core::MotionExecutionState::Immediate
+    );
+    let _execution: Option<open_gpui_ui_core::MotionScalarExecution> = None;
+    let _execution_sample: Option<open_gpui_ui_core::MotionScalarExecutionSample> = None;
     let _clip: Option<open_gpui_ui_core::MotionProjectionClip> = None;
 }
 

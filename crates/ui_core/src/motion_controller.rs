@@ -2,8 +2,10 @@
 
 use crate::motion_spring::{MotionModel, MotionScalarSample};
 use crate::motion_value::MotionValue;
-use crate::{MotionRunState, MotionSpec};
-use std::time::Duration;
+use crate::{
+    MotionPolicyInput, MotionPolicyReport, MotionRunState, MotionSpec, validate_motion_policy,
+};
+use std::time::{Duration, Instant};
 
 /// Renderer-neutral frame demand returned by motion controllers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +52,84 @@ impl MotionFrameDemand {
             }
             (Self::Idle, Self::Idle) => Self::Idle,
         }
+    }
+}
+
+/// Policy-resolved execution state for a motion run before adapter sampling begins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionExecutionState {
+    /// The run should publish its final semantic state without requesting frames.
+    Immediate,
+    /// The run may sample over time and request adapter-owned frames.
+    Scheduled,
+}
+
+impl MotionExecutionState {
+    /// Returns whether the run completes immediately.
+    pub const fn is_immediate(self) -> bool {
+        matches!(self, Self::Immediate)
+    }
+
+    /// Returns whether the run should be sampled over time.
+    pub const fn is_scheduled(self) -> bool {
+        matches!(self, Self::Scheduled)
+    }
+}
+
+/// Renderer-neutral policy result used to start motion from a single owner.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MotionExecutionPlan {
+    model: MotionModel,
+    policy_report: MotionPolicyReport,
+    state: MotionExecutionState,
+}
+
+impl MotionExecutionPlan {
+    /// Resolves a requested model through motion policy, falling back to immediate motion on
+    /// policy failure.
+    pub fn resolve(input: MotionPolicyInput) -> Self {
+        let requested_model = input.model();
+        let policy_report = validate_motion_policy(input);
+        let model = if policy_report.is_ok() {
+            requested_model
+        } else {
+            MotionModel::timeline(MotionSpec::immediate())
+        };
+        let state = if model.is_immediate() {
+            MotionExecutionState::Immediate
+        } else {
+            MotionExecutionState::Scheduled
+        };
+        Self {
+            model,
+            policy_report,
+            state,
+        }
+    }
+
+    /// Returns the model that should execute after policy resolution.
+    pub const fn model(&self) -> MotionModel {
+        self.model
+    }
+
+    /// Returns the policy report produced for the requested model.
+    pub const fn policy_report(&self) -> &MotionPolicyReport {
+        &self.policy_report
+    }
+
+    /// Returns the policy-resolved execution state.
+    pub const fn state(&self) -> MotionExecutionState {
+        self.state
+    }
+
+    /// Returns whether the run should complete immediately.
+    pub const fn is_immediate(&self) -> bool {
+        self.state.is_immediate()
+    }
+
+    /// Consumes the plan and returns its parts.
+    pub fn into_parts(self) -> (MotionModel, MotionPolicyReport, MotionExecutionState) {
+        (self.model, self.policy_report, self.state)
     }
 }
 
@@ -163,6 +243,131 @@ impl MotionScalarTrack {
     }
 }
 
+/// Sample from a policy-resolved scalar execution.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MotionScalarExecutionSample {
+    sample: MotionScalarSample,
+    complete: bool,
+    frame_demand: MotionFrameDemand,
+}
+
+impl MotionScalarExecutionSample {
+    /// Creates a scalar execution sample from explicit values.
+    pub const fn new(
+        sample: MotionScalarSample,
+        complete: bool,
+        frame_demand: MotionFrameDemand,
+    ) -> Self {
+        Self {
+            sample,
+            complete,
+            frame_demand,
+        }
+    }
+
+    /// Returns the underlying scalar sample.
+    pub const fn scalar_sample(self) -> MotionScalarSample {
+        self.sample
+    }
+
+    /// Returns the sampled scalar value.
+    pub const fn value(self) -> f32 {
+        self.sample.value()
+    }
+
+    /// Returns whether the run has reached the semantic completion state.
+    pub const fn complete(self) -> bool {
+        self.complete
+    }
+
+    /// Returns whether the adapter should request another frame.
+    pub const fn frame_demand(self) -> MotionFrameDemand {
+        self.frame_demand
+    }
+}
+
+/// A single scalar track plus its policy-resolved execution metadata.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MotionScalarExecution {
+    plan: MotionExecutionPlan,
+    track: MotionScalarTrack,
+}
+
+impl MotionScalarExecution {
+    /// Starts a scalar execution from an already resolved motion plan.
+    pub fn start(
+        plan: MotionExecutionPlan,
+        from: f32,
+        target: f32,
+        initial_velocity: f32,
+        started_at: Duration,
+    ) -> Self {
+        let track =
+            MotionScalarTrack::start(plan.model(), from, target, initial_velocity, started_at);
+        Self { plan, track }
+    }
+
+    /// Resolves policy input and starts a scalar execution.
+    pub fn start_resolved(
+        input: MotionPolicyInput,
+        from: f32,
+        target: f32,
+        initial_velocity: f32,
+        started_at: Duration,
+    ) -> Self {
+        Self::start(
+            MotionExecutionPlan::resolve(input),
+            from,
+            target,
+            initial_velocity,
+            started_at,
+        )
+    }
+
+    /// Returns the resolved execution plan.
+    pub const fn plan(&self) -> &MotionExecutionPlan {
+        &self.plan
+    }
+
+    /// Returns the underlying scalar track.
+    pub const fn track(&self) -> &MotionScalarTrack {
+        &self.track
+    }
+
+    /// Returns the model that should execute after policy resolution.
+    pub const fn model(&self) -> MotionModel {
+        self.plan.model()
+    }
+
+    /// Returns the policy report produced for the requested model.
+    pub const fn policy_report(&self) -> &MotionPolicyReport {
+        self.plan.policy_report()
+    }
+
+    /// Returns the policy-resolved execution state.
+    pub const fn state(&self) -> MotionExecutionState {
+        self.plan.state()
+    }
+
+    /// Samples the execution at deterministic elapsed time.
+    pub fn sample_at(&self, now: Duration) -> MotionScalarExecutionSample {
+        let sample = self.track.sample_at(now);
+        let complete = self.plan.is_immediate() || sample.reached_final_state();
+        let frame_demand = if complete {
+            MotionFrameDemand::Idle
+        } else {
+            MotionFrameDemand::from_active(sample.is_active())
+        };
+        MotionScalarExecutionSample::new(sample, complete, frame_demand)
+    }
+
+    /// Samples the execution from adapter instants while keeping deterministic elapsed-time
+    /// semantics in the controller layer.
+    pub fn sample_since(&self, started_at: Instant, now: Instant) -> MotionScalarExecutionSample {
+        self.sample_at(now.saturating_duration_since(started_at))
+    }
+}
+
 /// A sampled keyed scalar motion track.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MotionScalarTrackSample<K> {
@@ -211,6 +416,11 @@ impl<K> MotionScalarControllerSample<K> {
     /// Returns the grouped frame demand.
     pub const fn frame_demand(&self) -> MotionFrameDemand {
         self.frame_demand
+    }
+
+    /// Returns whether all grouped tracks are terminal for adapter frame scheduling.
+    pub const fn complete(&self) -> bool {
+        !self.frame_demand.needs_frame()
     }
 }
 
@@ -329,14 +539,24 @@ impl<K: Clone> MotionScalarController<K> {
             .fold(MotionFrameDemand::Idle, MotionFrameDemand::combine);
         MotionScalarControllerSample::new(tracks, frame_demand)
     }
+
+    /// Samples all tracks from adapter instants while keeping deterministic elapsed-time
+    /// semantics in the controller layer.
+    pub fn sample_since(
+        &self,
+        started_at: Instant,
+        now: Instant,
+    ) -> MotionScalarControllerSample<K> {
+        self.sample_at(now.saturating_duration_since(started_at))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        MotionDuration, MotionEasing, MotionModel, MotionPreference, MotionRunState, MotionSpec,
-        MotionSpringSpec,
+        MotionDuration, MotionEasing, MotionModel, MotionPolicyContext, MotionPreference,
+        MotionRunState, MotionSpec, MotionSpringSpec,
     };
     use std::time::Duration;
 
@@ -374,6 +594,7 @@ mod tests {
                 .iter()
                 .all(|track| track.sample().reached_final_state())
         );
+        assert!(complete.complete());
     }
 
     #[test]
@@ -437,5 +658,53 @@ mod tests {
                 .frame_demand_at(Duration::from_millis(10))
                 .needs_frame()
         );
+    }
+
+    #[test]
+    fn execution_plan_downgrades_policy_failures_to_immediate_motion() {
+        let requested_model = MotionModel::timeline(MotionSpec::new(
+            MotionPreference::Animated,
+            MotionDuration::Custom(Duration::from_millis(900)),
+            MotionEasing::Linear,
+        ));
+        let plan = MotionExecutionPlan::resolve(
+            MotionPolicyInput::new(MotionPolicyContext::CommittedLayout, requested_model)
+                .with_spatial_motion(true)
+                .with_reduced_motion_final_state(true),
+        );
+
+        assert!(!plan.policy_report().is_ok());
+        assert!(plan.is_immediate());
+        assert!(plan.model().is_immediate());
+    }
+
+    #[test]
+    fn scalar_execution_reports_completion_and_frame_demand_from_one_sample() {
+        let execution = MotionScalarExecution::start_resolved(
+            MotionPolicyInput::new(
+                MotionPolicyContext::CommittedLayout,
+                MotionModel::timeline(MotionSpec::new(
+                    MotionPreference::Animated,
+                    MotionDuration::Custom(Duration::from_millis(100)),
+                    MotionEasing::Linear,
+                )),
+            )
+            .with_spatial_motion(true)
+            .with_reduced_motion_final_state(true),
+            0.0,
+            1.0,
+            0.0,
+            Duration::ZERO,
+        );
+
+        let midpoint = execution.sample_at(Duration::from_millis(50));
+        assert_eq!(midpoint.value(), 0.5);
+        assert!(!midpoint.complete());
+        assert!(midpoint.frame_demand().needs_frame());
+
+        let complete = execution.sample_at(Duration::from_millis(120));
+        assert_eq!(complete.value(), 1.0);
+        assert!(complete.complete());
+        assert!(!complete.frame_demand().needs_frame());
     }
 }

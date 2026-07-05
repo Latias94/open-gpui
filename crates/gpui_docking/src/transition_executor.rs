@@ -11,10 +11,10 @@ use crate::{
 };
 use open_gpui::{Bounds, Pixels, Window, point, size};
 use open_gpui_ui_core::{
-    MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPolicyReport, MotionProjection,
-    MotionProjectionClip, MotionScalarSample, MotionScalarTrack, MotionSnapshot, MotionSpec,
-    motion_source_rect, preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
-    validate_motion_policy,
+    MotionExecutionPlan, MotionExecutionState, MotionModel, MotionPolicyContext, MotionPolicyInput,
+    MotionPolicyReport, MotionProjection, MotionProjectionClip, MotionScalarExecution,
+    MotionScalarExecutionSample, MotionSnapshot, MotionSpec, motion_source_rect,
+    preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
 };
 use std::time::{Duration, Instant};
 
@@ -24,7 +24,7 @@ pub(crate) struct DockTransitionExecution {
     pub(crate) model: MotionModel,
     pub(crate) policy_report: MotionPolicyReport,
     pub(crate) state: DockTransitionExecutionState,
-    track: MotionScalarTrack,
+    track: MotionScalarExecution,
     started_at: Instant,
     last_sample: Option<DockTransitionSample>,
     #[cfg(test)]
@@ -38,6 +38,15 @@ pub enum DockTransitionExecutionState {
     Immediate,
     /// Transition requested an animation frame and kept the final scene as the semantic target.
     Scheduled,
+}
+
+impl From<MotionExecutionState> for DockTransitionExecutionState {
+    fn from(state: MotionExecutionState) -> Self {
+        match state {
+            MotionExecutionState::Immediate => Self::Immediate,
+            MotionExecutionState::Scheduled => Self::Scheduled,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -118,21 +127,27 @@ impl DockTransitionExecutor {
         model: MotionModel,
         _window: Option<&Window>,
     ) -> &DockTransitionExecution {
-        let policy_report = validate_motion_policy(
+        let mut motion = MotionExecutionPlan::resolve(
             MotionPolicyInput::new(MotionPolicyContext::Continuity, model)
                 .with_spatial_motion(!plan.is_immediate() && !model.is_immediate())
                 .with_reduced_motion_final_state(true),
         );
-        let model = if policy_report.is_ok() {
-            model
-        } else {
-            MotionModel::timeline(MotionSpec::immediate())
-        };
-        let state = if plan.is_immediate() || model.is_immediate() {
+        if plan.is_immediate() {
+            motion = MotionExecutionPlan::resolve(
+                MotionPolicyInput::new(
+                    MotionPolicyContext::Continuity,
+                    MotionModel::timeline(MotionSpec::immediate()),
+                )
+                .with_reduced_motion_final_state(true),
+            );
+        }
+        let state = if plan.is_immediate() {
             DockTransitionExecutionState::Immediate
         } else {
-            DockTransitionExecutionState::Scheduled
+            DockTransitionExecutionState::from(motion.state())
         };
+        let model = motion.model();
+        let policy_report = motion.policy_report().clone();
 
         let plan = if state == DockTransitionExecutionState::Scheduled {
             match self.sample_active_for_retarget() {
@@ -148,7 +163,7 @@ impl DockTransitionExecutor {
             model,
             policy_report,
             state,
-            track: MotionScalarTrack::start(model, 0.0, 1.0, 0.0, Duration::ZERO),
+            track: MotionScalarExecution::start(motion, 0.0, 1.0, 0.0, Duration::ZERO),
             started_at: Instant::now(),
             last_sample: None,
             #[cfg(test)]
@@ -174,7 +189,7 @@ impl DockTransitionExecutor {
             execution,
             execution
                 .track
-                .sample_at(Instant::now().saturating_duration_since(execution.started_at)),
+                .sample_since(execution.started_at, Instant::now()),
         );
         execution.last_sample = Some(sample.clone());
         (!sample.complete).then_some(sample)
@@ -184,7 +199,7 @@ impl DockTransitionExecutor {
         let sample = self.sample_motion(|execution| {
             execution
                 .track
-                .sample_at(Instant::now().saturating_duration_since(execution.started_at))
+                .sample_since(execution.started_at, Instant::now())
         })?;
         if sample.needs_frame
             && let Some(window) = window
@@ -208,7 +223,7 @@ impl DockTransitionExecutor {
 
     fn sample_motion(
         &mut self,
-        motion_sample_for: impl FnOnce(&mut DockTransitionExecution) -> MotionScalarSample,
+        motion_sample_for: impl FnOnce(&mut DockTransitionExecution) -> MotionScalarExecutionSample,
     ) -> Option<DockTransitionSample> {
         let execution = self.current.as_mut()?;
         let motion_sample = motion_sample_for(execution);
@@ -223,16 +238,16 @@ impl DockTransitionExecutor {
 
 fn sample_execution(
     execution: &DockTransitionExecution,
-    motion_sample: MotionScalarSample,
+    motion_sample: MotionScalarExecutionSample,
 ) -> DockTransitionSample {
     let progress = motion_sample.value().clamp(0.0, 1.0);
-    let complete = execution.state == DockTransitionExecutionState::Immediate
-        || motion_sample.reached_final_state();
+    let complete =
+        execution.state == DockTransitionExecutionState::Immediate || motion_sample.complete();
     DockTransitionSample {
         final_scene: execution.plan.final_scene.clone(),
         progress,
         complete,
-        needs_frame: motion_sample.is_active() && !complete,
+        needs_frame: motion_sample.frame_demand().needs_frame(),
         pane_bounds: pane_bounds_samples(&execution.plan, progress),
         pane_clips: execution
             .plan

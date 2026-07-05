@@ -17,8 +17,9 @@ pub use crate::{
     grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d},
     motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec},
     motion_controller::{
-        MotionFrameDemand, MotionFrameReason, MotionScalarController, MotionScalarControllerSample,
-        MotionScalarTrack, MotionScalarTrackSample,
+        MotionExecutionPlan, MotionExecutionState, MotionFrameDemand, MotionFrameReason,
+        MotionScalarController, MotionScalarControllerSample, MotionScalarExecution,
+        MotionScalarExecutionSample, MotionScalarTrack, MotionScalarTrackSample,
     },
     motion_policy::{
         MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,

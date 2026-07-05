@@ -12,9 +12,9 @@ use open_gpui_ui_core::split::{
     SplitterTransitionIntent,
 };
 use open_gpui_ui_core::{
-    MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPreference, MotionPreset,
-    MotionProjectionClip, MotionScalarController, MotionScalarTrack, MotionSpec, Orientation,
-    Sizable, Size, UiRect, ui_point, ui_px, ui_rect, ui_size, validate_motion_policy,
+    MotionExecutionPlan, MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPreference,
+    MotionPreset, MotionProjectionClip, MotionScalarController, MotionScalarExecution, MotionSpec,
+    Orientation, Sizable, Size, UiRect, ui_point, ui_px, ui_rect, ui_size,
 };
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -119,12 +119,8 @@ impl SplitterRuntime {
             self.last_state = Some(state.clone());
             return false;
         }
-        let policy_report = validate_motion_policy(
-            MotionPolicyInput::new(MotionPolicyContext::CommittedLayout, model)
-                .with_spatial_motion(!model.is_immediate())
-                .with_reduced_motion_final_state(true),
-        );
-        if model.is_immediate() || !policy_report.is_ok() {
+        let motion = committed_layout_motion_plan(model);
+        if motion.is_immediate() {
             self.state_fractions = target_fractions.clone();
             self.panel_fractions = target_fractions;
             self.transition = None;
@@ -142,7 +138,7 @@ impl SplitterRuntime {
                 panel_ids,
                 from_fractions,
                 target_fractions,
-                model,
+                motion.model(),
             ),
         });
         self.last_state = Some(state.clone());
@@ -223,12 +219,8 @@ impl SplitterRuntime {
             .map(|state| state.with_panel_fractions(&self.panel_fractions))
             .unwrap_or_else(|| state.clone());
         let intent = transition_intent(&from_state, state);
-        let policy_report = validate_motion_policy(
-            MotionPolicyInput::new(MotionPolicyContext::CommittedLayout, model)
-                .with_spatial_motion(!model.is_immediate())
-                .with_reduced_motion_final_state(true),
-        );
-        if model.is_immediate() || !policy_report.is_ok() {
+        let motion = committed_layout_motion_plan(model);
+        if motion.is_immediate() {
             self.sync_immediate(panel_ids, target_fractions);
             self.last_state = Some(state.clone());
             return false;
@@ -238,7 +230,7 @@ impl SplitterRuntime {
             intent,
             SplitterLayoutScene::from_state(&from_state, transition_scene_bounds()),
             SplitterLayoutScene::from_state(state, transition_scene_bounds()),
-            MotionSpec::committed_layout(model.preference()),
+            MotionSpec::committed_layout(motion.model().preference()),
         );
         self.panel_ids = panel_ids;
         self.state_fractions = target_fractions.clone();
@@ -249,7 +241,7 @@ impl SplitterRuntime {
             target_state: state.clone(),
             transition,
             started_at: now,
-            track: MotionScalarTrack::start(model, 0.0, 1.0, 0.0, Duration::ZERO),
+            track: MotionScalarExecution::start(motion, 0.0, 1.0, 0.0, Duration::ZERO),
         });
         self.last_state = Some(state.clone());
         true
@@ -261,9 +253,9 @@ impl SplitterRuntime {
         };
         let sample = transition
             .controller
-            .sample_at(now.saturating_duration_since(transition.started_at));
+            .sample_since(transition.started_at, now);
         self.panel_fractions = fraction_samples_for_transition(transition, &sample);
-        let complete = !sample.frame_demand().needs_frame();
+        let complete = sample.complete();
         if complete {
             self.panel_fractions = transition.to_fractions.clone();
             self.transition = None;
@@ -275,10 +267,8 @@ impl SplitterRuntime {
         let Some(transition) = self.layout_transition.as_ref() else {
             return true;
         };
-        let sample = transition
-            .track
-            .sample_at(now.saturating_duration_since(transition.started_at));
-        let complete = sample.reached_final_state();
+        let sample = transition.track.sample_since(transition.started_at, now);
+        let complete = sample.complete();
         if complete {
             self.layout_transition = None;
         }
@@ -287,9 +277,7 @@ impl SplitterRuntime {
 
     fn layout_transition_sample(&self, now: Instant) -> Option<SplitterLayoutTransitionSample> {
         let transition = self.layout_transition.as_ref()?;
-        let sample = transition
-            .track
-            .sample_at(now.saturating_duration_since(transition.started_at));
+        let sample = transition.track.sample_since(transition.started_at, now);
         Some(transition.transition.sample(sample.value()))
     }
 
@@ -299,7 +287,7 @@ impl SplitterRuntime {
         };
         let sample = transition
             .controller
-            .sample_at(now.saturating_duration_since(transition.started_at));
+            .sample_since(transition.started_at, now);
         fraction_samples_for_transition(transition, &sample)
     }
 }
@@ -317,7 +305,7 @@ struct SplitterRuntimeLayoutTransition {
     target_state: SplitterState,
     transition: SplitterLayoutTransition,
     started_at: Instant,
-    track: MotionScalarTrack,
+    track: MotionScalarExecution,
 }
 
 fn fractions_equal(left: &[f32], right: &[f32]) -> bool {
@@ -339,6 +327,14 @@ fn scalar_controller_for_fractions(
         controller.start(panel_id, model, from, to, 0.0, Duration::ZERO);
     }
     controller
+}
+
+fn committed_layout_motion_plan(model: MotionModel) -> MotionExecutionPlan {
+    MotionExecutionPlan::resolve(
+        MotionPolicyInput::new(MotionPolicyContext::CommittedLayout, model)
+            .with_spatial_motion(!model.is_immediate())
+            .with_reduced_motion_final_state(true),
+    )
 }
 
 fn fraction_samples_for_transition(
