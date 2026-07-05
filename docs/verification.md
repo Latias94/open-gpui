@@ -44,11 +44,21 @@ cargo audit
 git diff --check
 ```
 
-`cargo audit` reported pre-existing lockfile advisories outside the `resvg`/`usvg` upgrade
-(`quick-xml 0.39.4`, `quinn-proto 0.11.14`) plus allowed warning-class advisories. The updated SVG
-stack crates reviewed in this slice (`resvg 0.46.0`, `usvg 0.46.0`, `imagesize 0.14.0`,
-`kurbo 0.13.1`, `polycool 0.4.0`, `roxmltree 0.21.1`, `svgtypes 0.16.1`) are crates.io packages
-with MIT and/or Apache-2.0 licenses.
+The follow-up dependency remediation updated the actionable advisories: `quinn-proto` now resolves
+to `0.11.16`, `anyhow` to `1.0.103`, `memmap2` to `0.9.11`, `async-tar` to `0.6.1` with the Tokio
+runtime, `futures-lite` to `2.6.1`, `stacksafe` to `1.0.2`, and `reqwest` to `0.13.4`. `cargo audit`
+now exits successfully. `.cargo/audit.toml` temporarily ignores the two `quick-xml 0.39.4`
+advisories because the currently published `wayland-scanner 0.31.10` and `zbus_xml 5.1.1` releases
+still pin `quick-xml = "0.39"`, and both reach this workspace through proc-macro/code-generation
+paths rather than runtime XML parsing. Remove those ignores once upstream releases accept
+`quick-xml >= 0.41`.
+
+The remaining warning-class advisories are not denied by the local audit gate: `paste 1.0.15` comes
+from `image`'s AVIF codec chain, and `ttf-parser 0.25.1` comes through the font/SVG stack. Removing
+the first would drop AVIF image support; replacing the second requires a renderer/font-stack
+migration. The updated SVG stack crates reviewed in this slice (`resvg 0.46.0`, `usvg 0.46.0`,
+`imagesize 0.14.0`, `kurbo 0.13.1`, `polycool 0.4.0`, `roxmltree 0.21.1`, `svgtypes 0.16.1`) are
+crates.io packages with MIT and/or Apache-2.0 licenses.
 
 For focused `open-gpui-canvas` work, run:
 
