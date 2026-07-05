@@ -24,6 +24,7 @@ screen-capture = ["open_gpui/screen-capture", "open_gpui_macos/screen-capture", 
 runtime_shaders = ["open_gpui_macos/runtime_shaders"]
 wayland = ["open_gpui_linux/wayland"]
 x11 = ["open_gpui_linux/x11"]
+web-multithreaded = ["open_gpui_web/multithreaded"]
 
 [dependencies]
 open_gpui.workspace = true

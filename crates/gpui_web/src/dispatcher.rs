@@ -22,6 +22,7 @@ fn shared_memory_supported() -> bool {
     has_shared_array_buffer && has_atomics && is_shared_buffer
 }
 
+#[cfg_attr(not(feature = "multithreaded"), allow(dead_code))]
 enum MainThreadItem {
     Runnable(RunnableVariant),
     Delayed {
@@ -34,6 +35,7 @@ enum MainThreadItem {
 
 struct MainThreadMailbox {
     sender: PriorityQueueSender<MainThreadItem>,
+    #[cfg_attr(not(feature = "multithreaded"), allow(dead_code))]
     receiver: parking_lot::Mutex<PriorityQueueReceiver<MainThreadItem>>,
     signal: AtomicI32,
 }
@@ -59,6 +61,7 @@ impl MainThreadMailbox {
         js_sys::Atomics::notify(&view, 0).ok();
     }
 
+    #[cfg(feature = "multithreaded")]
     fn drain(&self, window: &web_sys::Window) {
         let mut receiver = self.receiver.lock();
         loop {
@@ -78,6 +81,7 @@ impl MainThreadMailbox {
         js_sys::Int32Array::new_with_byte_offset_and_length(&memory.buffer(), byte_offset, 1)
     }
 
+    #[cfg(feature = "multithreaded")]
     fn run_waker_loop(self: &Arc<Self>, window: web_sys::Window) {
         if !shared_memory_supported() {
             log::warn!("SharedArrayBuffer not available; main thread mailbox waker loop disabled");
@@ -138,6 +142,9 @@ unsafe impl Sync for WebDispatcher {}
 
 impl WebDispatcher {
     pub fn new(browser_window: web_sys::Window, allow_threads: bool) -> Self {
+        #[cfg(not(feature = "multithreaded"))]
+        let _ = allow_threads;
+
         #[cfg(feature = "multithreaded")]
         let (background_sender, background_receiver) = PriorityQueueReceiver::new();
         #[cfg(not(feature = "multithreaded"))]
@@ -150,13 +157,19 @@ impl WebDispatcher {
         #[cfg(not(feature = "multithreaded"))]
         let supports_threads = false;
 
-        if supports_threads {
-            main_thread_mailbox.run_waker_loop(browser_window.clone());
-        } else {
-            log::warn!(
-                "SharedArrayBuffer not available; falling back to single-threaded dispatcher"
-            );
+        #[cfg(feature = "multithreaded")]
+        {
+            if supports_threads {
+                main_thread_mailbox.run_waker_loop(browser_window.clone());
+            } else {
+                log::warn!(
+                    "SharedArrayBuffer not available; falling back to single-threaded dispatcher"
+                );
+            }
         }
+
+        #[cfg(not(feature = "multithreaded"))]
+        log::info!("WebDispatcher built without multithreaded support; using single-threaded mode");
 
         #[cfg(feature = "multithreaded")]
         let background_threads = if supports_threads {
@@ -276,6 +289,7 @@ impl PlatformDispatcher for WebDispatcher {
     }
 }
 
+#[cfg(feature = "multithreaded")]
 fn execute_on_main_thread(window: &web_sys::Window, item: MainThreadItem) {
     match item {
         MainThreadItem::Runnable(runnable) => {

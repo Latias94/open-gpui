@@ -130,6 +130,10 @@ verified_by:
   - cargo nextest run -p open-gpui-command --no-fail-fast
   - cargo fmt -p open-gpui-command -p open-gpui-ui-components --check
   - cargo check -p open-gpui-command -p open-gpui-ui-components --tests
+  - cargo check -p open-gpui-web --target wasm32-unknown-unknown -j 1
+  - cargo check -p open-gpui-platform --target wasm32-unknown-unknown -j 1
+  - cargo check -p open-gpui-wgpu --target wasm32-unknown-unknown -j 1
+  - (cd crates/gpui_web/examples/hello_web && cargo check --target wasm32-unknown-unknown -j 1)
 ---
 
 # Current State
@@ -141,6 +145,12 @@ verified_by:
   `50f7cfc`, and verification fallout was fixed in `05f63de`. The remaining direct outdated root
   dependencies are `core-graphics` and `core-text`, intentionally held because the current
   `open-gpui-font-kit` native handles still use the older CoreGraphics/CoreText FFI type line.
+- Done on `refactor/ui-framework-non-overlay-depth`: stable wasm compile gates now pass for
+  `open-gpui-web`, `open-gpui-platform`, and `open-gpui-wgpu` on `wasm32-unknown-unknown`.
+  `open-gpui-web` defaults to the single-threaded wasm path; the `multithreaded` feature remains a
+  nightly/shared-memory path because `wasm_thread 0.3.3` enables `stdarch_wasm_atomic_wait`.
+  `open-gpui-platform` exposes `web-multithreaded`, and `hello_web` compile-checks on nightly with
+  that feature plus its shared-memory wasm rustflags.
 - Local nextest list-stage stalls on macOS were diagnosed as dyld/Gatekeeper validation of newly
   built test binaries, not scheduler/UI test logic. Rebuilding affected test binaries restored
   normal execution; the durable verification note is

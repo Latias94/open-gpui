@@ -20,16 +20,7 @@ use std::{
 };
 use wasm_bindgen::prelude::*;
 
-static BUNDLED_FONTS: &[&[u8]] = &[
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf"),
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf"),
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf"),
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-Bold.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-Italic.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-BoldItalic.ttf"),
-];
+static BUNDLED_FONTS: &[&[u8]] = &[];
 
 pub struct WebPlatform {
     browser_window: web_sys::Window,
@@ -70,12 +61,16 @@ impl WebPlatform {
         let text_system = Arc::new(open_gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
             "IBM Plex Sans",
         ));
-        let fonts = BUNDLED_FONTS
-            .iter()
-            .map(|bytes| Cow::Borrowed(*bytes))
-            .collect();
-        if let Err(error) = text_system.add_fonts(fonts) {
-            log::error!("failed to load bundled fonts: {error:#}");
+        if BUNDLED_FONTS.is_empty() {
+            log::warn!("WebPlatform started without bundled fonts");
+        } else {
+            let fonts = BUNDLED_FONTS
+                .iter()
+                .map(|bytes| Cow::Borrowed(*bytes))
+                .collect();
+            if let Err(error) = text_system.add_fonts(fonts) {
+                log::error!("failed to load bundled fonts: {error:#}");
+            }
         }
         let text_system: Arc<dyn PlatformTextSystem> = text_system;
         let active_display: Rc<dyn PlatformDisplay> =
