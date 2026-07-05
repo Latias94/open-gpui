@@ -15,9 +15,9 @@ use jellyflow_open_gpui::{
     control_option_key, control_selected_option_key, open_gpui_action_button_element_id,
     open_gpui_action_menu_element_id, open_gpui_control_element_id,
     open_gpui_custom_renderer_badge_element_id, open_gpui_custom_repeatables_badge_element_id,
-    open_gpui_custom_slots_badge_element_id, open_gpui_repeatable_item_element_id,
-    open_gpui_repeatable_remove_action_element_id, open_gpui_repeatable_reorder_action_element_id,
-    open_gpui_slot_action_button_element_id,
+    open_gpui_custom_slots_badge_element_id, open_gpui_product_card_element_id,
+    open_gpui_repeatable_item_element_id, open_gpui_repeatable_remove_action_element_id,
+    open_gpui_repeatable_reorder_action_element_id, open_gpui_slot_action_button_element_id,
 };
 use open_gpui::{
     AnyElement, App, Bounds, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, WeakEntity, Window,
@@ -795,7 +795,7 @@ pub fn render_product_card(
     accent: open_gpui::Rgba,
     fill: open_gpui::Rgba,
     view: WeakEntity<crate::JellyflowCanvasView>,
-) -> open_gpui::Div {
+) -> open_gpui::Stateful<open_gpui::Div> {
     render_product_surface_pointer_region(
         div()
             .size_full()
@@ -812,6 +812,10 @@ pub fn render_product_card(
             .shadow_sm(),
         view,
     )
+    .id(open_gpui_product_card_element_id(
+        context.node_id,
+        &context.renderer_key,
+    ))
 }
 
 pub fn render_product_surface_pointer_region(

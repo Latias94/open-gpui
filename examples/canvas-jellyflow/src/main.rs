@@ -57,15 +57,15 @@ use jellyflow_open_gpui::{
     OpenGpuiWireRouteEvidence, apply_dropped_wire_insert, assign_layout_pass_measurement_revision,
     open_gpui_action_summary_element_id, open_gpui_blackboard_item_element_id,
     open_gpui_blackboard_status_element_id, open_gpui_chrome_fallback_button_element_id,
-    open_gpui_node_renderer_context, open_gpui_repeatable_add_action_element_id,
-    open_gpui_repeatable_collection_element_id, open_gpui_repeatable_item_element_id,
-    open_gpui_repeatable_remove_action_element_id, open_gpui_repeatable_reorder_action_element_id,
-    open_gpui_slot_action_label_element_id, open_gpui_slot_badge_element_id,
-    open_gpui_slot_preview_progress_element_id, open_gpui_slot_status_label_element_id,
-    open_gpui_slot_value_element_id, project_actions_for_surface,
-    project_blackboards_for_descriptor, project_dropped_wire_menu, project_inspectors_for_surface,
-    project_menu, project_node_measurement, project_slot_controls, repeatable_item_projection,
-    repeatable_surface_projection, resolve_inspector_target_bounds,
+    open_gpui_node_renderer_context, open_gpui_node_surface_wrapper_element_id,
+    open_gpui_repeatable_add_action_element_id, open_gpui_repeatable_collection_element_id,
+    open_gpui_repeatable_item_element_id, open_gpui_repeatable_remove_action_element_id,
+    open_gpui_repeatable_reorder_action_element_id, open_gpui_slot_action_label_element_id,
+    open_gpui_slot_badge_element_id, open_gpui_slot_preview_progress_element_id,
+    open_gpui_slot_status_label_element_id, open_gpui_slot_value_element_id,
+    project_actions_for_surface, project_blackboards_for_descriptor, project_dropped_wire_menu,
+    project_inspectors_for_surface, project_menu, project_node_measurement, project_slot_controls,
+    repeatable_item_projection, repeatable_surface_projection, resolve_inspector_target_bounds,
 };
 use open_gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Modifiers, MouseButton,
@@ -1827,7 +1827,7 @@ fn render_open_gpui_node_wrapper(
     bounds: Bounds<Pixels>,
     surface: &NodeSurfaceSummary,
     chrome: OpenGpuiNodeWrapperChrome,
-) -> open_gpui::Div {
+) -> open_gpui::Stateful<open_gpui::Div> {
     let zoom = surface.zoom;
     let pad = if zoom >= 1.0 { px(10.0) } else { px(8.0) };
     let top = bounds.top() + pad;
@@ -1846,7 +1846,7 @@ fn render_open_gpui_node_wrapper(
         .min_h(px(0.0))
         .overflow_hidden();
 
-    match chrome {
+    let wrapper = match chrome {
         OpenGpuiNodeWrapperChrome::Custom => wrapper,
         OpenGpuiNodeWrapperChrome::Fallback => {
             let accent = if surface.selected {
@@ -1862,7 +1862,12 @@ fn render_open_gpui_node_wrapper(
                 .bg(rgb(0xffffff))
                 .shadow_sm()
         }
-    }
+    };
+
+    wrapper.id(open_gpui_node_surface_wrapper_element_id(
+        surface.renderer_context.node_id,
+        &surface.renderer_context.renderer_key,
+    ))
 }
 
 fn render_descriptor_fallback_node_content(
@@ -4752,6 +4757,76 @@ mod tests {
                 );
             })
             .expect("product gallery pending-frame test window updates");
+    }
+
+    #[test]
+    fn product_gallery_surfaces_are_keyed_by_renderer_before_layout_measurement() {
+        let workflow_surface = product_gallery_surface("workflow.review", "decision-card");
+        let erd_surface = product_gallery_surface("erd.customer_orders", "table-card");
+        let workflow_wrapper_id = open_gpui_node_surface_wrapper_element_id(
+            workflow_surface.renderer_context.node_id,
+            &workflow_surface.renderer_context.renderer_key,
+        );
+        let erd_wrapper_id = open_gpui_node_surface_wrapper_element_id(
+            erd_surface.renderer_context.node_id,
+            &erd_surface.renderer_context.renderer_key,
+        );
+
+        assert_ne!(
+            workflow_wrapper_id, erd_wrapper_id,
+            "surface wrapper id must change when the gallery switches renderer families"
+        );
+
+        let wrapper = render_open_gpui_node_wrapper(
+            Bounds::new(point(px(0.0), px(0.0)), size(px(240.0), px(140.0))),
+            &erd_surface,
+            OpenGpuiNodeWrapperChrome::Custom,
+        );
+        assert_eq!(
+            open_gpui::Element::id(&wrapper)
+                .expect("surface wrapper should be keyed")
+                .to_string(),
+            erd_wrapper_id
+        );
+    }
+
+    fn product_gallery_surface(fixture_id: &str, renderer_key: &str) -> NodeSurfaceSummary {
+        let case = product_gallery::product_gallery_cases()
+            .into_iter()
+            .find(|case| case.id() == fixture_id)
+            .unwrap_or_else(|| panic!("product gallery fixture should exist: {fixture_id}"));
+        let (store, document, _) =
+            project_product_gallery_case(&case).expect("product gallery fixture should project");
+        let editor =
+            editor_for_document(document).expect("canvas editor should accept gallery fixture");
+        let model = CanvasPaintModel::from(&editor);
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+
+        editor
+            .document()
+            .nodes()
+            .filter_map(|node| {
+                let jelly_node = jelly_node_id_from_node(node)?;
+                let jelly_node_record = store.graph().nodes().get(&jelly_node)?;
+                node_surface_summary_for_node(
+                    node,
+                    jelly_node,
+                    jelly_node_record,
+                    store.graph(),
+                    model.viewport().zoom,
+                    editor
+                        .selection()
+                        .contains_node(&NodeId::from(node.id.as_str())),
+                    &semantic_registry,
+                    &node_kit_registry,
+                    store.node_measurement(jelly_node),
+                )
+            })
+            .find(|surface| surface.renderer_context.renderer_key == renderer_key)
+            .unwrap_or_else(|| {
+                panic!("fixture {fixture_id} should expose renderer surface {renderer_key}")
+            })
     }
 
     #[open_gpui::test]
