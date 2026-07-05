@@ -1,9 +1,7 @@
 //! Component catalog metadata for the foundation gallery.
 
 use crate::story::{StoryContract, StoryContractKind, StoryProbeContract, StoryProbeOperation::*};
-use open_gpui_ui_components::component_contract::{
-    SurfaceGalleryStatus, component_contract_family, component_contract_gallery_status,
-};
+use open_gpui_ui_components::component_contract::{SurfaceGalleryStatus, component_contract_entry};
 
 /// Stable jump targets for the Components page navigator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -313,7 +311,7 @@ impl ComponentCatalogEntry {
     ) -> Self {
         Self {
             name,
-            status: ComponentCatalogStatus::from_contract(component_contract_gallery_status(name)),
+            status: contract_catalog_status(name),
             family: contract_family_or(name, family),
             state: Some(state),
             coverage,
@@ -332,7 +330,7 @@ impl ComponentCatalogEntry {
     ) -> Self {
         Self {
             name,
-            status: ComponentCatalogStatus::from_contract(component_contract_gallery_status(name)),
+            status: contract_catalog_status(name),
             family: contract_family_or(name, family),
             state: Some(state),
             coverage,
@@ -349,7 +347,7 @@ impl ComponentCatalogEntry {
     ) -> Self {
         Self {
             name,
-            status: ComponentCatalogStatus::from_contract(component_contract_gallery_status(name)),
+            status: contract_catalog_status(name),
             family: contract_family_or(name, family),
             state: None,
             coverage,
@@ -366,7 +364,7 @@ impl ComponentCatalogEntry {
     ) -> Self {
         Self {
             name,
-            status: ComponentCatalogStatus::from_contract(component_contract_gallery_status(name)),
+            status: contract_catalog_status(name),
             family: contract_family_or(name, family),
             state: None,
             coverage,
@@ -462,9 +460,19 @@ impl ComponentCatalogEntry {
     }
 }
 
+const fn contract_catalog_status(name: &'static str) -> ComponentCatalogStatus {
+    ComponentCatalogStatus::from_contract(match component_contract_entry(name) {
+        Some(entry) => entry.gallery_status,
+        None => SurfaceGalleryStatus::NotInGallery,
+    })
+}
+
 const fn contract_family_or(name: &'static str, fallback: &'static str) -> &'static str {
-    match component_contract_family(name) {
-        Some(family) => family,
+    match component_contract_entry(name) {
+        Some(entry) => match entry.family {
+            Some(family) => family,
+            None => fallback,
+        },
         None => fallback,
     }
 }

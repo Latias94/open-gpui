@@ -44,15 +44,10 @@ impl FocusRing {
     }
 }
 
-/// Converts a focus ring into a GPUI box shadow for render adapters.
+/// Converts a focus ring into a GPUI box shadow with an explicit theme context.
 ///
 /// This is an adapter-only helper: resolved component state should expose [`FocusRing`] and leave
 /// concrete `BoxShadow` painting to the GPUI renderer boundary.
-pub fn focus_ring_shadow(ring: FocusRing) -> Vec<BoxShadow> {
-    focus_ring_shadow_with_theme(ring, &ThemeContext::light())
-}
-
-/// Converts a focus ring into a GPUI box shadow with an explicit theme context.
 pub fn focus_ring_shadow_with_theme(ring: FocusRing, theme: &ThemeContext) -> Vec<BoxShadow> {
     vec![BoxShadow {
         color: theme.resolve(ring.color).into(),
@@ -73,7 +68,7 @@ mod tests {
     fn gpui_adapter_paints_focus_ring_as_outer_shadow() {
         let ring = FocusRing::from_color(ColorIntent::new(semantic::FOCUS_RING, 0x2f80ed));
 
-        let shadow = focus_ring_shadow(ring);
+        let shadow = focus_ring_shadow_with_theme(ring, &ThemeContext::light());
 
         assert_eq!(shadow.len(), 1);
         assert_eq!(shadow[0].spread_radius, px(2.0));

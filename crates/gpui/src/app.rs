@@ -237,6 +237,23 @@ impl Application {
         self
     }
 
+    /// Invokes a handler when the system wakes from sleep.
+    pub fn on_system_wake<F>(&self, mut callback: F) -> &Self
+    where
+        F: 'static + FnMut(&mut App),
+    {
+        let this = Rc::downgrade(&self.0);
+        self.0
+            .borrow_mut()
+            .platform
+            .on_system_wake(Box::new(move || {
+                if let Some(app) = this.upgrade() {
+                    callback(&mut app.borrow_mut());
+                }
+            }));
+        self
+    }
+
     /// Returns a handle to the [`BackgroundExecutor`] associated with this app, which can be used to spawn futures in the background.
     pub fn background_executor(&self) -> BackgroundExecutor {
         self.0.borrow().background_executor.clone()
@@ -2827,7 +2844,10 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
 
 #[cfg(test)]
 mod test {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
 
     use crate::{AppContext, Empty, TestAppContext, px, size};
 
@@ -2862,6 +2882,20 @@ mod test {
         });
 
         assert_eq!(*observation_count.borrow(), 2);
+    }
+
+    #[crate::test]
+    fn application_on_system_wake_runs_callback(cx: &mut TestAppContext) {
+        let wake_count = Rc::new(Cell::new(0));
+        super::Application(cx.app.clone()).on_system_wake({
+            let wake_count = wake_count.clone();
+            move |_| wake_count.set(wake_count.get() + 1)
+        });
+
+        cx.simulate_system_wake();
+        cx.simulate_system_wake();
+
+        assert_eq!(wake_count.get(), 2);
     }
 
     #[crate::test]

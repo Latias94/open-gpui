@@ -29,6 +29,48 @@ cargo check -p open-gpui-wgpu --target wasm32-unknown-unknown --locked -j 1
 These are stable, single-threaded wasm gates. Nightly shared-memory/atomics checks for
 `hello_web` remain optional verification, not CI requirements.
 
+For the 2026-07 Zed GPUI upstream-sync utility slice, the focused U7 verification on the Windows
+host was:
+
+```powershell
+cargo nextest run -p open-gpui-util
+cargo check -p open-gpui-util --locked
+cargo check -p open-gpui-util --target x86_64-apple-darwin --locked
+cargo run -p xtask -- scan-import-boundary
+git diff --check
+```
+
+The Windows Job Object process-tree tests ran on the host. The Darwin custom-`PATH` command tests
+compiled for `x86_64-apple-darwin`; runtime execution still requires a macOS runner.
+
+For the 2026-07 Zed GPUI upstream-sync SVG renderer slice, the focused U8 verification on the
+Windows host was:
+
+```powershell
+cargo nextest run -p open-gpui -E "test(text_with_split_glyph_clusters_in_mixed_fonts_does_not_panic) or test(svg_renderer)"
+cargo check -p open-gpui --locked
+cargo run -p xtask -- renderer-smoke
+cargo run -p xtask -- scan-import-boundary
+cargo audit
+git diff --check
+```
+
+The follow-up dependency remediation updated the actionable advisories: `quinn-proto` now resolves
+to `0.11.16`, `anyhow` to `1.0.103`, `memmap2` to `0.9.11`, `async-tar` to `0.6.1` with the Tokio
+runtime, `futures-lite` to `2.6.1`, `stacksafe` to `1.0.2`, and `reqwest` to `0.13.4`. `cargo audit`
+now exits successfully. `.cargo/audit.toml` temporarily ignores the two `quick-xml 0.39.4`
+advisories because the currently published `wayland-scanner 0.31.10` and `zbus_xml 5.1.1` releases
+still pin `quick-xml = "0.39"`, and both reach this workspace through proc-macro/code-generation
+paths rather than runtime XML parsing. Remove those ignores once upstream releases accept
+`quick-xml >= 0.41`.
+
+The remaining warning-class advisories are not denied by the local audit gate: `paste 1.0.15` comes
+from `image`'s AVIF codec chain, and `ttf-parser 0.25.1` comes through the font/SVG stack. Removing
+the first would drop AVIF image support; replacing the second requires a renderer/font-stack
+migration. The updated SVG stack crates reviewed in this slice (`resvg 0.46.0`, `usvg 0.46.0`,
+`imagesize 0.14.0`, `kurbo 0.13.1`, `polycool 0.4.0`, `roxmltree 0.21.1`, `svgtypes 0.16.1`) are
+crates.io packages with MIT and/or Apache-2.0 licenses.
+
 For focused `open-gpui-canvas` work, run:
 
 ```sh
@@ -486,7 +528,8 @@ source strings for shipped status. The component crate root and prelude both re-
 namespaced under `open_gpui_ui_components::gpui_adapter`. Key sentinels include
 `component_api_inventory_covers_official_gallery_catalog`,
 `component_api_inventory_uses_stable_ownership_vocabulary`, and
-`component_contract_projection_functions_delegate_to_contract_rows`,
+`component_contract_entry_returns_canonical_rows`,
+`component_contract_queries_derive_overlay_and_recipe_rows`,
 `component_contract_rows_are_split_by_responsibility`, and
 `root_and_prelude_exports_match_contract_default_surface_intent`. Run the focused proof with:
 
@@ -533,8 +576,7 @@ and `register_theme_json_file`. Production component render paths should resolve
 `ThemeResolver::current(cx)` or an explicit snapshot; direct `ThemeResolver::resolve(...)` is a
 legacy default-light compatibility path and should not appear in `crates/ui_components/src`
 rendering code. Focus-ring painting follows the same rule: production render paths should use
-`focus_ring_shadow_with_theme(...)`, while `focus_ring_shadow(...)` remains a default-light
-compatibility helper guarded by the public-surface adapter tests.
+`focus_ring_shadow_with_theme(...)` with an explicit render-time theme context.
 Loader failures are structured as `ThemeLoadError` / `ThemeFileField` for unsupported schema
 versions, missing identity fields, unsupported token or state names, duplicate token/state pairs,
 and invalid RGB values.
@@ -904,12 +946,12 @@ callers should convert their concrete window or viewport width at the adapter bo
 invoking UI-core adaptive helpers. The companion strict-boundary inventory must stay empty.
 `adapter_only_public_surfaces_match_allowlist` and
 `gpui_adapter_exports_group_runtime_specific_surfaces` guard the intentionally public GPUI helper
-surface: `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow`,
-`focus_ring_shadow_with_theme`, `GpuiOverlayState`, the adapter accessibility/geometry conversions,
-and related adapter scheduling helpers must stay classified under
+surface: `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow_with_theme`,
+`GpuiOverlayState`, the adapter accessibility/geometry conversions, and related adapter scheduling
+helpers must stay classified under
 `open_gpui_ui_components::gpui_adapter` instead of drifting into the crate root, prelude default
 interface, or resolved state. `FocusRing` itself uses neutral `UiPx`; only the GPUI focus-ring
-shadow helpers return `BoxShadow`, and production render paths should use the explicit-theme helper.
+shadow helper returns `BoxShadow`, and production render paths should use the explicit-theme helper.
 
 When changing GPUI accessibility repair or component metadata that creates explicit cross-node
 relationships, also run:

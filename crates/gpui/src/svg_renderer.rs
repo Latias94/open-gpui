@@ -324,6 +324,28 @@ mod tests {
     }
 
     #[test]
+    fn text_with_split_glyph_clusters_in_mixed_fonts_does_not_panic() {
+        let Some(db) = db_with_bundled_fonts() else {
+            return;
+        };
+        let options = usvg::Options {
+            fontdb: std::sync::Arc::new(db),
+            ..Default::default()
+        };
+
+        // A base letter followed by combining marks. HarfBuzz maps each mark
+        // glyph to the base byte index, which used to trigger the split-glyph
+        // panic when the text run crossed fonts.
+        let zalgo = "e\u{0301}\u{0302}\u{0303}\u{0304}\u{0306}\u{0307}\u{0308}\u{030a}";
+        let svg = format!(
+            r#"<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><text font-family="Lilex" font-size="32">{zalgo}<tspan font-family="IBM Plex Sans">{zalgo}</tspan></text></svg>"#
+        );
+
+        usvg::Tree::from_data(svg.as_bytes(), &options)
+            .expect("SVG with mixed-font text should parse");
+    }
+
+    #[test]
     fn test_is_emoji_presentation() {
         let cases = [
             ("a", false),

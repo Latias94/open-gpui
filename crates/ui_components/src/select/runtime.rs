@@ -12,17 +12,20 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
+use crate::choice_overlay_runtime::{
+    ChoiceOverlayRuntimeState, close_choice_overlay, commit_choice_overlay_single_value,
+};
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::gpui_px_from_ui;
 use crate::listbox::{Listbox, ListboxGroup, ListboxOption};
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayCloseRuntimeRequest, OverlayLayerHost, OverlayOpenRuntimeRequest,
-    resolve_overlay_open_state, set_overlay_open,
+    GpuiOverlayPlacement, OverlayLayerHost, OverlayOpenRuntimeRequest, resolve_overlay_open_state,
+    set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::{ThemeContext, ThemeResolver};
 
-use super::model::{SelectSelection, SelectState};
+use super::model::{SelectSelection, SelectState, SelectStateRequest};
 use super::render_plan::SelectRenderPlan;
 
 type SelectOpenChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
@@ -34,6 +37,21 @@ struct SelectRuntime {
     active_value: Option<String>,
     selected_value: Option<String>,
     trigger_focus: FocusHandle,
+}
+
+impl ChoiceOverlayRuntimeState for SelectRuntime {
+    fn open_mut(&mut self) -> &mut bool {
+        &mut self.open
+    }
+
+    fn trigger_focus(&self) -> FocusHandle {
+        self.trigger_focus.clone()
+    }
+
+    fn commit_single_value(&mut self, value: String) {
+        self.selected_value = Some(value.clone());
+        self.active_value = Some(value);
+    }
 }
 
 /// A concrete GPUI select component.
@@ -209,24 +227,24 @@ impl Select {
 
     /// Returns resolved select state.
     pub fn state(&self) -> SelectState {
-        SelectState::resolve(
-            self.size,
-            self.disabled,
-            self.open,
-            self.default_open,
-            self.label.to_string(),
-            self.placeholder.to_string(),
-            self.selected_value.as_deref(),
-            self.active_value.as_deref(),
-            self.groups.iter().map(ListboxGroup::descriptor),
-            self.options.iter().map(ListboxOption::descriptor),
-            self.placement_side,
-            self.placement_alignment,
-            self.outside_press_policy,
-            self.initial_focus_intent.clone(),
-            self.focus_restore_intent.clone(),
-            self.tokens,
-        )
+        SelectState::resolve(SelectStateRequest {
+            size: self.size,
+            disabled: self.disabled,
+            open: self.open,
+            default_open: self.default_open,
+            label: self.label.to_string(),
+            placeholder: self.placeholder.to_string(),
+            selected_value: self.selected_value.clone(),
+            active_value: self.active_value.clone(),
+            groups: self.groups.iter().map(ListboxGroup::descriptor).collect(),
+            options: self.options.iter().map(ListboxOption::descriptor).collect(),
+            placement_side: self.placement_side,
+            placement_alignment: self.placement_alignment,
+            outside_press_policy: self.outside_press_policy,
+            initial_focus_intent: self.initial_focus_intent.clone(),
+            focus_restore_intent: self.focus_restore_intent.clone(),
+            tokens: self.tokens,
+        })
     }
 }
 
@@ -265,24 +283,24 @@ impl RenderOnce for Select {
             .as_deref()
             .or(runtime_state.active_value.as_deref())
             .or(selected_value);
-        let state = SelectState::resolve(
-            self.size,
-            self.disabled,
-            Some(resolved_open),
-            self.default_open,
-            self.label.to_string(),
-            self.placeholder.to_string(),
-            selected_value,
-            active_value,
-            self.groups.iter().map(ListboxGroup::descriptor),
-            self.options.iter().map(ListboxOption::descriptor),
-            self.placement_side,
-            self.placement_alignment,
-            self.outside_press_policy,
-            self.initial_focus_intent.clone(),
-            self.focus_restore_intent.clone(),
-            self.tokens,
-        );
+        let state = SelectState::resolve(SelectStateRequest {
+            size: self.size,
+            disabled: self.disabled,
+            open: Some(resolved_open),
+            default_open: self.default_open,
+            label: self.label.to_string(),
+            placeholder: self.placeholder.to_string(),
+            selected_value: selected_value.map(str::to_owned),
+            active_value: active_value.map(str::to_owned),
+            groups: self.groups.iter().map(ListboxGroup::descriptor).collect(),
+            options: self.options.iter().map(ListboxOption::descriptor).collect(),
+            placement_side: self.placement_side,
+            placement_alignment: self.placement_alignment,
+            outside_press_policy: self.outside_press_policy,
+            initial_focus_intent: self.initial_focus_intent.clone(),
+            focus_restore_intent: self.focus_restore_intent.clone(),
+            tokens: self.tokens,
+        });
         let explicit_active_value = self.active_value.clone();
         let plan = SelectRenderPlan::from_state(self.id, &state);
         let trigger_border = theme.resolve(plan.colors.trigger_border());
@@ -497,24 +515,14 @@ fn select_content_element(
             let selection = SelectSelection::from(selection);
             let selected_value = selection.value().to_owned();
             let on_select = listbox_select.clone();
-            let trigger_focus = listbox_runtime.read(cx).trigger_focus.clone();
-            listbox_overlay_host.close_runtime_with_after_update(
-                OverlayCloseRuntimeRequest::new(
-                    listbox_runtime.clone(),
-                    &listbox_focus_restore,
-                    trigger_focus,
-                    listbox_open_change.as_deref(),
-                ),
+            commit_choice_overlay_single_value(
+                &listbox_overlay_host,
+                listbox_runtime.clone(),
+                listbox_focus_restore.clone(),
+                listbox_open_change.clone(),
+                selected_value,
                 window,
                 cx,
-                {
-                    let selected_value = selected_value.clone();
-                    move |runtime| {
-                        runtime.selected_value = Some(selected_value.clone());
-                        runtime.active_value = Some(selected_value);
-                        set_overlay_open(&mut runtime.open, false);
-                    }
-                },
                 move |window, cx| {
                     if let Some(on_select) = on_select.as_ref() {
                         on_select(selection, window, cx);
@@ -598,18 +606,12 @@ fn close_select(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    overlay_host.close_runtime(
-        OverlayCloseRuntimeRequest::new(
-            runtime,
-            &focus_restore,
-            trigger_focus,
-            on_open_change.as_deref(),
-        ),
+    close_choice_overlay(
+        &overlay_host,
+        runtime,
+        focus_restore,
+        on_open_change,
         window,
         cx,
-        |runtime| {
-            set_overlay_open(&mut runtime.open, false);
-        },
     );
 }

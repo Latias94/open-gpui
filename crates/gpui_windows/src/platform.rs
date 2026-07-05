@@ -21,7 +21,7 @@ use windows::{
         Foundation::*,
         Graphics::{Direct3D11::ID3D11Device, Gdi::*},
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*},
+        System::{Com::*, LibraryLoader::*, Ole::*, Power::*, SystemInformation::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
@@ -45,6 +45,7 @@ pub struct WindowsPlatform {
     /// as resizing them has failed, causing us to have lost at least the render target.
     invalidate_devices: Arc<AtomicBool>,
     handle: HWND,
+    suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
     disable_direct_composition: bool,
 }
 
@@ -75,6 +76,7 @@ struct PlatformCallbacks {
     will_open_app_menu: Cell<Option<Box<dyn FnMut()>>>,
     validate_app_menu_command: Cell<Option<Box<dyn FnMut(&dyn Action) -> bool>>>,
     keyboard_layout_change: Cell<Option<Box<dyn FnMut()>>>,
+    system_wake: Cell<Option<Box<dyn FnMut()>>>,
 }
 
 impl WindowsPlatformState {
@@ -188,6 +190,7 @@ impl WindowsPlatform {
             foreground_executor,
             text_system,
             direct_write_text_system,
+            suspend_resume_notification: RefCell::new(None),
             disable_direct_composition,
             drop_target_helper,
             invalidate_devices: Arc::new(AtomicBool::new(false)),
@@ -654,6 +657,22 @@ impl Platform for WindowsPlatform {
         self.inner.state.callbacks.reopen.set(Some(callback));
     }
 
+    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
+        self.inner.state.callbacks.system_wake.set(Some(callback));
+
+        let mut notification = self.suspend_resume_notification.borrow_mut();
+        if notification.is_none() {
+            *notification = unsafe {
+                // SAFETY: self.handle is the platform window that receives WM_POWERBROADCAST.
+                RegisterSuspendResumeNotification(
+                    HANDLE(self.handle.0),
+                    DEVICE_NOTIFY_WINDOW_HANDLE,
+                )
+                .log_err()
+            };
+        }
+    }
+
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
         *self.inner.state.menus.borrow_mut() = menus.into_iter().map(|menu| menu.owned()).collect();
     }
@@ -737,6 +756,10 @@ impl Platform for WindowsPlatform {
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
+        if let Err(err) = validate_credential_blob_size(password.len()) {
+            return Task::ready(Err(err));
+        }
+
         let password = password.to_vec();
         let mut username = username.encode_utf16().chain(Some(0)).collect_vec();
         let mut target_name = windows_credentials_target_name(url)
@@ -896,6 +919,7 @@ impl WindowsPlatformInner {
             | WM_GPUI_DOCK_MENU_ACTION
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
             | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
+            WM_POWERBROADCAST => self.handle_power_broadcast(wparam),
             _ => None,
         };
         if let Some(result) = handled {
@@ -1032,6 +1056,13 @@ impl WindowsPlatformInner {
         Some(0)
     }
 
+    fn handle_power_broadcast(&self, wparam: WPARAM) -> Option<isize> {
+        if wparam.0 as u32 == PBT_APMRESUMEAUTOMATIC {
+            self.with_callback(|callbacks| &callbacks.system_wake, |callback| callback());
+        }
+        Some(1)
+    }
+
     fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
         let directx_devices = lparam.0 as *const DirectXDevices;
         let directx_devices = unsafe { &*directx_devices };
@@ -1045,6 +1076,10 @@ impl WindowsPlatformInner {
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
         unsafe {
+            if let Some(notification) = self.suspend_resume_notification.borrow_mut().take() {
+                // SAFETY: notification was returned by RegisterSuspendResumeNotification.
+                UnregisterSuspendResumeNotification(notification).log_err();
+            }
             DestroyWindow(self.handle)
                 .context("Destroying platform window")
                 .log_err();
@@ -1328,6 +1363,16 @@ fn handle_gpu_device_lost(
     Ok(())
 }
 
+fn validate_credential_blob_size(size: usize) -> Result<()> {
+    if size > CRED_MAX_CREDENTIAL_BLOB_SIZE as usize {
+        anyhow::bail!(
+            "credential blob is {size} bytes, which exceeds the Windows Credential Manager limit of {CRED_MAX_CREDENTIAL_BLOB_SIZE} bytes"
+        );
+    }
+
+    Ok(())
+}
+
 const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("Zed::PlatformWindow");
 
 fn register_platform_window_class() {
@@ -1419,5 +1464,24 @@ mod tests {
         let item = ClipboardItem::new_string_with_json_metadata("abcdef".to_string(), vec![3, 4]);
         write_to_clipboard(item.clone());
         assert_eq!(read_from_clipboard(), Some(item));
+    }
+
+    #[test]
+    fn credential_blob_size_error_omits_secret_context() {
+        let secret_url = "https://example.test/callback?token=secret-token";
+        let username = "secret-user@example.test";
+        let password = b"secret-password";
+        let oversized = super::CRED_MAX_CREDENTIAL_BLOB_SIZE as usize + 1;
+
+        super::validate_credential_blob_size(password.len()).unwrap();
+
+        let error = super::validate_credential_blob_size(oversized).unwrap_err();
+        let message = error.to_string();
+
+        assert!(message.contains(&oversized.to_string()));
+        assert!(message.contains(&super::CRED_MAX_CREDENTIAL_BLOB_SIZE.to_string()));
+        assert!(!message.contains(secret_url));
+        assert!(!message.contains(username));
+        assert!(!message.contains("secret-password"));
     }
 }

@@ -890,7 +890,7 @@ impl WindowsWindowInner {
             return Some(HTTRANSPARENT as _);
         }
 
-        if !self.is_movable || self.state.is_fullscreen() {
+        if self.state.is_fullscreen() {
             return None;
         }
 
@@ -901,16 +901,7 @@ impl WindowsWindowInner {
                 .callbacks
                 .hit_test_window_control
                 .set(Some(callback));
-            if let Some(area) = area {
-                match area {
-                    WindowControlArea::Drag => Some(HTCAPTION as _),
-                    WindowControlArea::Close => return Some(HTCLOSE as _),
-                    WindowControlArea::Max => return Some(HTMAXBUTTON as _),
-                    WindowControlArea::Min => return Some(HTMINBUTTON as _),
-                }
-            } else {
-                None
-            }
+            area.and_then(|area| hit_test_window_control_area(area, self.is_movable))
         } else {
             None
         };
@@ -1645,6 +1636,16 @@ fn get_frame_thicknessy(dpi: u32) -> i32 {
     resize_frame_thickness + padding_thickness
 }
 
+fn hit_test_window_control_area(area: WindowControlArea, is_movable: bool) -> Option<isize> {
+    match area {
+        WindowControlArea::Drag if is_movable => Some(HTCAPTION as _),
+        WindowControlArea::Drag => None,
+        WindowControlArea::Close => Some(HTCLOSE as _),
+        WindowControlArea::Max => Some(HTMAXBUTTON as _),
+        WindowControlArea::Min => Some(HTMINBUTTON as _),
+    }
+}
+
 fn notify_frame_changed(handle: HWND) {
     unsafe {
         SetWindowPos(
@@ -1665,5 +1666,41 @@ fn notify_frame_changed(handle: HWND) {
                 | SWP_NOZORDER,
         )
         .log_err();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use open_gpui::WindowControlArea;
+    use windows::Win32::UI::WindowsAndMessaging::{HTCAPTION, HTCLOSE, HTMAXBUTTON, HTMINBUTTON};
+
+    use super::hit_test_window_control_area;
+
+    #[test]
+    fn immovable_windows_still_hit_test_caption_buttons() {
+        assert_eq!(
+            hit_test_window_control_area(WindowControlArea::Drag, false),
+            None
+        );
+        assert_eq!(
+            hit_test_window_control_area(WindowControlArea::Close, false),
+            Some(HTCLOSE as _)
+        );
+        assert_eq!(
+            hit_test_window_control_area(WindowControlArea::Max, false),
+            Some(HTMAXBUTTON as _)
+        );
+        assert_eq!(
+            hit_test_window_control_area(WindowControlArea::Min, false),
+            Some(HTMINBUTTON as _)
+        );
+    }
+
+    #[test]
+    fn movable_windows_hit_test_caption_drag_area() {
+        assert_eq!(
+            hit_test_window_control_area(WindowControlArea::Drag, true),
+            Some(HTCAPTION as _)
+        );
     }
 }

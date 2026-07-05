@@ -6,13 +6,13 @@ mod render_plan;
 mod runtime;
 mod style;
 
-use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
+use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    SharedString, StatefulInteractiveElement, Styled, Window, div, point, px,
+    SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_command::CommandDescriptor;
 use open_gpui_ui_core::{
@@ -24,6 +24,10 @@ use crate::a11y::UiA11yElementExt;
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::overlay::{
     OverlayLayerHost, OverlayOpenRuntimeRequest, resolve_overlay_open_state, set_overlay_open,
+};
+use crate::scroll_surface::{
+    scroll_surface_handle, set_vertical_scroll_offset, should_reset_scroll_surface,
+    vertical_scroll_offset, vertical_viewport_extent,
 };
 use crate::text_editing::TextEditingPolicy;
 use crate::text_input::TextInputDisplayMode;
@@ -43,6 +47,7 @@ pub use descriptor::{
 pub use model::{
     CommandDialogState, CommandGroupState, CommandItemState, CommandNavigationBehavior,
     CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandState,
+    CommandStateDataSource, CommandStateRequest,
 };
 pub use render_plan::{CommandBehaviorSnapshot, CommandRowBehaviorSnapshot};
 pub(crate) use render_plan::{CommandRenderPlan, CommandRowRenderPlan};
@@ -496,60 +501,39 @@ impl Command {
         selected_values: impl IntoIterator<Item = impl Into<String>>,
         active_value: Option<&str>,
     ) -> CommandState {
-        let state = if let Some(index_snapshot) = self.index_snapshot.clone() {
-            CommandState::resolve_from_index_snapshot(
-                self.size,
-                self.disabled,
-                open,
-                self.default_open,
-                self.dialog_enabled,
-                self.label.to_string(),
-                self.placeholder.to_string(),
-                query,
-                query_mode,
-                self.selection_mode,
-                selected_value,
-                selected_values,
-                active_value,
-                self.loading_state.clone(),
-                self.empty_label.to_string(),
-                self.dialog_title.clone(),
-                self.dialog_description.clone(),
-                index_snapshot,
-                self.outside_press_policy,
-                self.escape_key_policy,
-                self.initial_focus_intent.clone(),
-                self.focus_restore_intent.clone(),
-                self.tokens,
-            )
-        } else {
-            CommandState::resolve(
-                self.size,
-                self.disabled,
-                open,
-                self.default_open,
-                self.dialog_enabled,
-                self.label.to_string(),
-                self.placeholder.to_string(),
-                query,
-                query_mode,
-                self.selection_mode,
-                selected_value,
-                selected_values,
-                active_value,
-                self.loading_state.clone(),
-                self.empty_label.to_string(),
-                self.dialog_title.clone(),
-                self.dialog_description.clone(),
-                self.groups.iter().map(CommandGroup::descriptor),
-                self.items.iter().map(CommandItem::descriptor),
-                self.outside_press_policy,
-                self.escape_key_policy,
-                self.initial_focus_intent.clone(),
-                self.focus_restore_intent.clone(),
-                self.tokens,
-            )
-        };
+        let state = CommandState::resolve(CommandStateRequest {
+            size: self.size,
+            disabled: self.disabled,
+            open,
+            default_open: self.default_open,
+            dialog_enabled: self.dialog_enabled,
+            label: self.label.to_string(),
+            placeholder: self.placeholder.to_string(),
+            query: query.to_string(),
+            query_mode,
+            selection_mode: self.selection_mode,
+            selected_value: selected_value.map(str::to_owned),
+            selected_values: selected_values.into_iter().map(Into::into).collect(),
+            active_value: active_value.map(str::to_owned),
+            loading_state: self.loading_state.clone(),
+            empty_label: self.empty_label.to_string(),
+            dialog_title: self.dialog_title.clone(),
+            dialog_description: self.dialog_description.clone(),
+            data_source: self.index_snapshot.clone().map_or_else(
+                || {
+                    CommandStateDataSource::local(
+                        self.groups.iter().map(CommandGroup::descriptor),
+                        self.items.iter().map(CommandItem::descriptor),
+                    )
+                },
+                CommandStateDataSource::snapshot,
+            ),
+            outside_press_policy: self.outside_press_policy,
+            escape_key_policy: self.escape_key_policy,
+            initial_focus_intent: self.initial_focus_intent.clone(),
+            focus_restore_intent: self.focus_restore_intent.clone(),
+            tokens: self.tokens,
+        });
 
         state
             .with_metrics(self.metrics)
@@ -583,7 +567,6 @@ impl RenderOnce for Command {
                 self.active_value.clone(),
                 self.selected_value.clone(),
                 initial_selected_values.clone(),
-                initial_query.clone(),
                 cx.focus_handle(),
             )
         });
@@ -594,7 +577,7 @@ impl RenderOnce for Command {
             input
         });
         let runtime_state = runtime.read(cx).clone();
-        let scroll_handle = runtime_state.scroll_handle.clone();
+        let scroll_handle = scroll_surface_handle(&runtime_state.scroll_surface, None);
         let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
         let resolved_open = open_state.open();
         if open_state.runtime_changed() {
@@ -636,10 +619,18 @@ impl RenderOnce for Command {
             active_value,
         );
         let scroll_reset_key = command_scroll_reset_key(&state);
-        if runtime_state.scroll_reset_key != scroll_reset_key {
-            scroll_handle.set_offset(point(px(0.0), px(0.0)));
+        let previous_scroll_reset_key = runtime_state.scroll_surface.reset_key();
+        let reset_key_changed = previous_scroll_reset_key != Some(scroll_reset_key.as_str());
+        if should_reset_scroll_surface(
+            true,
+            previous_scroll_reset_key,
+            Some(scroll_reset_key.as_str()),
+        ) {
+            set_vertical_scroll_offset(&scroll_handle, UiPx::ZERO);
+        }
+        if reset_key_changed {
             runtime.update(cx, |runtime, _| {
-                runtime.scroll_reset_key = scroll_reset_key.clone();
+                runtime.scroll_surface.set_reset_key(Some(scroll_reset_key));
             });
         }
         let query_change_handler = self.on_query_change.clone();
@@ -661,9 +652,8 @@ impl RenderOnce for Command {
         let input_id: ElementId = (id.clone(), "input").into();
         let content_id: ElementId = (id.clone(), "content").into();
         let listbox_id: ElementId = (id.clone(), "listbox").into();
-        let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
-        let scroll_offset =
-            UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
+        let viewport_extent = vertical_viewport_extent(&scroll_handle);
+        let scroll_offset = vertical_scroll_offset(&scroll_handle);
         let metrics = state.metrics();
         let colors = state.colors();
         let disabled = state.disabled();

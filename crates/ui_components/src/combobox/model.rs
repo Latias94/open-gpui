@@ -91,35 +91,74 @@ pub struct ComboboxState {
     overlay: OverlayResolvedState,
 }
 
+/// Inputs used to resolve public combobox state.
+#[derive(Debug, Clone)]
+pub struct ComboboxStateRequest {
+    /// Control size.
+    pub size: Size,
+    /// Whether interaction is disabled.
+    pub disabled: bool,
+    /// Whether a value is required.
+    pub required: bool,
+    /// Controlled open value, when caller-owned.
+    pub open: Option<bool>,
+    /// Adapter-owned initial open value.
+    pub default_open: bool,
+    /// Accessible combobox label.
+    pub label: String,
+    /// Input placeholder text.
+    pub placeholder: String,
+    /// Current query text.
+    pub query: String,
+    /// Controlled selected option value.
+    pub selected_value: Option<String>,
+    /// Controlled active option value.
+    pub active_value: Option<String>,
+    /// Empty result label.
+    pub empty_label: String,
+    /// Grouped option descriptors.
+    pub groups: Vec<ComboboxGroupDescriptor>,
+    /// Standalone option descriptors.
+    pub options: Vec<ComboboxOptionDescriptor>,
+    /// Preferred overlay placement side.
+    pub placement_side: OverlayPlacementSide,
+    /// Preferred overlay placement alignment.
+    pub placement_alignment: OverlayPlacementAlignment,
+    /// Outside press dismissal policy.
+    pub outside_press_policy: OutsidePressPolicy,
+    /// Initial focus policy when opening.
+    pub initial_focus_intent: InitialFocusIntent,
+    /// Focus restore policy when closing.
+    pub focus_restore_intent: FocusRestoreIntent,
+    /// Theme token bundle.
+    pub tokens: ThemeTokens,
+}
+
 impl ComboboxState {
     /// Resolves public state for a combobox.
-    #[allow(clippy::too_many_arguments)]
-    pub fn resolve(
-        size: Size,
-        disabled: bool,
-        required: bool,
-        open: Option<bool>,
-        default_open: bool,
-        label: impl Into<String>,
-        placeholder: impl Into<String>,
-        query: impl Into<String>,
-        selected_value: Option<&str>,
-        active_value: Option<&str>,
-        empty_label: impl Into<String>,
-        groups: impl IntoIterator<Item = ComboboxGroupDescriptor>,
-        options: impl IntoIterator<Item = ComboboxOptionDescriptor>,
-        placement_side: OverlayPlacementSide,
-        placement_alignment: OverlayPlacementAlignment,
-        outside_press_policy: OutsidePressPolicy,
-        initial_focus_intent: InitialFocusIntent,
-        focus_restore_intent: FocusRestoreIntent,
-        tokens: ThemeTokens,
-    ) -> Self {
-        let label = label.into();
-        let placeholder = placeholder.into();
-        let query = query.into();
+    pub fn resolve(request: ComboboxStateRequest) -> Self {
+        let ComboboxStateRequest {
+            size,
+            disabled,
+            required,
+            open,
+            default_open,
+            label,
+            placeholder,
+            query,
+            selected_value,
+            active_value,
+            empty_label,
+            groups,
+            options,
+            placement_side,
+            placement_alignment,
+            outside_press_policy,
+            initial_focus_intent,
+            focus_restore_intent,
+            tokens,
+        } = request;
         let query = TextEditingPolicy::single_line().normalize_text(query.as_str());
-        let empty_label = empty_label.into();
         let disclosure = OverlayDisclosureConfig::new(OverlayLayerKind::NonModalDismissible)
             .controlled_open(open)
             .default_open(default_open)
@@ -131,8 +170,8 @@ impl ComboboxState {
         let open = disclosure.open();
         let open_mode = combobox_open_mode_from_disclosure(disclosure.open_mode());
         let normalized_query = choice::normalize_query(query.as_str());
-        let raw_groups = groups.into_iter().collect::<Vec<_>>();
-        let raw_options = options.into_iter().collect::<Vec<_>>();
+        let raw_groups = groups;
+        let raw_options = options;
         let total_option_count = raw_options.len()
             + raw_groups
                 .iter()
@@ -166,8 +205,8 @@ impl ComboboxState {
         let raw_collection = ChoiceCollection::resolve(
             false,
             flatten_combobox_choice_options(&raw_groups, &raw_options),
-            selected_value,
-            active_value,
+            selected_value.as_deref(),
+            active_value.as_deref(),
             ChoiceInteractionPolicy::listbox(),
         );
         let selected_value = raw_collection.selected_value().map(str::to_owned);
@@ -176,7 +215,7 @@ impl ComboboxState {
             disabled,
             label.clone(),
             selected_value.as_deref(),
-            active_value,
+            active_value.as_deref(),
             (!normalized_query.is_empty()).then_some(normalized_query.as_str()),
             empty_label.clone(),
             filtered_groups,

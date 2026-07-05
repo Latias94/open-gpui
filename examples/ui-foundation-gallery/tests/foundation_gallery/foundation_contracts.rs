@@ -65,6 +65,7 @@ fn package_manifest_stays_foundation_scoped() {
     assert!(manifest.contains("open_gpui_ui_core.workspace = true"));
     assert!(manifest.contains("open_gpui_ui_components.workspace = true"));
     assert!(manifest.contains("open_gpui_platform = { workspace = true"));
+    assert!(manifest.contains("font-kit"));
     assert!(!manifest.contains("open_gpui_canvas"));
     assert!(!manifest.contains("open_gpui_docking"));
     assert!(!manifest.contains("open_gpui_ui ="));
@@ -106,7 +107,7 @@ fn productization_checkpoint_keeps_extraction_deferred_and_boundary_refs_availab
     assert!(design.contains("splitter resize constraints"));
     assert!(design.contains("AccessKit node wiring"));
     assert!(design.contains("TextInputController"));
-    assert!(design.contains("focus_ring_shadow"));
+    assert!(design.contains("`focus_ring_shadow`"));
     assert!(design.contains("Interaction Ownership Matrix"));
     assert!(
         component_contract
@@ -117,7 +118,8 @@ fn productization_checkpoint_keeps_extraction_deferred_and_boundary_refs_availab
     assert!(component_contract.contains("open_gpui_ui_components::gpui_adapter"));
     assert!(component_contract.contains("TextInputController"));
     assert!(component_contract.contains("ScrollHandle"));
-    assert!(component_contract.contains("focus_ring_shadow"));
+    assert!(component_contract.contains("focus_ring_shadow_with_theme"));
+    assert!(!component_contract.contains("focus_ring_shadow("));
 }
 
 #[test]

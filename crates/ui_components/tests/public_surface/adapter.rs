@@ -84,7 +84,6 @@ fn adapter_only_public_surfaces_match_allowlist() {
     let expected = [
         ("adapter.rs", "GpuiOverlayState"),
         ("focus.rs", "BoxShadow"),
-        ("focus.rs", "focus_ring_shadow"),
         ("focus.rs", "focus_ring_shadow_with_theme"),
         ("overlay.rs", "GpuiOverlayState"),
         ("scroll_area.rs", "ScrollHandle"),
@@ -106,7 +105,6 @@ fn adapter_only_public_surfaces_match_allowlist() {
         "GpuiOverlayState",
         "ScrollHandle",
         "TextInputController",
-        "focus_ring_shadow",
         "focus_ring_shadow_with_theme",
     ]);
     actual.sort();
@@ -199,14 +197,6 @@ fn gpui_adapter_exports_group_runtime_specific_surfaces() {
     assert_eq!(
         root_overlay.snap_margin(),
         root::gpui_adapter::DEFAULT_OVERLAY_SAFE_MARGIN
-    );
-    assert_eq!(
-        root::gpui_adapter::focus_ring_shadow(FocusRing::from_color(ColorIntent::new(
-            semantic::FOCUS_RING,
-            0x2f80ed,
-        )))[0]
-            .spread_radius,
-        px(2.0)
     );
     assert_eq!(
         root::gpui_adapter::focus_ring_shadow_with_theme(

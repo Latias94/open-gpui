@@ -30,6 +30,7 @@ pub use crate::color::{ColorIntent, ColorState};
 pub use crate::combobox::{
     Combobox, ComboboxColors, ComboboxGroup, ComboboxGroupDescriptor, ComboboxMetrics,
     ComboboxOpenMode, ComboboxOption, ComboboxOptionDescriptor, ComboboxSelection, ComboboxState,
+    ComboboxStateRequest,
 };
 pub use crate::command::{
     Command, CommandBehaviorSnapshot, CommandColors, CommandDialogState, CommandGroup,
@@ -43,7 +44,7 @@ pub use crate::command::{
     CommandProviderPaletteProjection, CommandQueryMode, CommandRowBehaviorSnapshot,
     CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandSelectionMode,
     CommandShortcutInspectorCommand, CommandShortcutInspectorState, CommandState,
-    CommandStatusIntent, CommandStatusItem,
+    CommandStateDataSource, CommandStateRequest, CommandStatusIntent, CommandStatusItem,
 };
 pub use crate::component_contract::{
     COMPONENT_A11Y_EVIDENCE, COMPONENT_CONFORMANCE_GATES, ComponentA11yEvidence,
@@ -93,6 +94,7 @@ pub use crate::scroll_area::{
 };
 pub use crate::select::{
     Select, SelectColors, SelectMetrics, SelectOpenMode, SelectSelection, SelectState,
+    SelectStateRequest,
 };
 pub use crate::separator::{Separator, SeparatorColors, SeparatorMetrics, SeparatorState};
 pub use crate::sheet::{

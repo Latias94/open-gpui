@@ -9,6 +9,6 @@ mod style;
 pub use descriptor::{
     ComboboxGroup, ComboboxGroupDescriptor, ComboboxOption, ComboboxOptionDescriptor,
 };
-pub use model::{ComboboxOpenMode, ComboboxSelection, ComboboxState};
+pub use model::{ComboboxOpenMode, ComboboxSelection, ComboboxState, ComboboxStateRequest};
 pub use runtime::Combobox;
 pub use style::{ComboboxColors, ComboboxMetrics};

@@ -50,7 +50,7 @@ fn components_page_samples_expose_component_metadata() {
         .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
         .map(|entry| entry.name)
         .collect::<std::collections::BTreeSet<_>>();
-    let expected_official_names = component_contract_official_component_entries()
+    let expected_official_names = official_component_rows()
         .map(|entry| entry.name)
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
@@ -1691,16 +1691,17 @@ fn components_catalog_consumes_component_contract_rows() {
     use std::collections::BTreeSet;
 
     for entry in pages::components::COMPONENT_CATALOG {
-        let expected_status = pages::components::ComponentCatalogStatus::from_contract(
-            component_contract_gallery_status(entry.name),
-        );
+        let contract_row = component_contract_entry(entry.name)
+            .unwrap_or_else(|| panic!("missing component contract row for `{}`", entry.name));
+        let expected_status =
+            pages::components::ComponentCatalogStatus::from_contract(contract_row.gallery_status);
         assert_eq!(
             entry.status, expected_status,
             "catalog entry `{}` should derive status from the component contract rows",
             entry.name
         );
 
-        if let Some(expected_family) = component_contract_family(entry.name) {
+        if let Some(expected_family) = contract_row.family {
             assert_eq!(
                 entry.family, expected_family,
                 "catalog entry `{}` should derive family from the component contract rows",
@@ -1713,7 +1714,7 @@ fn components_catalog_consumes_component_contract_rows() {
         .iter()
         .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
-    let contract_official_names = component_contract_official_component_entries()
+    let contract_official_names = official_component_rows()
         .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
     let catalog_official_names = pages::components::COMPONENT_CATALOG
@@ -1726,8 +1727,15 @@ fn components_catalog_consumes_component_contract_rows() {
         "Components catalog official rows should be contract-owned"
     );
 
-    let missing_adjacent_surfaces = component_contract_components_gallery_entries()
-        .filter(|entry| entry.gallery_status != SurfaceGalleryStatus::OfficialComponent)
+    let missing_adjacent_surfaces = gallery_surface_rows()
+        .filter(|entry| {
+            matches!(
+                entry.gallery_status,
+                SurfaceGalleryStatus::AdapterOnly
+                    | SurfaceGalleryStatus::InternalAnatomy
+                    | SurfaceGalleryStatus::StateContract
+            )
+        })
         .filter(|entry| !catalog_names.contains(entry.name))
         .map(|entry| entry.name)
         .collect::<Vec<_>>();
@@ -2256,7 +2264,7 @@ fn choice_search_story_contracts_expose_state_readouts_and_contract_rows() {
 
         let entry = component_contract_entry(name)
             .unwrap_or_else(|| panic!("expected component contract row `{name}`"));
-        assert_eq!(entry.family, component_contract_family(name));
+        assert_eq!(entry.family, Some(family));
         assert_eq!(
             entry.gallery_status,
             SurfaceGalleryStatus::OfficialComponent
@@ -2364,7 +2372,7 @@ fn gallery_catalog_entries_satisfy_component_contract_evidence() {
         .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
 
-    for entry in component_contract_gallery_entries() {
+    for entry in gallery_surface_rows() {
         match entry.gallery_status {
             SurfaceGalleryStatus::OfficialOverlay => {
                 assert!(
@@ -2376,7 +2384,13 @@ fn gallery_catalog_entries_satisfy_component_contract_evidence() {
             SurfaceGalleryStatus::NotInGallery => unreachable!(),
             status => {
                 assert!(
-                    component_gallery_status_belongs_to_components_page(status),
+                    matches!(
+                        status,
+                        SurfaceGalleryStatus::OfficialComponent
+                            | SurfaceGalleryStatus::AdapterOnly
+                            | SurfaceGalleryStatus::InternalAnatomy
+                            | SurfaceGalleryStatus::StateContract
+                    ),
                     "component contract row `{}` has unhandled gallery status {:?}",
                     entry.name,
                     status

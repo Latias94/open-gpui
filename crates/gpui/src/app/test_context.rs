@@ -384,6 +384,11 @@ impl TestAppContext {
         rx
     }
 
+    /// Simulates the system waking from sleep.
+    pub fn simulate_system_wake(&self) {
+        self.test_platform.simulate_system_wake();
+    }
+
     /// Causes the given sources to be returned if the application queries for screen
     /// capture sources.
     pub fn set_screen_capture_sources(&self, sources: Vec<TestScreenCaptureSource>) {

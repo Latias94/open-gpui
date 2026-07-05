@@ -22,7 +22,7 @@ use std::{
     panic::{self, AssertUnwindSafe},
     pin::Pin,
     sync::{
-        Arc,
+        Arc, Weak,
         atomic::{AtomicBool, Ordering::SeqCst},
     },
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
@@ -162,12 +162,11 @@ impl TestScheduler {
     /// Create a local executor for this scheduler.
     pub fn foreground(self: &Arc<Self>) -> LocalExecutor {
         let session_id = self.allocate_session_id();
-        let scheduler = Arc::downgrade(self);
-        LocalExecutor::new(session_id, self.clone(), move |runnable| {
-            if let Some(scheduler) = scheduler.upgrade() {
-                scheduler.schedule_local(session_id, runnable);
-            }
-        })
+        LocalExecutor::new(
+            session_id,
+            self.clone(),
+            schedule_local_dispatch(Arc::downgrade(self), session_id),
+        )
     }
 
     /// Create a background executor for this scheduler
@@ -680,17 +679,38 @@ impl Scheduler for TestScheduler {
         >,
     ) -> Task<Box<dyn Any + Send + Sync>> {
         let session_id = self.allocate_session_id();
-        let scheduler = Arc::downgrade(&self);
-        let executor = LocalExecutor::new(session_id, self, move |runnable| {
-            if let Some(scheduler) = scheduler.upgrade() {
-                scheduler.schedule_local(session_id, runnable);
-            }
-        });
-        executor.spawn(f(executor.clone()))
+        let weak_scheduler = Arc::downgrade(&self);
+        let spawner = LocalExecutor::new(
+            session_id,
+            self,
+            schedule_local_dispatch(weak_scheduler.clone(), session_id),
+        );
+        spawner.spawn(async move {
+            let scheduler = weak_scheduler.upgrade().expect(
+                "dedicated tasks are only polled by their scheduler, which is still alive when polled",
+            );
+            let executor = LocalExecutor::new(
+                session_id,
+                scheduler,
+                schedule_local_dispatch(weak_scheduler, session_id),
+            );
+            f(executor).await
+        })
     }
 
     fn as_test(&self) -> Option<&TestScheduler> {
         Some(self)
+    }
+}
+
+fn schedule_local_dispatch(
+    scheduler: Weak<TestScheduler>,
+    session_id: SessionId,
+) -> impl Fn(Runnable<RunnableMeta>) + Send + Sync + 'static {
+    move |runnable| {
+        if let Some(scheduler) = scheduler.upgrade() {
+            scheduler.schedule_local(session_id, runnable);
+        }
     }
 }
 

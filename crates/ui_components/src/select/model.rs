@@ -97,29 +97,64 @@ pub struct SelectState {
     overlay: OverlayResolvedState,
 }
 
+/// Inputs used to resolve public select state.
+#[derive(Debug, Clone)]
+pub struct SelectStateRequest {
+    /// Control size.
+    pub size: Size,
+    /// Whether interaction is disabled.
+    pub disabled: bool,
+    /// Controlled open value, when caller-owned.
+    pub open: Option<bool>,
+    /// Adapter-owned initial open value.
+    pub default_open: bool,
+    /// Accessible select label.
+    pub label: String,
+    /// Trigger placeholder text.
+    pub placeholder: String,
+    /// Controlled selected option value.
+    pub selected_value: Option<String>,
+    /// Controlled active option value.
+    pub active_value: Option<String>,
+    /// Grouped option descriptors.
+    pub groups: Vec<ListboxGroupDescriptor>,
+    /// Standalone option descriptors.
+    pub options: Vec<ListboxOptionDescriptor>,
+    /// Preferred overlay placement side.
+    pub placement_side: OverlayPlacementSide,
+    /// Preferred overlay placement alignment.
+    pub placement_alignment: OverlayPlacementAlignment,
+    /// Outside press dismissal policy.
+    pub outside_press_policy: OutsidePressPolicy,
+    /// Initial focus policy when opening.
+    pub initial_focus_intent: InitialFocusIntent,
+    /// Focus restore policy when closing.
+    pub focus_restore_intent: FocusRestoreIntent,
+    /// Theme token bundle.
+    pub tokens: ThemeTokens,
+}
+
 impl SelectState {
     /// Resolves public state for a select.
-    #[allow(clippy::too_many_arguments)]
-    pub fn resolve(
-        size: Size,
-        disabled: bool,
-        open: Option<bool>,
-        default_open: bool,
-        label: impl Into<String>,
-        placeholder: impl Into<String>,
-        selected_value: Option<&str>,
-        active_value: Option<&str>,
-        groups: impl IntoIterator<Item = ListboxGroupDescriptor>,
-        options: impl IntoIterator<Item = ListboxOptionDescriptor>,
-        placement_side: OverlayPlacementSide,
-        placement_alignment: OverlayPlacementAlignment,
-        outside_press_policy: OutsidePressPolicy,
-        initial_focus_intent: InitialFocusIntent,
-        focus_restore_intent: FocusRestoreIntent,
-        tokens: ThemeTokens,
-    ) -> Self {
-        let label = label.into();
-        let placeholder = placeholder.into();
+    pub fn resolve(request: SelectStateRequest) -> Self {
+        let SelectStateRequest {
+            size,
+            disabled,
+            open,
+            default_open,
+            label,
+            placeholder,
+            selected_value,
+            active_value,
+            groups,
+            options,
+            placement_side,
+            placement_alignment,
+            outside_press_policy,
+            initial_focus_intent,
+            focus_restore_intent,
+            tokens,
+        } = request;
         let disclosure = OverlayDisclosureConfig::new(OverlayLayerKind::NonModalDismissible)
             .controlled_open(open)
             .default_open(default_open)
@@ -130,18 +165,16 @@ impl SelectState {
             .resolve();
         let open = disclosure.open();
         let open_mode = select_open_mode_from_disclosure(disclosure.open_mode());
-        let group_descriptors = groups.into_iter().collect::<Vec<_>>();
-        let option_descriptors = options.into_iter().collect::<Vec<_>>();
         let listbox = ListboxState::resolve(
             size,
             disabled,
             label.clone(),
-            selected_value,
-            active_value,
+            selected_value.as_deref(),
+            active_value.as_deref(),
             None,
             "No options",
-            group_descriptors.clone(),
-            option_descriptors.clone(),
+            groups.clone(),
+            options.clone(),
             tokens,
         );
         let overlay = disclosure.overlay().clone();

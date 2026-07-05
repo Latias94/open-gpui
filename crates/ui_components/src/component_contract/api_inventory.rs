@@ -14,7 +14,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             builder: "default_open_values",
             runtime_value: "open_values",
         }],
-        legacy_seed_inputs: &[],
         policy_hints: &["mode", "collapsible"],
         callbacks: &[CallbackApi {
             name: "on_open_change",
@@ -27,7 +26,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Button",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &[],
         callbacks: &[CallbackApi {
             name: "on_click",
@@ -40,7 +38,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Badge",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &[],
         callbacks: &[],
         renderer_neutral_state: true,
@@ -53,7 +50,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             builder: "default_open",
             runtime_value: "open",
         }],
-        legacy_seed_inputs: &[],
         policy_hints: &["content"],
         callbacks: &[CallbackApi {
             name: "on_open_change",
@@ -66,7 +62,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Link",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["href", "external"],
         callbacks: &[CallbackApi {
             name: "on_activate",
@@ -79,7 +74,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Breadcrumb",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["item", "disabled"],
         callbacks: &[CallbackApi {
             name: "on_activate",
@@ -92,7 +86,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Tag",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["variant", "removable"],
         callbacks: &[CallbackApi {
             name: "on_remove",
@@ -105,7 +98,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "ToastStack",
         controlled_inputs: &["toasts"],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["max_visible", "toast"],
         callbacks: &[
             CallbackApi {
@@ -124,7 +116,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "IconButton",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &[],
         callbacks: &[CallbackApi {
             name: "on_click",
@@ -137,7 +128,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Slider",
         controlled_inputs: &["value"],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["min", "max", "step"],
         callbacks: &[CallbackApi {
             name: "on_change",
@@ -150,7 +140,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "NumberInput",
         controlled_inputs: &["value"],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["min", "max", "step", "read_only", "invalid", "required"],
         callbacks: &[CallbackApi {
             name: "on_change",
@@ -163,7 +152,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Switch",
         controlled_inputs: &["checked"],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &[],
         callbacks: &[CallbackApi {
             name: "on_change",
@@ -176,7 +164,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Checkbox",
         controlled_inputs: &["checked", "checked_state"],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &[],
         callbacks: &[CallbackApi {
             name: "on_toggle",
@@ -192,7 +179,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             builder: "default_selected",
             runtime_value: "selected",
         }],
-        legacy_seed_inputs: &[],
         policy_hints: &["orientation"],
         callbacks: &[CallbackApi {
             name: "on_selection_change",
@@ -205,7 +191,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Toggle",
         controlled_inputs: &["pressed"],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &[],
         callbacks: &[CallbackApi {
             name: "on_change",
@@ -227,7 +212,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
                 runtime_value: "focused",
             },
         ],
-        legacy_seed_inputs: &[],
         policy_hints: &["orientation", "mode", "selection_required", "item"],
         callbacks: &[CallbackApi {
             name: "on_change",
@@ -243,7 +227,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             builder: "default_focused",
             runtime_value: "focused",
         }],
-        legacy_seed_inputs: &[],
         policy_hints: &["orientation"],
         callbacks: &[CallbackApi {
             name: "on_select",
@@ -259,7 +242,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             builder: "default_focused",
             runtime_value: "focused",
         }],
-        legacy_seed_inputs: &[],
         policy_hints: &["side", "variant", "collapse_mode"],
         callbacks: &[CallbackApi {
             name: "on_selection_change",
@@ -281,7 +263,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
                 runtime_value: "focused",
             },
         ],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "virtualized",
             "viewport_item_count",
@@ -309,7 +290,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Listbox",
         controlled_inputs: &["selected", "active"],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["embedded", "typeahead_query"],
         callbacks: &[CallbackApi {
             name: "on_select",
@@ -325,7 +305,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             builder: "default_open",
             runtime_value: "open",
         }],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "placement",
             "outside_press_policy",
@@ -358,7 +337,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
                 runtime_value: "query",
             },
         ],
-        legacy_seed_inputs: &[],
         policy_hints: &["placement", "outside_press_policy"],
         callbacks: &[
             CallbackApi {
@@ -395,7 +373,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
                 runtime_value: "query",
             },
         ],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "dialog",
             "dialog_enabled",
@@ -438,7 +415,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Label",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["for_control"],
         callbacks: &[],
         renderer_neutral_state: true,
@@ -448,7 +424,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "TextInput",
         controlled_inputs: &["value"],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["controller"],
         callbacks: &[CallbackApi {
             name: "on_change",
@@ -461,7 +436,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Textarea",
         controlled_inputs: &["value"],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["rows"],
         callbacks: &[CallbackApi {
             name: "on_change",
@@ -474,7 +448,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Field",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["control"],
         callbacks: &[],
         renderer_neutral_state: true,
@@ -487,7 +460,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             builder: "default_selected",
             runtime_value: "selected",
         }],
-        legacy_seed_inputs: &[],
         policy_hints: &["orientation", "activation_mode"],
         callbacks: &[CallbackApi {
             name: "on_selection_change",
@@ -500,7 +472,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "ScrollArea",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["axis", "reset_on_key", "preserve_scroll", "scroll_handle"],
         callbacks: &[],
         renderer_neutral_state: true,
@@ -510,7 +481,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Splitter",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["orientation", "panel", "motion_preference"],
         callbacks: &[],
         renderer_neutral_state: true,
@@ -523,7 +493,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             builder: "default_focused_row",
             runtime_value: "focused_row",
         }],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "virtualizer_snapshot",
             "expansion_mode",
@@ -585,7 +554,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
                 runtime_value: "query",
             },
         ],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "facets",
             "placeholder",
@@ -628,7 +596,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
                 runtime_value: "visibility",
             },
         ],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "columns",
             "empty_label",
@@ -663,7 +630,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             builder: "default_query",
             runtime_value: "query",
         }],
-        legacy_seed_inputs: &[],
         policy_hints: &["placeholder", "clear_label", "disabled"],
         callbacks: &[CallbackApi {
             name: "on_change",
@@ -685,7 +651,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
                 runtime_value: "value",
             },
         ],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "operator_option",
             "operators",
@@ -705,7 +670,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "TableToolbar",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["control", "secondary_control", "summary", "tokens"],
         callbacks: &[],
         renderer_neutral_state: true,
@@ -728,7 +692,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
                 runtime_value: "max_text",
             },
         ],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "facets",
             "range",
@@ -765,7 +728,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
                 runtime_value: "selected_index",
             },
         ],
-        legacy_seed_inputs: &[],
         policy_hints: &["viewport_item_count", "row_height", "overscan"],
         callbacks: &[CallbackApi {
             name: "on_activate",
@@ -778,7 +740,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "StatusCue",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &[],
         callbacks: &[],
         renderer_neutral_state: true,
@@ -788,7 +749,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "EmptyState",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &[],
         callbacks: &[],
         renderer_neutral_state: true,
@@ -798,7 +758,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Separator",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["orientation", "decorative"],
         callbacks: &[],
         renderer_neutral_state: true,
@@ -808,7 +767,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Kbd",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &[],
         callbacks: &[],
         renderer_neutral_state: true,
@@ -818,7 +776,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Progress",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["indeterminate"],
         callbacks: &[],
         renderer_neutral_state: true,
@@ -828,7 +785,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Skeleton",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &[],
         callbacks: &[],
         renderer_neutral_state: true,
@@ -838,7 +794,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Avatar",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["accessible_label"],
         callbacks: &[],
         renderer_neutral_state: true,
@@ -848,7 +803,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "AvatarGroup",
         controlled_inputs: &[],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &["avatar", "max_visible"],
         callbacks: &[],
         renderer_neutral_state: true,
@@ -858,7 +812,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Tooltip",
         controlled_inputs: &["open"],
         default_seeds: &[],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "open_intent",
             "placement_side",
@@ -876,7 +829,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             builder: "default_open",
             runtime_value: "open",
         }],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "open_intent",
             "placement_side",
@@ -900,7 +852,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             builder: "default_open",
             runtime_value: "open",
         }],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "placement_side",
             "placement_alignment",
@@ -922,7 +873,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             builder: "default_open",
             runtime_value: "open",
         }],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "outside_press_policy",
             "escape_key_policy",
@@ -943,7 +893,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             builder: "default_open",
             runtime_value: "open",
         }],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "outside_press_policy",
             "escape_key_policy",
@@ -974,7 +923,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             builder: "default_open",
             runtime_value: "open",
         }],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "side",
             "modal_mode",
@@ -1010,7 +958,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
                 runtime_value: "focused_value",
             },
         ],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "placement",
             "outside_press_policy",
@@ -1044,7 +991,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
                 runtime_value: "focused_value",
             },
         ],
-        legacy_seed_inputs: &[],
         policy_hints: &[
             "anchor_point",
             "outside_press_policy",
