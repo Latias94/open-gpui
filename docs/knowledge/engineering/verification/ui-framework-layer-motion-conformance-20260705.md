@@ -29,8 +29,13 @@ the low-level `roving_focus` module.
 - `cargo check -p open-gpui-docking --tests`: passed.
 - `cargo check -p open-gpui-ui-foundation-gallery --tests`: passed.
 - `cargo nextest run -p open-gpui-ui-core -E 'test(/overlay|motion/)' --no-fail-fast`: passed 63/63.
+- `cargo nextest run -p open-gpui-ui-components -E 'test(/overlay|choice|navigation|public_surface/)' --no-fail-fast`:
+  passed 95/95 on the follow-up rerun.
 - `cargo nextest run -p open-gpui-docking -E 'test(/transition|host_transition/)' --no-fail-fast`: passed 17/17.
 - `cargo nextest run -p open-gpui-ui-foundation-gallery -E 'test(/overlay|component/)' --no-fail-fast`: passed 93/93.
+- `target/debug/deps/overlay-40f6bb1cc2593e1b --list --format terse`: passed and listed 43 tests.
+- `target/debug/deps/overlay-40f6bb1cc2593e1b --nocapture --test-threads=1`: passed 43/43.
+- `cargo test -p open-gpui-ui-components --test overlay -- --nocapture`: passed 43/43.
 - `cargo test -p open-gpui-ui-components --test choice -- --nocapture`: passed 53/53.
 - `cargo test -p open-gpui-ui-components --test navigation -- --nocapture`: passed 19/19.
 - `cargo test -p open-gpui-ui-components --test public_surface -- --nocapture`: passed 40/40.
@@ -41,14 +46,13 @@ the low-level `roving_focus` module.
 # Environment Notes
 
 - `cargo nextest run -p open-gpui-ui-components -E 'test(/overlay|choice|navigation|public_surface/)' --no-fail-fast`
-  was interrupted after `choice` and `overlay` test binaries remained in `--list --format terse`
-  for several minutes.
-- `cargo test -p open-gpui-ui-components --test overlay -- --nocapture` and the exact
-  `overlay_open_change_helpers_match_core_policies` filter were also interrupted because the
-  overlay test binary did not reach the test-harness `running N tests` output locally.
-- This was treated as an environment/test-harness listing issue, not a failed assertion. The
-  current U7 diff did not modify overlay code, and gallery overlay/component nextest passed all
-  overlay smoke and contract tests in the current tree.
+  was initially interrupted after `choice` and `overlay` test binaries appeared to remain in
+  `--list --format terse` for several minutes.
+- Follow-up diagnosis could not reproduce the hang: direct overlay listing, direct overlay
+  single-threaded execution, cargo overlay test execution, and the full ui-components aggregate
+  nextest gate all passed in the same working tree.
+- The initial interruption is therefore treated as a transient local test-runner/process state, not
+  a failed assertion or remaining code defect.
 
 # Commits In Scope
 
@@ -62,6 +66,7 @@ the low-level `roving_focus` module.
 - `3af2f75` - `refactor(ui-components): route menu navigation through choice`
 - `718ee02` - `refactor(ui-components): route tree navigation through choice`
 - `61abcb3` - `refactor(ui-components): deepen component contract projections`
+- `a92e625` - `refactor(ui-components): narrow roving focus public surface`
 
 # Citations
 
