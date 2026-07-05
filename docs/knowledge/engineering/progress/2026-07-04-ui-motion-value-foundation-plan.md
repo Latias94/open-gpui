@@ -84,7 +84,7 @@ Started the UI motion value foundation implementation on `feat/ui-motion-value-f
   open-gpui-ui-components splitter::tests::runtime --lib` passed 6 tests; focused public surface
   method/export/docs tests passed; `cargo check -p open-gpui-ui-core -p open-gpui-ui-components -p
   open-gpui-docking` passed without warnings.
-- U6 is implemented: `MotionProjectionSample::visual_bounds()` now exposes projection visual bounds
+- U6 is implemented: `MotionProjection::visual_bounds()` now exposes projection visual bounds
   from core without asking adapters to reconstruct target+translation+scale locally; Docking moving
   and resizing pane transitions now render through the same final-size content clip/occlusion path
   as entering/leaving panes, while the final presentation scene remains the semantic authority.

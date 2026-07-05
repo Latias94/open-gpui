@@ -42,15 +42,16 @@ The accepted boundary is:
   bookkeeping, run owners, subscriptions, and public value mutation stay deferred until a
   first-party adapter proves direct need.
 - `MotionScalarTrack`, `MotionScalarController`, `MotionFrameDemand`, `MotionModel`, presets, policy
-  gates, and projection clips are the public motion contracts consumed by Splitter and docking.
+  gates, projection clips, and projection visual bounds are the public motion contracts consumed by
+  Splitter and docking.
 - Frame demand may carry minimal update/render reason vocabulary, but GPUI frame scheduling,
   measurement/read phases, render lifecycle, cursor state, windows, and platform compositor work
   remain adapter-owned.
 - Motion policy must be called by real Splitter or docking construction/execution paths, not only
   by direct policy tests.
-- Projection must be treated honestly: either adapters consume projection samples as final-size
-  transform/clip/reveal evidence, or the API is narrowed so it does not claim unused projection-tree
-  capability.
+- Projection must be treated honestly: adapters consume final-size clip/reveal data and visual
+  bounds; lower-level transform-tree, translation, scale, and scale-correction samples stay
+  internal unless a first-party adapter proves direct need.
 
 The deferred boundary is explicit:
 
@@ -84,7 +85,7 @@ flowchart TB
   Run --> Demand[Frame-demand reason]
   Policy[Motion policy] --> Model
   Policy --> Run
-  Projection[Projection sample data] --> Adapter[Splitter or docking adapter]
+  Projection[Projection clips and visual bounds] --> Adapter[Splitter or docking adapter]
   Demand --> Adapter
   Adapter --> GPUI[GPUI frame scheduling and rendering]
 ```

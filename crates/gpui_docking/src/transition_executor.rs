@@ -539,7 +539,6 @@ fn projected_visual_bounds(
 ) -> Bounds<Pixels> {
     bounds_from_ui_rect(
         MotionProjection::between(ui_rect_from_bounds(from), ui_rect_from_bounds(to))
-            .sample(progress)
-            .visual_bounds(),
+            .visual_bounds(progress),
     )
 }

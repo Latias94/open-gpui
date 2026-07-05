@@ -53,9 +53,7 @@ pub use motion_policy::{
     MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
     MotionPolicyReport, MotionPreviewTargetPolicy, validate_motion_policy,
 };
-pub use motion_projection::{
-    MotionProjection, MotionProjectionClip, MotionProjectionSample, MotionProjectionScale,
-};
+pub use motion_projection::{MotionProjection, MotionProjectionClip};
 pub use motion_runtime::{
     MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionRunState, MotionSnapshot,
     MotionTimeline, MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
