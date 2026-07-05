@@ -43,13 +43,14 @@ fn ui_core_motion_value_stays_private_while_consumed_motion_contracts_stay_publi
     let lib_path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs");
     let lib_source = std::fs::read_to_string(lib_path)
         .unwrap_or_else(|error| panic!("failed to read {lib_path}: {error}"));
+    let lib_lines = lib_source.lines().collect::<Vec<_>>();
 
     assert!(
-        lib_source.contains("\nmod motion_value;\n"),
+        lib_lines.contains(&"mod motion_value;"),
         "motion_value should remain an internal implementation module"
     );
     assert!(
-        !lib_source.contains("\npub mod motion_value;\n"),
+        !lib_lines.contains(&"pub mod motion_value;"),
         "MotionValue should not be reachable as open_gpui_ui_core::motion_value::MotionValue"
     );
 
