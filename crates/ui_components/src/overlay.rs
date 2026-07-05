@@ -1,6 +1,7 @@
 //! GPUI adapter helpers for shared overlay behavior.
 
 mod adapter;
+mod host;
 mod placement;
 mod runtime;
 
@@ -11,6 +12,7 @@ pub use adapter::{
 pub(crate) use adapter::{
     gpui_full_window_overlay_layer, gpui_positioned_overlay_layer, gpui_relative_overlay_layer,
 };
+pub(crate) use host::OverlayLayerHost;
 pub use open_gpui_ui_core::OverlayResolvedState;
 pub use placement::{GpuiOverlayPlacement, gpui_anchor, point_anchor_placement};
 pub(crate) use runtime::{
@@ -26,7 +28,7 @@ pub use runtime::{OverlayOpenChange, escape_open_change, outside_press_open_chan
 mod tests {
     use super::*;
     use open_gpui_ui_core::{
-        EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+        DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
         OverlayLayerKind,
     };
 
@@ -101,5 +103,33 @@ mod tests {
         assert!(!unopenable.open());
         assert_eq!(unopenable.overlay().policy().kind(), OverlayLayerKind::Menu);
         assert!(!unopenable.overlay().policy().presence().interactive());
+    }
+
+    #[test]
+    fn overlay_layer_host_facade_preserves_resolved_adapter_policy() {
+        let overlay = GpuiOverlayAdapterConfig::new(
+            OverlayLayerKind::NonModalDismissible,
+            open_gpui_ui_core::OverlayPresence::open(),
+        )
+        .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
+        .escape_key_policy(EscapeKeyPolicy::Dismiss)
+        .resolved_state();
+        let host = OverlayLayerHost::resolve(&overlay);
+
+        assert_eq!(host.policy().kind(), OverlayLayerKind::NonModalDismissible);
+        assert_eq!(host.adapter().layer_state(), overlay.layer_state());
+        assert_eq!(
+            host.outside_press_open_change()
+                .expect("dismissible host should resolve outside press")
+                .reason(),
+            DismissReason::OutsidePress
+        );
+        assert_eq!(
+            host.escape_open_change()
+                .expect("dismissible host should resolve escape")
+                .reason(),
+            DismissReason::EscapeKey
+        );
+        assert!(host.adapter().should_render_deferred_layer());
     }
 }

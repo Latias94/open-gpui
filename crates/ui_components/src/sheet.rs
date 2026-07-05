@@ -20,10 +20,8 @@ use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::ui_size_from_gpui_size;
 use crate::overlay::{
     OverlayCloseRuntimeRequest, OverlayDisclosureConfig, OverlayDisclosureOpenMode,
-    OverlayOpenRuntimeRequest, OverlayResolvedState, apply_overlay_open_change_with_after_update,
-    close_overlay_runtime_with_after_update, consume_overlay_event, escape_open_change,
-    gpui_full_window_overlay_layer, gpui_overlay_state, outside_press_open_change,
-    resolve_overlay_open_state, set_overlay_open,
+    OverlayLayerHost, OverlayOpenRuntimeRequest, OverlayResolvedState, resolve_overlay_open_state,
+    set_overlay_open,
 };
 use crate::theme::{ThemeContext, ThemeResolver};
 
@@ -840,7 +838,7 @@ impl RenderOnce for Sheet {
         let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
         let trigger_focus = runtime.read(cx).trigger_focus.clone();
         let close_focus = runtime.read(cx).close_focus.clone();
-        let overlay_adapter = gpui_overlay_state(state.overlay());
+        let overlay_host = OverlayLayerHost::resolve(state.overlay());
         let on_close = self.on_close;
         let on_open_change = self.on_open_change;
 
@@ -888,13 +886,14 @@ impl RenderOnce for Sheet {
                         let on_open_change = on_open_change.clone();
                         let on_close = on_close.clone();
                         let focus_restore = state.focus_restore_intent().clone();
-                        let escape_policy = state.overlay().policy().clone();
+                        let overlay_host = overlay_host.clone();
                         this.on_key_down(move |event: &KeyDownEvent, window, cx| {
                             if event.keystroke.key.as_str() == "escape"
-                                && escape_open_change(&escape_policy).is_some()
+                                && overlay_host.escape_open_change().is_some()
                             {
-                                consume_overlay_event(window, cx);
+                                overlay_host.consume_event(window, cx);
                                 close_sheet(
+                                    overlay_host.clone(),
                                     runtime.clone(),
                                     focus_restore.clone(),
                                     on_close.clone(),
@@ -911,6 +910,7 @@ impl RenderOnce for Sheet {
                         let on_open_change = on_open_change.clone();
                         let initial_focus = state.initial_focus_intent().clone();
                         let focus_state = state.clone();
+                        let overlay_host = overlay_host.clone();
                         this.cursor_pointer()
                             .hover(move |style| style.bg(trigger_hover_background))
                             .on_click(move |_event: &ClickEvent, window, cx| {
@@ -919,7 +919,7 @@ impl RenderOnce for Sheet {
                                 let focus_runtime = runtime.clone();
                                 let focus_state = focus_state.clone();
                                 let initial_focus = initial_focus.clone();
-                                apply_overlay_open_change_with_after_update(
+                                overlay_host.apply_open_change_with_after_update(
                                     OverlayOpenRuntimeRequest::new(
                                         runtime.clone(),
                                         next_open,
@@ -950,21 +950,20 @@ impl RenderOnce for Sheet {
                     .child(trigger_label),
             )
             .when(open, |this| {
-                this.child(gpui_full_window_overlay_layer(
-                    &overlay_adapter,
-                    sheet_layer_element(
-                        content,
-                        content_id.clone(),
-                        debug_id.clone(),
-                        state.clone(),
-                        viewport,
-                        runtime.clone(),
-                        close_focus.clone(),
-                        on_close.clone(),
-                        on_open_change.clone(),
-                        &theme,
-                    ),
-                ))
+                let overlay_host = overlay_host.clone();
+                this.child(overlay_host.full_window_layer(sheet_layer_element(
+                    content,
+                    content_id.clone(),
+                    debug_id.clone(),
+                    state.clone(),
+                    overlay_host.clone(),
+                    viewport,
+                    runtime.clone(),
+                    close_focus.clone(),
+                    on_close.clone(),
+                    on_open_change.clone(),
+                    &theme,
+                )))
             })
     }
 }
@@ -973,6 +972,7 @@ fn sheet_surface_element(
     content: SheetContent,
     debug_id: String,
     state: SheetState,
+    overlay_host: OverlayLayerHost,
     geometry: SheetSurfaceGeometry,
     runtime: Entity<SheetRuntime>,
     close_focus: FocusHandle,
@@ -982,8 +982,8 @@ fn sheet_surface_element(
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
-    let outside_change = outside_press_open_change(state.overlay().policy());
-    let escape_change = escape_open_change(state.overlay().policy());
+    let outside_change = overlay_host.outside_press_open_change();
+    let escape_change = overlay_host.escape_open_change();
     let surface_debug_id = debug_id.clone();
 
     div()
@@ -1019,10 +1019,12 @@ fn sheet_surface_element(
             let on_close = on_close.clone();
             let on_open_change = on_open_change.clone();
             let focus_restore = state.focus_restore_intent().clone();
+            let overlay_host = overlay_host.clone();
             move |event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key.as_str() == "escape" && escape_change.is_some() {
-                    consume_overlay_event(window, cx);
+                    overlay_host.consume_event(window, cx);
                     close_sheet(
+                        overlay_host.clone(),
                         runtime.clone(),
                         focus_restore.clone(),
                         on_close.clone(),
@@ -1040,8 +1042,10 @@ fn sheet_surface_element(
                 let on_close = on_close.clone();
                 let on_open_change = on_open_change.clone();
                 let focus_restore = state.focus_restore_intent().clone();
+                let overlay_host = overlay_host.clone();
                 this.on_mouse_down_out(move |_, window, cx| {
                     close_sheet(
+                        overlay_host.clone(),
                         runtime.clone(),
                         focus_restore.clone(),
                         on_close.clone(),
@@ -1087,6 +1091,7 @@ fn sheet_surface_element(
                         debug_id.clone(),
                         runtime.clone(),
                         close_focus.clone(),
+                        overlay_host.clone(),
                         on_close.clone(),
                         on_open_change.clone(),
                         theme,
@@ -1101,6 +1106,7 @@ fn sheet_layer_element(
     content_id: ElementId,
     debug_id: String,
     state: SheetState,
+    overlay_host: OverlayLayerHost,
     viewport: open_gpui::Size<Pixels>,
     runtime: Entity<SheetRuntime>,
     close_focus: FocusHandle,
@@ -1117,6 +1123,7 @@ fn sheet_layer_element(
             content_id,
             debug_id,
             state,
+            overlay_host,
             viewport,
             geometry,
             runtime,
@@ -1144,6 +1151,7 @@ fn sheet_layer_element(
                 content,
                 debug_id,
                 state,
+                overlay_host,
                 geometry,
                 runtime,
                 close_focus,
@@ -1161,6 +1169,7 @@ fn modal_sheet_layer_element(
     content_id: ElementId,
     debug_id: String,
     state: SheetState,
+    overlay_host: OverlayLayerHost,
     viewport: open_gpui::Size<Pixels>,
     geometry: SheetSurfaceGeometry,
     runtime: Entity<SheetRuntime>,
@@ -1170,7 +1179,8 @@ fn modal_sheet_layer_element(
     theme: &ThemeContext,
 ) -> impl IntoElement {
     let colors = state.colors();
-    let outside_change = outside_press_open_change(state.overlay().policy());
+    let outside_change = overlay_host.outside_press_open_change();
+    let barrier_overlay_host = overlay_host.clone();
 
     div()
         .id(content_id)
@@ -1185,17 +1195,19 @@ fn modal_sheet_layer_element(
         .h(viewport.height)
         .bg(theme.resolve(colors.barrier()))
         .occlude()
-        .on_any_mouse_down(|_, window, cx| {
-            consume_overlay_event(window, cx);
+        .on_any_mouse_down(move |_, window, cx| {
+            barrier_overlay_host.consume_event(window, cx);
         })
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_close = on_close.clone();
             let on_open_change = on_open_change.clone();
             let focus_restore = state.focus_restore_intent().clone();
+            let overlay_host = overlay_host.clone();
             this.on_click(move |_: &ClickEvent, window, cx| {
-                consume_overlay_event(window, cx);
+                overlay_host.consume_event(window, cx);
                 close_sheet(
+                    overlay_host.clone(),
                     runtime.clone(),
                     focus_restore.clone(),
                     on_close.clone(),
@@ -1209,6 +1221,7 @@ fn modal_sheet_layer_element(
             content,
             debug_id,
             state,
+            overlay_host,
             geometry,
             runtime,
             close_focus,
@@ -1271,6 +1284,7 @@ fn sheet_close_button(
     debug_id: String,
     runtime: Entity<SheetRuntime>,
     close_focus: FocusHandle,
+    overlay_host: OverlayLayerHost,
     on_close: Option<SheetCloseHandler>,
     on_open_change: Option<SheetOpenChangeHandler>,
     theme: &ThemeContext,
@@ -1311,6 +1325,7 @@ fn sheet_close_button(
         .on_click(move |_event: &ClickEvent, window, cx| {
             cx.stop_propagation();
             close_sheet(
+                overlay_host.clone(),
                 runtime.clone(),
                 focus_restore.clone(),
                 on_close.clone(),
@@ -1323,6 +1338,7 @@ fn sheet_close_button(
 }
 
 fn close_sheet(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<SheetRuntime>,
     focus_restore: FocusRestoreIntent,
     on_close: Option<SheetCloseHandler>,
@@ -1331,7 +1347,7 @@ fn close_sheet(
     cx: &mut App,
 ) {
     let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    close_overlay_runtime_with_after_update(
+    overlay_host.close_runtime_with_after_update(
         OverlayCloseRuntimeRequest::new(
             runtime,
             &focus_restore,

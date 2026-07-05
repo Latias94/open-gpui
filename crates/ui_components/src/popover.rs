@@ -20,9 +20,7 @@ use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
     GpuiOverlayPlacement, OverlayCloseRuntimeRequest, OverlayDisclosureConfig,
-    OverlayDisclosureOpenMode, OverlayOpenRuntimeRequest, OverlayResolvedState,
-    apply_overlay_open_change_with_after_update, close_overlay_runtime, consume_overlay_event,
-    escape_open_change, gpui_overlay_state, gpui_relative_overlay_layer, outside_press_open_change,
+    OverlayDisclosureOpenMode, OverlayLayerHost, OverlayOpenRuntimeRequest, OverlayResolvedState,
     resolve_overlay_open_state, set_overlay_open,
 };
 use crate::theme::{ThemeContext, ThemeResolver};
@@ -557,7 +555,7 @@ impl RenderOnce for Popover {
         let open = state.open();
         let trigger_focus = runtime.read(cx).trigger_focus.clone();
         let content_focus = runtime.read(cx).content_focus.clone();
-        let overlay_adapter = gpui_overlay_state(state.overlay());
+        let overlay_host = OverlayLayerHost::resolve(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 open_gpui_ui_core::OverlayAnchorInput::from_layout_bounds(open_gpui_ui_core::rect(
@@ -569,7 +567,7 @@ impl RenderOnce for Popover {
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
             .with_offset(ui_px(6.0)),
-            overlay_adapter.snap_margin(),
+            overlay_host.adapter().snap_margin(),
         );
 
         div()
@@ -615,13 +613,14 @@ impl RenderOnce for Popover {
                         let runtime = runtime.clone();
                         let on_escape_close = on_escape_close.clone();
                         let focus_restore = state.focus_restore_intent().clone();
-                        let escape_policy = state.overlay().policy().clone();
+                        let overlay_host = overlay_host.clone();
                         this.on_key_down(move |event: &KeyDownEvent, window, cx| {
                             if event.keystroke.key.as_str() == "escape"
-                                && escape_open_change(&escape_policy).is_some()
+                                && overlay_host.escape_open_change().is_some()
                             {
-                                consume_overlay_event(window, cx);
+                                overlay_host.consume_event(window, cx);
                                 close_popover(
+                                    overlay_host.clone(),
                                     runtime.clone(),
                                     focus_restore.clone(),
                                     on_escape_close.clone(),
@@ -636,6 +635,7 @@ impl RenderOnce for Popover {
                         let runtime = runtime.clone();
                         let on_open_change = on_open_change.clone();
                         let initial_focus = state.initial_focus_intent().clone();
+                        let overlay_host = overlay_host.clone();
                         this.cursor_pointer()
                             .hover(move |style| style.bg(trigger_hover_background))
                             .on_click(move |_event: &ClickEvent, window, cx| {
@@ -643,7 +643,7 @@ impl RenderOnce for Popover {
                                 let next_open = !open;
                                 let focus_runtime = runtime.clone();
                                 let initial_focus = initial_focus.clone();
-                                apply_overlay_open_change_with_after_update(
+                                overlay_host.apply_open_change_with_after_update(
                                     OverlayOpenRuntimeRequest::new(
                                         runtime.clone(),
                                         next_open,
@@ -673,14 +673,15 @@ impl RenderOnce for Popover {
                     .child(trigger_label),
             )
             .when(open, |this| {
-                this.child(gpui_relative_overlay_layer(
-                    &overlay_adapter,
+                let overlay_host = overlay_host.clone();
+                this.child(overlay_host.relative_layer(
                     &placement,
                     popover_content_element(
                         content,
                         content_id.clone(),
                         debug_id.clone(),
                         state.clone(),
+                        overlay_host.clone(),
                         &theme,
                         runtime.clone(),
                         content_focus.clone(),
@@ -697,6 +698,7 @@ fn popover_content_element(
     content_id: ElementId,
     debug_id: String,
     state: PopoverState,
+    overlay_host: OverlayLayerHost,
     theme: &ThemeContext,
     runtime: Entity<PopoverRuntime>,
     content_focus: FocusHandle,
@@ -705,10 +707,11 @@ fn popover_content_element(
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
-    let outside_change = outside_press_open_change(state.overlay().policy());
+    let outside_change = overlay_host.outside_press_open_change();
     let escape_runtime = runtime.clone();
     let escape_open_change = on_escape_close.clone();
     let escape_focus_restore = state.focus_restore_intent().clone();
+    let key_overlay_host = overlay_host.clone();
     let border = theme.resolve(colors.border());
     let background = theme.resolve(colors.background());
     let foreground = theme.resolve(colors.foreground());
@@ -737,8 +740,9 @@ fn popover_content_element(
         .ui_role(state.content_role())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             if event.keystroke.key.as_str() == "escape" {
-                consume_overlay_event(window, cx);
+                key_overlay_host.consume_event(window, cx);
                 close_popover(
+                    key_overlay_host.clone(),
                     escape_runtime.clone(),
                     escape_focus_restore.clone(),
                     escape_open_change.clone(),
@@ -751,8 +755,10 @@ fn popover_content_element(
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
             let focus_restore = state.focus_restore_intent().clone();
+            let overlay_host = overlay_host.clone();
             this.on_mouse_down_out(move |_, window, cx| {
                 close_popover(
+                    overlay_host.clone(),
                     runtime.clone(),
                     focus_restore.clone(),
                     on_open_change.clone(),
@@ -765,6 +771,7 @@ fn popover_content_element(
 }
 
 fn close_popover(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<PopoverRuntime>,
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
@@ -772,7 +779,7 @@ fn close_popover(
     cx: &mut App,
 ) {
     let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    close_overlay_runtime(
+    overlay_host.close_runtime(
         OverlayCloseRuntimeRequest::new(
             runtime,
             &focus_restore,
