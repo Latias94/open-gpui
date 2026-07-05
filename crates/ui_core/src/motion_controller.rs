@@ -252,8 +252,7 @@ pub struct MotionScalarExecutionSample {
 }
 
 impl MotionScalarExecutionSample {
-    /// Creates a scalar execution sample from explicit values.
-    pub const fn new(
+    const fn new(
         sample: MotionScalarSample,
         complete: bool,
         frame_demand: MotionFrameDemand,
