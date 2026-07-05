@@ -62,11 +62,7 @@ impl CanvasSceneFrame {
             }
         }
 
-        record_groups.sort_by(|left, right| {
-            left.z_index
-                .cmp(&right.z_index)
-                .then_with(|| left.ordinal.cmp(&right.ordinal))
-        });
+        record_groups.sort_by_key(scene_record_group_sort_key);
         edge_items.sort_by(|left, right| {
             left.z_index
                 .cmp(&right.z_index)
@@ -108,6 +104,14 @@ impl CanvasSceneFrame {
         }
         items
     }
+}
+
+fn scene_record_group_sort_key(group: &CanvasSceneRecordGroup) -> (u8, i32, usize) {
+    (
+        u8::from(group.selected || group.structurally_selected),
+        group.z_index,
+        group.ordinal,
+    )
 }
 
 #[derive(Clone, Debug, PartialEq)]

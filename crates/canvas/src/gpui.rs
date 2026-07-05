@@ -872,6 +872,53 @@ mod tests {
     }
 
     #[test]
+    fn scene_record_groups_promote_selected_nodes_atomically() {
+        let mut selected = CanvasNode::new(
+            "selected",
+            point(px(0.0), px(0.0)),
+            size(px(100.0), px(80.0)),
+        );
+        selected.z_index = 1;
+        let mut covering = CanvasNode::new(
+            "covering",
+            point(px(20.0), px(10.0)),
+            size(px(100.0), px(80.0)),
+        );
+        covering.z_index = 10;
+        let document = document_fixture().node(selected).node(covering).build();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Node(
+                crate::NodeId::from("selected"),
+            )))
+            .unwrap();
+        let model = CanvasPaintModel::from(&editor);
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(160.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        let scene = CanvasSceneFrame::from_paint_frame(&frame);
+        let layers = scene.ordered_layer_items();
+        let covering_chrome = scene_layer_index(
+            &layers,
+            HitTarget::Node(crate::NodeId::from("covering")),
+            CanvasSceneLayerPhase::RecordChrome,
+        );
+        let selected_widget = scene_layer_index(
+            &layers,
+            HitTarget::Node(crate::NodeId::from("selected")),
+            CanvasSceneLayerPhase::RecordWidget,
+        );
+
+        assert!(
+            covering_chrome < selected_widget,
+            "selection promotion must move the whole node group, not only top chrome"
+        );
+    }
+
+    #[test]
     fn scene_preserves_canvas_only_record_ordering() {
         let mut low = CanvasNode::new("low", point(px(0.0), px(0.0)), size(px(40.0), px(30.0)));
         low.z_index = 1;
