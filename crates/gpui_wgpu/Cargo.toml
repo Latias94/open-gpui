@@ -26,7 +26,7 @@ anyhow.workspace = true
 bytemuck = "1"
 open_gpui_collections.workspace = true
 cosmic-text = "0.19.0"
-etagere = "0.2"
+etagere = "0.3"
 itertools.workspace = true
 log.workspace = true
 parking_lot.workspace = true
@@ -46,9 +46,9 @@ pollster.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 wasm-bindgen.workspace = true
-wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
-js-sys = "0.3"
+wasm-bindgen-futures = "0.4.76"
+web-sys = { version = "0.3.103", features = ["HtmlCanvasElement"] }
+js-sys = "0.3.103"
 
 [dev-dependencies]
 criterion.workspace = true

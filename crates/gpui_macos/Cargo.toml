@@ -41,7 +41,7 @@ core-text = "21"
 ctor.workspace = true
 derive_more.workspace = true
 dispatch2 = "0.3.1"
-etagere = "0.2"
+etagere = "0.3"
 font-kit = { package = "open-gpui-font-kit", version = "0.14.3", optional = true }
 foreign-types = "0.5"
 futures.workspace = true
@@ -69,7 +69,7 @@ open_gpui_util.workspace = true
 uuid.workspace = true
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
-cbindgen = { version = "0.28.0", default-features = false }
+cbindgen = { version = "0.29", default-features = false }
 open_gpui.workspace = true
 
 # When this crate is itself being tested (cargo test -p gpui_macos), its own
