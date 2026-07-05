@@ -364,8 +364,9 @@ its source home is the `crates/ui_components/src/component_contract/` module fam
 `component_contract/mod.rs` is only the facade; `component_contract/types.rs` owns row types,
 `component_contract/rows.rs` is the row facade, `component_contract/rows/catalog.rs` owns canonical
 contract rows, `component_contract/rows/lists.rs` owns compatibility and family marker lists,
-`component_contract/projections.rs` owns query APIs, `component_contract/source_mapping.rs` owns
-source-owner projections, `component_contract/surfaces.rs` owns adjacent public-surface rows, and
+`component_contract/projections.rs` owns row lookup and gallery-scope query APIs,
+`component_contract/source_mapping.rs` owns source-owner projections,
+`component_contract/surfaces.rs` owns adjacent public-surface rows, and
 `component_contract/api_inventory.rs` owns public API inventory and method baselines. That split is
 a shared fact-source cleanup, not a broad component-file-size cleanup.
 That contract table classifies official components, official recipes, renderer-neutral state contracts,

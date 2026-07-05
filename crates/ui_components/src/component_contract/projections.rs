@@ -18,6 +18,59 @@ pub const fn component_contract_entry(name: &str) -> Option<&'static ComponentCo
     None
 }
 
+/// Returns every canonical component contract row.
+pub fn component_contract_entries() -> impl Iterator<Item = &'static ComponentContractEntry> {
+    COMPONENT_CONTRACT_ROWS.iter()
+}
+
+/// Returns rows that claim any gallery evidence.
+pub fn component_contract_gallery_entries() -> impl Iterator<Item = &'static ComponentContractEntry>
+{
+    component_contract_entries()
+        .filter(|entry| entry.gallery_status != SurfaceGalleryStatus::NotInGallery)
+}
+
+/// Returns rows that should be represented by the Components gallery catalog.
+pub fn component_contract_components_gallery_entries()
+-> impl Iterator<Item = &'static ComponentContractEntry> {
+    component_contract_entries()
+        .filter(|entry| component_gallery_status_belongs_to_components_page(entry.gallery_status))
+}
+
+/// Returns rows that should be rendered as official Components gallery samples.
+pub fn component_contract_official_component_entries()
+-> impl Iterator<Item = &'static ComponentContractEntry> {
+    component_contract_entries()
+        .filter(|entry| entry.gallery_status == SurfaceGalleryStatus::OfficialComponent)
+}
+
+/// Returns rows that should be rendered as official Overlay gallery samples.
+pub fn component_contract_official_overlay_entries()
+-> impl Iterator<Item = &'static ComponentContractEntry> {
+    component_contract_entries()
+        .filter(|entry| entry.gallery_status == SurfaceGalleryStatus::OfficialOverlay)
+}
+
+/// Returns rows that should be represented as Components gallery state readouts.
+pub fn component_contract_state_contract_entries()
+-> impl Iterator<Item = &'static ComponentContractEntry> {
+    component_contract_entries()
+        .filter(|entry| entry.gallery_status == SurfaceGalleryStatus::StateContract)
+}
+
+/// Returns true when a gallery status belongs to the Components page catalog.
+pub const fn component_gallery_status_belongs_to_components_page(
+    status: SurfaceGalleryStatus,
+) -> bool {
+    matches!(
+        status,
+        SurfaceGalleryStatus::OfficialComponent
+            | SurfaceGalleryStatus::AdapterOnly
+            | SurfaceGalleryStatus::InternalAnatomy
+            | SurfaceGalleryStatus::StateContract
+    )
+}
+
 /// Returns whether an API inventory component is intended for root/prelude defaults.
 pub fn component_inventory_default_export(entry: &ComponentApiInventoryEntry) -> bool {
     component_contract_entry(entry.component).is_some_and(|entry| entry.default_export)

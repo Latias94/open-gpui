@@ -6,8 +6,10 @@ use open_gpui_command::{
     CommandKeyBindingPatchOperation, CommandKeyBindingPatchOutcome, CommandProviderState,
 };
 use open_gpui_ui_components::component_contract::{
-    COMPONENT_API_INVENTORY, COMPONENT_CONTRACT_ROWS, PUBLIC_SURFACE_OWNER_MAP,
-    SurfaceGalleryStatus, component_contract_family, component_contract_gallery_status,
+    SurfaceGalleryStatus, component_contract_components_gallery_entries, component_contract_entry,
+    component_contract_family, component_contract_gallery_entries,
+    component_contract_gallery_status, component_contract_official_component_entries,
+    component_gallery_status_belongs_to_components_page,
 };
 use open_gpui_ui_components::{
     A11yLabelSource, A11yValueKind, AlertDialogIntent, AlertDialogOpenMode, BadgeVariant,

@@ -8,15 +8,9 @@ fn component_api_inventory_covers_official_gallery_catalog() {
         .iter()
         .map(|entry| entry.component.to_string())
         .collect::<BTreeSet<_>>();
-    let contract_official_names = COMPONENT_API_INVENTORY
-        .iter()
-        .filter(|entry| {
-            matches!(
-                component_contract_gallery_status(entry.component),
-                SurfaceGalleryStatus::OfficialComponent | SurfaceGalleryStatus::OfficialOverlay
-            )
-        })
-        .map(|entry| entry.component.to_string())
+    let contract_official_names = component_contract_official_component_entries()
+        .chain(component_contract_official_overlay_entries())
+        .map(|entry| entry.name.to_string())
         .collect::<BTreeSet<_>>();
 
     let missing = contract_official_names
@@ -104,6 +98,19 @@ fn component_contract_projection_functions_delegate_to_contract_rows() {
         );
         assert_eq!(component_source_inputs(entry.name), entry.source_inputs);
     }
+
+    assert_eq!(
+        component_contract_official_component_entries()
+            .map(|entry| entry.gallery_status)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([SurfaceGalleryStatus::OfficialComponent])
+    );
+    assert_eq!(
+        component_contract_official_overlay_entries()
+            .map(|entry| entry.gallery_status)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([SurfaceGalleryStatus::OfficialOverlay])
+    );
 }
 
 #[test]
@@ -170,6 +177,8 @@ fn component_contract_rows_are_split_by_responsibility() {
     assert!(inventory.contains("component_public_methods"));
     let projections = read_source_file(&contract_dir.join("projections.rs"));
     assert!(projections.contains("component_contract_gallery_status"));
+    assert!(projections.contains("component_contract_official_component_entries"));
+    assert!(projections.contains("component_contract_components_gallery_entries"));
     let source_mapping = read_source_file(&contract_dir.join("source_mapping.rs"));
     assert!(source_mapping.contains("component_source_inputs"));
     let evidence = read_source_file(&contract_dir.join("evidence.rs"));
@@ -192,14 +201,15 @@ fn component_contract_rows_align_compatibility_lists() {
         .map(|entry| entry.component)
         .collect::<std::collections::BTreeSet<_>>();
 
+    for entry in component_contract_official_overlay_entries() {
+        assert!(
+            overlays.contains(entry.name),
+            "official overlay `{}` should stay in OFFICIAL_OVERLAY_COMPONENTS",
+            entry.name
+        );
+    }
+
     for entry in COMPONENT_CONTRACT_ROWS {
-        if entry.gallery_status == SurfaceGalleryStatus::OfficialOverlay {
-            assert!(
-                overlays.contains(entry.name),
-                "official overlay `{}` should stay in OFFICIAL_OVERLAY_COMPONENTS",
-                entry.name
-            );
-        }
         if inventory.contains(entry.name) {
             assert_eq!(
                 entry.owner == PublicSurfaceOwnerClass::OfficialComponentRecipe,

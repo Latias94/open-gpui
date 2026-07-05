@@ -467,9 +467,9 @@ The public API inventory gate lives in `crates/ui_components/tests/public_surfac
 contract modules live under `crates/ui_components/tests/public_surface/`, while shared manifest
 projectors live in `crates/ui_components/tests/support/public_surface/mod.rs`. The product source
 of truth lives under `crates/ui_components/src/component_contract/`: `rows.rs` owns canonical
-contract rows, `projections.rs` owns query APIs, `api_inventory.rs` owns public API inventory and
-method baselines, `surfaces.rs` owns adjacent public-surface rows, and `source_mapping.rs` owns
-source-owner projections. Tests and gallery consume those typed contract rows instead of reading gallery
+contract rows, `projections.rs` owns row lookup and gallery-scope query APIs, `api_inventory.rs`
+owns public API inventory and method baselines, `surfaces.rs` owns adjacent public-surface rows,
+and `source_mapping.rs` owns source-owner projections. Tests and gallery consume those typed contract rows instead of reading gallery
 source strings for shipped status. The component crate root and prelude both re-export the curated default surface from
 `crates/ui_components/src/public_api/default.rs`; GPUI runtime adapter helpers remain explicitly
 namespaced under `open_gpui_ui_components::gpui_adapter`. Key sentinels include

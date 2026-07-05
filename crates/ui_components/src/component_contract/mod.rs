@@ -19,9 +19,12 @@ pub use api_inventory::{
 };
 pub use evidence::{COMPONENT_A11Y_EVIDENCE, COMPONENT_CONFORMANCE_GATES, component_a11y_evidence};
 pub use projections::{
-    component_contract_default_export, component_contract_docs_status,
-    component_contract_docs_token, component_contract_entry, component_contract_family,
-    component_contract_gallery_status, component_contract_source_home,
+    component_contract_components_gallery_entries, component_contract_default_export,
+    component_contract_docs_status, component_contract_docs_token, component_contract_entries,
+    component_contract_entry, component_contract_family, component_contract_gallery_entries,
+    component_contract_gallery_status, component_contract_official_component_entries,
+    component_contract_official_overlay_entries, component_contract_source_home,
+    component_contract_state_contract_entries, component_gallery_status_belongs_to_components_page,
     component_inventory_default_export, public_surface_default_export,
 };
 pub use rows::{COMPONENT_CONTRACT_ROWS, COMPONENT_RECIPE_COMPONENTS, OFFICIAL_OVERLAY_COMPONENTS};

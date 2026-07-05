@@ -50,13 +50,8 @@ fn components_page_samples_expose_component_metadata() {
         .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
         .map(|entry| entry.name)
         .collect::<std::collections::BTreeSet<_>>();
-    let expected_official_names = COMPONENT_API_INVENTORY
-        .iter()
-        .filter(|entry| {
-            component_contract_gallery_status(entry.component)
-                == SurfaceGalleryStatus::OfficialComponent
-        })
-        .map(|entry| entry.component)
+    let expected_official_names = component_contract_official_component_entries()
+        .map(|entry| entry.name)
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         official_names, expected_official_names,
@@ -1718,13 +1713,8 @@ fn components_catalog_consumes_component_contract_rows() {
         .iter()
         .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
-    let contract_official_names = COMPONENT_API_INVENTORY
-        .iter()
-        .filter(|entry| {
-            component_contract_gallery_status(entry.component)
-                == SurfaceGalleryStatus::OfficialComponent
-        })
-        .map(|entry| entry.component)
+    let contract_official_names = component_contract_official_component_entries()
+        .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
     let catalog_official_names = pages::components::COMPONENT_CATALOG
         .iter()
@@ -1736,16 +1726,8 @@ fn components_catalog_consumes_component_contract_rows() {
         "Components catalog official rows should be contract-owned"
     );
 
-    let missing_adjacent_surfaces = PUBLIC_SURFACE_OWNER_MAP
-        .iter()
-        .filter(|entry| {
-            matches!(
-                component_contract_gallery_status(entry.name),
-                SurfaceGalleryStatus::AdapterOnly
-                    | SurfaceGalleryStatus::InternalAnatomy
-                    | SurfaceGalleryStatus::StateContract
-            )
-        })
+    let missing_adjacent_surfaces = component_contract_components_gallery_entries()
+        .filter(|entry| entry.gallery_status != SurfaceGalleryStatus::OfficialComponent)
         .filter(|entry| !catalog_names.contains(entry.name))
         .map(|entry| entry.name)
         .collect::<Vec<_>>();
@@ -2208,12 +2190,6 @@ fn gallery_story_contracts_cover_components_state_readouts_and_overlays() {
 
 #[test]
 fn choice_search_story_contracts_expose_state_readouts_and_contract_rows() {
-    use std::collections::BTreeMap;
-
-    let contract_entries = COMPONENT_CONTRACT_ROWS
-        .iter()
-        .map(|entry| (entry.name, entry))
-        .collect::<BTreeMap<_, _>>();
     let expected = [
         (
             "Listbox",
@@ -2278,8 +2254,7 @@ fn choice_search_story_contracts_expose_state_readouts_and_contract_rows() {
             );
         }
 
-        let entry = contract_entries
-            .get(name)
+        let entry = component_contract_entry(name)
             .unwrap_or_else(|| panic!("expected component contract row `{name}`"));
         assert_eq!(entry.family, component_contract_family(name));
         assert_eq!(
@@ -2389,15 +2364,23 @@ fn gallery_catalog_entries_satisfy_component_contract_evidence() {
         .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
 
-    for entry in COMPONENT_CONTRACT_ROWS
-        .iter()
-        .filter(|entry| entry.gallery_status != SurfaceGalleryStatus::NotInGallery)
-    {
+    for entry in component_contract_gallery_entries() {
         match entry.gallery_status {
-            SurfaceGalleryStatus::OfficialComponent
-            | SurfaceGalleryStatus::AdapterOnly
-            | SurfaceGalleryStatus::InternalAnatomy
-            | SurfaceGalleryStatus::StateContract => {
+            SurfaceGalleryStatus::OfficialOverlay => {
+                assert!(
+                    overlay_names.contains(entry.name),
+                    "component contract row `{}` claims overlay gallery evidence but no overlay catalog row exists",
+                    entry.name
+                );
+            }
+            SurfaceGalleryStatus::NotInGallery => unreachable!(),
+            status => {
+                assert!(
+                    component_gallery_status_belongs_to_components_page(status),
+                    "component contract row `{}` has unhandled gallery status {:?}",
+                    entry.name,
+                    status
+                );
                 let catalog_entry = component_catalog
                     .get(entry.name)
                     .unwrap_or_else(|| {
@@ -2406,23 +2389,8 @@ fn gallery_catalog_entries_satisfy_component_contract_evidence() {
                             entry.name
                         )
                     });
-                let expected_status = match entry.gallery_status {
-                    SurfaceGalleryStatus::OfficialComponent => {
-                        pages::components::ComponentCatalogStatus::Official
-                    }
-                    SurfaceGalleryStatus::AdapterOnly => {
-                        pages::components::ComponentCatalogStatus::AdapterOnly
-                    }
-                    SurfaceGalleryStatus::InternalAnatomy => {
-                        pages::components::ComponentCatalogStatus::InternalAnatomy
-                    }
-                    SurfaceGalleryStatus::StateContract => {
-                        pages::components::ComponentCatalogStatus::StateContract
-                    }
-                    SurfaceGalleryStatus::OfficialOverlay | SurfaceGalleryStatus::NotInGallery => {
-                        unreachable!()
-                    }
-                };
+                let expected_status =
+                    pages::components::ComponentCatalogStatus::from_contract(entry.gallery_status);
                 assert_eq!(
                     catalog_entry.status, expected_status,
                     "component contract row `{}` should agree with Components catalog status",
@@ -2443,29 +2411,14 @@ fn gallery_catalog_entries_satisfy_component_contract_evidence() {
                     );
                 }
             }
-            SurfaceGalleryStatus::OfficialOverlay => {
-                assert!(
-                    overlay_names.contains(entry.name),
-                    "component contract row `{}` claims overlay gallery evidence but no overlay catalog row exists",
-                    entry.name
-                );
-            }
-            SurfaceGalleryStatus::NotInGallery => unreachable!(),
         }
     }
 }
 
 #[test]
 fn gallery_story_contracts_reference_component_contract_rows() {
-    use std::collections::BTreeMap;
-
-    let contract_entries = COMPONENT_CONTRACT_ROWS
-        .iter()
-        .map(|entry| (entry.name, entry))
-        .collect::<BTreeMap<_, _>>();
-
     for story in pages::components::component_story_contracts() {
-        let entry = contract_entries.get(story.owner_name()).unwrap_or_else(|| {
+        let entry = component_contract_entry(story.owner_name()).unwrap_or_else(|| {
             panic!(
                 "component story `{}` should reference a component contract row",
                 story.owner_name()
@@ -2483,7 +2436,7 @@ fn gallery_story_contracts_reference_component_contract_rows() {
     }
 
     for story in pages::overlay::overlay_story_contracts() {
-        let entry = contract_entries.get(story.owner_name()).unwrap_or_else(|| {
+        let entry = component_contract_entry(story.owner_name()).unwrap_or_else(|| {
             panic!(
                 "overlay story `{}` should reference a component contract row",
                 story.owner_name()
