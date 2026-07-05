@@ -30,6 +30,11 @@ impl OverlayLayerHost {
         }
     }
 
+    /// Creates a host from a pre-resolved adapter state.
+    pub(crate) fn from_adapter(adapter: GpuiOverlayState) -> Self {
+        Self { adapter }
+    }
+
     /// Returns the GPUI adapter state.
     pub(crate) const fn adapter(&self) -> &GpuiOverlayState {
         &self.adapter

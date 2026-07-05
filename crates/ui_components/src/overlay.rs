@@ -9,17 +9,12 @@ pub use adapter::{
     DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayState,
     default_deferred_priority, gpui_overlay_state,
 };
-pub(crate) use adapter::{
-    gpui_full_window_overlay_layer, gpui_positioned_overlay_layer, gpui_relative_overlay_layer,
-};
 pub(crate) use host::OverlayLayerHost;
 pub use open_gpui_ui_core::OverlayResolvedState;
 pub use placement::{GpuiOverlayPlacement, gpui_anchor, point_anchor_placement};
 pub(crate) use runtime::{
     OverlayCloseRuntimeRequest, OverlayDisclosureConfig, OverlayDisclosureOpenMode,
-    OverlayOpenRuntimeRequest, apply_overlay_open_change, close_overlay_runtime,
-    close_overlay_runtime_with_after_update, consume_overlay_event, resolve_overlay_open_state,
-    set_overlay_open,
+    OverlayOpenRuntimeRequest, resolve_overlay_open_state, set_overlay_open,
 };
 pub use runtime::{OverlayOpenChange, escape_open_change, outside_press_open_change};
 

@@ -11,10 +11,7 @@ use open_gpui_ui_core::{FocusRestoreIntent, Role, Sizable, ThemeTokens, UiPx, ui
 use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
-use crate::overlay::{
-    OverlayCloseRuntimeRequest, close_overlay_runtime, close_overlay_runtime_with_after_update,
-    escape_open_change, outside_press_open_change, set_overlay_open,
-};
+use crate::overlay::{OverlayCloseRuntimeRequest, OverlayLayerHost, set_overlay_open};
 use crate::scroll_area::ScrollArea;
 use crate::text_input::TextInput;
 use crate::text_input::adapter::TextInputController;
@@ -77,6 +74,7 @@ pub(super) fn command_dialog_layer_element(
     viewport_extent: UiPx,
     scroll_offset: UiPx,
     dialog_state: CommandDialogState,
+    overlay_host: OverlayLayerHost,
     viewport: open_gpui::Size<Pixels>,
     input_controller: Entity<TextInputController>,
     runtime: Entity<CommandRuntime>,
@@ -88,9 +86,10 @@ pub(super) fn command_dialog_layer_element(
     theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
-    let outside_change = outside_press_open_change(dialog_state.overlay().policy());
+    let outside_change = overlay_host.outside_press_open_change();
     let x = ((viewport.width - gpui_px_from_ui(metrics.max_width())) / 2.0).max(px(12.0));
     let y = (viewport.height / 10.0).max(px(24.0));
+    let barrier_overlay_host = overlay_host.clone();
 
     div()
         .id((content_id.clone(), "layer"))
@@ -101,9 +100,8 @@ pub(super) fn command_dialog_layer_element(
         .h(viewport.height)
         .bg(rgba(0x00000033))
         .occlude()
-        .on_any_mouse_down(|_, window, cx| {
-            window.prevent_default();
-            cx.stop_propagation();
+        .on_any_mouse_down(move |_, window, cx| {
+            barrier_overlay_host.consume_event(window, cx);
         })
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
@@ -113,10 +111,11 @@ pub(super) fn command_dialog_layer_element(
                 .policy()
                 .focus_restore_intent()
                 .clone();
+            let overlay_host = overlay_host.clone();
             this.on_click(move |_: &ClickEvent, window, cx| {
-                window.prevent_default();
-                cx.stop_propagation();
+                overlay_host.consume_event(window, cx);
                 close_command_dialog(
+                    overlay_host.clone(),
                     runtime.clone(),
                     focus_restore.clone(),
                     on_open_change.clone(),
@@ -150,6 +149,7 @@ pub(super) fn command_dialog_layer_element(
                     on_select,
                     on_selected_values_change,
                     tokens,
+                    Some(overlay_host),
                     theme,
                 )),
         )
@@ -172,6 +172,7 @@ pub(super) fn command_content_element(
     on_select: Option<CommandSelectionHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     tokens: ThemeTokens,
+    overlay_host: Option<OverlayLayerHost>,
     theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
@@ -181,11 +182,10 @@ pub(super) fn command_content_element(
     let selected_values = state.selected_values().to_vec();
     let selection_mode = state.selection_mode();
     let dialog_state = state.dialog().cloned();
-    let outside_change = if let Some(dialog_state) = dialog_state.as_ref() {
-        outside_press_open_change(dialog_state.overlay().policy())
-    } else {
-        None
-    };
+    let overlay_host = overlay_host.unwrap_or_else(|| OverlayLayerHost::resolve(state.overlay()));
+    let outside_change = dialog_state
+        .as_ref()
+        .and_then(|_| overlay_host.outside_press_open_change());
     let scroll_viewport_id = state.scroll_area().viewport_id().to_owned();
     let plan = CommandRenderPlan::resolve(
         debug_id.clone(),
@@ -214,10 +214,9 @@ pub(super) fn command_content_element(
     let key_focus_restore = state.focus_restore_intent().clone();
     let key_selection_mode = selection_mode;
     let key_scroll_handle = scroll_handle.clone();
-    let escape_change = state
-        .dialog()
-        .map(|dialog_state| escape_open_change(dialog_state.overlay().policy()))
-        .unwrap_or_else(|| escape_open_change(state.overlay().policy()));
+    let escape_change = overlay_host.escape_open_change();
+    let key_overlay_host = overlay_host.clone();
+    let escape_overlay_host = overlay_host.clone();
     let content_debug_id = debug_id.clone();
     let mut command_input = TextInput::new(input_id, state.label().to_owned())
         .controller(input_controller)
@@ -264,6 +263,7 @@ pub(super) fn command_content_element(
                 cx.stop_propagation();
                 window.prevent_default();
                 close_command_dialog(
+                    escape_overlay_host.clone(),
                     escape_runtime.clone(),
                     escape_focus_restore.clone(),
                     on_escape_open_change.clone(),
@@ -290,6 +290,7 @@ pub(super) fn command_content_element(
                     window.prevent_default();
                     let selection_index = selection.index();
                     handle_command_selection(
+                        key_overlay_host.clone(),
                         key_runtime.clone(),
                         key_selection_mode,
                         key_dialog_enabled,
@@ -311,8 +312,10 @@ pub(super) fn command_content_element(
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
             let focus_restore = state.focus_restore_intent().clone();
+            let overlay_host = overlay_host.clone();
             this.on_mouse_down_out(move |_, window, cx| {
                 close_command_dialog(
+                    overlay_host.clone(),
                     runtime.clone(),
                     focus_restore.clone(),
                     on_open_change.clone(),
@@ -410,6 +413,7 @@ pub(super) fn command_content_element(
                             &plan,
                             &plan_rows,
                             total_size,
+                            overlay_host.clone(),
                             runtime.clone(),
                             selection_mode,
                             selected_values.clone(),
@@ -651,6 +655,7 @@ fn render_command_results_body(
     plan: &CommandRenderPlan,
     rows: &[CommandRowRenderPlan],
     total_size: UiPx,
+    overlay_host: OverlayLayerHost,
     runtime: Entity<CommandRuntime>,
     selection_mode: CommandSelectionMode,
     selected_values: Vec<String>,
@@ -691,6 +696,7 @@ fn render_command_results_body(
             rows,
             metrics,
             colors,
+            overlay_host,
             runtime,
             selection_mode,
             selected_values,
@@ -710,6 +716,7 @@ fn command_result_children(
     rows: Vec<CommandRowRenderPlan>,
     metrics: CommandMetrics,
     colors: CommandColors,
+    overlay_host: OverlayLayerHost,
     runtime: Entity<CommandRuntime>,
     selection_mode: CommandSelectionMode,
     selected_values: Vec<String>,
@@ -751,6 +758,7 @@ fn command_result_children(
                 row,
                 metrics,
                 colors,
+                overlay_host.clone(),
                 runtime.clone(),
                 selection_mode,
                 selected_values.clone(),
@@ -773,6 +781,7 @@ fn render_command_result_row(
     row: CommandRowRenderPlan,
     metrics: CommandMetrics,
     colors: CommandColors,
+    overlay_host: OverlayLayerHost,
     runtime: Entity<CommandRuntime>,
     selection_mode: CommandSelectionMode,
     selected_values: Vec<String>,
@@ -880,6 +889,7 @@ fn render_command_result_row(
                                 return;
                             };
                             handle_command_selection(
+                                overlay_host.clone(),
                                 runtime.clone(),
                                 selection_mode,
                                 dialog_enabled,
@@ -910,6 +920,7 @@ fn render_command_result_row(
 
 #[allow(clippy::too_many_arguments)]
 fn handle_command_selection(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<CommandRuntime>,
     selection_mode: CommandSelectionMode,
     dialog_enabled: bool,
@@ -927,7 +938,7 @@ fn handle_command_selection(
             if dialog_enabled {
                 let selected_value = selection.value().to_owned();
                 let trigger_focus = runtime.read(cx).trigger_focus.clone();
-                close_overlay_runtime_with_after_update(
+                overlay_host.close_runtime_with_after_update(
                     OverlayCloseRuntimeRequest::new(
                         runtime.clone(),
                         &focus_restore,
@@ -1060,6 +1071,7 @@ pub(super) fn command_scroll_reset_key(state: &CommandState) -> String {
 }
 
 pub(super) fn close_command_dialog(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<CommandRuntime>,
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<CommandOpenChangeHandler>,
@@ -1067,7 +1079,7 @@ pub(super) fn close_command_dialog(
     cx: &mut App,
 ) {
     let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    close_overlay_runtime(
+    overlay_host.close_runtime(
         OverlayCloseRuntimeRequest::new(
             runtime,
             &focus_restore,

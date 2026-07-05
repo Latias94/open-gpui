@@ -23,8 +23,7 @@ use open_gpui_ui_core::{
 use crate::a11y::UiA11yElementExt;
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::overlay::{
-    OverlayOpenRuntimeRequest, apply_overlay_open_change, gpui_full_window_overlay_layer,
-    gpui_overlay_state, resolve_overlay_open_state, set_overlay_open,
+    OverlayLayerHost, OverlayOpenRuntimeRequest, resolve_overlay_open_state, set_overlay_open,
 };
 use crate::text_editing::TextEditingPolicy;
 use crate::text_input::TextInputDisplayMode;
@@ -671,10 +670,10 @@ impl RenderOnce for Command {
         let focus_ring = state.focus_ring();
         let dialog_state = state.dialog().cloned();
         let dialog_open = dialog_state.clone().filter(|_| state.open());
-        let dialog_overlay_adapter = dialog_state
+        let dialog_overlay_host = dialog_state
             .as_ref()
-            .map(|dialog| gpui_overlay_state(dialog.overlay()))
-            .unwrap_or_else(|| gpui_overlay_state(state.overlay()));
+            .map(|dialog| OverlayLayerHost::resolve(dialog.overlay()))
+            .unwrap_or_else(|| OverlayLayerHost::resolve(state.overlay()));
         let viewport = window.viewport_size();
         let dialog_enabled = self.dialog_enabled;
         let trigger_label = self.trigger_label;
@@ -702,6 +701,7 @@ impl RenderOnce for Command {
                 let on_open_change = on_open_change.clone();
                 let trigger_label = trigger_label.clone();
                 let open = state.open();
+                let overlay_host = dialog_overlay_host.clone();
                 this.child(
                     div()
                         .id(trigger_id)
@@ -731,7 +731,7 @@ impl RenderOnce for Command {
                                 move |_event: &ClickEvent, window, cx| {
                                     cx.stop_propagation();
                                     if !open {
-                                        apply_overlay_open_change(
+                                        overlay_host.apply_open_change(
                                             OverlayOpenRuntimeRequest::new(
                                                 runtime.clone(),
                                                 true,
@@ -767,33 +767,33 @@ impl RenderOnce for Command {
                     on_select.clone(),
                     on_selected_values_change.clone(),
                     tokens,
+                    None,
                     &theme,
                 ))
             })
             .when_some(dialog_open, |this, dialog_state| {
-                this.child(gpui_full_window_overlay_layer(
-                    &dialog_overlay_adapter,
-                    command_dialog_layer_element(
-                        content_id,
-                        input_id,
-                        listbox_id,
-                        debug_id,
-                        state,
-                        scroll_handle,
-                        viewport_extent,
-                        scroll_offset,
-                        dialog_state,
-                        viewport,
-                        input_controller,
-                        runtime,
-                        on_open_change,
-                        on_query_change,
-                        on_select,
-                        on_selected_values_change,
-                        tokens,
-                        &theme,
-                    ),
-                ))
+                let overlay_host = dialog_overlay_host.clone();
+                this.child(overlay_host.full_window_layer(command_dialog_layer_element(
+                    content_id,
+                    input_id,
+                    listbox_id,
+                    debug_id,
+                    state,
+                    scroll_handle,
+                    viewport_extent,
+                    scroll_offset,
+                    dialog_state,
+                    overlay_host.clone(),
+                    viewport,
+                    input_controller,
+                    runtime,
+                    on_open_change,
+                    on_query_change,
+                    on_select,
+                    on_selected_values_change,
+                    tokens,
+                    &theme,
+                )))
             })
     }
 }

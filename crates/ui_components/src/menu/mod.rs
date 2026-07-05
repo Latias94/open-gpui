@@ -27,10 +27,8 @@ use crate::a11y::UiA11yElementExt;
 use crate::focus::focus_ring_shadow_with_theme;
 
 use crate::overlay::{
-    GpuiOverlayPlacement, GpuiOverlayState, OverlayCloseRuntimeRequest, OverlayOpenRuntimeRequest,
-    apply_overlay_open_change, close_overlay_runtime, consume_overlay_event, gpui_overlay_state,
-    gpui_positioned_overlay_layer, gpui_relative_overlay_layer, outside_press_open_change,
-    resolve_overlay_open_state, set_overlay_open,
+    GpuiOverlayPlacement, GpuiOverlayState, OverlayCloseRuntimeRequest, OverlayLayerHost,
+    OverlayOpenRuntimeRequest, resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::{ThemeContext, ThemeResolver};
@@ -56,6 +54,7 @@ fn menu_item_element(
     metrics: MenuMetrics,
     colors: MenuColors,
     runtime: open_gpui::Entity<MenuRuntime>,
+    overlay_host: OverlayLayerHost,
     trigger_focus: FocusHandle,
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
@@ -106,6 +105,7 @@ fn menu_item_element(
             let selection = MenuSelection::from_item(&item_state);
             let item_handler = item.on_select.clone();
             let global_handler = on_select.clone();
+            let overlay_host_for_click = overlay_host.clone();
             let item_label = item_state.label().to_owned();
             let shortcut = item_state.shortcut().map(str::to_owned);
             let item_path_key = item_state.path_key();
@@ -208,6 +208,7 @@ fn menu_item_element(
                                 global_handler(selection, window, cx);
                             }
                             close_menu(
+                                overlay_host_for_click.clone(),
                                 runtime.clone(),
                                 trigger_focus.clone(),
                                 focus_restore.clone(),
@@ -692,7 +693,7 @@ impl RenderOnce for Menu {
         let trigger_foreground = theme.resolve(colors.trigger_foreground());
         let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
         let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
-        let overlay_adapter = gpui_overlay_state(state.overlay());
+        let overlay_host = OverlayLayerHost::resolve(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 open_gpui_ui_core::OverlayAnchorInput::from_layout_bounds(open_gpui_ui_core::rect(
@@ -704,7 +705,7 @@ impl RenderOnce for Menu {
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
             .with_offset(ui_px(4.0)),
-            overlay_adapter.snap_margin(),
+            overlay_host.adapter().snap_margin(),
         );
 
         if open && !runtime_state.did_initial_focus {
@@ -766,10 +767,12 @@ impl RenderOnce for Menu {
                         let on_open_change = on_open_change.clone();
                         let trigger_focus = trigger_focus_for_escape.clone();
                         let focus_restore = focus_restore_for_escape.clone();
+                        let overlay_host = overlay_host.clone();
                         this.on_key_down(move |event: &KeyDownEvent, window, cx| {
                             if event.keystroke.key.as_str() == "escape" {
-                                consume_overlay_event(window, cx);
+                                overlay_host.consume_event(window, cx);
                                 close_menu(
+                                    overlay_host.clone(),
                                     runtime.clone(),
                                     trigger_focus.clone(),
                                     focus_restore.clone(),
@@ -784,12 +787,13 @@ impl RenderOnce for Menu {
                     .when(!disabled, |this| {
                         let runtime = runtime.clone();
                         let on_open_change = on_open_change.clone();
+                        let overlay_host = overlay_host.clone();
                         this.cursor_pointer()
                             .hover(move |style| style.bg(trigger_hover_background))
                             .on_click(move |_event: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 let next_open = !open;
-                                apply_overlay_open_change(
+                                overlay_host.apply_open_change(
                                     OverlayOpenRuntimeRequest::new(
                                         runtime.clone(),
                                         next_open,
@@ -812,8 +816,8 @@ impl RenderOnce for Menu {
                     .child(trigger_content),
             )
             .when(open, |this| {
-                this.child(gpui_relative_overlay_layer(
-                    &overlay_adapter,
+                let overlay_host = overlay_host.clone();
+                this.child(overlay_host.relative_layer(
                     &placement,
                     menu_content_element(
                         items,
@@ -821,6 +825,7 @@ impl RenderOnce for Menu {
                         debug_id.clone(),
                         state.clone(),
                         runtime.clone(),
+                        overlay_host.clone(),
                         trigger_focus_for_content.clone(),
                         content_focus.clone(),
                         scroll_handle.clone(),
@@ -829,8 +834,8 @@ impl RenderOnce for Menu {
                         on_select.clone(),
                         &theme,
                         cx,
-                        overlay_adapter.snap_margin(),
-                        overlay_adapter.deferred_priority(),
+                        overlay_host.adapter().snap_margin(),
+                        overlay_host.adapter().deferred_priority(),
                     ),
                 ))
             })
@@ -843,6 +848,7 @@ fn menu_content_element(
     debug_id: String,
     state: MenuState,
     runtime: open_gpui::Entity<MenuRuntime>,
+    overlay_host: OverlayLayerHost,
     trigger_focus: FocusHandle,
     content_focus: FocusHandle,
     scroll_handle: ScrollHandle,
@@ -856,11 +862,12 @@ fn menu_content_element(
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
-    let outside_change = outside_press_open_change(state.overlay().policy());
+    let outside_change = overlay_host.outside_press_open_change();
     let key_state = state.clone();
     let key_runtime = runtime.clone();
     let key_open_change = on_open_change.clone();
     let key_select = on_select.clone();
+    let key_overlay_host = overlay_host.clone();
     let trigger_focus_for_keydown = trigger_focus.clone();
     let focus_restore_for_keydown = focus_restore.clone();
     let trigger_focus_for_outside = trigger_focus.clone();
@@ -873,6 +880,7 @@ fn menu_content_element(
         None,
         debug_id.clone(),
         runtime.clone(),
+        overlay_host.clone(),
         trigger_focus.clone(),
         focus_restore.clone(),
         on_open_change.clone(),
@@ -906,14 +914,15 @@ fn menu_content_element(
 
             match intent {
                 MenuKeyboardIntent::DismissSubmenu(target) => {
-                    consume_overlay_event(window, cx);
+                    key_overlay_host.consume_event(window, cx);
                     key_runtime.update(cx, |runtime, _| {
                         runtime.apply_submenu_target(&target);
                     });
                 }
                 MenuKeyboardIntent::DismissRoot => {
-                    consume_overlay_event(window, cx);
+                    key_overlay_host.consume_event(window, cx);
                     close_menu(
+                        key_overlay_host.clone(),
                         key_runtime.clone(),
                         trigger_focus_for_keydown.clone(),
                         focus_restore_for_keydown.clone(),
@@ -956,6 +965,7 @@ fn menu_content_element(
                         on_select(selection, window, cx);
                     }
                     close_menu(
+                        key_overlay_host.clone(),
                         key_runtime.clone(),
                         trigger_focus_for_keydown.clone(),
                         focus_restore_for_keydown.clone(),
@@ -969,8 +979,10 @@ fn menu_content_element(
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
+            let overlay_host = overlay_host.clone();
             this.on_mouse_down_out(move |_, window, cx| {
                 close_menu(
+                    overlay_host.clone(),
                     runtime.clone(),
                     trigger_focus_for_outside.clone(),
                     focus_restore_for_outside.clone(),
@@ -990,6 +1002,7 @@ fn menu_branch_surface(
     surface_id: Option<ElementId>,
     debug_id: String,
     runtime: open_gpui::Entity<MenuRuntime>,
+    overlay_host: OverlayLayerHost,
     trigger_focus: FocusHandle,
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
@@ -1049,6 +1062,7 @@ fn menu_branch_surface(
             metrics,
             colors,
             runtime.clone(),
+            overlay_host.clone(),
             trigger_focus.clone(),
             focus_restore.clone(),
             on_open_change.clone(),
@@ -1061,6 +1075,7 @@ fn menu_branch_surface(
         &branch_states,
         debug_id.clone(),
         runtime.clone(),
+        overlay_host.clone(),
         trigger_focus.clone(),
         focus_restore.clone(),
         on_open_change.clone(),
@@ -1127,6 +1142,7 @@ fn menu_submenu_layer(
     branch_states: &[MenuItemState],
     debug_id: String,
     runtime: open_gpui::Entity<MenuRuntime>,
+    overlay_host: OverlayLayerHost,
     trigger_focus: FocusHandle,
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
@@ -1165,6 +1181,7 @@ fn menu_submenu_layer(
         None,
         debug_id,
         runtime,
+        overlay_host.clone(),
         trigger_focus,
         focus_restore,
         on_open_change,
@@ -1176,12 +1193,13 @@ fn menu_submenu_layer(
         deferred_priority,
     );
 
-    Some(gpui_positioned_overlay_layer(
-        &GpuiOverlayState::resolve(
-            state.overlay().policy().clone(),
-            deferred_priority,
-            snap_margin,
-        ),
+    let submenu_host = OverlayLayerHost::from_adapter(GpuiOverlayState::resolve(
+        state.overlay().policy().clone(),
+        deferred_priority,
+        snap_margin,
+    ));
+
+    Some(submenu_host.positioned_layer(
         &placement,
         placement.position().unwrap_or_default(),
         submenu_surface,
@@ -1195,6 +1213,7 @@ fn menu_item_elements(
     metrics: MenuMetrics,
     colors: MenuColors,
     runtime: open_gpui::Entity<MenuRuntime>,
+    overlay_host: OverlayLayerHost,
     trigger_focus: FocusHandle,
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
@@ -1213,6 +1232,7 @@ fn menu_item_elements(
                 metrics,
                 colors,
                 runtime.clone(),
+                overlay_host.clone(),
                 trigger_focus.clone(),
                 focus_restore.clone(),
                 on_open_change.clone(),
@@ -1290,6 +1310,7 @@ fn flatten_visible_menu_items(
 }
 
 fn close_menu(
+    overlay_host: OverlayLayerHost,
     runtime: open_gpui::Entity<MenuRuntime>,
     trigger_focus: FocusHandle,
     focus_restore: FocusRestoreIntent,
@@ -1297,7 +1318,7 @@ fn close_menu(
     window: &mut Window,
     cx: &mut App,
 ) {
-    close_overlay_runtime(
+    overlay_host.close_runtime(
         OverlayCloseRuntimeRequest::new(
             runtime,
             &focus_restore,
