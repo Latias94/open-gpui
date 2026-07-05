@@ -475,7 +475,8 @@ source strings for shipped status. The component crate root and prelude both re-
 namespaced under `open_gpui_ui_components::gpui_adapter`. Key sentinels include
 `component_api_inventory_covers_official_gallery_catalog`,
 `component_api_inventory_uses_stable_ownership_vocabulary`, and
-`component_contract_projection_functions_delegate_to_contract_rows`,
+`component_contract_entry_returns_canonical_rows`,
+`component_contract_queries_derive_overlay_and_recipe_rows`,
 `component_contract_rows_are_split_by_responsibility`, and
 `root_and_prelude_exports_match_contract_default_surface_intent`. Run the focused proof with:
 
@@ -522,8 +523,7 @@ and `register_theme_json_file`. Production component render paths should resolve
 `ThemeResolver::current(cx)` or an explicit snapshot; direct `ThemeResolver::resolve(...)` is a
 legacy default-light compatibility path and should not appear in `crates/ui_components/src`
 rendering code. Focus-ring painting follows the same rule: production render paths should use
-`focus_ring_shadow_with_theme(...)`, while `focus_ring_shadow(...)` remains a default-light
-compatibility helper guarded by the public-surface adapter tests.
+`focus_ring_shadow_with_theme(...)` with an explicit render-time theme context.
 Loader failures are structured as `ThemeLoadError` / `ThemeFileField` for unsupported schema
 versions, missing identity fields, unsupported token or state names, duplicate token/state pairs,
 and invalid RGB values.
@@ -893,12 +893,12 @@ callers should convert their concrete window or viewport width at the adapter bo
 invoking UI-core adaptive helpers. The companion strict-boundary inventory must stay empty.
 `adapter_only_public_surfaces_match_allowlist` and
 `gpui_adapter_exports_group_runtime_specific_surfaces` guard the intentionally public GPUI helper
-surface: `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow`,
-`focus_ring_shadow_with_theme`, `GpuiOverlayState`, the adapter accessibility/geometry conversions,
-and related adapter scheduling helpers must stay classified under
+surface: `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow_with_theme`,
+`GpuiOverlayState`, the adapter accessibility/geometry conversions, and related adapter scheduling
+helpers must stay classified under
 `open_gpui_ui_components::gpui_adapter` instead of drifting into the crate root, prelude default
 interface, or resolved state. `FocusRing` itself uses neutral `UiPx`; only the GPUI focus-ring
-shadow helpers return `BoxShadow`, and production render paths should use the explicit-theme helper.
+shadow helper returns `BoxShadow`, and production render paths should use the explicit-theme helper.
 
 When changing GPUI accessibility repair or component metadata that creates explicit cross-node
 relationships, also run:

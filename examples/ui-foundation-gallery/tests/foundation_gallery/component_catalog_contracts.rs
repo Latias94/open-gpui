@@ -50,13 +50,8 @@ fn components_page_samples_expose_component_metadata() {
         .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
         .map(|entry| entry.name)
         .collect::<std::collections::BTreeSet<_>>();
-    let expected_official_names = COMPONENT_API_INVENTORY
-        .iter()
-        .filter(|entry| {
-            component_contract_gallery_status(entry.component)
-                == SurfaceGalleryStatus::OfficialComponent
-        })
-        .map(|entry| entry.component)
+    let expected_official_names = official_component_rows()
+        .map(|entry| entry.name)
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         official_names, expected_official_names,
@@ -1696,16 +1691,17 @@ fn components_catalog_consumes_component_contract_rows() {
     use std::collections::BTreeSet;
 
     for entry in pages::components::COMPONENT_CATALOG {
-        let expected_status = pages::components::ComponentCatalogStatus::from_contract(
-            component_contract_gallery_status(entry.name),
-        );
+        let contract_row = component_contract_entry(entry.name)
+            .unwrap_or_else(|| panic!("missing component contract row for `{}`", entry.name));
+        let expected_status =
+            pages::components::ComponentCatalogStatus::from_contract(contract_row.gallery_status);
         assert_eq!(
             entry.status, expected_status,
             "catalog entry `{}` should derive status from the component contract rows",
             entry.name
         );
 
-        if let Some(expected_family) = component_contract_family(entry.name) {
+        if let Some(expected_family) = contract_row.family {
             assert_eq!(
                 entry.family, expected_family,
                 "catalog entry `{}` should derive family from the component contract rows",
@@ -1718,13 +1714,8 @@ fn components_catalog_consumes_component_contract_rows() {
         .iter()
         .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
-    let contract_official_names = COMPONENT_API_INVENTORY
-        .iter()
-        .filter(|entry| {
-            component_contract_gallery_status(entry.component)
-                == SurfaceGalleryStatus::OfficialComponent
-        })
-        .map(|entry| entry.component)
+    let contract_official_names = official_component_rows()
+        .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
     let catalog_official_names = pages::components::COMPONENT_CATALOG
         .iter()
@@ -1736,11 +1727,10 @@ fn components_catalog_consumes_component_contract_rows() {
         "Components catalog official rows should be contract-owned"
     );
 
-    let missing_adjacent_surfaces = PUBLIC_SURFACE_OWNER_MAP
-        .iter()
+    let missing_adjacent_surfaces = gallery_surface_rows()
         .filter(|entry| {
             matches!(
-                component_contract_gallery_status(entry.name),
+                entry.gallery_status,
                 SurfaceGalleryStatus::AdapterOnly
                     | SurfaceGalleryStatus::InternalAnatomy
                     | SurfaceGalleryStatus::StateContract
@@ -2281,7 +2271,7 @@ fn choice_search_story_contracts_expose_state_readouts_and_contract_rows() {
         let entry = contract_entries
             .get(name)
             .unwrap_or_else(|| panic!("expected component contract row `{name}`"));
-        assert_eq!(entry.family, component_contract_family(name));
+        assert_eq!(entry.family, Some(family));
         assert_eq!(
             entry.gallery_status,
             SurfaceGalleryStatus::OfficialComponent

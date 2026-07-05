@@ -430,6 +430,45 @@ impl CommandDataSource {
     }
 }
 
+/// Command result descriptors supplied to [`CommandStateRequest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandStateDataSource {
+    /// Locally supplied grouped and standalone command descriptors.
+    Local {
+        /// Local grouped command descriptors.
+        groups: Vec<CommandGroupDescriptor>,
+        /// Local standalone command descriptors.
+        items: Vec<CommandItemDescriptor>,
+    },
+    /// Caller-owned indexed command snapshot.
+    Snapshot(CommandIndexSnapshot),
+}
+
+impl CommandStateDataSource {
+    /// Creates a local command data source.
+    pub fn local(
+        groups: impl IntoIterator<Item = CommandGroupDescriptor>,
+        items: impl IntoIterator<Item = CommandItemDescriptor>,
+    ) -> Self {
+        Self::Local {
+            groups: groups.into_iter().collect(),
+            items: items.into_iter().collect(),
+        }
+    }
+
+    /// Creates a snapshot-backed command data source.
+    pub fn snapshot(snapshot: CommandIndexSnapshot) -> Self {
+        Self::Snapshot(snapshot)
+    }
+
+    fn into_private(self) -> CommandDataSource {
+        match self {
+            Self::Local { groups, items } => CommandDataSource::local(groups, items),
+            Self::Snapshot(snapshot) => CommandDataSource::snapshot(snapshot),
+        }
+    }
+}
+
 /// Resolved command state used by tests, demos, and rendering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommandState {
@@ -467,36 +506,61 @@ pub struct CommandState {
     focus_ring: FocusRing,
 }
 
+/// Inputs used to resolve public command state.
+#[derive(Debug, Clone)]
+pub struct CommandStateRequest {
+    /// Control size.
+    pub size: Size,
+    /// Whether interaction is disabled.
+    pub disabled: bool,
+    /// Controlled open value, when caller-owned.
+    pub open: Option<bool>,
+    /// Adapter-owned initial open value.
+    pub default_open: bool,
+    /// Whether the command surface resolves dialog overlay metadata.
+    pub dialog_enabled: bool,
+    /// Accessible command label.
+    pub label: String,
+    /// Search input placeholder.
+    pub placeholder: String,
+    /// Current query text.
+    pub query: String,
+    /// Query ownership mode.
+    pub query_mode: CommandQueryMode,
+    /// Selection ownership mode.
+    pub selection_mode: CommandSelectionMode,
+    /// Controlled single selected value.
+    pub selected_value: Option<String>,
+    /// Controlled selected values for multi-select mode.
+    pub selected_values: Vec<String>,
+    /// Controlled active value.
+    pub active_value: Option<String>,
+    /// Loading state supplied outside an index snapshot.
+    pub loading_state: Option<CommandLoadingState>,
+    /// Empty result label.
+    pub empty_label: String,
+    /// Dialog title when dialog mode is enabled.
+    pub dialog_title: Option<String>,
+    /// Dialog description when dialog mode is enabled.
+    pub dialog_description: Option<String>,
+    /// Command descriptors or indexed snapshot used to resolve results.
+    pub data_source: CommandStateDataSource,
+    /// Outside press dismissal policy.
+    pub outside_press_policy: OutsidePressPolicy,
+    /// Escape key dismissal policy.
+    pub escape_key_policy: EscapeKeyPolicy,
+    /// Initial focus policy when opening.
+    pub initial_focus_intent: InitialFocusIntent,
+    /// Focus restore policy when closing.
+    pub focus_restore_intent: FocusRestoreIntent,
+    /// Theme token bundle.
+    pub tokens: ThemeTokens,
+}
+
 impl CommandState {
     /// Resolves public state for a command surface.
-    #[allow(clippy::too_many_arguments)]
-    pub fn resolve(
-        size: Size,
-        disabled: bool,
-        open: Option<bool>,
-        default_open: bool,
-        dialog_enabled: bool,
-        label: impl Into<String>,
-        placeholder: impl Into<String>,
-        query: impl Into<String>,
-        query_mode: CommandQueryMode,
-        selection_mode: CommandSelectionMode,
-        selected_value: Option<&str>,
-        selected_values: impl IntoIterator<Item = impl Into<String>>,
-        active_value: Option<&str>,
-        loading_state: Option<CommandLoadingState>,
-        empty_label: impl Into<String>,
-        dialog_title: Option<String>,
-        dialog_description: Option<String>,
-        groups: impl IntoIterator<Item = CommandGroupDescriptor>,
-        items: impl IntoIterator<Item = CommandItemDescriptor>,
-        outside_press_policy: OutsidePressPolicy,
-        escape_key_policy: EscapeKeyPolicy,
-        initial_focus_intent: InitialFocusIntent,
-        focus_restore_intent: FocusRestoreIntent,
-        tokens: ThemeTokens,
-    ) -> Self {
-        Self::resolve_from_data_source(
+    pub fn resolve(request: CommandStateRequest) -> Self {
+        let CommandStateRequest {
             size,
             disabled,
             open,
@@ -514,42 +578,14 @@ impl CommandState {
             empty_label,
             dialog_title,
             dialog_description,
-            CommandDataSource::local(groups, items),
+            data_source,
             outside_press_policy,
             escape_key_policy,
             initial_focus_intent,
             focus_restore_intent,
             tokens,
-        )
-    }
+        } = request;
 
-    /// Resolves public state from a caller-owned command index snapshot.
-    #[allow(clippy::too_many_arguments)]
-    pub fn resolve_from_index_snapshot(
-        size: Size,
-        disabled: bool,
-        open: Option<bool>,
-        default_open: bool,
-        dialog_enabled: bool,
-        label: impl Into<String>,
-        placeholder: impl Into<String>,
-        query: impl Into<String>,
-        query_mode: CommandQueryMode,
-        selection_mode: CommandSelectionMode,
-        selected_value: Option<&str>,
-        selected_values: impl IntoIterator<Item = impl Into<String>>,
-        active_value: Option<&str>,
-        loading_state: Option<CommandLoadingState>,
-        empty_label: impl Into<String>,
-        dialog_title: Option<String>,
-        dialog_description: Option<String>,
-        index_snapshot: CommandIndexSnapshot,
-        outside_press_policy: OutsidePressPolicy,
-        escape_key_policy: EscapeKeyPolicy,
-        initial_focus_intent: InitialFocusIntent,
-        focus_restore_intent: FocusRestoreIntent,
-        tokens: ThemeTokens,
-    ) -> Self {
         Self::resolve_from_data_source(
             size,
             disabled,
@@ -561,14 +597,14 @@ impl CommandState {
             query,
             query_mode,
             selection_mode,
-            selected_value,
+            selected_value.as_deref(),
             selected_values,
-            active_value,
+            active_value.as_deref(),
             loading_state,
             empty_label,
             dialog_title,
             dialog_description,
-            CommandDataSource::snapshot(index_snapshot),
+            data_source.into_private(),
             outside_press_policy,
             escape_key_policy,
             initial_focus_intent,

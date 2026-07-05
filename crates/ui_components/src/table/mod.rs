@@ -26,7 +26,8 @@ mod virtualization;
 use crate::a11y::UiA11yElementExt;
 use crate::geometry::gpui_px_from_ui;
 use crate::scroll_surface::{
-    scroll_surface_handle, vertical_scroll_offset, vertical_viewport_extent,
+    handle_vertical_wheel_scroll, scroll_surface_handle, vertical_scroll_offset,
+    vertical_viewport_extent,
 };
 use open_gpui::prelude::*;
 use open_gpui::{
@@ -48,7 +49,7 @@ pub use behavior::{
     TableColumnRegionSnapshot, TableHeaderSummarySnapshot, TableRowBehaviorSnapshot,
     TableRowCountSnapshot, TableTreeSummarySnapshot, TableVisibleRowsSnapshot,
 };
-use body::{handle_table_vertical_scroll_wheel, render_table_body};
+use body::render_table_body;
 pub use column_visibility::{
     TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
     TableColumnVisibilityItemState, TableColumnVisibilityState,
@@ -403,7 +404,7 @@ impl RenderOnce for Table {
             .on_scroll_wheel({
                 let scroll_handle = scroll_handle.clone();
                 move |event, window, cx| {
-                    handle_table_vertical_scroll_wheel(&scroll_handle, event, window);
+                    handle_vertical_wheel_scroll(&scroll_handle, event, window);
                     window.prevent_default();
                     cx.stop_propagation();
                 }
@@ -608,7 +609,6 @@ mod tests {
 
         let resolved = measured_virtualizer_state(
             &rows,
-            TableRowMeasureMode::Measured,
             &measurements,
             ui_px(20.0),
             2,

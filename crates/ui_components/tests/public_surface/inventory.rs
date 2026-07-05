@@ -8,15 +8,9 @@ fn component_api_inventory_covers_official_gallery_catalog() {
         .iter()
         .map(|entry| entry.component.to_string())
         .collect::<BTreeSet<_>>();
-    let contract_official_names = COMPONENT_API_INVENTORY
-        .iter()
-        .filter(|entry| {
-            matches!(
-                component_contract_gallery_status(entry.component),
-                SurfaceGalleryStatus::OfficialComponent | SurfaceGalleryStatus::OfficialOverlay
-            )
-        })
-        .map(|entry| entry.component.to_string())
+    let contract_official_names = official_component_rows()
+        .chain(official_overlay_component_rows())
+        .map(|entry| entry.name.to_string())
         .collect::<BTreeSet<_>>();
 
     let missing = contract_official_names
@@ -27,13 +21,6 @@ fn component_api_inventory_covers_official_gallery_catalog() {
         missing.is_empty(),
         "contract official component entries need public API inventory rows: {missing:?}"
     );
-
-    for overlay in OFFICIAL_OVERLAY_COMPONENTS {
-        assert!(
-            inventory_names.contains(*overlay),
-            "overlay component `{overlay}` needs a public API inventory row"
-        );
-    }
 }
 
 #[test]
@@ -75,7 +62,7 @@ fn component_contract_rows_cover_inventory_and_adjacent_surfaces() {
 }
 
 #[test]
-fn component_contract_projection_functions_delegate_to_contract_rows() {
+fn component_contract_entry_returns_canonical_rows() {
     for entry in COMPONENT_CONTRACT_ROWS {
         let projected = component_contract_entry(entry.name)
             .unwrap_or_else(|| panic!("missing canonical contract row for `{}`", entry.name));
@@ -83,24 +70,6 @@ fn component_contract_projection_functions_delegate_to_contract_rows() {
             projected, entry,
             "{} projection should return the canonical contract row",
             entry.name
-        );
-        assert_eq!(component_contract_family(entry.name), entry.family);
-        assert_eq!(
-            component_contract_gallery_status(entry.name),
-            entry.gallery_status
-        );
-        assert_eq!(
-            component_contract_default_export(entry.name),
-            entry.default_export
-        );
-        assert_eq!(
-            component_contract_docs_status(entry.name),
-            Some(entry.docs_status)
-        );
-        assert_eq!(component_contract_docs_token(entry.name), entry.docs_token);
-        assert_eq!(
-            component_contract_source_home(entry.name),
-            Some(entry.source_home)
         );
         assert_eq!(component_source_inputs(entry.name), entry.source_inputs);
     }
@@ -115,7 +84,6 @@ fn component_contract_rows_are_split_by_responsibility() {
         "types.rs",
         "rows.rs",
         "rows/catalog.rs",
-        "rows/lists.rs",
         "projections.rs",
         "surfaces.rs",
         "api_inventory.rs",
@@ -147,11 +115,7 @@ fn component_contract_rows_are_split_by_responsibility() {
     }
 
     let rows_facade = read_source_file(&contract_dir.join("rows.rs"));
-    for stale_single_file_fact in [
-        "ComponentContractEntry {",
-        "pub const OFFICIAL_OVERLAY_COMPONENTS",
-        "pub const COMPONENT_RECIPE_COMPONENTS",
-    ] {
+    for stale_single_file_fact in ["ComponentContractEntry {"] {
         assert!(
             !rows_facade.contains(stale_single_file_fact),
             "component_contract/rows.rs should stay a facade, not own `{stale_single_file_fact}`"
@@ -162,14 +126,12 @@ fn component_contract_rows_are_split_by_responsibility() {
     assert!(rows.contains("COMPONENT_CONTRACT_ROWS"));
     let row_catalog = read_source_file(&contract_dir.join("rows").join("catalog.rs"));
     assert!(row_catalog.contains("ComponentContractEntry {"));
-    let row_lists = read_source_file(&contract_dir.join("rows").join("lists.rs"));
-    assert!(row_lists.contains("OFFICIAL_OVERLAY_COMPONENTS"));
-    assert!(row_lists.contains("COMPONENT_RECIPE_COMPONENTS"));
     let inventory = read_source_file(&contract_dir.join("api_inventory.rs"));
     assert!(inventory.contains("COMPONENT_API_INVENTORY"));
     assert!(inventory.contains("component_public_methods"));
     let projections = read_source_file(&contract_dir.join("projections.rs"));
-    assert!(projections.contains("component_contract_gallery_status"));
+    assert!(projections.contains("gallery_surface_rows"));
+    assert!(projections.contains("official_component_rows"));
     let source_mapping = read_source_file(&contract_dir.join("source_mapping.rs"));
     assert!(source_mapping.contains("component_source_inputs"));
     let evidence = read_source_file(&contract_dir.join("evidence.rs"));
@@ -178,36 +140,88 @@ fn component_contract_rows_are_split_by_responsibility() {
 }
 
 #[test]
-fn component_contract_rows_align_compatibility_lists() {
-    let overlays = OFFICIAL_OVERLAY_COMPONENTS
-        .iter()
-        .copied()
-        .collect::<std::collections::BTreeSet<_>>();
-    let recipes = COMPONENT_RECIPE_COMPONENTS
-        .iter()
-        .copied()
-        .collect::<std::collections::BTreeSet<_>>();
+fn component_contract_queries_derive_overlay_and_recipe_rows() {
     let inventory = COMPONENT_API_INVENTORY
         .iter()
         .map(|entry| entry.component)
         .collect::<std::collections::BTreeSet<_>>();
 
-    for entry in COMPONENT_CONTRACT_ROWS {
-        if entry.gallery_status == SurfaceGalleryStatus::OfficialOverlay {
-            assert!(
-                overlays.contains(entry.name),
-                "official overlay `{}` should stay in OFFICIAL_OVERLAY_COMPONENTS",
-                entry.name
-            );
-        }
-        if inventory.contains(entry.name) {
-            assert_eq!(
-                entry.owner == PublicSurfaceOwnerClass::OfficialComponentRecipe,
-                recipes.contains(entry.name),
-                "{} recipe ownership drifted from COMPONENT_RECIPE_COMPONENTS",
-                entry.name
-            );
-        }
+    let overlays = official_overlay_component_rows()
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected_overlays = COMPONENT_CONTRACT_ROWS
+        .iter()
+        .filter(|entry| entry.gallery_status == SurfaceGalleryStatus::OfficialOverlay)
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        overlays, expected_overlays,
+        "official overlay query must derive from contract gallery status"
+    );
+
+    let official_components = official_component_rows()
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected_official_components = COMPONENT_CONTRACT_ROWS
+        .iter()
+        .filter(|entry| entry.gallery_status == SurfaceGalleryStatus::OfficialComponent)
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        official_components, expected_official_components,
+        "official component query must derive from contract gallery status"
+    );
+
+    let gallery_rows = gallery_surface_rows()
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected_gallery_rows = COMPONENT_CONTRACT_ROWS
+        .iter()
+        .filter(|entry| entry.gallery_status != SurfaceGalleryStatus::NotInGallery)
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        gallery_rows, expected_gallery_rows,
+        "gallery row query must derive from contract gallery status"
+    );
+
+    let default_rows = default_surface_rows()
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected_default_rows = COMPONENT_CONTRACT_ROWS
+        .iter()
+        .filter(|entry| entry.default_export)
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        default_rows, expected_default_rows,
+        "default surface query must derive from contract default export intent"
+    );
+
+    let recipes = component_recipe_component_rows()
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected_recipes = COMPONENT_CONTRACT_ROWS
+        .iter()
+        .filter(|entry| entry.owner == PublicSurfaceOwnerClass::OfficialComponentRecipe)
+        .map(|entry| entry.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        recipes, expected_recipes,
+        "component recipe query must derive from contract owner class"
+    );
+
+    for overlay in &overlays {
+        assert!(
+            inventory.contains(overlay),
+            "official overlay `{overlay}` should have an API inventory row"
+        );
+    }
+    for recipe in &recipes {
+        assert!(
+            inventory.contains(recipe),
+            "component recipe `{recipe}` should have an API inventory row"
+        );
     }
 }
 
@@ -215,12 +229,11 @@ fn component_contract_rows_align_compatibility_lists() {
 fn component_recipe_inventory_rows_are_classified_once() {
     use std::collections::BTreeSet;
 
-    let recipe_names = COMPONENT_RECIPE_COMPONENTS
-        .iter()
-        .copied()
+    let recipe_names = component_recipe_component_rows()
+        .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
 
-    for recipe in COMPONENT_RECIPE_COMPONENTS {
+    for recipe in &recipe_names {
         assert!(
             COMPONENT_API_INVENTORY
                 .iter()
@@ -233,7 +246,9 @@ fn component_recipe_inventory_rows_are_classified_once() {
             "component recipe `{recipe}` must use the contract recipe owner"
         );
         assert_eq!(
-            component_contract_gallery_status(recipe),
+            component_contract_entry(recipe)
+                .expect("recipe should have a contract row")
+                .gallery_status,
             SurfaceGalleryStatus::NotInGallery,
             "component recipe `{recipe}` should not become a standalone official gallery row"
         );
@@ -244,7 +259,7 @@ fn component_recipe_inventory_rows_are_classified_once() {
             public_owner_for_component_inventory(entry.component)
                 == PublicSurfaceOwnerClass::OfficialComponentRecipe,
             recipe_names.contains(entry.component),
-            "{} owner classification drifted from COMPONENT_RECIPE_COMPONENTS",
+            "{} owner classification drifted from component_recipe_component_rows()",
             entry.component
         );
     }
@@ -314,8 +329,6 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_sort_requested",
         "on_toggle",
     ];
-    const CURRENT_LEGACY_SEED_INPUTS: &[(&str, &str)] = &[];
-
     for entry in COMPONENT_API_INVENTORY {
         for seed in entry.default_seeds {
             assert!(
@@ -344,15 +357,6 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
                 "{} callback `{}` must document its payload type",
                 entry.component,
                 callback.name
-            );
-        }
-
-        for legacy_seed in entry.legacy_seed_inputs {
-            assert!(
-                CURRENT_LEGACY_SEED_INPUTS.contains(&(entry.component, *legacy_seed)),
-                "{} legacy seed `{}` needs an explicit migration decision before U2",
-                entry.component,
-                legacy_seed
             );
         }
     }

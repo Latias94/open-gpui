@@ -19,15 +19,11 @@ pub use api_inventory::{
 };
 pub use evidence::{COMPONENT_A11Y_EVIDENCE, COMPONENT_CONFORMANCE_GATES, component_a11y_evidence};
 pub use projections::{
-    component_contract_default_export, component_contract_docs_status,
-    component_contract_docs_token, component_contract_entry, component_contract_family,
-    component_contract_gallery_status, component_contract_source_home,
-    component_inventory_default_export, public_surface_default_export,
+    component_contract_entry, component_recipe_component_rows, default_surface_rows,
+    gallery_surface_rows, official_component_rows, official_overlay_component_rows,
 };
-pub use rows::{COMPONENT_CONTRACT_ROWS, COMPONENT_RECIPE_COMPONENTS, OFFICIAL_OVERLAY_COMPONENTS};
-pub use source_mapping::{
-    component_source_home, component_source_inputs, table_render_owner_files,
-};
+pub use rows::COMPONENT_CONTRACT_ROWS;
+pub use source_mapping::component_source_inputs;
 pub use surfaces::PUBLIC_SURFACE_OWNER_MAP;
 pub use types::{
     CallbackApi, ComponentA11yEvidence, ComponentApiInventoryEntry, ComponentConformanceGate,

@@ -1,11 +1,9 @@
 use open_gpui_ui_components::component_contract::{
-    COMPONENT_API_INVENTORY, COMPONENT_CONTRACT_ROWS, COMPONENT_RECIPE_COMPONENTS,
-    ComponentApiInventoryEntry, OFFICIAL_OVERLAY_COMPONENTS, PUBLIC_SURFACE_OWNER_MAP,
-    PublicSurfaceOwnerClass, SurfaceDocsStatus, SurfaceGalleryStatus,
-    component_contract_default_export, component_contract_docs_status,
-    component_contract_docs_token, component_contract_entry, component_contract_family,
-    component_contract_gallery_status, component_contract_source_home, component_public_methods,
-    component_source_inputs, public_owner_for_component_inventory, table_render_owner_files,
+    COMPONENT_API_INVENTORY, COMPONENT_CONTRACT_ROWS, ComponentApiInventoryEntry,
+    PUBLIC_SURFACE_OWNER_MAP, PublicSurfaceOwnerClass, SurfaceDocsStatus, SurfaceGalleryStatus,
+    component_contract_entry, component_public_methods, component_recipe_component_rows,
+    component_source_inputs, default_surface_rows, gallery_surface_rows, official_component_rows,
+    official_overlay_component_rows, public_owner_for_component_inventory,
 };
 use open_gpui_ui_components::{ColorIntent, FocusRing, gpui_adapter::gpui_role_from_ui};
 use open_gpui_ui_core::{
@@ -215,10 +213,9 @@ fn surface_manifest() -> Vec<SurfaceManifestEntry> {
 }
 
 fn component_gallery_status(name: &str) -> Option<SurfaceGalleryStatus> {
-    match component_contract_gallery_status(name) {
-        SurfaceGalleryStatus::NotInGallery => None,
-        status => Some(status),
-    }
+    component_contract_entry(name)
+        .map(|entry| entry.gallery_status)
+        .filter(|status| *status != SurfaceGalleryStatus::NotInGallery)
 }
 
 fn primitive_status_for_surface(name: &str, home: &str) -> SurfacePrimitiveStatus {

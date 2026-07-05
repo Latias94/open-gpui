@@ -4,22 +4,22 @@ use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, FontWeight, IntoElement,
     KeyDownEvent, ParentElement, Pixels, ScrollHandle, StatefulInteractiveElement, Styled, Window,
-    div, point, px, rgba,
+    div, px, rgba,
 };
 use open_gpui_ui_core::{FocusRestoreIntent, Role, Sizable, ThemeTokens, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
-use crate::color::{ColorIntent, ColorState};
-use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
-use crate::overlay::{
-    OverlayCloseRuntimeRequest, close_overlay_runtime, close_overlay_runtime_with_after_update,
-    escape_open_change, outside_press_open_change, set_overlay_open,
+use crate::choice_overlay_runtime::{
+    ChoiceOverlayRuntimeState, close_choice_overlay, commit_choice_overlay_single_value,
 };
+use crate::color::{ColorIntent, ColorState};
+use crate::geometry::gpui_px_from_ui;
+use crate::overlay::{escape_open_change, outside_press_open_change};
 use crate::scroll_area::ScrollArea;
+use crate::scroll_surface::{ScrollSurfaceRevealStrategy, ScrollSurfaceRuntime, reveal_fixed_row};
 use crate::text_input::TextInput;
 use crate::text_input::adapter::TextInputController;
 use crate::theme::ThemeContext;
-use crate::virtualized_list::{VirtualizedListScrollStrategy, virtualized_list_scroll_target};
 
 use super::render_plan::resolve_command_viewport_extent;
 use super::{
@@ -40,8 +40,7 @@ pub(super) struct CommandRuntime {
     pub(super) active_value: Option<String>,
     pub(super) selected_value: Option<String>,
     pub(super) selected_values: Vec<String>,
-    pub(super) scroll_handle: ScrollHandle,
-    pub(super) scroll_reset_key: String,
+    pub(super) scroll_surface: ScrollSurfaceRuntime,
     pub(super) trigger_focus: FocusHandle,
 }
 
@@ -51,7 +50,6 @@ impl CommandRuntime {
         active_value: Option<String>,
         selected_value: Option<String>,
         selected_values: Vec<String>,
-        scroll_reset_key: String,
         trigger_focus: FocusHandle,
     ) -> Self {
         Self {
@@ -59,10 +57,24 @@ impl CommandRuntime {
             active_value,
             selected_value,
             selected_values,
-            scroll_handle: ScrollHandle::new(),
-            scroll_reset_key,
+            scroll_surface: ScrollSurfaceRuntime::new(None),
             trigger_focus,
         }
+    }
+}
+
+impl ChoiceOverlayRuntimeState for CommandRuntime {
+    fn open_mut(&mut self) -> &mut bool {
+        &mut self.open
+    }
+
+    fn trigger_focus(&self) -> FocusHandle {
+        self.trigger_focus.clone()
+    }
+
+    fn commit_single_value(&mut self, value: String) {
+        self.selected_value = Some(value.clone());
+        self.active_value = Some(value);
     }
 }
 
@@ -926,24 +938,13 @@ fn handle_command_selection(
         CommandSelectionMode::Single => {
             if dialog_enabled {
                 let selected_value = selection.value().to_owned();
-                let trigger_focus = runtime.read(cx).trigger_focus.clone();
-                close_overlay_runtime_with_after_update(
-                    OverlayCloseRuntimeRequest::new(
-                        runtime.clone(),
-                        &focus_restore,
-                        trigger_focus,
-                        on_open_change.as_deref(),
-                    ),
+                commit_choice_overlay_single_value(
+                    runtime.clone(),
+                    focus_restore,
+                    on_open_change,
+                    selected_value,
                     window,
                     cx,
-                    {
-                        let selected_value = selected_value.clone();
-                        move |runtime| {
-                            runtime.selected_value = Some(selected_value.clone());
-                            runtime.active_value = Some(selected_value);
-                            set_overlay_open(&mut runtime.open, false);
-                        }
-                    },
                     move |window, cx| {
                         if let Some(on_select) = on_select.as_ref() {
                             on_select(selection, window, cx);
@@ -974,22 +975,14 @@ fn handle_command_selection(
 }
 
 fn scroll_command_item_into_view(scroll_handle: &ScrollHandle, state: &CommandState, index: usize) {
-    let viewport_extent = resolve_command_viewport_extent(
-        state.metrics(),
-        ui_px_from_gpui(scroll_handle.bounds().size.height),
-    );
-    let current_scroll_offset =
-        UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
-    let target = virtualized_list_scroll_target(
-        VirtualizedListScrollStrategy::Nearest,
+    reveal_fixed_row(
+        scroll_handle,
+        ScrollSurfaceRevealStrategy::Nearest,
         index,
         state.items().len(),
         state.metrics().row_height(),
-        viewport_extent,
-        current_scroll_offset,
+        Some(resolve_command_viewport_extent(state.metrics(), UiPx::ZERO)),
     );
-
-    scroll_handle.set_offset(point(px(0.0), -gpui_px_from_ui(target)));
 }
 
 fn command_row_background(active: bool, selected: bool, colors: CommandColors) -> ColorIntent {
@@ -1066,20 +1059,7 @@ pub(super) fn close_command_dialog(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    close_overlay_runtime(
-        OverlayCloseRuntimeRequest::new(
-            runtime,
-            &focus_restore,
-            trigger_focus,
-            on_open_change.as_deref(),
-        ),
-        window,
-        cx,
-        |runtime| {
-            set_overlay_open(&mut runtime.open, false);
-        },
-    );
+    close_choice_overlay(runtime, focus_restore, on_open_change, window, cx);
 }
 
 fn command_selection_change_after_toggle(
@@ -1152,6 +1132,43 @@ mod tests {
                     .item(CommandItem::new("view-sidebar", "View Sidebar"))
                     .item(CommandItem::new("zoom-in", "Zoom In")),
             )
+    }
+
+    #[test]
+    fn scroll_reset_key_tracks_query_not_selection_navigation() {
+        let base = Command::new("palette", "Command palette")
+            .open(true)
+            .default_query("file")
+            .selected("open-file")
+            .active("open-file")
+            .item(CommandItem::new("open-file", "Open File"))
+            .item(CommandItem::new("close-file", "Close File"))
+            .state();
+        let selection_changed = Command::new("palette", "Command palette")
+            .open(true)
+            .default_query("file")
+            .selected("close-file")
+            .active("close-file")
+            .item(CommandItem::new("open-file", "Open File"))
+            .item(CommandItem::new("close-file", "Close File"))
+            .state();
+        let query_changed = Command::new("palette", "Command palette")
+            .open(true)
+            .default_query("close")
+            .selected("close-file")
+            .active("close-file")
+            .item(CommandItem::new("open-file", "Open File"))
+            .item(CommandItem::new("close-file", "Close File"))
+            .state();
+
+        assert_eq!(
+            command_scroll_reset_key(&base),
+            command_scroll_reset_key(&selection_changed)
+        );
+        assert_ne!(
+            command_scroll_reset_key(&base),
+            command_scroll_reset_key(&query_changed)
+        );
     }
 
     #[test]

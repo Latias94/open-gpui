@@ -3,7 +3,6 @@ use std::rc::Rc;
 mod keyboard;
 mod layout;
 mod rows;
-mod scroll;
 
 use open_gpui::prelude::*;
 use open_gpui::{Entity, IntoElement, ParentElement, ScrollHandle, Styled, div, px};
@@ -22,8 +21,6 @@ use super::{
 };
 
 use rows::render_table_row_band;
-
-pub(super) use scroll::handle_table_vertical_scroll_wheel;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_table_body(

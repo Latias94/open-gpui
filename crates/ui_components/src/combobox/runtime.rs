@@ -13,12 +13,14 @@ use open_gpui_ui_core::{
 
 use crate::a11y::UiA11yElementExt;
 use crate::choice;
+use crate::choice_overlay_runtime::{
+    ChoiceOverlayRuntimeState, close_choice_overlay, commit_choice_overlay_single_value,
+};
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::gpui_px_from_ui;
 use crate::listbox::Listbox;
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayCloseRuntimeRequest, OverlayOpenRuntimeRequest,
-    apply_overlay_open_change, close_overlay_runtime, close_overlay_runtime_with_after_update,
+    GpuiOverlayPlacement, OverlayOpenRuntimeRequest, apply_overlay_open_change,
     consume_overlay_event, gpui_overlay_state, gpui_relative_overlay_layer,
     outside_press_open_change, resolve_overlay_open_state, set_overlay_open,
 };
@@ -30,7 +32,8 @@ use crate::theme::{ThemeContext, ThemeResolver};
 
 use super::descriptor::{ComboboxGroup, ComboboxOption};
 use super::model::{
-    ComboboxKeyboardAction, ComboboxSelection, ComboboxState, combobox_keyboard_action,
+    ComboboxKeyboardAction, ComboboxSelection, ComboboxState, ComboboxStateRequest,
+    combobox_keyboard_action,
 };
 use super::render_plan::ComboboxRenderPlan;
 
@@ -43,6 +46,21 @@ struct ComboboxRuntime {
     active_value: Option<String>,
     selected_value: Option<String>,
     trigger_focus: FocusHandle,
+}
+
+impl ChoiceOverlayRuntimeState for ComboboxRuntime {
+    fn open_mut(&mut self) -> &mut bool {
+        &mut self.open
+    }
+
+    fn trigger_focus(&self) -> FocusHandle {
+        self.trigger_focus.clone()
+    }
+
+    fn commit_single_value(&mut self, value: String) {
+        self.selected_value = Some(value.clone());
+        self.active_value = Some(value);
+    }
 }
 
 /// A concrete GPUI combobox component.
@@ -223,27 +241,31 @@ impl Combobox {
 
     /// Returns resolved combobox state.
     pub fn state(&self) -> ComboboxState {
-        ComboboxState::resolve(
-            self.size,
-            self.disabled,
-            self.required,
-            self.open,
-            self.default_open,
-            self.label.to_string(),
-            self.placeholder.to_string(),
-            self.default_query.as_str(),
-            self.selected_value.as_deref(),
-            self.active_value.as_deref(),
-            self.empty_label.to_string(),
-            self.groups.iter().map(ComboboxGroup::descriptor),
-            self.options.iter().map(ComboboxOption::descriptor),
-            self.placement_side,
-            self.placement_alignment,
-            self.outside_press_policy,
-            self.initial_focus_intent.clone(),
-            self.focus_restore_intent.clone(),
-            self.tokens,
-        )
+        ComboboxState::resolve(ComboboxStateRequest {
+            size: self.size,
+            disabled: self.disabled,
+            required: self.required,
+            open: self.open,
+            default_open: self.default_open,
+            label: self.label.to_string(),
+            placeholder: self.placeholder.to_string(),
+            query: self.default_query.to_string(),
+            selected_value: self.selected_value.clone(),
+            active_value: self.active_value.clone(),
+            empty_label: self.empty_label.to_string(),
+            groups: self.groups.iter().map(ComboboxGroup::descriptor).collect(),
+            options: self
+                .options
+                .iter()
+                .map(ComboboxOption::descriptor)
+                .collect(),
+            placement_side: self.placement_side,
+            placement_alignment: self.placement_alignment,
+            outside_press_policy: self.outside_press_policy,
+            initial_focus_intent: self.initial_focus_intent.clone(),
+            focus_restore_intent: self.focus_restore_intent.clone(),
+            tokens: self.tokens,
+        })
     }
 }
 
@@ -289,27 +311,31 @@ impl RenderOnce for Combobox {
             .as_deref()
             .or(runtime_state.active_value.as_deref())
             .or(selected_value);
-        let state = ComboboxState::resolve(
-            self.size,
-            self.disabled,
-            self.required,
-            Some(resolved_open),
-            self.default_open,
-            self.label.to_string(),
-            self.placeholder.to_string(),
-            query.as_str(),
-            selected_value,
-            active_value,
-            self.empty_label.to_string(),
-            self.groups.iter().map(ComboboxGroup::descriptor),
-            self.options.iter().map(ComboboxOption::descriptor),
-            self.placement_side,
-            self.placement_alignment,
-            self.outside_press_policy,
-            self.initial_focus_intent.clone(),
-            self.focus_restore_intent.clone(),
-            self.tokens,
-        );
+        let state = ComboboxState::resolve(ComboboxStateRequest {
+            size: self.size,
+            disabled: self.disabled,
+            required: self.required,
+            open: Some(resolved_open),
+            default_open: self.default_open,
+            label: self.label.to_string(),
+            placeholder: self.placeholder.to_string(),
+            query: query.clone(),
+            selected_value: selected_value.map(str::to_owned),
+            active_value: active_value.map(str::to_owned),
+            empty_label: self.empty_label.to_string(),
+            groups: self.groups.iter().map(ComboboxGroup::descriptor).collect(),
+            options: self
+                .options
+                .iter()
+                .map(ComboboxOption::descriptor)
+                .collect(),
+            placement_side: self.placement_side,
+            placement_alignment: self.placement_alignment,
+            outside_press_policy: self.outside_press_policy,
+            initial_focus_intent: self.initial_focus_intent.clone(),
+            focus_restore_intent: self.focus_restore_intent.clone(),
+            tokens: self.tokens,
+        });
         input_controller.update(cx, |controller, cx| {
             if controller.placeholder() != self.placeholder.as_ref() {
                 controller.set_placeholder(self.placeholder.clone(), cx);
@@ -404,24 +430,13 @@ impl RenderOnce for Combobox {
                                 let selected_label = selection.label().to_owned();
                                 let input_controller = input_controller.clone();
                                 let on_select = on_select.clone();
-                                let trigger_focus = runtime.read(cx).trigger_focus.clone();
-                                close_overlay_runtime_with_after_update(
-                                    OverlayCloseRuntimeRequest::new(
-                                        runtime.clone(),
-                                        &focus_restore,
-                                        trigger_focus,
-                                        on_open_change.as_deref(),
-                                    ),
+                                commit_choice_overlay_single_value(
+                                    runtime.clone(),
+                                    focus_restore.clone(),
+                                    on_open_change.clone(),
+                                    selected_value,
                                     window,
                                     cx,
-                                    {
-                                        let selected_value = selected_value.clone();
-                                        move |runtime| {
-                                            runtime.selected_value = Some(selected_value.clone());
-                                            runtime.active_value = Some(selected_value);
-                                            set_overlay_open(&mut runtime.open, false);
-                                        }
-                                    },
                                     move |window, cx| {
                                         input_controller.update(cx, |controller, cx| {
                                             controller.set_value(selected_label, cx);
@@ -607,24 +622,13 @@ fn combobox_content_element(
                 let payload_label = payload.label().to_owned();
                 let input_controller = input_controller.clone();
                 let on_select = on_select.clone();
-                let trigger_focus = runtime.read(cx).trigger_focus.clone();
-                close_overlay_runtime_with_after_update(
-                    OverlayCloseRuntimeRequest::new(
-                        runtime.clone(),
-                        &focus_restore,
-                        trigger_focus,
-                        on_open_change.as_deref(),
-                    ),
+                commit_choice_overlay_single_value(
+                    runtime.clone(),
+                    focus_restore.clone(),
+                    on_open_change.clone(),
+                    payload_value,
                     window,
                     cx,
-                    {
-                        let payload_value = payload_value.clone();
-                        move |runtime| {
-                            runtime.selected_value = Some(payload_value.clone());
-                            runtime.active_value = Some(payload_value);
-                            set_overlay_open(&mut runtime.open, false);
-                        }
-                    },
                     move |window, cx| {
                         input_controller.update(cx, |controller, cx| {
                             controller.set_value(payload_label, cx);
@@ -710,18 +714,5 @@ fn close_combobox(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    close_overlay_runtime(
-        OverlayCloseRuntimeRequest::new(
-            runtime,
-            &focus_restore,
-            trigger_focus,
-            on_open_change.as_deref(),
-        ),
-        window,
-        cx,
-        |runtime| {
-            set_overlay_open(&mut runtime.open, false);
-        },
-    );
+    close_choice_overlay(runtime, focus_restore, on_open_change, window, cx);
 }

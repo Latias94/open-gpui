@@ -34,7 +34,9 @@ fn surface_manifest_aligns_adjacent_gallery_statuses() {
     let manifest = surface_manifest();
 
     for owner in PUBLIC_SURFACE_OWNER_MAP {
-        let expected_status = component_contract_gallery_status(owner.name);
+        let expected_status = component_contract_entry(owner.name)
+            .map(|entry| entry.gallery_status)
+            .unwrap_or(SurfaceGalleryStatus::NotInGallery);
         if expected_status == SurfaceGalleryStatus::NotInGallery {
             continue;
         }
