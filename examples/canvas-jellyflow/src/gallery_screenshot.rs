@@ -182,6 +182,7 @@ fn open_gallery_case_window(
                 deferred_editor_refresh: false,
                 last_canvas_view_size: None,
                 last_canvas_bounds: None,
+                last_canvas_scene: None,
             })
         })
         .map_err(|error| error.to_string())?;

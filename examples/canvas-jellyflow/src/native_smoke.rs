@@ -31,6 +31,7 @@ pub(super) fn product_gallery_native_lifecycle_evidence(
             deferred_editor_refresh: false,
             last_canvas_view_size: None,
             last_canvas_bounds: None,
+            last_canvas_scene: None,
         }
     });
 

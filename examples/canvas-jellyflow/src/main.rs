@@ -76,10 +76,10 @@ use open_gpui_canvas::{
     CanvasConnectionPreviewRoute, CanvasConnectionRelease, CanvasDocument, CanvasEditor,
     CanvasEditorInputHandler, CanvasEvent, CanvasHandle, CanvasKeyModifiers, CanvasKindLabel,
     CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeRenderPolicy,
-    CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasSceneFrame,
-    CanvasSceneLayerPhase, CanvasTool, CanvasToolIntent, CanvasViewport, DocumentError, HandleRole,
-    HitTarget, NodeId, PointerButton, canvas_editor_scene_view_with_frame, canvas_scene_view,
-    collect_visible_records,
+    CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasPreparedPaintFrame,
+    CanvasSceneFrame, CanvasSceneLayerPhase, CanvasTool, CanvasToolIntent, CanvasViewport,
+    DocumentError, HandleRole, HitTarget, NodeId, PointerButton,
+    canvas_editor_scene_view_with_frame, canvas_scene_view, collect_visible_records,
 };
 use open_gpui_platform::application;
 use open_gpui_ui_components::gpui_adapter::init_text_input;
@@ -232,6 +232,7 @@ struct JellyflowCanvasView {
     deferred_editor_refresh: bool,
     last_canvas_view_size: Option<open_gpui::Size<Pixels>>,
     last_canvas_bounds: Option<Bounds<Pixels>>,
+    last_canvas_scene: Option<CanvasSceneFrame>,
 }
 
 #[derive(Clone)]
@@ -284,6 +285,18 @@ struct NodeSurfaceSummary {
     measurement: Option<NodeMeasurement>,
     inspector_target: Option<OpenGpuiInspectorTargetBounds>,
     node_data: Value,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NodeSceneHostRecordSource {
+    PreparedSceneFrame,
+    LastCanvasBoundsSceneFrame,
+    InitialDocumentBootstrap,
+}
+
+struct NodeSceneHostRecords<'a> {
+    nodes: Vec<&'a CanvasNode>,
+    source: NodeSceneHostRecordSource,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -406,13 +419,13 @@ impl Render for JellyflowCanvasView {
                                     options,
                                     theme,
                                     canvas_base_scene_phases(),
-                                    |this, bounds, _frame, cx| {
-                                        this.update_canvas_viewport_from_bounds(bounds, cx);
+                                    |this, bounds, frame, cx| {
+                                        this.update_canvas_scene_from_frame(bounds, frame, cx);
                                     },
                                 )
                                 .size_full(),
                             )
-                            .children(self.render_node_surfaces(&render_model, options, cx))
+                            .children(self.render_scene_node_widgets(&render_model, options, cx))
                             .child(
                                 div()
                                     .absolute()
@@ -765,7 +778,7 @@ impl JellyflowCanvasView {
             .child(selection)
     }
 
-    fn render_node_surfaces(
+    fn render_scene_node_widgets(
         &self,
         model: &CanvasPaintModel,
         options: CanvasPaintOptions,
@@ -775,7 +788,11 @@ impl JellyflowCanvasView {
         let collector = self.measured_regions.clone();
         let renderer_registry = demo_node_renderer_registry();
         let renderers = demo_custom_node_renderers();
-        self.surface_render_nodes_for_scene(model, options)
+        let NodeSceneHostRecords {
+            nodes,
+            source: _source,
+        } = self.scene_node_host_records(model, options);
+        nodes
             .into_iter()
             .filter_map(|node| {
                 let surface = self.node_surface_summary(node, zoom)?;
@@ -797,22 +814,38 @@ impl JellyflowCanvasView {
             .collect()
     }
 
-    fn surface_render_nodes_for_scene(
+    fn scene_node_host_records<'a>(
         &self,
-        model: &CanvasPaintModel,
+        model: &'a CanvasPaintModel,
         options: CanvasPaintOptions,
-    ) -> Vec<&CanvasNode> {
-        let document = self.editor.document();
-        if let Some(bounds) = self.last_canvas_bounds {
-            let frame = collect_visible_records(model, bounds, options);
-            let scene = CanvasSceneFrame::from_paint_frame(&frame);
-            let nodes = surface_render_nodes_for_scene(document, &scene);
+    ) -> NodeSceneHostRecords<'a> {
+        let document = model.document();
+        if let Some(scene) = &self.last_canvas_scene {
+            let nodes = scene_node_records(document, scene);
             if !nodes.is_empty() {
-                return nodes;
+                return NodeSceneHostRecords {
+                    nodes,
+                    source: NodeSceneHostRecordSource::PreparedSceneFrame,
+                };
             }
         }
 
-        surface_render_nodes(document).collect()
+        if let Some(bounds) = self.last_canvas_bounds {
+            let frame = collect_visible_records(model, bounds, options);
+            let scene = CanvasSceneFrame::from_paint_frame(&frame);
+            let nodes = scene_node_records(document, &scene);
+            if !nodes.is_empty() {
+                return NodeSceneHostRecords {
+                    nodes,
+                    source: NodeSceneHostRecordSource::LastCanvasBoundsSceneFrame,
+                };
+            }
+        }
+
+        NodeSceneHostRecords {
+            nodes: initial_node_scene_bootstrap_records(document),
+            source: NodeSceneHostRecordSource::InitialDocumentBootstrap,
+        }
     }
 
     fn node_surface_summary(&self, node: &CanvasNode, zoom: f32) -> Option<NodeSurfaceSummary> {
@@ -883,6 +916,7 @@ impl JellyflowCanvasView {
         match self.handle_canvas_shortcut(event) {
             Ok(true) => {
                 self.auto_fit_viewport = false;
+                self.invalidate_canvas_scene_cache();
                 self.sync_store_from_canvas_document();
                 cx.notify();
             }
@@ -898,9 +932,16 @@ impl JellyflowCanvasView {
 
     fn set_canvas_tool(&mut self, tool: CanvasTool, cx: &mut Context<Self>) {
         match self.editor.set_tool(tool) {
-            Ok(()) => cx.notify(),
+            Ok(()) => {
+                self.invalidate_canvas_scene_cache();
+                cx.notify();
+            }
             Err(error) => eprintln!("canvas tool switch failed: {error}"),
         }
+    }
+
+    fn invalidate_canvas_scene_cache(&mut self) {
+        self.last_canvas_scene = None;
     }
 
     fn canvas_input_handler() -> CanvasEditorInputHandler<Self> {
@@ -945,6 +986,7 @@ impl JellyflowCanvasView {
         self.auto_fit_viewport = false;
         match self.editor.handle_event(event) {
             Ok(()) => {
+                self.invalidate_canvas_scene_cache();
                 let connection_release = self.editor.take_connection_release();
                 let synced = self
                     .sync_store_from_canvas_document_with_refresh(!self.is_pointer_interacting());
@@ -1005,6 +1047,7 @@ impl JellyflowCanvasView {
                 self.deferred_editor_refresh = false;
                 self.last_canvas_view_size = None;
                 self.last_canvas_bounds = None;
+                self.invalidate_canvas_scene_cache();
                 window.refresh();
                 self.schedule_measurement_frame(window, cx);
                 cx.notify();
@@ -1328,9 +1371,10 @@ impl JellyflowCanvasView {
         changed
     }
 
-    fn update_canvas_viewport_from_bounds(
+    fn update_canvas_scene_from_frame(
         &mut self,
         bounds: Bounds<Pixels>,
+        frame: &CanvasPreparedPaintFrame,
         cx: &mut Context<Self>,
     ) {
         let view_size = bounds.size;
@@ -1340,7 +1384,10 @@ impl JellyflowCanvasView {
 
         self.last_canvas_bounds = Some(bounds);
         if self.update_canvas_viewport_for_view_size(view_size) {
+            self.last_canvas_scene = None;
             cx.notify();
+        } else {
+            self.last_canvas_scene = Some(frame.frame().scene_frame());
         }
     }
 
@@ -1373,6 +1420,7 @@ impl JellyflowCanvasView {
         self.last_canvas_view_size = update.last_canvas_view_size;
         if update.viewport != viewport {
             self.editor.set_viewport(update.viewport);
+            self.invalidate_canvas_scene_cache();
             return true;
         }
         false
@@ -1403,6 +1451,7 @@ impl JellyflowCanvasView {
         self.editor = editor;
         self.projection = projection;
         self.deferred_editor_refresh = false;
+        self.invalidate_canvas_scene_cache();
     }
 }
 
@@ -1926,17 +1975,17 @@ fn node_surface_wrapper_backplate_fill(_chrome: OpenGpuiNodeWrapperChrome) -> op
     rgb(0xffffff)
 }
 
-fn surface_render_nodes(document: &CanvasDocument) -> impl Iterator<Item = &CanvasNode> {
+fn initial_node_scene_bootstrap_records(document: &CanvasDocument) -> Vec<&CanvasNode> {
     let mut nodes = document.nodes().enumerate().collect::<Vec<_>>();
     nodes.sort_by(|(left_ordinal, left), (right_ordinal, right)| {
         left.z_index
             .cmp(&right.z_index)
             .then_with(|| left_ordinal.cmp(right_ordinal))
     });
-    nodes.into_iter().map(|(_, node)| node)
+    nodes.into_iter().map(|(_, node)| node).collect()
 }
 
-fn surface_render_nodes_for_scene<'a>(
+fn scene_node_records<'a>(
     document: &'a CanvasDocument,
     scene: &CanvasSceneFrame,
 ) -> Vec<&'a CanvasNode> {
@@ -4359,6 +4408,7 @@ fn main() {
                     deferred_editor_refresh: false,
                     last_canvas_view_size: None,
                     last_canvas_bounds: None,
+                    last_canvas_scene: None,
                 })
             },
         )
@@ -4637,6 +4687,7 @@ mod tests {
                 point(px(24.0), px(46.0)),
                 default_canvas_view_size(),
             )),
+            last_canvas_scene: None,
         });
 
         cx.update_entity(&view, |this, cx| {
@@ -4779,6 +4830,7 @@ mod tests {
                     point(px(24.0), px(46.0)),
                     default_canvas_view_size(),
                 )),
+                last_canvas_scene: None,
             }
         });
 
@@ -4838,6 +4890,7 @@ mod tests {
                     point(px(24.0), px(46.0)),
                     default_canvas_view_size(),
                 )),
+                last_canvas_scene: None,
             }
         });
 
@@ -4933,7 +4986,7 @@ mod tests {
     }
 
     #[test]
-    fn node_surfaces_render_in_canvas_z_order() {
+    fn initial_node_scene_bootstrap_records_follow_canvas_z_order() {
         let mut high = CanvasNode::new("high", point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
         high.z_index = 10;
         let mut equal_a = CanvasNode::new(
@@ -4958,7 +5011,8 @@ mod tests {
         builder.add_node(equal_b).unwrap();
         let document = builder.build().unwrap();
 
-        let order = surface_render_nodes(&document)
+        let order = initial_node_scene_bootstrap_records(&document)
+            .into_iter()
             .map(|node| node.id.as_str().to_owned())
             .collect::<Vec<_>>();
 
@@ -4966,7 +5020,7 @@ mod tests {
     }
 
     #[test]
-    fn node_surfaces_render_from_scene_record_groups() {
+    fn node_scene_widgets_render_from_scene_record_groups() {
         let mut high = CanvasNode::new("high", point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
         high.z_index = 10;
         let mut low = CanvasNode::new("low", point(px(20.0), px(10.0)), size(px(100.0), px(80.0)));
@@ -4984,12 +5038,85 @@ mod tests {
         );
         let scene = CanvasSceneFrame::from_paint_frame(&frame);
 
-        let order = surface_render_nodes_for_scene(&document, &scene)
+        let order = scene_node_records(&document, &scene)
             .into_iter()
             .map(|node| node.id.as_str().to_owned())
             .collect::<Vec<_>>();
 
         assert_eq!(order, ["low", "high"]);
+    }
+
+    #[open_gpui::test]
+    fn canvas_view_scene_node_host_prefers_scene_frame_before_bootstrap(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
+        let (gallery, store, editor, projection) = product_gallery_state();
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let bounds = Bounds::new(point(px(0.0), px(0.0)), default_canvas_view_size());
+        let model = CanvasPaintModel::from(&editor);
+        let scene = CanvasSceneFrame::from_paint_frame(&collect_visible_records(
+            &model,
+            bounds,
+            CanvasPaintOptions::default(),
+        ));
+        let expected_order = scene_node_records(editor.document(), &scene)
+            .into_iter()
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>();
+
+        let view = cx.new(|cx| JellyflowCanvasView {
+            editor,
+            store,
+            focus_handle: cx.focus_handle(),
+            projection,
+            gallery,
+            adapter: OpenGpuiAdapter::default(),
+            semantic_registry,
+            node_kit_registry,
+            measured_regions: OpenGpuiBoundsCollector::new(),
+            measurement_coverage: BTreeMap::new(),
+            measurement_revision: 1,
+            measurement_refresh_requested: false,
+            measurement_frame_pending: false,
+            measurement_frame_generation: 0,
+            auto_fit_viewport: false,
+            deferred_editor_refresh: false,
+            last_canvas_view_size: Some(default_canvas_view_size()),
+            last_canvas_bounds: Some(bounds),
+            last_canvas_scene: Some(scene),
+        });
+
+        cx.update_entity(&view, |this, _cx| {
+            let model = CanvasPaintModel::from(&this.editor);
+            let records = this.scene_node_host_records(&model, CanvasPaintOptions::default());
+            assert_eq!(
+                records.source,
+                NodeSceneHostRecordSource::PreparedSceneFrame
+            );
+            assert_eq!(
+                records
+                    .nodes
+                    .iter()
+                    .map(|node| node.id.clone())
+                    .collect::<Vec<_>>(),
+                expected_order
+            );
+
+            this.last_canvas_scene = None;
+            let records = this.scene_node_host_records(&model, CanvasPaintOptions::default());
+            assert_eq!(
+                records.source,
+                NodeSceneHostRecordSource::LastCanvasBoundsSceneFrame
+            );
+
+            this.last_canvas_bounds = None;
+            let records = this.scene_node_host_records(&model, CanvasPaintOptions::default());
+            assert_eq!(
+                records.source,
+                NodeSceneHostRecordSource::InitialDocumentBootstrap
+            );
+        });
     }
 
     fn product_gallery_surface(fixture_id: &str, renderer_key: &str) -> NodeSurfaceSummary {
@@ -5057,6 +5184,7 @@ mod tests {
             deferred_editor_refresh: false,
             last_canvas_view_size: None,
             last_canvas_bounds: None,
+            last_canvas_scene: None,
         });
 
         cx.update_entity(&view, |this, _| {
@@ -6614,6 +6742,7 @@ mod tests {
             deferred_editor_refresh: false,
             last_canvas_view_size: None,
             last_canvas_bounds: None,
+            last_canvas_scene: None,
         });
 
         cx.update_entity(&view, |this, _cx| {
