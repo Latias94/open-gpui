@@ -8,18 +8,18 @@ use jellyflow_open_gpui::{
     open_gpui_custom_action_missing_element_id, open_gpui_custom_repeatables_badge_element_id,
     open_gpui_custom_slots_badge_element_id, open_gpui_repeatable_add_action_element_id,
 };
-use open_gpui::{AnyElement, Pixels, div, prelude::*, px, rgb};
+use open_gpui::{AnyElement, div, prelude::*, px, rgb};
 use open_gpui_ui_components::{BadgeVariant, ButtonVariant};
 
 use crate::{
     GpuiNodeRendererServices, GpuiNodeRendererTable, demo_repeatable_add_item,
     node_component_kit::{
-        self, NodeComponentKitActions, PRODUCT_BODY_TOP, PRODUCT_CARD_PAD,
-        PRODUCT_CONTROL_CHIP_HEIGHT, PRODUCT_CONTROL_ROW_HEIGHT, PRODUCT_PORT_RAIL_HEIGHT,
-        PRODUCT_PREVIEW_ROW_HEIGHT, PRODUCT_PROMPT_CONTROL_ROW_HEIGHT,
-        PRODUCT_REPEATABLE_ADD_WIDTH, PRODUCT_REPEATABLE_CHIP_HEIGHT,
-        PRODUCT_REPEATABLE_ROW_HEIGHT, PRODUCT_SECTION_GAP, PRODUCT_TITLE_ROW_HEIGHT,
-        ProductLayoutRegion, ProductNodeAnchorSide, product_layout_stack, reserve_product_region,
+        self, NodeComponentKitActions, PRODUCT_CARD_PAD, PRODUCT_CONTROL_CHIP_HEIGHT,
+        PRODUCT_CONTROL_ROW_HEIGHT, PRODUCT_PORT_RAIL_HEIGHT, PRODUCT_PREVIEW_ROW_HEIGHT,
+        PRODUCT_PROMPT_CONTROL_ROW_HEIGHT, PRODUCT_REPEATABLE_ADD_WIDTH,
+        PRODUCT_REPEATABLE_ROW_HEIGHT, PRODUCT_TITLE_ROW_HEIGHT, ProductLayoutRegion,
+        ProductNodeAnchorSide, ProductRepeatableLayoutPlan, product_layout_stack,
+        reserve_product_region, reserve_product_repeatable_list,
     },
 };
 
@@ -58,12 +58,16 @@ fn decision_card_layout(node_size: CanvasSize) -> DecisionCardLayout {
 struct ShaderCardLayout {
     title: ProductLayoutRegion,
     input_rail: ProductLayoutRegion,
-    input_chips: ProductLayoutRegion,
+    input_rows: ProductRepeatableLayoutPlan,
     control_row: ProductLayoutRegion,
     output_rail: ProductLayoutRegion,
 }
 
-fn shader_card_layout(node_size: CanvasSize) -> ShaderCardLayout {
+fn shader_card_layout(
+    node_size: CanvasSize,
+    input_count: usize,
+    max_visible_inputs: usize,
+) -> ShaderCardLayout {
     let mut layout = product_layout_stack(node_size, 0.0);
     ShaderCardLayout {
         title: reserve_product_region(&mut layout, "title", PRODUCT_TITLE_ROW_HEIGHT, 28.0),
@@ -73,11 +77,14 @@ fn shader_card_layout(node_size: CanvasSize) -> ShaderCardLayout {
             PRODUCT_PORT_RAIL_HEIGHT,
             20.0,
         ),
-        input_chips: reserve_product_region(
+        input_rows: reserve_product_repeatable_list(
             &mut layout,
-            "input-chips",
-            PRODUCT_REPEATABLE_CHIP_HEIGHT,
-            24.0,
+            "shader.inputs",
+            input_count,
+            max_visible_inputs,
+            PRODUCT_REPEATABLE_ROW_HEIGHT,
+            4.0,
+            PRODUCT_CONTROL_CHIP_HEIGHT,
         ),
         control_row: reserve_product_region(
             &mut layout,
@@ -98,10 +105,14 @@ struct TableCardLayout {
     title: ProductLayoutRegion,
     primary_control: ProductLayoutRegion,
     chip_row: ProductLayoutRegion,
-    columns_top: Pixels,
+    columns: ProductRepeatableLayoutPlan,
 }
 
-fn table_card_layout(node_size: CanvasSize) -> TableCardLayout {
+fn table_card_layout(
+    node_size: CanvasSize,
+    column_count: usize,
+    max_visible_columns: usize,
+) -> TableCardLayout {
     let mut layout = product_layout_stack(node_size, 0.0);
     let title = reserve_product_region(&mut layout, "title", PRODUCT_TITLE_ROW_HEIGHT, 28.0);
     let primary_control = reserve_product_region(
@@ -112,14 +123,20 @@ fn table_card_layout(node_size: CanvasSize) -> TableCardLayout {
     );
     let chip_row =
         reserve_product_region(&mut layout, "chip-row", PRODUCT_CONTROL_CHIP_HEIGHT, 24.0);
-    let columns_top = px(layout.regions().last().map_or(PRODUCT_BODY_TOP, |region| {
-        region.top + region.height + PRODUCT_SECTION_GAP
-    }));
+    let columns = reserve_product_repeatable_list(
+        &mut layout,
+        "table.columns",
+        column_count,
+        max_visible_columns,
+        PRODUCT_REPEATABLE_ROW_HEIGHT,
+        4.0,
+        PRODUCT_CONTROL_CHIP_HEIGHT,
+    );
     TableCardLayout {
         title,
         primary_control,
         chip_row,
-        columns_top,
+        columns,
     }
 }
 
@@ -406,7 +423,11 @@ fn render_shader_card(
     let texture_control = context.control("control.texture");
     let property_control = context.control("control.property.name");
     let shader_inputs = repeatable_items_for(context, "shader.inputs");
-    let layout = shader_card_layout(context.node_size);
+    let layout = shader_card_layout(
+        context.node_size,
+        shader_inputs.len(),
+        context.surface_preset.repeatable_visible_items_or(3),
+    );
     let missing_ports = shader_inputs
         .iter()
         .filter(|item| {
@@ -462,8 +483,7 @@ fn render_shader_card(
         .child(render_shader_inputs(
             context,
             &shader_inputs,
-            layout.input_chips.top,
-            layout.input_chips.height,
+            layout.input_rows,
             collector.clone(),
             &actions,
         ))
@@ -527,7 +547,11 @@ fn render_table_card(
     let field_name = context.control("control.field.name");
     let field_type = context.control("control.field.type");
     let foreign_key = context.control("control.foreign_key.binding");
-    let layout = table_card_layout(context.node_size);
+    let layout = table_card_layout(
+        context.node_size,
+        columns.len(),
+        context.surface_preset.repeatable_visible_items_or(3),
+    );
 
     node_component_kit::render_product_card(context, rgb(0x2563eb), rgb(0xf8fafc), view.clone())
         .child(node_component_kit::render_product_header(
@@ -606,21 +630,21 @@ fn render_table_card(
                     3,
                     collector.clone(),
                     &actions,
+                ))
+                .child(render_repeatable_add(
+                    context,
+                    context
+                        .repeatables
+                        .iter()
+                        .find(|repeatable| repeatable.projection.key == "table.columns"),
+                    &actions,
                 )),
         )
         .child(render_table_columns(
             context,
             &columns,
-            layout.columns_top,
+            layout.columns,
             collector,
-            &actions,
-        ))
-        .child(render_repeatable_add(
-            context,
-            context
-                .repeatables
-                .iter()
-                .find(|repeatable| repeatable.projection.key == "table.columns"),
             &actions,
         ))
         .into_any_element()
@@ -794,31 +818,22 @@ fn render_primary_action(
 fn render_shader_inputs(
     context: &OpenGpuiNodeRendererContext,
     items: &[&OpenGpuiRepeatableItemLayout],
-    top: Pixels,
-    height: Pixels,
+    plan: ProductRepeatableLayoutPlan,
     collector: OpenGpuiBoundsCollector,
     actions: &NodeComponentKitActions,
 ) -> AnyElement {
-    let visible_limit = shader_visible_repeatable_limit_for_bounds(
-        context.node_size.width,
-        height.as_f32(),
-        items.len(),
-        context.surface_preset.repeatable_visible_items_or(3),
-    );
-    let hidden_count = items.len().saturating_sub(visible_limit);
-
     div()
         .absolute()
         .left(px(PRODUCT_CARD_PAD))
-        .top(top)
+        .top(plan.region.top)
         .right(px(PRODUCT_CARD_PAD))
-        .h(height)
+        .h(plan.region.height)
         .flex()
-        .items_center()
+        .flex_col()
         .gap_1()
         .overflow_hidden()
-        .children(items.iter().take(visible_limit).map(|item| {
-            node_component_kit::render_product_repeatable_chip(
+        .children(items.iter().take(plan.visible_items).map(|item| {
+            node_component_kit::render_product_repeatable_row(
                 context,
                 item,
                 collector.clone(),
@@ -828,54 +843,30 @@ fn render_shader_inputs(
         .child(node_component_kit::render_product_overflow_affordance(
             context.node_id,
             "shader.inputs",
-            hidden_count,
+            plan.hidden_items,
             collector,
         ))
         .into_any_element()
 }
 
-fn shader_visible_repeatable_limit_for_bounds(
-    node_width: f32,
-    available_height: f32,
-    item_count: usize,
-    budget_limit: usize,
-) -> usize {
-    let width_budget = (node_width - PRODUCT_CARD_PAD * 2.0).max(1.0);
-    let max_by_width = (width_budget / 104.0).floor().max(1.0) as usize;
-    node_component_kit::adaptive_repeatable_list_plan(
-        "shader.inputs",
-        available_height,
-        item_count,
-        budget_limit.min(max_by_width),
-        PRODUCT_REPEATABLE_CHIP_HEIGHT,
-        4.0,
-        PRODUCT_CONTROL_CHIP_HEIGHT,
-    )
-    .visible_items
-    .min(max_by_width)
-}
-
 fn render_table_columns(
     context: &OpenGpuiNodeRendererContext,
     items: &[&OpenGpuiRepeatableItemLayout],
-    top: Pixels,
+    plan: ProductRepeatableLayoutPlan,
     collector: OpenGpuiBoundsCollector,
     actions: &NodeComponentKitActions,
 ) -> AnyElement {
-    let visible_limit = table_visible_repeatable_limit(context, top, items.len());
-    let hidden_count = items.len().saturating_sub(visible_limit);
-
     div()
         .absolute()
         .left(px(PRODUCT_CARD_PAD))
-        .top(top)
+        .top(plan.region.top)
         .right(px(PRODUCT_CARD_PAD))
-        .bottom(px(PRODUCT_CARD_PAD))
+        .h(plan.region.height)
         .flex()
         .flex_col()
         .gap_1()
         .overflow_hidden()
-        .children(items.iter().take(visible_limit).map(|item| {
+        .children(items.iter().take(plan.visible_items).map(|item| {
             node_component_kit::render_product_repeatable_row(
                 context,
                 item,
@@ -886,43 +877,10 @@ fn render_table_columns(
         .child(node_component_kit::render_product_overflow_affordance(
             context.node_id,
             "table.columns",
-            hidden_count,
+            plan.hidden_items,
             collector,
         ))
         .into_any_element()
-}
-
-fn table_visible_repeatable_limit(
-    context: &OpenGpuiNodeRendererContext,
-    top: Pixels,
-    item_count: usize,
-) -> usize {
-    let budget_limit = context.surface_preset.repeatable_visible_items_or(3);
-    table_visible_repeatable_limit_for_height(
-        context.node_size.height,
-        top.as_f32(),
-        budget_limit,
-        item_count,
-    )
-}
-
-fn table_visible_repeatable_limit_for_height(
-    node_height: f32,
-    top: f32,
-    budget_limit: usize,
-    item_count: usize,
-) -> usize {
-    let available_height = (node_height - top - PRODUCT_CARD_PAD).max(0.0);
-    node_component_kit::adaptive_repeatable_list_plan(
-        "table.columns",
-        available_height,
-        item_count,
-        budget_limit,
-        PRODUCT_REPEATABLE_ROW_HEIGHT,
-        4.0,
-        PRODUCT_CONTROL_CHIP_HEIGHT,
-    )
-    .visible_items
 }
 
 fn render_repeatable_add(
@@ -969,6 +927,7 @@ fn repeatable_items_for<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node_component_kit::{PRODUCT_BODY_TOP, PRODUCT_SECTION_GAP};
     use jellyflow::{
         core::{CanvasSize, NodeKindKey},
         runtime::schema::NodeKitRegistry,
@@ -991,36 +950,36 @@ mod tests {
     }
 
     #[test]
-    fn product_renderer_layouts_fit_runtime_readable_budgets() {
-        assert_preset_fits_renderer(
+    fn product_renderer_full_layouts_fit_published_preferred_budgets() {
+        assert_preferred_size_fits_renderer(
             "demo.llm",
             CanvasSize {
                 width: 320.0,
                 height: decision_card_required_height(),
             },
         );
-        assert_preset_fits_renderer(
+        assert_preferred_size_fits_renderer(
             "demo.shader.mix",
             CanvasSize {
                 width: 340.0,
                 height: shader_card_required_height(),
             },
         );
-        assert_preset_fits_renderer(
+        assert_preferred_size_fits_renderer(
             "demo.table",
             CanvasSize {
                 width: 396.0,
                 height: table_card_required_height(),
             },
         );
-        assert_preset_fits_renderer(
+        assert_preferred_size_fits_renderer(
             "demo.topic",
             CanvasSize {
                 width: 304.0,
                 height: topic_card_required_height(),
             },
         );
-        assert_preset_fits_renderer(
+        assert_preferred_size_fits_renderer(
             "demo.source",
             CanvasSize {
                 width: 312.0,
@@ -1049,13 +1008,13 @@ mod tests {
     }
 
     fn shader_card_required_height() -> f32 {
-        let layout = shader_card_layout(layout_probe_size(340.0));
+        let layout = shader_card_layout(layout_probe_size(340.0), 3, 3);
         region_bottom(layout.output_rail) + PRODUCT_CARD_PAD
     }
 
     fn table_card_required_height() -> f32 {
-        let layout = table_card_layout(layout_probe_size(396.0));
-        layout.columns_top.as_f32() + (PRODUCT_REPEATABLE_ROW_HEIGHT + 4.0) * 3.0 + PRODUCT_CARD_PAD
+        let layout = table_card_layout(layout_probe_size(396.0), 3, 3);
+        region_bottom(layout.columns.region) + PRODUCT_CARD_PAD
     }
 
     fn topic_card_required_height() -> f32 {
@@ -1068,67 +1027,91 @@ mod tests {
         region_bottom(layout.asset_control) + PRODUCT_CARD_PAD
     }
 
-    fn assert_preset_fits_renderer(kind: &str, required: CanvasSize) {
+    fn assert_preferred_size_fits_renderer(kind: &str, required: CanvasSize) {
         let registry = NodeKitRegistry::builtin().node_registry();
         let descriptor = registry
             .view_descriptor(&NodeKindKey::new(kind))
             .expect("builtin product descriptor");
         let preset = OpenGpuiProductSurfacePreset::from_descriptor(&descriptor);
-        let minimum = preset
-            .min_readable_size
-            .expect("product renderer should publish min readable size");
+        let preferred = preset
+            .preferred_size
+            .expect("product renderer should publish preferred size");
 
         assert!(
-            minimum.width >= required.width,
-            "{kind} min width {} must fit renderer requirement {}",
-            minimum.width,
+            preferred.width >= required.width,
+            "{kind} preferred width {} must fit renderer requirement {}",
+            preferred.width,
             required.width
         );
         assert!(
-            minimum.height >= required.height,
-            "{kind} min height {} must fit renderer requirement {}",
-            minimum.height,
+            preferred.height >= required.height,
+            "{kind} preferred height {} must fit renderer requirement {}",
+            preferred.height,
             required.height
         );
     }
 
     #[test]
     fn table_repeatable_limit_accounts_for_overflow_indicator_budget() {
-        let columns_top = table_card_layout(layout_probe_size(396.0))
-            .columns_top
-            .as_f32();
-        let reduced_height =
-            columns_top + PRODUCT_CARD_PAD + PRODUCT_REPEATABLE_ROW_HEIGHT * 2.0 + 4.0;
+        let constrained = table_card_layout(
+            CanvasSize {
+                width: 396.0,
+                height: 258.0,
+            },
+            5,
+            4,
+        );
+        assert_eq!(constrained.columns.visible_items, 1);
+        assert_eq!(constrained.columns.hidden_items, 4);
 
-        assert_eq!(
-            table_visible_repeatable_limit_for_height(reduced_height, columns_top, 4, 5),
-            1
+        let full = table_card_layout(
+            CanvasSize {
+                width: 396.0,
+                height: 360.0,
+            },
+            4,
+            4,
         );
-        assert_eq!(
-            table_visible_repeatable_limit_for_height(
-                columns_top + PRODUCT_CARD_PAD + (PRODUCT_REPEATABLE_ROW_HEIGHT + 4.0) * 4.0,
-                columns_top,
-                4,
-                4,
-            ),
-            4
-        );
+        assert_eq!(full.columns.visible_items, 4);
+        assert_eq!(full.columns.hidden_items, 0);
     }
 
     #[test]
-    fn shader_repeatable_limit_accounts_for_width_and_height() {
-        assert_eq!(
-            shader_visible_repeatable_limit_for_bounds(220.0, 154.0, 4, 4),
-            1
+    fn shader_repeatable_plan_uses_region_height_not_width_fit() {
+        let narrow = shader_card_layout(
+            CanvasSize {
+                width: 220.0,
+                height: 252.0,
+            },
+            4,
+            4,
         );
-        assert_eq!(
-            shader_visible_repeatable_limit_for_bounds(420.0, 154.0, 4, 4),
-            3
+        let wide = shader_card_layout(
+            CanvasSize {
+                width: 420.0,
+                height: 252.0,
+            },
+            4,
+            4,
         );
+        assert_eq!(narrow.input_rows.visible_items, 2);
+        assert_eq!(narrow.input_rows.hidden_items, 2);
         assert_eq!(
-            shader_visible_repeatable_limit_for_bounds(420.0, 16.0, 4, 4),
-            0
+            wide.input_rows.visible_items,
+            narrow.input_rows.visible_items
         );
+        assert_eq!(wide.input_rows.hidden_items, narrow.input_rows.hidden_items);
+
+        let shell = shader_card_layout(
+            CanvasSize {
+                width: 420.0,
+                height: 146.0,
+            },
+            4,
+            4,
+        );
+        assert_eq!(shell.input_rows.visible_items, 0);
+        assert_eq!(shell.input_rows.hidden_items, 4);
     }
 
     #[test]
@@ -1163,7 +1146,7 @@ mod tests {
             height: 168.0,
         };
         assert_layout_stays_inside(
-            shader_card_layout(shader_size),
+            shader_card_layout(shader_size, 3, 3),
             shader_size.height - PRODUCT_CARD_PAD,
         );
         let table_size = CanvasSize {
@@ -1171,7 +1154,7 @@ mod tests {
             height: 184.0,
         };
         assert_layout_stays_inside(
-            table_card_layout(table_size),
+            table_card_layout(table_size, 3, 3),
             table_size.height - PRODUCT_CARD_PAD,
         );
         let topic_size = CanvasSize {
@@ -1212,7 +1195,7 @@ mod tests {
             vec![
                 self.title,
                 self.input_rail,
-                self.input_chips,
+                self.input_rows.region,
                 self.control_row,
                 self.output_rail,
             ]
@@ -1227,7 +1210,12 @@ mod tests {
 
     impl ProductLayoutRegions for TableCardLayout {
         fn regions(&self) -> Vec<ProductLayoutRegion> {
-            vec![self.title, self.primary_control, self.chip_row]
+            vec![
+                self.title,
+                self.primary_control,
+                self.chip_row,
+                self.columns.region,
+            ]
         }
     }
 

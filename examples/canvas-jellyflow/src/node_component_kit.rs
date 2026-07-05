@@ -39,7 +39,6 @@ pub const PRODUCT_PORT_RAIL_HEIGHT: f32 = 26.0;
 pub const PRODUCT_CONTROL_ROW_HEIGHT: f32 = 40.0;
 pub const PRODUCT_PROMPT_CONTROL_ROW_HEIGHT: f32 = 48.0;
 pub const PRODUCT_CONTROL_CHIP_HEIGHT: f32 = 34.0;
-pub const PRODUCT_REPEATABLE_CHIP_HEIGHT: f32 = 36.0;
 pub const PRODUCT_REPEATABLE_ROW_HEIGHT: f32 = 42.0;
 pub const PRODUCT_REPEATABLE_ADD_WIDTH: f32 = 96.0;
 pub const PRODUCT_SECTION_GAP: f32 = 6.0;
@@ -521,6 +520,7 @@ impl AdaptiveNodeLayoutStack {
         }
     }
 
+    #[cfg(test)]
     pub fn from_available_height(available_height: f32, gap: f32) -> Self {
         Self {
             cursor_y: 0.0,
@@ -534,6 +534,7 @@ impl AdaptiveNodeLayoutStack {
         (self.bottom_y - self.cursor_y).max(0.0)
     }
 
+    #[cfg(test)]
     pub fn regions(&self) -> &[AdaptiveNodeLayoutRegion] {
         &self.regions
     }
@@ -622,6 +623,7 @@ impl AdaptiveNodeLayoutStack {
     }
 }
 
+#[cfg(test)]
 pub fn adaptive_repeatable_list_plan(
     key: impl Into<String>,
     available_height: f32,
@@ -659,6 +661,23 @@ impl ProductLayoutRegion {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct ProductRepeatableLayoutPlan {
+    pub region: ProductLayoutRegion,
+    pub visible_items: usize,
+    pub hidden_items: usize,
+}
+
+impl ProductRepeatableLayoutPlan {
+    pub fn from_adaptive(plan: AdaptiveRepeatableLayoutPlan) -> Self {
+        Self {
+            region: ProductLayoutRegion::from_adaptive(plan.region),
+            visible_items: plan.visible_items,
+            hidden_items: plan.hidden_items,
+        }
+    }
+}
+
 pub fn product_layout_stack(node_size: CanvasSize, footer_height: f32) -> AdaptiveNodeLayoutStack {
     AdaptiveNodeLayoutStack::new(
         node_size,
@@ -676,6 +695,25 @@ pub fn reserve_product_region(
     compact_height: f32,
 ) -> ProductLayoutRegion {
     ProductLayoutRegion::from_adaptive(layout.reserve_region(key, full_height, compact_height))
+}
+
+pub fn reserve_product_repeatable_list(
+    layout: &mut AdaptiveNodeLayoutStack,
+    key: &'static str,
+    item_count: usize,
+    max_visible_items: usize,
+    row_height: f32,
+    row_gap: f32,
+    overflow_indicator_height: f32,
+) -> ProductRepeatableLayoutPlan {
+    ProductRepeatableLayoutPlan::from_adaptive(layout.reserve_repeatable_list(
+        key,
+        item_count,
+        max_visible_items,
+        row_height,
+        row_gap,
+        overflow_indicator_height,
+    ))
 }
 
 #[derive(Clone, Copy)]
@@ -1153,87 +1191,6 @@ pub(crate) fn product_repeatable_overflow_measurement_id(
     OpenGpuiMeasurementId::overflow(node_id, collection_key)
 }
 
-pub fn render_product_repeatable_chip(
-    context: &OpenGpuiNodeRendererContext,
-    item: &OpenGpuiRepeatableItemLayout,
-    collector: OpenGpuiBoundsCollector,
-    actions: &NodeComponentKitActions,
-) -> AnyElement {
-    let projection = &item.projection;
-    let label = repeatable_item_label(&projection.item_data, &projection.label);
-    let ty = repeatable_item_type_label(&projection.item_data);
-    let disabled = projection.remove_disabled_reason.is_some();
-    let port_status = repeatable_port_status_label(projection.dynamic_port_policy);
-    let missing_port =
-        projection.dynamic_port_policy == OpenGpuiDynamicPortPolicy::MissingGraphPort;
-    let collection_key = projection.collection_key.clone();
-    let item_id = projection.item_id.clone();
-    let anchor = projection.anchor.clone();
-
-    render_measured_region(
-        context.repeatable_item_measurement_id(projection.slot_key.clone(), item_id.clone()),
-        collector.clone(),
-        div()
-            .h(px(PRODUCT_REPEATABLE_CHIP_HEIGHT))
-            .min_w(px(84.0))
-            .flex_1()
-            .max_w(px(132.0))
-            .flex()
-            .items_center()
-            .gap_1()
-            .rounded_sm()
-            .bg(if missing_port {
-                rgb(0xfffbeb)
-            } else {
-                rgb(0xede9fe)
-            })
-            .border_1()
-            .border_color(if missing_port {
-                rgb(0xf59e0b)
-            } else {
-                rgb(0xa78bfa)
-            })
-            .px_1()
-            .overflow_hidden()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .child(render_product_text_line(label, rgb(0x111827), false)),
-            )
-            .child(render_repeatable_type_badge(
-                context,
-                &collection_key,
-                &item_id,
-                &ty,
-            ))
-            .child(render_repeatable_port_status_badge(
-                context,
-                &collection_key,
-                &item_id,
-                port_status,
-                projection.dynamic_port_policy,
-            ))
-            .child(repeatable_action_button(
-                context.node_id,
-                open_gpui_repeatable_remove_action_element_id(
-                    context.node_id,
-                    &collection_key,
-                    &item_id,
-                ),
-                "Del",
-                ButtonVariant::Destructive,
-                disabled,
-                OpenGpuiRepeatableActionPlan::Remove {
-                    collection_key,
-                    item_id: item_id.clone(),
-                },
-                actions,
-            ))
-            .child(render_product_inline_anchor(context, anchor, collector)),
-    )
-}
-
 pub fn render_product_repeatable_row(
     context: &OpenGpuiNodeRendererContext,
     item: &OpenGpuiRepeatableItemLayout,
@@ -1336,47 +1293,6 @@ pub fn render_product_repeatable_row(
                     )),
             )
             .child(render_product_inline_anchor(context, anchor, collector)),
-    )
-}
-
-fn render_repeatable_type_badge(
-    context: &OpenGpuiNodeRendererContext,
-    collection_key: &str,
-    item_id: &str,
-    ty: &str,
-) -> AnyElement {
-    render_product_badge(
-        format!(
-            "jellyflow-repeatable-type:{}:{collection_key}:{item_id}",
-            context.node_id.0
-        ),
-        ty.to_owned(),
-        BadgeVariant::Outline,
-    )
-}
-
-fn render_repeatable_port_status_badge(
-    context: &OpenGpuiNodeRendererContext,
-    collection_key: &str,
-    item_id: &str,
-    label: &'static str,
-    policy: OpenGpuiDynamicPortPolicy,
-) -> AnyElement {
-    if policy == OpenGpuiDynamicPortPolicy::BoundToGraphPort {
-        return div().w(px(0.0)).h(px(0.0)).into_any_element();
-    }
-
-    render_product_badge(
-        format!(
-            "jellyflow-repeatable-port-status:{}:{collection_key}:{item_id}",
-            context.node_id.0
-        ),
-        label,
-        if policy == OpenGpuiDynamicPortPolicy::MissingGraphPort {
-            BadgeVariant::Destructive
-        } else {
-            BadgeVariant::Secondary
-        },
     )
 }
 
@@ -1863,10 +1779,12 @@ pub(crate) fn repeatable_item_label(item_data: &Value, fallback: &str) -> String
         .unwrap_or_else(|| fallback.to_owned())
 }
 
+#[cfg(test)]
 pub(crate) fn repeatable_item_type_label(item_data: &Value) -> String {
     json_path_label(item_data, &["ty"]).unwrap_or_else(|| "value".to_owned())
 }
 
+#[cfg(test)]
 pub(crate) fn repeatable_port_status_label(policy: OpenGpuiDynamicPortPolicy) -> &'static str {
     match policy {
         OpenGpuiDynamicPortPolicy::DisplayOnly => "display",
