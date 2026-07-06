@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `open-gpui-canvas` as a reusable infinite-canvas foundation with JSON Canvas
   import/export, document mutation journaling, tool sessions, spatial/runtime caches, kind
   policies, persistence adapters, and native canvas examples.
+- Added `open-gpui-motion` for renderer-neutral motion foundations, including deterministic
+  timeline/spring sampling, scalar motion controllers, policy validation, frame-demand reporting,
+  neutral geometry, and layout projection primitives.
 - Added stable wasm surface checks for the web backend and a browser-runnable `hello_web` path.
 - Added platform/system hooks such as system wake callbacks.
 

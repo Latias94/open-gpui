@@ -18,6 +18,7 @@ members = [
     "crates/http_client",
     "crates/http_client_tls",
     "crates/media",
+    "crates/motion",
     "crates/ui_components",
     "crates/ui_core",
     "crates/refineable",
@@ -65,6 +66,7 @@ open_gpui_linux = { package = "open-gpui-linux", version = "0.2.0", path = "crat
 open_gpui_macos = { package = "open-gpui-macos", version = "0.2.0", path = "crates/gpui_macos", default-features = false }
 open_gpui_macros = { package = "open-gpui-macros", version = "0.2.0", path = "crates/gpui_macros" }
 open_gpui_media = { package = "open-gpui-media", version = "0.2.0", path = "crates/media" }
+open_gpui_motion = { package = "open-gpui-motion", version = "0.2.0", path = "crates/motion" }
 open_gpui_platform = { package = "open-gpui-platform", version = "0.2.0", path = "crates/gpui_platform", default-features = false }
 open_gpui_refineable = { package = "open-gpui-refineable", version = "0.2.0", path = "crates/refineable" }
 open_gpui_refineable_derive = { package = "open-gpui-refineable-derive", version = "0.2.0", path = "crates/refineable/derive_refineable" }

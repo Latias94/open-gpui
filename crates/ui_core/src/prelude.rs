@@ -15,26 +15,6 @@ pub use crate::{
         UiEdges, UiPoint, UiPx, UiRect, UiSize, ui_edges, ui_point, ui_px, ui_rect, ui_size,
     },
     grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d},
-    motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec},
-    motion_controller::{
-        MotionExecutionPlan, MotionExecutionState, MotionFrameDemand, MotionFrameReason,
-        MotionScalarController, MotionScalarControllerSample, MotionScalarExecution,
-        MotionScalarExecutionSample, MotionScalarTrack, MotionScalarTrackSample,
-    },
-    motion_policy::{
-        MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
-        MotionPolicyReport, MotionPreviewTargetPolicy, validate_motion_policy,
-    },
-    motion_projection::{MotionProjection, MotionProjectionClip},
-    motion_runtime::{
-        MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionRunState, MotionSnapshot,
-        MotionTimeline, MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
-        preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
-    },
-    motion_spring::{
-        MotionModel, MotionPreset, MotionScalarSample, MotionSpring, MotionSpringPhysics,
-        MotionSpringPreset, MotionSpringSpec,
-    },
     overlay::{
         DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
         FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,

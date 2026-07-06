@@ -1,6 +1,6 @@
 //! Renderer-neutral runtime helpers for deterministic UI motion.
 
-use crate::{MotionSpec, UiPx, UiRect, ui_point, ui_rect, ui_size};
+use crate::{MotionPx, MotionRect, MotionSpec, motion_point, motion_rect, motion_size};
 use std::{
     collections::HashMap,
     hash::Hash,
@@ -36,9 +36,6 @@ impl MotionRunState {
         matches!(self, Self::Immediate | Self::Completed)
     }
 }
-
-/// Compatibility alias for older timeline-only code.
-pub type MotionTimelineState = MotionRunState;
 
 /// A sampled point on a motion timeline.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -319,7 +316,7 @@ pub enum MotionEdge {
 ///
 /// A rect touching an edge prefers that edge before distance comparisons. This keeps retargeted
 /// split and zoom panes moving toward the window edge they visually belong to.
-pub fn preferred_motion_edge(bounds: UiRect, container: UiRect) -> MotionEdge {
+pub fn preferred_motion_edge(bounds: MotionRect, container: MotionRect) -> MotionEdge {
     let left = (bounds.origin.x - container.origin.x).as_f32().abs();
     let right = (rect_right(container) - rect_right(bounds)).abs();
     let top = (bounds.origin.y - container.origin.y).as_f32().abs();
@@ -352,87 +349,99 @@ pub fn preferred_motion_edge(bounds: UiRect, container: UiRect) -> MotionEdge {
 }
 
 /// Returns bounds for the rect just outside the container on the chosen edge.
-pub fn motion_source_rect(edge: MotionEdge, final_bounds: UiRect, container: UiRect) -> UiRect {
+pub fn motion_source_rect(
+    edge: MotionEdge,
+    final_bounds: MotionRect,
+    container: MotionRect,
+) -> MotionRect {
     let origin = match edge {
-        MotionEdge::Left => ui_point(
+        MotionEdge::Left => motion_point(
             container.origin.x - final_bounds.size.width,
             final_bounds.origin.y,
         ),
-        MotionEdge::Right => ui_point(UiPx::new(rect_right(container)), final_bounds.origin.y),
-        MotionEdge::Top => ui_point(
+        MotionEdge::Right => {
+            motion_point(MotionPx::new(rect_right(container)), final_bounds.origin.y)
+        }
+        MotionEdge::Top => motion_point(
             final_bounds.origin.x,
             container.origin.y - final_bounds.size.height,
         ),
-        MotionEdge::Bottom => ui_point(final_bounds.origin.x, UiPx::new(rect_bottom(container))),
+        MotionEdge::Bottom => {
+            motion_point(final_bounds.origin.x, MotionPx::new(rect_bottom(container)))
+        }
     };
-    ui_rect(origin, final_bounds.size)
+    motion_rect(origin, final_bounds.size)
 }
 
 /// Samples the visible sub-rect revealed from an edge at unit progress.
-pub fn reveal_rect_from_edge(final_bounds: UiRect, edge: MotionEdge, progress: f32) -> UiRect {
+pub fn reveal_rect_from_edge(
+    final_bounds: MotionRect,
+    edge: MotionEdge,
+    progress: f32,
+) -> MotionRect {
     let progress = progress.clamp(0.0, 1.0);
     match edge {
         MotionEdge::Left => {
             let width = final_bounds.size.width * progress;
-            ui_rect(
+            motion_rect(
                 final_bounds.origin,
-                ui_size(width, final_bounds.size.height),
+                motion_size(width, final_bounds.size.height),
             )
         }
         MotionEdge::Right => {
             let width = final_bounds.size.width * progress;
-            ui_rect(
-                ui_point(
-                    UiPx::new(rect_right(final_bounds)) - width,
+            motion_rect(
+                motion_point(
+                    MotionPx::new(rect_right(final_bounds)) - width,
                     final_bounds.origin.y,
                 ),
-                ui_size(width, final_bounds.size.height),
+                motion_size(width, final_bounds.size.height),
             )
         }
         MotionEdge::Top => {
             let height = final_bounds.size.height * progress;
-            ui_rect(
+            motion_rect(
                 final_bounds.origin,
-                ui_size(final_bounds.size.width, height),
+                motion_size(final_bounds.size.width, height),
             )
         }
         MotionEdge::Bottom => {
             let height = final_bounds.size.height * progress;
-            ui_rect(
-                ui_point(
+            motion_rect(
+                motion_point(
                     final_bounds.origin.x,
-                    UiPx::new(rect_bottom(final_bounds)) - height,
+                    MotionPx::new(rect_bottom(final_bounds)) - height,
                 ),
-                ui_size(final_bounds.size.width, height),
+                motion_size(final_bounds.size.width, height),
             )
         }
     }
 }
 
 /// Samples a rect between two rects at unit progress.
-pub fn lerp_rect(from: UiRect, to: UiRect, progress: f32) -> UiRect {
+pub fn lerp_rect(from: MotionRect, to: MotionRect, progress: f32) -> MotionRect {
     let progress = progress.clamp(0.0, 1.0);
-    ui_rect(
-        ui_point(
+    motion_rect(
+        motion_point(
             lerp_px(from.origin.x, to.origin.x, progress),
             lerp_px(from.origin.y, to.origin.y, progress),
         ),
-        ui_size(
+        motion_size(
             lerp_px(from.size.width, to.size.width, progress),
             lerp_px(from.size.height, to.size.height, progress),
         ),
     )
 }
 
-fn lerp_px(from: UiPx, to: UiPx, progress: f32) -> UiPx {
-    UiPx::new(from.as_f32() + (to.as_f32() - from.as_f32()) * progress)
+fn lerp_px(from: MotionPx, to: MotionPx, progress: f32) -> MotionPx {
+    MotionPx::new(from.as_f32() + (to.as_f32() - from.as_f32()) * progress)
 }
 
-fn rect_right(bounds: UiRect) -> f32 {
+fn rect_right(bounds: MotionRect) -> f32 {
     bounds.origin.x.as_f32() + bounds.size.width.as_f32()
 }
 
-fn rect_bottom(bounds: UiRect) -> f32 {
+fn rect_bottom(bounds: MotionRect) -> f32 {
     bounds.origin.y.as_f32() + bounds.size.height.as_f32()
 }
 
@@ -534,13 +543,13 @@ mod tests {
 
     #[test]
     fn preferred_motion_edge_prefers_touching_edge_before_distance() {
-        let container = ui_rect(
-            ui_point(UiPx::ZERO, UiPx::ZERO),
-            ui_size(UiPx::new(400.0), UiPx::new(240.0)),
+        let container = motion_rect(
+            motion_point(MotionPx::ZERO, MotionPx::ZERO),
+            motion_size(MotionPx::new(400.0), MotionPx::new(240.0)),
         );
-        let touching_top_but_closer_left = ui_rect(
-            ui_point(UiPx::new(20.0), UiPx::ZERO),
-            ui_size(UiPx::new(80.0), UiPx::new(80.0)),
+        let touching_top_but_closer_left = motion_rect(
+            motion_point(MotionPx::new(20.0), MotionPx::ZERO),
+            motion_size(MotionPx::new(80.0), MotionPx::new(80.0)),
         );
 
         assert_eq!(
@@ -551,26 +560,26 @@ mod tests {
 
     #[test]
     fn motion_source_rect_places_rect_outside_container_edge() {
-        let container = ui_rect(
-            ui_point(UiPx::ZERO, UiPx::ZERO),
-            ui_size(UiPx::new(400.0), UiPx::new(240.0)),
+        let container = motion_rect(
+            motion_point(MotionPx::ZERO, MotionPx::ZERO),
+            motion_size(MotionPx::new(400.0), MotionPx::new(240.0)),
         );
-        let final_bounds = ui_rect(
-            ui_point(UiPx::new(40.0), UiPx::new(20.0)),
-            ui_size(UiPx::new(80.0), UiPx::new(60.0)),
+        let final_bounds = motion_rect(
+            motion_point(MotionPx::new(40.0), MotionPx::new(20.0)),
+            motion_size(MotionPx::new(80.0), MotionPx::new(60.0)),
         );
 
         assert_eq!(
             motion_source_rect(MotionEdge::Left, final_bounds, container),
-            ui_rect(
-                ui_point(UiPx::new(-80.0), UiPx::new(20.0)),
+            motion_rect(
+                motion_point(MotionPx::new(-80.0), MotionPx::new(20.0)),
                 final_bounds.size
             )
         );
         assert_eq!(
             motion_source_rect(MotionEdge::Bottom, final_bounds, container),
-            ui_rect(
-                ui_point(UiPx::new(40.0), UiPx::new(240.0)),
+            motion_rect(
+                motion_point(MotionPx::new(40.0), MotionPx::new(240.0)),
                 final_bounds.size
             )
         );
@@ -578,16 +587,16 @@ mod tests {
 
     #[test]
     fn reveal_and_lerp_rect_clamp_progress() {
-        let rect = ui_rect(
-            ui_point(UiPx::new(10.0), UiPx::new(20.0)),
-            ui_size(UiPx::new(100.0), UiPx::new(80.0)),
+        let rect = motion_rect(
+            motion_point(MotionPx::new(10.0), MotionPx::new(20.0)),
+            motion_size(MotionPx::new(100.0), MotionPx::new(80.0)),
         );
 
         assert_eq!(
             reveal_rect_from_edge(rect, MotionEdge::Right, 0.25),
-            ui_rect(
-                ui_point(UiPx::new(85.0), UiPx::new(20.0)),
-                ui_size(UiPx::new(25.0), UiPx::new(80.0))
+            motion_rect(
+                motion_point(MotionPx::new(85.0), MotionPx::new(20.0)),
+                motion_size(MotionPx::new(25.0), MotionPx::new(80.0))
             )
         );
         assert_eq!(lerp_rect(rect, rect, 2.0), rect);

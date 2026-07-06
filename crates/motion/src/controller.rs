@@ -1,7 +1,7 @@
 //! Renderer-neutral motion controller contracts.
 
-use crate::motion_spring::{MotionModel, MotionScalarSample};
-use crate::motion_value::MotionValue;
+use crate::spring::{MotionModel, MotionScalarSample};
+use crate::value::MotionValue;
 use crate::{
     MotionPolicyInput, MotionPolicyReport, MotionRunState, MotionSpec, validate_motion_policy,
 };

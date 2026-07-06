@@ -360,7 +360,7 @@ verified_by:
 - Done: `refactor/docking-flat-motion-runtime` merged the docking motion runtime pass into `main`.
   Docking now uses real final-size pane content reveal, sampled pane/divider/zoom retargeting,
   presentation-scene-seeded drop facts, programmatic Splitter motion, and a shared
-  `open_gpui_ui_core::MotionTimeline` runtime primitive.
+  `open_gpui_motion::MotionTimeline` runtime primitive.
 - Done: Dock overlay/drop-preview geometry now follows Dear ImGui's current-target model: preview
   rectangles stay pinned to the current semantic target instead of interpolating from previous
   preview bounds. Overlay motion remains lifecycle/opacity-only; pane, divider, zoom, and

@@ -1,6 +1,6 @@
 //! Renderer-neutral motion policy validation.
 
-use crate::motion_spring::{MotionModel, MotionSpringPhysics};
+use crate::spring::{MotionModel, MotionSpringPhysics};
 use std::time::Duration;
 
 /// Maximum routine UI motion duration accepted without a continuity reason.

@@ -1,5 +1,6 @@
 use crate::DropZone;
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
+use open_gpui_motion::{MotionRect, motion_point, motion_px, motion_rect, motion_size};
 use open_gpui_ui_core::{UiRect, ui_point, ui_px, ui_rect, ui_size};
 
 const DEFAULT_DROP_GUIDE_FONT_SIZE: f32 = 16.0;
@@ -20,6 +21,26 @@ pub(crate) fn ui_rect_from_bounds(bounds: Bounds<Pixels>) -> UiRect {
 }
 
 pub(crate) fn bounds_from_ui_rect(rect: UiRect) -> Bounds<Pixels> {
+    Bounds::new(
+        point(px(rect.origin.x.as_f32()), px(rect.origin.y.as_f32())),
+        size(px(rect.size.width.as_f32()), px(rect.size.height.as_f32())),
+    )
+}
+
+pub(crate) fn motion_rect_from_bounds(bounds: Bounds<Pixels>) -> MotionRect {
+    motion_rect(
+        motion_point(
+            motion_px(f32::from(bounds.origin.x)),
+            motion_px(f32::from(bounds.origin.y)),
+        ),
+        motion_size(
+            motion_px(f32::from(bounds.size.width)),
+            motion_px(f32::from(bounds.size.height)),
+        ),
+    )
+}
+
+pub(crate) fn bounds_from_motion_rect(rect: MotionRect) -> Bounds<Pixels> {
     Bounds::new(
         point(px(rect.origin.x.as_f32()), px(rect.origin.y.as_f32())),
         size(px(rect.size.width.as_f32()), px(rect.size.height.as_f32())),

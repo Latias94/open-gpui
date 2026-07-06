@@ -4177,6 +4177,7 @@ version = "0.2.0"
 dependencies = [
  "log",
  "open-gpui",
+ "open-gpui-motion",
  "open-gpui-ui-core",
  "serde",
  "serde_json",
@@ -4375,6 +4376,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-motion"
+version = "0.2.0"
+
+[[package]]
 name = "open-gpui-platform"
 version = "0.2.0"
 dependencies = [
@@ -4491,6 +4496,7 @@ version = "0.2.0"
 dependencies = [
  "open-gpui",
  "open-gpui-command",
+ "open-gpui-motion",
  "open-gpui-ui-core",
  "schemars",
  "serde",
@@ -4501,6 +4507,9 @@ dependencies = [
 [[package]]
 name = "open-gpui-ui-core"
 version = "0.2.0"
+dependencies = [
+ "open-gpui-motion",
+]
 
 [[package]]
 name = "open-gpui-ui-foundation-gallery"
@@ -4508,6 +4517,7 @@ version = "0.2.0"
 dependencies = [
  "open-gpui",
  "open-gpui-command",
+ "open-gpui-motion",
  "open-gpui-platform",
  "open-gpui-ui-components",
  "open-gpui-ui-core",

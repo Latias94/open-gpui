@@ -1,5 +1,5 @@
 [package]
-name = "open-gpui-ui-core"
+name = "open-gpui-motion"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -7,14 +7,11 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-readme.workspace = true
-description = "Foundation primitives for the Open GPUI component ecosystem."
+readme = "README.md"
+description = "Renderer-neutral motion primitives for Open GPUI."
 
 [lib]
 path = "src/lib.rs"
-
-[dependencies]
-open_gpui_motion.workspace = true
 
 [lints]
 workspace = true

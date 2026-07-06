@@ -9,7 +9,7 @@ use crate::{
     zoom_state::{DockZoomScene, DockZoomState},
 };
 use open_gpui::{AppContext as _, Bounds, TestAppContext, point, px, size};
-use open_gpui_ui_core::{MotionDuration, MotionEasing, MotionModel, MotionPreference, MotionSpec};
+use open_gpui_motion::{MotionDuration, MotionEasing, MotionModel, MotionPreference, MotionSpec};
 use slotmap::Key;
 use std::time::Duration;
 

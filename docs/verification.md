@@ -11,6 +11,8 @@ The gate runs:
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 - `cargo check -p open-gpui-smoke-native`
+- `cargo nextest run -p open-gpui-motion`
+- `cargo test -p open-gpui-motion --doc`
 - `cargo nextest run -p open-gpui-ui-core`
 - `cargo nextest run -p open-gpui-ui-components`
 - `cargo nextest run -p open-gpui-ui-foundation-gallery`
@@ -170,7 +172,8 @@ the gates aligned to the shared primitive boundary:
 
 ```sh
 cargo fmt --all -- --check
-cargo nextest run -p open-gpui-ui-core motion spring projection policy --no-fail-fast
+cargo nextest run -p open-gpui-motion --no-fail-fast
+cargo check -p open-gpui-ui-core --tests
 cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast
 cargo nextest run -p open-gpui-docking host_presentation_scene_tests host_viewport_preview_visual_tests host_transition_tests host_zoom_focus_tests host_divider_hit_map_tests host_accessibility_tests --no-fail-fast
 cargo check -p open-gpui-docking-native
@@ -214,12 +217,13 @@ markers stay separate from target previews, zoom/focus produce deterministic des
 and corner hits derive from the shared split hit map, and accessibility descriptors expose roles,
 bounds, orientation, selected state, disabled state, and actions.
 
-The shared motion runtime checks additionally prove that `open_gpui_ui_core` owns deterministic
+The shared motion runtime checks additionally prove that `open_gpui_motion` owns deterministic
 timeline sampling, spring sampling, scalar values, model-neutral scalar samples, frame-demand
 reasons, explicit model/preset resolution, layout projection data, motion policy validation,
 terminal state, reduced-motion completion, stable-identity retarget matching, and renderer-neutral
 projection clips. The public motion surface is the controller/model/policy/projection layer;
-`motion_value` remains a private implementation module behind `MotionScalarTrack`.
+`MotionValue` remains a private implementation detail behind `MotionScalarTrack`, and
+`open_gpui_ui_core` must not re-export motion contracts.
 `SplitterLayoutTransition::sample` now exposes final-content bounds plus visible
 clip bounds for insert, remove, resize, collapse, and expand transition descriptors. The GPUI
 Splitter adapter consumes those samples for programmatic identity/count/collapse/expand changes via
@@ -811,8 +815,11 @@ cargo fmt --all -- --check
 cargo check -p open-gpui-ui-components --tests
 cargo nextest run -p open-gpui-ui-components --test choice --no-fail-fast
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
+cargo nextest run -p open-gpui-motion --no-fail-fast
+cargo test -p open-gpui-motion --doc
 cargo check -p open-gpui-ui-core --tests
-cargo nextest run -p open-gpui-ui-core motion motion_controller motion_value motion_policy motion_projection --no-fail-fast
+cargo nextest run -p open-gpui-ui-core split --no-fail-fast
+cargo nextest run -p open-gpui-ui-core --test headless_contracts --no-fail-fast
 cargo check -p open-gpui-ui-foundation-gallery --tests
 cargo nextest run -p open-gpui-ui-foundation-gallery component --no-fail-fast
 cargo run -p xtask -- scan-ui-contract
