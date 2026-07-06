@@ -1471,8 +1471,17 @@ fn components_page_samples_expose_component_metadata() {
     );
     let release_navigation_snapshot = release_navigation.behavior_snapshot();
     let release_navigation_summary = release_navigation.state_summary();
+    let first_virtualized_row = &release_navigation_snapshot.rows()[0];
     assert_eq!(release_navigation_snapshot.role(), Role::ListBox);
     assert_eq!(release_navigation_snapshot.row_role(), Role::ListBoxOption);
+    assert_eq!(first_virtualized_row.label(), "Release #0000");
+    assert_eq!(
+        first_virtualized_row.secondary_text(),
+        Some("UI lane / Ready")
+    );
+    assert_eq!(first_virtualized_row.leading_metadata(), Some("UI"));
+    assert_eq!(first_virtualized_row.badge(), Some("Ready"));
+    assert_eq!(first_virtualized_row.status(), Some("On track"));
     assert_eq!(release_navigation_summary.item_count, 10_000);
     assert_eq!(release_navigation_summary.visible_start, 0);
     assert_eq!(release_navigation_summary.active_index, Some(0));

@@ -224,13 +224,21 @@ impl VirtualizedListSample {
 fn release_navigation_item(index: usize) -> VirtualizedListItemDescriptor {
     let teams = ["UI", "Runtime", "Platform", "Docs", "QA"];
     let statuses = ["Ready", "Review", "Build", "Verify", "Blocked"];
+    let team = teams[index % teams.len()];
+    let status = statuses[(index / 11) % statuses.len()];
 
     VirtualizedListItemDescriptor::new(
         format!("release-nav-{index:04}"),
-        format!(
-            "Release #{index:04} / {} / {}",
-            teams[index % teams.len()],
-            statuses[(index / 11) % statuses.len()]
-        ),
+        format!("Release #{index:04}"),
     )
+    .secondary_text(format!("{team} lane / {status}"))
+    .with_text_value(format!("release {index:04} {team} {status}"))
+    .leading_metadata(team)
+    .trailing_metadata(format!("batch {}", index / 100))
+    .badge(status)
+    .status(if status == "Blocked" {
+        "Needs owner"
+    } else {
+        "On track"
+    })
 }

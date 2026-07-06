@@ -75,12 +75,69 @@ impl VirtualizedListSelectionMode {
     }
 }
 
+/// Anatomy of one virtualized-list row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VirtualizedListRowKind {
+    /// Selectable item row.
+    #[default]
+    Item,
+    /// Non-selectable section heading that groups following item rows.
+    Section,
+    /// Non-selectable visual separator.
+    Separator,
+    /// Non-selectable loading status row.
+    Loading,
+    /// Non-selectable empty status row.
+    Empty,
+    /// Non-selectable error status row.
+    Error,
+}
+
+impl VirtualizedListRowKind {
+    /// Returns the stable row kind label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Item => "item",
+            Self::Section => "section",
+            Self::Separator => "separator",
+            Self::Loading => "loading",
+            Self::Empty => "empty",
+            Self::Error => "error",
+        }
+    }
+
+    /// Returns whether the row participates in active selection and activation.
+    pub const fn selectable(self) -> bool {
+        matches!(self, Self::Item)
+    }
+
+    /// Returns the row accessibility role.
+    pub const fn role(self) -> Role {
+        match self {
+            Self::Item => Role::ListBoxOption,
+            Self::Section => Role::Group,
+            Self::Separator => Role::Separator,
+            Self::Loading => Role::ProgressIndicator,
+            Self::Empty => Role::Section,
+            Self::Error => Role::AlertDialog,
+        }
+    }
+}
+
 /// Pure descriptor for one virtualized list item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VirtualizedListItemDescriptor {
     key: String,
     label: String,
+    kind: VirtualizedListRowKind,
     disabled: bool,
+    disabled_reason: Option<String>,
+    secondary_text: Option<String>,
+    text_value: Option<String>,
+    leading_metadata: Option<String>,
+    trailing_metadata: Option<String>,
+    badge: Option<String>,
+    status: Option<String>,
 }
 
 impl VirtualizedListItemDescriptor {
@@ -89,13 +146,94 @@ impl VirtualizedListItemDescriptor {
         Self {
             key: key.into(),
             label: label.into(),
+            kind: VirtualizedListRowKind::Item,
             disabled: false,
+            disabled_reason: None,
+            secondary_text: None,
+            text_value: None,
+            leading_metadata: None,
+            trailing_metadata: None,
+            badge: None,
+            status: None,
         }
+    }
+
+    /// Creates a selectable item descriptor.
+    pub fn item(key: impl Into<String>, primary_text: impl Into<String>) -> Self {
+        Self::new(key, primary_text)
+    }
+
+    /// Creates a non-selectable section row.
+    pub fn section(key: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::new(key, label).with_kind(VirtualizedListRowKind::Section)
+    }
+
+    /// Creates a non-selectable separator row.
+    pub fn separator(key: impl Into<String>) -> Self {
+        Self::new(key, "").with_kind(VirtualizedListRowKind::Separator)
+    }
+
+    /// Creates a non-selectable loading status row.
+    pub fn loading(key: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(key, message).with_kind(VirtualizedListRowKind::Loading)
+    }
+
+    /// Creates a non-selectable empty status row.
+    pub fn empty(key: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(key, message).with_kind(VirtualizedListRowKind::Empty)
+    }
+
+    /// Creates a non-selectable error status row.
+    pub fn error(key: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(key, message).with_kind(VirtualizedListRowKind::Error)
     }
 
     /// Marks the item as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Marks the item as disabled and records the reason exposed in snapshots.
+    pub fn disabled_reason(mut self, reason: impl Into<String>) -> Self {
+        self.disabled = true;
+        self.disabled_reason = Some(reason.into());
+        self
+    }
+
+    /// Applies secondary row text.
+    pub fn secondary_text(mut self, secondary_text: impl Into<String>) -> Self {
+        self.secondary_text = Some(secondary_text.into());
+        self
+    }
+
+    /// Applies explicit text used by typeahead and activation payloads.
+    pub fn with_text_value(mut self, text_value: impl Into<String>) -> Self {
+        self.text_value = Some(text_value.into());
+        self
+    }
+
+    /// Applies leading metadata text.
+    pub fn leading_metadata(mut self, metadata: impl Into<String>) -> Self {
+        self.leading_metadata = Some(metadata.into());
+        self
+    }
+
+    /// Applies trailing metadata text.
+    pub fn trailing_metadata(mut self, metadata: impl Into<String>) -> Self {
+        self.trailing_metadata = Some(metadata.into());
+        self
+    }
+
+    /// Applies compact badge text.
+    pub fn badge(mut self, badge: impl Into<String>) -> Self {
+        self.badge = Some(badge.into());
+        self
+    }
+
+    /// Applies status text.
+    pub fn status(mut self, status: impl Into<String>) -> Self {
+        self.status = Some(status.into());
         self
     }
 
@@ -109,9 +247,24 @@ impl VirtualizedListItemDescriptor {
         &self.label
     }
 
+    /// Returns the primary row text.
+    pub fn primary_text(&self) -> &str {
+        &self.label
+    }
+
+    /// Returns the secondary row text.
+    pub fn secondary_text_ref(&self) -> Option<&str> {
+        self.secondary_text.as_deref()
+    }
+
     /// Returns the text value used by typeahead and accessibility.
     pub fn text_value(&self) -> &str {
-        &self.label
+        self.text_value.as_deref().unwrap_or(&self.label)
+    }
+
+    /// Returns the row kind.
+    pub const fn kind(&self) -> VirtualizedListRowKind {
+        self.kind
     }
 
     /// Returns whether the item is disabled.
@@ -119,9 +272,47 @@ impl VirtualizedListItemDescriptor {
         self.disabled
     }
 
+    /// Returns the disabled reason.
+    pub fn disabled_reason_ref(&self) -> Option<&str> {
+        self.disabled_reason.as_deref()
+    }
+
+    /// Returns leading metadata text.
+    pub fn leading_metadata_ref(&self) -> Option<&str> {
+        self.leading_metadata.as_deref()
+    }
+
+    /// Returns trailing metadata text.
+    pub fn trailing_metadata_ref(&self) -> Option<&str> {
+        self.trailing_metadata.as_deref()
+    }
+
+    /// Returns badge text.
+    pub fn badge_ref(&self) -> Option<&str> {
+        self.badge.as_deref()
+    }
+
+    /// Returns status text.
+    pub fn status_ref(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
+
+    /// Returns whether the row participates in active selection and activation.
+    pub const fn selectable(&self) -> bool {
+        self.kind.selectable() && !self.disabled
+    }
+
     /// Returns the renderer-neutral state item for this descriptor.
     pub fn state_item(&self) -> VirtualizedListStateItem {
-        VirtualizedListStateItem::new(self.key(), self.text_value()).disabled(self.disabled)
+        VirtualizedListStateItem::new(self.key(), self.text_value())
+            .row_kind(self.kind)
+            .disabled(self.disabled)
+    }
+
+    fn with_kind(mut self, kind: VirtualizedListRowKind) -> Self {
+        self.kind = kind;
+        self.disabled = !kind.selectable();
+        self
     }
 }
 
@@ -131,6 +322,7 @@ pub struct VirtualizedListStateItem {
     key: String,
     disabled: bool,
     text_value: String,
+    kind: VirtualizedListRowKind,
 }
 
 impl VirtualizedListStateItem {
@@ -140,12 +332,19 @@ impl VirtualizedListStateItem {
             key: key.into(),
             disabled: false,
             text_value: text_value.into(),
+            kind: VirtualizedListRowKind::Item,
         }
     }
 
     /// Marks the item as disabled for focus, selection, and activation.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Applies row anatomy.
+    pub fn row_kind(mut self, kind: VirtualizedListRowKind) -> Self {
+        self.kind = kind;
         self
     }
 
@@ -163,11 +362,26 @@ impl VirtualizedListStateItem {
     pub fn text_value(&self) -> &str {
         &self.text_value
     }
+
+    /// Returns row anatomy.
+    pub const fn kind(&self) -> VirtualizedListRowKind {
+        self.kind
+    }
+
+    /// Returns whether the row participates in active selection and activation.
+    pub const fn selectable(&self) -> bool {
+        self.kind.selectable() && !self.disabled
+    }
 }
 
 impl From<VirtualizedListItemDescriptor> for VirtualizedListStateItem {
     fn from(item: VirtualizedListItemDescriptor) -> Self {
-        Self::new(item.key, item.label).disabled(item.disabled)
+        Self::new(
+            item.key,
+            item.text_value.unwrap_or_else(|| item.label.clone()),
+        )
+        .row_kind(item.kind)
+        .disabled(item.disabled)
     }
 }
 
@@ -649,6 +863,9 @@ impl VirtualizedListState {
             [index] => *index,
             _ => return VirtualizedListRevealResult::NotSelectable(key.to_owned()),
         };
+        if !self.items[index].kind().selectable() {
+            return VirtualizedListRevealResult::NotSelectable(key.to_owned());
+        }
         let scroll_offset = virtualized_list_scroll_target(
             strategy,
             index,
@@ -735,7 +952,7 @@ pub struct VirtualizedListRowBehaviorSnapshot {
     item: VirtualizedListItemDescriptor,
     render_key: String,
     index: usize,
-    position_in_set: usize,
+    position_in_set: Option<usize>,
     size_of_set: usize,
     virtual_start: UiPx,
     virtual_size: UiPx,
@@ -777,6 +994,46 @@ impl VirtualizedListRowBehaviorSnapshot {
         self.item.label()
     }
 
+    /// Returns the row kind.
+    pub const fn kind(&self) -> VirtualizedListRowKind {
+        self.item.kind()
+    }
+
+    /// Returns secondary row text.
+    pub fn secondary_text(&self) -> Option<&str> {
+        self.item.secondary_text_ref()
+    }
+
+    /// Returns the text value used by typeahead and activation.
+    pub fn text_value(&self) -> &str {
+        self.item.text_value()
+    }
+
+    /// Returns disabled reason text.
+    pub fn disabled_reason(&self) -> Option<&str> {
+        self.item.disabled_reason_ref()
+    }
+
+    /// Returns leading metadata text.
+    pub fn leading_metadata(&self) -> Option<&str> {
+        self.item.leading_metadata_ref()
+    }
+
+    /// Returns trailing metadata text.
+    pub fn trailing_metadata(&self) -> Option<&str> {
+        self.item.trailing_metadata_ref()
+    }
+
+    /// Returns badge text.
+    pub fn badge(&self) -> Option<&str> {
+        self.item.badge_ref()
+    }
+
+    /// Returns status text.
+    pub fn status(&self) -> Option<&str> {
+        self.item.status_ref()
+    }
+
     /// Returns the stable render key.
     pub fn render_key(&self) -> &str {
         &self.render_key
@@ -787,12 +1044,12 @@ impl VirtualizedListRowBehaviorSnapshot {
         self.index
     }
 
-    /// Returns the one-based position within the rendered set.
-    pub const fn position_in_set(&self) -> usize {
+    /// Returns the one-based position within the selectable option set.
+    pub const fn position_in_set(&self) -> Option<usize> {
         self.position_in_set
     }
 
-    /// Returns the total set size.
+    /// Returns the total selectable option set size.
     pub const fn size_of_set(&self) -> usize {
         self.size_of_set
     }
@@ -963,7 +1220,7 @@ pub(crate) struct VirtualizedListRowRenderPlan {
     item: VirtualizedListItemDescriptor,
     render_key: String,
     index: usize,
-    position_in_set: usize,
+    position_in_set: Option<usize>,
     size_of_set: usize,
     measurement: VirtualizerItemMeasurement,
     active: bool,
@@ -978,24 +1235,26 @@ impl VirtualizedListRowRenderPlan {
         render_key: String,
         index: usize,
         measurement: VirtualizerItemMeasurement,
+        position_in_set: Option<usize>,
         size_of_set: usize,
         state: &VirtualizedListState,
     ) -> Self {
-        let active = state.active_key() == Some(item.key());
-        let selected = state.selected_key_set().contains(item.key());
+        let active = item.selectable() && state.active_key() == Some(item.key());
+        let selected = item.kind().selectable() && state.selected_key_set().contains(item.key());
         let disabled = state.disabled() || item.disabled_state();
+        let role = item.kind().role();
 
         Self {
             item,
             render_key,
             index,
-            position_in_set: index + 1,
+            position_in_set,
             size_of_set,
             measurement,
             active,
             selected,
             disabled,
-            role: Role::ListBoxOption,
+            role,
         }
     }
 
@@ -1033,12 +1292,12 @@ impl VirtualizedListRowRenderPlan {
         self.index
     }
 
-    /// Returns the one-based position within the rendered set.
-    pub const fn position_in_set(&self) -> usize {
+    /// Returns the one-based position within the selectable option set.
+    pub const fn position_in_set(&self) -> Option<usize> {
         self.position_in_set
     }
 
-    /// Returns the total set size.
+    /// Returns the total selectable option set size.
     pub const fn size_of_set(&self) -> usize {
         self.size_of_set
     }
@@ -1119,6 +1378,11 @@ impl VirtualizedListRenderPlan {
         let metrics = state.metrics();
         let viewport_extent = resolve_viewport_extent(&state, viewport_extent);
         let duplicate_keys = duplicate_item_keys(items);
+        let row_positions = virtualized_list_row_positions(items);
+        let option_count = row_positions
+            .iter()
+            .filter(|position| position.is_some())
+            .count();
         let virtualizer = VirtualizerState::new(items.len(), metrics.row_height())
             .with_viewport_extent(viewport_extent)
             .with_overscan(metrics.overscan_count())
@@ -1140,7 +1404,8 @@ impl VirtualizedListRenderPlan {
                     render_key,
                     index,
                     measurement,
-                    state.item_count(),
+                    row_positions.get(index).copied().flatten(),
+                    option_count,
                     &state,
                 )
             })
@@ -1463,7 +1728,6 @@ impl RenderOnce for VirtualizedList {
         let on_activate = self.on_activate.clone();
         let on_selection_change = self.on_selection_change.clone();
         let list_state = plan.state().clone();
-        let row_role = plan.row_role();
         let rows = plan.rows().to_vec();
         let list_id = plan.list_id().to_owned();
         let scroll_viewport_id = format!("virtualized-list:{}:viewport", plan.list_id());
@@ -1544,7 +1808,6 @@ impl RenderOnce for VirtualizedList {
                             &list_id,
                             &rows,
                             plan.virtualizer().total_size(),
-                            row_role,
                             list_state.clone(),
                             runtime.clone(),
                             focus_handle,
@@ -1564,7 +1827,6 @@ fn render_virtualized_list_body(
     list_id: &str,
     rows: &[VirtualizedListRowRenderPlan],
     total_size: UiPx,
-    row_role: Role,
     list_state: VirtualizedListState,
     runtime: Entity<VirtualizedListRuntime>,
     focus_handle: FocusHandle,
@@ -1588,7 +1850,6 @@ fn render_virtualized_list_body(
             render_virtualized_list_row(
                 list_id.clone(),
                 row,
-                row_role,
                 list_state.clone(),
                 runtime.clone(),
                 focus_handle.clone(),
@@ -1601,7 +1862,6 @@ fn render_virtualized_list_body(
 fn render_virtualized_list_row(
     list_id: String,
     row: VirtualizedListRowRenderPlan,
-    row_role: Role,
     list_state: VirtualizedListState,
     runtime: Entity<VirtualizedListRuntime>,
     focus_handle: FocusHandle,
@@ -1611,6 +1871,13 @@ fn render_virtualized_list_row(
     let render_key = row.render_key().to_owned();
     let target = row.target();
     let activation = VirtualizedListActivation::from_target(target.clone(), row.selected());
+    let row_kind = row.item().kind();
+    let primary_text = row.label().to_owned();
+    let secondary_text = row.item().secondary_text_ref().map(str::to_owned);
+    let leading_metadata = row.item().leading_metadata_ref().map(str::to_owned);
+    let trailing_metadata = row.item().trailing_metadata_ref().map(str::to_owned);
+    let badge = row.item().badge_ref().map(str::to_owned);
+    let status = row.item().status_ref().map(str::to_owned);
     let row_background = if row.selected() {
         rgb(0xe7f0ff)
     } else if row.active() {
@@ -1646,10 +1913,12 @@ fn render_virtualized_list_row(
         .border_color(rgb(0xe2e4dc))
         .bg(row_background)
         .text_color(text_color)
-        .ui_role(row_role)
+        .ui_role(row.role())
         .aria_selected(row.selected())
         .aria_disabled(row.disabled())
-        .aria_position_in_set(row.position_in_set())
+        .when_some(row.position_in_set(), |this, position| {
+            this.aria_position_in_set(position)
+        })
         .when(!row.disabled(), |this| {
             this.cursor_pointer().hover(|style| style.bg(rgb(0xeef2f7)))
         })
@@ -1685,7 +1954,70 @@ fn render_virtualized_list_row(
                 }
             })
         })
-        .child(row.label().to_owned())
+        .when(row_kind == VirtualizedListRowKind::Separator, |this| {
+            this.child(div().mx(px(8.0)).h(px(1.0)).w_full().bg(rgb(0xe2e4dc)))
+        })
+        .when(row_kind != VirtualizedListRowKind::Separator, |this| {
+            this.px(px(10.0)).child(
+                div()
+                    .w_full()
+                    .min_w(px(0.0))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .when_some(leading_metadata, |this, metadata| {
+                        this.child(
+                            div()
+                                .text_color(rgb(0x667085))
+                                .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
+                                .child(metadata),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .flex()
+                            .flex_col()
+                            .child(primary_text)
+                            .when_some(secondary_text, |this, secondary_text| {
+                                this.child(
+                                    div()
+                                        .text_color(rgb(0x667085))
+                                        .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
+                                        .child(secondary_text),
+                                )
+                            }),
+                    )
+                    .when_some(badge, |this, badge| {
+                        this.child(
+                            div()
+                                .rounded(px(4.0))
+                                .bg(rgb(0xeef2f7))
+                                .px_1()
+                                .text_color(rgb(0x475467))
+                                .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
+                                .child(badge),
+                        )
+                    })
+                    .when_some(status, |this, status| {
+                        this.child(
+                            div()
+                                .text_color(rgb(0x475467))
+                                .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
+                                .child(status),
+                        )
+                    })
+                    .when_some(trailing_metadata, |this, metadata| {
+                        this.child(
+                            div()
+                                .text_color(rgb(0x667085))
+                                .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
+                                .child(metadata),
+                        )
+                    }),
+            )
+        })
 }
 
 fn handle_virtualized_list_key_down(
@@ -1874,6 +2206,19 @@ fn duplicate_item_keys(items: &[VirtualizedListItemDescriptor]) -> BTreeSet<Stri
         .collect()
 }
 
+fn virtualized_list_row_positions(items: &[VirtualizedListItemDescriptor]) -> Vec<Option<usize>> {
+    let mut option_position = 0usize;
+    items
+        .iter()
+        .map(|item| {
+            item.kind().selectable().then(|| {
+                option_position += 1;
+                option_position
+            })
+        })
+        .collect()
+}
+
 fn virtualized_list_state_items(
     items: &[VirtualizedListItemDescriptor],
 ) -> Vec<VirtualizedListStateItem> {
@@ -1896,7 +2241,7 @@ fn is_selectable_state_item(
     item: &VirtualizedListStateItem,
     duplicate_keys: &BTreeSet<String>,
 ) -> bool {
-    !item.disabled_state() && !duplicate_keys.contains(item.key())
+    item.selectable() && !duplicate_keys.contains(item.key())
 }
 
 fn state_item_index_by_unique_key(
@@ -1910,7 +2255,7 @@ fn state_item_index_by_unique_key(
 
     items
         .iter()
-        .position(|item| item.key() == key && !item.disabled_state())
+        .position(|item| item.key() == key && item.selectable())
 }
 
 fn first_selectable_state_item_index(
@@ -2203,7 +2548,7 @@ mod tests {
         assert!(snapshot.rows()[0].selected());
         assert!(snapshot.rows()[2].disabled());
         assert!(snapshot.rows()[3].active());
-        assert_eq!(snapshot.rows()[2].position_in_set(), 3);
+        assert_eq!(snapshot.rows()[2].position_in_set(), Some(3));
         assert_eq!(snapshot.rows()[2].size_of_set(), 4);
         assert_eq!(snapshot.rows()[2].virtual_start(), ui_px(56.0));
         assert_eq!(snapshot.rows()[2].virtual_size(), ui_px(28.0));
@@ -2217,6 +2562,122 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["root", "1:duplicate", "2:duplicate", "tail"]
         );
+    }
+
+    #[test]
+    fn virtualized_list_typed_item_snapshot_preserves_anatomy() {
+        let snapshot = VirtualizedList::new(
+            "typed-list",
+            "Typed list",
+            [
+                VirtualizedListItemDescriptor::item("release-42", "Release 42")
+                    .secondary_text("Platform / Ready")
+                    .with_text_value("release forty two platform ready")
+                    .leading_metadata("UI")
+                    .trailing_metadata("12 files")
+                    .badge("Ready")
+                    .status("Verified"),
+            ],
+        )
+        .default_active_key("release-42")
+        .default_selected_key("release-42")
+        .behavior_snapshot();
+        let row = &snapshot.rows()[0];
+
+        assert_eq!(row.kind(), VirtualizedListRowKind::Item);
+        assert_eq!(row.label(), "Release 42");
+        assert_eq!(row.secondary_text(), Some("Platform / Ready"));
+        assert_eq!(row.text_value(), "release forty two platform ready");
+        assert_eq!(row.leading_metadata(), Some("UI"));
+        assert_eq!(row.trailing_metadata(), Some("12 files"));
+        assert_eq!(row.badge(), Some("Ready"));
+        assert_eq!(row.status(), Some("Verified"));
+        assert_eq!(row.position_in_set(), Some(1));
+        assert_eq!(row.size_of_set(), 1);
+        assert_eq!(
+            snapshot
+                .state()
+                .activation_for_key("enter")
+                .map(|activation| activation.text_value().to_owned()),
+            Some("release forty two platform ready".to_owned())
+        );
+    }
+
+    #[test]
+    fn virtualized_list_sections_and_separators_are_not_selectable_options() {
+        let snapshot = VirtualizedList::new(
+            "sectioned-list",
+            "Sectioned list",
+            [
+                VirtualizedListItemDescriptor::section("recent", "Recent"),
+                VirtualizedListItemDescriptor::new("alpha", "Alpha"),
+                VirtualizedListItemDescriptor::separator("split"),
+                VirtualizedListItemDescriptor::new("beta", "Beta").disabled_reason("Offline"),
+            ],
+        )
+        .default_active_key("recent")
+        .default_selected_keys(["recent", "beta"])
+        .behavior_snapshot();
+
+        assert_eq!(snapshot.state().active_key(), Some("alpha"));
+        assert!(snapshot.state().selected_keys().is_empty());
+        assert_eq!(snapshot.rows()[0].kind(), VirtualizedListRowKind::Section);
+        assert_eq!(snapshot.rows()[0].role(), Role::Group);
+        assert_eq!(snapshot.rows()[0].position_in_set(), None);
+        assert_eq!(snapshot.rows()[0].size_of_set(), 2);
+        assert_eq!(snapshot.rows()[1].position_in_set(), Some(1));
+        assert_eq!(snapshot.rows()[2].kind(), VirtualizedListRowKind::Separator);
+        assert_eq!(snapshot.rows()[2].role(), Role::Separator);
+        assert_eq!(snapshot.rows()[2].position_in_set(), None);
+        assert_eq!(snapshot.rows()[3].disabled_reason(), Some("Offline"));
+        assert_eq!(snapshot.rows()[3].position_in_set(), Some(2));
+        assert_eq!(
+            snapshot.state().scroll_target_for_key(
+                "recent",
+                VirtualizedListScrollStrategy::Nearest,
+                ui_px(84.0),
+                UiPx::ZERO,
+            ),
+            VirtualizedListRevealResult::NotSelectable("recent".to_owned())
+        );
+    }
+
+    #[test]
+    fn virtualized_list_status_rows_suppress_activation_and_expose_roles() {
+        let loading = VirtualizedList::new(
+            "loading-list",
+            "Loading list",
+            [VirtualizedListItemDescriptor::loading(
+                "loading",
+                "Loading releases",
+            )],
+        )
+        .default_active_key("loading")
+        .behavior_snapshot();
+        let empty = VirtualizedList::new(
+            "empty-list",
+            "Empty list",
+            [VirtualizedListItemDescriptor::empty("empty", "No releases")],
+        )
+        .behavior_snapshot();
+        let error = VirtualizedList::new(
+            "error-list",
+            "Error list",
+            [VirtualizedListItemDescriptor::error(
+                "error",
+                "Failed to load",
+            )],
+        )
+        .behavior_snapshot();
+
+        assert!(!loading.state().visible_empty());
+        assert_eq!(loading.state().active_key(), None);
+        assert_eq!(loading.state().activation_for_key("enter"), None);
+        assert_eq!(loading.rows()[0].role(), Role::ProgressIndicator);
+        assert_eq!(loading.rows()[0].position_in_set(), None);
+        assert_eq!(loading.rows()[0].size_of_set(), 0);
+        assert_eq!(empty.rows()[0].role(), Role::Section);
+        assert_eq!(error.rows()[0].role(), Role::AlertDialog);
     }
 
     #[test]

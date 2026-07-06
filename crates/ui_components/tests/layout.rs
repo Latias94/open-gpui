@@ -102,7 +102,7 @@ fn virtualized_list_behavior_snapshot_uses_item_descriptors_and_virtualizer_cont
     assert!(active_row.active());
     assert!(!active_row.selected());
     assert_eq!(active_row.role(), Role::ListBoxOption);
-    assert_eq!(active_row.position_in_set(), 105);
+    assert_eq!(active_row.position_in_set(), Some(105));
     assert_eq!(active_row.size_of_set(), 10_000);
     assert_eq!(active_row.virtual_start(), ui_px(2_912.0));
     assert_eq!(active_row.virtual_size(), ui_px(28.0));
@@ -612,6 +612,10 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         root::VirtualizedListStateItem::new("root-item", "Root item");
     let _prelude_virtualized_state_item: prelude::VirtualizedListStateItem =
         prelude::VirtualizedListStateItem::new("prelude-item", "Prelude item");
+    let root_virtualized_row_kind: root::VirtualizedListRowKind =
+        root::VirtualizedListRowKind::Item;
+    let prelude_virtualized_row_kind: prelude::VirtualizedListRowKind =
+        prelude::VirtualizedListRowKind::Section;
     let root_virtualized_selection_mode: root::VirtualizedListSelectionMode =
         root::VirtualizedListSelectionMode::Multiple;
     let prelude_virtualized_selection_mode: prelude::VirtualizedListSelectionMode =
@@ -683,6 +687,8 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     );
     assert_eq!(root_virtualized_selection_mode.as_str(), "multiple");
     assert_eq!(prelude_virtualized_selection_mode.as_str(), "single");
+    assert_eq!(root_virtualized_row_kind.as_str(), "item");
+    assert_eq!(prelude_virtualized_row_kind.role(), Role::Group);
     assert_eq!(root_virtualized_snapshot.role(), Role::ListBox);
     assert_eq!(prelude_virtualized_snapshot.row_role(), Role::ListBoxOption);
     assert_eq!(
