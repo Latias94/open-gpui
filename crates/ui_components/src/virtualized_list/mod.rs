@@ -15,6 +15,9 @@ use open_gpui::{
     KeyDownEvent, ParentElement, Pixels, RenderOnce, ScrollHandle, SharedString,
     StatefulInteractiveElement, Styled, Window, div, px, rgb,
 };
+use open_gpui_motion::{
+    MotionFrameDemand, MotionModel, MotionPreference, MotionPreset, MotionScalarController,
+};
 #[cfg(test)]
 use open_gpui_ui_core::ui_px;
 use open_gpui_ui_core::{
@@ -24,6 +27,7 @@ use open_gpui_ui_core::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 type VirtualizedListActivationHandler =
     Rc<dyn Fn(VirtualizedListActivation, &mut Window, &mut App)>;
@@ -31,6 +35,8 @@ type VirtualizedListSelectionChangeHandler =
     Rc<dyn Fn(VirtualizedListSelectionChange, &mut Window, &mut App)>;
 type VirtualizedListRowRenderer =
     Rc<dyn Fn(VirtualizedListRowRenderContext, &mut Window, &mut App) -> AnyElement>;
+
+const ACTIVE_INDICATOR_EPSILON: f32 = 0.001;
 
 /// Scroll alignment requested when a virtualized row should be revealed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1762,6 +1768,246 @@ impl VirtualizedListRenderPlan {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VirtualizedListActiveIndicatorAxis {
+    Top,
+    Height,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct VirtualizedListActiveIndicatorBounds {
+    top: UiPx,
+    height: UiPx,
+}
+
+impl VirtualizedListActiveIndicatorBounds {
+    const fn new(top: UiPx, height: UiPx) -> Self {
+        Self {
+            top,
+            height: nonnegative_px(height),
+        }
+    }
+
+    fn approximately_equals(self, other: Self) -> bool {
+        (self.top.as_f32() - other.top.as_f32()).abs() <= ACTIVE_INDICATOR_EPSILON
+            && (self.height.as_f32() - other.height.as_f32()).abs() <= ACTIVE_INDICATOR_EPSILON
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct VirtualizedListActiveIndicatorTarget {
+    key: String,
+    bounds: VirtualizedListActiveIndicatorBounds,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct VirtualizedListActiveIndicatorSnapshot {
+    top: UiPx,
+    height: UiPx,
+    frame_demand: MotionFrameDemand,
+}
+
+impl VirtualizedListActiveIndicatorSnapshot {
+    const fn new(top: UiPx, height: UiPx, frame_demand: MotionFrameDemand) -> Self {
+        Self {
+            top,
+            height,
+            frame_demand,
+        }
+    }
+
+    const fn top(self) -> UiPx {
+        self.top
+    }
+
+    const fn height(self) -> UiPx {
+        self.height
+    }
+
+    const fn frame_demand(self) -> MotionFrameDemand {
+        self.frame_demand
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct VirtualizedListActiveIndicatorState {
+    key: String,
+    target: VirtualizedListActiveIndicatorBounds,
+    sampled: VirtualizedListActiveIndicatorBounds,
+    started_at: Instant,
+    controller: MotionScalarController<VirtualizedListActiveIndicatorAxis>,
+    frame_demand: MotionFrameDemand,
+}
+
+impl VirtualizedListActiveIndicatorState {
+    fn immediate(key: String, bounds: VirtualizedListActiveIndicatorBounds, now: Instant) -> Self {
+        Self {
+            key,
+            target: bounds,
+            sampled: bounds,
+            started_at: now,
+            controller: active_indicator_controller_for_bounds(
+                bounds,
+                bounds,
+                MotionPreset::immediate().resolve_model(),
+            ),
+            frame_demand: MotionFrameDemand::Idle,
+        }
+    }
+
+    fn sample_at(&mut self, now: Instant) -> MotionFrameDemand {
+        let sample = self.controller.sample_since(self.started_at, now);
+        self.sampled = active_indicator_bounds_from_sample(&sample, self.target);
+        self.frame_demand = sample.frame_demand();
+        if sample.complete() {
+            self.sampled = self.target;
+            self.frame_demand = MotionFrameDemand::Idle;
+        }
+        self.frame_demand
+    }
+
+    fn retarget(
+        &mut self,
+        target: VirtualizedListActiveIndicatorTarget,
+        now: Instant,
+        model: MotionModel,
+    ) -> MotionFrameDemand {
+        let sampled = self.sampled_after_update(now);
+        if model.is_immediate() || sampled.approximately_equals(target.bounds) {
+            *self = Self::immediate(target.key, target.bounds, now);
+            return MotionFrameDemand::Idle;
+        }
+
+        self.key = target.key;
+        self.target = target.bounds;
+        self.sampled = sampled;
+        self.started_at = now;
+        self.controller = active_indicator_controller_for_bounds(sampled, target.bounds, model);
+        self.sample_at(now)
+    }
+
+    fn sampled_after_update(&mut self, now: Instant) -> VirtualizedListActiveIndicatorBounds {
+        self.sample_at(now);
+        self.sampled
+    }
+
+    fn cancel_at(&mut self, now: Instant) {
+        let elapsed = now.saturating_duration_since(self.started_at);
+        self.controller
+            .cancel(&VirtualizedListActiveIndicatorAxis::Top, elapsed);
+        self.controller
+            .cancel(&VirtualizedListActiveIndicatorAxis::Height, elapsed);
+        self.controller.prune_terminal_at(elapsed);
+        self.frame_demand = MotionFrameDemand::Idle;
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+struct VirtualizedListActiveIndicatorRuntime {
+    state: Option<VirtualizedListActiveIndicatorState>,
+}
+
+impl VirtualizedListActiveIndicatorRuntime {
+    fn sync(
+        &mut self,
+        plan: &VirtualizedListRenderPlan,
+        now: Instant,
+        model: MotionModel,
+    ) -> MotionFrameDemand {
+        let Some(target) = active_indicator_target(plan) else {
+            self.hide_at(now);
+            return MotionFrameDemand::Idle;
+        };
+
+        let Some(state) = self.state.as_mut() else {
+            self.state = Some(VirtualizedListActiveIndicatorState::immediate(
+                target.key,
+                target.bounds,
+                now,
+            ));
+            return MotionFrameDemand::Idle;
+        };
+
+        if state.key == target.key && state.target.approximately_equals(target.bounds) {
+            return state.sample_at(now);
+        }
+
+        state.retarget(target, now, model)
+    }
+
+    fn hide_at(&mut self, now: Instant) {
+        if let Some(state) = self.state.as_mut() {
+            state.cancel_at(now);
+        }
+        self.state = None;
+    }
+
+    fn snapshot(&self) -> Option<VirtualizedListActiveIndicatorSnapshot> {
+        self.state.as_ref().map(|state| {
+            VirtualizedListActiveIndicatorSnapshot::new(
+                state.sampled.top,
+                state.sampled.height,
+                state.frame_demand,
+            )
+        })
+    }
+}
+
+fn active_indicator_target(
+    plan: &VirtualizedListRenderPlan,
+) -> Option<VirtualizedListActiveIndicatorTarget> {
+    plan.rows()
+        .iter()
+        .find(|row| row.active() && !row.disabled())
+        .map(|row| VirtualizedListActiveIndicatorTarget {
+            key: row.key().to_owned(),
+            bounds: VirtualizedListActiveIndicatorBounds::new(
+                row.virtual_start(),
+                row.virtual_size(),
+            ),
+        })
+}
+
+fn active_indicator_controller_for_bounds(
+    from: VirtualizedListActiveIndicatorBounds,
+    to: VirtualizedListActiveIndicatorBounds,
+    model: MotionModel,
+) -> MotionScalarController<VirtualizedListActiveIndicatorAxis> {
+    let mut controller = MotionScalarController::new();
+    controller.start(
+        VirtualizedListActiveIndicatorAxis::Top,
+        model,
+        from.top.as_f32(),
+        to.top.as_f32(),
+        0.0,
+        Duration::ZERO,
+    );
+    controller.start(
+        VirtualizedListActiveIndicatorAxis::Height,
+        model,
+        from.height.as_f32(),
+        to.height.as_f32(),
+        0.0,
+        Duration::ZERO,
+    );
+    controller
+}
+
+fn active_indicator_bounds_from_sample(
+    sample: &open_gpui_motion::MotionScalarControllerSample<VirtualizedListActiveIndicatorAxis>,
+    target: VirtualizedListActiveIndicatorBounds,
+) -> VirtualizedListActiveIndicatorBounds {
+    let top = sample
+        .track(&VirtualizedListActiveIndicatorAxis::Top)
+        .map(|track| UiPx::new(track.sample().value()))
+        .unwrap_or(target.top);
+    let height = sample
+        .track(&VirtualizedListActiveIndicatorAxis::Height)
+        .map(|track| UiPx::new(track.sample().value()))
+        .unwrap_or(target.height);
+    VirtualizedListActiveIndicatorBounds::new(top, height)
+}
+
 #[derive(Debug, Clone)]
 struct VirtualizedListRuntime {
     scroll_surface: ScrollSurfaceRuntime,
@@ -1770,6 +2016,7 @@ struct VirtualizedListRuntime {
     selected_keys: BTreeSet<String>,
     row_measurements: BTreeMap<String, UiPx>,
     pending_scroll_to_active: Option<String>,
+    active_indicator: VirtualizedListActiveIndicatorRuntime,
 }
 
 impl VirtualizedListRuntime {
@@ -1796,6 +2043,7 @@ pub struct VirtualizedList {
     viewport_item_count: usize,
     metrics: VirtualizedListMetrics,
     row_measure_mode: VirtualizedListRowMeasureMode,
+    motion_preference: MotionPreference,
     snapshot: Option<VirtualizerSnapshot>,
     row_renderer: Option<VirtualizedListRowRenderer>,
     on_activate: Option<VirtualizedListActivationHandler>,
@@ -1836,6 +2084,7 @@ impl VirtualizedList {
             viewport_item_count: DEFAULT_VIRTUALIZED_LIST_VIEWPORT_ITEM_COUNT,
             metrics: VirtualizedListMetrics::from_size(size),
             row_measure_mode: VirtualizedListRowMeasureMode::default(),
+            motion_preference: MotionPreference::Animated,
             snapshot: None,
             row_renderer: None,
             on_activate: None,
@@ -1893,6 +2142,12 @@ impl VirtualizedList {
     /// Applies the body row measurement mode.
     pub fn row_measure_mode(mut self, row_measure_mode: VirtualizedListRowMeasureMode) -> Self {
         self.row_measure_mode = row_measure_mode;
+        self
+    }
+
+    /// Applies the motion preference for active-descendant chrome.
+    pub fn motion_preference(mut self, motion_preference: MotionPreference) -> Self {
+        self.motion_preference = motion_preference;
         self
     }
 
@@ -2024,6 +2279,9 @@ impl RenderOnce for VirtualizedList {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let runtime_id = format!("virtualized-list:{}:runtime", self.id);
         let debug_id = self.id.to_string();
+        let now = Instant::now();
+        let active_indicator_model =
+            MotionPreset::affordance(self.motion_preference).resolve_model();
         let runtime = window.use_keyed_state(runtime_id, cx, |_, cx| VirtualizedListRuntime {
             scroll_surface: ScrollSurfaceRuntime::new(None),
             focus_handle: cx.focus_handle(),
@@ -2031,6 +2289,7 @@ impl RenderOnce for VirtualizedList {
             selected_keys: self.selected_keys.clone(),
             row_measurements: BTreeMap::new(),
             pending_scroll_to_active: None,
+            active_indicator: VirtualizedListActiveIndicatorRuntime::default(),
         });
         let runtime_state = runtime.read(cx).clone();
         let scroll_handle = scroll_surface_handle(&runtime_state.scroll_surface, None);
@@ -2082,7 +2341,7 @@ impl RenderOnce for VirtualizedList {
         let scroll_viewport_id = format!("virtualized-list:{}:viewport", plan.list_id());
         let root_click_state = list_state.clone();
 
-        runtime.update(cx, |runtime, _| {
+        let active_indicator_demand = runtime.update(cx, |runtime, _| {
             if runtime.active_key.as_deref() != list_state.active_key() {
                 runtime.active_key = list_state.active_key().map(str::to_owned);
                 runtime.pending_scroll_to_active = list_state.active_key().map(str::to_owned);
@@ -2090,7 +2349,14 @@ impl RenderOnce for VirtualizedList {
             if &runtime.selected_keys != list_state.selected_key_set() {
                 runtime.selected_keys = list_state.selected_key_set().clone();
             }
+            runtime
+                .active_indicator
+                .sync(&plan, now, active_indicator_model)
         });
+        if active_indicator_demand.needs_frame() {
+            window.request_animation_frame();
+        }
+        let active_indicator = runtime.read(cx).active_indicator.snapshot();
 
         div()
             .id(self.id)
@@ -2161,6 +2427,7 @@ impl RenderOnce for VirtualizedList {
                             &list_id,
                             &rows,
                             plan.virtualizer().total_size(),
+                            active_indicator,
                             row_measure_mode,
                             estimated_row_height,
                             row_renderer,
@@ -2185,6 +2452,7 @@ fn render_virtualized_list_body(
     list_id: &str,
     rows: &[VirtualizedListRowRenderPlan],
     total_size: UiPx,
+    active_indicator: Option<VirtualizedListActiveIndicatorSnapshot>,
     row_measure_mode: VirtualizedListRowMeasureMode,
     estimated_row_height: UiPx,
     row_renderer: Option<VirtualizedListRowRenderer>,
@@ -2230,6 +2498,29 @@ fn render_virtualized_list_body(
         .w_full()
         .h(gpui_px_from_ui(total_size))
         .children(row_elements)
+        .when_some(active_indicator, |this, indicator| {
+            this.child(render_virtualized_list_active_indicator(indicator))
+        })
+        .into_any_element()
+}
+
+fn render_virtualized_list_active_indicator(
+    indicator: VirtualizedListActiveIndicatorSnapshot,
+) -> AnyElement {
+    let indicator_color = if indicator.frame_demand().needs_frame() {
+        rgb(0x2563eb)
+    } else {
+        rgb(0x2f80ed)
+    };
+
+    div()
+        .absolute()
+        .top(gpui_px_from_ui(indicator.top()))
+        .left(px(0.0))
+        .w(px(3.0))
+        .h(gpui_px_from_ui(indicator.height()))
+        .rounded(px(2.0))
+        .bg(indicator_color)
         .into_any_element()
 }
 
@@ -2846,6 +3137,42 @@ fn resolve_virtualized_list_virtualizer(
 mod tests {
     use super::*;
 
+    fn indicator_plan(active_key: &str, scroll_offset: UiPx) -> VirtualizedListRenderPlan {
+        let items = (0..12)
+            .map(|index| {
+                VirtualizedListItemDescriptor::new(
+                    format!("indicator-row-{index:02}"),
+                    format!("Row {index:02}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let metrics = VirtualizedListMetrics::from_size(Size::Small)
+            .with_row_height(ui_px(20.0))
+            .with_overscan_count(0);
+        let state = VirtualizedListState::resolve(
+            Size::Small,
+            false,
+            items.iter().map(VirtualizedListStateItem::from),
+            Some(active_key),
+            [active_key],
+            VirtualizedListSelectionMode::Single,
+            Some(3),
+        )
+        .with_metrics(metrics);
+
+        VirtualizedListRenderPlan::resolve(
+            "indicator-list",
+            "Indicator list",
+            state,
+            &items,
+            VirtualizedListRowMeasureMode::Fixed,
+            &BTreeMap::new(),
+            None,
+            scroll_offset,
+            ui_px(60.0),
+        )
+    }
+
     #[test]
     fn virtualized_list_state_resolves_active_from_keys_and_preserves_metrics() {
         let items = (0..10)
@@ -3438,6 +3765,90 @@ mod tests {
         assert_eq!(contexts[2].disabled_reason(), Some("Offline"));
         assert_eq!(contexts[3].kind(), VirtualizedListRowKind::Empty);
         assert!(!contexts[3].selectable());
+    }
+
+    #[test]
+    fn virtualized_list_active_indicator_retargets_visible_rows_and_requests_frames() {
+        let start = Instant::now();
+        let model = MotionPreset::affordance(MotionPreference::Animated).resolve_model();
+        let mut indicator = VirtualizedListActiveIndicatorRuntime::default();
+        let first = indicator_plan("indicator-row-00", UiPx::ZERO);
+
+        assert_eq!(
+            indicator.sync(&first, start, model),
+            MotionFrameDemand::Idle
+        );
+        let first_snapshot = indicator.snapshot().expect("visible indicator");
+        assert_eq!(
+            indicator.state.as_ref().map(|state| state.key.as_str()),
+            Some("indicator-row-00")
+        );
+        assert_eq!(first_snapshot.top(), ui_px(0.0));
+        assert_eq!(first_snapshot.height(), ui_px(20.0));
+        assert_eq!(first_snapshot.frame_demand(), MotionFrameDemand::Idle);
+
+        let second = indicator_plan("indicator-row-02", UiPx::ZERO);
+        let demand = indicator.sync(&second, start + Duration::from_millis(16), model);
+        assert!(demand.needs_frame());
+        let moving = indicator.snapshot().expect("moving indicator");
+        assert_eq!(
+            indicator.state.as_ref().map(|state| state.key.as_str()),
+            Some("indicator-row-02")
+        );
+        assert!(moving.frame_demand().needs_frame());
+        assert!(moving.top().as_f32() < ui_px(40.0).as_f32());
+
+        let final_demand = indicator.sync(&second, start + Duration::from_secs(2), model);
+        assert_eq!(final_demand, MotionFrameDemand::Idle);
+        let final_snapshot = indicator.snapshot().expect("settled indicator");
+        assert_eq!(final_snapshot.top(), ui_px(40.0));
+        assert_eq!(final_snapshot.height(), ui_px(20.0));
+    }
+
+    #[test]
+    fn virtualized_list_active_indicator_reduced_motion_publishes_final_bounds() {
+        let start = Instant::now();
+        let animated = MotionPreset::affordance(MotionPreference::Animated).resolve_model();
+        let reduced = MotionPreset::affordance(MotionPreference::Reduced).resolve_model();
+        let mut indicator = VirtualizedListActiveIndicatorRuntime::default();
+        let first = indicator_plan("indicator-row-00", UiPx::ZERO);
+        let second = indicator_plan("indicator-row-02", UiPx::ZERO);
+
+        assert_eq!(
+            indicator.sync(&first, start, animated),
+            MotionFrameDemand::Idle
+        );
+        let demand = indicator.sync(&second, start + Duration::from_millis(16), reduced);
+
+        assert_eq!(demand, MotionFrameDemand::Idle);
+        let snapshot = indicator.snapshot().expect("reduced indicator");
+        assert_eq!(
+            indicator.state.as_ref().map(|state| state.key.as_str()),
+            Some("indicator-row-02")
+        );
+        assert_eq!(snapshot.top(), ui_px(40.0));
+        assert_eq!(snapshot.height(), ui_px(20.0));
+        assert_eq!(snapshot.frame_demand(), MotionFrameDemand::Idle);
+    }
+
+    #[test]
+    fn virtualized_list_active_indicator_hides_when_active_row_is_offscreen() {
+        let start = Instant::now();
+        let model = MotionPreset::affordance(MotionPreference::Animated).resolve_model();
+        let mut indicator = VirtualizedListActiveIndicatorRuntime::default();
+        let visible = indicator_plan("indicator-row-00", UiPx::ZERO);
+        let offscreen = indicator_plan("indicator-row-00", ui_px(140.0));
+
+        assert_eq!(
+            indicator.sync(&visible, start, model),
+            MotionFrameDemand::Idle
+        );
+        assert!(indicator.snapshot().is_some());
+
+        let demand = indicator.sync(&offscreen, start + Duration::from_millis(16), model);
+        assert_eq!(demand, MotionFrameDemand::Idle);
+        assert!(indicator.snapshot().is_none());
+        assert!(indicator.state.is_none());
     }
 
     #[test]
