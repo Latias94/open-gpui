@@ -419,8 +419,10 @@ impl Render for JellyflowCanvasView {
                                     options,
                                     theme,
                                     canvas_base_scene_phases(),
-                                    |this, bounds, frame, cx| {
-                                        this.update_canvas_scene_from_frame(bounds, frame, cx);
+                                    |this, window, bounds, frame, cx| {
+                                        this.update_canvas_scene_from_frame(
+                                            window, bounds, frame, cx,
+                                        );
                                     },
                                 )
                                 .size_full(),
@@ -1083,6 +1085,7 @@ impl JellyflowCanvasView {
             cx.notify();
         });
         window.refresh();
+        self.defer_canvas_refresh(window, cx);
     }
 
     fn dispatch_control_authoring_plan(
@@ -1384,6 +1387,7 @@ impl JellyflowCanvasView {
 
     fn update_canvas_scene_from_frame(
         &mut self,
+        window: &mut Window,
         bounds: Bounds<Pixels>,
         frame: &CanvasPreparedPaintFrame,
         cx: &mut Context<Self>,
@@ -1393,13 +1397,29 @@ impl JellyflowCanvasView {
             return;
         }
 
+        let previous_bounds = self.last_canvas_bounds;
         self.last_canvas_bounds = Some(bounds);
         if self.update_canvas_viewport_for_view_size(view_size) {
             self.last_canvas_scene = None;
+            self.defer_canvas_refresh(window, cx);
             cx.notify();
         } else {
-            self.last_canvas_scene = Some(frame.frame().scene_frame());
+            let scene = frame.frame().scene_frame();
+            let scene_changed = self.last_canvas_scene.as_ref() != Some(&scene);
+            let bounds_changed = previous_bounds != Some(bounds);
+            self.last_canvas_scene = Some(scene);
+            if scene_changed || bounds_changed {
+                self.defer_canvas_refresh(window, cx);
+                cx.notify();
+            }
         }
+    }
+
+    fn defer_canvas_refresh(&self, window: &Window, cx: &mut Context<Self>) {
+        cx.defer_in(window, |_this, window, cx| {
+            window.refresh();
+            cx.notify();
+        });
     }
 
     fn handle_product_surface_pointer_down(
@@ -4980,7 +5000,6 @@ mod tests {
                 .advance_clock(Duration::from_millis(34));
             assert!(visual.simulate_frame(RequestFrameOptions {
                 require_presentation: true,
-                force_render: true,
                 ..Default::default()
             }));
             let ready = visual.cx.read_entity(&view, |this, _| {
