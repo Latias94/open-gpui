@@ -234,9 +234,14 @@ impl DockHost {
     ) -> DockTransitionExecutionState {
         let state = self
             .transition_executor_mut()
-            .execute_model(plan, model, window)
+            .execute_model(plan, model)
             .state;
         cx.notify();
+        if state == DockTransitionExecutionState::Scheduled
+            && let Some(window) = window
+        {
+            window.request_animation_frame();
+        }
         state
     }
 
@@ -244,7 +249,9 @@ impl DockHost {
         &mut self,
         window: Option<&Window>,
     ) -> Option<DockTransitionSample> {
-        self.transition_executor_mut().sample(window)
+        let sample = self.transition_executor_mut().sample()?;
+        request_transition_frame(window, &sample);
+        Some(sample)
     }
 
     pub(crate) fn execute_visual_affordance_transition_plan(
@@ -253,17 +260,25 @@ impl DockHost {
         spec: MotionSpec,
         window: Option<&Window>,
     ) -> DockTransitionExecutionState {
-        self.visual_affordance_transition_executor_mut()
-            .execute(plan, spec, window)
-            .state
+        let state = self
+            .visual_affordance_transition_executor_mut()
+            .execute(plan, spec)
+            .state;
+        if state == DockTransitionExecutionState::Scheduled
+            && let Some(window) = window
+        {
+            window.request_animation_frame();
+        }
+        state
     }
 
     pub(crate) fn sample_visual_affordance_transition_for_render(
         &mut self,
         window: Option<&Window>,
     ) -> Option<DockTransitionSample> {
-        self.visual_affordance_transition_executor_mut()
-            .sample(window)
+        let sample = self.visual_affordance_transition_executor_mut().sample()?;
+        request_transition_frame(window, &sample);
+        Some(sample)
     }
 
     pub(crate) fn clear_visual_affordance_transition_for_render(&mut self) -> bool {
@@ -311,5 +326,13 @@ impl DockHost {
             };
             selected.clone().or_else(|| items.first().cloned())
         })
+    }
+}
+
+fn request_transition_frame(window: Option<&Window>, sample: &DockTransitionSample) {
+    if sample.frame_demand.needs_frame()
+        && let Some(window) = window
+    {
+        window.request_animation_frame();
     }
 }
