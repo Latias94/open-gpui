@@ -1288,6 +1288,8 @@ pub(super) fn render_components_section(
                                                         pages::components::record_virtualized_list_activation(
                                                             sample_id_for_activation.clone(),
                                                             activation.index(),
+                                                            activation.key().to_owned(),
+                                                            activation.text_value().to_owned(),
                                                             cx,
                                                         );
                                                     },

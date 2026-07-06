@@ -14,13 +14,6 @@ pub mod controllable_state;
 pub mod focus;
 pub mod geometry;
 pub mod grid_viewport;
-pub mod motion;
-pub mod motion_controller;
-pub mod motion_policy;
-pub mod motion_projection;
-pub mod motion_runtime;
-pub mod motion_spring;
-mod motion_value;
 pub mod overlay;
 pub mod prelude;
 pub mod sizing;
@@ -43,26 +36,6 @@ pub use geometry::{
     UiEdges, UiPoint, UiPx, UiRect, UiSize, ui_edges, ui_point, ui_px, ui_rect, ui_size,
 };
 pub use grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d};
-pub use motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
-pub use motion_controller::{
-    MotionExecutionPlan, MotionExecutionState, MotionFrameDemand, MotionFrameReason,
-    MotionScalarController, MotionScalarControllerSample, MotionScalarExecution,
-    MotionScalarExecutionSample, MotionScalarTrack, MotionScalarTrackSample,
-};
-pub use motion_policy::{
-    MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
-    MotionPolicyReport, MotionPreviewTargetPolicy, validate_motion_policy,
-};
-pub use motion_projection::{MotionProjection, MotionProjectionClip};
-pub use motion_runtime::{
-    MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionRunState, MotionSnapshot,
-    MotionTimeline, MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
-    preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
-};
-pub use motion_spring::{
-    MotionModel, MotionPreset, MotionScalarSample, MotionSpring, MotionSpringPhysics,
-    MotionSpringPreset, MotionSpringSpec,
-};
 pub use overlay::{
     DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
     FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,

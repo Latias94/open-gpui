@@ -493,8 +493,8 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentCatalog,
         docs_token: Some("VirtualizedList"),
         default_export: true,
-        source_inputs: &["virtualized_list.rs"],
-        source_home: "virtualized_list.rs",
+        source_inputs: &["virtualized_list/mod.rs"],
+        source_home: "virtualized_list/mod.rs",
     },
     ComponentContractEntry {
         name: "StatusCue",
@@ -711,8 +711,8 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentContract,
         docs_token: Some("VirtualizedListState"),
         default_export: true,
-        source_inputs: &["virtualized_list.rs"],
-        source_home: "virtualized_list.rs",
+        source_inputs: &["virtualized_list/mod.rs"],
+        source_home: "virtualized_list/mod.rs",
     },
     ComponentContractEntry {
         name: "ComponentA11yContract",
@@ -1114,8 +1114,8 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentContract,
         docs_token: Some("VirtualizedListBehaviorSnapshot"),
         default_export: true,
-        source_inputs: &["virtualized_list.rs"],
-        source_home: "virtualized_list.rs",
+        source_inputs: &["virtualized_list/mod.rs"],
+        source_home: "virtualized_list/mod.rs",
     },
     ComponentContractEntry {
         name: "CommandBehaviorSnapshot",

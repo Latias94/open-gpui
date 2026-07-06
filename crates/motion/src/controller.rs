@@ -1,7 +1,7 @@
 //! Renderer-neutral motion controller contracts.
 
-use crate::motion_spring::{MotionModel, MotionScalarSample};
-use crate::motion_value::MotionValue;
+use crate::spring::{MotionModel, MotionScalarSample};
+use crate::value::MotionValue;
 use crate::{
     MotionPolicyInput, MotionPolicyReport, MotionRunState, MotionSpec, validate_motion_policy,
 };
@@ -45,13 +45,85 @@ impl MotionFrameDemand {
         }
     }
 
-    fn combine(self, other: Self) -> Self {
+    /// Combines two frame demands into one adapter-owned frame request.
+    pub const fn combine(self, other: Self) -> Self {
         match (self, other) {
             (Self::NeedsFrame(reason), _) | (_, Self::NeedsFrame(reason)) => {
                 Self::NeedsFrame(reason)
             }
             (Self::Idle, Self::Idle) => Self::Idle,
         }
+    }
+
+    /// Combines many frame demands into one adapter-owned frame request.
+    pub fn combine_all(demands: impl IntoIterator<Item = Self>) -> Self {
+        demands.into_iter().fold(Self::Idle, Self::combine)
+    }
+}
+
+/// Adapter clock sample mapped into deterministic controller elapsed time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MotionClockSample {
+    elapsed: Duration,
+    delta: Duration,
+    clamped: bool,
+}
+
+impl MotionClockSample {
+    /// A zero elapsed-time clock sample.
+    pub const ZERO: Self = Self {
+        elapsed: Duration::ZERO,
+        delta: Duration::ZERO,
+        clamped: false,
+    };
+
+    /// Creates a clock sample from previous and requested elapsed times.
+    ///
+    /// Non-monotonic elapsed time is clamped to the previous elapsed time. This keeps controller
+    /// sampling deterministic and avoids negative deltas for adapters whose frame clock moves
+    /// backwards or is restored from stale state.
+    pub fn from_elapsed(previous_elapsed: Duration, requested_elapsed: Duration) -> Self {
+        if requested_elapsed < previous_elapsed {
+            Self {
+                elapsed: previous_elapsed,
+                delta: Duration::ZERO,
+                clamped: true,
+            }
+        } else {
+            Self {
+                elapsed: requested_elapsed,
+                delta: requested_elapsed - previous_elapsed,
+                clamped: false,
+            }
+        }
+    }
+
+    /// Creates a clock sample from a start instant and current adapter instant.
+    pub fn from_instant(started_at: Instant, now: Instant) -> Self {
+        Self::from_elapsed(Duration::ZERO, now.saturating_duration_since(started_at))
+    }
+
+    /// Creates a clock sample from adapter instants and clamps non-monotonic elapsed time.
+    pub fn from_instants(started_at: Instant, previous_now: Instant, now: Instant) -> Self {
+        Self::from_elapsed(
+            previous_now.saturating_duration_since(started_at),
+            now.saturating_duration_since(started_at),
+        )
+    }
+
+    /// Returns clamped controller elapsed time.
+    pub const fn elapsed(self) -> Duration {
+        self.elapsed
+    }
+
+    /// Returns elapsed-time delta since the previous sample.
+    pub const fn delta(self) -> Duration {
+        self.delta
+    }
+
+    /// Returns whether requested elapsed time was clamped.
+    pub const fn clamped(self) -> bool {
+        self.clamped
     }
 }
 
@@ -142,6 +214,7 @@ pub struct MotionScalarTrack {
     initial_velocity: f32,
     started_at: Duration,
     cancelled_at: Option<Duration>,
+    finished_at: Option<Duration>,
 }
 
 impl MotionScalarTrack {
@@ -160,6 +233,7 @@ impl MotionScalarTrack {
             initial_velocity,
             started_at,
             cancelled_at: None,
+            finished_at: None,
         }
     }
 
@@ -204,9 +278,22 @@ impl MotionScalarTrack {
         self.cancelled_at
     }
 
+    /// Returns the controller time at which the track was explicitly finished.
+    pub const fn finished_at(&self) -> Option<Duration> {
+        self.finished_at
+    }
+
     /// Cancels the track at the provided controller time.
     pub fn cancel_at(&mut self, cancelled_at: Duration) {
-        self.cancelled_at = Some(cancelled_at);
+        if self.finished_at.is_none() {
+            self.cancelled_at = Some(cancelled_at);
+        }
+    }
+
+    /// Finishes the track at the provided controller time and publishes the target value.
+    pub fn finish_at(&mut self, finished_at: Duration) {
+        self.finished_at = Some(finished_at);
+        self.cancelled_at = None;
     }
 
     /// Retargets the track from its sampled value and velocity.
@@ -217,6 +304,16 @@ impl MotionScalarTrack {
 
     /// Samples the track at the provided controller time.
     pub fn sample_at(&self, now: Duration) -> MotionScalarSample {
+        if let Some(finished_at) = self.finished_at {
+            return MotionScalarSample::new(
+                MotionRunState::Completed,
+                finished_at.saturating_sub(self.started_at),
+                self.target,
+                0.0,
+                self.target,
+            );
+        }
+
         let effective_now = self.cancelled_at.unwrap_or(now);
         let elapsed = effective_now.saturating_sub(self.started_at);
         let mut sample = self.model.sample_scalar_elapsed(
@@ -358,6 +455,11 @@ impl MotionScalarExecution {
             MotionFrameDemand::from_active(sample.is_active())
         };
         MotionScalarExecutionSample::new(sample, complete, frame_demand)
+    }
+
+    /// Samples the execution at a deterministic adapter clock sample.
+    pub fn sample_clock(&self, clock: MotionClockSample) -> MotionScalarExecutionSample {
+        self.sample_at(clock.elapsed())
     }
 
     /// Samples the execution from adapter instants while keeping deterministic elapsed-time
@@ -515,12 +617,34 @@ impl<K: PartialEq> MotionScalarController<K> {
         }
     }
 
+    /// Finishes an existing keyed track at the provided controller time.
+    pub fn finish(&mut self, key: &K, now: Duration) {
+        if let Some((_, existing)) = self
+            .tracks
+            .iter_mut()
+            .find(|(track_key, _)| track_key == key)
+        {
+            existing.finish_at(now);
+        }
+    }
+
     /// Returns the frame demand at the provided controller time.
     pub fn frame_demand_at(&self, now: Duration) -> MotionFrameDemand {
+        MotionFrameDemand::combine_all(
+            self.tracks
+                .iter()
+                .map(|(_, track)| track.frame_demand_at(now)),
+        )
+    }
+}
+
+impl<K> MotionScalarController<K> {
+    /// Removes terminal tracks and returns the number of pruned entries.
+    pub fn prune_terminal_at(&mut self, now: Duration) -> usize {
+        let before = self.tracks.len();
         self.tracks
-            .iter()
-            .map(|(_, track)| track.frame_demand_at(now))
-            .fold(MotionFrameDemand::Idle, MotionFrameDemand::combine)
+            .retain(|(_, track)| track.frame_demand_at(now).needs_frame());
+        before - self.tracks.len()
     }
 }
 
@@ -532,11 +656,17 @@ impl<K: Clone> MotionScalarController<K> {
             .iter()
             .map(|(key, track)| MotionScalarTrackSample::new(key.clone(), track.sample_at(now)))
             .collect::<Vec<_>>();
-        let frame_demand = tracks
-            .iter()
-            .map(|track| MotionFrameDemand::from_active(track.sample().is_active()))
-            .fold(MotionFrameDemand::Idle, MotionFrameDemand::combine);
+        let frame_demand = MotionFrameDemand::combine_all(
+            tracks
+                .iter()
+                .map(|track| MotionFrameDemand::from_active(track.sample().is_active())),
+        );
         MotionScalarControllerSample::new(tracks, frame_demand)
+    }
+
+    /// Samples all tracks at a deterministic adapter clock sample.
+    pub fn sample_clock(&self, clock: MotionClockSample) -> MotionScalarControllerSample<K> {
+        self.sample_at(clock.elapsed())
     }
 
     /// Samples all tracks from adapter instants while keeping deterministic elapsed-time
@@ -594,6 +724,84 @@ mod tests {
                 .all(|track| track.sample().reached_final_state())
         );
         assert!(complete.complete());
+    }
+
+    #[test]
+    fn frame_demand_combines_idle_and_active_with_stable_reason() {
+        let active = MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender);
+
+        assert_eq!(MotionFrameDemand::Idle.combine(active), active);
+        assert_eq!(active.combine(MotionFrameDemand::Idle), active);
+        assert_eq!(
+            MotionFrameDemand::combine_all([
+                MotionFrameDemand::Idle,
+                active,
+                MotionFrameDemand::Idle,
+            ]),
+            active
+        );
+    }
+
+    #[test]
+    fn clock_sample_clamps_non_monotonic_elapsed_time() {
+        let sample =
+            MotionClockSample::from_elapsed(Duration::from_millis(40), Duration::from_millis(15));
+
+        assert_eq!(sample.elapsed(), Duration::from_millis(40));
+        assert_eq!(sample.delta(), Duration::ZERO);
+        assert!(sample.clamped());
+    }
+
+    #[test]
+    fn finishing_track_jumps_to_target_and_stops_frame_demand() {
+        let mut track = MotionScalarTrack::start(
+            MotionModel::timeline(MotionSpec::new(
+                MotionPreference::Animated,
+                MotionDuration::Custom(Duration::from_millis(200)),
+                MotionEasing::Linear,
+            )),
+            0.0,
+            1.0,
+            0.0,
+            Duration::ZERO,
+        );
+
+        track.finish_at(Duration::from_millis(40));
+        let sample = track.sample_at(Duration::from_millis(50));
+
+        assert_eq!(sample.state(), MotionRunState::Completed);
+        assert_eq!(sample.value(), 1.0);
+        assert!(sample.reached_final_state());
+        assert!(
+            !track
+                .frame_demand_at(Duration::from_millis(50))
+                .needs_frame()
+        );
+    }
+
+    #[test]
+    fn controller_prunes_terminal_tracks_after_cancel_and_finish() {
+        let mut controller = MotionScalarController::new();
+        let model = MotionModel::timeline(MotionSpec::new(
+            MotionPreference::Animated,
+            MotionDuration::Custom(Duration::from_millis(200)),
+            MotionEasing::Linear,
+        ));
+
+        controller.start("cancelled", model, 0.0, 1.0, 0.0, Duration::ZERO);
+        controller.start("finished", model, 0.0, 1.0, 0.0, Duration::ZERO);
+        controller.start("active", model, 0.0, 1.0, 0.0, Duration::ZERO);
+        controller.cancel(&"cancelled", Duration::from_millis(40));
+        controller.finish(&"finished", Duration::from_millis(40));
+
+        assert_eq!(controller.prune_terminal_at(Duration::from_millis(50)), 2);
+        assert_eq!(controller.tracks().len(), 1);
+        assert_eq!(controller.tracks()[0].0, "active");
+        assert!(
+            controller
+                .frame_demand_at(Duration::from_millis(50))
+                .needs_frame()
+        );
     }
 
     #[test]
@@ -705,5 +913,27 @@ mod tests {
         assert_eq!(complete.value(), 1.0);
         assert!(complete.complete());
         assert!(!complete.frame_demand().needs_frame());
+    }
+
+    #[test]
+    fn reduced_motion_execution_publishes_final_value_without_frame_demand() {
+        let execution = MotionScalarExecution::start_resolved(
+            MotionPolicyInput::new(
+                MotionPolicyContext::CommittedLayout,
+                MotionModel::timeline(MotionSpec::committed_layout(MotionPreference::Reduced)),
+            )
+            .with_reduced_motion_final_state(true),
+            0.0,
+            1.0,
+            0.0,
+            Duration::ZERO,
+        );
+
+        let sample = execution.sample_at(Duration::ZERO);
+
+        assert_eq!(sample.scalar_sample().state(), MotionRunState::Immediate);
+        assert_eq!(sample.value(), 1.0);
+        assert!(sample.complete());
+        assert!(!sample.frame_demand().needs_frame());
     }
 }

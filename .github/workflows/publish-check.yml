@@ -68,15 +68,14 @@ jobs:
 
           leaf = sorted((pkg for pkg in packages if not has_local_workspace_dep(pkg)), key=lambda pkg: pkg["name"])
           non_leaf = sorted((pkg for pkg in packages if has_local_workspace_dep(pkg)), key=lambda pkg: pkg["name"])
-          explicit_package_targets = {"open-gpui-canvas"}
-
           print("Leaf crates:")
           print(", ".join(pkg["name"] for pkg in leaf) or "(none)")
           print("Non-leaf crates:")
           print(", ".join(pkg["name"] for pkg in non_leaf) or "(none)")
 
           # Leaf crates get a full package build. Crates that still depend on local workspace
-          # packages are checked with --list until their dependency chain can be published.
+          # packages are checked with --list because a version bump is merged before the new
+          # dependency chain exists on crates.io.
           def run_package(pkg, extra_args):
               print(f"::group::cargo package {pkg['name']} {' '.join(extra_args)}")
               subprocess.run(
@@ -88,11 +87,6 @@ jobs:
           for pkg in leaf:
               run_package(pkg, ["--no-verify"])
 
-          for pkg in packages:
-              if pkg["name"] in explicit_package_targets and pkg not in leaf:
-                  run_package(pkg, ["--no-verify"])
-
           for pkg in non_leaf:
-              if pkg["name"] not in explicit_package_targets:
-                  run_package(pkg, ["--list"])
+              run_package(pkg, ["--list"])
           PY

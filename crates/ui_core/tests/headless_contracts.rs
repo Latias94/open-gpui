@@ -39,42 +39,48 @@ fn ui_core_strict_boundary_blockers_match_allowlist() {
 }
 
 #[test]
-fn ui_core_motion_value_stays_private_while_consumed_motion_contracts_stay_public() {
+fn ui_core_no_longer_exports_motion_contracts() {
     let lib_path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs");
     let lib_source = std::fs::read_to_string(lib_path)
         .unwrap_or_else(|error| panic!("failed to read {lib_path}: {error}"));
-    let lib_lines = lib_source.lines().collect::<Vec<_>>();
+    let prelude_path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/prelude.rs");
+    let prelude_source = std::fs::read_to_string(prelude_path)
+        .unwrap_or_else(|error| panic!("failed to read {prelude_path}: {error}"));
 
     assert!(
-        lib_lines.contains(&"mod motion_value;"),
-        "motion_value should remain an internal implementation module"
+        !lib_source.contains("pub mod motion"),
+        "motion modules should live in open-gpui-motion, not open-gpui-ui-core"
     );
     assert!(
-        !lib_lines.contains(&"pub mod motion_value;"),
-        "MotionValue should not be reachable as open_gpui_ui_core::motion_value::MotionValue"
+        !lib_source.contains("pub use motion"),
+        "motion exports should live in open-gpui-motion, not open-gpui-ui-core"
+    );
+    assert!(
+        !prelude_source.contains("MotionSpec"),
+        "the ui_core prelude should not re-export motion contracts"
     );
 
-    let _track: Option<open_gpui_ui_core::MotionScalarTrack> = None;
-    let _controller: open_gpui_ui_core::MotionScalarController<&'static str> =
-        open_gpui_ui_core::MotionScalarController::new();
-    let demand = open_gpui_ui_core::MotionFrameDemand::Idle;
+    let _track: Option<open_gpui_motion::MotionScalarTrack> = None;
+    let _controller: open_gpui_motion::MotionScalarController<&'static str> =
+        open_gpui_motion::MotionScalarController::new();
+    let demand = open_gpui_motion::MotionFrameDemand::Idle;
     assert!(!demand.needs_frame());
 
-    let model = open_gpui_ui_core::MotionPreset::Immediate.resolve_model();
-    let plan = open_gpui_ui_core::MotionExecutionPlan::resolve(
-        open_gpui_ui_core::MotionPolicyInput::new(
-            open_gpui_ui_core::MotionPolicyContext::CommittedLayout,
+    let model = open_gpui_motion::MotionPreset::Immediate.resolve_model();
+    let plan = open_gpui_motion::MotionExecutionPlan::resolve(
+        open_gpui_motion::MotionPolicyInput::new(
+            open_gpui_motion::MotionPolicyContext::CommittedLayout,
             model,
         )
         .with_reduced_motion_final_state(true),
     );
     assert_eq!(
         plan.state(),
-        open_gpui_ui_core::MotionExecutionState::Immediate
+        open_gpui_motion::MotionExecutionState::Immediate
     );
-    let _execution: Option<open_gpui_ui_core::MotionScalarExecution> = None;
-    let _execution_sample: Option<open_gpui_ui_core::MotionScalarExecutionSample> = None;
-    let _clip: Option<open_gpui_ui_core::MotionProjectionClip> = None;
+    let _execution: Option<open_gpui_motion::MotionScalarExecution> = None;
+    let _execution_sample: Option<open_gpui_motion::MotionScalarExecutionSample> = None;
+    let _clip: Option<open_gpui_motion::MotionProjectionClip> = None;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -116,6 +122,9 @@ fn strict_boundary_blockers() -> Vec<BoundaryBlocker> {
         .collect::<BTreeSet<_>>();
 
     for (file, line) in source_lines_with("open_gpui") {
+        if line.contains("open_gpui_motion") {
+            continue;
+        }
         blockers.insert(BoundaryBlocker::new("source reference", file, line));
     }
 
@@ -146,7 +155,7 @@ fn cargo_dependency_blockers() -> Vec<BoundaryBlocker> {
     uncommented_manifest_lines(&manifest)
         .lines()
         .map(str::trim)
-        .filter(|line| line.starts_with("open_gpui"))
+        .filter(|line| line.starts_with("open_gpui") && !line.starts_with("open_gpui_motion"))
         .map(|line| BoundaryBlocker::new("cargo dependency", "Cargo.toml", line))
         .collect()
 }

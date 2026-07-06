@@ -1,6 +1,6 @@
 use crate::{
     DockNodeId, DropZone, SplitAxis,
-    geometry::{bounds_from_ui_rect, ui_rect_from_bounds},
+    geometry::{bounds_from_motion_rect, motion_rect_from_bounds},
     presentation_scene::DockPresentationScene,
     transition_geometry::{
         DockDividerTransition, DockDividerTransitionKind, DockPaneTransition,
@@ -10,7 +10,7 @@ use crate::{
     visual_affordance_scene::DockVisualAffordanceId,
 };
 use open_gpui::{Bounds, Pixels, Window, point, size};
-use open_gpui_ui_core::{
+use open_gpui_motion::{
     MotionExecutionPlan, MotionExecutionState, MotionModel, MotionPolicyContext, MotionPolicyInput,
     MotionPolicyReport, MotionProjection, MotionProjectionClip, MotionScalarExecution,
     MotionScalarExecutionSample, MotionSnapshot, MotionSpec, motion_source_rect,
@@ -388,15 +388,15 @@ fn slide_transition_from_bounds(
     scene_bounds: Bounds<Pixels>,
 ) -> DockSlideTransition {
     let edge = preferred_motion_edge(
-        ui_rect_from_bounds(final_bounds),
-        ui_rect_from_bounds(scene_bounds),
+        motion_rect_from_bounds(final_bounds),
+        motion_rect_from_bounds(scene_bounds),
     );
     DockSlideTransition {
         edge,
-        source_bounds: bounds_from_ui_rect(motion_source_rect(
+        source_bounds: bounds_from_motion_rect(motion_source_rect(
             edge,
-            ui_rect_from_bounds(final_bounds),
-            ui_rect_from_bounds(scene_bounds),
+            motion_rect_from_bounds(final_bounds),
+            motion_rect_from_bounds(scene_bounds),
         )),
         final_bounds,
         occlusion_bounds: final_bounds,
@@ -410,9 +410,13 @@ fn pane_clip_sample(transition: &DockPaneTransition, progress: f32) -> Option<Do
             Some(dock_pane_clip_sample(
                 transition.node,
                 MotionProjectionClip::new(
-                    ui_rect_from_bounds(slide.final_bounds),
-                    ui_rect_from_bounds(reveal_bounds(slide.final_bounds, slide.edge, progress)),
-                    ui_rect_from_bounds(slide.occlusion_bounds),
+                    motion_rect_from_bounds(slide.final_bounds),
+                    motion_rect_from_bounds(reveal_bounds(
+                        slide.final_bounds,
+                        slide.edge,
+                        progress,
+                    )),
+                    motion_rect_from_bounds(slide.occlusion_bounds),
                     progress,
                 ),
             ))
@@ -422,13 +426,13 @@ fn pane_clip_sample(transition: &DockPaneTransition, progress: f32) -> Option<Do
             Some(dock_pane_clip_sample(
                 transition.node,
                 MotionProjectionClip::new(
-                    ui_rect_from_bounds(slide.final_bounds),
-                    ui_rect_from_bounds(reveal_bounds(
+                    motion_rect_from_bounds(slide.final_bounds),
+                    motion_rect_from_bounds(reveal_bounds(
                         slide.final_bounds,
                         slide.edge,
                         1.0 - progress,
                     )),
-                    ui_rect_from_bounds(slide.occlusion_bounds),
+                    motion_rect_from_bounds(slide.occlusion_bounds),
                     progress,
                 ),
             ))
@@ -439,7 +443,10 @@ fn pane_clip_sample(transition: &DockPaneTransition, progress: f32) -> Option<Do
             Some(dock_pane_clip_sample(
                 transition.node,
                 MotionProjectionClip::from_projection(
-                    MotionProjection::between(ui_rect_from_bounds(from), ui_rect_from_bounds(to)),
+                    MotionProjection::between(
+                        motion_rect_from_bounds(from),
+                        motion_rect_from_bounds(to),
+                    ),
                     progress,
                 ),
             ))
@@ -451,9 +458,9 @@ fn pane_clip_sample(transition: &DockPaneTransition, progress: f32) -> Option<Do
 fn dock_pane_clip_sample(node: DockNodeId, clip: MotionProjectionClip) -> DockPaneClipSample {
     DockPaneClipSample {
         node,
-        content_bounds: bounds_from_ui_rect(clip.content_bounds()),
-        visible_bounds: bounds_from_ui_rect(clip.visible_bounds()),
-        occlusion_bounds: bounds_from_ui_rect(clip.occlusion_bounds()),
+        content_bounds: bounds_from_motion_rect(clip.content_bounds()),
+        visible_bounds: bounds_from_motion_rect(clip.visible_bounds()),
+        occlusion_bounds: bounds_from_motion_rect(clip.occlusion_bounds()),
         progress: clip.progress(),
     }
 }
@@ -495,8 +502,8 @@ fn reveal_bounds(
     edge: DockTransitionEdge,
     progress: f32,
 ) -> Bounds<Pixels> {
-    bounds_from_ui_rect(reveal_rect_from_edge(
-        ui_rect_from_bounds(final_bounds),
+    bounds_from_motion_rect(reveal_rect_from_edge(
+        motion_rect_from_bounds(final_bounds),
         edge,
         progress,
     ))
@@ -537,8 +544,8 @@ fn projected_visual_bounds(
     to: Bounds<Pixels>,
     progress: f32,
 ) -> Bounds<Pixels> {
-    bounds_from_ui_rect(
-        MotionProjection::between(ui_rect_from_bounds(from), ui_rect_from_bounds(to))
+    bounds_from_motion_rect(
+        MotionProjection::between(motion_rect_from_bounds(from), motion_rect_from_bounds(to))
             .visual_bounds(progress),
     )
 }

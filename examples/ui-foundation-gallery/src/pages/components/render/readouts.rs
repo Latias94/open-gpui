@@ -364,7 +364,7 @@ pub(crate) fn component_virtualized_list_state_contract_row(
 ) -> impl IntoElement {
     let activation = state
         .activation_for_key("enter")
-        .map(|activation| activation.index().to_string())
+        .map(|activation| format!("{} / {}", activation.index(), activation.key()))
         .unwrap_or_else(|| "none".to_owned());
 
     div()
@@ -374,10 +374,12 @@ pub(crate) fn component_virtualized_list_state_contract_row(
         .text_xs()
         .text_color(rgb(0x5a6472))
         .child(format!(
-            "{} items / active {} / selected {}",
+            "{} items / active {} ({}) / selected {} ({})",
             state.item_count(),
             optional_index_label(state.active_index()),
-            optional_index_label(state.selected_index())
+            optional_key_label(state.active_key()),
+            optional_index_label(state.selected_index()),
+            selected_keys_label(state.selected_keys())
         ))
         .child(format!(
             "viewport {} / row {} / overscan {}",
@@ -403,6 +405,19 @@ fn optional_index_label(index: Option<usize>) -> String {
     index
         .map(|index| index.to_string())
         .unwrap_or_else(|| "none".to_owned())
+}
+
+fn optional_key_label(key: Option<&str>) -> String {
+    key.unwrap_or("none").to_owned()
+}
+
+fn selected_keys_label<'a>(keys: impl IntoIterator<Item = &'a str>) -> String {
+    let keys = keys.into_iter().collect::<Vec<_>>();
+    if keys.is_empty() {
+        "none".to_owned()
+    } else {
+        keys.join(", ")
+    }
 }
 
 fn tree_keyboard_action_label(action: Option<TreeKeyboardAction>) -> String {
@@ -603,7 +618,7 @@ pub(crate) fn component_virtualized_list_state_row(
 ) -> impl IntoElement {
     let activation = state
         .activation_for_key("enter")
-        .map(|activation| activation.index().to_string())
+        .map(|activation| format!("{} / {}", activation.index(), activation.key()))
         .unwrap_or_else(|| "none".to_owned());
 
     div()
@@ -613,10 +628,12 @@ pub(crate) fn component_virtualized_list_state_row(
         .text_xs()
         .text_color(rgb(0x5a6472))
         .child(format!(
-            "{} items / active {} / selected {}",
+            "{} items / active {} ({}) / selected {} ({})",
             summary.item_count,
             optional_index_label(summary.active_index),
-            optional_index_label(summary.selected_index)
+            optional_key_label(summary.active_key.as_deref()),
+            optional_index_label(summary.selected_index),
+            selected_keys_label(summary.selected_keys.iter().map(String::as_str))
         ))
         .child(format!(
             "viewport {} / row {} / overscan {}",

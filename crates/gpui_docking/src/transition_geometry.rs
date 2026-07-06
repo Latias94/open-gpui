@@ -1,6 +1,6 @@
 use crate::{
     DockNodeId, DropZone, SplitAxis,
-    geometry::{bounds_from_ui_rect, ui_rect_from_bounds},
+    geometry::{bounds_from_motion_rect, motion_rect_from_bounds},
     presentation_scene::{
         DockPresentationFocusRegion, DockPresentationPane, DockPresentationScene,
     },
@@ -11,7 +11,7 @@ use crate::{
     zoom_state::DockZoomScene,
 };
 use open_gpui::{Bounds, Pixels};
-use open_gpui_ui_core::{MotionEdge, MotionPreference, motion_source_rect, preferred_motion_edge};
+use open_gpui_motion::{MotionEdge, MotionPreference, motion_source_rect, preferred_motion_edge};
 use std::collections::{HashMap, HashSet};
 
 /// Descriptor plan for docking presentation, divider, and visual affordance transitions.
@@ -376,8 +376,8 @@ pub(crate) fn preferred_transition_edge(
     scene_bounds: Bounds<Pixels>,
 ) -> DockTransitionEdge {
     preferred_motion_edge(
-        ui_rect_from_bounds(bounds),
-        ui_rect_from_bounds(scene_bounds),
+        motion_rect_from_bounds(bounds),
+        motion_rect_from_bounds(scene_bounds),
     )
 }
 
@@ -386,9 +386,9 @@ fn source_bounds_for_edge(
     final_bounds: Bounds<Pixels>,
     scene_bounds: Bounds<Pixels>,
 ) -> Bounds<Pixels> {
-    bounds_from_ui_rect(motion_source_rect(
+    bounds_from_motion_rect(motion_source_rect(
         edge,
-        ui_rect_from_bounds(final_bounds),
-        ui_rect_from_bounds(scene_bounds),
+        motion_rect_from_bounds(final_bounds),
+        motion_rect_from_bounds(scene_bounds),
     ))
 }

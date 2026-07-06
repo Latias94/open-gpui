@@ -1,8 +1,8 @@
 //! Renderer-neutral layout projection primitives.
 
 use crate::{
-    MotionEdge, MotionPreference, UiPoint, UiPx, UiRect, reveal_rect_from_edge, ui_point, ui_rect,
-    ui_size,
+    MotionEdge, MotionPoint, MotionPreference, MotionPx, MotionRect, motion_point, motion_rect,
+    motion_size, reveal_rect_from_edge,
 };
 
 const TRANSLATE_EPSILON: f32 = 0.01;
@@ -31,28 +31,28 @@ impl MotionProjectionScale {
 /// Projection from previous geometry to final target geometry.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MotionProjection {
-    source: UiRect,
-    target: UiRect,
+    source: MotionRect,
+    target: MotionRect,
 }
 
 impl MotionProjection {
     /// Creates a projection between a source rect and final target rect.
-    pub const fn between(source: UiRect, target: UiRect) -> Self {
+    pub const fn between(source: MotionRect, target: MotionRect) -> Self {
         Self { source, target }
     }
 
     /// Returns the source rect.
-    pub const fn source(self) -> UiRect {
+    pub const fn source(self) -> MotionRect {
         self.source
     }
 
     /// Returns the final target rect.
-    pub const fn target(self) -> UiRect {
+    pub const fn target(self) -> MotionRect {
         self.target
     }
 
     /// Returns the sampled visual bounds after applying projection movement to final-size content.
-    pub fn visual_bounds(self, progress: f32) -> UiRect {
+    pub fn visual_bounds(self, progress: f32) -> MotionRect {
         self.visual_bounds_with_preference(progress, MotionPreference::Animated)
     }
 
@@ -61,7 +61,7 @@ impl MotionProjection {
         self,
         progress: f32,
         preference: MotionPreference,
-    ) -> UiRect {
+    ) -> MotionRect {
         self.sample_with_preference(progress, preference)
             .visual_bounds()
     }
@@ -78,9 +78,9 @@ impl MotionProjection {
         };
         let source_translation = self.source_translation();
         let source_scale = self.source_scale();
-        let translation = ui_point(
-            UiPx::new(source_translation.x.as_f32() * (1.0 - progress)),
-            UiPx::new(source_translation.y.as_f32() * (1.0 - progress)),
+        let translation = motion_point(
+            MotionPx::new(source_translation.x.as_f32() * (1.0 - progress)),
+            MotionPx::new(source_translation.y.as_f32() * (1.0 - progress)),
         );
         let scale = MotionProjectionScale::new(
             lerp_scale(source_scale.x(), 1.0, progress),
@@ -95,8 +95,8 @@ impl MotionProjection {
         )
     }
 
-    fn source_translation(self) -> UiPoint {
-        snap_translation(ui_point(
+    fn source_translation(self) -> MotionPoint {
+        snap_translation(motion_point(
             self.source.origin.x - self.target.origin.x,
             self.source.origin.y - self.target.origin.y,
         ))
@@ -112,27 +112,27 @@ impl MotionProjection {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct MotionProjectionSample {
-    target_bounds: UiRect,
+    target_bounds: MotionRect,
     progress: f32,
-    translation: UiPoint,
+    translation: MotionPoint,
     scale: MotionProjectionScale,
 }
 
 /// Sampled clip for rendering final-size content through a moving or revealing viewport.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MotionProjectionClip {
-    content_bounds: UiRect,
-    visible_bounds: UiRect,
-    occlusion_bounds: UiRect,
+    content_bounds: MotionRect,
+    visible_bounds: MotionRect,
+    occlusion_bounds: MotionRect,
     progress: f32,
 }
 
 impl MotionProjectionClip {
     /// Creates a sampled clip from explicit final-content, visible, and occlusion bounds.
     pub fn new(
-        content_bounds: UiRect,
-        visible_bounds: UiRect,
-        occlusion_bounds: UiRect,
+        content_bounds: MotionRect,
+        visible_bounds: MotionRect,
+        occlusion_bounds: MotionRect,
         progress: f32,
     ) -> Self {
         Self {
@@ -164,7 +164,7 @@ impl MotionProjectionClip {
     }
 
     /// Creates a reveal clip inside final content bounds from the chosen edge.
-    pub fn reveal(content_bounds: UiRect, edge: MotionEdge, progress: f32) -> Self {
+    pub fn reveal(content_bounds: MotionRect, edge: MotionEdge, progress: f32) -> Self {
         let progress = progress.clamp(0.0, 1.0);
         Self::new(
             content_bounds,
@@ -175,17 +175,17 @@ impl MotionProjectionClip {
     }
 
     /// Returns the final-size content bounds.
-    pub const fn content_bounds(self) -> UiRect {
+    pub const fn content_bounds(self) -> MotionRect {
         self.content_bounds
     }
 
     /// Returns the sampled visible viewport bounds.
-    pub const fn visible_bounds(self) -> UiRect {
+    pub const fn visible_bounds(self) -> MotionRect {
         self.visible_bounds
     }
 
     /// Returns the occlusion bounds that cover the snapped final scene underneath.
-    pub const fn occlusion_bounds(self) -> UiRect {
+    pub const fn occlusion_bounds(self) -> MotionRect {
         self.occlusion_bounds
     }
 
@@ -197,9 +197,9 @@ impl MotionProjectionClip {
 
 impl MotionProjectionSample {
     const fn new(
-        target_bounds: UiRect,
+        target_bounds: MotionRect,
         progress: f32,
-        translation: UiPoint,
+        translation: MotionPoint,
         scale: MotionProjectionScale,
     ) -> Self {
         Self {
@@ -210,17 +210,17 @@ impl MotionProjectionSample {
         }
     }
 
-    const fn target_bounds(self) -> UiRect {
+    const fn target_bounds(self) -> MotionRect {
         self.target_bounds
     }
 
-    fn visual_bounds(self) -> UiRect {
-        ui_rect(
-            ui_point(
+    fn visual_bounds(self) -> MotionRect {
+        motion_rect(
+            motion_point(
                 self.target_bounds.origin.x + self.translation.x,
                 self.target_bounds.origin.y + self.translation.y,
             ),
-            ui_size(
+            motion_size(
                 self.target_bounds.size.width * self.scale.x(),
                 self.target_bounds.size.height * self.scale.y(),
             ),
@@ -232,7 +232,7 @@ impl MotionProjectionSample {
     }
 }
 
-fn divide_or_identity(from: UiPx, to: UiPx) -> f32 {
+fn divide_or_identity(from: MotionPx, to: MotionPx) -> f32 {
     let denominator = to.as_f32();
     if denominator.abs() <= f32::EPSILON || !denominator.is_finite() {
         1.0
@@ -249,10 +249,10 @@ fn sanitize_scale(scale: f32) -> f32 {
     }
 }
 
-fn snap_translation(point: UiPoint) -> UiPoint {
-    ui_point(
-        UiPx::new(snap_zero(point.x.as_f32(), TRANSLATE_EPSILON)),
-        UiPx::new(snap_zero(point.y.as_f32(), TRANSLATE_EPSILON)),
+fn snap_translation(point: MotionPoint) -> MotionPoint {
+    motion_point(
+        MotionPx::new(snap_zero(point.x.as_f32(), TRANSLATE_EPSILON)),
+        MotionPx::new(snap_zero(point.y.as_f32(), TRANSLATE_EPSILON)),
     )
 }
 
@@ -282,12 +282,12 @@ fn lerp_scale(from: f32, to: f32, progress: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MotionEdge, MotionPreference, UiPx, ui_point, ui_rect, ui_size};
+    use crate::{MotionEdge, MotionPreference, MotionPx, motion_point, motion_rect, motion_size};
 
-    fn rect(x: f32, y: f32, width: f32, height: f32) -> crate::UiRect {
-        ui_rect(
-            ui_point(UiPx::new(x), UiPx::new(y)),
-            ui_size(UiPx::new(width), UiPx::new(height)),
+    fn rect(x: f32, y: f32, width: f32, height: f32) -> crate::MotionRect {
+        motion_rect(
+            motion_point(MotionPx::new(x), MotionPx::new(y)),
+            motion_size(MotionPx::new(width), MotionPx::new(height)),
         )
     }
 

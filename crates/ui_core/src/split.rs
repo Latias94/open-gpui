@@ -1,8 +1,9 @@
 //! Renderer-neutral split layout primitives.
 
-use crate::{
-    MotionEdge, MotionProjection, MotionProjectionClip, MotionSpec, Orientation, Size, UiPx,
-    UiRect, reveal_rect_from_edge, ui_point, ui_px, ui_rect, ui_size,
+use crate::{Orientation, Size, UiPx, UiRect, ui_point, ui_px, ui_rect, ui_size};
+use open_gpui_motion::{
+    MotionEdge, MotionPreference, MotionProjection, MotionProjectionClip, MotionRect, MotionSpec,
+    motion_point, motion_px, motion_rect, motion_size, reveal_rect_from_edge,
 };
 use std::collections::HashMap;
 
@@ -1149,7 +1150,7 @@ impl SplitterPanelTransitionSample {
         scene_bounds: UiRect,
         orientation: Orientation,
         progress: f32,
-        preference: crate::MotionPreference,
+        preference: MotionPreference,
     ) -> Self {
         let clip = match (transition.kind, transition.from, transition.to) {
             (SplitterPanelTransitionKind::Entering, _, Some(to)) => Some(splitter_enter_clip(
@@ -1174,7 +1175,10 @@ impl SplitterPanelTransitionSample {
                 Some(from),
                 Some(to),
             ) => Some(MotionProjectionClip::from_projection_with_preference(
-                MotionProjection::between(from, to),
+                MotionProjection::between(
+                    motion_rect_from_ui_rect(from),
+                    motion_rect_from_ui_rect(to),
+                ),
                 progress,
                 preference,
             )),
@@ -1246,7 +1250,7 @@ fn splitter_enter_clip(
     scene_bounds: UiRect,
     orientation: Orientation,
     progress: f32,
-    preference: crate::MotionPreference,
+    preference: MotionPreference,
 ) -> MotionProjectionClip {
     let progress = if preference.is_immediate() {
         1.0
@@ -1254,7 +1258,7 @@ fn splitter_enter_clip(
         progress.clamp(0.0, 1.0)
     };
     MotionProjectionClip::reveal(
-        to,
+        motion_rect_from_ui_rect(to),
         splitter_reveal_edge(to, scene_bounds, orientation),
         progress,
     )
@@ -1265,20 +1269,18 @@ fn splitter_leave_clip(
     scene_bounds: UiRect,
     orientation: Orientation,
     progress: f32,
-    preference: crate::MotionPreference,
+    preference: MotionPreference,
 ) -> MotionProjectionClip {
     let progress = if preference.is_immediate() {
         1.0
     } else {
         progress.clamp(0.0, 1.0)
     };
+    let edge = splitter_reveal_edge(from, scene_bounds, orientation);
+    let from = motion_rect_from_ui_rect(from);
     MotionProjectionClip::new(
         from,
-        reveal_rect_from_edge(
-            from,
-            splitter_reveal_edge(from, scene_bounds, orientation),
-            1.0 - progress,
-        ),
+        reveal_rect_from_edge(from, edge, 1.0 - progress),
         from,
         progress,
     )
@@ -1305,6 +1307,19 @@ fn splitter_reveal_edge(
             }
         }
     }
+}
+
+fn motion_rect_from_ui_rect(rect: UiRect) -> MotionRect {
+    motion_rect(
+        motion_point(
+            motion_px(rect.origin.x.as_f32()),
+            motion_px(rect.origin.y.as_f32()),
+        ),
+        motion_size(
+            motion_px(rect.size.width.as_f32()),
+            motion_px(rect.size.height.as_f32()),
+        ),
+    )
 }
 
 fn lerp_ui_rect(from: UiRect, to: UiRect, progress: f32) -> UiRect {
@@ -1996,7 +2011,7 @@ fn overlap_or_touching_span(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MotionPreference;
+    use open_gpui_motion::MotionPreference;
 
     fn rect(width: f32, height: f32) -> UiRect {
         at_rect(0.0, 0.0, width, height)
@@ -2395,12 +2410,21 @@ mod tests {
         let center_clip = center_start
             .clip()
             .expect("entering panel should provide a reveal clip");
-        assert_eq!(center_clip.content_bounds(), center_to);
-        assert_eq!(center_clip.occlusion_bounds(), center_to);
-        assert_eq!(center_clip.visible_bounds().size.width, ui_px(0.0));
+        assert_eq!(
+            center_clip.content_bounds(),
+            motion_rect_from_ui_rect(center_to)
+        );
+        assert_eq!(
+            center_clip.occlusion_bounds(),
+            motion_rect_from_ui_rect(center_to)
+        );
+        assert_eq!(
+            center_clip.visible_bounds().size.width,
+            open_gpui_motion::motion_px(0.0)
+        );
         assert_eq!(
             center_clip.visible_bounds().size.height,
-            center_to.size.height
+            open_gpui_motion::motion_px(center_to.size.height.as_f32())
         );
 
         let left_transition = insert
@@ -2416,14 +2440,23 @@ mod tests {
             .panel("left")
             .and_then(SplitterPanelTransitionSample::clip)
             .expect("resizing panel should provide a projection clip");
-        assert_eq!(left_start_clip.content_bounds(), left_to);
-        assert_eq!(left_start_clip.visible_bounds(), left_from);
+        assert_eq!(
+            left_start_clip.content_bounds(),
+            motion_rect_from_ui_rect(left_to)
+        );
+        assert_eq!(
+            left_start_clip.visible_bounds(),
+            motion_rect_from_ui_rect(left_from)
+        );
         let left_end_clip = insert
             .sample(1.0)
             .panel("left")
             .and_then(SplitterPanelTransitionSample::clip)
             .expect("resizing panel should finish at final bounds");
-        assert_eq!(left_end_clip.visible_bounds(), left_to);
+        assert_eq!(
+            left_end_clip.visible_bounds(),
+            motion_rect_from_ui_rect(left_to)
+        );
 
         let remove = SplitterLayoutTransition::between(
             SplitterTransitionIntent::Remove,
@@ -2445,18 +2478,30 @@ mod tests {
             .panel("center")
             .and_then(SplitterPanelTransitionSample::clip)
             .expect("leaving panel should provide a reveal clip");
-        assert_eq!(remove_start_clip.content_bounds(), center_from);
-        assert_eq!(remove_start_clip.visible_bounds(), center_from);
+        assert_eq!(
+            remove_start_clip.content_bounds(),
+            motion_rect_from_ui_rect(center_from)
+        );
+        assert_eq!(
+            remove_start_clip.visible_bounds(),
+            motion_rect_from_ui_rect(center_from)
+        );
         let remove_end_clip = remove
             .sample(1.0)
             .panel("center")
             .and_then(SplitterPanelTransitionSample::clip)
             .expect("leaving panel should shrink its visible bounds");
-        assert_eq!(remove_end_clip.content_bounds(), center_from);
-        assert_eq!(remove_end_clip.visible_bounds().size.width, ui_px(0.0));
+        assert_eq!(
+            remove_end_clip.content_bounds(),
+            motion_rect_from_ui_rect(center_from)
+        );
+        assert_eq!(
+            remove_end_clip.visible_bounds().size.width,
+            open_gpui_motion::motion_px(0.0)
+        );
         assert_eq!(
             remove_end_clip.visible_bounds().size.height,
-            center_from.size.height
+            open_gpui_motion::motion_px(center_from.size.height.as_f32())
         );
     }
 
@@ -2563,7 +2608,13 @@ mod tests {
             .panel("left")
             .and_then(SplitterPanelTransitionSample::clip)
             .expect("reduced-motion resize should still expose final clip geometry");
-        assert_eq!(left_clip.content_bounds(), left_to);
-        assert_eq!(left_clip.visible_bounds(), left_to);
+        assert_eq!(
+            left_clip.content_bounds(),
+            motion_rect_from_ui_rect(left_to)
+        );
+        assert_eq!(
+            left_clip.visible_bounds(),
+            motion_rect_from_ui_rect(left_to)
+        );
     }
 }

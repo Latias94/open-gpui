@@ -7,15 +7,15 @@ use open_gpui::{
     Empty, Entity, IntoElement, ParentElement, Pixels, Point, Render, RenderOnce, Styled, Window,
     div, px, relative, rgb,
 };
+use open_gpui_motion::{
+    MotionExecutionPlan, MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPreference,
+    MotionPreset, MotionProjectionClip, MotionScalarController, MotionScalarExecution, MotionSpec,
+};
 use open_gpui_ui_core::split::{
     SplitterLayoutTransition, SplitterLayoutTransitionSample, SplitterPanelTransitionSample,
     SplitterTransitionIntent,
 };
-use open_gpui_ui_core::{
-    MotionExecutionPlan, MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPreference,
-    MotionPreset, MotionProjectionClip, MotionScalarController, MotionScalarExecution, MotionSpec,
-    Orientation, Sizable, Size, UiRect, ui_point, ui_px, ui_rect, ui_size,
-};
+use open_gpui_ui_core::{Orientation, Sizable, Size, UiRect, ui_point, ui_px, ui_rect, ui_size};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -339,7 +339,7 @@ fn committed_layout_motion_plan(model: MotionModel) -> MotionExecutionPlan {
 
 fn fraction_samples_for_transition(
     transition: &SplitterRuntimeTransition,
-    sample: &open_gpui_ui_core::MotionScalarControllerSample<String>,
+    sample: &open_gpui_motion::MotionScalarControllerSample<String>,
 ) -> Vec<f32> {
     transition
         .panel_ids
@@ -929,7 +929,7 @@ fn render_handle(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use open_gpui_ui_core::{
+    use open_gpui_motion::{
         MotionDuration, MotionEasing, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
         MotionSpec, validate_motion_policy,
     };
@@ -1063,7 +1063,10 @@ mod tests {
         let center_clip = center
             .clip()
             .expect("inserted panel should expose a reveal clip");
-        assert_eq!(center_clip.visible_bounds().size.width, ui_px(0.0));
+        assert_eq!(
+            center_clip.visible_bounds().size.width,
+            open_gpui_motion::motion_px(0.0)
+        );
 
         assert!(!runtime.sync_at(&replaced, start + Duration::from_millis(900)));
         assert!(runtime.layout_transition.is_none());

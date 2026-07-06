@@ -7,10 +7,10 @@ use open_gpui::{
     AnyElement, Context, Entity, IntoElement, ListSizingBehavior, Render, Window, div, list, px,
     rgb,
 };
+use open_gpui_motion::MotionPreference;
 use open_gpui_ui_components::*;
 use open_gpui_ui_core::{
-    MotionPreference, Orientation, Sizable, Size, TableColumnId, TableTextFilterOperator,
-    ThemeTokens, UiPx,
+    Orientation, Sizable, Size, TableColumnId, TableTextFilterOperator, ThemeTokens, UiPx,
 };
 
 mod choice;

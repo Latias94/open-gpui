@@ -1,0 +1,58 @@
+topic: Open GPUI VirtualizedList and motion foundations before v0.2.0
+created: 2026-07-06
+fields:
+  - name: component_layer
+    description: Whether the reference concern belongs to collection state, virtualizer math, GPUI adapter rendering, motion core, or domain components.
+    detail_level: detailed
+  - name: identity_model
+    description: Stable item key, value, index, section key, duplicate-key fallback, and reorder/filter semantics.
+    detail_level: detailed
+  - name: row_content_model
+    description: Text label, typed row anatomy, custom row renderer, slots, secondary text, badges, icons, and trailing metadata.
+    detail_level: detailed
+  - name: selection_and_activation
+    description: Single selection, multi-selection, active descendant, selection-required behavior, disabled rows, activation payload, and key-based callbacks.
+    detail_level: detailed
+  - name: grouping_and_sections
+    description: Section headers, group rows, separators, sticky headers, group-local metadata, and how these affect navigation and a11y.
+    detail_level: detailed
+  - name: fixed_vs_measured_strategy
+    description: Fixed row height, known-size rows, runtime measurement cache, variable-height support, invalidation, and when dynamic sizing is deferred.
+    detail_level: detailed
+  - name: scroll_contract
+    description: ScrollToIndex, ScrollToKey, alignment, nearest/center/top/bottom behavior, smooth scrolling, scroll anchoring, and offscreen active item handling.
+    detail_level: detailed
+  - name: overscan_and_windowing
+    description: Overscan range, buffer size, keep-mounted rows, pinned/sticky ranges, range extraction, and visible range callbacks.
+    detail_level: detailed
+  - name: measurement_cache_invalidation
+    description: Cache ownership, snapshot/restore, stale key/index prevention, resize handling, and zero-size hidden-list behavior.
+    detail_level: detailed
+  - name: accessibility_contract
+    description: Roles, aria-posinset, aria-setsize, active descendant, disabled/selected metadata, group labels, virtualized offscreen semantics, and keyboard rules.
+    detail_level: detailed
+  - name: motion_consumer_shape
+    description: Which component chrome can consume motion without animating virtualized row layout or causing scroll jump.
+    detail_level: detailed
+  - name: frame_demand_contract
+    description: Motion frame demand aggregation, start/continue/finalize semantics, cancellation, reduced-motion final state, and adapter-owned request-frame rules.
+    detail_level: detailed
+  - name: clock_and_sampling_model
+    description: Duration versus Instant public API, monotonic frame samples, deterministic tests, retargeting, finish, cancel, and pruning terminal tracks.
+    detail_level: detailed
+  - name: public_api_stability
+    description: What must be stable for v0.2.0, what can break now, and which richer APIs should remain private or deferred.
+    detail_level: detailed
+  - name: test_surface
+    description: Unit, integration, doc-test, gallery smoke, behavior snapshots, accessibility assertions, and import-boundary verification needed for confidence.
+    detail_level: detailed
+  - name: performance_budget
+    description: Large-list allocation behavior, hot-path measurement costs, row renderer overhead, frame demand coalescing, and scroll jank risks.
+    detail_level: detailed
+  - name: deferred_scope
+    description: Known valuable work that should not be part of the v0.2.0 pre-release refactor.
+    detail_level: brief
+uncertain:
+  - Whether VirtualizedList should publicly expose a generic custom row renderer in v0.2.0 or keep custom rows behind typed row content until one more consumer appears.
+  - Whether measured row support should be fully exposed on VirtualizedList now or stay adapter-internal while Table keeps richer variable-height behavior.
+  - Whether motion should add a minimal presence bookkeeping module in this plan or defer it until Overlay/Collapsible consumes it directly.
