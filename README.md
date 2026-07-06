@@ -63,15 +63,13 @@ During local development, use workspace path dependencies instead of registry ve
 - `crates/motion`: renderer-neutral `open-gpui-motion` timing, spring, policy, projection, and frame-demand primitives
 - `crates/canvas`: reusable `open-gpui-canvas` model and interaction primitives for infinite canvas applications
 - `examples/canvas-notes`: native JSON Canvas note-map example
-- `examples/canvas-jellyflow`: native Jellyflow graph projection example
 - `examples/smoke-native`: native smoke example
 - `xtask`: workspace verification and import-boundary checks
 
-Run the canvas examples with:
+Run the canvas example with:
 
 ```sh
 cargo run -p open-gpui-canvas-notes
-cargo run -p open-gpui-canvas-jellyflow
 ```
 
 ## Verification
