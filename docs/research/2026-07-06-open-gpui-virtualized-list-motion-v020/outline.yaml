@@ -1,0 +1,173 @@
+topic: Open GPUI VirtualizedList and motion foundations before v0.2.0
+created: 2026-07-06
+scope:
+  purpose: >
+    Gather repository evidence and prior art for a v0.2.0 breaking refactor that upgrades
+    VirtualizedList from a text-label-only component into a reusable collection surface, while
+    strengthening open-gpui-motion with only the runtime contracts proven by first-party consumers.
+  primary_questions:
+    - >
+      Which VirtualizedList contracts should break before v0.2.0 so later collection, command,
+      tree, table, and listbox work does not need another public API migration?
+    - >
+      Which motion contracts should be strengthened now, and which richer animation APIs should
+      stay deferred until a concrete Open GPUI consumer proves them?
+  assumptions:
+    - The project is pre-1.0 and the user explicitly permits fearless breaking refactors.
+    - The current open-gpui-motion crate is the only stable motion import path.
+    - Existing VirtualizerState and RowWindow contracts are preferred over introducing a new
+      virtualization engine.
+    - Reference repositories are prior art and design input, not code to copy verbatim.
+items:
+  - id: local-virtualized-list
+    source: local
+    paths:
+      - crates/ui_components/src/virtualized_list.rs
+      - crates/ui_components/tests/choice.rs
+      - examples/ui-foundation-gallery/src/pages/components/samples/virtualized_list.rs
+      - docs/ui/component-contract.md
+      - docs/verification.md
+    notes:
+      - Current descriptor shape is key, label, and disabled only.
+      - Activation payload is index-only.
+      - The GPUI row renderer places the label string directly as row content.
+      - Behavior snapshots cover roles, active/selected, overscan, render keys, and fixed-row geometry.
+  - id: local-virtualizer-core
+    source: local
+    paths:
+      - crates/ui_core/src/virtualizer.rs
+      - crates/ui_core/src/grid_viewport.rs
+      - crates/ui_components/src/table/virtualization.rs
+      - crates/ui_components/src/table/render_plan/mod.rs
+      - crates/ui_components/src/command/render_plan.rs
+      - crates/ui_components/src/tree/render_plan.rs
+    notes:
+      - VirtualizerState already owns stable item keys, measurement cache, snapshots, fixed-window
+        resolution, known-size windows, ranges, total size, and overscan.
+      - Table already feeds runtime measurements back into the virtualizer.
+      - Command and Tree both show fixed-row virtualized render-plan patterns that VirtualizedList
+        can converge with.
+  - id: local-choice-and-listbox
+    source: local
+    paths:
+      - crates/ui_components/src/choice.rs
+      - crates/ui_components/src/listbox.rs
+      - crates/ui_components/src/command/model.rs
+      - crates/ui_components/src/combobox
+      - crates/ui_components/src/select
+    notes:
+      - ChoiceCollection already models stable-value selection, active item, disabled item skipping,
+        typeahead, single selection, and multi-selection.
+      - Listbox already supports groups, separators, selected value, active value, and option payloads.
+      - VirtualizedList should reuse or publicize this collection vocabulary rather than inventing
+        a parallel index-only model.
+  - id: local-motion-crate
+    source: local
+    paths:
+      - crates/motion/src/lib.rs
+      - crates/motion/src/controller.rs
+      - crates/motion/src/runtime.rs
+      - crates/motion/src/projection.rs
+      - crates/motion/README.md
+      - docs/adr/0018-open-gpui-motion-crate-boundary.md
+      - xtask/src/import_boundary.rs
+    notes:
+      - Motion already owns scalar sampling, policy, projection, reduced-motion final-state
+        semantics, retargeting, and import-boundary checks.
+      - MotionFrameDemand is currently a minimal single-reason contract and needs public aggregation
+        semantics before multiple components drive one frame request.
+      - MotionTimeline still exposes Instant while the scalar controller samples by Duration.
+  - id: tanstack-virtual
+    source: local-reference
+    paths:
+      - repo-ref/tanstack-virtual/packages/virtual-core/src/index.ts
+      - repo-ref/tanstack-virtual/packages/react-virtual/e2e/app/measure-element/main.tsx
+      - repo-ref/tanstack-virtual/packages/react-virtual/e2e/app/stale-index/main.tsx
+      - repo-ref/tanstack-virtual/packages/virtual-core/CHANGELOG.md
+    links:
+      - https://tanstack.com/virtual/latest/docs/api/virtualizer
+    notes:
+      - Core API is headless and centered on count, getItemKey, estimateSize, measureElement,
+        overscan, range extraction, scrollToIndex, and measurement cache.
+      - Recent fixes around stale indexes and cached measurements are directly relevant to stable-key
+        invalidation in Open GPUI.
+  - id: react-window
+    source: local-reference
+    paths:
+      - repo-ref/react-window/lib/components/list/types.ts
+      - repo-ref/react-window/lib/components/list/List.tsx
+      - repo-ref/react-window/lib/core/useVirtualizer.ts
+      - repo-ref/react-window/lib/core/getStartStopIndices.ts
+    links:
+      - https://react-window.vercel.app/
+    notes:
+      - The list component separates rowComponent from virtualization math.
+      - Dynamic row heights are supported but documented as less efficient than predetermined sizes.
+      - Programmatic scroll remains imperative and index-based, while row content is caller-owned.
+  - id: virtua
+    source: local-reference
+    paths:
+      - repo-ref/virtua/src/react/Virtualizer.tsx
+      - repo-ref/virtua/docs/react/interfaces/VListProps.md
+      - repo-ref/virtua/docs/react/interfaces/VirtualizerHandle.md
+    links:
+      - https://github.com/inokawa/virtua
+    notes:
+      - Provides a high-level VList plus a customizable virtualizer.
+      - Supports data-backed lazy children, buffer size, item size hints, cache restore,
+        keepMounted, scrollToIndex, offset lookup, and viewport metrics.
+  - id: react-spectrum
+    source: local-reference
+    paths:
+      - repo-ref/react-spectrum/packages/@react-stately/list/src/index.ts
+      - repo-ref/react-spectrum/packages/@react-aria/listbox/src/index.ts
+      - repo-ref/react-spectrum/packages/@react-stately/virtualizer/src/index.ts
+      - repo-ref/react-spectrum/packages/@react-aria/virtualizer/src/index.ts
+    links:
+      - https://react-spectrum.adobe.com/react-aria/useListBox.html
+      - https://react-spectrum.adobe.com/react-stately/collections.html
+    notes:
+      - Sparse checkout only exposes package entry points, but the public architecture still
+        reinforces collection/listbox/virtualizer separation.
+      - Selection, disabled keys, sections, focus, and ARIA belong above the virtualizer core.
+  - id: react-virtuoso-and-platform-lists
+    source: web-reference
+    links:
+      - https://virtuoso.dev/
+      - https://reactnative.dev/docs/virtualizedlist
+      - https://shopify.github.io/flash-list/docs/v2-changes/
+      - https://developer.android.com/develop/ui/compose/lists
+      - https://doc.qt.io/qt-6/qml-qtquick-listview.html
+    notes:
+      - Mature productized virtual lists expose grouped rows, chat/prepend anchoring, keep-visible
+        policies, item reuse, current/highlight state, and list-level lifecycle hooks.
+      - Open GPUI should defer recycling pools and chat anchoring, but stable keys and key-based
+        state are necessary now.
+  - id: accessibility-standards
+    source: web-reference
+    links:
+      - https://www.w3.org/WAI/ARIA/apg/patterns/listbox/
+      - https://www.w3.org/WAI/ARIA/apg/practices/grid-and-table-properties/
+    notes:
+      - Virtualized collection rows must keep position, set-size, active descendant, disabled,
+        and selected metadata consistent even when most rows are offscreen.
+      - Group and section rows require role-specific metadata rather than generic text rows.
+  - id: motion-prior-art
+    source: local-reference
+    paths:
+      - repo-ref/motion/packages/motion-dom/src/frameloop
+      - repo-ref/motion/packages/motion-dom/src/value/index.ts
+      - repo-ref/motion/packages/framer-motion/src/components/AnimatePresence
+      - repo-ref/react-spring/packages/rafz/src/index.ts
+      - repo-ref/react-spring/packages/core/src/FrameLoopDemand.test.ts
+      - repo-ref/fret/docs/adr/0240-frame-clock-and-reduced-motion-gates-v1.md
+      - repo-ref/fret/docs/adr/0034-timers-animation-and-redraw-scheduling.md
+    notes:
+      - Useful concepts are demand-driven frame scheduling, explicit clocks, cancel versus finish,
+        reduced-motion final state, and keyed presence.
+      - Open GPUI should not copy MotionValue subscription graphs, React hooks, WAAPI assumptions,
+        or global frameloops into the core crate.
+execution:
+  batch_size: 3
+  items_per_agent: 3
+  output_dir: docs/research/2026-07-06-open-gpui-virtualized-list-motion-v020/results
