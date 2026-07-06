@@ -139,21 +139,38 @@ For the v0.2.0 `VirtualizedList` and `open-gpui-motion` foundation, run the focu
 before relying on the full workspace gate:
 
 ```sh
-cargo test -p open-gpui-ui-core virtualizer --locked
-cargo test -p open-gpui-ui-components --lib virtualized_list --locked
-cargo test -p open-gpui-ui-components --test public_surface --locked
-cargo test -p open-gpui-ui-components --test layout virtualized --locked
+cargo metadata --no-deps --format-version 1
+cargo test -p open-gpui-ui-core --locked virtualizer
+cargo test -p open-gpui-ui-components --locked --lib virtualized_list
+cargo test -p open-gpui-ui-components --locked --test public_surface
+cargo test -p open-gpui-ui-components --locked --test layout virtualized
 cargo check -p open-gpui-ui-foundation-gallery --tests --locked
-cargo test -p open-gpui-ui-foundation-gallery --test foundation_gallery component_catalog_contracts --locked
-cargo test -p open-gpui-ui-foundation-gallery --test foundation_gallery component_smoke_tree_virtualized --locked
+cargo test -p open-gpui-ui-foundation-gallery --locked --test foundation_gallery component_catalog_contracts
+cargo test -p open-gpui-ui-foundation-gallery --locked --test foundation_gallery component_smoke_tree_virtualized
 cargo check -p open-gpui-motion --tests --locked
 cargo nextest run -p open-gpui-motion --no-fail-fast --status-level fail --locked
 cargo test -p open-gpui-motion --doc --locked
 ```
 
 These gates cover key-based virtualized state, typed and custom-rendered rows, measured-row
-snapshots, active-indicator motion demand/reduced-motion/offscreen behavior, public API inventory,
-and gallery scroll/keyboard containment.
+snapshots, typeahead, replacement-style range selection, sticky-section snapshot metadata,
+active-indicator motion demand/reduced-motion/offscreen behavior, public API inventory, and gallery
+scroll/keyboard containment.
+
+For v0.2.0 crate discovery, the normal-checkout user entry points are:
+
+```sh
+cargo run -p open-gpui-ui-foundation-gallery
+cargo run -p open-gpui-docking-native
+cargo run -p open-gpui-canvas-notes
+```
+
+The component, motion, and docking crate guides live at `crates/ui_components/README.md`,
+`crates/motion/README.md`, and `crates/gpui_docking/README.md`. `open-gpui-ui-components`,
+`open-gpui-motion`, and `open-gpui-docking` package metadata should point at those crate-local
+README files. The Jellyflow canvas showcase remains optional and must be run explicitly with
+`cargo run --manifest-path examples/canvas-jellyflow/Cargo.toml` only when its sibling repositories
+are present.
 
 The gallery package includes Components-page runtime smoke coverage for regressions that state-only
 tests can miss: short-viewport page scrolling and navigation reset, navigation rail scrolling,

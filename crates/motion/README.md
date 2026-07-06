@@ -39,6 +39,23 @@ terminal pruning, and `MotionFrameDemand` aggregation. They do not prove row ent
 public presence, keyframes, repeat/reverse/speed controls, shared-layout orchestration, WAAPI, or a
 global scheduler.
 
+## Where To See It
+
+Run the component gallery to inspect Splitter and VirtualizedList motion in a normal checkout:
+
+```sh
+cargo run -p open-gpui-ui-foundation-gallery
+```
+
+Run the docking example to inspect layout and affordance motion through the docking host:
+
+```sh
+cargo run -p open-gpui-docking-native
+```
+
+Both examples keep frame scheduling in their GPUI adapters. `open-gpui-motion` only publishes
+deterministic samples and frame demand.
+
 ## Boundaries
 
 This crate deliberately does not provide React hooks, CSS parsing, DOM measurement, WAAPI behavior,
