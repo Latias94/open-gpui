@@ -1,13 +1,13 @@
 [package]
 name = "open-gpui-canvas-jellyflow"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
-license.workspace = true
-repository.workspace = true
-homepage.workspace = true
-documentation.workspace = true
-readme.workspace = true
+version = "0.2.0"
+edition = "2024"
+authors = ["Mingzhen Zhuang <superfrankie621@gmail.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/Latias94/open-gpui"
+homepage = "https://github.com/Latias94/open-gpui"
+documentation = "https://docs.rs/open-gpui"
+readme = "README.md"
 publish = false
 description = "Native Jellyflow graph projection example for open-gpui-canvas."
 
@@ -18,17 +18,14 @@ path = "src/main.rs"
 [dependencies]
 jellyflow = { path = "../../../../crates/jellyflow" }
 jellyflow-open-gpui = { path = "../../../../crates/jellyflow-open-gpui" }
-open_gpui.workspace = true
-open_gpui_canvas.workspace = true
-open_gpui_platform = { workspace = true, features = ["font-kit"] }
-open_gpui_ui_components.workspace = true
-open_gpui_ui_core.workspace = true
-serde_json.workspace = true
+open_gpui = { package = "open-gpui", path = "../../crates/gpui", default-features = false }
+open_gpui_canvas = { package = "open-gpui-canvas", path = "../../crates/canvas" }
+open_gpui_platform = { package = "open-gpui-platform", path = "../../crates/gpui_platform", default-features = false, features = ["font-kit"] }
+open_gpui_ui_components = { package = "open-gpui-ui-components", path = "../../crates/ui_components" }
+open_gpui_ui_core = { package = "open-gpui-ui-core", path = "../../crates/ui_core" }
+serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
 
 [dev-dependencies]
-image.workspace = true
-open_gpui = { workspace = true, features = ["test-support"] }
-open_gpui_platform = { workspace = true, features = ["font-kit", "test-support"] }
-
-[lints]
-workspace = true
+image = "0.25.1"
+open_gpui = { package = "open-gpui", path = "../../crates/gpui", default-features = false, features = ["test-support"] }
+open_gpui_platform = { package = "open-gpui-platform", path = "../../crates/gpui_platform", default-features = false, features = ["font-kit", "test-support"] }

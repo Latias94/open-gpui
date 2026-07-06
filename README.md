@@ -63,15 +63,26 @@ During local development, use workspace path dependencies instead of registry ve
 - `crates/motion`: renderer-neutral `open-gpui-motion` timing, spring, policy, projection, and frame-demand primitives
 - `crates/canvas`: reusable `open-gpui-canvas` model and interaction primitives for infinite canvas applications
 - `examples/canvas-notes`: native JSON Canvas note-map example
-- `examples/canvas-jellyflow`: native Jellyflow graph projection example
+- `examples/canvas-jellyflow`: optional native Jellyflow graph projection showcase that requires adjacent Jellyflow repositories
+- `examples/docking-native`: native docking workspace example
 - `examples/smoke-native`: native smoke example
+- `examples/ui-foundation-gallery`: native UI component gallery and conformance surface
 - `xtask`: workspace verification and import-boundary checks
 
-Run the canvas examples with:
+Run normal-checkout examples with:
 
 ```sh
 cargo run -p open-gpui-canvas-notes
-cargo run -p open-gpui-canvas-jellyflow
+cargo run -p open-gpui-docking-native
+cargo run -p open-gpui-ui-foundation-gallery
+```
+
+The Jellyflow showcase is excluded from the default workspace because it depends on sibling
+`jellyflow` and `jellyflow-open-gpui` repositories. When those repositories are present, run it
+explicitly:
+
+```sh
+cargo run --manifest-path examples/canvas-jellyflow/Cargo.toml
 ```
 
 ## Verification
