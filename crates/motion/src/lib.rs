@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 
 //! Renderer-neutral motion primitives for Open GPUI.

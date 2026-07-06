@@ -135,6 +135,26 @@ cargo nextest run -p open-gpui-ui-components
 cargo nextest run -p open-gpui-ui-foundation-gallery
 ```
 
+For the v0.2.0 `VirtualizedList` and `open-gpui-motion` foundation, run the focused gates below
+before relying on the full workspace gate:
+
+```sh
+cargo test -p open-gpui-ui-core virtualizer --locked
+cargo test -p open-gpui-ui-components --lib virtualized_list --locked
+cargo test -p open-gpui-ui-components --test public_surface --locked
+cargo test -p open-gpui-ui-components --test layout virtualized --locked
+cargo check -p open-gpui-ui-foundation-gallery --tests --locked
+cargo test -p open-gpui-ui-foundation-gallery --test foundation_gallery component_catalog_contracts --locked
+cargo test -p open-gpui-ui-foundation-gallery --test foundation_gallery component_smoke_tree_virtualized --locked
+cargo check -p open-gpui-motion --tests --locked
+cargo nextest run -p open-gpui-motion --no-fail-fast --status-level fail --locked
+cargo test -p open-gpui-motion --doc --locked
+```
+
+These gates cover key-based virtualized state, typed and custom-rendered rows, measured-row
+snapshots, active-indicator motion demand/reduced-motion/offscreen behavior, public API inventory,
+and gallery scroll/keyboard containment.
+
 The gallery package includes Components-page runtime smoke coverage for regressions that state-only
 tests can miss: short-viewport page scrolling and navigation reset, navigation rail scrolling,
 Select popup outside dismissal, nested ScrollArea wheel scrolling, vertical Tabs rail scrolling,

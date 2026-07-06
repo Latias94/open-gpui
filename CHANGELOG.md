@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   foundation, including theme tokens, component contracts, accessibility helpers, overlay
   primitives, choice/menu/select/combobox surfaces, table and tree foundations, and gallery
   conformance coverage.
+- Added the official `VirtualizedList` component with key-based active/selected state, typed row
+  descriptors, section/separator/status rows, multi-select activation payloads, measured-row
+  virtualizer snapshots, a constrained `render_row` content hook, and motion-backed active
+  descendant chrome.
 - Added `open-gpui-command` for command-center workflows, including command providers, keymap
   preflight, shortcut inspection and editing state, conflict diagnostics, palette query history,
   and provider refresh plumbing.
@@ -40,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first render, and dispatches callbacks without holding mutable callback borrows across user code.
 - Overlay, choice, command, table, tree, and gallery internals were tightened around explicit
   runtime requests and contract objects, reducing shallow compatibility surfaces before 1.0.
+- `VirtualizedList` is now a collection-backed component instead of an index-primary label list.
+  It uses `VirtualizerState` for range math, keeps render plans crate-private, exposes behavior
+  snapshots for probes, and treats active-indicator motion as paint-only chrome.
 - Canvas APIs were tightened so mutation, paint, runtime cache, edge routing, and kind policy stay
   behind the editor/runtime boundaries.
 - Dependency baselines were refreshed, including `windows`/`windows-core` 0.62, `wgpu` 29,
@@ -75,6 +82,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   action names are still accepted as deprecated aliases for migration.
 - Platform-specific identifiers for keyrings, pasteboard metadata, Windows credential targets, and
   Windows window classes now use Open GPUI names.
+- `VirtualizedList` was rebuilt before v0.2.0: index-only activation and text-label-only rows are
+  replaced by stable keys, typed descriptors, `VirtualizedListSelectionMode`,
+  `VirtualizedListActivation`, `VirtualizedListSelectionChange`,
+  `VirtualizedListBehaviorSnapshot`, `VirtualizedListRowMeasureMode`, and the `render_row`
+  content-renderer boundary.
 
 ## [0.1.0] - 2026-06-09
 

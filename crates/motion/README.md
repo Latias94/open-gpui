@@ -22,6 +22,21 @@ Adapters keep authority over rendering, input, focus, accessibility, and frame s
 Splitter, docking host, canvas, or application decides when to request a GPUI frame and how to map a
 motion sample into painted elements.
 
+## First-Party Proof Scope
+
+The v0.2.0 stable proof is intentionally small:
+
+- `Splitter` consumes scalar controller samples for programmatic panel layout transitions.
+- `VirtualizedList` consumes scalar controller samples for an active-descendant indicator that
+  moves paint-only chrome by stable row key.
+- Docking consumes neutral motion geometry and projection helpers for presentation and affordance
+  evidence.
+
+These consumers prove deterministic clocks, retargeting, reduced-motion final state, cancellation,
+terminal pruning, and `MotionFrameDemand` aggregation. They do not prove row enter/exit animation,
+public presence, keyframes, repeat/reverse/speed controls, shared-layout orchestration, WAAPI, or a
+global scheduler.
+
 ## Boundaries
 
 This crate deliberately does not provide React hooks, CSS parsing, DOM measurement, WAAPI behavior,

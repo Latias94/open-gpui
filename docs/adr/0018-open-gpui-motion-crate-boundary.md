@@ -39,6 +39,9 @@ The stable surface is limited to contracts proven by current first-party consume
 keyframes, repeat/reverse/speed controls, public value subscriptions, high-level builders, DOM/CSS
 parsing, React hooks, WAAPI behavior, browser-native acceleration, and full shared-layout
 orchestration are not accepted as stable core promises.
+For v0.2.0, `VirtualizedList` extends the proof set by consuming scalar controller samples for a
+stable-key active-descendant indicator that animates paint-only chrome while leaving row layout,
+scroll offsets, focus, hit testing, selection, and accessibility state under the component adapter.
 
 ## Consequences
 

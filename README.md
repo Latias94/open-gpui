@@ -58,6 +58,8 @@ During local development, use workspace path dependencies instead of registry ve
 - `crates/gpui_linux`, `crates/gpui_macos`, `crates/gpui_windows`, `crates/gpui_web`: platform backends
 - `crates/gpui_wgpu`: renderer backend
 - `crates/gpui_macros`: Open GPUI proc macros
+- `crates/ui_core`: renderer-neutral UI contracts, geometry, virtualizer math, and component state helpers
+- `crates/ui_components`: official component library surfaces such as Listbox, Command, Table, Tree, and VirtualizedList
 - `crates/motion`: renderer-neutral `open-gpui-motion` timing, spring, policy, projection, and frame-demand primitives
 - `crates/canvas`: reusable `open-gpui-canvas` model and interaction primitives for infinite canvas applications
 - `examples/canvas-notes`: native JSON Canvas note-map example
