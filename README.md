@@ -23,8 +23,8 @@ Add the main framework crate:
 
 ```toml
 [dependencies]
-open_gpui = { package = "open-gpui", version = "0.1.0" }
-open_gpui_platform = { package = "open-gpui-platform", version = "0.1.0" }
+open_gpui = { package = "open-gpui", version = "0.2.0" }
+open_gpui_platform = { package = "open-gpui-platform", version = "0.2.0" }
 ```
 
 Use `open_gpui::...` in Rust code:
