@@ -53,7 +53,7 @@ pub struct VirtualizedListSample {
 }
 
 /// Precomputed state summary for a virtualized list sample.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct VirtualizedListSampleStateSummary {
     /// Total source item count.
     pub item_count: usize,
@@ -73,6 +73,10 @@ pub struct VirtualizedListSampleStateSummary {
     pub active_index: Option<usize>,
     /// Selected row index.
     pub selected_index: Option<usize>,
+    /// Active row key.
+    pub active_key: Option<String>,
+    /// Selected row keys.
+    pub selected_keys: Vec<String>,
 }
 
 impl VirtualizedListSampleStateSummary {
@@ -90,6 +94,13 @@ impl VirtualizedListSampleStateSummary {
             overscan_end: overscan.end(),
             active_index: snapshot.state().active_index(),
             selected_index: snapshot.state().selected_index(),
+            active_key: snapshot.state().active_key().map(str::to_owned),
+            selected_keys: snapshot
+                .state()
+                .selected_keys()
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
         }
     }
 }
@@ -108,12 +119,13 @@ impl VirtualizedListSample {
         .viewport_item_count(self.state.viewport_item_count())
         .disabled(self.state.disabled());
 
-        if let Some(active_index) = self.state.active_index() {
-            list = list.default_active_index(active_index);
+        if let Some(active_key) = self.state.active_key() {
+            list = list.default_active_key(active_key);
         }
-        if let Some(selected_index) = self.state.selected_index() {
-            list = list.default_selected_index(selected_index);
+        if !self.state.selected_key_set().is_empty() {
+            list = list.default_selected_keys(self.state.selected_keys());
         }
+        list = list.selection_mode(self.state.selection_mode());
 
         list
     }
@@ -125,8 +137,8 @@ impl VirtualizedListSample {
     }
 
     /// Returns the precomputed state summary.
-    pub const fn state_summary(&self) -> VirtualizedListSampleStateSummary {
-        self.state_summary
+    pub fn state_summary(&self) -> VirtualizedListSampleStateSummary {
+        self.state_summary.clone()
     }
 }
 
@@ -139,9 +151,10 @@ pub fn virtualized_list_state_contract_samples() -> [VirtualizedListStateContrac
         state: VirtualizedListState::resolve(
             Size::Small,
             false,
-            10_000,
-            Some(42),
-            Some(40),
+            (0..10_000).map(|index| release_navigation_item(index).state_item()),
+            Some("release-nav-0042"),
+            ["release-nav-0040"],
+            VirtualizedListSelectionMode::Single,
             Some(12),
         ),
         scroll_strategy: VirtualizedListScrollStrategy::Center,
@@ -161,18 +174,26 @@ fn build_virtualized_list_samples() -> [VirtualizedListSample; 1] {
     let row_height = ui_px(28.0);
     let overscan = 4;
     let item_count = 10_000;
-    let items = Arc::from(
+    let items: Arc<[VirtualizedListItemDescriptor]> = Arc::from(
         (0..item_count)
             .map(release_navigation_item)
             .collect::<Vec<_>>()
             .into_boxed_slice(),
     );
-    let state = VirtualizedListState::resolve(size, false, item_count, Some(0), Some(0), Some(8))
-        .with_metrics(
-            VirtualizedListMetrics::from_size(size)
-                .with_row_height(row_height)
-                .with_overscan_count(overscan),
-        );
+    let state = VirtualizedListState::resolve(
+        size,
+        false,
+        items.iter().map(|item| item.state_item()),
+        Some("release-nav-0000"),
+        ["release-nav-0000"],
+        VirtualizedListSelectionMode::Single,
+        Some(8),
+    )
+    .with_metrics(
+        VirtualizedListMetrics::from_size(size)
+            .with_row_height(row_height)
+            .with_overscan_count(overscan),
+    );
 
     [VirtualizedListSample {
         id: "release-navigation",

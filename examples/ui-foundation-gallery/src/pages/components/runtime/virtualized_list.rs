@@ -7,6 +7,10 @@ pub struct VirtualizedListSampleActivation {
     pub sample_id: String,
     /// Activated item index.
     pub index: usize,
+    /// Activated item key.
+    pub key: String,
+    /// Activated item text value.
+    pub text_value: String,
 }
 
 /// Runtime activation log used by gallery smoke tests.
@@ -33,12 +37,16 @@ impl VirtualizedListSampleRuntimeLog {
 pub fn record_virtualized_list_activation(
     sample_id: impl Into<String>,
     index: usize,
+    key: impl Into<String>,
+    text_value: impl Into<String>,
     cx: &mut App,
 ) {
     cx.update_default_global::<VirtualizedListSampleRuntimeLog, _>(|log, _| {
         log.activations.push(VirtualizedListSampleActivation {
             sample_id: sample_id.into(),
             index,
+            key: key.into(),
+            text_value: text_value.into(),
         });
     });
 }

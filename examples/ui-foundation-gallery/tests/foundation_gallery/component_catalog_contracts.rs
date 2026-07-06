@@ -1460,7 +1460,15 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(release_navigation.items.len(), 10_000);
     assert_eq!(release_navigation.state.item_count(), 10_000);
     assert_eq!(release_navigation.state.active_index(), Some(0));
+    assert_eq!(
+        release_navigation.state.active_key(),
+        Some("release-nav-0000")
+    );
     assert_eq!(release_navigation.state.selected_index(), Some(0));
+    assert_eq!(
+        release_navigation.state.selected_keys(),
+        ["release-nav-0000"]
+    );
     let release_navigation_snapshot = release_navigation.behavior_snapshot();
     let release_navigation_summary = release_navigation.state_summary();
     assert_eq!(release_navigation_snapshot.role(), Role::ListBox);
@@ -1468,7 +1476,15 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(release_navigation_summary.item_count, 10_000);
     assert_eq!(release_navigation_summary.visible_start, 0);
     assert_eq!(release_navigation_summary.active_index, Some(0));
+    assert_eq!(
+        release_navigation_summary.active_key.as_deref(),
+        Some("release-nav-0000")
+    );
     assert_eq!(release_navigation_summary.selected_index, Some(0));
+    assert_eq!(
+        release_navigation_summary.selected_keys,
+        vec!["release-nav-0000".to_owned()]
+    );
     assert!(
         release_navigation_snapshot.rendered_row_count()
             <= release_navigation_snapshot.visible_row_count() + release_navigation.overscan
@@ -1515,7 +1531,9 @@ fn components_page_state_contract_samples_expose_tree_and_virtualized_list_contr
     );
     assert_eq!(virtualized.state.item_count(), 10_000);
     assert_eq!(virtualized.state.active_index(), Some(42));
+    assert_eq!(virtualized.state.active_key(), Some("release-nav-0042"));
     assert_eq!(virtualized.state.selected_index(), Some(40));
+    assert_eq!(virtualized.state.selected_keys(), ["release-nav-0040"]);
     assert_eq!(virtualized.state.viewport_item_count(), 12);
     assert_eq!(virtualized.state.navigation_target("pageup"), Some(30));
     assert_eq!(virtualized.state.navigation_target("pagedown"), Some(54));
@@ -1523,8 +1541,8 @@ fn components_page_state_contract_samples_expose_tree_and_virtualized_list_contr
         virtualized
             .state
             .activation_for_key("space")
-            .map(|activation| activation.index()),
-        Some(42)
+            .map(|activation| (activation.index(), activation.key().to_owned())),
+        Some((42, "release-nav-0042".to_owned()))
     );
 }
 

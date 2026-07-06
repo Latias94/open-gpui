@@ -77,8 +77,8 @@ fn virtualized_list_behavior_snapshot_uses_item_descriptors_and_virtualizer_cont
         .collect::<Vec<_>>();
     let snapshot = VirtualizedList::new("contracts-list", "Contracts list", items)
         .with_size(Size::Small)
-        .default_active_index(104)
-        .default_selected_index(101)
+        .default_active_key("item-0104")
+        .default_selected_key("item-0101")
         .viewport_item_count(7)
         .behavior_snapshot_with_viewport(ui_px(2_800.0), ui_px(196.0));
 
@@ -113,8 +113,10 @@ fn virtualized_list_behavior_snapshot_uses_item_descriptors_and_virtualizer_cont
     assert_eq!(selected_row.index(), 101);
     assert!(selected_row.selected());
 
-    let activation = VirtualizedListActivation::new(active_row.index());
+    let activation =
+        VirtualizedListActivation::new(active_row.index(), active_row.key(), active_row.label());
     assert_eq!(activation.index(), 104);
+    assert_eq!(activation.key(), "item-0104");
     assert_eq!(
         virtualized_list_scroll_target(
             VirtualizedListScrollStrategy::Top,
@@ -142,8 +144,8 @@ fn virtualized_list_behavior_snapshot_applies_builder_metrics() {
         .with_size(Size::Small)
         .row_height(ui_px(24.0))
         .overscan(2)
-        .default_active_index(5)
-        .default_selected_index(3)
+        .default_active_key("item-0005")
+        .default_selected_key("item-0003")
         .viewport_item_count(4)
         .behavior_snapshot_with_viewport(ui_px(48.0), ui_px(96.0));
 
@@ -505,10 +507,35 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     let _direct_moved_tree = apply_tree_move(moved_tree.clone(), &root_tree_move);
     let prelude_move_state: prelude::TreeState =
         prelude::TreeState::resolve(Size::Medium, "Move tree", None, None, moved_tree);
-    let root_virtualized_state: root::VirtualizedListState =
-        root::VirtualizedListState::resolve(Size::Small, false, 12, Some(4), Some(4), Some(3));
+    let root_virtualized_state: root::VirtualizedListState = root::VirtualizedListState::resolve(
+        Size::Small,
+        false,
+        (0..12).map(|index| {
+            root::VirtualizedListStateItem::new(
+                format!("root-item-{index}"),
+                format!("Root item {index}"),
+            )
+        }),
+        Some("root-item-4"),
+        ["root-item-4"],
+        root::VirtualizedListSelectionMode::Single,
+        Some(3),
+    );
     let prelude_virtualized_state: prelude::VirtualizedListState =
-        prelude::VirtualizedListState::resolve(Size::Small, false, 12, Some(4), Some(4), Some(3));
+        prelude::VirtualizedListState::resolve(
+            Size::Small,
+            false,
+            (0..12).map(|index| {
+                prelude::VirtualizedListStateItem::new(
+                    format!("prelude-item-{index}"),
+                    format!("Prelude item {index}"),
+                )
+            }),
+            Some("prelude-item-4"),
+            ["prelude-item-4"],
+            prelude::VirtualizedListSelectionMode::Single,
+            Some(3),
+        );
     let root_virtualized_items = (0..12)
         .map(|index| {
             root::VirtualizedListItemDescriptor::new(
@@ -523,8 +550,8 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         root_virtualized_items.clone(),
     )
     .with_size(Size::Small)
-    .default_active_index(4)
-    .default_selected_index(4)
+    .default_active_key("root-item-4")
+    .default_selected_key("root-item-4")
     .viewport_item_count(3);
     let prelude_virtualized_items = (0..12)
         .map(|index| {
@@ -540,8 +567,8 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         prelude_virtualized_items.clone(),
     )
     .with_size(Size::Small)
-    .default_active_index(4)
-    .default_selected_index(4)
+    .default_active_key("prelude-item-4")
+    .default_selected_key("prelude-item-4")
     .viewport_item_count(3);
     let root_virtualized_snapshot: root::VirtualizedListBehaviorSnapshot =
         root_virtualized_list.behavior_snapshot_with_viewport(ui_px(28.0), ui_px(56.0));
@@ -578,9 +605,17 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     let _prelude_tree_action: Option<prelude::TreeKeyboardAction> =
         prelude_tree_state.keyboard_action_for_key("right");
     let _root_virtualized_activation: root::VirtualizedListActivation =
-        root::VirtualizedListActivation::new(4);
+        root::VirtualizedListActivation::new(4, "root-item-4", "Root item 4");
     let _prelude_virtualized_activation: prelude::VirtualizedListActivation =
-        prelude::VirtualizedListActivation::new(4);
+        prelude::VirtualizedListActivation::new(4, "prelude-item-4", "Prelude item 4");
+    let _root_virtualized_state_item: root::VirtualizedListStateItem =
+        root::VirtualizedListStateItem::new("root-item", "Root item");
+    let _prelude_virtualized_state_item: prelude::VirtualizedListStateItem =
+        prelude::VirtualizedListStateItem::new("prelude-item", "Prelude item");
+    let root_virtualized_selection_mode: root::VirtualizedListSelectionMode =
+        root::VirtualizedListSelectionMode::Multiple;
+    let prelude_virtualized_selection_mode: prelude::VirtualizedListSelectionMode =
+        prelude::VirtualizedListSelectionMode::Single;
     let _root_scroll_strategy: root::VirtualizedListScrollStrategy =
         root::VirtualizedListScrollStrategy::Center;
     let _prelude_scroll_strategy: prelude::VirtualizedListScrollStrategy =
@@ -635,9 +670,19 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     );
     assert_eq!(root_virtualized_component_state.active_index(), Some(4));
     assert_eq!(
+        root_virtualized_component_state.active_key(),
+        Some("root-item-4")
+    );
+    assert_eq!(
         prelude_virtualized_component_state.selected_index(),
         Some(4)
     );
+    assert_eq!(
+        prelude_virtualized_component_state.selected_keys(),
+        ["prelude-item-4"]
+    );
+    assert_eq!(root_virtualized_selection_mode.as_str(), "multiple");
+    assert_eq!(prelude_virtualized_selection_mode.as_str(), "single");
     assert_eq!(root_virtualized_snapshot.role(), Role::ListBox);
     assert_eq!(prelude_virtualized_snapshot.row_role(), Role::ListBoxOption);
     assert_eq!(

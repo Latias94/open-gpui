@@ -26,6 +26,8 @@ use std::sync::Arc;
 
 type VirtualizedListActivationHandler =
     Rc<dyn Fn(VirtualizedListActivation, &mut Window, &mut App)>;
+type VirtualizedListSelectionChangeHandler =
+    Rc<dyn Fn(VirtualizedListSelectionChange, &mut Window, &mut App)>;
 
 /// Scroll alignment requested when a virtualized row should be revealed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -49,6 +51,26 @@ impl VirtualizedListScrollStrategy {
             Self::Top => "top",
             Self::Center => "center",
             Self::Bottom => "bottom",
+        }
+    }
+}
+
+/// Selection behavior for a virtualized list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VirtualizedListSelectionMode {
+    /// A single row may be selected. Click, Enter, and Space select and activate.
+    #[default]
+    Single,
+    /// Multiple rows may be selected. Click and Space toggle selection; Enter activates.
+    Multiple,
+}
+
+impl VirtualizedListSelectionMode {
+    /// Returns the stable selection mode label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Single => "single",
+            Self::Multiple => "multiple",
         }
     }
 }
@@ -87,9 +109,71 @@ impl VirtualizedListItemDescriptor {
         &self.label
     }
 
+    /// Returns the text value used by typeahead and accessibility.
+    pub fn text_value(&self) -> &str {
+        &self.label
+    }
+
     /// Returns whether the item is disabled.
     pub const fn disabled_state(&self) -> bool {
         self.disabled
+    }
+
+    /// Returns the renderer-neutral state item for this descriptor.
+    pub fn state_item(&self) -> VirtualizedListStateItem {
+        VirtualizedListStateItem::new(self.key(), self.text_value()).disabled(self.disabled)
+    }
+}
+
+/// Renderer-neutral item metadata used by virtualized-list state resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VirtualizedListStateItem {
+    key: String,
+    disabled: bool,
+    text_value: String,
+}
+
+impl VirtualizedListStateItem {
+    /// Creates a state item.
+    pub fn new(key: impl Into<String>, text_value: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            disabled: false,
+            text_value: text_value.into(),
+        }
+    }
+
+    /// Marks the item as disabled for focus, selection, and activation.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// Returns the stable semantic key.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Returns whether this item is disabled.
+    pub const fn disabled_state(&self) -> bool {
+        self.disabled
+    }
+
+    /// Returns the text value used by typeahead and accessibility.
+    pub fn text_value(&self) -> &str {
+        &self.text_value
+    }
+}
+
+impl From<VirtualizedListItemDescriptor> for VirtualizedListStateItem {
+    fn from(item: VirtualizedListItemDescriptor) -> Self {
+        Self::new(item.key, item.label).disabled(item.disabled)
+    }
+}
+
+impl From<&VirtualizedListItemDescriptor> for VirtualizedListStateItem {
+    fn from(item: &VirtualizedListItemDescriptor) -> Self {
+        item.state_item()
     }
 }
 
@@ -136,22 +220,190 @@ impl VirtualizedListMetrics {
     }
 }
 
-/// Resolved activation payload for a virtualized row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VirtualizedListActivation {
+/// Resolved item target for key-first virtualized-list actions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VirtualizedListItemTarget {
+    key: String,
     index: usize,
+    disabled: bool,
+    text_value: String,
+}
+
+impl VirtualizedListItemTarget {
+    /// Creates an item target.
+    fn new(
+        key: impl Into<String>,
+        index: usize,
+        disabled: bool,
+        text_value: impl Into<String>,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            index,
+            disabled,
+            text_value: text_value.into(),
+        }
+    }
+
+    /// Returns the stable item key.
+    fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Returns the resolved item index.
+    /// Returns whether the target is disabled.
+    const fn disabled(&self) -> bool {
+        self.disabled
+    }
+}
+
+/// Resolved activation payload for a virtualized row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VirtualizedListActivation {
+    key: String,
+    index: usize,
+    disabled: bool,
+    selected: bool,
+    text_value: String,
 }
 
 impl VirtualizedListActivation {
-    /// Creates an activation payload for a visible item index.
-    pub const fn new(index: usize) -> Self {
-        Self { index }
+    /// Creates an activation payload for a visible item.
+    pub fn new(index: usize, key: impl Into<String>, text_value: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            index,
+            disabled: false,
+            selected: false,
+            text_value: text_value.into(),
+        }
+    }
+
+    fn from_target(target: VirtualizedListItemTarget, selected: bool) -> Self {
+        Self {
+            key: target.key,
+            index: target.index,
+            disabled: target.disabled,
+            selected,
+            text_value: target.text_value,
+        }
+    }
+
+    /// Returns the activated item key.
+    pub fn key(&self) -> &str {
+        &self.key
     }
 
     /// Returns the activated item index.
-    pub const fn index(self) -> usize {
+    pub const fn index(&self) -> usize {
         self.index
     }
+
+    /// Returns whether the activated item was disabled.
+    pub const fn disabled(&self) -> bool {
+        self.disabled
+    }
+
+    /// Returns whether the activated item was selected before activation.
+    pub const fn selected(&self) -> bool {
+        self.selected
+    }
+
+    /// Returns the activated item text value.
+    pub fn text_value(&self) -> &str {
+        &self.text_value
+    }
+}
+
+/// Selection-change payload for controlled virtualized-list selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VirtualizedListSelectionChange {
+    changed_key: String,
+    selected_keys: Vec<String>,
+}
+
+impl VirtualizedListSelectionChange {
+    /// Creates a selection-change payload.
+    pub fn new<K>(
+        changed_key: impl Into<String>,
+        selected_keys: impl IntoIterator<Item = K>,
+    ) -> Self
+    where
+        K: Into<String>,
+    {
+        Self {
+            changed_key: changed_key.into(),
+            selected_keys: selected_keys.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    /// Returns the key whose selection changed.
+    pub fn changed_key(&self) -> &str {
+        &self.changed_key
+    }
+
+    /// Returns all selected keys after the change.
+    pub fn selected_keys(&self) -> Vec<&str> {
+        self.selected_keys.iter().map(String::as_str).collect()
+    }
+
+    fn selected_key_set(&self) -> BTreeSet<String> {
+        self.selected_keys.iter().cloned().collect()
+    }
+}
+
+/// Resolved key-based scroll target for a virtualized list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VirtualizedListRevealTarget {
+    key: String,
+    index: usize,
+    scroll_offset: UiPx,
+    estimated: bool,
+}
+
+impl VirtualizedListRevealTarget {
+    /// Creates a reveal target.
+    pub fn new(key: impl Into<String>, index: usize, scroll_offset: UiPx, estimated: bool) -> Self {
+        Self {
+            key: key.into(),
+            index,
+            scroll_offset,
+            estimated,
+        }
+    }
+
+    /// Returns the target key.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Returns the target index.
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Returns the resolved scroll offset.
+    pub const fn scroll_offset(&self) -> UiPx {
+        self.scroll_offset
+    }
+
+    /// Returns whether the target used estimated geometry.
+    pub const fn estimated(&self) -> bool {
+        self.estimated
+    }
+}
+
+/// Result of resolving a key-based reveal request.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VirtualizedListRevealResult {
+    /// The row can be revealed with exact fixed-row geometry.
+    Revealed(VirtualizedListRevealTarget),
+    /// The row can be revealed with estimated geometry.
+    Estimated(VirtualizedListRevealTarget),
+    /// The key is not present in the current collection.
+    NotFound(String),
+    /// The key is present but belongs to a non-selectable structural row.
+    NotSelectable(String),
 }
 
 /// Resolved virtualized-list state used by tests, adapters, and rendering.
@@ -159,40 +411,87 @@ impl VirtualizedListActivation {
 pub struct VirtualizedListState {
     size: Size,
     disabled: bool,
-    item_count: usize,
+    items: Arc<[VirtualizedListStateItem]>,
+    duplicate_keys: BTreeSet<String>,
+    active_key: Option<String>,
     active_index: Option<usize>,
-    selected_index: Option<usize>,
+    selected_keys: BTreeSet<String>,
+    selected_indices: Vec<usize>,
+    selection_mode: VirtualizedListSelectionMode,
     viewport_item_count: usize,
     metrics: VirtualizedListMetrics,
 }
 
 impl VirtualizedListState {
     /// Resolves public state for a virtualized list.
-    pub fn resolve(
+    pub fn resolve<I, T, S, K>(
         size: Size,
         disabled: bool,
-        item_count: usize,
-        active_index: Option<usize>,
-        selected_index: Option<usize>,
+        items: I,
+        active_key: Option<&str>,
+        selected_keys: S,
+        selection_mode: VirtualizedListSelectionMode,
         viewport_item_count: Option<usize>,
-    ) -> Self {
-        let selected_index = selected_index.and_then(|index| valid_index(index, item_count));
-        let active_index = if disabled || item_count == 0 {
+    ) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<VirtualizedListStateItem>,
+        S: IntoIterator<Item = K>,
+        K: AsRef<str>,
+    {
+        let items: Arc<[VirtualizedListStateItem]> = Arc::from(
+            items
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
+        let duplicate_keys = duplicate_state_item_keys(items.as_ref());
+        let requested_selected_keys = selected_keys
+            .into_iter()
+            .map(|key| key.as_ref().to_owned())
+            .collect::<BTreeSet<_>>();
+
+        let mut selected_keys = BTreeSet::new();
+        let mut selected_indices = Vec::new();
+        if !disabled {
+            for (index, item) in items.iter().enumerate() {
+                if !is_selectable_state_item(item, &duplicate_keys) {
+                    continue;
+                }
+
+                if requested_selected_keys.contains(item.key()) {
+                    selected_keys.insert(item.key().to_owned());
+                    selected_indices.push(index);
+                    if selection_mode == VirtualizedListSelectionMode::Single {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let active_index = if disabled {
             None
         } else {
-            active_index
-                .and_then(|index| valid_index(index, item_count))
-                .or(selected_index)
-                .or(Some(0))
+            active_key
+                .and_then(|key| {
+                    state_item_index_by_unique_key(items.as_ref(), &duplicate_keys, key)
+                })
+                .or_else(|| selected_indices.first().copied())
+                .or_else(|| first_selectable_state_item_index(items.as_ref(), &duplicate_keys))
         };
-        let selected_index = if disabled { None } else { selected_index };
+        let active_key = active_index.map(|index| items[index].key().to_owned());
 
         Self {
             size,
             disabled,
-            item_count,
+            items,
+            duplicate_keys,
+            active_key,
             active_index,
-            selected_index,
+            selected_keys,
+            selected_indices,
+            selection_mode,
             viewport_item_count: viewport_item_count.filter(|count| *count > 0).unwrap_or(1),
             metrics: VirtualizedListMetrics::from_size(size),
         }
@@ -209,8 +508,18 @@ impl VirtualizedListState {
     }
 
     /// Returns the total item count.
-    pub const fn item_count(&self) -> usize {
-        self.item_count
+    pub fn item_count(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Returns the resolved state items.
+    pub fn items(&self) -> &[VirtualizedListStateItem] {
+        &self.items
+    }
+
+    /// Returns the active descendant key.
+    pub fn active_key(&self) -> Option<&str> {
+        self.active_key.as_deref()
     }
 
     /// Returns the active descendant index.
@@ -218,9 +527,29 @@ impl VirtualizedListState {
         self.active_index
     }
 
-    /// Returns the selected row index.
-    pub const fn selected_index(&self) -> Option<usize> {
-        self.selected_index
+    /// Returns the first selected row index in item order.
+    pub fn selected_index(&self) -> Option<usize> {
+        self.selected_indices.first().copied()
+    }
+
+    /// Returns selected row indices in item order.
+    pub fn selected_indices(&self) -> &[usize] {
+        &self.selected_indices
+    }
+
+    /// Returns selected keys in sorted key order.
+    pub fn selected_keys(&self) -> Vec<&str> {
+        self.selected_keys.iter().map(String::as_str).collect()
+    }
+
+    /// Returns selected keys as a set.
+    pub const fn selected_key_set(&self) -> &BTreeSet<String> {
+        &self.selected_keys
+    }
+
+    /// Returns the selection behavior.
+    pub const fn selection_mode(&self) -> VirtualizedListSelectionMode {
+        self.selection_mode
     }
 
     /// Returns the estimated number of rows visible in the viewport.
@@ -245,8 +574,8 @@ impl VirtualizedListState {
     }
 
     /// Returns whether the list has no items to render.
-    pub const fn visible_empty(&self) -> bool {
-        self.item_count == 0
+    pub fn visible_empty(&self) -> bool {
+        self.items.is_empty()
     }
 
     /// Returns the target index for an APG-style navigation key.
@@ -255,26 +584,148 @@ impl VirtualizedListState {
             return None;
         }
 
-        virtualized_list_navigation_target(
+        let active_index = self.active_index?;
+        let selectable_indices = self.selectable_indices();
+        let active_position = selectable_indices
+            .iter()
+            .position(|index| *index == active_index)?;
+        let target_position = virtualized_list_navigation_target(
             key,
-            self.active_index?,
-            self.item_count,
+            active_position,
+            selectable_indices.len(),
             self.viewport_item_count,
-        )
+        )?;
+
+        selectable_indices.get(target_position).copied()
     }
 
     /// Returns activation payload for Enter or Space.
     pub fn activation_for_key(&self, key: &str) -> Option<VirtualizedListActivation> {
-        if self.disabled || !matches!(key, "enter" | "space") {
+        if self.disabled {
             return None;
         }
 
-        self.active_index.map(VirtualizedListActivation::new)
+        match (key, self.selection_mode) {
+            ("enter", _) | ("space", VirtualizedListSelectionMode::Single) => {
+                let target = self.active_target()?;
+                Some(VirtualizedListActivation::from_target(
+                    target,
+                    self.active_key
+                        .as_deref()
+                        .is_some_and(|key| self.selected_keys.contains(key)),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns selection change payload for selection keyboard commands.
+    pub fn selection_change_for_key(&self, key: &str) -> Option<VirtualizedListSelectionChange> {
+        if key != "space" {
+            return None;
+        }
+
+        let target = self.active_target()?;
+        self.selection_change_for_target(&target)
+    }
+
+    /// Returns a key-based reveal target for fixed-height rows.
+    pub fn scroll_target_for_key(
+        &self,
+        key: &str,
+        strategy: VirtualizedListScrollStrategy,
+        viewport_extent: UiPx,
+        current_scroll_offset: UiPx,
+    ) -> VirtualizedListRevealResult {
+        let matches = self
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| (item.key() == key).then_some(index))
+            .collect::<Vec<_>>();
+
+        let index = match matches.as_slice() {
+            [] => return VirtualizedListRevealResult::NotFound(key.to_owned()),
+            [index] => *index,
+            _ => return VirtualizedListRevealResult::NotSelectable(key.to_owned()),
+        };
+        let scroll_offset = virtualized_list_scroll_target(
+            strategy,
+            index,
+            self.item_count(),
+            self.metrics.row_height(),
+            viewport_extent,
+            current_scroll_offset,
+        );
+
+        VirtualizedListRevealResult::Revealed(VirtualizedListRevealTarget::new(
+            key,
+            index,
+            scroll_offset,
+            false,
+        ))
     }
 
     /// Clamps a requested item index into the list range.
     pub fn clamped_index(&self, index: usize) -> Option<usize> {
-        valid_index(index, self.item_count).or_else(|| self.item_count.checked_sub(1))
+        valid_index(index, self.item_count()).or_else(|| self.item_count().checked_sub(1))
+    }
+
+    fn target_at_index(&self, index: usize) -> Option<VirtualizedListItemTarget> {
+        let item = self.items.get(index)?;
+        is_selectable_state_item(item, &self.duplicate_keys).then(|| {
+            VirtualizedListItemTarget::new(
+                item.key().to_owned(),
+                index,
+                self.disabled || item.disabled_state(),
+                item.text_value().to_owned(),
+            )
+        })
+    }
+
+    fn active_target(&self) -> Option<VirtualizedListItemTarget> {
+        self.active_index
+            .and_then(|index| self.target_at_index(index))
+    }
+
+    fn selection_change_for_target(
+        &self,
+        target: &VirtualizedListItemTarget,
+    ) -> Option<VirtualizedListSelectionChange> {
+        if self.disabled || target.disabled() {
+            return None;
+        }
+
+        let mut selected_keys = self.selected_keys.clone();
+        match self.selection_mode {
+            VirtualizedListSelectionMode::Single => {
+                if selected_keys.len() == 1 && selected_keys.contains(target.key()) {
+                    return None;
+                }
+                selected_keys.clear();
+                selected_keys.insert(target.key().to_owned());
+            }
+            VirtualizedListSelectionMode::Multiple => {
+                if !selected_keys.insert(target.key().to_owned()) {
+                    selected_keys.remove(target.key());
+                }
+            }
+        }
+
+        Some(VirtualizedListSelectionChange::new(
+            target.key().to_owned(),
+            selected_keys,
+        ))
+    }
+
+    fn selectable_indices(&self) -> Vec<usize> {
+        self.items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                is_selectable_state_item(item, &self.duplicate_keys).then_some(index)
+            })
+            .collect()
     }
 }
 
@@ -530,8 +981,8 @@ impl VirtualizedListRowRenderPlan {
         size_of_set: usize,
         state: &VirtualizedListState,
     ) -> Self {
-        let active = state.active_index() == Some(index);
-        let selected = state.selected_index() == Some(index);
+        let active = state.active_key() == Some(item.key());
+        let selected = state.selected_key_set().contains(item.key());
         let disabled = state.disabled() || item.disabled_state();
 
         Self {
@@ -553,9 +1004,23 @@ impl VirtualizedListRowRenderPlan {
         &self.item
     }
 
+    /// Returns the stable source item key.
+    pub fn key(&self) -> &str {
+        self.item.key()
+    }
+
     /// Returns the visible item label.
     pub fn label(&self) -> &str {
         self.item.label()
+    }
+
+    fn target(&self) -> VirtualizedListItemTarget {
+        VirtualizedListItemTarget::new(
+            self.key().to_owned(),
+            self.index,
+            self.disabled,
+            self.item.text_value().to_owned(),
+        )
     }
 
     /// Returns the stable render key.
@@ -635,12 +1100,19 @@ impl VirtualizedListRenderPlan {
         viewport_extent: UiPx,
     ) -> Self {
         let metrics = state.metrics();
+        let state_items = virtualized_list_state_items(items);
+        let selected_keys = state
+            .selected_keys()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
         let state = VirtualizedListState::resolve(
             state.size(),
             state.disabled(),
-            items.len(),
-            state.active_index(),
-            state.selected_index(),
+            state_items,
+            state.active_key(),
+            selected_keys,
+            state.selection_mode(),
             Some(state.viewport_item_count()),
         )
         .with_metrics(metrics);
@@ -743,9 +1215,9 @@ impl VirtualizedListRenderPlan {
 struct VirtualizedListRuntime {
     scroll_surface: ScrollSurfaceRuntime,
     focus_handle: FocusHandle,
-    active_index: Option<usize>,
-    selected_index: Option<usize>,
-    pending_scroll_to_active: Option<usize>,
+    active_key: Option<String>,
+    selected_keys: BTreeSet<String>,
+    pending_scroll_to_active: Option<String>,
 }
 
 /// A concrete GPUI virtualized list renderer.
@@ -756,11 +1228,13 @@ pub struct VirtualizedList {
     items: Arc<[VirtualizedListItemDescriptor]>,
     size: Size,
     disabled: bool,
-    active_index: Option<usize>,
-    selected_index: Option<usize>,
+    active_key: Option<String>,
+    selected_keys: BTreeSet<String>,
+    selection_mode: VirtualizedListSelectionMode,
     viewport_item_count: usize,
     metrics: VirtualizedListMetrics,
     on_activate: Option<VirtualizedListActivationHandler>,
+    on_selection_change: Option<VirtualizedListSelectionChangeHandler>,
 }
 
 impl VirtualizedList {
@@ -791,11 +1265,13 @@ impl VirtualizedList {
             items,
             size,
             disabled: false,
-            active_index: None,
-            selected_index: None,
+            active_key: None,
+            selected_keys: BTreeSet::new(),
+            selection_mode: VirtualizedListSelectionMode::Single,
             viewport_item_count: DEFAULT_VIRTUALIZED_LIST_VIEWPORT_ITEM_COUNT,
             metrics: VirtualizedListMetrics::from_size(size),
             on_activate: None,
+            on_selection_change: None,
         }
     }
 
@@ -805,15 +1281,32 @@ impl VirtualizedList {
         self
     }
 
-    /// Applies the default active item index for adapter-owned runtime state.
-    pub fn default_active_index(mut self, index: usize) -> Self {
-        self.active_index = Some(index);
+    /// Applies the default active item key for adapter-owned runtime state.
+    pub fn default_active_key(mut self, key: impl Into<String>) -> Self {
+        self.active_key = Some(key.into());
         self
     }
 
-    /// Applies the default selected item index for adapter-owned runtime state.
-    pub fn default_selected_index(mut self, index: usize) -> Self {
-        self.selected_index = Some(index);
+    /// Applies the default selected item key for adapter-owned runtime state.
+    pub fn default_selected_key(mut self, key: impl Into<String>) -> Self {
+        self.selected_keys.clear();
+        self.selected_keys.insert(key.into());
+        self
+    }
+
+    /// Applies the default selected item keys for adapter-owned runtime state.
+    pub fn default_selected_keys<I, K>(mut self, keys: I) -> Self
+    where
+        I: IntoIterator<Item = K>,
+        K: Into<String>,
+    {
+        self.selected_keys = keys.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Applies the list selection behavior.
+    pub fn selection_mode(mut self, selection_mode: VirtualizedListSelectionMode) -> Self {
+        self.selection_mode = selection_mode;
         self
     }
 
@@ -844,11 +1337,20 @@ impl VirtualizedList {
         self
     }
 
+    /// Registers a selection-change handler for controlled selected keys.
+    pub fn on_selection_change(
+        mut self,
+        handler: impl Fn(VirtualizedListSelectionChange, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_selection_change = Some(Rc::new(handler));
+        self
+    }
+
     /// Returns resolved renderer-neutral list state from the builder seed.
     pub fn state(&self) -> VirtualizedListState {
         self.resolved_state(
-            self.active_index,
-            self.selected_index,
+            self.active_key.as_deref(),
+            self.selected_keys.iter().map(String::as_str),
             self.viewport_item_count,
         )
     }
@@ -874,8 +1376,8 @@ impl VirtualizedList {
     /// Resolves the renderer-neutral state and virtual window for the current list.
     fn render_plan(&self, scroll_offset: UiPx, viewport_extent: UiPx) -> VirtualizedListRenderPlan {
         let state = self.resolved_state(
-            self.active_index,
-            self.selected_index,
+            self.active_key.as_deref(),
+            self.selected_keys.iter().map(String::as_str),
             self.viewport_item_count,
         );
         VirtualizedListRenderPlan::resolve(
@@ -888,18 +1390,22 @@ impl VirtualizedList {
         )
     }
 
-    fn resolved_state(
+    fn resolved_state<'a, I>(
         &self,
-        active_index: Option<usize>,
-        selected_index: Option<usize>,
+        active_key: Option<&str>,
+        selected_keys: I,
         viewport_item_count: usize,
-    ) -> VirtualizedListState {
+    ) -> VirtualizedListState
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
         VirtualizedListState::resolve(
             self.size,
             self.disabled,
-            self.items.len(),
-            active_index,
-            selected_index,
+            virtualized_list_state_items(self.items.as_ref()),
+            active_key,
+            selected_keys,
+            self.selection_mode,
             Some(viewport_item_count.max(1)),
         )
         .with_metrics(self.metrics)
@@ -921,8 +1427,8 @@ impl RenderOnce for VirtualizedList {
         let runtime = window.use_keyed_state(runtime_id, cx, |_, cx| VirtualizedListRuntime {
             scroll_surface: ScrollSurfaceRuntime::new(None),
             focus_handle: cx.focus_handle(),
-            active_index: self.active_index,
-            selected_index: self.selected_index,
+            active_key: self.active_key.clone(),
+            selected_keys: self.selected_keys.clone(),
             pending_scroll_to_active: None,
         });
         let runtime_state = runtime.read(cx).clone();
@@ -934,11 +1440,13 @@ impl RenderOnce for VirtualizedList {
             viewport_extent,
             self.viewport_item_count,
         );
-        let active_index = runtime_state.active_index.or(self.active_index);
-        let selected_index = runtime_state.selected_index.or(self.selected_index);
-        let state = self.resolved_state(active_index, selected_index, viewport_item_count);
-        if let Some(pending_scroll_to_active) = runtime_state.pending_scroll_to_active {
-            scroll_active_index(&scroll_handle, &state, pending_scroll_to_active);
+        let state = self.resolved_state(
+            runtime_state.active_key.as_deref(),
+            runtime_state.selected_keys.iter().map(String::as_str),
+            viewport_item_count,
+        );
+        if let Some(pending_scroll_to_active) = runtime_state.pending_scroll_to_active.as_deref() {
+            scroll_active_key(&scroll_handle, &state, pending_scroll_to_active);
             runtime.update(cx, |runtime, _| {
                 runtime.pending_scroll_to_active = None;
             });
@@ -953,6 +1461,7 @@ impl RenderOnce for VirtualizedList {
             viewport_extent,
         );
         let on_activate = self.on_activate.clone();
+        let on_selection_change = self.on_selection_change.clone();
         let list_state = plan.state().clone();
         let row_role = plan.row_role();
         let rows = plan.rows().to_vec();
@@ -961,12 +1470,12 @@ impl RenderOnce for VirtualizedList {
         let root_click_state = list_state.clone();
 
         runtime.update(cx, |runtime, _| {
-            if runtime.active_index != list_state.active_index() {
-                runtime.active_index = list_state.active_index();
-                runtime.pending_scroll_to_active = list_state.active_index();
+            if runtime.active_key.as_deref() != list_state.active_key() {
+                runtime.active_key = list_state.active_key().map(str::to_owned);
+                runtime.pending_scroll_to_active = list_state.active_key().map(str::to_owned);
             }
-            if runtime.selected_index != list_state.selected_index() {
-                runtime.selected_index = list_state.selected_index();
+            if &runtime.selected_keys != list_state.selected_key_set() {
+                runtime.selected_keys = list_state.selected_key_set().clone();
             }
         });
 
@@ -1012,15 +1521,15 @@ impl RenderOnce for VirtualizedList {
                 let runtime = runtime.clone();
                 let scroll_handle = scroll_handle.clone();
                 let on_activate = on_activate.clone();
-                let items = self.items.clone();
+                let on_selection_change = on_selection_change.clone();
                 let plan_state = list_state.clone();
                 move |event: &KeyDownEvent, window, cx| {
                     handle_virtualized_list_key_down(
                         &plan_state,
-                        items.as_ref(),
                         runtime.clone(),
                         scroll_handle.clone(),
                         on_activate.clone(),
+                        on_selection_change.clone(),
                         event,
                         window,
                         cx,
@@ -1036,9 +1545,11 @@ impl RenderOnce for VirtualizedList {
                             &rows,
                             plan.virtualizer().total_size(),
                             row_role,
+                            list_state.clone(),
                             runtime.clone(),
                             focus_handle,
                             on_activate,
+                            on_selection_change,
                         ),
                     )
                     .vertical()
@@ -1054,9 +1565,11 @@ fn render_virtualized_list_body(
     rows: &[VirtualizedListRowRenderPlan],
     total_size: UiPx,
     row_role: Role,
+    list_state: VirtualizedListState,
     runtime: Entity<VirtualizedListRuntime>,
     focus_handle: FocusHandle,
     on_activate: Option<VirtualizedListActivationHandler>,
+    on_selection_change: Option<VirtualizedListSelectionChangeHandler>,
 ) -> impl IntoElement {
     let rows = rows.to_vec();
     let list_id = list_id.to_owned();
@@ -1076,9 +1589,11 @@ fn render_virtualized_list_body(
                 list_id.clone(),
                 row,
                 row_role,
+                list_state.clone(),
                 runtime.clone(),
                 focus_handle.clone(),
                 on_activate.clone(),
+                on_selection_change.clone(),
             )
         }))
 }
@@ -1087,13 +1602,15 @@ fn render_virtualized_list_row(
     list_id: String,
     row: VirtualizedListRowRenderPlan,
     row_role: Role,
+    list_state: VirtualizedListState,
     runtime: Entity<VirtualizedListRuntime>,
     focus_handle: FocusHandle,
     on_activate: Option<VirtualizedListActivationHandler>,
+    on_selection_change: Option<VirtualizedListSelectionChangeHandler>,
 ) -> impl IntoElement {
     let render_key = row.render_key().to_owned();
-    let row_index = row.index();
-    let activation = VirtualizedListActivation::new(row_index);
+    let target = row.target();
+    let activation = VirtualizedListActivation::from_target(target.clone(), row.selected());
     let row_background = if row.selected() {
         rgb(0xe7f0ff)
     } else if row.active() {
@@ -1140,17 +1657,31 @@ fn render_virtualized_list_row(
             let runtime = runtime.clone();
             let focus_handle = focus_handle.clone();
             let on_activate = on_activate.clone();
+            let on_selection_change = on_selection_change.clone();
+            let list_state = list_state.clone();
+            let target = target.clone();
+            let activation = activation.clone();
+            let activate_on_click =
+                list_state.selection_mode() == VirtualizedListSelectionMode::Single;
             this.on_click(move |_event: &ClickEvent, window, cx| {
                 cx.stop_propagation();
                 window.prevent_default();
+                let selection_change = list_state.selection_change_for_target(&target);
                 runtime.update(cx, |runtime, _| {
-                    runtime.active_index = Some(row_index);
-                    runtime.selected_index = Some(row_index);
+                    runtime.active_key = Some(target.key().to_owned());
+                    if let Some(selection_change) = selection_change.as_ref() {
+                        runtime.selected_keys = selection_change.selected_key_set();
+                    }
                     runtime.pending_scroll_to_active = None;
                 });
                 focus_handle.focus(window, cx);
-                if let Some(on_activate) = on_activate.as_ref() {
-                    on_activate(activation, window, cx);
+                if let (Some(on_selection_change), Some(selection_change)) =
+                    (on_selection_change.as_ref(), selection_change)
+                {
+                    on_selection_change(selection_change, window, cx);
+                }
+                if activate_on_click && let Some(on_activate) = on_activate.as_ref() {
+                    on_activate(activation.clone(), window, cx);
                 }
             })
         })
@@ -1159,10 +1690,10 @@ fn render_virtualized_list_row(
 
 fn handle_virtualized_list_key_down(
     state: &VirtualizedListState,
-    items: &[VirtualizedListItemDescriptor],
     runtime: Entity<VirtualizedListRuntime>,
     scroll_handle: ScrollHandle,
     on_activate: Option<VirtualizedListActivationHandler>,
+    on_selection_change: Option<VirtualizedListSelectionChangeHandler>,
     event: &KeyDownEvent,
     window: &mut Window,
     cx: &mut App,
@@ -1173,43 +1704,79 @@ fn handle_virtualized_list_key_down(
 
     let key = event.keystroke.key.as_str();
     if let Some(target) = state.navigation_target(key) {
+        let Some(target) = state.target_at_index(target) else {
+            return;
+        };
         cx.stop_propagation();
         window.prevent_default();
         runtime.update(cx, |runtime, _| {
-            runtime.active_index = Some(target);
-            runtime.pending_scroll_to_active = Some(target);
+            runtime.active_key = Some(target.key().to_owned());
+            runtime.pending_scroll_to_active = Some(target.key().to_owned());
         });
-        scroll_active_index(&scroll_handle, state, target);
+        scroll_active_key(&scroll_handle, state, target.key());
         return;
     }
 
     if let Some(activation) = state.activation_for_key(key) {
-        let Some(item) = items.get(activation.index()) else {
-            return;
+        cx.stop_propagation();
+        window.prevent_default();
+        let selection_change = if state.selection_mode() == VirtualizedListSelectionMode::Single {
+            state
+                .target_at_index(activation.index())
+                .and_then(|target| state.selection_change_for_target(&target))
+        } else {
+            None
         };
-        if item.disabled_state() {
-            return;
+        runtime.update(cx, |runtime, _| {
+            runtime.active_key = Some(activation.key().to_owned());
+            if let Some(selection_change) = selection_change.as_ref() {
+                runtime.selected_keys = selection_change.selected_key_set();
+            }
+            runtime.pending_scroll_to_active = Some(activation.key().to_owned());
+        });
+        scroll_active_key(&scroll_handle, state, activation.key());
+        if let (Some(on_selection_change), Some(selection_change)) =
+            (on_selection_change.as_ref(), selection_change)
+        {
+            on_selection_change(selection_change, window, cx);
         }
+        if let Some(on_activate) = on_activate.as_ref() {
+            on_activate(activation, window, cx);
+        }
+        return;
+    }
 
+    if let Some(selection_change) = state.selection_change_for_key(key) {
         cx.stop_propagation();
         window.prevent_default();
         runtime.update(cx, |runtime, _| {
-            runtime.active_index = Some(activation.index());
-            runtime.selected_index = Some(activation.index());
-            runtime.pending_scroll_to_active = Some(activation.index());
+            runtime.selected_keys = selection_change.selected_key_set();
         });
-        scroll_active_index(&scroll_handle, state, activation.index());
-        if let Some(on_activate) = on_activate.as_ref() {
-            on_activate(activation, window, cx);
+        if let Some(on_selection_change) = on_selection_change.as_ref() {
+            on_selection_change(selection_change, window, cx);
         }
     }
 }
 
-fn scroll_active_index(scroll_handle: &ScrollHandle, state: &VirtualizedListState, index: usize) {
+fn scroll_active_key(scroll_handle: &ScrollHandle, state: &VirtualizedListState, key: &str) {
+    let target = match state.scroll_target_for_key(
+        key,
+        VirtualizedListScrollStrategy::Nearest,
+        state.viewport_extent(),
+        vertical_scroll_offset(scroll_handle),
+    ) {
+        VirtualizedListRevealResult::Revealed(target)
+        | VirtualizedListRevealResult::Estimated(target) => target,
+        VirtualizedListRevealResult::NotFound(_)
+        | VirtualizedListRevealResult::NotSelectable(_) => {
+            return;
+        }
+    };
+
     reveal_fixed_row(
         scroll_handle,
         ScrollSurfaceRevealStrategy::Nearest,
-        index,
+        target.index(),
         state.item_count(),
         state.metrics().row_height(),
         Some(state.viewport_extent()),
@@ -1307,6 +1874,54 @@ fn duplicate_item_keys(items: &[VirtualizedListItemDescriptor]) -> BTreeSet<Stri
         .collect()
 }
 
+fn virtualized_list_state_items(
+    items: &[VirtualizedListItemDescriptor],
+) -> Vec<VirtualizedListStateItem> {
+    items.iter().map(VirtualizedListStateItem::from).collect()
+}
+
+fn duplicate_state_item_keys(items: &[VirtualizedListStateItem]) -> BTreeSet<String> {
+    let mut counts = BTreeMap::new();
+    for item in items {
+        *counts.entry(item.key().to_owned()).or_insert(0usize) += 1;
+    }
+
+    counts
+        .into_iter()
+        .filter_map(|(key, count)| (count > 1).then_some(key))
+        .collect()
+}
+
+fn is_selectable_state_item(
+    item: &VirtualizedListStateItem,
+    duplicate_keys: &BTreeSet<String>,
+) -> bool {
+    !item.disabled_state() && !duplicate_keys.contains(item.key())
+}
+
+fn state_item_index_by_unique_key(
+    items: &[VirtualizedListStateItem],
+    duplicate_keys: &BTreeSet<String>,
+    key: &str,
+) -> Option<usize> {
+    if duplicate_keys.contains(key) {
+        return None;
+    }
+
+    items
+        .iter()
+        .position(|item| item.key() == key && !item.disabled_state())
+}
+
+fn first_selectable_state_item_index(
+    items: &[VirtualizedListStateItem],
+    duplicate_keys: &BTreeSet<String>,
+) -> Option<usize> {
+    items
+        .iter()
+        .position(|item| is_selectable_state_item(item, duplicate_keys))
+}
+
 fn virtualized_list_render_key(
     item: &VirtualizedListItemDescriptor,
     index: usize,
@@ -1324,14 +1939,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn virtualized_list_state_clamps_active_and_preserves_metrics() {
-        let state =
-            VirtualizedListState::resolve(Size::Small, false, 10, Some(12), Some(4), Some(5));
+    fn virtualized_list_state_resolves_active_from_keys_and_preserves_metrics() {
+        let items = (0..10)
+            .map(|index| VirtualizedListStateItem::new(format!("item-{index}"), index.to_string()))
+            .collect::<Vec<_>>();
+
+        let state = VirtualizedListState::resolve(
+            Size::Small,
+            false,
+            items,
+            Some("item-12"),
+            ["item-4"],
+            VirtualizedListSelectionMode::Single,
+            Some(5),
+        );
 
         assert_eq!(state.size(), Size::Small);
         assert_eq!(state.item_count(), 10);
+        assert_eq!(state.active_key(), Some("item-4"));
         assert_eq!(state.active_index(), Some(4));
         assert_eq!(state.selected_index(), Some(4));
+        assert_eq!(state.selected_keys(), ["item-4"]);
         assert_eq!(state.viewport_item_count(), 5);
         assert_eq!(state.metrics().row_height(), ui_px(28.0));
         assert!(!state.visible_empty());
@@ -1339,7 +1967,18 @@ mod tests {
 
     #[test]
     fn virtualized_list_navigation_stays_inside_range() {
-        let state = VirtualizedListState::resolve(Size::Medium, false, 12, Some(6), None, Some(4));
+        let items = (0..12)
+            .map(|index| VirtualizedListStateItem::new(format!("item-{index}"), index.to_string()))
+            .collect::<Vec<_>>();
+        let state = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            items,
+            Some("item-6"),
+            std::iter::empty::<&str>(),
+            VirtualizedListSelectionMode::Single,
+            Some(4),
+        );
 
         assert_eq!(state.navigation_target("home"), Some(0));
         assert_eq!(state.navigation_target("end"), Some(11));
@@ -1350,10 +1989,47 @@ mod tests {
     }
 
     #[test]
+    fn virtualized_list_navigation_skips_disabled_rows() {
+        let state = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            [
+                VirtualizedListStateItem::new("alpha", "Alpha"),
+                VirtualizedListStateItem::new("beta", "Beta").disabled(true),
+                VirtualizedListStateItem::new("gamma", "Gamma"),
+            ],
+            Some("alpha"),
+            std::iter::empty::<&str>(),
+            VirtualizedListSelectionMode::Single,
+            Some(2),
+        );
+
+        assert_eq!(state.navigation_target("down"), Some(2));
+        assert_eq!(state.navigation_target("end"), Some(2));
+    }
+
+    #[test]
     fn virtualized_list_empty_or_disabled_state_has_no_targets() {
-        let empty = VirtualizedListState::resolve(Size::Medium, false, 0, None, None, None);
-        let disabled =
-            VirtualizedListState::resolve(Size::Medium, true, 10, Some(2), Some(2), None);
+        let empty = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            Vec::<VirtualizedListStateItem>::new(),
+            None,
+            std::iter::empty::<&str>(),
+            VirtualizedListSelectionMode::Single,
+            None,
+        );
+        let disabled = VirtualizedListState::resolve(
+            Size::Medium,
+            true,
+            (0..10).map(|index| {
+                VirtualizedListStateItem::new(format!("item-{index}"), index.to_string())
+            }),
+            Some("item-2"),
+            ["item-2"],
+            VirtualizedListSelectionMode::Single,
+            None,
+        );
 
         assert!(empty.visible_empty());
         assert_eq!(empty.active_index(), None);
@@ -1361,6 +2037,134 @@ mod tests {
         assert_eq!(disabled.active_index(), None);
         assert_eq!(disabled.selected_index(), None);
         assert_eq!(disabled.activation_for_key("enter"), None);
+    }
+
+    #[test]
+    fn virtualized_list_duplicate_keys_are_not_semantic_targets() {
+        let state = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            [
+                VirtualizedListStateItem::new("duplicate", "First duplicate"),
+                VirtualizedListStateItem::new("duplicate", "Second duplicate"),
+                VirtualizedListStateItem::new("tail", "Tail"),
+            ],
+            Some("duplicate"),
+            ["duplicate"],
+            VirtualizedListSelectionMode::Single,
+            Some(3),
+        );
+
+        assert_eq!(state.active_key(), Some("tail"));
+        assert_eq!(state.active_index(), Some(2));
+        assert!(state.selected_keys().is_empty());
+        assert_eq!(
+            state.scroll_target_for_key(
+                "duplicate",
+                VirtualizedListScrollStrategy::Nearest,
+                ui_px(84.0),
+                UiPx::ZERO,
+            ),
+            VirtualizedListRevealResult::NotSelectable("duplicate".to_owned())
+        );
+    }
+
+    #[test]
+    fn virtualized_list_state_resolves_selection_by_key_after_reorder() {
+        let items = [
+            VirtualizedListStateItem::new("alpha", "Alpha"),
+            VirtualizedListStateItem::new("beta", "Beta"),
+            VirtualizedListStateItem::new("gamma", "Gamma"),
+        ];
+        let reordered = [items[2].clone(), items[0].clone(), items[1].clone()];
+
+        let state = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            reordered,
+            Some("gamma"),
+            ["beta"],
+            VirtualizedListSelectionMode::Multiple,
+            Some(3),
+        );
+
+        assert_eq!(state.active_key(), Some("gamma"));
+        assert_eq!(state.active_index(), Some(0));
+        assert_eq!(state.selected_keys(), ["beta"]);
+        assert!(state.selected_key_set().contains("beta"));
+        assert_eq!(state.selected_indices(), [2]);
+    }
+
+    #[test]
+    fn virtualized_list_multi_select_space_toggles_and_enter_activates() {
+        let state = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            [
+                VirtualizedListStateItem::new("alpha", "Alpha"),
+                VirtualizedListStateItem::new("beta", "Beta"),
+            ],
+            Some("beta"),
+            ["alpha"],
+            VirtualizedListSelectionMode::Multiple,
+            Some(2),
+        );
+
+        let change = state
+            .selection_change_for_key("space")
+            .expect("space should toggle selection in multi-select mode");
+        assert_eq!(change.changed_key(), "beta");
+        assert_eq!(change.selected_keys(), ["alpha", "beta"]);
+        assert_eq!(state.activation_for_key("space"), None);
+
+        let activation = state
+            .activation_for_key("enter")
+            .expect("enter should activate the active key");
+        assert_eq!(activation.key(), "beta");
+        assert_eq!(activation.index(), 1);
+        assert_eq!(activation.text_value(), "Beta");
+    }
+
+    #[test]
+    fn virtualized_list_scroll_to_key_reports_reveal_result() {
+        let state = VirtualizedListState::resolve(
+            Size::Small,
+            false,
+            [
+                VirtualizedListStateItem::new("alpha", "Alpha"),
+                VirtualizedListStateItem::new("beta", "Beta").disabled(true),
+                VirtualizedListStateItem::new("gamma", "Gamma"),
+            ],
+            Some("alpha"),
+            ["alpha"],
+            VirtualizedListSelectionMode::Single,
+            Some(2),
+        )
+        .with_metrics(VirtualizedListMetrics::from_size(Size::Small).with_row_height(ui_px(28.0)));
+
+        assert_eq!(
+            state.scroll_target_for_key(
+                "beta",
+                VirtualizedListScrollStrategy::Top,
+                ui_px(56.0),
+                UiPx::ZERO,
+            ),
+            VirtualizedListRevealResult::Revealed(VirtualizedListRevealTarget::new(
+                "beta",
+                1,
+                ui_px(28.0),
+                false
+            ))
+        );
+        assert_eq!(
+            state.scroll_target_for_key(
+                "missing",
+                VirtualizedListScrollStrategy::Top,
+                ui_px(56.0),
+                UiPx::ZERO,
+            ),
+            VirtualizedListRevealResult::NotFound("missing".to_owned())
+        );
     }
 
     #[test]
@@ -1381,8 +2185,8 @@ mod tests {
         ];
         let snapshot = VirtualizedList::new("virtualized-list", "Virtualized list", items)
             .with_size(Size::Small)
-            .default_active_index(2)
-            .default_selected_index(1)
+            .default_active_key("tail")
+            .default_selected_key("root")
             .viewport_item_count(2)
             .behavior_snapshot_with_viewport(ui_px(56.0), ui_px(56.0));
 
@@ -1396,9 +2200,9 @@ mod tests {
         assert_eq!(snapshot.rows()[0].item().key(), "root");
         assert_eq!(snapshot.rows()[1].render_key(), "1:duplicate");
         assert_eq!(snapshot.rows()[2].render_key(), "2:duplicate");
-        assert!(snapshot.rows()[1].selected());
+        assert!(snapshot.rows()[0].selected());
         assert!(snapshot.rows()[2].disabled());
-        assert!(snapshot.rows()[2].active());
+        assert!(snapshot.rows()[3].active());
         assert_eq!(snapshot.rows()[2].position_in_set(), 3);
         assert_eq!(snapshot.rows()[2].size_of_set(), 4);
         assert_eq!(snapshot.rows()[2].virtual_start(), ui_px(56.0));

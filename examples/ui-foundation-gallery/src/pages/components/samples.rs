@@ -26,7 +26,8 @@ use open_gpui_ui_components::{
     ToggleGroupState, ToggleState, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
     ToolbarItemKind, ToolbarState, Tree, TreeBehaviorSnapshot, TreeItemDescriptor, TreeState,
     VirtualizedList, VirtualizedListBehaviorSnapshot, VirtualizedListItemDescriptor,
-    VirtualizedListMetrics, VirtualizedListScrollStrategy, VirtualizedListState,
+    VirtualizedListMetrics, VirtualizedListScrollStrategy, VirtualizedListSelectionMode,
+    VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,

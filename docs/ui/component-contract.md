@@ -307,7 +307,8 @@ without persistent selection ownership, and `on_toggle` for expansion or tri-sta
 Seed-shaped runtime builders must stay explicit in the API inventory. Current examples include
 `Tabs::default_selected`, `RadioGroup::default_selected`, `Toolbar::default_focused`,
 `Sidebar::default_focused`, `Tree::default_selected`, `Tree::default_focused`,
-`VirtualizedList::default_active_index`, `VirtualizedList::default_selected_index`,
+`VirtualizedList::default_active_key`, `VirtualizedList::default_selected_key`,
+`VirtualizedList::default_selected_keys`,
 `Combobox::default_query`, `Command::default_query`, `Menu::default_focused_value`, and
 `ContextMenu::default_focused_value`. Direct names such as `Sidebar::selected`,
 `Listbox::selected`, `Select::selected`, `Combobox::selected`, and `Command::selected` remain
