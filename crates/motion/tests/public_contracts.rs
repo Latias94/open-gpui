@@ -1,8 +1,9 @@
 use open_gpui_motion::{
     MotionClockSample, MotionDuration, MotionEasing, MotionExecutionPlan, MotionFrameDemand,
-    MotionFrameReason, MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPreference,
-    MotionProjection, MotionProjectionClip, MotionRunState, MotionScalarController,
-    MotionScalarExecution, MotionSpec, motion_point, motion_px, motion_rect, motion_size,
+    MotionFrameHost, MotionFrameReason, MotionModel, MotionPolicyContext, MotionPolicyInput,
+    MotionPreference, MotionProjection, MotionProjectionClip, MotionRunState,
+    MotionScalarController, MotionScalarExecution, MotionSpec, motion_point, motion_px,
+    motion_rect, motion_size,
 };
 use std::time::Duration;
 
@@ -76,6 +77,23 @@ fn frame_demand_and_clock_samples_are_public_adapter_contracts() {
     assert_eq!(clock.elapsed(), Duration::from_millis(90));
     assert_eq!(clock.delta(), Duration::ZERO);
     assert!(clock.clamped());
+}
+
+#[test]
+fn frame_host_is_a_public_adapter_contract() {
+    let active = MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender);
+    let mut frame_host = MotionFrameHost::new();
+
+    let first = frame_host.observe(MotionFrameDemand::Idle);
+    let second =
+        frame_host.sample_elapsed(Duration::from_millis(16), |clock| (clock.elapsed(), active));
+
+    assert!(!first.should_request_frame());
+    assert!(second.should_request_frame());
+    assert_eq!(*second.value(), Duration::from_millis(16));
+    assert_eq!(second.frame_demand(), active);
+    assert_eq!(second.update().requested_frames(), 1);
+    assert_eq!(frame_host.last_frame_demand(), active);
 }
 
 #[test]

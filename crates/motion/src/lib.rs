@@ -10,6 +10,7 @@
 mod value;
 
 pub mod controller;
+pub mod frame_host;
 pub mod geometry;
 pub mod motion;
 pub mod policy;
@@ -22,6 +23,7 @@ pub use controller::{
     MotionFrameReason, MotionScalarController, MotionScalarControllerSample, MotionScalarExecution,
     MotionScalarExecutionSample, MotionScalarTrack, MotionScalarTrackSample,
 };
+pub use frame_host::{MotionFrameHost, MotionFrameHostSample, MotionFrameHostUpdate};
 pub use geometry::{
     MotionEdges, MotionPoint, MotionPx, MotionRect, MotionSize, motion_edges, motion_point,
     motion_px, motion_rect, motion_size,

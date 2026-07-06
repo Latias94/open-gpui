@@ -16,7 +16,8 @@ use open_gpui::{
     StatefulInteractiveElement, Styled, Window, div, px, rgb,
 };
 use open_gpui_motion::{
-    MotionFrameDemand, MotionModel, MotionPreference, MotionPreset, MotionScalarController,
+    MotionFrameDemand, MotionFrameHost, MotionModel, MotionPreference, MotionPreset,
+    MotionScalarController,
 };
 #[cfg(test)]
 use open_gpui_ui_core::ui_px;
@@ -2017,6 +2018,7 @@ struct VirtualizedListRuntime {
     row_measurements: BTreeMap<String, UiPx>,
     pending_scroll_to_active: Option<String>,
     active_indicator: VirtualizedListActiveIndicatorRuntime,
+    active_indicator_frame_host: MotionFrameHost,
 }
 
 impl VirtualizedListRuntime {
@@ -2290,6 +2292,7 @@ impl RenderOnce for VirtualizedList {
             row_measurements: BTreeMap::new(),
             pending_scroll_to_active: None,
             active_indicator: VirtualizedListActiveIndicatorRuntime::default(),
+            active_indicator_frame_host: MotionFrameHost::new(),
         });
         let runtime_state = runtime.read(cx).clone();
         let scroll_handle = scroll_surface_handle(&runtime_state.scroll_surface, None);
@@ -2341,7 +2344,7 @@ impl RenderOnce for VirtualizedList {
         let scroll_viewport_id = format!("virtualized-list:{}:viewport", plan.list_id());
         let root_click_state = list_state.clone();
 
-        let active_indicator_demand = runtime.update(cx, |runtime, _| {
+        let active_indicator_frame = runtime.update(cx, |runtime, _| {
             if runtime.active_key.as_deref() != list_state.active_key() {
                 runtime.active_key = list_state.active_key().map(str::to_owned);
                 runtime.pending_scroll_to_active = list_state.active_key().map(str::to_owned);
@@ -2349,11 +2352,15 @@ impl RenderOnce for VirtualizedList {
             if &runtime.selected_keys != list_state.selected_key_set() {
                 runtime.selected_keys = list_state.selected_key_set().clone();
             }
+            let active_indicator_demand =
+                runtime
+                    .active_indicator
+                    .sync(&plan, now, active_indicator_model);
             runtime
-                .active_indicator
-                .sync(&plan, now, active_indicator_model)
+                .active_indicator_frame_host
+                .observe(active_indicator_demand)
         });
-        if active_indicator_demand.needs_frame() {
+        if active_indicator_frame.should_request_frame() {
             window.request_animation_frame();
         }
         let active_indicator = runtime.read(cx).active_indicator.snapshot();
