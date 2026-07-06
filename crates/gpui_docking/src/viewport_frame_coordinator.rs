@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::drop_runtime::DockHostDropScene;
 use crate::{
     DockNodeId, DockSpaceId, DockViewportWindowFacts,
     drop_runtime::DockHostDropSceneFact,
@@ -18,7 +20,7 @@ impl DockViewportFrameCoordinator {
         &self.host_scenes
     }
 
-    pub(crate) fn register_host_scene(
+    pub(crate) fn register_host_scene_with_facts(
         &mut self,
         space: DockSpaceId,
         window_id: WindowId,
@@ -26,15 +28,17 @@ impl DockViewportFrameCoordinator {
         host_bounds: Bounds<Pixels>,
         host_position: Point<Pixels>,
         drop_guide_style: DockDropGuideStyle,
+        initial_facts: Vec<DockHostDropSceneFact>,
     ) -> DockViewportHostSceneRegistration {
         self.host_scenes
-            .register(DockViewportHostSceneSnapshot::new(
+            .register(DockViewportHostSceneSnapshot::new_with_facts(
                 space,
                 window_id,
                 window_facts.current_bounds,
                 host_bounds,
                 host_position,
                 drop_guide_style,
+                initial_facts,
             ))
     }
 
@@ -85,6 +89,15 @@ impl DockViewportFrameCoordinator {
     ) -> Option<Bounds<Pixels>> {
         self.host_scenes
             .tab_label_bounds_for_tabs(space, window_id, tabs, target_index)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scene_for_window(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<DockHostDropScene> {
+        self.host_scenes.scene_for_window(space, window_id)
     }
 
     #[cfg(test)]

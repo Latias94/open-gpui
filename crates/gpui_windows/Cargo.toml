@@ -29,7 +29,7 @@ accesskit.workspace = true
 accesskit_windows.workspace = true
 anyhow.workspace = true
 open_gpui_collections.workspace = true
-etagere = "0.2"
+etagere = "0.3"
 futures.workspace = true
 image.workspace = true
 itertools.workspace = true
@@ -42,7 +42,7 @@ open_gpui_util.workspace = true
 uuid.workspace = true
 windows.workspace = true
 windows-core.workspace = true
-windows-numerics = "0.2"
+windows-numerics = "0.3"
 windows-registry = "0.5"
 
 [target.'cfg(target_os = "windows")'.dependencies.scap]

@@ -4,6 +4,56 @@
 
 * [Current State](current-state.md) - Short durable summary of the active engineering state.
 * [Update Log](log.md) - Chronological history of meaningful memory updates.
+* [Open GPUI native UI framework distribution strategy](decisions/open-gpui-native-ui-framework-distribution-strategy.md) - Decision memory for Cargo-first crate distribution, source inspection, typed contract checks, gallery, theme, a11y, and verification.
+* [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](../../adr/0014-remove-native-ui-hybrid-registry.md) - Current decision removing the generated registry manifest, scaffold recipes, artifacts, and scan command.
+* [ADR 0013: Open GPUI Native UI Hybrid Registry](../../adr/0013-open-gpui-native-ui-hybrid-registry.md) - Superseded decision for the removed hybrid registry experiment.
+* [ADR 0015: UI Motion Runtime Foundation](../../adr/0015-ui-motion-runtime-foundation.md) - Current renderer-neutral motion timeline and retarget boundary for Splitter and docking.
+* [ADR 0016: UI Motion Spring Foundation](../../adr/0016-ui-motion-spring-foundation.md) - Accepted renderer-neutral spring, projection, controller, and motion policy boundary.
+* [UI motion spring foundation planning](progress/2026-07-03-ui-motion-spring-foundation-plan.md) - Completed implementation boundary for adding spring/projection primitives without compositor or public animation APIs.
+* [UI motion spring foundation](progress/2026-07-03-ui-motion-spring-foundation.md) - Implementation state for spring sampling, projection, scalar controller, policy validation, Splitter migration, and docking transition migration.
+* [UI motion spring foundation verification](verification/ui-motion-spring-foundation-20260703.md) - Verification evidence for spring/projection/controller/policy, Splitter, and docking transition gates.
+* [Native UI framework design research handoff](sessions/2026-07-02-native-ui-framework-design-research-handoff.md) - Handoff for the 28-item native UI framework design research report and next architecture step.
+* [Native UI framework research report verification](verification/native-ui-framework-research-report-20260702.md) - Verification evidence for the generated research report and JSON field coverage.
+* [Open GPUI command ecosystem U1/U2](progress/2026-07-03-open-gpui-command-ecosystem-u1-u2.md) - Initial command registry and command palette snapshot projection slice.
+* [Open GPUI command ecosystem U1/U2 verification](verification/open-gpui-command-ecosystem-u1-u2-20260703.md) - Verification evidence for registry, projection, and public-surface gates.
+* [Open GPUI command ecosystem U3-U5](progress/2026-07-03-open-gpui-command-ecosystem-u3-u5.md) - GPUI action/keymap adapter, registry-backed gallery proof, and command ecosystem docs.
+* [Open GPUI command ecosystem U3-U5 verification](verification/open-gpui-command-ecosystem-u3-u5-20260703.md) - Verification evidence for shortcut projection, adapter dispatch, and gallery registry sample gates.
+* [Open GPUI command crate extraction](progress/2026-07-03-open-gpui-command-crate-extraction.md) - Current extraction of command metadata, scoped registry, availability, menu projection, history, and GPUI command-id dispatch into `open_gpui_command`.
+* [Open GPUI CommandCenter runtime facade](progress/2026-07-03-open-gpui-command-center-runtime.md) - Recommended app-owned command facade over scoped registration, availability, shortcut projection, menu/search, dispatch, and history.
+* [Open GPUI command provider runtime](progress/2026-07-03-open-gpui-command-provider-runtime.md) - Runtime-neutral dynamic provider request/response/source layer in `open_gpui_command`.
+* [Open GPUI command provider gallery proof](progress/2026-07-03-open-gpui-command-provider-gallery.md) - Foundation gallery `provider-search` sample that refreshes a provider and renders a dynamic `CommandIndexSnapshot`.
+* [Open GPUI command provider gallery verification](verification/open-gpui-command-provider-gallery-20260703.md) - Verification evidence for provider-backed command gallery contracts.
+* [Open GPUI command provider lifecycle](progress/2026-07-03-open-gpui-command-provider-lifecycle.md) - Center-issued provider request ids, lifecycle-bound responses, stale-response outcomes, and provider status query metadata.
+* [Open GPUI command provider lifecycle verification](verification/open-gpui-command-provider-lifecycle-20260703.md) - Verification evidence for provider lifecycle, stale response handling, public exports, and gallery request metadata.
+* [Open GPUI command provider refresh controller](progress/2026-07-03-open-gpui-command-provider-refresh-controller.md) - Reusable provider-backed command palette query/loading/response/snapshot pipeline.
+* [Open GPUI command provider refresh controller verification](verification/open-gpui-command-provider-refresh-controller-20260703.md) - Verification evidence for refresh controller, public exports, and gallery migration.
+* [Open GPUI command refresh UI bridge](progress/2026-07-03-open-gpui-command-refresh-ui-bridge.md) - UI-side adapter from provider refresh projections to command palette snapshots, loading state, and provider status.
+* [Open GPUI command refresh UI bridge verification](verification/open-gpui-command-refresh-ui-bridge-20260703.md) - Verification evidence for the UI adapter, public surface, and gallery provider sample.
+* [Open GPUI command shortcut diagnostics](progress/2026-07-03-open-gpui-command-shortcut-diagnostics.md) - Command/action/keymap drift diagnostics for app startup checks and plugin-host validation.
+* [Open GPUI command shortcut diagnostics verification](verification/open-gpui-command-shortcut-diagnostics-20260703.md) - Verification evidence for strict adapter diagnostics, CommandCenter facade filtering, exports, and gallery proof.
+* [Open GPUI command palette projection](progress/2026-07-03-open-gpui-command-palette-projection.md) - UI-side CommandCenter palette projection that joins query, shortcuts, provider statuses, diagnostics, and Command snapshots.
+* [Open GPUI command palette projection verification](verification/open-gpui-command-palette-projection-20260703.md) - Verification evidence for `CommandPaletteProjection`, public exports, and gallery provider/dispatch proof.
+* [Open GPUI command palette controller](progress/2026-07-03-open-gpui-command-palette-controller.md) - UI-side palette query/provider lifecycle controller over `CommandCenter` projections.
+* [Open GPUI command palette controller verification](verification/open-gpui-command-palette-controller-20260703.md) - Verification evidence for `CommandPaletteController`, public exports, async stale-response handling, and gallery migration.
+* [Open GPUI command context keymap](progress/2026-07-03-open-gpui-command-context-keymap.md) - Command scope and GPUI key context stack for context-aware shortcut projection.
+* [Open GPUI command context keymap verification](verification/open-gpui-command-context-keymap-20260703.md) - Verification evidence for `CommandContextStack`, context-aware keymap projection, public exports, and gallery proof.
+* [Open GPUI command source handles](progress/2026-07-03-open-gpui-command-source-handles.md) - Explicit source/provider lifecycle handles for plugin-like command registrations.
+* [Open GPUI command source handles verification](verification/open-gpui-command-source-handles-20260703.md) - Verification evidence for handle unregister behavior, public exports, and command docs.
+* [Open GPUI command query history ergonomics](progress/2026-07-03-open-gpui-command-query-history.md) - CommandCenter query-history facade plus CommandPaletteController up/down recall helpers.
+* [Open GPUI command query history verification](verification/open-gpui-command-query-history-20260703.md) - Verification evidence for query-history facade, duplicate promotion, and controller draft-query restoration.
+* [Open GPUI command keybinding registry](progress/2026-07-03-open-gpui-command-keybinding-registry.md) - Command-id keyed shortcut source registry that projects plugin/app dictionaries into GPUI key bindings.
+* [Open GPUI command keybinding registry verification](verification/open-gpui-command-keybinding-registry-20260703.md) - Verification evidence for keybinding projection, diagnostics, public exports, and GPUI chord/context semantics.
+* [Open GPUI command keybinding conflicts](progress/2026-07-04-open-gpui-command-keybinding-conflicts.md) - Same-context shortcut conflict reporting and explicit install reports for command keybinding sources.
+* [Open GPUI command keybinding conflicts verification](verification/open-gpui-command-keybinding-conflicts-20260704.md) - Verification evidence for conflict reporting, append-only install reports, and public exports.
+* [Open GPUI command palette status items](progress/2026-07-04-open-gpui-command-palette-status-items.md) - UI-side command palette status rows for provider failures and shortcut diagnostics.
+* [Open GPUI command palette status items verification](verification/open-gpui-command-palette-status-items-20260704.md) - Verification evidence for status row projection, public exports, and gallery diagnostics rendering.
+* [Open GPUI command navigation polish](progress/2026-07-04-open-gpui-command-navigation-polish.md) - Command palette navigation behavior for loop bounds, Home/End, and Alt group jumps.
+* [Open GPUI command navigation polish verification](verification/open-gpui-command-navigation-polish-20260704.md) - Verification evidence for command runtime navigation, public exports, gallery readouts, and contract scanning.
+* [Open GPUI command palette pending provider requests](progress/2026-07-04-open-gpui-command-palette-pending-provider-requests.md) - UI-side controller update API for app-owned async provider request handoff.
+* [Open GPUI command palette pending provider requests verification](verification/open-gpui-command-palette-pending-provider-requests-20260704.md) - Verification evidence for pending provider requests, public exports, and command controller gates.
+* [Native UI hybrid registry architecture planning](progress/2026-07-02-native-ui-hybrid-registry-architecture-plan.md) - Superseded historical plan for the removed hybrid registry MVP.
+* [Native UI hybrid registry implementation](progress/2026-07-02-native-ui-hybrid-registry-implementation.md) - Superseded implementation history for the removed registry manifest, recipes, artifacts, and scan.
+* [Native UI hybrid registry implementation verification](verification/native-ui-hybrid-registry-implementation-20260702.md) - Superseded verification evidence for the removed hybrid registry work.
 * [Open GPUI UI foundation first](decisions/open-gpui-ui-foundation-first.md) - Decision to prioritize accessibility, focus, overlay, tokens, sizing, density, and adaptive layout before broad component rollout.
 * [Open GPUI UI component productization roadmap](decisions/open-gpui-ui-productization-roadmap.md) - Decision to treat current UI crates as the active product boundary and defer standalone headless extraction.
 * [Open GPUI UI component depth roadmap](decisions/open-gpui-ui-component-depth-roadmap.md) - Decision to deepen Command, Menu, Table, and Tree before adding more shallow primitives.
@@ -20,6 +70,16 @@
 * [Menu runtime focus regression verification](verification/menu-runtime-focus-regression-20260620.md) - Verification evidence for the menu/context-menu runtime focus repair.
 * [Gallery scroll and viewport hardening verification](verification/gallery-scroll-viewport-hardening-20260621.md) - Verification evidence for navigation rail, ScrollArea, and vertical Tabs scroll regressions.
 * [Docking nested inner-edge ImGui alignment verification](verification/docking-nested-inner-edge-20260628.md) - Verification evidence for mixed-axis nested inner-edge docking staying scoped to the hit leaf.
+* [Docking presentation prior art synthesis](subagents/docking-presentation-prior-art-20260630.md) - Subagent synthesis of SuperSplit, BonSplit, and current docking UI/UX capability gaps.
+* [Docking runtime capability follow-up synthesis](subagents/docking-runtime-capability-followup-20260630.md) - Subagent and local synthesis for the post-merge runtime animation, tab insertion, accessibility, split primitive, and dogfood plan.
+* [Docking presentation scene and motion model planning](progress/2026-06-30-docking-presentation-scene-motion-plan.md) - Planning note for the next docking presentation scene, overlay, motion, zoom/focus, divider, and accessibility refactor.
+* [Docking split motion primitive refactor](progress/2026-06-30-docking-split-motion-primitives.md) - Current progress note for the shared split/motion primitive boundary and U10 cleanup.
+* [Docking split motion primitive verification](verification/docking-split-motion-primitives-20260630.md) - Verification evidence for the split/motion primitive refactor gates.
+* [Docking flat motion runtime framework implementation](progress/2026-07-02-docking-flat-motion-runtime-plan.md) - Implementation state for flat render authority, real-content transition reveal, overlay motion, retargeting, split motion, and zoom/focus polish.
+* [Docking flat motion runtime verification](verification/docking-flat-motion-runtime-20260702.md) - Verification evidence for focused and final flat motion runtime gates.
+* [UI motion runtime foundation](progress/2026-07-02-ui-motion-runtime-foundation.md) - Progress note for the shared `ui_core` motion timeline and retarget primitive used by Splitter and docking.
+* [Docking render authority convergence planning](progress/2026-07-02-docking-render-authority-convergence-plan.md) - Follow-up plan note for scene/render/drop-fact geometry parity and duplicate render geometry deletion.
+* [Docking visual affordance runtime](progress/2026-07-03-docking-visual-affordance-runtime.md) - Implementation state for unified docking preview, motion, accessibility, debug, and native affordance diagnostics.
 * [Tree renderer productization verification](verification/tree-renderer-productization-20260622.md) - Verification evidence for the official Tree renderer, gallery sample, and nested scroll smokes.
 * [Tree virtualized window verification](verification/tree-virtualized-window-20260626.md) - Verification evidence for the opt-in Tree virtualized render window, API export coverage, and gallery metadata proof.
 * [Table sticky pinned columns verification](verification/table-sticky-pinned-columns-20260623.md) - Verification evidence for sticky pinned Table center scrolling and nested vertical containment.

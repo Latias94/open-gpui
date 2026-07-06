@@ -10,6 +10,67 @@ use web_time::Instant;
 #[cfg(feature = "multithreaded")]
 const MIN_BACKGROUND_THREADS: usize = 2;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum WebDispatcherMode {
+    SingleThreaded {
+        reason: WebDispatcherSingleThreadedReason,
+    },
+    Multithreaded {
+        background_workers: usize,
+    },
+}
+
+impl WebDispatcherMode {
+    pub fn supports_background_workers(self) -> bool {
+        matches!(self, Self::Multithreaded { .. })
+    }
+
+    pub fn single_threaded_reason(self) -> Option<WebDispatcherSingleThreadedReason> {
+        match self {
+            Self::SingleThreaded { reason } => Some(reason),
+            Self::Multithreaded { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum WebDispatcherSingleThreadedReason {
+    BuiltWithoutMultithreadedFeature,
+    DisabledByCaller,
+    SharedMemoryUnavailable,
+    WorkerStartupFailed,
+}
+
+#[cfg(feature = "multithreaded")]
+fn select_dispatcher_mode(
+    allow_threads: bool,
+    shared_memory_supported: bool,
+    hardware_concurrency: f64,
+) -> WebDispatcherMode {
+    if !allow_threads {
+        WebDispatcherMode::SingleThreaded {
+            reason: WebDispatcherSingleThreadedReason::DisabledByCaller,
+        }
+    } else if !shared_memory_supported {
+        WebDispatcherMode::SingleThreaded {
+            reason: WebDispatcherSingleThreadedReason::SharedMemoryUnavailable,
+        }
+    } else {
+        WebDispatcherMode::Multithreaded {
+            background_workers: hardware_concurrency.max(MIN_BACKGROUND_THREADS as f64) as usize,
+        }
+    }
+}
+
+#[cfg(not(feature = "multithreaded"))]
+fn select_dispatcher_mode(_allow_threads: bool) -> WebDispatcherMode {
+    WebDispatcherMode::SingleThreaded {
+        reason: WebDispatcherSingleThreadedReason::BuiltWithoutMultithreadedFeature,
+    }
+}
+
 #[cfg(feature = "multithreaded")]
 fn shared_memory_supported() -> bool {
     let global = js_sys::global();
@@ -22,18 +83,21 @@ fn shared_memory_supported() -> bool {
     has_shared_array_buffer && has_atomics && is_shared_buffer
 }
 
+#[cfg_attr(not(feature = "multithreaded"), allow(dead_code))]
 enum MainThreadItem {
     Runnable(RunnableVariant),
     Delayed {
         runnable: RunnableVariant,
         millis: i32,
     },
-    // TODO-Wasm: Shouldn't these run on their own dedicated thread?
+    // Realtime callbacks stay on the main-thread mailbox until a dedicated
+    // web audio/worklet execution path exists.
     RealtimeFunction(Box<dyn FnOnce() + Send>),
 }
 
 struct MainThreadMailbox {
     sender: PriorityQueueSender<MainThreadItem>,
+    #[cfg_attr(not(feature = "multithreaded"), allow(dead_code))]
     receiver: parking_lot::Mutex<PriorityQueueReceiver<MainThreadItem>>,
     signal: AtomicI32,
 }
@@ -53,17 +117,18 @@ impl MainThreadMailbox {
             log::error!("MainThreadMailbox::send failed: receiver disconnected");
         }
 
-        // TODO-Wasm: Verify this lock-free protocol
+        // The queue is the source of truth; this atomic flag is only the
+        // multithreaded wake-up signal for the main-thread drain loop.
         let view = self.signal_view();
         js_sys::Atomics::store(&view, 0, 1).ok();
         js_sys::Atomics::notify(&view, 0).ok();
     }
 
+    #[cfg(feature = "multithreaded")]
     fn drain(&self, window: &web_sys::Window) {
         let mut receiver = self.receiver.lock();
         loop {
             // We need these `spin` variants because we can't acquire a lock on the main thread.
-            // TODO-WASM: Should we do something different?
             match receiver.spin_try_pop() {
                 Ok(Some(item)) => execute_on_main_thread(window, item),
                 Ok(None) => break,
@@ -78,6 +143,7 @@ impl MainThreadMailbox {
         js_sys::Int32Array::new_with_byte_offset_and_length(&memory.buffer(), byte_offset, 1)
     }
 
+    #[cfg(feature = "multithreaded")]
     fn run_waker_loop(self: &Arc<Self>, window: web_sys::Window) {
         if !shared_memory_supported() {
             log::warn!("SharedArrayBuffer not available; main thread mailbox waker loop disabled");
@@ -121,12 +187,41 @@ impl MainThreadMailbox {
     }
 }
 
+#[cfg(feature = "multithreaded")]
+fn spawn_background_workers(
+    background_workers: usize,
+    background_receiver: &PriorityQueueReceiver<RunnableVariant>,
+) -> Vec<wasm_thread::JoinHandle<()>> {
+    let mut handles = Vec::with_capacity(background_workers);
+    for i in 0..background_workers {
+        let mut receiver = background_receiver.clone();
+        let builder = wasm_thread::Builder::new().name(format!("background-worker-{i}"));
+        match builder.spawn(move || {
+            loop {
+                let runnable: RunnableVariant = match receiver.pop() {
+                    Ok(runnable) => runnable,
+                    Err(_) => {
+                        log::info!("background-worker-{i}: channel disconnected, exiting");
+                        break;
+                    }
+                };
+
+                runnable.run();
+            }
+        }) {
+            Ok(handle) => handles.push(handle),
+            Err(error) => log::error!("failed to spawn background-worker-{i}: {error}"),
+        }
+    }
+    handles
+}
+
 pub struct WebDispatcher {
     main_thread_id: std::thread::ThreadId,
     browser_window: web_sys::Window,
     background_sender: PriorityQueueSender<RunnableVariant>,
     main_thread_mailbox: Arc<MainThreadMailbox>,
-    supports_threads: bool,
+    mode: WebDispatcherMode,
     #[cfg(feature = "multithreaded")]
     _background_threads: Vec<wasm_thread::JoinHandle<()>>,
 }
@@ -138,6 +233,9 @@ unsafe impl Sync for WebDispatcher {}
 
 impl WebDispatcher {
     pub fn new(browser_window: web_sys::Window, allow_threads: bool) -> Self {
+        #[cfg(not(feature = "multithreaded"))]
+        let _ = allow_threads;
+
         #[cfg(feature = "multithreaded")]
         let (background_sender, background_receiver) = PriorityQueueReceiver::new();
         #[cfg(not(feature = "multithreaded"))]
@@ -146,50 +244,46 @@ impl WebDispatcher {
         let main_thread_mailbox = Arc::new(MainThreadMailbox::new());
 
         #[cfg(feature = "multithreaded")]
-        let supports_threads = allow_threads && shared_memory_supported();
+        let mut mode = select_dispatcher_mode(
+            allow_threads,
+            shared_memory_supported(),
+            browser_window.navigator().hardware_concurrency(),
+        );
         #[cfg(not(feature = "multithreaded"))]
-        let supports_threads = false;
+        let mode = select_dispatcher_mode(allow_threads);
 
-        if supports_threads {
-            main_thread_mailbox.run_waker_loop(browser_window.clone());
-        } else {
-            log::warn!(
-                "SharedArrayBuffer not available; falling back to single-threaded dispatcher"
-            );
-        }
+        #[cfg(not(feature = "multithreaded"))]
+        log::info!("WebDispatcher built without multithreaded support; using single-threaded mode");
 
         #[cfg(feature = "multithreaded")]
-        let background_threads = if supports_threads {
-            let thread_count = browser_window
-                .navigator()
-                .hardware_concurrency()
-                .max(MIN_BACKGROUND_THREADS as f64) as usize;
-
-            // TODO-Wasm: Is it bad to have web workers blocking for a long time like this?
-            (0..thread_count)
-                .map(|i| {
-                    let mut receiver = background_receiver.clone();
-                    wasm_thread::Builder::new()
-                        .name(format!("background-worker-{i}"))
-                        .spawn(move || {
-                            loop {
-                                let runnable: RunnableVariant = match receiver.pop() {
-                                    Ok(runnable) => runnable,
-                                    Err(_) => {
-                                        log::info!(
-                                            "background-worker-{i}: channel disconnected, exiting"
-                                        );
-                                        break;
-                                    }
-                                };
-
-                                runnable.run();
-                            }
-                        })
-                        .expect("failed to spawn background worker thread")
-                })
-                .collect::<Vec<_>>()
+        let background_threads = if let WebDispatcherMode::Multithreaded { background_workers } =
+            mode
+        {
+            // Workers intentionally block on the queue only in explicit
+            // multithreaded mode. Stable fallback mode never starts workers.
+            let threads = spawn_background_workers(background_workers, &background_receiver);
+            if threads.is_empty() {
+                mode = WebDispatcherMode::SingleThreaded {
+                    reason: WebDispatcherSingleThreadedReason::WorkerStartupFailed,
+                };
+                log::warn!("No background workers started; falling back to single-threaded mode");
+            } else {
+                if threads.len() != background_workers {
+                    log::warn!(
+                        "Started {} of {background_workers} requested background workers",
+                        threads.len()
+                    );
+                    mode = WebDispatcherMode::Multithreaded {
+                        background_workers: threads.len(),
+                    };
+                }
+                main_thread_mailbox.run_waker_loop(browser_window.clone());
+            }
+            threads
         } else {
+            if allow_threads {
+                log::warn!("WebDispatcher using single-threaded mode: {mode:?}");
+            }
             Vec::new()
         };
 
@@ -198,10 +292,14 @@ impl WebDispatcher {
             browser_window,
             background_sender,
             main_thread_mailbox,
-            supports_threads,
+            mode,
             #[cfg(feature = "multithreaded")]
             _background_threads: background_threads,
         }
+    }
+
+    pub fn mode(&self) -> WebDispatcherMode {
+        self.mode
     }
 
     fn on_main_thread(&self) -> bool {
@@ -215,7 +313,7 @@ impl PlatformDispatcher for WebDispatcher {
     }
 
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
-        if !self.supports_threads {
+        if !self.mode.supports_background_workers() {
             self.dispatch_on_main_thread(runnable, priority);
             return;
         }
@@ -276,6 +374,7 @@ impl PlatformDispatcher for WebDispatcher {
     }
 }
 
+#[cfg(feature = "multithreaded")]
 fn execute_on_main_thread(window: &web_sys::Window, item: MainThreadItem) {
     match item {
         MainThreadItem::Runnable(runnable) => {
@@ -309,10 +408,68 @@ fn schedule_runnable(window: &web_sys::Window, runnable: RunnableVariant, priori
             window.queue_microtask(callback);
         }
         _ => {
-            // TODO-Wasm: this ought to enqueue so we can dequeue with proper priority
+            // Browser single-threaded scheduling currently preserves only the
+            // realtime-vs-deferred distinction. Full priority queue draining is
+            // deferred until the web backend has a broader scheduler surface.
             window
                 .set_timeout_with_callback_and_timeout_and_arguments_0(callback, 0)
                 .ok();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(not(feature = "multithreaded"))]
+    #[test]
+    fn stable_build_reports_missing_multithreaded_feature() {
+        assert_eq!(
+            select_dispatcher_mode(true),
+            WebDispatcherMode::SingleThreaded {
+                reason: WebDispatcherSingleThreadedReason::BuiltWithoutMultithreadedFeature,
+            }
+        );
+    }
+
+    #[cfg(feature = "multithreaded")]
+    #[test]
+    fn disabled_threads_report_caller_opt_out() {
+        assert_eq!(
+            select_dispatcher_mode(false, true, 8.0),
+            WebDispatcherMode::SingleThreaded {
+                reason: WebDispatcherSingleThreadedReason::DisabledByCaller,
+            }
+        );
+    }
+
+    #[cfg(feature = "multithreaded")]
+    #[test]
+    fn missing_shared_memory_reports_single_threaded_fallback() {
+        assert_eq!(
+            select_dispatcher_mode(true, false, 8.0),
+            WebDispatcherMode::SingleThreaded {
+                reason: WebDispatcherSingleThreadedReason::SharedMemoryUnavailable,
+            }
+        );
+    }
+
+    #[cfg(feature = "multithreaded")]
+    #[test]
+    fn multithreaded_mode_clamps_background_workers() {
+        assert_eq!(
+            select_dispatcher_mode(true, true, 1.0),
+            WebDispatcherMode::Multithreaded {
+                background_workers: MIN_BACKGROUND_THREADS,
+            }
+        );
+
+        assert_eq!(
+            select_dispatcher_mode(true, true, 8.0),
+            WebDispatcherMode::Multithreaded {
+                background_workers: 8,
+            }
+        );
     }
 }

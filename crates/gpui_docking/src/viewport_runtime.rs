@@ -1,4 +1,6 @@
 #[cfg(test)]
+use crate::drop_runtime::DockHostDropScene;
+#[cfg(test)]
 use crate::viewport_registry::DockViewportRouteUnavailableReason;
 #[cfg(test)]
 use crate::viewport_window_lifecycle::DockViewportReusableWindow;
@@ -146,7 +148,7 @@ struct DockViewportDropRouteSnapshot {
 
 struct DockViewportDropRouteSnapshotSelection {
     request: DockViewportDropRouteRequest,
-    route: DockViewportDropRoute,
+    route_resolution: DockViewportDropRouteResolution,
 }
 
 impl DockViewportDropRouteSnapshot {
@@ -165,7 +167,7 @@ impl DockViewportDropRouteSnapshot {
     fn into_route_selection(self) -> DockViewportDropRouteSnapshotSelection {
         DockViewportDropRouteSnapshotSelection {
             request: self.request,
-            route: self.route_resolution.into_route(),
+            route_resolution: self.route_resolution,
         }
     }
 }
@@ -850,6 +852,7 @@ impl DockViewportRuntime {
         .is_some_and(|registration| registration.changed)
     }
 
+    #[cfg(test)]
     pub(crate) fn begin_viewport_host_scene_frame(
         &mut self,
         space: impl Into<DockSpaceId>,
@@ -858,6 +861,27 @@ impl DockViewportRuntime {
         host_bounds: Bounds<Pixels>,
         host_position: Point<Pixels>,
         drop_guide_style: crate::DockDropGuideStyle,
+    ) -> Option<DockViewportHostSceneRegistration> {
+        self.begin_viewport_host_scene_frame_with_facts(
+            space,
+            window_id,
+            window_facts,
+            host_bounds,
+            host_position,
+            drop_guide_style,
+            Vec::new(),
+        )
+    }
+
+    pub(crate) fn begin_viewport_host_scene_frame_with_facts(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        window_id: WindowId,
+        window_facts: DockViewportWindowFacts,
+        host_bounds: Bounds<Pixels>,
+        host_position: Point<Pixels>,
+        drop_guide_style: crate::DockDropGuideStyle,
+        initial_facts: Vec<DockHostDropSceneFact>,
     ) -> Option<DockViewportHostSceneRegistration> {
         let space = space.into();
         let window = self.adapter.window_for_space(&space)?;
@@ -871,13 +895,14 @@ impl DockViewportRuntime {
             false
         };
         let changed = self.update_viewport_snapshot(&space, window_facts, host_bounds);
-        let mut registration = self.frame_coordinator.register_host_scene(
+        let mut registration = self.frame_coordinator.register_host_scene_with_facts(
             space,
             window_id,
             window_facts,
             host_bounds,
             host_position,
             drop_guide_style,
+            initial_facts,
         );
         registration.changed |= changed || close_cancelled;
         Some(registration)
@@ -930,6 +955,15 @@ impl DockViewportRuntime {
     ) -> Option<Bounds<Pixels>> {
         self.frame_coordinator
             .tab_label_bounds_for_tabs(space, window_id, tabs, target_index)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rendered_host_drop_scene_for_window(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<DockHostDropScene> {
+        self.frame_coordinator.scene_for_window(space, window_id)
     }
 
     pub(crate) fn routed_drop_preview_for(
@@ -1429,6 +1463,24 @@ impl DockViewportRuntime {
         self.status.record_platform_sync(record);
     }
 
+    pub(crate) fn record_visual_affordance_status(
+        &mut self,
+        space: DockSpaceId,
+        window_id: WindowId,
+        summary: crate::DockVisualAffordanceDebugSummary,
+    ) {
+        self.status
+            .record_visual_affordance(space, window_id, summary);
+    }
+
+    pub(crate) fn clear_visual_affordance_status(
+        &mut self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) {
+        self.status.clear_visual_affordance(space, window_id);
+    }
+
     fn deliver_payload_drop_inner(
         &mut self,
         delivery: DockDropDelivery,
@@ -1714,29 +1766,6 @@ impl DockViewportRuntime {
         let initial_route_request =
             self.backend_route_request_without_target_context_resample(request, cx);
         update.mark_changed(initial_route_request.changed);
-        let initial_snapshot = DockViewportDropRouteSnapshot::resolve(
-            &self.adapter,
-            initial_route_request.request,
-            &policy,
-        );
-        let initial_route = initial_snapshot.route_resolution.route_ref();
-        let initial_unavailable_reason = initial_snapshot.route_resolution.unavailable_reason();
-        if initial_route_request.changed
-            || initial_unavailable_reason.is_some()
-            || matches!(
-                initial_route,
-                DockViewportDropRoute::TearOff | DockViewportDropRoute::Rejected(_)
-            )
-        {
-            log::debug!(
-                "[DEBUG-docking-native] runtime route snapshot source_space={} source_node={:?} route={:?} initial_changed={} initial_unavailable_reason={:?}",
-                request.source_space().as_str(),
-                request.source_node(),
-                initial_route,
-                initial_route_request.changed,
-                initial_unavailable_reason
-            );
-        }
 
         let DockViewportDropRouteSnapshotRefresh {
             snapshot: resampled_snapshot,
@@ -1746,10 +1775,12 @@ impl DockViewportRuntime {
         update.mark_changed(resampled_changed);
         update.extend_windows(resampled_effects.refresh().iter().cloned());
         let selection = resampled_snapshot.into_route_selection();
+        let unavailable_reason = selection.route_resolution.unavailable_reason();
+        let route = selection.route_resolution.into_route();
         let resolution =
-            self.resolve_payload_drop_delivery_resolution(&selection.request, selection.route, cx);
+            self.resolve_payload_drop_delivery_resolution(&selection.request, route, cx);
         self.status
-            .record_route(&selection.request, resolution.route());
+            .record_route(&selection.request, resolution.route(), unavailable_reason);
         resolved_drop_route_outcome(resolution, update)
     }
 

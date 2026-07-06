@@ -2,7 +2,7 @@
 
 use crate::a11y::UiA11yElementExt;
 use crate::feedback::{FeedbackColors, FeedbackIntent};
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
@@ -708,7 +708,8 @@ impl Sizable for ToastStack {
 }
 
 impl RenderOnce for ToastStack {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let stack_metrics = state.metrics();
         let overflow_colors = ThemeResolver::feedback_colors(state.tokens, ToastIntent::Neutral);
@@ -732,6 +733,8 @@ impl RenderOnce for ToastStack {
                 let metrics = toast.metrics();
                 let colors = toast.colors();
                 let focus_ring = toast.focus_ring();
+                let action_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+                let dismiss_focus_shadow = action_focus_shadow.clone();
                 let action = toast.action();
                 let dismiss = toast.dismiss(ToastDismissReason::Manual);
                 let on_action = on_action.clone();
@@ -756,9 +759,9 @@ impl RenderOnce for ToastStack {
                     .gap(gpui_px_from_ui(metrics.gap()))
                     .rounded(gpui_px_from_ui(metrics.radius()))
                     .border_1()
-                    .border_color(ThemeResolver::resolve(colors.border()))
-                    .bg(ThemeResolver::resolve(colors.background()))
-                    .text_color(ThemeResolver::resolve(colors.foreground()))
+                    .border_color(theme.resolve(colors.border()))
+                    .bg(theme.resolve(colors.background()))
+                    .text_color(theme.resolve(colors.foreground()))
                     .ui_role(toast.role())
                     .aria_label(title.clone())
                     .child(
@@ -767,7 +770,7 @@ impl RenderOnce for ToastStack {
                             .w(gpui_px_from_ui(metrics.marker_size()))
                             .h(gpui_px_from_ui(metrics.marker_size()))
                             .rounded(gpui_px_from_ui(ui_px(999.0)))
-                            .bg(ThemeResolver::resolve(colors.marker())),
+                            .bg(theme.resolve(colors.marker())),
                     )
                     .child(
                         div()
@@ -785,9 +788,7 @@ impl RenderOnce for ToastStack {
                             .when_some(description, |this, description| {
                                 this.child(
                                     div()
-                                        .text_color(ThemeResolver::resolve(
-                                            colors.muted_foreground(),
-                                        ))
+                                        .text_color(theme.resolve(colors.muted_foreground()))
                                         .text_size(gpui_px_from_ui(metrics.description_size()))
                                         .line_height(gpui_px_from_ui(metrics.description_size()))
                                         .child(description),
@@ -805,13 +806,13 @@ impl RenderOnce for ToastStack {
                                         .justify_center()
                                         .rounded(gpui_px_from_ui(metrics.radius()))
                                         .border_1()
-                                        .border_color(ThemeResolver::resolve(colors.border()))
+                                        .border_color(theme.resolve(colors.border()))
                                         .focusable()
                                         .tab_stop(true)
                                         .ui_role(Role::Button)
                                         .aria_label(label.clone())
                                         .focus_visible(move |style| {
-                                            style.shadow(focus_ring_shadow(focus_ring))
+                                            style.shadow(action_focus_shadow.clone())
                                         })
                                         .cursor_pointer()
                                         .when_some(on_action.clone(), |this, on_action| {
@@ -838,7 +839,7 @@ impl RenderOnce for ToastStack {
                                 .ui_role(Role::Button)
                                 .aria_label("Dismiss notification")
                                 .focus_visible(move |style| {
-                                    style.shadow(focus_ring_shadow(focus_ring))
+                                    style.shadow(dismiss_focus_shadow.clone())
                                 })
                                 .cursor_pointer()
                                 .when_some(on_dismiss.clone(), |this, on_dismiss| {
@@ -856,7 +857,7 @@ impl RenderOnce for ToastStack {
                 this.child(
                     div()
                         .text_size(gpui_px_from_ui(stack_metrics.description_size()))
-                        .text_color(ThemeResolver::resolve(overflow_colors.muted_foreground()))
+                        .text_color(theme.resolve(overflow_colors.muted_foreground()))
                         .child(format!("+{} more", state.overflow_count())),
                 )
             })

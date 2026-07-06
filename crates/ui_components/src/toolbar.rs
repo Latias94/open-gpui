@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
-    App, ClickEvent, Context, ElementId, FocusHandle, InteractiveElement, IntoElement,
+    AnyView, App, ClickEvent, Context, ElementId, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
     Window, div,
 };
@@ -14,9 +14,9 @@ use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, Toggled, 
 
 use crate::a11y::UiA11yElementExt;
 use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
+use crate::choice::{ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::roving_focus::{active_index_from_str_keys, roving_navigation_target};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::theme::ThemeResolver;
 
 /// Item kind for a toolbar.
@@ -340,16 +340,14 @@ impl ToolbarState {
         tokens: ThemeTokens,
     ) -> Self {
         let descriptors: Vec<ToolbarItemDescriptor> = items.into_iter().collect();
-        let values: Vec<String> = descriptors.iter().map(|item| item.value.clone()).collect();
-        let disabled_map: Vec<bool> = descriptors
-            .iter()
-            .map(|item| disabled || !item.focusable())
-            .collect();
-        let focused_index = if disabled {
-            None
-        } else {
-            active_index_from_str_keys(&values, focused_value, &disabled_map)
-        };
+        let collection = ChoiceCollection::resolve(
+            disabled,
+            toolbar_choice_items(disabled, &descriptors),
+            None,
+            focused_value,
+            ChoiceInteractionPolicy::roving(orientation),
+        );
+        let focused_index = collection.active_index();
         let colors = ThemeResolver::button_colors(tokens, ButtonVariant::Outline, false);
 
         let items = descriptors
@@ -482,7 +480,29 @@ pub fn toolbar_navigation_target(
     current: usize,
     disabled: &[bool],
 ) -> Option<usize> {
-    roving_navigation_target(orientation, key, current, disabled)
+    ChoiceInteractionPolicy::roving(orientation).navigation_target_index(key, current, disabled)
+}
+
+fn toolbar_choice_items(
+    disabled: bool,
+    items: &[ToolbarItemDescriptor],
+) -> Vec<ChoiceItemProjection<()>> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let label = item.label().to_owned();
+            ChoiceItemProjection::new(
+                index,
+                None,
+                item.value(),
+                label.clone(),
+                disabled || !item.focusable(),
+                (),
+            )
+            .text_value(label)
+        })
+        .collect()
 }
 
 /// A concrete GPUI toolbar item.
@@ -491,6 +511,7 @@ pub struct ToolbarItem {
     descriptor: ToolbarItemDescriptor,
     visible_label: Option<SharedString>,
     on_select: Option<Rc<dyn Fn(ToolbarSelection, &mut Window, &mut App)>>,
+    tooltip: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
 }
 
 impl ToolbarItem {
@@ -501,6 +522,7 @@ impl ToolbarItem {
             descriptor: ToolbarItemDescriptor::action(value, label.to_string()),
             visible_label: Some(label),
             on_select: None,
+            tooltip: None,
         }
     }
 
@@ -514,6 +536,7 @@ impl ToolbarItem {
             descriptor: ToolbarItemDescriptor::action(value, label),
             visible_label: Some(icon.into()),
             on_select: None,
+            tooltip: None,
         }
     }
 
@@ -527,6 +550,7 @@ impl ToolbarItem {
             descriptor: ToolbarItemDescriptor::toggle(value, label),
             visible_label: Some(icon.into()),
             on_select: None,
+            tooltip: None,
         }
     }
 
@@ -537,6 +561,7 @@ impl ToolbarItem {
             descriptor: ToolbarItemDescriptor::toggle(value, label.to_string()),
             visible_label: Some(label),
             on_select: None,
+            tooltip: None,
         }
     }
 
@@ -546,6 +571,7 @@ impl ToolbarItem {
             descriptor: ToolbarItemDescriptor::separator(value),
             visible_label: None,
             on_select: None,
+            tooltip: None,
         }
     }
 
@@ -567,6 +593,14 @@ impl ToolbarItem {
         handler: impl Fn(ToolbarSelection, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_select = Some(Rc::new(handler));
+        self
+    }
+
+    /// Adds a hover/focus tooltip to a non-separator toolbar item.
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        if self.descriptor.kind() != ToolbarItemKind::Separator {
+            self.tooltip = Some(Rc::new(tooltip));
+        }
         self
     }
 
@@ -680,6 +714,7 @@ impl Sizable for Toolbar {
 
 impl RenderOnce for Toolbar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let Toolbar {
             id,
             label,
@@ -756,8 +791,8 @@ impl RenderOnce for Toolbar {
                 .p(gpui_px_from_ui(metrics.padding()))
                 .rounded(gpui_px_from_ui(metrics.radius()))
                 .border_1()
-                .border_color(ThemeResolver::resolve(colors.border()))
-                .bg(ThemeResolver::resolve(colors.background()))
+                .border_color(theme.resolve(colors.border()))
+                .bg(theme.resolve(colors.background()))
                 .when(is_vertical, |this| this.flex_col().items_stretch())
                 .when(!is_vertical, |this| {
                     this.flex_row().items_center().flex_wrap()
@@ -765,6 +800,7 @@ impl RenderOnce for Toolbar {
                 .children(state.items().iter().enumerate().map(|(index, item)| {
                     let descriptor = item_descriptors[index].clone();
                     let visible_label = items[index].visible_label.clone();
+                    let item_tooltip = items[index].tooltip.clone();
                     let click_item_handler = items[index].select_handler();
                     let key_item_handler = click_item_handler.clone();
                     let click_toolbar_handler = on_select.clone();
@@ -786,6 +822,17 @@ impl RenderOnce for Toolbar {
                     } else {
                         None
                     };
+                    let separator_color = theme.resolve(colors.border());
+                    let item_border = separator_color;
+                    let item_background = theme.resolve(toolbar_item_background(
+                        colors,
+                        pressed_colors,
+                        item_kind,
+                        item_pressed,
+                    ));
+                    let item_foreground = theme.resolve(colors.foreground());
+                    let item_hover_background = theme.resolve(colors.hover_background());
+                    let item_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
 
                     if item.kind() == ToolbarItemKind::Separator {
                         return div()
@@ -796,7 +843,7 @@ impl RenderOnce for Toolbar {
                                 move || format!("toolbar:{debug_id}:item:{item_value}")
                             })
                             .flex_none()
-                            .bg(ThemeResolver::resolve(colors.border()))
+                            .bg(separator_color)
                             .when(is_vertical, |this| {
                                 this.w_full()
                                     .h(gpui_px_from_ui(metrics.separator_thickness()))
@@ -839,21 +886,15 @@ impl RenderOnce for Toolbar {
                         .gap_2()
                         .rounded(gpui_px_from_ui(metrics.item().radius()))
                         .border_1()
-                        .border_color(ThemeResolver::resolve(colors.border()))
-                        .bg(ThemeResolver::resolve(toolbar_item_background(
-                            colors,
-                            pressed_colors,
-                            item_kind,
-                            item_pressed,
-                        )))
+                        .border_color(item_border)
+                        .bg(item_background)
                         .text_size(gpui_px_from_ui(metrics.item().text_size()))
                         .line_height(gpui_px_from_ui(metrics.item().text_size()))
-                        .text_color(ThemeResolver::resolve(colors.foreground()))
-                        .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                        .text_color(item_foreground)
+                        .focus_visible(move |style| style.shadow(item_focus_shadow.clone()))
                         .when(!item_disabled, |this| {
-                            this.cursor_pointer().hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.hover_background()))
-                            })
+                            this.cursor_pointer()
+                                .hover(move |style| style.bg(item_hover_background))
                         })
                         .when(item_disabled, |this| {
                             this.opacity(0.56).cursor_not_allowed()
@@ -934,6 +975,9 @@ impl RenderOnce for Toolbar {
 
                                 cx.stop_propagation();
                             }
+                        })
+                        .when_some(item_tooltip, |this, tooltip| {
+                            this.tooltip(move |window, cx| tooltip(window, cx))
                         })
                         .child(visible_label.unwrap_or_else(|| descriptor.label().into()))
                         .into_any_element()

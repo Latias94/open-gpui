@@ -12,7 +12,7 @@ use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::theme::ThemeResolver;
 
 /// Resolved switch metrics.
@@ -261,7 +261,7 @@ impl Sizable for Switch {
 }
 
 impl RenderOnce for Switch {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -270,6 +270,13 @@ impl RenderOnce for Switch {
         let next_checked = !state.checked();
         let label = self.label.clone();
         let debug_id = self.id.to_string();
+        let theme_context = ThemeResolver::current(cx);
+        let theme = &theme_context;
+        let border_color = theme.resolve(colors.border());
+        let track_color = theme.resolve(colors.track());
+        let thumb_color = theme.resolve(colors.thumb());
+        let label_color = theme.resolve(colors.label());
+        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, theme);
 
         div()
             .id(self.id)
@@ -286,7 +293,7 @@ impl RenderOnce for Switch {
                     .unwrap_or_else(|| SharedString::from("Switch")),
             )
             .ui_aria_toggled(state.toggled())
-            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+            .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| this.cursor_pointer())
             .when_some(
@@ -305,8 +312,8 @@ impl RenderOnce for Switch {
                     .h(gpui_px_from_ui(metrics.track_height()))
                     .rounded(gpui_px_from_ui(metrics.track_height()))
                     .border_1()
-                    .border_color(ThemeResolver::resolve(colors.border()))
-                    .bg(ThemeResolver::resolve(colors.track()))
+                    .border_color(border_color)
+                    .bg(track_color)
                     .child(
                         div()
                             .absolute()
@@ -319,7 +326,7 @@ impl RenderOnce for Switch {
                             .w(gpui_px_from_ui(metrics.thumb_size()))
                             .h(gpui_px_from_ui(metrics.thumb_size()))
                             .rounded(gpui_px_from_ui(metrics.thumb_size()))
-                            .bg(ThemeResolver::resolve(colors.thumb()))
+                            .bg(thumb_color)
                             .shadow_sm(),
                     ),
             )
@@ -328,7 +335,7 @@ impl RenderOnce for Switch {
                     div()
                         .text_size(gpui_px_from_ui(metrics.label_text_size()))
                         .line_height(gpui_px_from_ui(metrics.track_height()))
-                        .text_color(ThemeResolver::resolve(colors.label()))
+                        .text_color(label_color)
                         .child(label),
                 )
             })

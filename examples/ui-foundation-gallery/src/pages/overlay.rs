@@ -3,6 +3,7 @@
 use open_gpui::{point, px};
 use std::time::Duration;
 
+use crate::story::{StoryContract, StoryProbeContract, StoryProbeOperation::*};
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogIntent, AlertDialogState, ContextMenu, ContextMenuState, Dialog,
     DialogState, HoverCard, HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardState, Menu,
@@ -26,7 +27,11 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_foundation_gallery::pages::overlay::OVERLAY_CATALOG",
     "open_gpui_ui_foundation_gallery::pages::overlay::OverlayCatalogEntry",
     "open_gpui_ui_foundation_gallery::pages::overlay::OverlayCatalogStatus",
+    "open_gpui_ui_foundation_gallery::pages::overlay::overlay_story_contracts",
     "open_gpui_ui_foundation_gallery::pages::overlay::overlay_sample_selector_pairs",
+    "open_gpui_ui_foundation_gallery::StoryContract",
+    "open_gpui_ui_foundation_gallery::StoryProbeContract",
+    "open_gpui_ui_foundation_gallery::StoryProbeOperation",
     "open_gpui_ui_components::Tooltip",
     "open_gpui_ui_components::TooltipState",
     "open_gpui_ui_components::HoverCard",
@@ -242,6 +247,144 @@ pub fn overlay_sample_selector_pairs() -> impl Iterator<Item = (&'static str, &'
     OVERLAY_CATALOG
         .iter()
         .map(|entry| (entry.name, entry.sample_selector))
+}
+
+const OVERLAY_TRIGGER_OPEN_DISMISS_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Open, "trigger", "opened surface"),
+    StoryProbeContract::new(Dismiss, "outside or escape", "closed surface"),
+    StoryProbeContract::new(Focus, "trigger", "focus restore"),
+    StoryProbeContract::new(ReadPublicPayload, "state", "resolved overlay policy"),
+];
+
+const OVERLAY_CONTROL_OPEN_DISMISS_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Open, "control", "opened controlled surface"),
+    StoryProbeContract::new(Dismiss, "escape or outside", "closed controlled surface"),
+    StoryProbeContract::new(Focus, "trigger", "focus restore"),
+    StoryProbeContract::new(ReadPublicPayload, "state", "resolved overlay policy"),
+];
+
+const TOOLTIP_STORY_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Open, "hover or focus trigger", "tooltip content"),
+    StoryProbeContract::new(Dismiss, "focus or pointer leave", "closed tooltip content"),
+    StoryProbeContract::new(Focus, "trigger", "focus-driven tooltip content"),
+    StoryProbeContract::new(ReadPublicPayload, "state", "resolved tooltip policy"),
+];
+
+const ALERT_DIALOG_STORY_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Open, "trigger", "opened alert dialog surface"),
+    StoryProbeContract::new(
+        Dismiss,
+        "primary action or escape",
+        "closed alert dialog surface",
+    ),
+    StoryProbeContract::new(Activate, "primary action", "action dismissal"),
+    StoryProbeContract::new(Focus, "cancel action", "initial focus and restore"),
+    StoryProbeContract::new(ReadPublicPayload, "state", "resolved alert dialog policy"),
+];
+
+const CONTEXT_MENU_STORY_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Open, "right-click hotspot", "opened menu surface"),
+    StoryProbeContract::new(Dismiss, "escape or outside", "closed menu surface"),
+    StoryProbeContract::new(Focus, "hotspot", "context anchor focus"),
+    StoryProbeContract::new(ReadPublicPayload, "state", "resolved context-menu policy"),
+];
+
+/// Returns overlay story contracts used by gallery runtime probes.
+pub fn overlay_story_contracts() -> Vec<StoryContract> {
+    OVERLAY_CATALOG
+        .iter()
+        .map(|entry| match entry.name {
+            "Tooltip" => StoryContract::overlay(
+                entry.name,
+                entry.family,
+                entry.state,
+                entry.catalog_selector(),
+                entry.sample_selector,
+                Some("gallery:overlay-tooltip-trigger:hover-focus"),
+                Some("tooltip:overlay-tooltip-content:hover-focus:content"),
+                None,
+                TOOLTIP_STORY_PROBES,
+            ),
+            "HoverCard" => StoryContract::overlay(
+                entry.name,
+                entry.family,
+                entry.state,
+                entry.catalog_selector(),
+                entry.sample_selector,
+                Some("hover-card:overlay-hover-card-demo:manual-controlled:trigger"),
+                Some("hover-card:overlay-hover-card-demo:manual-controlled:content"),
+                Some("gallery:overlay-hover-card-controlled-toggle"),
+                OVERLAY_CONTROL_OPEN_DISMISS_PROBES,
+            ),
+            "Popover" => StoryContract::overlay(
+                entry.name,
+                entry.family,
+                entry.state,
+                entry.catalog_selector(),
+                entry.sample_selector,
+                Some("popover:overlay-popover-demo:controlled:trigger"),
+                Some("popover:overlay-popover-demo:controlled:content"),
+                Some("gallery:overlay-popover-control:controlled"),
+                OVERLAY_TRIGGER_OPEN_DISMISS_PROBES,
+            ),
+            "Dialog" => StoryContract::overlay(
+                entry.name,
+                entry.family,
+                entry.state,
+                entry.catalog_selector(),
+                entry.sample_selector,
+                Some("dialog:overlay-dialog-demo:controlled-modal:trigger"),
+                Some("dialog:overlay-dialog-demo:controlled-modal:surface"),
+                Some("gallery:overlay-dialog-control:controlled-modal"),
+                OVERLAY_TRIGGER_OPEN_DISMISS_PROBES,
+            ),
+            "AlertDialog" => StoryContract::overlay(
+                entry.name,
+                entry.family,
+                entry.state,
+                entry.catalog_selector(),
+                entry.sample_selector,
+                Some("alert-dialog:overlay-alert-dialog-demo:destructive-confirm:trigger"),
+                Some("alert-dialog:overlay-alert-dialog-demo:destructive-confirm:surface"),
+                Some("gallery:overlay-alert-dialog-control:destructive-confirm"),
+                ALERT_DIALOG_STORY_PROBES,
+            ),
+            "Sheet" => StoryContract::overlay(
+                entry.name,
+                entry.family,
+                entry.state,
+                entry.catalog_selector(),
+                entry.sample_selector,
+                Some("gallery:overlay-sheet-control:right-non-modal"),
+                Some("sheet:overlay-sheet-demo:right-non-modal:surface"),
+                Some("gallery:overlay-sheet-control:right-non-modal"),
+                OVERLAY_CONTROL_OPEN_DISMISS_PROBES,
+            ),
+            "Menu" => StoryContract::overlay(
+                entry.name,
+                entry.family,
+                entry.state,
+                entry.catalog_selector(),
+                entry.sample_selector,
+                Some("gallery:overlay-menu-control:controlled"),
+                Some("menu:overlay-menu-demo:controlled:content"),
+                Some("gallery:overlay-menu-control:controlled"),
+                OVERLAY_CONTROL_OPEN_DISMISS_PROBES,
+            ),
+            "ContextMenu" => StoryContract::overlay(
+                entry.name,
+                entry.family,
+                entry.state,
+                entry.catalog_selector(),
+                entry.sample_selector,
+                Some("context-menu:overlay-context-menu-demo:controlled:hotspot"),
+                Some("context-menu:overlay-context-menu-demo:controlled:surface"),
+                Some("gallery:overlay-context-menu-control:controlled"),
+                CONTEXT_MENU_STORY_PROBES,
+            ),
+            _ => unreachable!("official overlay catalog entry should have a story contract"),
+        })
+        .collect()
 }
 
 const OVERLAY_CONTROLLED_SAMPLE_COUNT: usize = 7;

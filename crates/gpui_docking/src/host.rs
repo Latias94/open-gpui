@@ -5,7 +5,9 @@ use crate::{
     DockViewportFocusCommand, DockViewportFocusRequest, DockViewportPlatformFocusRestoreGate,
     DockViewportRuntimeHandle, geometry::DockDropGuideStyle,
     host_render_session::DockHostRenderSession, interaction::DockInteractionRuntime,
-    workspace::DockWorkspace,
+    presentation_scene::DockPresentationScene, transition_executor::DockTransitionExecutor,
+    visual_affordance_scene::DockVisualAffordanceScene, workspace::DockWorkspace,
+    zoom_state::DockZoomState,
 };
 use open_gpui::{
     AppContext as _, Context, Entity, FocusHandle, Pixels, Subscription, Window, WindowId, px,
@@ -54,6 +56,7 @@ impl Default for DockHostOptions {
 pub struct DockHost {
     controller: Entity<DockController>,
     space: DockSpaceId,
+    focus_handle: FocusHandle,
     viewport_runtime: DockViewportRuntimeHandle,
     viewport_activation_subscription: Option<Subscription>,
     viewport_bounds_subscription: Option<Subscription>,
@@ -61,7 +64,14 @@ pub struct DockHost {
     panel_focus_trackers: HashMap<DockItemId, DockPanelFocusTracker>,
     #[cfg(test)]
     debug: DockDebugInstrumentation,
+    #[cfg(test)]
+    pub(crate) debug_recording_suppression_depth: usize,
     interaction: DockInteractionRuntime,
+    zoom: DockZoomState,
+    transitions: DockTransitionExecutor,
+    visual_affordance_transitions: DockTransitionExecutor,
+    last_visual_affordance_scene: Option<DockVisualAffordanceScene>,
+    last_presentation_scene: Option<DockPresentationScene>,
 }
 
 impl DockHost {
@@ -76,6 +86,7 @@ impl DockHost {
         Self {
             controller,
             space: space.into(),
+            focus_handle: cx.focus_handle(),
             viewport_runtime,
             viewport_activation_subscription: None,
             viewport_bounds_subscription: None,
@@ -83,12 +94,23 @@ impl DockHost {
             panel_focus_trackers: HashMap::new(),
             #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
+            #[cfg(test)]
+            debug_recording_suppression_depth: 0,
             interaction: DockInteractionRuntime::default(),
+            zoom: DockZoomState::default(),
+            transitions: DockTransitionExecutor::default(),
+            visual_affordance_transitions: DockTransitionExecutor::default(),
+            last_visual_affordance_scene: None,
+            last_presentation_scene: None,
         }
     }
 
     pub(crate) fn space(&self) -> &DockSpaceId {
         &self.space
+    }
+
+    pub(crate) fn host_focus_handle(&self) -> FocusHandle {
+        self.focus_handle.clone()
     }
 
     #[cfg(test)]
@@ -136,6 +158,50 @@ impl DockHost {
 
     pub(crate) fn interaction_mut(&mut self) -> &mut DockInteractionRuntime {
         &mut self.interaction
+    }
+
+    pub(crate) fn zoom_state(&self) -> &DockZoomState {
+        &self.zoom
+    }
+
+    pub(crate) fn zoom_state_mut(&mut self) -> &mut DockZoomState {
+        &mut self.zoom
+    }
+
+    pub(crate) fn transition_executor_mut(&mut self) -> &mut DockTransitionExecutor {
+        &mut self.transitions
+    }
+
+    pub(crate) fn visual_affordance_transition_executor_mut(
+        &mut self,
+    ) -> &mut DockTransitionExecutor {
+        &mut self.visual_affordance_transitions
+    }
+
+    pub(crate) fn visual_affordance_transition_executor_for_debug(
+        &self,
+    ) -> &DockTransitionExecutor {
+        &self.visual_affordance_transitions
+    }
+
+    pub(crate) fn last_visual_affordance_scene(&self) -> Option<&DockVisualAffordanceScene> {
+        self.last_visual_affordance_scene.as_ref()
+    }
+
+    pub(crate) fn set_last_visual_affordance_scene(&mut self, scene: DockVisualAffordanceScene) {
+        self.last_visual_affordance_scene = Some(scene);
+    }
+
+    pub(crate) fn clear_last_visual_affordance_scene(&mut self) -> bool {
+        self.last_visual_affordance_scene.take().is_some()
+    }
+
+    pub(crate) fn last_presentation_scene(&self) -> Option<&DockPresentationScene> {
+        self.last_presentation_scene.as_ref()
+    }
+
+    pub(crate) fn set_last_presentation_scene(&mut self, scene: DockPresentationScene) {
+        self.last_presentation_scene = Some(scene);
     }
 
     pub(crate) fn viewport_runtime(&self) -> &DockViewportRuntimeHandle {

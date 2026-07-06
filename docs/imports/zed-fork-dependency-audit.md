@@ -32,7 +32,7 @@ flowchart TD
 
 | Fork | Resolution | Compatibility note | Evidence |
 | --- | --- | --- | --- |
-| `zed-reqwest` | Replaced with crates.io `reqwest = "=0.12.15"`. | Zed's fork added per-request `RequestBuilder::redirect_policy`; `reqwest_client` now caches same-config clients with the requested upstream client-level redirect policy when a request carries `RedirectPolicy`. | `cargo check -p reqwest_client`; `cargo nextest run -p reqwest_client` |
+| `zed-reqwest` | Replaced with crates.io `reqwest = "=0.13.4"`. | Zed's fork added per-request `RequestBuilder::redirect_policy`; `reqwest_client` caches same-config clients with the requested upstream client-level redirect policy when a request carries `RedirectPolicy`. The 0.13 upgrade keeps the redirect-client adapter and removes the `rustls-pemfile` advisory path. | `cargo check -p open-gpui-reqwest-client --all-features`; `cargo audit` |
 | `zed-scap` package | Replaced with the Open GPUI-owned `open-gpui-scap` fork at `https://github.com/Latias94/scap`, branch `main`. | The fork keeps the public `scap` crate API by setting `[lib] name = "scap"` while using an owned package name. It also adapts the Windows path to `windows-capture = 1.5.0` by using `Frame::timestamp()`. | `cargo check --locked` in `Latias94/scap`; `cargo package --no-verify` in `Latias94/scap`; `cargo check -p gpui_windows --all-features --locked`; `cargo run -p xtask -- scan-import-boundary` |
 | `zed-scap` transitive `windows-capture` drift | Superseded by the `open-gpui-scap` migration. | Earlier recovery pinned `windows-capture = 1.4.0` while Open GPUI still consumed `zed-scap`; the owned fork now adapts to `windows-capture = 1.5.0` instead. | Historical evidence: `cargo check -p gpui_windows --all-features`; current evidence is covered by the `open-gpui-scap` row. |
 | `zed-xim` | Replaced with crates.io `xim = "=0.5.0"`. | Zed's fork exposed a `Client::reset_ic` helper. Upstream `xim 0.5.0` removed that helper but still exposes `ClientCore::send_req` and `Request::ResetIc`, so `gpui_linux` now sends the same XIM reset request directly. | WSL Ubuntu: `cargo check -p gpui_linux --all-features` |
@@ -297,9 +297,10 @@ Result:
 - The native renderer smoke requests a local `wgpu` adapter and device, creates the GPUI renderer
   bind group layouts, and creates the core render pipelines. It also checks that the subpixel sprite
   pipeline is present only when the device exposes `DUAL_SOURCE_BLENDING`.
-- `cargo check -p gpui_wgpu --all-targets --features font-kit` is not a valid migration gate yet
-  because `crates/gpui_wgpu/benches/layout_line.rs` includes font assets that are not present in
-  this extracted workspace. That failure is unrelated to the `wgpu` API.
+- `cargo check -p gpui_wgpu --all-targets --features font-kit` is a valid migration gate after
+  `crates/gpui_wgpu/benches/layout_line.rs` stopped using compile-time font includes. The
+  benchmark now reads optional font paths at runtime and skips initialization when those assets are
+  absent from an extracted workspace.
 
 Decision:
 

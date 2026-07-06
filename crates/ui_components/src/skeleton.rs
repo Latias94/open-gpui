@@ -156,7 +156,8 @@ impl Sizable for Skeleton {
 }
 
 impl RenderOnce for Skeleton {
-    fn render(self, _window: &mut open_gpui::Window, _cx: &mut open_gpui::App) -> impl IntoElement {
+    fn render(self, _window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -168,7 +169,7 @@ impl RenderOnce for Skeleton {
             .w(gpui_px_from_ui(metrics.width()))
             .h(gpui_px_from_ui(metrics.height()))
             .rounded(gpui_px_from_ui(metrics.radius()))
-            .bg(ThemeResolver::resolve(colors.background()))
+            .bg(theme.resolve(colors.background()))
             .when(state.subtle(), |this| this.opacity(0.56))
     }
 }

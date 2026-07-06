@@ -27,6 +27,8 @@ pub(crate) struct TestPlatform {
     pub(crate) hovered_window_available: RefCell<bool>,
     pub(crate) hovered_window: RefCell<Option<TestWindow>>,
     window_stack: RefCell<Option<Vec<TestWindow>>>,
+    platform_viewport_windows: RefCell<bool>,
+    no_input_windows: RefCell<bool>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
     pressed_mouse_buttons: Mutex<Option<Vec<MouseButton>>>,
@@ -41,6 +43,7 @@ pub(crate) struct TestPlatform {
     pub text_system: Arc<dyn PlatformTextSystem>,
     pub expect_restart: RefCell<Option<oneshot::Sender<Option<PathBuf>>>>,
     quit_requested: RefCell<bool>,
+    system_wake_callback: RefCell<Option<Box<dyn FnMut()>>>,
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
     weak: Weak<Self>,
 }
@@ -137,8 +140,11 @@ impl TestPlatform {
             hovered_window_available: RefCell::new(true),
             hovered_window: Default::default(),
             window_stack: Default::default(),
+            platform_viewport_windows: RefCell::new(true),
+            no_input_windows: RefCell::new(true),
             expect_restart: Default::default(),
             quit_requested: Default::default(),
+            system_wake_callback: Default::default(),
             current_clipboard_item: Mutex::new(None),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             current_primary_item: Mutex::new(None),
@@ -149,6 +155,14 @@ impl TestPlatform {
             text_system,
             headless_renderer_factory,
         })
+    }
+
+    pub(crate) fn set_no_input_windows(&self, supported: bool) {
+        *self.no_input_windows.borrow_mut() = supported;
+    }
+
+    pub(crate) fn set_platform_viewport_windows(&self, supported: bool) {
+        *self.platform_viewport_windows.borrow_mut() = supported;
     }
 
     pub(crate) fn simulate_new_path_selection(
@@ -279,9 +293,35 @@ impl TestPlatform {
         *self.hovered_window_available.borrow_mut() = available;
     }
 
+    pub(crate) fn cursor_style(&self) -> CursorStyle {
+        *self.active_cursor.lock()
+    }
+
+    pub(crate) fn set_window_cursor_style(&self, window: &TestWindow, style: CursorStyle) {
+        let cursor_owner = if *self.hovered_window_available.borrow() {
+            self.hovered_window
+                .borrow()
+                .as_ref()
+                .is_some_and(|hovered| Rc::ptr_eq(&hovered.0, &window.0))
+        } else {
+            self.active_window
+                .borrow()
+                .as_ref()
+                .is_some_and(|active| Rc::ptr_eq(&active.0, &window.0))
+        };
+
+        if cursor_owner {
+            *self.active_cursor.lock() = style;
+        }
+    }
+
     pub(crate) fn set_hovered_window(&self, window: Option<TestWindow>) {
         let previous_window = self.hovered_window.borrow_mut().take();
         self.hovered_window.borrow_mut().clone_from(&window);
+        *self.active_cursor.lock() = window
+            .as_ref()
+            .map(|window| window.0.lock().cursor_style)
+            .unwrap_or(CursorStyle::Arrow);
 
         if let Some(previous_window) = previous_window {
             if let Some(window) = window.as_ref()
@@ -322,6 +362,14 @@ impl TestPlatform {
         }
     }
 
+    pub(crate) fn simulate_system_wake(&self) {
+        let Some(mut callback) = self.system_wake_callback.take() else {
+            return;
+        };
+        callback();
+        self.system_wake_callback.replace(Some(callback));
+    }
+
     pub(crate) fn did_prompt_for_new_path(&self) -> bool {
         !self.prompts.borrow().new_path.is_empty()
     }
@@ -351,6 +399,10 @@ impl Platform for TestPlatform {
     fn on_keyboard_layout_change(&self, _: Box<dyn FnMut()>) {}
 
     fn on_thermal_state_change(&self, _: Box<dyn FnMut()>) {}
+
+    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
+        self.system_wake_callback.replace(Some(callback));
+    }
 
     fn thermal_state(&self) -> ThermalState {
         ThermalState::Nominal
@@ -450,10 +502,12 @@ impl Platform for TestPlatform {
 
     fn viewport_capabilities(&self) -> crate::PlatformViewportCapabilities {
         crate::PlatformViewportCapabilities {
+            platform_viewport_windows: *self.platform_viewport_windows.borrow(),
             global_window_bounds: true,
             window_stack: self.window_stack.borrow().is_some(),
             display_work_area: true,
             dpi_scale: true,
+            no_input_windows: *self.no_input_windows.borrow(),
             hovered_window_ignores_no_input: true,
             ..Default::default()
         }
@@ -549,10 +603,6 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn set_cursor_style(&self, style: crate::CursorStyle) {
-        *self.active_cursor.lock() = style;
-    }
-
     fn hide_cursor_until_mouse_moves(&self) {}
 
     fn is_cursor_visible(&self) -> bool {
@@ -623,10 +673,10 @@ struct TestKeyboardLayout;
 
 impl PlatformKeyboardLayout for TestKeyboardLayout {
     fn id(&self) -> &str {
-        "zed.keyboard.example"
+        "open-gpui.keyboard.example"
     }
 
     fn name(&self) -> &str {
-        "zed.keyboard.example"
+        "open-gpui.keyboard.example"
     }
 }

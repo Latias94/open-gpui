@@ -1,10 +1,16 @@
 use crate::{
-    DockHost, DockItemId, DockNodeId, DockSpaceId,
+    DockHost, DockItemId, DockNodeId, DockSpaceId, SplitAxis,
+    divider_hit_map::{DockDividerHandleHitTarget, DockDividerHitTarget},
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
-    interaction::{DockPayloadDropRelease, DockRuntimeDragSession},
+    interaction::{DockPayloadDropRelease, DockRuntimeDragSession, SplitterDragAxis},
+    presentation_scene::DockPresentationScene,
+    viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
+use open_gpui_ui_core::AccessibleAction;
+
+const ACCESSIBILITY_SPLITTER_STEP_PX: f32 = 24.0;
 
 impl DockHost {
     pub(crate) fn record_payload_drag_anchor_from_render(
@@ -42,6 +48,14 @@ impl DockHost {
         let begin = self.begin_tab_item_drag_interaction(tabs, item, payload, cx);
         begin.outcome.finish(cx);
         begin.drag_session
+    }
+
+    pub(crate) fn focus_host_for_drag_from_render(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus(&self.host_focus_handle(), cx);
     }
 
     pub(crate) fn update_payload_drag_tear_off_geometry_from_render(
@@ -83,6 +97,22 @@ impl DockHost {
         changed || anchor_cleared
     }
 
+    pub(crate) fn cancel_payload_drag_from_render(
+        &mut self,
+        payload: &DockDragPayload,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let drag_session = self.active_payload_drag_session(payload);
+        let session_changed = drag_session
+            .as_ref()
+            .is_some_and(|session| self.finish_payload_drag_session(session, cx));
+        let local_preview_cleared = self.clear_drop_preview_interaction();
+        let routed_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
+        let active_drag_cleared = cx.stop_active_drag(window);
+        session_changed || local_preview_cleared || routed_preview_cleared || active_drag_cleared
+    }
+
     pub(crate) fn select_tab_from_render(
         &mut self,
         tabs: DockNodeId,
@@ -107,6 +137,29 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> bool {
         self.commit_payload_drop_release(release, window, cx)
+    }
+
+    pub(crate) fn drop_payload_release_from_rendered_host_scene(
+        &mut self,
+        payload: DockDragPayload,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let drag_session = self.active_payload_drag_session(&payload);
+        let event_receiver_local_scene_proof =
+            self.interaction().viewport_host_scene_frame().cloned();
+        self.drop_payload_release_from_render(
+            DockPayloadDropRelease::hovered_host_with_session(
+                payload,
+                self.space().clone(),
+                position,
+                drag_session,
+            )
+            .with_event_receiver_local_scene_proof(event_receiver_local_scene_proof),
+            window,
+            cx,
+        )
     }
 
     pub(crate) fn commit_payload_drop_release(
@@ -146,15 +199,43 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let _ = self.record_payload_drag_hovered_viewport_from_render(payload, window);
-        self.schedule_outside_release_poll_from_host(payload, window, cx);
         self.publish_viewport_host_scene_interaction(host_bounds, position, window, cx);
-        self.update_floating_drag_interaction(position, cx)
-            .merge(
-                self.update_viewport_drop_route_preview_interaction(payload, position, window, cx),
-            )
+        self.update_payload_drag_hover_state_from_render(payload, position, window, cx)
             .merge(self.ensure_host_drop_scene_interaction(payload, position, cx))
             .finish(cx)
+    }
+
+    pub(crate) fn update_payload_drag_hover_from_rendered_host_scene(
+        &mut self,
+        payload: &DockDragPayload,
+        position: Point<Pixels>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let local_preview_cleared = if self.interaction().drop_scene_position() == Some(position) {
+            false
+        } else {
+            self.clear_drop_preview_interaction()
+        };
+        let changed = self
+            .update_payload_drag_hover_state_from_render(payload, position, window, cx)
+            .merge(
+                crate::host_interaction_outcome::DockHostInteractionOutcome::from_session_changed(
+                    local_preview_cleared,
+                ),
+            )
+            .finish(cx);
+        changed
+    }
+
+    pub(crate) fn publish_rendered_viewport_host_scene_frame_from_render(
+        &mut self,
+        frame: Option<DockViewportHostSceneFrame>,
+        window: &Window,
+    ) -> bool {
+        let window_id = window.window_handle().window_id();
+        let frame = frame.filter(|frame| frame.matches_viewport(self.space(), window_id));
+        self.interaction_mut().set_viewport_host_scene_frame(frame)
     }
 
     pub(crate) fn update_local_root_drop_scene_from_render(
@@ -210,28 +291,56 @@ impl DockHost {
         self.finish_floating_drag_interaction().finish(cx)
     }
 
-    pub(crate) fn begin_splitter_drag_from_render(
+    pub(crate) fn begin_divider_drag_from_scene(
         &mut self,
-        split: DockNodeId,
-        handle_index: usize,
-        start_position: Pixels,
-        split_extent: Pixels,
-        initial_fractions: Vec<f32>,
+        scene: &DockPresentationScene,
+        target: &DockDividerHitTarget,
+        position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) -> bool {
+        match target {
+            DockDividerHitTarget::Single(handle) => self
+                .begin_splitter_drag_axis_from_scene(scene, handle, position)
+                .finish(cx),
+            DockDividerHitTarget::Corner(corner) => {
+                let Some(horizontal) =
+                    splitter_drag_axis_from_scene(scene, &corner.horizontal, position)
+                else {
+                    return false;
+                };
+                let Some(vertical) =
+                    splitter_drag_axis_from_scene(scene, &corner.vertical, position)
+                else {
+                    return false;
+                };
+                self.begin_corner_splitter_drag_interaction(horizontal, vertical)
+                    .finish(cx)
+            }
+        }
+    }
+
+    fn begin_splitter_drag_axis_from_scene(
+        &mut self,
+        scene: &DockPresentationScene,
+        handle: &DockDividerHandleHitTarget,
+        position: Point<Pixels>,
+    ) -> crate::host_interaction_outcome::DockHostInteractionOutcome {
+        let Some(axis) = splitter_drag_axis_from_scene(scene, handle, position) else {
+            return crate::host_interaction_outcome::DockHostInteractionOutcome::Idle;
+        };
         self.begin_splitter_drag_interaction(
-            split,
-            handle_index,
-            start_position,
-            split_extent,
-            initial_fractions,
+            axis.axis,
+            axis.split,
+            axis.handle_index,
+            axis.start_position,
+            axis.split_extent,
+            axis.initial_fractions,
         )
-        .finish(cx)
     }
 
     pub(crate) fn update_splitter_drag_from_render(
         &mut self,
-        position: Pixels,
+        position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) -> bool {
         self.update_splitter_drag_interaction(position, cx)
@@ -240,6 +349,59 @@ impl DockHost {
 
     pub(crate) fn finish_splitter_drag_from_render(&mut self, cx: &mut Context<Self>) -> bool {
         self.finish_splitter_drag_interaction().finish(cx)
+    }
+
+    pub(crate) fn resize_splitter_from_accessibility(
+        &mut self,
+        split: DockNodeId,
+        axis: SplitAxis,
+        handle_index: usize,
+        action: AccessibleAction,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(scene) = self.last_presentation_scene().cloned() else {
+            return false;
+        };
+        let Some(splitter) = scene.splitters.iter().find(|splitter| {
+            splitter.split == split && splitter.axis == axis && splitter.index == handle_index
+        }) else {
+            return false;
+        };
+        let start_position = splitter.bounds.center();
+        let delta = match action {
+            AccessibleAction::Increment => open_gpui::px(ACCESSIBILITY_SPLITTER_STEP_PX),
+            AccessibleAction::Decrement => open_gpui::px(-ACCESSIBILITY_SPLITTER_STEP_PX),
+            _ => return false,
+        };
+        let target_position = match axis {
+            SplitAxis::Horizontal => Point {
+                x: start_position.x + delta,
+                y: start_position.y,
+            },
+            SplitAxis::Vertical => Point {
+                x: start_position.x,
+                y: start_position.y + delta,
+            },
+        };
+
+        self.begin_splitter_drag_axis_from_scene(
+            &scene,
+            &DockDividerHandleHitTarget {
+                key: crate::divider_hit_map::DockDividerHandleKey {
+                    split,
+                    index: handle_index,
+                    axis,
+                },
+                before: splitter.before,
+                after: splitter.after,
+                bounds: splitter.bounds,
+                extent: splitter.extent,
+            },
+            start_position,
+        )
+        .merge(self.update_splitter_drag_interaction(target_position, cx))
+        .merge(self.finish_splitter_drag_interaction())
+        .finish(cx)
     }
 
     fn record_payload_drag_hovered_viewport_from_render(
@@ -257,4 +419,50 @@ impl DockHost {
                 window.window_handle().window_id(),
             )
     }
+
+    fn update_payload_drag_hover_state_from_render(
+        &mut self,
+        payload: &DockDragPayload,
+        position: Point<Pixels>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> crate::host_interaction_outcome::DockHostInteractionOutcome {
+        let hovered_changed =
+            self.record_payload_drag_hovered_viewport_from_render(payload, window);
+        let outside_poll_started =
+            self.schedule_outside_release_poll_from_host(payload, window, cx);
+        self.update_floating_drag_interaction(position, cx)
+            .merge(
+                self.update_viewport_drop_route_preview_interaction(payload, position, window, cx),
+            )
+            .merge(
+                crate::host_interaction_outcome::DockHostInteractionOutcome::from_session_changed(
+                    hovered_changed || outside_poll_started,
+                ),
+            )
+    }
+}
+
+fn splitter_drag_axis_from_scene(
+    scene: &DockPresentationScene,
+    handle: &DockDividerHandleHitTarget,
+    position: Point<Pixels>,
+) -> Option<SplitterDragAxis> {
+    let splitter = scene.splitters.iter().find(|splitter| {
+        splitter.split == handle.key.split
+            && splitter.index == handle.key.index
+            && splitter.axis == handle.key.axis
+    })?;
+    let start_position = match splitter.axis {
+        SplitAxis::Horizontal => position.x,
+        SplitAxis::Vertical => position.y,
+    };
+    Some(SplitterDragAxis::new(
+        splitter.axis,
+        splitter.split,
+        splitter.index,
+        start_position,
+        splitter.extent,
+        splitter.shares.clone(),
+    ))
 }

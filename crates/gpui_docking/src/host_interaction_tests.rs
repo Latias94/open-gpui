@@ -1,13 +1,15 @@
 use crate::{
-    DockCentralRegion, DockController, DockGraph, DockNode, DockNodeId, DockPanel,
+    DockCentralRegion, DockController, DockGraph, DockHost, DockNode, DockNodeId, DockPanel,
     DockPanelDescriptor, DockSpaceId, DockViewportRuntimeHandle, DockWorkspace, DropZone,
     SplitAxis,
     debug::DockDebugRegion,
+    divider_hit_map::{DockDividerHitMap, DockDividerHitTarget},
     drag::DockDragPayload,
     drop_scene_fact,
     drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
     host_test_support::*,
     interaction::DockPayloadDropRelease,
+    transition_geometry::DockVisualAffordanceTransitionKind,
 };
 use open_gpui::{
     AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, point,
@@ -176,6 +178,93 @@ fn splitter_drag_clamps_to_minimum_pane_size(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn corner_splitter_drag_updates_both_axes_through_rendered_events(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let top_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let bottom_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let vertical = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![top_right, bottom_right],
+        fractions: vec![0.5, 0.5],
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left, vertical],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root);
+    let workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, _host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(400.0), px(240.0)));
+    let scene = window
+        .root(cx)
+        .expect("window should expose host")
+        .update(cx, |host, cx| {
+            host.presentation_scene_for_test(floating_bounds(0.0, 0.0, 400.0, 240.0), cx)
+        });
+    let hit_map = DockDividerHitMap::from_scene(&scene);
+    let start = match hit_map
+        .hit(point(px(200.0), px(120.0)))
+        .expect("junction should resolve")
+    {
+        DockDividerHitTarget::Corner(corner) => corner.bounds.center(),
+        DockDividerHitTarget::Single(_) => panic!("junction should prefer corner"),
+    };
+    let end = point(start.x + px(80.0), start.y + px(48.0));
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Split {
+            fractions: root_fractions,
+            ..
+        } = controller
+            .graph()
+            .node(root)
+            .expect("root split should exist")
+        else {
+            panic!("root should be split");
+        };
+        let DockNode::Split {
+            fractions: vertical_fractions,
+            ..
+        } = controller
+            .graph()
+            .node(vertical)
+            .expect("vertical split should exist")
+        else {
+            panic!("right side should be vertical split");
+        };
+        assert_close(root_fractions[0], 0.7);
+        assert_close(root_fractions[1], 0.3);
+        assert_close(vertical_fractions[0], 0.7);
+        assert_close(vertical_fractions[1], 0.3);
+    });
+}
+
+#[open_gpui::test]
 fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
     let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let workspace =
@@ -220,6 +309,23 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
     let preview_bounds = debug_bounds(&mut drag_visual, &preview);
     let preview_body_bounds = debug_bounds(&mut drag_visual, &preview_body);
     let preview_tab_bounds = debug_bounds(&mut drag_visual, &preview_tab);
+    let visual_affordance_sample = cx
+        .update_entity(&host, |host, _| {
+            host.sample_visual_affordance_transition_for_test(Duration::from_millis(0))
+        })
+        .expect("center hover should schedule an visual affordance transition sample");
+    let affordance_kinds = visual_affordance_sample
+        .visual_affordances
+        .iter()
+        .map(|overlay| overlay.kind)
+        .collect::<Vec<_>>();
+    assert!(
+        affordance_kinds.contains(&DockVisualAffordanceTransitionKind::TargetBody)
+            && affordance_kinds.contains(&DockVisualAffordanceTransitionKind::TabInsertion)
+            && affordance_kinds.contains(&DockVisualAffordanceTransitionKind::PayloadTab)
+            && affordance_kinds.contains(&DockVisualAffordanceTransitionKind::PayloadGhost),
+        "center hover should route body, insertion slot, payload tabs, and payload ghosts through the visual affordance transition runtime: {affordance_kinds:?}"
+    );
     assert!(
         preview_bounds.contains(&preview_tab_bounds.center()),
         "payload tab preview should stay inside the center drop preview"
@@ -327,6 +433,144 @@ fn tab_bar_append_preview_shifts_payload_tab_right_of_existing_tab(cx: &mut Test
     assert!(
         preview_tab_bounds.origin.x >= runtime_target_tab_bounds.center().x,
         "append preview should move toward the append slot after the existing tab: preview={preview_tab_bounds:?} runtime_target={runtime_target_tab_bounds:?} debug_target={target_bounds:?}"
+    );
+}
+
+#[open_gpui::test]
+fn tab_bar_preview_positions_payload_tab_at_leading_and_middle_slots(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b"), item("c")],
+        selected: Some(item("b")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![source_tabs, target_tabs],
+        fractions: vec![0.4, 0.6],
+    });
+    graph.set_root(space(), root);
+    let workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(640.0), px(240.0)));
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_first = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: target_tabs,
+            item: item("b"),
+        },
+    )
+    .expect("first target tab selector should be emitted");
+    let target_second = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: target_tabs,
+            item: item("c"),
+        },
+    )
+    .expect("second target tab selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+
+    cx.run_until_parked();
+    let mut hover_visual = VisualTestContext::from_window(window.into(), cx);
+    let first_bounds = debug_bounds(&mut hover_visual, &target_first);
+    let leading_hover = point(first_bounds.origin.x + px(2.0), first_bounds.center().y);
+    hover_visual.simulate_mouse_move(leading_hover, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let leading_index = host
+        .update(cx, |host, _| {
+            match host.interaction().resolved_drop_target() {
+                Some(target) => match target.kind {
+                    DockResolvedDropTargetKind::TabBar { insert_index, .. } => Some(insert_index),
+                    _ => None,
+                },
+                None => None,
+            }
+        })
+        .expect("leading tab hover should resolve a tab insertion target");
+    assert_eq!(leading_index, 0);
+    let mut leading_visual = VisualTestContext::from_window(window.into(), cx);
+    let leading_preview_tab = selector_for(
+        &leading_visual,
+        &host,
+        DockDebugRegion::DropPayloadTabPreview { index: 0 },
+    )
+    .expect("leading tab hover should render a payload tab preview");
+    let leading_insertion = selector_for(
+        &leading_visual,
+        &host,
+        DockDebugRegion::DropTabInsertionPreview,
+    )
+    .expect("leading tab hover should render an insertion preview");
+    let leading_preview_tab_bounds = debug_bounds(&mut leading_visual, &leading_preview_tab);
+    let leading_insertion_bounds = debug_bounds(&mut leading_visual, &leading_insertion);
+    assert!(
+        leading_preview_tab_bounds.origin.x >= first_bounds.origin.x
+            && leading_preview_tab_bounds.origin.x < first_bounds.center().x,
+        "leading payload tab should start inside the first insertion slot, not append after the stack: preview={leading_preview_tab_bounds:?} first={first_bounds:?}"
+    );
+    assert!(
+        leading_insertion_bounds.center().x <= first_bounds.origin.x + px(4.0),
+        "leading slot should align with first tab start: insertion={leading_insertion_bounds:?} first={first_bounds:?}"
+    );
+
+    let second_bounds = debug_bounds(&mut leading_visual, &target_second);
+    let middle_hover = point(second_bounds.origin.x + px(2.0), second_bounds.center().y);
+    leading_visual.simulate_mouse_move(middle_hover, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut middle_visual = VisualTestContext::from_window(window.into(), cx);
+    let middle_preview_tab = selector_for(
+        &middle_visual,
+        &host,
+        DockDebugRegion::DropPayloadTabPreview { index: 0 },
+    )
+    .expect("middle tab hover should render a payload tab preview");
+    let middle_insertion = selector_for(
+        &middle_visual,
+        &host,
+        DockDebugRegion::DropTabInsertionPreview,
+    )
+    .expect("middle tab hover should render an insertion preview");
+    let middle_preview_tab_bounds = debug_bounds(&mut middle_visual, &middle_preview_tab);
+    let middle_insertion_bounds = debug_bounds(&mut middle_visual, &middle_insertion);
+    assert!(
+        (f32::from(middle_preview_tab_bounds.origin.x) - f32::from(second_bounds.origin.x)).abs()
+            <= 4.0,
+        "middle payload tab should start at the second tab slot, not append after the stack: preview={middle_preview_tab_bounds:?} second={second_bounds:?}"
+    );
+    assert_close(
+        f32::from(middle_insertion_bounds.center().x),
+        f32::from(second_bounds.origin.x),
     );
 }
 
@@ -783,6 +1027,276 @@ fn dragging_tab_within_same_stack_reorders_tabs(cx: &mut TestAppContext) {
         assert_eq!(items, &vec![item("b"), item("c"), item("a")]);
         assert_eq!(selected.as_ref(), items.get(2));
     });
+}
+
+#[open_gpui::test]
+fn same_stack_tab_preview_is_stable_when_pointer_is_stationary(cx: &mut TestAppContext) {
+    let (graph, tabs) = tabs_graph(&["a", "b"]);
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(420.0), px(220.0)));
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let hold = point(start.x + px(28.0), start.y);
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(hold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(hold, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    let mut drag_visual = VisualTestContext::from_window(window.into(), cx);
+    let insertion = selector_for(
+        &drag_visual,
+        &host,
+        DockDebugRegion::DropTabInsertionPreview,
+    )
+    .expect("same-stack stationary hover should render an insertion preview");
+    let preview_tab = selector_for(
+        &drag_visual,
+        &host,
+        DockDebugRegion::DropPayloadTabPreview { index: 0 },
+    )
+    .expect("same-stack stationary hover should render a payload tab preview");
+    let first_insertion_bounds = debug_bounds(&mut drag_visual, &insertion);
+    let first_preview_tab_bounds = debug_bounds(&mut drag_visual, &preview_tab);
+    cx.update_entity(&host, |host, _| {
+        host.sample_visual_affordance_transition_for_test(Duration::from_millis(0))
+    })
+    .expect("same-stack stationary hover should schedule a visual affordance transition");
+    let mut previous_progress = cx
+        .update_entity(&host, |host, _| {
+            host.sample_visual_affordance_transition_for_test(Duration::from_millis(40))
+        })
+        .expect("same-stack visual affordance transition should still be active")
+        .progress;
+
+    for step in 0..4 {
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_mouse_move(hold, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        let mut drag_visual = VisualTestContext::from_window(window.into(), cx);
+        assert_eq!(
+            debug_bounds(&mut drag_visual, &insertion),
+            first_insertion_bounds,
+            "stationary same-stack drag must not move the tab insertion preview"
+        );
+        assert_eq!(
+            debug_bounds(&mut drag_visual, &preview_tab),
+            first_preview_tab_bounds,
+            "stationary same-stack drag must not move the payload tab preview"
+        );
+        let progress = cx
+            .update_entity(&host, |host, _| {
+                host.sample_visual_affordance_transition_for_test(Duration::from_millis(
+                    50 + step * 10,
+                ))
+            })
+            .expect("stationary same-stack hover should keep the transition alive")
+            .progress;
+        assert!(
+            progress >= previous_progress,
+            "stationary same-stack hover must not restart the visual affordance transition: previous={previous_progress} current={progress}"
+        );
+        previous_progress = progress;
+    }
+}
+
+#[open_gpui::test]
+fn same_stack_tab_preview_holds_slot_across_center_jitter(cx: &mut TestAppContext) {
+    let (graph, tabs) = tabs_graph(&["a", "b"]);
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(420.0), px(220.0)));
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let source_bounds = debug_bounds(&mut visual, &source_tab);
+    let start = source_bounds.center();
+    let drag_threshold = point(start.x + px(24.0), start.y);
+    let left_of_center = point(start.x - px(12.0), start.y + px(4.0));
+    let right_of_center = point(start.x + px(4.0), start.y + px(4.0));
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(drag_threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(left_of_center, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let initial_insert_index = cx
+        .update_entity(&host, |host, _| {
+            match host.interaction().resolved_drop_target() {
+                Some(target) => match target.kind {
+                    DockResolvedDropTargetKind::TabBar { insert_index, .. } => Some(insert_index),
+                    _ => None,
+                },
+                None => None,
+            }
+        })
+        .expect("same-stack left-of-center hover should resolve a tab insertion target");
+    assert_eq!(initial_insert_index, 0);
+
+    let mut drag_visual = VisualTestContext::from_window(window.into(), cx);
+    let insertion = selector_for(
+        &drag_visual,
+        &host,
+        DockDebugRegion::DropTabInsertionPreview,
+    )
+    .expect("same-stack hover should render an insertion preview");
+    let initial_insertion_bounds = debug_bounds(&mut drag_visual, &insertion);
+
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_mouse_move(right_of_center, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let held_insert_index = cx
+        .update_entity(&host, |host, _| {
+            match host.interaction().resolved_drop_target() {
+                Some(target) => match target.kind {
+                    DockResolvedDropTargetKind::TabBar { insert_index, .. } => Some(insert_index),
+                    _ => None,
+                },
+                None => None,
+            }
+        })
+        .expect("same-stack right-of-center jitter should keep a tab insertion target");
+    assert_eq!(
+        held_insert_index, initial_insert_index,
+        "adjacent slot jitter around a tab center should keep the existing insert index"
+    );
+
+    let mut drag_visual = VisualTestContext::from_window(window.into(), cx);
+    assert_eq!(
+        debug_bounds(&mut drag_visual, &insertion),
+        initial_insertion_bounds,
+        "adjacent slot jitter around a tab center should not move the insertion preview"
+    );
+}
+
+#[open_gpui::test]
+fn viewport_same_stack_tab_preview_is_stable_when_pointer_is_stationary(cx: &mut TestAppContext) {
+    let secondary_space = DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(secondary_space.clone(), tabs);
+
+    let mut workspace = DockWorkspace::new(secondary_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                viewport_window_options(420.0, 220.0),
+                app,
+            )
+        })
+        .expect("secondary viewport should open through runtime handle");
+    let window = opened
+        .window()
+        .downcast::<DockHost>()
+        .expect("secondary viewport should render DockHost");
+    let host = window
+        .root(cx)
+        .expect("secondary viewport should expose DockHost root");
+    cx.run_until_parked();
+
+    let mut visual = VisualTestContext::from_window(opened.window(), cx);
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let hold = point(start.x + px(28.0), start.y);
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(hold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(hold, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    let mut drag_visual = VisualTestContext::from_window(opened.window(), cx);
+    let insertion = selector_for(
+        &drag_visual,
+        &host,
+        DockDebugRegion::DropTabInsertionPreview,
+    )
+    .expect("same-stack stationary hover should render an insertion preview");
+    let preview_tab = selector_for(
+        &drag_visual,
+        &host,
+        DockDebugRegion::DropPayloadTabPreview { index: 0 },
+    )
+    .expect("same-stack stationary hover should render a payload tab preview");
+    let first_insertion_bounds = debug_bounds(&mut drag_visual, &insertion);
+    let first_preview_tab_bounds = debug_bounds(&mut drag_visual, &preview_tab);
+    cx.update_entity(&host, |host, _| {
+        host.sample_visual_affordance_transition_for_test(Duration::from_millis(0))
+    })
+    .expect("viewport same-stack stationary hover should schedule a visual affordance transition");
+    let mut previous_progress = cx
+        .update_entity(&host, |host, _| {
+            host.sample_visual_affordance_transition_for_test(Duration::from_millis(40))
+        })
+        .expect("viewport same-stack visual affordance transition should still be active")
+        .progress;
+
+    for step in 0..4 {
+        let mut visual = VisualTestContext::from_window(opened.window(), cx);
+        visual.simulate_mouse_move(hold, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        let mut drag_visual = VisualTestContext::from_window(opened.window(), cx);
+        assert_eq!(
+            debug_bounds(&mut drag_visual, &insertion),
+            first_insertion_bounds,
+            "stationary viewport drag must not move the tab insertion preview"
+        );
+        assert_eq!(
+            debug_bounds(&mut drag_visual, &preview_tab),
+            first_preview_tab_bounds,
+            "stationary viewport drag must not move the payload tab preview"
+        );
+        let progress = cx
+            .update_entity(&host, |host, _| {
+                host.sample_visual_affordance_transition_for_test(Duration::from_millis(
+                    50 + step * 10,
+                ))
+            })
+            .expect("stationary viewport same-stack hover should keep the transition alive")
+            .progress;
+        assert!(
+            progress >= previous_progress,
+            "stationary viewport hover must not restart the visual affordance transition: previous={previous_progress} current={progress}"
+        );
+        previous_progress = progress;
+    }
 }
 
 #[open_gpui::test]
@@ -1422,6 +1936,7 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
     let start = debug_bounds(&mut visual, &source_tab).center();
     let threshold = point(start.x + px(24.0), start.y);
     let end = inner_edge_drop_position(target_bounds, DropZone::Right);
+    let window_id = window.window_id();
 
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
@@ -1455,6 +1970,17 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
         .is_none(),
         "edge split previews should not render a payload tab label"
     );
+    let status = cx.read_entity(&host, |host, _| host.viewport_runtime().runtime_status());
+    let affordance = status
+        .visual_affordances
+        .iter()
+        .find(|record| record.space == space() && record.window_id == window_id)
+        .expect("rendered drop preview should publish a runtime affordance diagnostic");
+    assert!(
+        affordance.summary.active_count > 0,
+        "runtime affordance diagnostic should describe the active preview"
+    );
+
     visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let visual = VisualTestContext::from_window(window.into(), cx);
@@ -1462,6 +1988,14 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
     assert!(
         selector_for(&visual, &host, DockDebugRegion::DropPreview).is_none(),
         "edge drop preview should clear after release"
+    );
+    let status = cx.read_entity(&host, |host, _| host.viewport_runtime().runtime_status());
+    assert!(
+        status
+            .visual_affordances
+            .iter()
+            .all(|record| record.window_id != window_id),
+        "cleared drop preview should clear the runtime affordance diagnostic"
     );
 }
 
@@ -1906,9 +2440,8 @@ fn runtime_nested_tab_tear_off_uses_leaf_size_not_tab_label(cx: &mut TestAppCont
         rendered_leaf_bounds.size.height > tab_bounds.size.height * 3.0,
         "test must distinguish the leaf from the tab label"
     );
-    assert!(
-        leaf_bounds.contains(&rendered_leaf_bounds.origin)
-            && leaf_bounds.contains(&rendered_leaf_bounds.bottom_right()),
+    assert_eq!(
+        rendered_leaf_bounds, leaf_bounds,
         "rendered leaf bounds should describe the source leaf interior"
     );
 

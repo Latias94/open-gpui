@@ -17,6 +17,7 @@ pub struct TableToolbarState {
     secondary_control_count: usize,
     summary: Option<String>,
     tokens: ThemeTokens,
+    colors: TableToolbarColors,
 }
 
 impl TableToolbarState {
@@ -29,6 +30,7 @@ impl TableToolbarState {
         summary: Option<impl Into<String>>,
         tokens: ThemeTokens,
     ) -> Self {
+        let colors = ThemeResolver::table_toolbar_colors(tokens);
         Self {
             id: id.into(),
             label: label.into(),
@@ -37,6 +39,7 @@ impl TableToolbarState {
             secondary_control_count,
             summary: summary.map(Into::into),
             tokens,
+            colors,
         }
     }
 
@@ -95,14 +98,38 @@ impl TableToolbarState {
         self.tokens
     }
 
+    /// Returns resolved toolbar color intents.
+    pub const fn colors(&self) -> TableToolbarColors {
+        self.colors
+    }
+
     /// Returns the foreground color intent for toolbar labels and controls.
     pub const fn foreground(&self) -> ColorIntent {
-        ColorIntent::new(self.tokens.text, 0x18202a)
+        self.colors.foreground()
     }
 
     /// Returns the muted foreground color intent for summary text.
     pub const fn muted_foreground(&self) -> ColorIntent {
-        ColorIntent::new(self.tokens.text_muted, 0x5a6472)
+        self.colors.muted_foreground()
+    }
+}
+
+/// Resolved table toolbar color intents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TableToolbarColors {
+    pub(crate) foreground: ColorIntent,
+    pub(crate) muted_foreground: ColorIntent,
+}
+
+impl TableToolbarColors {
+    /// Returns the foreground color intent for toolbar labels and controls.
+    pub const fn foreground(self) -> ColorIntent {
+        self.foreground
+    }
+
+    /// Returns the muted foreground color intent for summary text.
+    pub const fn muted_foreground(self) -> ColorIntent {
+        self.muted_foreground
     }
 }
 
@@ -197,15 +224,16 @@ impl Sizable for TableToolbar {
 }
 
 impl RenderOnce for TableToolbar {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let debug_id = state.id().to_owned();
         let primary_debug_id = debug_id.clone();
         let secondary_debug_id = debug_id.clone();
         let summary_debug_id = debug_id.clone();
         let label = state.label().to_owned();
-        let text_color = ThemeResolver::resolve(state.foreground());
-        let summary_text_color = ThemeResolver::resolve(state.muted_foreground());
+        let text_color = theme.resolve(state.foreground());
+        let summary_text_color = theme.resolve(state.muted_foreground());
         let size = state.size();
         let has_primary_controls = state.primary_control_count() > 0;
         let has_secondary_controls = state.secondary_control_count() > 0;

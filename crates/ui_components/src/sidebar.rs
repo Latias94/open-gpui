@@ -14,7 +14,7 @@ use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::roving_focus::roving_navigation_target;
 use crate::scroll_area::ScrollArea;
 use crate::theme::ThemeResolver;
@@ -1199,6 +1199,7 @@ impl Sizable for Sidebar {
 
 impl RenderOnce for Sidebar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let Sidebar {
             id,
             label,
@@ -1286,6 +1287,8 @@ impl RenderOnce for Sidebar {
                     let disabled_items = disabled_items.clone();
                     let item_states_for_section = item_states.clone();
                     let section_debug_id = debug_id.clone();
+                    let section_label_color = theme.resolve(colors.muted_foreground());
+                    let item_theme = theme.clone();
 
                     div()
                         .id(sidebar_section_id(section.value()))
@@ -1300,7 +1303,7 @@ impl RenderOnce for Sidebar {
                                     .px(gpui_px_from_ui(metrics.item_padding_x()))
                                     .text_xs()
                                     .line_height(gpui_px_from_ui(metrics.text_size()))
-                                    .text_color(ThemeResolver::resolve(colors.muted_foreground()))
+                                    .text_color(section_label_color)
                                     .child(section.label().to_owned()),
                             )
                         })
@@ -1333,6 +1336,23 @@ impl RenderOnce for Sidebar {
                             let item_action = item.action_label_text().map(str::to_owned);
                             let item_position = item.position_in_set();
                             let item_size_of_set = item.size_of_set();
+                            let item_background = item_theme.resolve(if item_selected {
+                                colors.item_selected_background()
+                            } else {
+                                colors.item_background()
+                            });
+                            let item_foreground = item_theme.resolve(if item_disabled {
+                                colors.item_disabled_foreground()
+                            } else {
+                                colors.foreground()
+                            });
+                            let item_hover_background =
+                                item_theme.resolve(colors.item_hover_background());
+                            let badge_background = item_theme.resolve(colors.badge_background());
+                            let badge_foreground = item_theme.resolve(colors.badge_foreground());
+                            let action_foreground = item_theme.resolve(colors.muted_foreground());
+                            let item_focus_shadow =
+                                focus_ring_shadow_with_theme(focus_ring, &item_theme);
 
                             div()
                                 .id(sidebar_item_id(item.value()))
@@ -1366,27 +1386,14 @@ impl RenderOnce for Sidebar {
                                 .justify_center()
                                 .gap_2()
                                 .rounded(gpui_px_from_ui(metrics.radius()))
-                                .bg(ThemeResolver::resolve(if item_selected {
-                                    colors.item_selected_background()
-                                } else {
-                                    colors.item_background()
-                                }))
+                                .bg(item_background)
                                 .text_size(gpui_px_from_ui(metrics.text_size()))
                                 .line_height(gpui_px_from_ui(metrics.text_size()))
-                                .text_color(ThemeResolver::resolve(if item_disabled {
-                                    colors.item_disabled_foreground()
-                                } else {
-                                    colors.foreground()
-                                }))
-                                .focus_visible(move |style| {
-                                    style.shadow(focus_ring_shadow(focus_ring))
-                                })
+                                .text_color(item_foreground)
+                                .focus_visible(move |style| style.shadow(item_focus_shadow.clone()))
                                 .when(!item_disabled, |this| {
-                                    this.cursor_pointer().hover(move |style| {
-                                        style.bg(ThemeResolver::resolve(
-                                            colors.item_hover_background(),
-                                        ))
-                                    })
+                                    this.cursor_pointer()
+                                        .hover(move |style| style.bg(item_hover_background))
                                 })
                                 .when(item_disabled, |this| {
                                     this.opacity(0.56).cursor_not_allowed()
@@ -1492,12 +1499,8 @@ impl RenderOnce for Sidebar {
                                                 .items_center()
                                                 .justify_center()
                                                 .rounded(gpui_px_from_ui(ui_px(999.0)))
-                                                .bg(ThemeResolver::resolve(
-                                                    colors.badge_background(),
-                                                ))
-                                                .text_color(ThemeResolver::resolve(
-                                                    colors.badge_foreground(),
-                                                ))
+                                                .bg(badge_background)
+                                                .text_color(badge_foreground)
                                                 .text_xs()
                                                 .child(badge),
                                         )
@@ -1508,9 +1511,7 @@ impl RenderOnce for Sidebar {
                                             this.child(
                                                 div()
                                                     .text_xs()
-                                                    .text_color(ThemeResolver::resolve(
-                                                        colors.muted_foreground(),
-                                                    ))
+                                                    .text_color(action_foreground)
                                                     .child(action),
                                             )
                                         },
@@ -1534,12 +1535,12 @@ impl RenderOnce for Sidebar {
                 .flex()
                 .flex_col()
                 .overflow_hidden()
-                .border_color(ThemeResolver::resolve(colors.border()))
-                .bg(ThemeResolver::resolve(match variant {
+                .border_color(theme.resolve(colors.border()))
+                .bg(theme.resolve(match variant {
                     SidebarVariant::Docked => colors.surface(),
                     SidebarVariant::Floating | SidebarVariant::Inset => colors.floating_surface(),
                 }))
-                .text_color(ThemeResolver::resolve(colors.foreground()))
+                .text_color(theme.resolve(colors.foreground()))
                 .when(
                     variant == SidebarVariant::Docked && side == SidebarSide::Left,
                     |this| this.border_r_1(),

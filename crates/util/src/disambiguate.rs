@@ -154,17 +154,17 @@ mod tests {
     fn test_duplicate_paths_from_multiple_groups() {
         use std::path::Path;
 
-        // Simulates the sidebar scenario: a path like /Users/rtfeldman/code/zed
-        // appears in two project groups (e.g. "zed" alone and "zed, roc").
+        // Simulates the sidebar scenario: a path like /Users/rtfeldman/code/open-gpui
+        // appears in two project groups (e.g. "open-gpui" alone and "open-gpui, roc").
         // After deduplication, only unique paths should be disambiguated.
         //
         // Paths:
-        //   /Users/rtfeldman/code/worktrees/zed/focal-arrow/zed  (group 1)
-        //   /Users/rtfeldman/code/zed                             (group 2)
-        //   /Users/rtfeldman/code/zed                             (group 3, same path as group 2)
-        //   /Users/rtfeldman/code/roc                             (group 3)
+        //   /Users/rtfeldman/code/worktrees/open-gpui/focal-arrow/open-gpui  (group 1)
+        //   /Users/rtfeldman/code/open-gpui                                  (group 2)
+        //   /Users/rtfeldman/code/open-gpui                                  (group 3, same path as group 2)
+        //   /Users/rtfeldman/code/roc                                        (group 3)
         //
-        // A naive flat_map collects duplicates. The duplicate /code/zed entries
+        // A naive flat_map collects duplicates. The duplicate /code/open-gpui entries
         // collide with each other and drive the detail to the full path.
         // The fix is to deduplicate before disambiguating.
 
@@ -183,20 +183,23 @@ mod tests {
         }
 
         let all_paths: Vec<&Path> = vec![
-            Path::new("/Users/rtfeldman/code/worktrees/zed/focal-arrow/zed"),
-            Path::new("/Users/rtfeldman/code/zed"),
+            Path::new("/Users/rtfeldman/code/worktrees/open-gpui/focal-arrow/open-gpui"),
+            Path::new("/Users/rtfeldman/code/open-gpui"),
             Path::new("/Users/rtfeldman/code/roc"),
         ];
 
         let details =
             compute_disambiguation_details(&all_paths, |path, detail| path_suffix(path, detail));
 
-        // focal-arrow/zed and code/zed both end in "zed", so they need detail 1.
+        // focal-arrow/open-gpui and code/open-gpui both end in "open-gpui", so they need detail 1.
         // "roc" is unique at detail 0.
         assert_eq!(details, vec![1, 1, 0]);
 
-        assert_eq!(path_suffix(all_paths[0], details[0]), "focal-arrow/zed");
-        assert_eq!(path_suffix(all_paths[1], details[1]), "code/zed");
+        assert_eq!(
+            path_suffix(all_paths[0], details[0]),
+            "focal-arrow/open-gpui"
+        );
+        assert_eq!(path_suffix(all_paths[1], details[1]), "code/open-gpui");
         assert_eq!(path_suffix(all_paths[2], details[2]), "roc");
     }
 }

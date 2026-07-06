@@ -35,25 +35,30 @@ The current component stack now has that boundary evidence:
   supplied `ScrollHandle`, `focus_ring_shadow`, `GpuiOverlayState`, GPUI geometry conversion
   helpers, and GPUI overlay scheduling helpers.
 
-This is enough evidence to start a focused behavior-extraction design, but not enough to create or
-publish a new crate in the current branch.
+This is enough evidence to preserve a future extraction option if the project explicitly reopens
+that direction, but not enough reason to create or publish a new crate in the current branch.
 
 ## Decision
 
-Do **not** create `open-gpui-ui-headless` yet.
+Do **not** create `open-gpui-ui-headless` yet, and do not treat this checkpoint as an automatic
+next-step extraction plan.
 
 The strict UI-core boundary is clean, so the old core-boundary blockers are no longer active. The
-remaining decision is sequencing: the next change should be a narrow extraction plan that moves one
-behavior family at a time, keeps GPUI adapter APIs behind `open_gpui_ui_components::gpui_adapter`,
-and proves each move with existing tests before any package is published.
+remaining decision is sequencing. ADR 0008 made current-crate productization the active roadmap,
+and the 2026-07-01 follow-up narrows the next UI work to component registry ownership,
+accessibility contract gates, and theme schema/loading. If extraction is reopened later, it should
+be a fresh explicit plan that moves one behavior family at a time, keeps GPUI adapter APIs behind
+`open_gpui_ui_components::gpui_adapter`, and proves each move with existing tests before any
+package is published.
 
 ADR 0007 records that design gate. It identifies the first extraction candidates and the adapter
 surfaces that must not move.
 
 ADR 0008 later moved the active roadmap away from crate extraction and toward current-crate
-productization. This checkpoint remains the boundary evidence to consult if extraction is reopened.
+productization. This checkpoint remains the boundary evidence to consult if extraction is reopened,
+not a pending implementation item.
 
-Likely first extraction candidates:
+If extraction is explicitly reopened, likely first extraction candidates are:
 
 - overlay policy, presence, dismissal, stack ordering, focus-intent, and placement vocabulary;
 - roving-focus navigation helpers;
@@ -131,9 +136,10 @@ Revisit crate creation when all of the following are true:
 
 ## Follow-Up Work
 
-- Completed 2026-06-16: generic roving-focus helpers moved out of `tabs.rs` into
-  `open_gpui_ui_components::roving_focus`; `Tabs` keeps compatibility re-exports while `Menu` and
-  `RadioGroup` depend on the neutral module.
+- Completed 2026-06-16 and narrowed 2026-07-05: generic roving-focus helpers moved out of
+  `tabs.rs`; the implementation module is private, explicit low-level consumers use
+  `open_gpui_ui_components::primitives::roving_focus_group`, and `Tabs` keeps compatibility
+  re-exports while choice-like components depend on the shared internal behavior path.
 - Completed 2026-06-16: `ContextMenuState` now stores renderer-neutral `OverlayPlacementInput`;
   GPUI placement is resolved only inside the adapter/render boundary.
 - Completed 2026-06-16: added window-free overlay stack ordering tests for outside press and focus
@@ -145,5 +151,8 @@ Revisit crate creation when all of the following are true:
   boundary blocker inventory became empty.
 - Roadmap update 2026-06-17: ADR 0008 makes current-crate productization the active next phase.
   The ADR 0007 extraction design is deferred reference material, not the next implementation step.
+- Roadmap update 2026-07-01: after the Command, Menu, ContextMenu, Tree, and Table behavior
+  boundary work, the next UI productization slice is registry ownership, accessibility contract
+  gates, and theme schema/loading. Standalone headless extraction remains out of scope.
 - Keep `docs/ui/component-contract.md` and `docs/verification.md` current whenever a component
   state type adds new behavior metadata or a public adapter-only surface changes.

@@ -1,5 +1,6 @@
 //! Table component backed by renderer-neutral row-model and virtualizer contracts.
 
+mod behavior;
 mod body;
 mod cell;
 mod column_visibility;
@@ -23,7 +24,11 @@ mod toolbar;
 mod virtualization;
 
 use crate::a11y::UiA11yElementExt;
-use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
+use crate::geometry::gpui_px_from_ui;
+use crate::scroll_surface::{
+    handle_vertical_wheel_scroll, scroll_surface_handle, vertical_scroll_offset,
+    vertical_viewport_extent,
+};
 use open_gpui::prelude::*;
 use open_gpui::{
     App, DragMoveEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement,
@@ -31,7 +36,7 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{
     Sizable, Size, TableColumnResizeDirection, TableColumnResizeMode, TableExpansionMode,
-    TableRowId, TableState, UiPx, VirtualizerSnapshot, ui_px,
+    TableRowId, TableState, UiPx, VirtualizerSnapshot,
 };
 pub use open_gpui_ui_core::{
     TableResolvedHeaderCell, TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions,
@@ -39,7 +44,12 @@ pub use open_gpui_ui_core::{
 };
 use std::rc::Rc;
 
-use body::{handle_table_vertical_scroll_wheel, render_table_body};
+pub use behavior::{
+    TableBehaviorSnapshot, TableCellBehaviorSnapshot, TableColumnBehaviorSnapshot,
+    TableColumnRegionSnapshot, TableHeaderSummarySnapshot, TableRowBehaviorSnapshot,
+    TableRowCountSnapshot, TableTreeSummarySnapshot, TableVisibleRowsSnapshot,
+};
+use body::render_table_body;
 pub use column_visibility::{
     TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
     TableColumnVisibilityItemState, TableColumnVisibilityState,
@@ -64,15 +74,14 @@ pub use predicate_filter::{
     TablePredicateFilterOperatorOptionState, TablePredicateFilterState,
 };
 pub use range_filter::{TableRangeFilter, TableRangeFilterChange, TableRangeFilterState};
-pub use render_plan::{
+pub(in crate::table) use render_plan::{
     TableCellRenderPlan, TableCenterColumnWindowPlan, TableColumnRegionRenderPlan,
-    TableColumnRenderPlan, TableHeaderCellRenderPlan, TableHeaderGroupRegionRenderPlan,
-    TableHeaderGroupRegionsRenderPlan, TableHeaderGroupRenderPlan, TablePinnedLayoutPlan,
-    TableRenderPlan, TableRowRenderPlan,
+    TableColumnRenderPlan, TableHeaderCellRenderPlan, TablePinnedLayoutPlan, TableRenderPlan,
+    TableRowRenderPlan,
 };
 use resize::{TableColumnResizeDrag, TableResizeRenderConfig, handle_table_column_resize_drag};
 use runtime::TableRuntime;
-pub use toolbar::{TableToolbar, TableToolbarState};
+pub use toolbar::{TableToolbar, TableToolbarColors, TableToolbarState};
 
 type TableSortHandler = Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>;
 pub(super) type TableColumnSizingHandler =
@@ -294,13 +303,8 @@ impl Table {
     }
 
     /// Returns the renderer-neutral table input.
-    pub const fn table_state(&self) -> &TableState {
+    pub const fn state(&self) -> &TableState {
         &self.state
-    }
-
-    /// Returns a default resolved plan at scroll origin.
-    pub fn state(&self) -> TableRenderPlan {
-        self.render_plan(UiPx::ZERO, self.metrics.viewport_extent())
     }
 }
 
@@ -318,10 +322,12 @@ impl RenderOnce for Table {
         let runtime = window.use_keyed_state(runtime_id, cx, |_, _| {
             TableRuntime::new(default_focused_row)
         });
-        let scroll_handle = runtime.read(cx).scroll_handle.clone();
-        let horizontal_scroll_handle = runtime.read(cx).horizontal_scroll_handle.clone();
-        let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
-        let scroll_offset = ui_px((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
+        let runtime_snapshot = runtime.read(cx).clone();
+        let scroll_handle = scroll_surface_handle(&runtime_snapshot.scroll_surface, None);
+        let horizontal_scroll_handle =
+            scroll_surface_handle(&runtime_snapshot.horizontal_scroll_surface, None);
+        let viewport_extent = vertical_viewport_extent(&scroll_handle);
+        let scroll_offset = vertical_scroll_offset(&scroll_handle);
         let on_sort_requested = self.on_sort_requested.clone();
         let on_column_order_change = self.on_column_order_change.clone();
         let column_resizing_enabled =
@@ -398,7 +404,7 @@ impl RenderOnce for Table {
             .on_scroll_wheel({
                 let scroll_handle = scroll_handle.clone();
                 move |event, window, cx| {
-                    handle_table_vertical_scroll_wheel(&scroll_handle, event, window);
+                    handle_vertical_wheel_scroll(&scroll_handle, event, window);
                     window.prevent_default();
                     cx.stop_propagation();
                 }
@@ -459,7 +465,7 @@ mod tests {
     use super::*;
     use open_gpui_ui_core::{
         TableColumn, TableColumnId, TableColumnPinning, TableColumnRegion, TableColumnSizing,
-        TableRow, TableSort, VirtualizerRange,
+        TableRow, TableSort, VirtualizerRange, ui_px,
     };
 
     #[test]
@@ -480,7 +486,67 @@ mod tests {
 
         assert_eq!(columns[0].width(), committed_width);
         assert_eq!(columns[0].start(), UiPx::ZERO);
-        assert_eq!(columns[0].after(), UiPx::ZERO);
+    }
+
+    #[test]
+    fn center_column_window_resolves_known_width_range_and_spacers() {
+        let columns = test_center_columns([
+            ("metric_00", 80.0),
+            ("metric_01", 90.0),
+            ("metric_02", 100.0),
+            ("metric_03", 110.0),
+            ("metric_04", 120.0),
+            ("metric_05", 130.0),
+        ]);
+
+        let window = TableCenterColumnWindowPlan::resolve(&columns, ui_px(210.0), ui_px(170.0), 1)
+            .expect("center columns should resolve a virtual window");
+
+        assert!(window.virtualized());
+        assert_eq!(window.center_width(), ui_px(630.0));
+        assert_eq!(*window.visible_range(), VirtualizerRange::new(2, 4));
+        assert_eq!(*window.overscan_range(), VirtualizerRange::new(2, 5));
+        assert_eq!(window.leading_spacer_width(), ui_px(170.0));
+        assert_eq!(window.trailing_spacer_width(), ui_px(130.0));
+        assert_eq!(
+            window
+                .rendered_columns()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["metric_02", "metric_03", "metric_04"]
+        );
+    }
+
+    #[test]
+    fn center_column_window_recomputes_total_width_after_column_resize() {
+        let mut columns = test_center_columns([
+            ("metric_00", 80.0),
+            ("metric_01", 90.0),
+            ("metric_02", 100.0),
+            ("metric_03", 110.0),
+        ]);
+        let before = TableCenterColumnWindowPlan::resolve(&columns, ui_px(0.0), ui_px(190.0), 0)
+            .expect("center columns should resolve before resize");
+
+        columns[2] = columns[2].clone().with_width(ui_px(160.0));
+        let after = TableCenterColumnWindowPlan::resolve(&columns, ui_px(0.0), ui_px(190.0), 0)
+            .expect("center columns should resolve after resize");
+
+        assert_eq!(before.center_width(), ui_px(380.0));
+        assert_eq!(after.center_width(), ui_px(440.0));
+        assert_eq!(
+            after
+                .rendered_columns()
+                .iter()
+                .map(|column| (column.id().as_str(), column.width()))
+                .collect::<Vec<_>>(),
+            [
+                ("metric_00", ui_px(80.0)),
+                ("metric_01", ui_px(90.0)),
+                ("metric_02", ui_px(160.0))
+            ]
+        );
     }
 
     #[test]
@@ -543,7 +609,6 @@ mod tests {
 
         let resolved = measured_virtualizer_state(
             &rows,
-            TableRowMeasureMode::Measured,
             &measurements,
             ui_px(20.0),
             2,
@@ -561,5 +626,20 @@ mod tests {
         assert_eq!(resolved.measurements()[0].start(), ui_px(0.0));
         assert_eq!(resolved.measurements()[1].start(), ui_px(18.0));
         assert_eq!(resolved.measurements()[2].start(), ui_px(46.0));
+    }
+
+    fn test_center_columns<const N: usize>(widths: [(&str, f32); N]) -> Vec<TableColumnRenderPlan> {
+        widths
+            .into_iter()
+            .map(|(id, width)| {
+                TableColumnRenderPlan::test_content_fit_column(
+                    id,
+                    id,
+                    ui_px(width),
+                    ui_px(10.0),
+                    ui_px(400.0),
+                )
+            })
+            .collect()
     }
 }

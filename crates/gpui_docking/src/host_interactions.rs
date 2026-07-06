@@ -2,12 +2,12 @@
 use crate::interaction::{FloatingDrag, SplitterDrag};
 use crate::{
     DockEdgeDockSizing, DockHost, DockItemId, DockNodeId, DockSpaceId, DockViewportFocusCommand,
-    DockViewportFocusRequest, DropZone,
+    DockViewportFocusRequest, DropZone, SplitAxis,
     drag::DockDragPayload,
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{
         DockFloatingBoundsRequest, DockPayloadDropRelease, DockRuntimeDragSession,
-        DockSplitterResizeRequest,
+        DockSplitterResizeRequest, SplitterDragAxis,
     },
     workspace_drop_transaction::DockWorkspacePayloadDropRequest,
     workspace_move_validation::dock_target_validator,
@@ -72,6 +72,7 @@ impl DockHost {
 
     pub(crate) fn begin_splitter_drag_interaction(
         &mut self,
+        axis: SplitAxis,
         split: DockNodeId,
         handle_index: usize,
         start_position: Pixels,
@@ -79,6 +80,7 @@ impl DockHost {
         initial_fractions: Vec<f32>,
     ) -> DockHostInteractionOutcome {
         self.interaction_mut().start_splitter_drag(
+            axis,
             split,
             handle_index,
             start_position,
@@ -88,9 +90,19 @@ impl DockHost {
         DockHostInteractionOutcome::Notify { changed: false }
     }
 
+    pub(crate) fn begin_corner_splitter_drag_interaction(
+        &mut self,
+        horizontal: SplitterDragAxis,
+        vertical: SplitterDragAxis,
+    ) -> DockHostInteractionOutcome {
+        self.interaction_mut()
+            .start_corner_splitter_drag(horizontal, vertical);
+        DockHostInteractionOutcome::Notify { changed: false }
+    }
+
     pub(crate) fn update_splitter_drag_interaction(
         &mut self,
-        position: Pixels,
+        position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
         let split_min_size =
@@ -307,7 +319,7 @@ impl DockHost {
     ) -> DockHostInteractionOutcome {
         DockHostInteractionOutcome::from_commit_result(
             self.mutate_controller_from_host(cx, |controller| {
-                controller.resize_split(request.split, &request.fractions)
+                controller.resize_splits(&request.updates)
             }),
             notify_on_unchanged,
         )

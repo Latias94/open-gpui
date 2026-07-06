@@ -10,15 +10,20 @@ use crate::{
 };
 use open_gpui::{Bounds, Pixels, Point, Size};
 
+const TAB_REORDER_HOLD_DEAD_ZONE_PX: f32 = 8.0;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct DockTabReorderHold {
     target_tabs: DockNodeId,
+    insert_index: usize,
     bounds: Bounds<Pixels>,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct DockDropRuntime {
     resolution: Option<DockDropResolution>,
+    guide_target: Option<DockResolvedDropTarget>,
+    reorder_hold_resolution: Option<DockDropResolution>,
     scene: Option<DockHostDropScene>,
 }
 
@@ -95,20 +100,65 @@ impl DockHostDropScene {
         self.drop_guide_style
     }
 
-    pub(crate) fn push_fact(&mut self, fact: DockHostDropSceneFact) {
+    pub(crate) fn push_fact(&mut self, fact: DockHostDropSceneFact) -> bool {
         if self.fact_is_excluded(&fact) {
-            return;
+            return false;
         }
 
         match fact {
-            DockHostDropSceneFact::TabLabel(target) => self.tab_labels.push(target),
-            DockHostDropSceneFact::TabBar(target) => self.tab_bars.push(target),
-            DockHostDropSceneFact::Leaf(target) => self.leaves.push(target),
-            DockHostDropSceneFact::Root(target) => self.root = Some(target),
+            DockHostDropSceneFact::TabLabel(target) => {
+                if let Some(existing) = self.tab_labels.iter_mut().find(|label| {
+                    label.target_tabs == target.target_tabs
+                        && label.target_index == target.target_index
+                }) {
+                    if *existing == target {
+                        false
+                    } else {
+                        *existing = target;
+                        true
+                    }
+                } else {
+                    self.tab_labels.push(target);
+                    true
+                }
+            }
+            DockHostDropSceneFact::TabBar(target) => {
+                self.tab_bars.push(target);
+                true
+            }
+            DockHostDropSceneFact::Leaf(target) => {
+                self.leaves.push(target);
+                true
+            }
+            DockHostDropSceneFact::Root(target) => {
+                if self.root == Some(target) {
+                    false
+                } else {
+                    self.root = Some(target);
+                    true
+                }
+            }
             DockHostDropSceneFact::FloatingTitleBar(target) => {
                 self.floating_title_bars.push(target);
+                true
             }
-            DockHostDropSceneFact::EmptySpace(target) => self.empty_spaces.push(target),
+            DockHostDropSceneFact::EmptySpace(target) => {
+                self.empty_spaces.push(target);
+                true
+            }
+        }
+    }
+
+    pub(crate) fn preserve_measured_tab_labels_from(&mut self, previous: &Self) {
+        for label in previous.tab_labels.iter().copied() {
+            let should_preserve = self.tab_bars.iter().any(|tab_bar| {
+                tab_bar.target_tabs == label.target_tabs
+                    && label.target_index < tab_bar.insert_index
+                    && tab_bar.is_central == label.is_central
+            });
+            if should_preserve {
+                self.push_fact(DockHostDropSceneFact::TabLabel(label));
+            }
         }
     }
 
@@ -132,6 +182,28 @@ impl DockHostDropScene {
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
     ) -> Option<DockDropResolution> {
         drop_target::resolve_layout_drop(DockDropResolverInput {
+            position: self.position,
+            payload_size: self.payload_size,
+            drop_guide_style: self.drop_guide_style,
+            policy,
+            target_validator,
+            edge_plan_resolver,
+            tab_labels: &self.tab_labels,
+            tab_bars: &self.tab_bars,
+            leaves: &self.leaves,
+            root: self.root,
+            floating_title_bars: &self.floating_title_bars,
+            empty_spaces: &self.empty_spaces,
+        })
+    }
+
+    pub(crate) fn resolve_guide_target_with_validator(
+        &self,
+        policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
+        edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
+    ) -> Option<DockResolvedDropTarget> {
+        drop_target::resolve_layout_drop_guide(DockDropResolverInput {
             position: self.position,
             payload_size: self.payload_size,
             drop_guide_style: self.drop_guide_style,
@@ -235,16 +307,16 @@ impl DockDropRuntime {
         target_validator: Option<&DockDropTargetValidator<'_>>,
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
     ) -> bool {
-        let resolution = match self.resolve_scene_resolution(
+        let (resolution, guide_target) = match self.resolve_scene_resolution(
             scene,
             policy,
             target_validator,
             edge_plan_resolver,
         ) {
-            Some(resolution) => resolution,
+            Some(resolved) => resolved,
             None => return false,
         };
-        self.replace_resolution(resolution)
+        self.replace_resolution(resolution, guide_target)
     }
 
     fn resolve_scene_resolution(
@@ -253,25 +325,31 @@ impl DockDropRuntime {
         policy: &DockPolicy,
         target_validator: Option<&DockDropTargetValidator<'_>>,
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
-    ) -> Option<Option<DockDropResolution>> {
+    ) -> Option<(Option<DockDropResolution>, Option<DockResolvedDropTarget>)> {
         let mut resolution =
             match scene.resolve_drop_with_validator(policy, target_validator, edge_plan_resolver) {
                 Some(resolution) => Some(resolution),
                 None if scene.clear_on_miss => None,
                 None => return None,
             };
-        if let Some(existing) = self.resolution.as_ref().and_then(valid_target)
+        let mut guide_target = if resolution.is_none() {
+            scene.resolve_guide_target_with_validator(policy, target_validator, edge_plan_resolver)
+        } else {
+            None
+        };
+        if let Some(existing_resolution) = self.reorder_hold_resolution.as_ref()
+            && let Some(existing) = resolution_target(existing_resolution)
             && let Some(reorder_hold) = tab_reorder_hold(existing)
-            && reorder_hold.bounds.contains(&scene.position)
-            && resolution
-                .as_ref()
-                .and_then(valid_target)
-                .and_then(DockResolvedDropTarget::center_target_tabs)
-                .is_some_and(|target_tabs| target_tabs == reorder_hold.target_tabs)
+            && should_hold_tab_reorder_target(
+                resolution.as_ref().and_then(resolution_target),
+                reorder_hold,
+                scene.position,
+            )
         {
-            resolution = Some(DockDropResolution::Valid(existing.clone()));
+            resolution = Some(existing_resolution.clone());
+            guide_target = None;
         }
-        Some(resolution)
+        Some((resolution, guide_target))
     }
 
     pub(crate) fn take_release_target_at(
@@ -293,17 +371,26 @@ impl DockDropRuntime {
             edge_plan_resolver,
         );
         self.scene = None;
+        self.reorder_hold_resolution = None;
         match resolution {
-            Some(Some(DockDropResolution::Valid(target))) => {
+            Some((Some(DockDropResolution::Valid(target)), _)) => {
                 self.resolution = None;
+                self.guide_target = None;
                 Some(target)
             }
-            Some(Some(DockDropResolution::Rejected(rejection))) => {
+            Some((Some(DockDropResolution::Rejected(rejection)), _)) => {
                 self.resolution = Some(DockDropResolution::Rejected(rejection));
+                self.guide_target = None;
                 None
             }
-            Some(None) | None => {
+            Some((None, guide_target)) => {
                 self.resolution = None;
+                self.guide_target = guide_target;
+                None
+            }
+            None => {
+                self.resolution = None;
+                self.guide_target = None;
                 None
             }
         }
@@ -316,12 +403,23 @@ impl DockDropRuntime {
     }
 
     pub(crate) fn clear(&mut self) -> bool {
-        let changed = self.resolution.take().is_some() || self.scene.take().is_some();
+        let changed = self.resolution.take().is_some()
+            || self.guide_target.take().is_some()
+            || self.reorder_hold_resolution.take().is_some()
+            || self.scene.take().is_some();
         changed
     }
 
     pub(crate) fn drop_resolution(&self) -> Option<&DockDropResolution> {
         self.resolution.as_ref()
+    }
+
+    pub(crate) fn guide_target(&self) -> Option<&DockResolvedDropTarget> {
+        self.guide_target.as_ref()
+    }
+
+    pub(crate) fn scene_position(&self) -> Option<Point<Pixels>> {
+        self.scene.as_ref().map(|scene| scene.position)
     }
 
     pub(crate) fn drop_guide_style(&self) -> DockDropGuideStyle {
@@ -355,11 +453,23 @@ impl DockDropRuntime {
         self.scene.as_mut().expect("scene should be initialized")
     }
 
-    fn replace_resolution(&mut self, resolution: Option<DockDropResolution>) -> bool {
-        if self.resolution == resolution {
+    fn replace_resolution(
+        &mut self,
+        resolution: Option<DockDropResolution>,
+        guide_target: Option<DockResolvedDropTarget>,
+    ) -> bool {
+        self.reorder_hold_resolution = resolution
+            .as_ref()
+            .filter(|resolution| {
+                resolution_target(resolution)
+                    .is_some_and(|target| tab_reorder_hold(target).is_some())
+            })
+            .cloned();
+        if self.resolution == resolution && self.guide_target == guide_target {
             return false;
         }
         self.resolution = resolution;
+        self.guide_target = guide_target;
         true
     }
 
@@ -378,17 +488,10 @@ pub(crate) fn resolution_target(
     }
 }
 
-fn valid_target(resolution: &DockDropResolution) -> Option<&DockResolvedDropTarget> {
-    match resolution {
-        DockDropResolution::Valid(target) => Some(target),
-        DockDropResolution::Rejected(_) => None,
-    }
-}
-
 fn tab_reorder_hold(target: &DockResolvedDropTarget) -> Option<DockTabReorderHold> {
     let drop_target::DockResolvedDropTargetKind::TabBar {
         target_tabs,
-        insert_index: _,
+        insert_index,
     } = target.kind
     else {
         return None;
@@ -396,8 +499,46 @@ fn tab_reorder_hold(target: &DockResolvedDropTarget) -> Option<DockTabReorderHol
 
     Some(DockTabReorderHold {
         target_tabs,
-        bounds: target.preview_bounds?,
+        insert_index,
+        bounds: target.hit_bounds.or(target.preview_bounds)?,
     })
+}
+
+fn should_hold_tab_reorder_target(
+    target: Option<&DockResolvedDropTarget>,
+    hold: DockTabReorderHold,
+    position: Point<Pixels>,
+) -> bool {
+    let Some(target) = target else {
+        return hold.bounds.contains(&position);
+    };
+    match target.kind {
+        drop_target::DockResolvedDropTargetKind::LeafCenter { .. } => {
+            target.center_target_tabs() == Some(hold.target_tabs) && hold.bounds.contains(&position)
+        }
+        drop_target::DockResolvedDropTargetKind::TabBar {
+            target_tabs,
+            insert_index,
+        } => {
+            target_tabs == hold.target_tabs
+                && (insert_index == hold.insert_index
+                    || (insert_index.abs_diff(hold.insert_index) == 1
+                        && tab_reorder_hold_dead_zone_contains(hold.bounds, position)))
+        }
+        drop_target::DockResolvedDropTargetKind::InnerEdge { .. }
+        | drop_target::DockResolvedDropTargetKind::RootEdge { .. }
+        | drop_target::DockResolvedDropTargetKind::FloatingTitleBar { .. }
+        | drop_target::DockResolvedDropTargetKind::EmptyDockSpace { .. } => false,
+    }
+}
+
+fn tab_reorder_hold_dead_zone_contains(bounds: Bounds<Pixels>, position: Point<Pixels>) -> bool {
+    if !bounds.contains(&position) {
+        return false;
+    }
+    let center_x = f32::from(bounds.center().x);
+    let position_x = f32::from(position.x);
+    (position_x - center_x).abs() <= TAB_REORDER_HOLD_DEAD_ZONE_PX
 }
 
 #[cfg(test)]
@@ -704,6 +845,203 @@ mod tests {
         ));
 
         assert_eq!(resolved_tab_insert_index(&runtime), Some(0));
+    }
+
+    #[test]
+    fn reorder_target_updates_insert_index_within_same_tab_stack() {
+        let tabs = DockNodeId::null();
+        let mut runtime = DockDropRuntime::default();
+        let first_position = point(px(20.0), px(28.0));
+        let second_position = point(px(120.0), px(28.0));
+
+        runtime.begin_scene(
+            DockHostDropScene::new(first_position),
+            &DockPolicy::default(),
+        );
+        assert!(runtime.push_scene_fact(
+            first_position,
+            Vec::new(),
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs,
+                target_index: 0,
+                bounds: bounds(10.0, 20.0, 80.0, 24.0),
+                is_central: false,
+            }),
+            &DockPolicy::default()
+        ));
+        assert_eq!(resolved_tab_insert_index(&runtime), Some(0));
+
+        assert!(!runtime.begin_scene(
+            DockHostDropScene::new(second_position).preserve_on_miss(),
+            &DockPolicy::default()
+        ));
+        assert!(runtime.push_scene_fact(
+            second_position,
+            Vec::new(),
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs,
+                target_index: 1,
+                bounds: bounds(100.0, 20.0, 80.0, 24.0),
+                is_central: false,
+            }),
+            &DockPolicy::default()
+        ));
+
+        assert_eq!(
+            resolved_tab_insert_index(&runtime),
+            Some(1),
+            "same-stack reorder hold must not freeze the old tab insertion slot"
+        );
+    }
+
+    #[test]
+    fn tab_reorder_hold_dampens_adjacent_slot_jitter_near_tab_center() {
+        let tabs = DockNodeId::null();
+        let mut runtime = DockDropRuntime::default();
+        let tab_bounds = bounds(10.0, 20.0, 100.0, 24.0);
+        let left_of_center = point(px(56.0), px(28.0));
+        let right_of_center = point(px(64.0), px(28.0));
+        let far_right = point(px(96.0), px(28.0));
+
+        runtime.begin_scene(
+            DockHostDropScene::new(left_of_center),
+            &DockPolicy::default(),
+        );
+        assert!(runtime.push_scene_fact(
+            left_of_center,
+            Vec::new(),
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs,
+                target_index: 0,
+                bounds: tab_bounds,
+                is_central: false,
+            }),
+            &DockPolicy::default()
+        ));
+        assert_eq!(resolved_tab_insert_index(&runtime), Some(0));
+
+        assert!(!runtime.begin_scene(
+            DockHostDropScene::new(right_of_center).preserve_on_miss(),
+            &DockPolicy::default()
+        ));
+        assert!(!runtime.push_scene_fact(
+            right_of_center,
+            Vec::new(),
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs,
+                target_index: 0,
+                bounds: tab_bounds,
+                is_central: false,
+            }),
+            &DockPolicy::default()
+        ));
+        assert_eq!(
+            resolved_tab_insert_index(&runtime),
+            Some(0),
+            "adjacent insert slots around the tab center should not flicker while the pointer is effectively stationary"
+        );
+
+        assert!(!runtime.begin_scene(
+            DockHostDropScene::new(far_right).preserve_on_miss(),
+            &DockPolicy::default()
+        ));
+        assert!(runtime.push_scene_fact(
+            far_right,
+            Vec::new(),
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs,
+                target_index: 0,
+                bounds: tab_bounds,
+                is_central: false,
+            }),
+            &DockPolicy::default()
+        ));
+        assert_eq!(
+            resolved_tab_insert_index(&runtime),
+            Some(1),
+            "intentional movement out of the center dead zone should still update the insertion slot"
+        );
+    }
+
+    #[test]
+    fn tab_reorder_hold_survives_partial_scene_while_pointer_stays_inside_held_tab() {
+        let tabs = DockNodeId::null();
+        let mut runtime = DockDropRuntime::default();
+        let tab_bounds = bounds(10.0, 20.0, 100.0, 24.0);
+        let position = point(px(64.0), px(28.0));
+
+        runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
+        assert!(runtime.push_scene_fact(
+            position,
+            Vec::new(),
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs,
+                target_index: 0,
+                bounds: tab_bounds,
+                is_central: false,
+            }),
+            &DockPolicy::default()
+        ));
+        assert_eq!(resolved_tab_insert_index(&runtime), Some(1));
+
+        assert!(
+            !runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default()),
+            "partial render scenes with no facts should keep the held tab target stable"
+        );
+        assert_eq!(resolved_tab_insert_index(&runtime), Some(1));
+
+        let outside = point(px(140.0), px(28.0));
+        assert!(
+            runtime.begin_scene(DockHostDropScene::new(outside), &DockPolicy::default()),
+            "moving outside the held tab bounds should still clear the stale tab target"
+        );
+        assert_eq!(runtime.resolved_target(), None);
+        assert!(runtime.reorder_hold_resolution.is_none());
+    }
+
+    #[test]
+    fn tab_reorder_hold_suppresses_partial_guide_target_churn() {
+        let tabs = DockNodeId::null();
+        let mut runtime = DockDropRuntime::default();
+        let tab_bounds = bounds(10.0, 20.0, 100.0, 24.0);
+        let root_bounds = bounds(0.0, 0.0, 400.0, 240.0);
+        let position = point(px(64.0), px(28.0));
+
+        runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
+        assert!(runtime.push_scene_fact(
+            position,
+            Vec::new(),
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs,
+                target_index: 0,
+                bounds: tab_bounds,
+                is_central: false,
+            }),
+            &DockPolicy::default()
+        ));
+        assert_eq!(resolved_tab_insert_index(&runtime), Some(1));
+        assert!(runtime.guide_target().is_none());
+
+        assert!(
+            !runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default()),
+            "a partial scene with the same held tab target should not report a state change"
+        );
+        assert!(runtime.guide_target().is_none());
+
+        assert!(
+            !runtime.push_scene_fact(
+                position,
+                Vec::new(),
+                DockHostDropSceneFact::Root(crate::drop_target::DockRootDropTarget {
+                    root: tabs,
+                    bounds: root_bounds,
+                }),
+                &DockPolicy::default()
+            ),
+            "guide-only partial facts must not churn state while a held tab target is active"
+        );
+        assert_eq!(resolved_tab_insert_index(&runtime), Some(1));
+        assert!(runtime.guide_target().is_none());
     }
 
     #[test]

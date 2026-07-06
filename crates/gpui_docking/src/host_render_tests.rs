@@ -1,14 +1,26 @@
 use crate::{
     DockCentralRegion, DockController, DockFloatingContainer, DockGraph, DockHost, DockNode,
-    DockNodeId, DockPanelDescriptor, DockSpaceId, DockViewportActivationTransaction,
-    DockViewportFocusCommand, DockViewportFocusRequest, DockViewportPlatformSyncAction,
-    DockViewportRuntimeHandle, DockWorkspace, SplitAxis, debug::DockDebugRegion,
-    drag::DockDragPayload, host_test_support::*,
+    DockNodeId, DockPanelDescriptor, DockSpaceId, DockTransitionExecutionState,
+    DockViewportActivationTransaction, DockViewportDropPayload, DockViewportDropRoute,
+    DockViewportDropRouteRequest, DockViewportFocusCommand, DockViewportFocusRequest,
+    DockViewportPlatformSignals, DockViewportPlatformSyncAction, DockViewportRuntimeHandle,
+    DockViewportTargetContext, DockWorkspace, SplitAxis,
+    debug::DockDebugRegion,
+    drag::DockDragPayload,
+    drop_scene_fact,
+    host_test_support::*,
+    presentation_scene::{DockPresentationPane, DockPresentationPaneKind, DockPresentationScene},
+    transition_geometry::{DockMotionPreference, DockTransitionPlan},
+    visual_affordance_scene::{
+        DockVisualAffordanceKind, DockVisualAffordanceLayer, DockVisualAffordanceScene,
+        DockVisualAffordanceState, DockVisualLayerScope,
+    },
 };
 use open_gpui::{
-    AppContext as _, Entity, Focusable, Modifiers, MouseButton, RequestFrameOptions,
-    TestAppContext, VisualTestContext, px, size,
+    AnyWindowHandle, AppContext as _, Entity, Focusable, Modifiers, MouseButton,
+    RequestFrameOptions, TestAppContext, VisualTestContext, px, size,
 };
+use open_gpui_ui_core::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
 use slotmap::Key;
 use std::time::Duration;
 
@@ -49,6 +61,99 @@ fn single_tabs_render_selected_panel_and_all_tab_labels(cx: &mut TestAppContext)
     assert!(
         selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_none(),
         "inactive panel should not be mounted"
+    );
+}
+
+#[open_gpui::test]
+fn render_measured_tab_label_fact_overrides_scene_equal_slot_estimate(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph_with_selected(&["short", "long"], "short");
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[
+            ("short", "S", "Short"),
+            ("long", "A very long measured tab label", "Long"),
+        ],
+        size(px(480.0), px(200.0)),
+    );
+    let window_id = window.window_id();
+
+    let short_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("short"),
+        },
+    )
+    .expect("short tab selector should be emitted");
+    let rendered_short_bounds = debug_bounds(&mut visual, &short_tab);
+    let (scene_label_bounds, runtime_label_bounds) = host.update(cx, |host, cx| {
+        let scene = host.presentation_scene_for_test(floating_bounds(0.0, 0.0, 480.0, 200.0), cx);
+        let scene_label_bounds = scene
+            .tab_labels
+            .iter()
+            .find(|label| label.tabs == root && label.index == 0)
+            .expect("scene label should exist")
+            .bounds;
+        let runtime_label_bounds = host
+            .viewport_runtime()
+            .rendered_tab_label_bounds_for_tabs(host.space(), Some(window_id), root, 0)
+            .expect("runtime should keep render-measured tab label fact");
+        (scene_label_bounds, runtime_label_bounds)
+    });
+
+    assert_bounds_close(
+        runtime_label_bounds,
+        rendered_short_bounds,
+        "render-measured tab label fact",
+    );
+    assert!(
+        (f32::from(runtime_label_bounds.size.width) - f32::from(scene_label_bounds.size.width))
+            .abs()
+            > 1.0,
+        "tab label probe should preserve intrinsic render width when it differs from scene equal slots: runtime={runtime_label_bounds:?} scene={scene_label_bounds:?}"
+    );
+}
+
+#[open_gpui::test]
+fn render_tab_bar_bounds_match_presentation_scene_tab_bar(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph_with_selected(&["short", "long"], "short");
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[
+            ("short", "S", "Short"),
+            ("long", "A very long measured tab label", "Long"),
+        ],
+        size(px(480.0), px(200.0)),
+    );
+    let tab_bar = selector_for(&visual, &host, DockDebugRegion::TabBar { node: root })
+        .expect("tab bar selector should be emitted");
+    let rendered_tab_bar_bounds = debug_bounds(&mut visual, &tab_bar);
+    let window_id = window.window_id();
+    let (scene_tab_bar_bounds, runtime_tab_bar_bounds) = host.update(cx, |host, cx| {
+        let scene = host.presentation_scene_for_test(floating_bounds(0.0, 0.0, 480.0, 200.0), cx);
+        let scene_tab_bar_bounds = scene
+            .tab_bar_for_node(root)
+            .expect("scene tab bar should exist")
+            .bounds;
+        let runtime_tab_bar_bounds = host
+            .viewport_runtime()
+            .rendered_tab_bar_bounds_for_tabs(host.space(), Some(window_id), root)
+            .expect("runtime should keep scene-seeded tab bar fact");
+        (scene_tab_bar_bounds, runtime_tab_bar_bounds)
+    });
+
+    assert_bounds_close(
+        rendered_tab_bar_bounds,
+        scene_tab_bar_bounds,
+        "rendered tab bar",
+    );
+    assert_bounds_close(
+        runtime_tab_bar_bounds,
+        scene_tab_bar_bounds,
+        "scene-seeded tab bar fact",
     );
 }
 
@@ -122,6 +227,288 @@ fn drop_guides_render_while_tab_drag_is_active(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn rendered_scene_frame_is_published_for_event_receiver_local_routing(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(500.0), px(240.0)),
+    );
+
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("target tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let host_position = inner_edge_drop_position(target_bounds, crate::DropZone::Left);
+    let any_window: AnyWindowHandle = window.into();
+    let payload = DockDragPayload::new_item(space(), left_tabs, item("a"), "Panel A".to_string());
+    let (runtime, scene_proof) = cx.update_entity(&host, |host, cx| {
+        host.begin_payload_drag_from_render(&payload, cx);
+        (
+            host.viewport_runtime().clone(),
+            host.interaction().viewport_host_scene_frame().cloned(),
+        )
+    });
+    let scene_proof =
+        scene_proof.expect("rendered host scene frame should be published for routing");
+
+    let request = DockViewportDropRouteRequest::from_platform_signals(
+        space(),
+        left_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        host_position,
+        None,
+        DockViewportPlatformSignals::from_target_context(
+            DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
+        )
+        .with_event_receiver_window(any_window)
+        .with_global_window_bounds(false),
+    )
+    .with_event_receiver_local_scene_proof(Some(scene_proof));
+    let resolution =
+        cx.update(|app| runtime.resolve_payload_drop_delivery_for_request(&request, app));
+
+    assert!(
+        matches!(resolution.route(), DockViewportDropRoute::Local { .. }),
+        "event-receiver local routing should use the rendered scene frame, got {:?}",
+        resolution.route()
+    );
+    assert!(
+        resolution.delivery().is_some(),
+        "local route should resolve a concrete dock target from the rendered scene"
+    );
+}
+
+#[open_gpui::test]
+fn rendered_scene_route_resolves_nested_leaf_edge_from_scene_seeded_frame(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let upper_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("upper")],
+        selected: Some(item("upper")),
+    });
+    let lower_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("lower")],
+        selected: Some(item("lower")),
+    });
+    let nested = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![upper_tabs, lower_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![source_tabs, nested],
+        fractions: vec![0.35, 0.65],
+    });
+    graph.set_root(space(), root);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("upper", "Upper", "Upper"),
+            ("lower", "Lower", "Lower"),
+        ],
+        size(px(600.0), px(300.0)),
+    );
+
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: lower_tabs })
+        .expect("lower nested tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let host_position = inner_edge_drop_position(target_bounds, crate::DropZone::Left);
+    let any_window: AnyWindowHandle = window.into();
+    let payload = DockDragPayload::new_item(space(), source_tabs, item("a"), "Panel A".to_string());
+    let (runtime, scene_proof) = cx.update_entity(&host, |host, cx| {
+        host.begin_payload_drag_from_render(&payload, cx);
+        (
+            host.viewport_runtime().clone(),
+            host.interaction().viewport_host_scene_frame().cloned(),
+        )
+    });
+    let scene_proof =
+        scene_proof.expect("rendered host scene frame should be published for routing");
+
+    let request = DockViewportDropRouteRequest::from_platform_signals(
+        space(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        host_position,
+        None,
+        DockViewportPlatformSignals::from_target_context(
+            DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
+        )
+        .with_event_receiver_window(any_window)
+        .with_global_window_bounds(false),
+    )
+    .with_event_receiver_local_scene_proof(Some(scene_proof));
+    let resolution =
+        cx.update(|app| runtime.resolve_payload_drop_delivery_for_request(&request, app));
+    let target = resolution
+        .delivery()
+        .and_then(|delivery| delivery.workspace_target())
+        .expect("rendered scene route should resolve a workspace target");
+
+    assert!(
+        matches!(
+            &target.target().kind,
+            crate::drop_target::DockResolvedDropTargetKind::InnerEdge {
+                target_tabs,
+                zone: crate::DropZone::Left,
+                ..
+            } if *target_tabs == lower_tabs
+        ),
+        "scene-seeded frame should target the nested lower leaf left edge, got {:?}",
+        target.target()
+    );
+}
+
+#[open_gpui::test]
+fn rendered_scene_route_commits_edge_drop_without_local_scene_update(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(500.0), px(240.0)));
+
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("target tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let host_position = inner_edge_drop_position(target_bounds, crate::DropZone::Left);
+    let payload = DockDragPayload::new_item(space(), left_tabs, item("a"), "Panel A".to_string());
+
+    window
+        .update(cx, |host, window, cx| {
+            host.begin_payload_drag_from_render(&payload, cx);
+            host.update_payload_drag_hover_from_rendered_host_scene(
+                &payload,
+                host_position,
+                window,
+                cx,
+            );
+            assert!(
+                host.interaction().drop_preview().is_none(),
+                "host-level fallback should not leave stale local previews above the routed preview"
+            );
+            assert!(
+                host.viewport_runtime()
+                    .routed_drop_preview_for(host.space(), window.window_handle().window_id())
+                    .is_some()
+                    || host
+                        .viewport_runtime()
+                        .routed_drop_route_preview_for(
+                            host.space(),
+                            window.window_handle().window_id()
+                        )
+                        .is_some(),
+                "rendered scene routing should produce a routed preview"
+            );
+            assert!(
+                host.drop_payload_release_from_rendered_host_scene(
+                    payload.clone(),
+                    host_position,
+                    window,
+                    cx,
+                ),
+                "release should commit through the rendered scene route"
+            );
+        })
+        .expect("host window should be live");
+
+    cx.read_entity(&controller, |controller, _| {
+        let root = controller
+            .graph()
+            .root(&space())
+            .expect("space should keep a root after edge drop");
+        let DockNode::Split { axis, children, .. } =
+            controller.graph().node(root).expect("root should exist")
+        else {
+            panic!("root should be a split after edge drop");
+        };
+        assert_eq!(*axis, SplitAxis::Horizontal);
+        assert_eq!(children.len(), 2);
+        assert_eq!(
+            controller.graph().collect_items_in_subtree(children[0]),
+            vec![item("a")],
+            "left-edge drop should place the moved item in the first child"
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_subtree(children[1]),
+            vec![item("b")],
+            "left-edge drop should keep the target item in the second child"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn rendered_scene_hover_preserves_local_rejected_preview_for_same_pointer_pass(
+    cx: &mut TestAppContext,
+) {
+    let (graph, root, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace
+        .policy_mut()
+        .allow_dock_class_in_space(space(), "inspector");
+    workspace.register_panel_descriptor(
+        item("a"),
+        DockPanelDescriptor::new("Panel A").with_dock_class("editor"),
+    );
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller, size(px(500.0), px(240.0)));
+
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("target tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let position = inner_edge_drop_position(target_bounds, crate::DropZone::Right);
+    let payload = DockDragPayload::new_item(space(), left_tabs, item("a"), "Panel A".to_string());
+
+    window
+        .update(cx, |host, window, cx| {
+            host.begin_payload_drag_from_render(&payload, cx);
+            host.begin_host_drop_scene_from_render(
+                &payload,
+                window.bounds(),
+                position,
+                window,
+                cx,
+            );
+            host.update_local_drop_scene_fact_from_render(
+                &payload,
+                crate::drop_scene_fact::leaf(root, right_tabs, target_bounds, false),
+                position,
+                window,
+                cx,
+            );
+            assert!(
+                host.interaction()
+                    .drop_preview()
+                    .is_some_and(|preview| !preview.scene.decision.is_allowed()),
+                "local scene should produce a rejected preview before host fallback runs"
+            );
+
+            host.update_payload_drag_hover_from_rendered_host_scene(
+                &payload,
+                position,
+                window,
+                cx,
+            );
+            assert!(
+                host.interaction()
+                    .drop_preview()
+                    .is_some_and(|preview| !preview.scene.decision.is_allowed()),
+                "host-level fallback must not clear a local preview already produced for this pointer position"
+            );
+        })
+        .expect("host window should be live");
+}
+
+#[open_gpui::test]
 fn host_scene_expiry_watch_survives_manual_frame_callbacks(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a", "b"]);
     let (window, host, mut visual) = open_host(
@@ -157,6 +544,234 @@ fn host_scene_expiry_watch_survives_manual_frame_callbacks(cx: &mut TestAppConte
         require_presentation: true,
         ..Default::default()
     }));
+}
+
+#[open_gpui::test]
+fn transition_sample_visual_affordance_renders_from_executor(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a"]);
+    let (window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A")],
+        size(px(400.0), px(240.0)),
+    );
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(floating_bounds(0.0, 0.0, 400.0, 240.0), cx)
+    });
+    let affordance_bounds = floating_bounds(32.0, 16.0, 90.0, 26.0);
+    let affordance_scene =
+        DockVisualAffordanceScene::from_test_layers(vec![DockVisualAffordanceLayer::test_layer(
+            DockVisualAffordanceKind::PayloadGhost,
+            affordance_bounds,
+            Some(root),
+            Some(crate::DropZone::Center),
+            DockVisualLayerScope::Local,
+            DockVisualAffordanceState::Active,
+            Some(0),
+            Some("Panel A".to_string()),
+            None,
+            Some("Preview Panel A".to_string()),
+        )]);
+    let plan = DockTransitionPlan::from_visual_affordance_scene(
+        &scene,
+        &affordance_scene,
+        DockMotionPreference::Animated,
+    );
+
+    window
+        .update(cx, |host, window, cx| {
+            assert_eq!(
+                host.execute_transition_plan(
+                    plan,
+                    MotionSpec::layout(DockMotionPreference::Animated),
+                    Some(window),
+                    cx,
+                ),
+                DockTransitionExecutionState::Scheduled
+            );
+        })
+        .expect("host should execute transition plan");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+
+    let transition_layer = selector_for(&visual, &host, DockDebugRegion::TransitionLayer)
+        .expect("transition layer selector should be emitted");
+    assert!(debug_bounds(&mut visual, &transition_layer).size.width > px(0.0));
+    let transition_overlay = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TransitionVisualAffordance { index: 0 },
+    )
+    .expect("sampled visual affordance selector should be emitted");
+    assert_bounds_close(
+        debug_bounds(&mut visual, &transition_overlay),
+        affordance_bounds,
+        "sampled transition visual affordance",
+    );
+}
+
+#[open_gpui::test]
+fn transition_pane_clip_mounts_real_pane_content(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+
+    let host_bounds = floating_bounds(0.0, 0.0, 400.0, 240.0);
+    let previous = single_tabs_presentation_scene(left_tabs, host_bounds);
+    let next = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(host_bounds, cx)
+    });
+    let final_right_bounds = next
+        .panes
+        .iter()
+        .find(|pane| pane.node == Some(right_tabs))
+        .expect("final scene should contain right tabs pane")
+        .bounds;
+    let plan = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
+
+    window
+        .update(cx, |host, window, cx| {
+            assert_eq!(
+                host.execute_transition_plan(
+                    plan,
+                    MotionSpec::new(
+                        MotionPreference::Animated,
+                        MotionDuration::Custom(Duration::ZERO),
+                        MotionEasing::Linear,
+                    ),
+                    Some(window),
+                    cx,
+                ),
+                DockTransitionExecutionState::Scheduled
+            );
+        })
+        .expect("host should execute transition plan");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+
+    let clip = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TransitionPaneClip { node: right_tabs },
+    )
+    .expect("transition pane clip selector should be emitted");
+    let content = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TransitionPaneContent { node: right_tabs },
+    )
+    .expect("transition pane content selector should be emitted");
+    let occlusion = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TransitionPaneOcclusion { node: right_tabs },
+    )
+    .expect("transition pane occlusion selector should be emitted");
+
+    assert_bounds_close(
+        debug_bounds(&mut visual, &clip),
+        final_right_bounds,
+        "transition pane clip",
+    );
+    assert_bounds_close(
+        debug_bounds(&mut visual, &occlusion),
+        final_right_bounds,
+        "transition pane occlusion",
+    );
+    assert_bounds_close(
+        debug_bounds(&mut visual, &content),
+        final_right_bounds,
+        "transition pane content",
+    );
+    let panel_b = selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") })
+        .expect("primary selected panel selector should still be emitted");
+    assert!(debug_bounds(&mut visual, &panel_b).size.height > px(0.0));
+}
+
+#[open_gpui::test]
+fn transition_projection_clip_mounts_final_size_pane_content(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, _right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+
+    let host_bounds = floating_bounds(0.0, 0.0, 400.0, 240.0);
+    let previous = single_tabs_presentation_scene(left_tabs, host_bounds);
+    let previous_left_bounds = previous
+        .pane_for_node(left_tabs)
+        .expect("previous scene should contain left tabs pane")
+        .bounds;
+    let next = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(host_bounds, cx)
+    });
+    let final_left_bounds = next
+        .pane_for_node(left_tabs)
+        .expect("final scene should contain left tabs pane")
+        .bounds;
+    let plan = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
+
+    window
+        .update(cx, |host, window, cx| {
+            assert_eq!(
+                host.execute_transition_plan(
+                    plan,
+                    MotionSpec::new(
+                        MotionPreference::Animated,
+                        MotionDuration::Custom(Duration::from_secs(60)),
+                        MotionEasing::Linear,
+                    ),
+                    Some(window),
+                    cx,
+                ),
+                DockTransitionExecutionState::Scheduled
+            );
+        })
+        .expect("host should execute transition plan");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+
+    let clip = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TransitionPaneClip { node: left_tabs },
+    )
+    .expect("resizing pane projection clip selector should be emitted");
+    let content = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TransitionPaneContent { node: left_tabs },
+    )
+    .expect("resizing pane projected content selector should be emitted");
+    let occlusion = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TransitionPaneOcclusion { node: left_tabs },
+    )
+    .expect("resizing pane projection occlusion selector should be emitted");
+
+    let clip_bounds = debug_bounds(&mut visual, &clip);
+    assert!(
+        clip_bounds.size.width > final_left_bounds.size.width
+            && clip_bounds.size.width <= previous_left_bounds.size.width,
+        "projection clip should start from previous width and move toward final width"
+    );
+    assert_bounds_close(
+        debug_bounds(&mut visual, &content),
+        final_left_bounds,
+        "resizing pane projected content",
+    );
+    assert_bounds_close(
+        debug_bounds(&mut visual, &occlusion),
+        final_left_bounds,
+        "resizing pane projection occlusion",
+    );
 }
 
 #[open_gpui::test]
@@ -387,6 +1002,118 @@ fn root_drop_guides_use_outer_edge_drop_box_geometry(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn root_edge_hover_keeps_target_leaf_side_guides_visible(cx: &mut TestAppContext) {
+    let (graph, root, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(500.0), px(240.0)),
+    );
+
+    start_tab_drag(&mut visual, &host, left_tabs, "a");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: left_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let source_bounds = debug_bounds(&mut visual, &source_tab);
+    let start = source_bounds.center();
+    let root_selector = selector_for(&visual, &host, DockDebugRegion::Split { node: root })
+        .expect("root split selector should be emitted");
+    let root_bounds = debug_bounds(&mut visual, &root_selector);
+    let right_stack = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("right stack selector should be emitted");
+    let right_bounds = debug_bounds(&mut visual, &right_stack);
+    let outer_boxes = crate::geometry::drop_boxes_with_style(
+        root_bounds,
+        crate::geometry::DockDropBoxSet::Outer,
+        crate::DockDropGuideStyle::default(),
+    );
+    let outer_right_hit = outer_boxes
+        .iter()
+        .find(|drop_box| drop_box.kind.zone() == crate::DropZone::Right)
+        .expect("right outer drop box should exist")
+        .hit_bounds
+        .center();
+    let payload = DockDragPayload::new_item(space(), left_tabs, item("a"), "Panel A".to_string());
+    window
+        .update(cx, |host, window, cx| {
+            host.begin_tab_item_drag_from_render(left_tabs, item("a"), &payload, cx);
+            host.update_payload_drag_tear_off_geometry_from_render(
+                &payload,
+                crate::drag::DockDragTearOffGeometry::from_source_bounds(source_bounds, start)
+                    .with_preferred_size(source_bounds.size),
+            );
+            host.begin_host_drop_scene_from_render(
+                &payload,
+                root_bounds,
+                outer_right_hit,
+                window,
+                cx,
+            );
+            host.update_local_root_drop_scene_from_render(
+                &payload,
+                root,
+                root_bounds,
+                outer_right_hit,
+                window,
+                cx,
+            );
+            host.update_local_drop_scene_fact_from_render(
+                &payload,
+                drop_scene_fact::leaf(root, right_tabs, right_bounds, false),
+                outer_right_hit,
+                window,
+                cx,
+            );
+        })
+        .expect("host should publish root drop scene");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    let expected_inner_boxes = crate::geometry::drop_boxes_with_style(
+        right_bounds,
+        crate::geometry::DockDropBoxSet::Inner,
+        crate::DockDropGuideStyle::default(),
+    );
+
+    assert_drop_guide_not_emitted(&visual, &host, Some(right_tabs), crate::DropZone::Center);
+    for zone in [
+        crate::DropZone::Left,
+        crate::DropZone::Right,
+        crate::DropZone::Top,
+        crate::DropZone::Bottom,
+    ] {
+        assert_drop_guide_emitted(&visual, &host, None, zone);
+        let guide = selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::DropGuide {
+                node: Some(right_tabs),
+                zone,
+            },
+        )
+        .unwrap_or_else(|| panic!("{zone:?} right stack guide selector should be emitted"));
+        let guide_bounds = debug_bounds(&mut visual, &guide);
+        let expected = expected_inner_boxes
+            .iter()
+            .find(|drop_box| drop_box.kind.zone() == zone)
+            .unwrap_or_else(|| panic!("{zone:?} inner drop box should exist"));
+        assert_bounds_close(
+            guide_bounds,
+            expected.draw_bounds,
+            &format!("{zone:?} right stack guide"),
+        );
+    }
+}
+
+#[open_gpui::test]
 fn empty_host_center_guide_uses_center_drop_box_geometry(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let mut graph = DockGraph::new();
@@ -469,6 +1196,252 @@ fn empty_host_center_guide_uses_center_drop_box_geometry(cx: &mut TestAppContext
         expected_center.draw_bounds,
         "empty host center guide",
     );
+}
+
+#[open_gpui::test]
+fn cross_window_leaf_interior_hover_keeps_guide_only_preview(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let source_window = cx.open_window(size(px(320.0), px(220.0)), {
+        let controller = controller.clone();
+        let runtime = runtime.clone();
+        let source_space = source_space.clone();
+        move |_, cx| {
+            DockHost::from_controller(
+                controller.clone(),
+                source_space.clone(),
+                runtime.clone(),
+                cx,
+            )
+        }
+    });
+    let source_host = source_window
+        .root(cx)
+        .expect("source window should expose DockHost root");
+    let target_window = cx.open_window(size(px(420.0), px(260.0)), {
+        let controller = controller.clone();
+        let runtime = runtime.clone();
+        let target_space = target_space.clone();
+        move |_, cx| {
+            DockHost::from_controller(
+                controller.clone(),
+                target_space.clone(),
+                runtime.clone(),
+                cx,
+            )
+        }
+    });
+    let target_host = target_window
+        .root(cx)
+        .expect("target window should expose DockHost root");
+    cx.run_until_parked();
+
+    let mut source_visual = VisualTestContext::from_window(source_window.into(), cx);
+    start_tab_drag(&mut source_visual, &source_host, source_tabs, "a");
+    cx.run_until_parked();
+
+    let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut target_visual, &target_tabs_selector);
+    let interior_miss = open_gpui::point(
+        target_bounds.origin.x + target_bounds.size.width * 0.78,
+        target_bounds.origin.y + target_bounds.size.height * 0.5,
+    );
+    target_visual.simulate_mouse_move(interior_miss, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    let target_visual = VisualTestContext::from_window(target_window.into(), cx);
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::DropPreviewBody,
+        )
+        .is_none(),
+        "guide-only hover should not render a concrete body preview"
+    );
+    for zone in [
+        crate::DropZone::Center,
+        crate::DropZone::Left,
+        crate::DropZone::Right,
+        crate::DropZone::Top,
+        crate::DropZone::Bottom,
+    ] {
+        assert_drop_guide_emitted(&target_visual, &target_host, Some(target_tabs), zone);
+    }
+}
+
+#[open_gpui::test]
+fn cross_window_inner_edge_expanded_hit_area_docks(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source-expanded");
+    let target_space = DockSpaceId::from("target-expanded");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("c")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let source_window = cx.open_window(size(px(320.0), px(220.0)), {
+        let controller = controller.clone();
+        let runtime = runtime.clone();
+        let source_space = source_space.clone();
+        move |_, cx| {
+            DockHost::from_controller(
+                controller.clone(),
+                source_space.clone(),
+                runtime.clone(),
+                cx,
+            )
+        }
+    });
+    let source_host = source_window
+        .root(cx)
+        .expect("source window should expose DockHost root");
+    let target_window = cx.open_window(size(px(420.0), px(260.0)), {
+        let controller = controller.clone();
+        let runtime = runtime.clone();
+        let target_space = target_space.clone();
+        move |_, cx| {
+            DockHost::from_controller(
+                controller.clone(),
+                target_space.clone(),
+                runtime.clone(),
+                cx,
+            )
+        }
+    });
+    let target_host = target_window
+        .root(cx)
+        .expect("target window should expose DockHost root");
+    cx.run_until_parked();
+
+    let mut source_visual = VisualTestContext::from_window(source_window.into(), cx);
+    start_tab_drag(&mut source_visual, &source_host, source_tabs, "a");
+    cx.run_until_parked();
+
+    let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut target_visual, &target_tabs_selector);
+    let right_box = crate::geometry::drop_boxes_with_style(
+        target_bounds,
+        crate::geometry::DockDropBoxSet::Inner,
+        crate::DockDropGuideStyle::default(),
+    )
+    .into_iter()
+    .find(|drop_box| {
+        drop_box.kind == crate::geometry::DockDropBoxKind::InnerEdge(crate::DropZone::Right)
+    })
+    .expect("right inner drop box should exist");
+    let expanded_hit = open_gpui::point(
+        right_box.draw_bounds.origin.x - px(1.0),
+        target_bounds.center().y,
+    );
+    assert!(
+        !right_box.draw_bounds.contains(&expanded_hit),
+        "test point should exercise the expanded ImGui-style hit area outside the drawn guide box"
+    );
+    assert!(
+        right_box.hit_bounds.contains(&expanded_hit),
+        "test point should still be inside the expanded ImGui-style hit area"
+    );
+
+    target_visual.simulate_mouse_move(expanded_hit, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
+    assert_drop_guide_emitted(
+        &target_visual,
+        &target_host,
+        Some(target_tabs),
+        crate::DropZone::Right,
+    );
+    target_visual.simulate_mouse_up(expanded_hit, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    controller.update(cx, |controller, _| {
+        let DockNode::Tabs { items, .. } = controller
+            .graph()
+            .node(source_tabs)
+            .expect("source tabs should still exist")
+        else {
+            panic!("source should remain a tabs node");
+        };
+        assert_eq!(
+            items,
+            &[item("c")],
+            "source should retain the non-dragged tab after expanded edge drop"
+        );
+        let target_root = controller
+            .graph()
+            .root(&target_space)
+            .expect("target space should still have a root");
+        let DockNode::Split { children, .. } = controller
+            .graph()
+            .node(target_root)
+            .expect("target root should exist")
+        else {
+            panic!("expanded edge drop should split the target root");
+        };
+        assert_eq!(children.len(), 2);
+        let DockNode::Tabs { items, .. } = controller
+            .graph()
+            .node(children[1])
+            .expect("right child should exist")
+        else {
+            panic!("right child should be a tabs node");
+        };
+        assert_eq!(
+            items,
+            &[item("a")],
+            "expanded right-edge drop should create a new right child"
+        );
+    });
 }
 
 #[open_gpui::test]
@@ -801,6 +1774,30 @@ fn start_tab_drag(
     );
 }
 
+fn single_tabs_presentation_scene(
+    tabs: DockNodeId,
+    bounds: open_gpui::Bounds<open_gpui::Pixels>,
+) -> DockPresentationScene {
+    DockPresentationScene {
+        space: space(),
+        bounds,
+        root: Some(tabs),
+        panes: vec![DockPresentationPane {
+            node: Some(tabs),
+            kind: DockPresentationPaneKind::Tabs,
+            bounds,
+            floating: None,
+            is_central: false,
+        }],
+        tab_bars: Vec::new(),
+        tab_labels: Vec::new(),
+        splitters: Vec::new(),
+        floating_containers: Vec::new(),
+        focus_regions: Vec::new(),
+        overlay_anchors: Vec::new(),
+    }
+}
+
 fn assert_drop_guide_emitted(
     visual: &VisualTestContext,
     host: &Entity<DockHost>,
@@ -822,24 +1819,6 @@ fn assert_drop_guide_not_emitted(
     assert!(
         selector_for(visual, host, DockDebugRegion::DropGuide { node, zone }).is_none(),
         "{zone:?} drop guide selector should not be emitted"
-    );
-}
-
-fn assert_bounds_close(
-    actual: open_gpui::Bounds<open_gpui::Pixels>,
-    expected: open_gpui::Bounds<open_gpui::Pixels>,
-    context: &str,
-) {
-    assert_close(f32::from(actual.origin.x), f32::from(expected.origin.x));
-    assert_close(f32::from(actual.origin.y), f32::from(expected.origin.y));
-    assert_close(f32::from(actual.size.width), f32::from(expected.size.width));
-    assert_close(
-        f32::from(actual.size.height),
-        f32::from(expected.size.height),
-    );
-    assert!(
-        expected.contains(&actual.center()),
-        "{context} center should remain inside expected drop box: actual={actual:?}, expected={expected:?}"
     );
 }
 
@@ -2027,7 +3006,13 @@ fn empty_central_passthrough_syncs_window_pointer_input(cx: &mut TestAppContext)
             .last_platform_sync
             .as_ref()
             .map(|sync| sync.applied.as_slice()),
-        Some([DockViewportPlatformSyncAction::PointerInput { enabled: false }].as_slice())
+        Some(
+            [
+                DockViewportPlatformSyncAction::PointerInput { enabled: false },
+                DockViewportPlatformSyncAction::ViewportFlagNoInputs { enabled: true },
+            ]
+            .as_slice()
+        )
     );
 
     controller.update(cx, |controller, cx| {
@@ -2058,7 +3043,13 @@ fn empty_central_passthrough_syncs_window_pointer_input(cx: &mut TestAppContext)
             .last_platform_sync
             .as_ref()
             .map(|sync| sync.applied.as_slice()),
-        Some([DockViewportPlatformSyncAction::PointerInput { enabled: true }].as_slice())
+        Some(
+            [
+                DockViewportPlatformSyncAction::PointerInput { enabled: true },
+                DockViewportPlatformSyncAction::ViewportFlagNoInputs { enabled: false },
+            ]
+            .as_slice()
+        )
     );
 }
 
@@ -2099,7 +3090,7 @@ fn empty_central_passthrough_with_floating_content_keeps_window_pointer_input(
     );
     assert!(
         selector_for(&visual, &host, DockDebugRegion::Floating { node: floating }).is_some(),
-        "floating overlay should still render above the empty central region"
+        "floating visual affordance should still render above the empty central region"
     );
     let runtime = host.update(cx, |host, _| host.viewport_runtime().clone());
     assert_eq!(
@@ -2144,7 +3135,7 @@ fn ordinary_render_does_not_restore_externally_owned_pointer_passthrough(cx: &mu
 }
 
 #[open_gpui::test]
-fn floating_container_renders_panel_inside_overlay_bounds(cx: &mut TestAppContext) {
+fn floating_container_renders_panel_inside_affordance_bounds(cx: &mut TestAppContext) {
     let (graph, _root, floating) = floating_overlay_graph();
     let (_window, host, mut visual) = open_host(
         cx,

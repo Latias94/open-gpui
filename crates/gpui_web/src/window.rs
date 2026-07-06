@@ -1,11 +1,12 @@
 use crate::display::WebDisplay;
 use crate::events::{ClickState, WebEventListeners, is_mac_platform};
+use crate::platform::set_body_cursor;
 use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 
 use open_gpui::{
-    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs,
-    Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, DispatchEventResult,
+    GpuSpecs, Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
@@ -55,6 +56,8 @@ pub(crate) struct WebWindowInner {
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
     pub(crate) is_composing: Cell<bool>,
+    pub(crate) cursor_visible: Rc<Cell<bool>>,
+    pub(crate) last_cursor_css: Rc<Cell<&'static str>>,
     mql_handle: RefCell<Option<MqlHandle>>,
     pending_physical_size: Cell<Option<(u32, u32)>>,
 }
@@ -76,6 +79,8 @@ impl WebWindow {
         _params: WindowParams,
         context: &WgpuContext,
         browser_window: web_sys::Window,
+        cursor_visible: Rc<Cell<bool>>,
+        last_cursor_css: Rc<Cell<&'static str>>,
     ) -> anyhow::Result<Self> {
         let document = browser_window
             .document()
@@ -182,9 +187,13 @@ impl WebWindow {
             last_physical_size: Cell::new((0, 0)),
             notify_scale: Cell::new(false),
             is_composing: Cell::new(false),
+            cursor_visible,
+            last_cursor_css,
             mql_handle: RefCell::new(None),
             pending_physical_size: Cell::new(None),
         });
+
+        inner.update_size_from_canvas_rect();
 
         let raf_closure = inner.create_raf_closure();
         inner.schedule_raf(&raf_closure);
@@ -255,66 +264,159 @@ impl WebWindow {
                 .last_physical_size
                 .set((physical_width, physical_height));
 
-            // Skip rendering to a zero-size canvas (e.g. display:none).
-            if physical_width == 0 || physical_height == 0 {
-                let mut s = inner.state.borrow_mut();
-                s.bounds.size = Size::default();
-                s.scale_factor = dpr_f32;
-                // Still fire the callback so GPUI knows the window is gone.
-                drop(s);
-                let mut cbs = inner.callbacks.borrow_mut();
-                if let Some(ref mut callback) = cbs.resize {
-                    callback(Size::default(), dpr_f32);
-                }
-                return;
-            }
-
-            let max_texture_dimension = inner.state.borrow().max_texture_dimension;
-            let clamped_width = physical_width.min(max_texture_dimension);
-            let clamped_height = physical_height.min(max_texture_dimension);
-
-            inner
-                .pending_physical_size
-                .set(Some((clamped_width, clamped_height)));
-
-            {
-                let mut s = inner.state.borrow_mut();
-                s.bounds.size = Size {
-                    width: px(logical_width),
-                    height: px(logical_height),
-                };
-                s.scale_factor = dpr_f32;
-            }
-
-            let new_size = Size {
-                width: px(logical_width),
-                height: px(logical_height),
-            };
-
-            let mut cbs = inner.callbacks.borrow_mut();
-            if let Some(ref mut callback) = cbs.resize {
-                callback(new_size, dpr_f32);
-            }
+            let new_size = inner.update_observed_size(
+                physical_width,
+                physical_height,
+                logical_width,
+                logical_height,
+                dpr_f32,
+            );
+            inner.dispatch_resize(new_size, dpr_f32);
         })
     }
 }
 
 impl WebWindowInner {
+    fn update_size_from_canvas_rect(&self) {
+        let rect = self.canvas.get_bounding_client_rect();
+        let dpr = self.browser_window.device_pixel_ratio();
+        let logical_width = rect.width().max(0.0) as f32;
+        let logical_height = rect.height().max(0.0) as f32;
+        let physical_width = (logical_width as f64 * dpr).round() as u32;
+        let physical_height = (logical_height as f64 * dpr).round() as u32;
+
+        self.last_physical_size
+            .set((physical_width, physical_height));
+        self.update_observed_size(
+            physical_width,
+            physical_height,
+            logical_width,
+            logical_height,
+            dpr as f32,
+        );
+    }
+
+    fn update_observed_size(
+        &self,
+        physical_width: u32,
+        physical_height: u32,
+        logical_width: f32,
+        logical_height: f32,
+        dpr: f32,
+    ) -> Size<Pixels> {
+        let new_size = Size {
+            width: px(logical_width),
+            height: px(logical_height),
+        };
+
+        if physical_width == 0 || physical_height == 0 {
+            let mut state = self.state.borrow_mut();
+            state.bounds.size = Size::default();
+            state.scale_factor = dpr;
+            self.pending_physical_size.set(None);
+            return Size::default();
+        }
+
+        let max_texture_dimension = self.state.borrow().max_texture_dimension;
+        self.pending_physical_size.set(Some((
+            physical_width.min(max_texture_dimension),
+            physical_height.min(max_texture_dimension),
+        )));
+
+        {
+            let mut state = self.state.borrow_mut();
+            state.bounds.size = new_size;
+            state.scale_factor = dpr;
+        }
+
+        new_size
+    }
+
+    pub(crate) fn dispatch_resize(&self, size: Size<Pixels>, scale_factor: f32) {
+        let mut callback = {
+            let mut callbacks = self.callbacks.borrow_mut();
+            callbacks.resize.take()
+        };
+
+        if let Some(ref mut callback) = callback {
+            callback(size, scale_factor);
+        }
+
+        if let Some(callback) = callback {
+            self.callbacks.borrow_mut().resize = Some(callback);
+        }
+    }
+
+    pub(crate) fn dispatch_request_frame(&self, options: RequestFrameOptions) {
+        let mut callback = {
+            let mut callbacks = self.callbacks.borrow_mut();
+            callbacks.request_frame.take()
+        };
+
+        if let Some(ref mut callback) = callback {
+            callback(options);
+        }
+
+        if let Some(callback) = callback {
+            self.callbacks.borrow_mut().request_frame = Some(callback);
+        }
+    }
+
+    pub(crate) fn dispatch_active_status_change(&self, is_active: bool) {
+        let mut callback = {
+            let mut callbacks = self.callbacks.borrow_mut();
+            callbacks.active_status_change.take()
+        };
+
+        if let Some(ref mut callback) = callback {
+            callback(is_active);
+        }
+
+        if let Some(callback) = callback {
+            self.callbacks.borrow_mut().active_status_change = Some(callback);
+        }
+    }
+
+    pub(crate) fn dispatch_hover_status_change(&self, is_hovered: bool) {
+        let mut callback = {
+            let mut callbacks = self.callbacks.borrow_mut();
+            callbacks.hover_status_change.take()
+        };
+
+        if let Some(ref mut callback) = callback {
+            callback(is_hovered);
+        }
+
+        if let Some(callback) = callback {
+            self.callbacks.borrow_mut().hover_status_change = Some(callback);
+        }
+    }
+
+    pub(crate) fn dispatch_appearance_changed(&self) {
+        let mut callback = {
+            let mut callbacks = self.callbacks.borrow_mut();
+            callbacks.appearance_changed.take()
+        };
+
+        if let Some(ref mut callback) = callback {
+            callback();
+        }
+
+        if let Some(callback) = callback {
+            self.callbacks.borrow_mut().appearance_changed = Some(callback);
+        }
+    }
+
     fn create_raf_closure(self: &Rc<Self>) -> Closure<dyn FnMut()> {
         let raf_handle: Rc<RefCell<Option<js_sys::Function>>> = Rc::new(RefCell::new(None));
         let raf_handle_inner = Rc::clone(&raf_handle);
 
         let this = Rc::clone(self);
         let closure = Closure::new(move || {
-            {
-                let mut callbacks = this.callbacks.borrow_mut();
-                if let Some(ref mut callback) = callbacks.request_frame {
-                    callback(RequestFrameOptions {
-                        require_presentation: true,
-                        force_render: false,
-                    });
-                }
-            }
+            this.dispatch_request_frame(RequestFrameOptions {
+                require_presentation: true,
+                force_render: false,
+            });
 
             // Re-schedule for the next frame
             if let Some(ref func) = *raf_handle_inner.borrow() {
@@ -330,9 +432,12 @@ impl WebWindowInner {
     }
 
     fn schedule_raf(&self, closure: &Closure<dyn FnMut()>) {
-        self.browser_window
+        if let Err(error) = self
+            .browser_window
             .request_animation_frame(closure.as_ref().unchecked_ref())
-            .ok();
+        {
+            log::error!("failed to schedule requestAnimationFrame: {error:?}");
+        }
     }
 
     fn observe_canvas(&self, observer: &web_sys::ResizeObserver) {
@@ -395,10 +500,7 @@ impl WebWindowInner {
                 let mut state = this.state.borrow_mut();
                 state.is_active = is_visible;
             }
-            let mut callbacks = this.callbacks.borrow_mut();
-            if let Some(ref mut callback) = callbacks.active_status_change {
-                callback(is_visible);
-            }
+            this.dispatch_active_status_change(is_visible);
         });
 
         document
@@ -428,10 +530,7 @@ impl WebWindowInner {
 
         let this = Rc::clone(self);
         let closure = Closure::<dyn FnMut(JsValue)>::new(move |_event: JsValue| {
-            let mut callbacks = this.callbacks.borrow_mut();
-            if let Some(ref mut callback) = callbacks.appearance_changed {
-                callback();
-            }
+            this.dispatch_appearance_changed();
         });
 
         mql.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref())
@@ -504,6 +603,30 @@ impl raw_window_handle::HasDisplayHandle for WebWindow {
     }
 }
 
+fn cursor_style_to_css(style: CursorStyle) -> &'static str {
+    match style {
+        CursorStyle::Arrow => "default",
+        CursorStyle::IBeam => "text",
+        CursorStyle::Crosshair => "crosshair",
+        CursorStyle::ClosedHand => "grabbing",
+        CursorStyle::OpenHand => "grab",
+        CursorStyle::PointingHand => "pointer",
+        CursorStyle::ResizeLeft | CursorStyle::ResizeRight | CursorStyle::ResizeLeftRight => {
+            "ew-resize"
+        }
+        CursorStyle::ResizeUp | CursorStyle::ResizeDown | CursorStyle::ResizeUpDown => "ns-resize",
+        CursorStyle::ResizeUpLeftDownRight => "nesw-resize",
+        CursorStyle::ResizeUpRightDownLeft => "nwse-resize",
+        CursorStyle::ResizeColumn => "col-resize",
+        CursorStyle::ResizeRow => "row-resize",
+        CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
+        CursorStyle::OperationNotAllowed => "not-allowed",
+        CursorStyle::DragLink => "alias",
+        CursorStyle::DragCopy => "copy",
+        CursorStyle::ContextualMenu => "context-menu",
+    }
+}
+
 impl PlatformWindow for WebWindow {
     fn bounds(&self) -> Bounds<Pixels> {
         self.inner.state.borrow().bounds
@@ -545,6 +668,15 @@ impl PlatformWindow for WebWindow {
 
     fn mouse_position(&self) -> Point<Pixels> {
         self.inner.state.borrow().mouse_position
+    }
+
+    fn set_cursor_style(&self, style: CursorStyle) {
+        let css_cursor = cursor_style_to_css(style);
+        self.inner.last_cursor_css.set(css_cursor);
+        let _ = self.inner.canvas.style().set_property("cursor", css_cursor);
+        if self.inner.cursor_visible.get() {
+            set_body_cursor(&self.inner.browser_window, css_cursor);
+        }
     }
 
     fn modifiers(&self) -> Modifiers {

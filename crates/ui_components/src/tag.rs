@@ -3,7 +3,7 @@
 use crate::a11y::UiA11yElementExt;
 use crate::badge::{BadgeColors, BadgeMetrics, BadgeVariant};
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
@@ -247,11 +247,13 @@ impl Sizable for Tag {
 }
 
 impl RenderOnce for Tag {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
         let remove_focus_ring = state.remove_focus_ring();
+        let remove_focus_shadow = focus_ring_shadow_with_theme(remove_focus_ring, &theme);
         let disabled = state.disabled();
         let label = self.label.clone();
         let remove_payload = state.remove();
@@ -266,9 +268,9 @@ impl RenderOnce for Tag {
             .gap_1()
             .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
-            .border_color(ThemeResolver::resolve(colors.border()))
-            .bg(ThemeResolver::resolve(colors.background()))
-            .text_color(ThemeResolver::resolve(colors.foreground()))
+            .border_color(theme.resolve(colors.border()))
+            .bg(theme.resolve(colors.background()))
+            .text_color(theme.resolve(colors.foreground()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
             .ui_role(state.role())
@@ -292,9 +294,7 @@ impl RenderOnce for Tag {
                             .tab_stop(true)
                             .ui_role(state.remove_role())
                             .aria_label(format!("Remove {}", remove_payload.label()))
-                            .focus_visible(move |style| {
-                                style.shadow(focus_ring_shadow(remove_focus_ring))
-                            })
+                            .focus_visible(move |style| style.shadow(remove_focus_shadow.clone()))
                             .cursor_pointer()
                             .on_click(move |event, window, cx| {
                                 cx.stop_propagation();

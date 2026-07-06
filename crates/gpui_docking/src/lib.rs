@@ -79,12 +79,15 @@
 //! ```
 #![warn(missing_docs)]
 
+mod accessibility_scene;
 mod action;
 mod builder;
+mod chrome_geometry;
 mod controller;
 #[cfg(test)]
 mod controller_builder_tests;
 mod debug;
+mod divider_hit_map;
 #[cfg(test)]
 mod dock_op_fixture_tests;
 mod drag;
@@ -122,11 +125,18 @@ mod panel_catalog;
 mod panel_registry;
 mod panel_view;
 mod policy;
+mod presentation_commands;
+mod presentation_scene;
 mod render;
 mod render_floating;
 mod render_split;
 mod render_tabs;
-mod split_fraction;
+mod spatial_navigation;
+#[cfg(test)]
+mod spatial_navigation_tests;
+mod split_geometry;
+mod transition_executor;
+mod transition_geometry;
 mod viewport;
 mod viewport_activation;
 mod viewport_backend_focus;
@@ -159,6 +169,7 @@ mod viewport_tear_off;
 mod viewport_tear_off_move;
 mod viewport_window_lifecycle;
 mod viewport_window_ownership;
+mod visual_affordance_scene;
 mod workspace;
 mod workspace_action;
 mod workspace_drop_target;
@@ -170,7 +181,12 @@ mod workspace_move_validation;
 mod workspace_panel_lifecycle;
 mod workspace_panel_transaction;
 mod workspace_resize_transaction;
+mod zoom_state;
 
+#[cfg(test)]
+mod host_accessibility_tests;
+#[cfg(test)]
+mod host_divider_hit_map_tests;
 #[cfg(test)]
 mod host_floating_tests;
 #[cfg(test)]
@@ -178,21 +194,41 @@ mod host_interaction_tests;
 #[cfg(test)]
 mod host_panel_tests;
 #[cfg(test)]
+mod host_presentation_scene_tests;
+#[cfg(test)]
+mod host_render_geometry_parity_tests;
+#[cfg(test)]
 mod host_render_tests;
 #[cfg(test)]
 mod host_test_support;
 #[cfg(test)]
 mod host_tests;
 #[cfg(test)]
+mod host_transition_tests;
+#[cfg(test)]
+mod host_viewport_close_tests;
+#[cfg(test)]
+mod host_viewport_lifecycle_tests;
+#[cfg(test)]
 mod host_viewport_matrix_tests;
 #[cfg(test)]
 mod host_viewport_model_tests;
 #[cfg(test)]
-mod host_viewport_runtime_handle_tests;
+mod host_viewport_placement_tests;
 #[cfg(test)]
-mod host_viewport_runtime_tests;
+mod host_viewport_platform_capability_tests;
+#[cfg(test)]
+mod host_viewport_preview_tests;
+#[cfg(test)]
+mod host_viewport_preview_visual_tests;
+#[cfg(test)]
+mod host_viewport_route_tests;
+#[cfg(test)]
+mod host_viewport_runtime_test_support;
 #[cfg(test)]
 mod host_viewport_tests;
+#[cfg(test)]
+mod host_zoom_focus_tests;
 #[cfg(test)]
 mod layout_tests;
 #[cfg(test)]
@@ -208,19 +244,21 @@ mod workspace_selection_tests;
 pub use action::*;
 pub use builder::*;
 pub use controller::*;
+pub use debug::{DockVisualAffordanceDebugLayer, DockVisualAffordanceDebugSummary};
 pub use geometry::DockDropGuideStyle;
 pub use graph::*;
 pub use host::*;
 pub use ids::*;
 pub use layout::*;
 pub use op::DockGraphMutationError;
-#[cfg(test)]
-pub(crate) use op::SplitFractionsUpdate;
 pub(crate) use op::{DockGraphDropTarget, DockOp};
 pub use panel::*;
 pub use panel_catalog::*;
 pub use panel_registry::*;
 pub use policy::*;
+pub use spatial_navigation::DockSpatialDirection;
+pub use transition_executor::DockTransitionExecutionState;
+pub use transition_geometry::DockTransitionPlan;
 pub(crate) use viewport::*;
 #[cfg(test)]
 pub(crate) use viewport_activation::DockViewportWindowActivation;
@@ -248,6 +286,11 @@ pub use viewport_placement::*;
 pub use viewport_placement_adapter::*;
 pub use viewport_placement_validation::*;
 pub(crate) use viewport_platform_signals::*;
+#[cfg(test)]
+pub(crate) use viewport_platform_sync::{
+    DockViewportPlatformFlagRequests, sync_reused_viewport_window,
+    unavailable_reused_viewport_window_sync, unsupported_viewport_platform_flag_requests,
+};
 pub(crate) use viewport_registration::*;
 pub(crate) use viewport_registry::{DockViewportSnapshot, DockViewportWindowFacts};
 pub(crate) use viewport_routed_preview::*;

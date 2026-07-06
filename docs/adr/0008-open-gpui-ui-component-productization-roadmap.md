@@ -30,13 +30,23 @@ Treat the current UI crates as the product boundary for the next phase.
 - Keep renderer-neutral state and adapter classification as hygiene, not as the primary product
   objective.
 
-The next sequence should therefore be:
+After the Command, Menu, ContextMenu, Tree, and Table behavior boundary work, the next sequence
+should therefore be:
 
-1. Recenter roadmap and memory docs on current-crate productization.
-2. Finish runtime foundations that every component depends on.
-3. Harden shell/navigation and choice/search families.
+1. Split the component contract registry by product responsibility so registry rows, projections,
+   source mappings, inventory, docs status, gallery status, and validation helpers do not keep
+   growing inside one module.
+2. Add focused accessibility contract gates for representative official component families,
+   separating renderer-neutral intent from GPUI adapter mapping and documenting unsupported platform
+   details.
+3. Add a theme JSON schema and file-loader facade so `ThemeDefinition` can become a portable product
+   contract instead of a code-only construction path.
 4. Keep the gallery, verification docs, and engineering memory aligned with the active product
    story.
+
+Broad splitting of every remaining 1k+ component file is not part of this sequence. A large file
+should move only when a concrete contract, runtime, accessibility, or theme ownership problem makes
+the split valuable. Standalone headless extraction also remains out of scope.
 
 ## Rationale
 
@@ -54,11 +64,15 @@ Positive:
   story.
 - Runtime foundations, shell/navigation, and choice/search can be improved as one coherent product
   line.
+- The next work can harden shared product contracts before adding another large visible component
+  or package boundary.
 
 Negative:
 
 - A future standalone headless crate remains deferred and must be revisited explicitly if the
   product direction changes.
+- Some large component implementation files remain large until a concrete ownership problem makes
+  splitting them worthwhile.
 - Some historical docs will still mention extraction because they record the earlier boundary work.
   Those references should be treated as history unless a new extraction plan is opened.
 
@@ -75,9 +89,10 @@ next implementation phase.
 
 ## Follow-Up Work
 
-- Update the roadmap and series-plan docs so productization is the active story.
-- Update the engineering wiki memory bundle so later sessions resume from the productization
-  narrative.
+- Implement the registry, accessibility, and theme productization plan in
+  `docs/plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md`.
+- Update the engineering wiki memory bundle so later sessions resume from the registry/a11y/theme
+  productization narrative.
 - Keep ADR 0006 and ADR 0007 available as historical boundary references.
 
 ## Citations

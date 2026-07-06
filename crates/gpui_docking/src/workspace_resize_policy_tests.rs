@@ -1,7 +1,7 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockGraphDropTarget,
-    DockGraphMutationError, DockNode, DockNodeId, DockPolicyError, DropZone, SplitAxis,
-    host_test_support::*,
+    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockGraphDropTarget,
+    DockGraphMutationError, DockNode, DockNodeId, DockPolicyError, DockSplitResize, DropZone,
+    SplitAxis, host_test_support::*,
 };
 use open_gpui::TestAppContext;
 use slotmap::Key;
@@ -93,6 +93,59 @@ fn workspace_resize_split_transaction_rejects_invalid_targets(cx: &mut TestAppCo
 }
 
 #[open_gpui::test]
+fn workspace_resize_splits_transaction_updates_corner_axes(cx: &mut TestAppContext) {
+    let (graph, root, vertical) = corner_resize_graph();
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[("a", "A", "A"), ("b", "B", "B"), ("c", "C", "C")],
+    );
+
+    let outcome = workspace
+        .apply_action(&DockAction::ResizeSplits {
+            updates: vec![
+                DockSplitResize::new(root, [0.65, 0.35]),
+                DockSplitResize::new(vertical, [0.25, 0.75]),
+            ],
+        })
+        .expect("corner resize should update both split axes");
+
+    assert_eq!(outcome, DockActionOutcome::Changed);
+    assert_split_fractions(workspace.graph().node(root), &[0.65, 0.35]);
+    assert_split_fractions(workspace.graph().node(vertical), &[0.25, 0.75]);
+}
+
+#[open_gpui::test]
+fn workspace_resize_splits_transaction_rejects_without_partial_mutation(cx: &mut TestAppContext) {
+    let (graph, root, vertical) = corner_resize_graph();
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[("a", "A", "A"), ("b", "B", "B"), ("c", "C", "C")],
+    );
+
+    let err = workspace
+        .apply_action(&DockAction::ResizeSplits {
+            updates: vec![
+                DockSplitResize::new(root, [0.65, 0.35]),
+                DockSplitResize::new(vertical, [1.0]),
+            ],
+        })
+        .expect_err("invalid second axis should reject the whole corner resize");
+
+    assert_eq!(
+        err,
+        DockActionApplyError::Graph(DockGraphMutationError::SplitFractionsLenMismatch {
+            split: vertical,
+            children_len: 2,
+            fractions_len: 1,
+        })
+    );
+    assert_split_fractions(workspace.graph().node(root), &[0.5, 0.5]);
+    assert_split_fractions(workspace.graph().node(vertical), &[0.5, 0.5]);
+}
+
+#[open_gpui::test]
 fn workspace_policy_blocks_edge_drop_without_mutating_graph(cx: &mut TestAppContext) {
     let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
@@ -152,4 +205,69 @@ fn workspace_policy_blocks_splitter_resize_without_mutating_graph(cx: &mut TestA
     };
     assert_close(fractions[0], 0.5);
     assert_close(fractions[1], 0.5);
+}
+
+#[open_gpui::test]
+fn workspace_policy_blocks_corner_resize_without_mutating_graph(cx: &mut TestAppContext) {
+    let (graph, root, vertical) = corner_resize_graph();
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[("a", "A", "A"), ("b", "B", "B"), ("c", "C", "C")],
+    );
+    workspace.policy_mut().set_allow_splitter_resize(false);
+
+    let err = workspace
+        .apply_action(&DockAction::ResizeSplits {
+            updates: vec![
+                DockSplitResize::new(root, [0.65, 0.35]),
+                DockSplitResize::new(vertical, [0.25, 0.75]),
+            ],
+        })
+        .expect_err("corner resize should be rejected by policy");
+
+    assert_eq!(
+        err,
+        DockActionApplyError::Policy(DockPolicyError::SplitterResizeDisabled)
+    );
+    assert_split_fractions(workspace.graph().node(root), &[0.5, 0.5]);
+    assert_split_fractions(workspace.graph().node(vertical), &[0.5, 0.5]);
+}
+
+fn corner_resize_graph() -> (DockGraph, DockNodeId, DockNodeId) {
+    let mut graph = DockGraph::new();
+    let left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let top_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let bottom_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let vertical = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![top_right, bottom_right],
+        fractions: vec![0.5, 0.5],
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left, vertical],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root);
+    (graph, root, vertical)
+}
+
+fn assert_split_fractions(node: Option<&DockNode>, expected: &[f32]) {
+    let Some(DockNode::Split { fractions, .. }) = node else {
+        panic!("node should be a split");
+    };
+    assert_eq!(fractions.len(), expected.len());
+    for (actual, expected) in fractions.iter().zip(expected.iter()) {
+        assert_close(*actual, *expected);
+    }
 }

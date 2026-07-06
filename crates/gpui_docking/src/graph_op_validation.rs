@@ -1,9 +1,7 @@
-#[cfg(test)]
-use crate::SplitFractionsUpdate;
 use crate::{
     DockGraphDropTarget, DockGraphMutationError, DockItemId, DockNodeId, DockOp, DockSpaceId,
+    DockSplitResize,
 };
-#[cfg(test)]
 use std::collections::HashSet;
 
 use super::{DockGraph, DockNode, DropZone};
@@ -151,10 +149,9 @@ impl DockGraph {
         Ok(())
     }
 
-    #[cfg(test)]
     pub(in crate::graph) fn validate_split_fraction_updates(
         &self,
-        updates: &[SplitFractionsUpdate],
+        updates: &[DockSplitResize],
     ) -> Result<(), DockGraphMutationError> {
         let mut seen = HashSet::new();
         for update in updates {
@@ -356,7 +353,6 @@ impl DockGraph {
                     DockTreeMutationExpectation::ValidateOnly,
                 ))
             }
-            #[cfg(test)]
             DockOp::SetSplitFractionsMany { updates } => {
                 self.validate_split_fraction_updates(updates)?;
                 self.apply_tree_mutation_plan(DockTreeMutationPlan::allow_noop(
@@ -578,7 +574,6 @@ impl<'a> DockTreeMutationPlan<'a> {
             DockOp::SetFloatingBounds { .. } => "SetFloatingBounds",
             DockOp::RaiseFloating { .. } => "RaiseFloating",
             DockOp::SetSplitFractions { .. } => "SetSplitFractions",
-            #[cfg(test)]
             DockOp::SetSplitFractionsMany { .. } => "SetSplitFractionsMany",
             #[cfg(test)]
             DockOp::SetSplitFractionTwo { .. } => "SetSplitFractionTwo",

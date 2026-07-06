@@ -5,16 +5,14 @@ use std::{
     sync::Arc,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
-use std::{
-    ffi::OsString,
-    fs::File,
-    io::Read as _,
-    os::fd::{AsFd, FromRawFd, IntoRawFd},
-    time::Duration,
-};
+use std::{ffi::OsString, fs::File, os::fd::AsFd, time::Duration};
+#[cfg(feature = "wayland")]
+use std::{io::Read as _, os::fd::AsRawFd};
 
 use anyhow::{Context as _, anyhow};
 use calloop::LoopSignal;
+#[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+use calloop::channel::Sender;
 use futures::channel::oneshot;
 use open_gpui_util::ResultExt as _;
 use open_gpui_util::command::{new_command, new_std_command};
@@ -23,15 +21,14 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::linux::{LinuxDispatcher, PriorityQueueCalloopReceiver};
 use open_gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow,
-    Result, RunnableVariant, Task, ThermalState, WindowAppearance, WindowButtonLayout,
-    WindowParams,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId, ForegroundExecutor,
+    Keymap, Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow, Result, RunnableVariant,
+    Task, ThermalState, WindowAppearance, WindowButtonLayout, WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
-use open_gpui::{MouseButton, Pixels, Point, px};
+use open_gpui::{CursorStyle, Pixels, Point, px};
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const SCROLL_LINES: f32 = 3.0;
@@ -42,7 +39,7 @@ pub(crate) const SCROLL_LINES: f32 = 3.0;
 pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
-pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
+pub(crate) const KEYRING_LABEL: &str = "open-gpui-github-account";
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 const FILE_PICKER_PORTAL_MISSING: &str =
@@ -80,7 +77,6 @@ pub(crate) trait LinuxClient {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>>;
-    fn set_cursor_style(&self, style: CursorStyle);
     fn hide_cursor_until_mouse_moves(&self) {}
     fn is_cursor_visible(&self) -> bool {
         true
@@ -124,6 +120,7 @@ pub(crate) struct PlatformHandlers {
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
+    pub(crate) system_wake: Option<Box<dyn FnMut()>>,
 }
 
 pub(crate) struct LinuxCommon {
@@ -136,11 +133,23 @@ pub(crate) struct LinuxCommon {
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
+    #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+    wake_sender: Sender<()>,
+    wake_listener_started: bool,
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, PriorityQueueCalloopReceiver<RunnableVariant>) {
+    pub fn new(
+        signal: LoopSignal,
+    ) -> (
+        Self,
+        PriorityQueueCalloopReceiver<RunnableVariant>,
+        calloop::channel::Channel<()>,
+    ) {
         let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
+        let (wake_sender, wake_receiver) = calloop::channel::channel();
+        #[cfg(not(all(target_os = "linux", any(feature = "wayland", feature = "x11"))))]
+        let _ = wake_sender;
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::linux::CosmicTextSystem::new("IBM Plex Sans"));
@@ -163,10 +172,64 @@ impl LinuxCommon {
             callbacks,
             signal,
             menus: Vec::new(),
+            #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+            wake_sender,
+            wake_listener_started: false,
         };
 
-        (common, main_receiver)
+        (common, main_receiver, wake_receiver)
     }
+
+    pub(crate) fn start_wake_listener(&mut self) {
+        if self.wake_listener_started {
+            return;
+        }
+
+        #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+        smol::spawn({
+            let wake_sender = self.wake_sender.clone();
+            async move {
+                if let Err(error) = listen_for_system_wake(wake_sender).await {
+                    log::debug!("failed to listen for system wake events: {error:?}");
+                }
+            }
+        })
+        .detach();
+
+        self.wake_listener_started = true;
+    }
+
+    pub(crate) fn handle_system_wake(&mut self) {
+        let Some(mut callback) = self.callbacks.system_wake.take() else {
+            return;
+        };
+        callback();
+        self.callbacks.system_wake = Some(callback);
+    }
+}
+
+#[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+async fn listen_for_system_wake(wake_sender: Sender<()>) -> anyhow::Result<()> {
+    use futures::StreamExt as _;
+
+    let connection = ashpd::zbus::Connection::system().await?;
+    let proxy = ashpd::zbus::Proxy::new(
+        &connection,
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+    )
+    .await?;
+    let mut sleep_events = proxy.receive_signal("PrepareForSleep").await?;
+
+    while let Some(message) = sleep_events.next().await {
+        let sleeping = message.body().deserialize::<bool>()?;
+        if !sleeping {
+            wake_sender.send(()).ok();
+        }
+    }
+
+    Ok(())
 }
 
 pub(crate) struct LinuxPlatform<P> {
@@ -515,6 +578,13 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         });
     }
 
+    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
+        self.inner.with_common(|common| {
+            common.callbacks.system_wake = Some(callback);
+            common.start_wake_listener();
+        });
+    }
+
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.inner.with_common(|common| {
             common.callbacks.app_menu_action = Some(callback);
@@ -557,10 +627,6 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         Err(anyhow::Error::msg(
             "Platform<LinuxPlatform>::path_for_auxiliary_executable is not implemented yet",
         ))
-    }
-
-    fn set_cursor_style(&self, style: CursorStyle) {
-        self.inner.set_cursor_style(style)
     }
 
     fn hide_cursor_until_mouse_moves(&self) {
@@ -780,12 +846,44 @@ pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::S
     state
 }
 
-#[cfg(any(feature = "wayland", feature = "x11"))]
-pub(super) unsafe fn read_fd(fd: filedescriptor::FileDescriptor) -> Result<Vec<u8>> {
-    let mut file = unsafe { File::from_raw_fd(fd.into_raw_fd()) };
+#[cfg(feature = "wayland")]
+pub(super) const PIPE_READ_TIMEOUT: Duration = Duration::from_secs(4);
+
+#[cfg(feature = "wayland")]
+pub(super) fn read_fd_with_timeout(
+    mut fd: filedescriptor::FileDescriptor,
+    timeout: Duration,
+) -> Result<Vec<u8>> {
+    fd.set_non_blocking(true)?;
     let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
-    Ok(buffer)
+    let mut chunk = [0u8; 8192];
+    loop {
+        let mut poll_fds = [filedescriptor::pollfd {
+            fd: fd.as_raw_fd(),
+            events: filedescriptor::POLLIN,
+            revents: 0,
+        }];
+        let ready = match filedescriptor::poll(&mut poll_fds, Some(timeout)) {
+            Ok(ready) => ready,
+            Err(filedescriptor::Error::Poll(err))
+                if err.kind() == std::io::ErrorKind::Interrupted =>
+            {
+                continue;
+            }
+            Err(err) => return Err(err.into()),
+        };
+        if ready == 0 {
+            anyhow::bail!("timed out waiting for data on pipe after {timeout:?}");
+        }
+        match fd.read(&mut chunk) {
+            Ok(0) => return Ok(buffer),
+            Ok(len) => buffer.extend_from_slice(&chunk[..len]),
+            Err(err)
+                if err.kind() == std::io::ErrorKind::WouldBlock
+                    || err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(err) => return Err(err.into()),
+        }
+    }
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -1156,5 +1254,99 @@ mod tests {
             zero,
             Point::new(px(5.0), px(5.1))
         ),);
+    }
+
+    #[cfg(feature = "wayland")]
+    mod read_fd_with_timeout {
+        use std::io::Write as _;
+        use std::time::{Duration, Instant};
+
+        use super::super::{PIPE_READ_TIMEOUT, read_fd_with_timeout};
+
+        #[test]
+        fn reads_data_written_before_close() {
+            let mut pipe = filedescriptor::Pipe::new().unwrap();
+            pipe.write.write_all(b"hello clipboard").unwrap();
+            drop(pipe.write);
+
+            let bytes = read_fd_with_timeout(pipe.read, PIPE_READ_TIMEOUT).unwrap();
+            assert_eq!(bytes, b"hello clipboard");
+        }
+
+        #[test]
+        fn returns_empty_when_writer_closes_without_writing() {
+            let pipe = filedescriptor::Pipe::new().unwrap();
+            drop(pipe.write);
+
+            let bytes = read_fd_with_timeout(pipe.read, PIPE_READ_TIMEOUT).unwrap();
+            assert!(bytes.is_empty());
+        }
+
+        #[test]
+        fn times_out_when_writer_never_writes() {
+            let pipe = filedescriptor::Pipe::new().unwrap();
+            let _open_writer = pipe.write;
+
+            let timeout = Duration::from_millis(50);
+            let started = Instant::now();
+            let result = read_fd_with_timeout(pipe.read, timeout);
+            let elapsed = started.elapsed();
+
+            let err = result.unwrap_err();
+            assert!(
+                err.to_string().contains("timed out"),
+                "unexpected error: {err}"
+            );
+            assert!(elapsed >= timeout, "returned before the timeout elapsed");
+        }
+
+        #[test]
+        fn times_out_when_writer_stalls_after_partial_write() {
+            let mut pipe = filedescriptor::Pipe::new().unwrap();
+            pipe.write.write_all(b"partial").unwrap();
+            let _open_writer = pipe.write;
+
+            let err = read_fd_with_timeout(pipe.read, Duration::from_millis(50)).unwrap_err();
+            assert!(
+                err.to_string().contains("timed out"),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn slow_writer_resets_deadline_between_chunks() {
+            let pipe = filedescriptor::Pipe::new().unwrap();
+            let chunks = 12;
+            let gap = Duration::from_millis(40);
+            let timeout = Duration::from_millis(400);
+
+            let writer = std::thread::spawn({
+                let mut write = pipe.write;
+                move || {
+                    for _ in 0..chunks {
+                        std::thread::sleep(gap);
+                        write.write_all(&[b'x'; 1000]).unwrap();
+                    }
+                }
+            });
+            let bytes = read_fd_with_timeout(pipe.read, timeout).unwrap();
+            writer.join().unwrap();
+            assert_eq!(bytes, vec![b'x'; 1000 * chunks]);
+        }
+
+        #[test]
+        fn reads_payload_larger_than_pipe_capacity() {
+            let pipe = filedescriptor::Pipe::new().unwrap();
+            let payload = vec![b'z'; 1024 * 1024];
+
+            let writer = std::thread::spawn({
+                let mut write = pipe.write;
+                let payload = payload.clone();
+                move || write.write_all(&payload).unwrap()
+            });
+            let bytes = read_fd_with_timeout(pipe.read, PIPE_READ_TIMEOUT).unwrap();
+            writer.join().unwrap();
+            assert_eq!(bytes, payload);
+        }
     }
 }

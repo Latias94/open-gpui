@@ -2,27 +2,30 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, ElementId, Entity, FontWeight, IntoElement, KeyDownEvent,
-    ParentElement, Pixels, ScrollHandle, StatefulInteractiveElement, Styled, Window, div, point,
-    px, rgba,
+    AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, FontWeight, IntoElement,
+    KeyDownEvent, ParentElement, Pixels, ScrollHandle, StatefulInteractiveElement, Styled, Window,
+    div, px, rgba,
 };
-use open_gpui_ui_core::{Role, Sizable, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{FocusRestoreIntent, Role, Sizable, ThemeTokens, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
+use crate::choice_overlay_runtime::{
+    ChoiceOverlayRuntimeState, close_choice_overlay, commit_choice_overlay_single_value,
+};
 use crate::color::{ColorIntent, ColorState};
-use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
-use crate::overlay::{escape_open_change, outside_press_open_change};
+use crate::geometry::gpui_px_from_ui;
+use crate::overlay::OverlayLayerHost;
 use crate::scroll_area::ScrollArea;
+use crate::scroll_surface::{ScrollSurfaceRevealStrategy, ScrollSurfaceRuntime, reveal_fixed_row};
 use crate::text_input::TextInput;
 use crate::text_input::adapter::TextInputController;
-use crate::theme::ThemeResolver;
-use crate::virtualized_list::{VirtualizedListScrollStrategy, virtualized_list_scroll_target};
+use crate::theme::ThemeContext;
 
 use super::render_plan::resolve_command_viewport_extent;
 use super::{
     CommandColors, CommandDialogState, CommandMetrics, CommandRenderPlan, CommandRowRenderPlan,
     CommandSelection, CommandSelectionChange, CommandSelectionMode, CommandState,
-    DEFAULT_COMMAND_VIEWPORT_ITEM_COUNT, nonnegative_px,
+    CommandStatusIntent, DEFAULT_COMMAND_VIEWPORT_ITEM_COUNT, nonnegative_px,
 };
 
 pub(super) type CommandOpenChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
@@ -37,8 +40,8 @@ pub(super) struct CommandRuntime {
     pub(super) active_value: Option<String>,
     pub(super) selected_value: Option<String>,
     pub(super) selected_values: Vec<String>,
-    pub(super) scroll_handle: ScrollHandle,
-    pub(super) scroll_reset_key: String,
+    pub(super) scroll_surface: ScrollSurfaceRuntime,
+    pub(super) trigger_focus: FocusHandle,
 }
 
 impl CommandRuntime {
@@ -47,16 +50,31 @@ impl CommandRuntime {
         active_value: Option<String>,
         selected_value: Option<String>,
         selected_values: Vec<String>,
-        scroll_reset_key: String,
+        trigger_focus: FocusHandle,
     ) -> Self {
         Self {
             open,
             active_value,
             selected_value,
             selected_values,
-            scroll_handle: ScrollHandle::new(),
-            scroll_reset_key,
+            scroll_surface: ScrollSurfaceRuntime::new(None),
+            trigger_focus,
         }
+    }
+}
+
+impl ChoiceOverlayRuntimeState for CommandRuntime {
+    fn open_mut(&mut self) -> &mut bool {
+        &mut self.open
+    }
+
+    fn trigger_focus(&self) -> FocusHandle {
+        self.trigger_focus.clone()
+    }
+
+    fn commit_single_value(&mut self, value: String) {
+        self.selected_value = Some(value.clone());
+        self.active_value = Some(value);
     }
 }
 
@@ -71,6 +89,7 @@ pub(super) fn command_dialog_layer_element(
     viewport_extent: UiPx,
     scroll_offset: UiPx,
     dialog_state: CommandDialogState,
+    overlay_host: OverlayLayerHost,
     viewport: open_gpui::Size<Pixels>,
     input_controller: Entity<TextInputController>,
     runtime: Entity<CommandRuntime>,
@@ -79,11 +98,13 @@ pub(super) fn command_dialog_layer_element(
     on_select: Option<CommandSelectionHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     tokens: ThemeTokens,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
-    let outside_change = outside_press_open_change(dialog_state.overlay().policy());
+    let outside_change = overlay_host.outside_press_open_change();
     let x = ((viewport.width - gpui_px_from_ui(metrics.max_width())) / 2.0).max(px(12.0));
     let y = (viewport.height / 10.0).max(px(24.0));
+    let barrier_overlay_host = overlay_host.clone();
 
     div()
         .id((content_id.clone(), "layer"))
@@ -94,17 +115,28 @@ pub(super) fn command_dialog_layer_element(
         .h(viewport.height)
         .bg(rgba(0x00000033))
         .occlude()
-        .on_any_mouse_down(|_, window, cx| {
-            window.prevent_default();
-            cx.stop_propagation();
+        .on_any_mouse_down(move |_, window, cx| {
+            barrier_overlay_host.consume_event(window, cx);
         })
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
+            let focus_restore = dialog_state
+                .overlay()
+                .policy()
+                .focus_restore_intent()
+                .clone();
+            let overlay_host = overlay_host.clone();
             this.on_click(move |_: &ClickEvent, window, cx| {
-                window.prevent_default();
-                cx.stop_propagation();
-                close_command_dialog(runtime.clone(), on_open_change.clone(), window, cx);
+                overlay_host.consume_event(window, cx);
+                close_command_dialog(
+                    overlay_host.clone(),
+                    runtime.clone(),
+                    focus_restore.clone(),
+                    on_open_change.clone(),
+                    window,
+                    cx,
+                );
             })
         })
         .child(
@@ -132,6 +164,8 @@ pub(super) fn command_dialog_layer_element(
                     on_select,
                     on_selected_values_change,
                     tokens,
+                    Some(overlay_host),
+                    theme,
                 )),
         )
 }
@@ -153,6 +187,8 @@ pub(super) fn command_content_element(
     on_select: Option<CommandSelectionHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     tokens: ThemeTokens,
+    overlay_host: Option<OverlayLayerHost>,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
@@ -161,11 +197,10 @@ pub(super) fn command_content_element(
     let selected_values = state.selected_values().to_vec();
     let selection_mode = state.selection_mode();
     let dialog_state = state.dialog().cloned();
-    let outside_change = if let Some(dialog_state) = dialog_state.as_ref() {
-        outside_press_open_change(dialog_state.overlay().policy())
-    } else {
-        None
-    };
+    let overlay_host = overlay_host.unwrap_or_else(|| OverlayLayerHost::resolve(state.overlay()));
+    let outside_change = dialog_state
+        .as_ref()
+        .and_then(|_| overlay_host.outside_press_open_change());
     let scroll_viewport_id = state.scroll_area().viewport_id().to_owned();
     let plan = CommandRenderPlan::resolve(
         debug_id.clone(),
@@ -177,10 +212,13 @@ pub(super) fn command_content_element(
     let plan_rows = plan.rows().to_vec();
     let total_size = plan.virtualizer().total_size();
     let loading_id: ElementId = (content_id.clone(), "loading").into();
+    let status_id: ElementId = (content_id.clone(), "status").into();
     let chips_id: ElementId = (content_id.clone(), "selected-chips").into();
     let selected_chips = state.selected_chips().to_vec();
+    let status_items = state.status_items().to_vec();
     let escape_runtime = runtime.clone();
     let on_escape_open_change = on_open_change.clone();
+    let escape_focus_restore = state.focus_restore_intent().clone();
     let key_state = state.clone();
     let key_runtime = runtime.clone();
     let key_on_select = on_select.clone();
@@ -188,12 +226,12 @@ pub(super) fn command_content_element(
     let key_on_selected_values_change = on_selected_values_change.clone();
     let key_selected_values = selected_values.clone();
     let key_dialog_enabled = state.dialog().is_some();
+    let key_focus_restore = state.focus_restore_intent().clone();
     let key_selection_mode = selection_mode;
     let key_scroll_handle = scroll_handle.clone();
-    let escape_change = state
-        .dialog()
-        .map(|dialog_state| escape_open_change(dialog_state.overlay().policy()))
-        .unwrap_or_else(|| escape_open_change(state.overlay().policy()));
+    let escape_change = overlay_host.escape_open_change();
+    let key_overlay_host = overlay_host.clone();
+    let escape_overlay_host = overlay_host.clone();
     let content_debug_id = debug_id.clone();
     let mut command_input = TextInput::new(input_id, state.label().to_owned())
         .controller(input_controller)
@@ -219,9 +257,9 @@ pub(super) fn command_content_element(
         .gap_2()
         .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(colors.border()))
-        .bg(ThemeResolver::resolve(colors.surface()))
-        .text_color(ThemeResolver::resolve(colors.foreground()))
+        .border_color(theme.resolve(colors.border()))
+        .bg(theme.resolve(colors.surface()))
+        .text_color(theme.resolve(colors.foreground()))
         .shadow_lg()
         .when_some(dialog_state.clone(), |this, dialog_state| {
             this.occlude().ui_role(dialog_state.role())
@@ -235,16 +273,21 @@ pub(super) fn command_content_element(
         })
         .aria_label(label.clone())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
-            let key = event.keystroke.key.as_str();
+            let key = command_key_down_event_key(event);
             if key == "escape" && escape_change.is_some() {
                 cx.stop_propagation();
                 window.prevent_default();
                 close_command_dialog(
+                    escape_overlay_host.clone(),
                     escape_runtime.clone(),
+                    escape_focus_restore.clone(),
                     on_escape_open_change.clone(),
                     window,
                     cx,
                 );
+                return;
+            }
+            if event.prefer_character_input {
                 return;
             }
 
@@ -262,9 +305,11 @@ pub(super) fn command_content_element(
                     window.prevent_default();
                     let selection_index = selection.index();
                     handle_command_selection(
+                        key_overlay_host.clone(),
                         key_runtime.clone(),
                         key_selection_mode,
                         key_dialog_enabled,
+                        key_focus_restore.clone(),
                         &key_selected_values,
                         key_on_select.clone(),
                         key_on_open_change.clone(),
@@ -281,8 +326,17 @@ pub(super) fn command_content_element(
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
+            let focus_restore = state.focus_restore_intent().clone();
+            let overlay_host = overlay_host.clone();
             this.on_mouse_down_out(move |_, window, cx| {
-                close_command_dialog(runtime.clone(), on_open_change.clone(), window, cx);
+                close_command_dialog(
+                    overlay_host.clone(),
+                    runtime.clone(),
+                    focus_restore.clone(),
+                    on_open_change.clone(),
+                    window,
+                    cx,
+                );
             })
         })
         .child(command_input)
@@ -303,8 +357,8 @@ pub(super) fn command_content_element(
                             .py(px(1.0))
                             .rounded(gpui_px_from_ui(state.size().control_radius()))
                             .border_1()
-                            .border_color(ThemeResolver::resolve(colors.border()))
-                            .text_color(ThemeResolver::resolve(colors.foreground()))
+                            .border_color(theme.resolve(colors.border()))
+                            .text_color(theme.resolve(colors.foreground()))
                             .child(chip.label().to_owned()),
                     )
                 },
@@ -314,10 +368,46 @@ pub(super) fn command_content_element(
             this.child(
                 div()
                     .id(loading_id)
-                    .text_color(ThemeResolver::resolve(colors.muted_foreground()))
+                    .text_color(theme.resolve(colors.muted_foreground()))
                     .ui_role(loading.role())
                     .aria_label(loading.message().to_owned())
                     .child(loading.message().to_owned()),
+            )
+        })
+        .when(!status_items.is_empty(), |this| {
+            let status_debug_id = debug_id.clone();
+            this.child(
+                status_items.into_iter().enumerate().fold(
+                    div()
+                        .id(status_id)
+                        .debug_selector(move || format!("command:{status_debug_id}:status"))
+                        .flex()
+                        .flex_col()
+                        .gap_1(),
+                    |list, (index, item)| {
+                        let foreground =
+                            theme.resolve(command_status_foreground(item.intent(), colors, tokens));
+                        let item_debug_id = debug_id.clone();
+                        let message = item.message().to_owned();
+                        list.child(
+                            div()
+                                .id(format!("command-status:{index}"))
+                                .debug_selector(move || {
+                                    format!("command:{item_debug_id}:status:{index}")
+                                })
+                                .px(gpui_px_from_ui(metrics.padding()))
+                                .py(px(2.0))
+                                .rounded(gpui_px_from_ui(state.size().control_radius()))
+                                .border_1()
+                                .border_color(foreground)
+                                .text_xs()
+                                .text_color(foreground)
+                                .ui_role(item.role())
+                                .aria_label(message.clone())
+                                .child(message),
+                        )
+                    },
+                ),
             )
         })
         .h(gpui_px_from_ui(metrics.max_height()))
@@ -338,6 +428,7 @@ pub(super) fn command_content_element(
                             &plan,
                             &plan_rows,
                             total_size,
+                            overlay_host.clone(),
                             runtime.clone(),
                             selection_mode,
                             selected_values.clone(),
@@ -345,6 +436,7 @@ pub(super) fn command_content_element(
                             on_open_change,
                             on_selected_values_change,
                             state.dialog().is_some(),
+                            theme,
                         ),
                     )
                     .vertical()
@@ -396,28 +488,180 @@ fn command_navigation_target<'a>(
     key: &str,
     viewport_extent: UiPx,
 ) -> Option<&'a crate::listbox::ListboxOptionState> {
-    if let Some(target) = state.listbox().navigation_target(key) {
-        return Some(target);
-    }
-
+    let key = command_navigation_key(key);
     let current = state.listbox().active_index()?;
-    let item_count = state.listbox().options().len();
-    if item_count == 0 {
+    let options = state.listbox().options();
+    if current >= options.len() {
         return None;
     }
 
-    let page_step = command_page_step(state, viewport_extent).max(1);
-    let target = match key {
-        "pageup" => current.saturating_sub(page_step),
-        "pagedown" => (current + page_step).min(item_count - 1),
-        _ => return None,
-    };
+    match key {
+        "home" => command_first_focusable_option(options),
+        "end" => command_last_focusable_option(options),
+        "up" => command_adjacent_focusable_option(options, current, false, state.loop_navigation()),
+        "down" => {
+            command_adjacent_focusable_option(options, current, true, state.loop_navigation())
+        }
+        "pageup" => {
+            let page_step = command_page_step(state, viewport_extent).max(1);
+            command_focusable_option_near(options, current.saturating_sub(page_step), false)
+        }
+        "pagedown" => {
+            let page_step = command_page_step(state, viewport_extent).max(1);
+            command_focusable_option_near(
+                options,
+                current.saturating_add(page_step).min(options.len() - 1),
+                true,
+            )
+        }
+        "alt-up" if state.group_navigation() => {
+            command_group_navigation_target(options, current, false, state.loop_navigation())
+        }
+        "alt-down" if state.group_navigation() => {
+            command_group_navigation_target(options, current, true, state.loop_navigation())
+        }
+        _ => None,
+    }
+}
 
-    state
-        .listbox()
-        .options()
-        .get(target)
-        .filter(|option| option.focusable())
+fn command_navigation_key(key: &str) -> &str {
+    match key {
+        "ctrl-j" | "ctrl-n" => "down",
+        "ctrl-k" | "ctrl-p" => "up",
+        "ctrl-d" => "pagedown",
+        "ctrl-u" => "pageup",
+        _ => key,
+    }
+}
+
+fn command_key_down_event_key(event: &KeyDownEvent) -> &str {
+    let key = event.keystroke.key.as_str();
+    let modifiers = event.keystroke.modifiers;
+    if modifiers.control && modifiers.number_of_modifiers() == 1 {
+        return match key {
+            "j" | "n" => "down",
+            "k" | "p" => "up",
+            "d" => "pagedown",
+            "u" => "pageup",
+            _ => key,
+        };
+    }
+    if modifiers.alt && modifiers.number_of_modifiers() == 1 {
+        return match key {
+            "up" => "alt-up",
+            "down" => "alt-down",
+            _ => key,
+        };
+    }
+    key
+}
+
+fn command_first_focusable_option(
+    options: &[crate::listbox::ListboxOptionState],
+) -> Option<&crate::listbox::ListboxOptionState> {
+    options.iter().find(|option| option.focusable())
+}
+
+fn command_last_focusable_option(
+    options: &[crate::listbox::ListboxOptionState],
+) -> Option<&crate::listbox::ListboxOptionState> {
+    options.iter().rev().find(|option| option.focusable())
+}
+
+fn command_adjacent_focusable_option(
+    options: &[crate::listbox::ListboxOptionState],
+    current: usize,
+    forward: bool,
+    loop_navigation: bool,
+) -> Option<&crate::listbox::ListboxOptionState> {
+    let target = crate::roving_focus::next_matching_index(
+        options.len(),
+        current,
+        forward,
+        loop_navigation,
+        |index| {
+            options
+                .get(index)
+                .is_some_and(crate::listbox::ListboxOptionState::focusable)
+        },
+    )?;
+    options.get(target)
+}
+
+fn command_group_navigation_target(
+    options: &[crate::listbox::ListboxOptionState],
+    current: usize,
+    forward: bool,
+    loop_navigation: bool,
+) -> Option<&crate::listbox::ListboxOptionState> {
+    let current_group = options.get(current)?.group_index();
+    let target_group = if forward {
+        options
+            .iter()
+            .skip(current + 1)
+            .find(|option| option.focusable() && option.group_index() != current_group)
+            .or_else(|| {
+                loop_navigation
+                    .then(|| {
+                        options.iter().take(current).find(|option| {
+                            option.focusable() && option.group_index() != current_group
+                        })
+                    })
+                    .flatten()
+            })
+    } else {
+        options
+            .iter()
+            .take(current)
+            .rev()
+            .find(|option| option.focusable() && option.group_index() != current_group)
+            .or_else(|| {
+                loop_navigation
+                    .then(|| {
+                        options.iter().skip(current + 1).rev().find(|option| {
+                            option.focusable() && option.group_index() != current_group
+                        })
+                    })
+                    .flatten()
+            })
+    }?
+    .group_index();
+
+    options
+        .iter()
+        .find(|option| option.focusable() && option.group_index() == target_group)
+}
+
+fn command_focusable_option_near(
+    options: &[crate::listbox::ListboxOptionState],
+    target: usize,
+    forward: bool,
+) -> Option<&crate::listbox::ListboxOptionState> {
+    if forward {
+        options
+            .iter()
+            .skip(target)
+            .find(|option| option.focusable())
+            .or_else(|| {
+                options
+                    .iter()
+                    .take(target)
+                    .rev()
+                    .find(|option| option.focusable())
+            })
+    } else {
+        options
+            .iter()
+            .take(target + 1)
+            .rev()
+            .find(|option| option.focusable())
+            .or_else(|| {
+                options
+                    .iter()
+                    .skip(target + 1)
+                    .find(|option| option.focusable())
+            })
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -426,6 +670,7 @@ fn render_command_results_body(
     plan: &CommandRenderPlan,
     rows: &[CommandRowRenderPlan],
     total_size: UiPx,
+    overlay_host: OverlayLayerHost,
     runtime: Entity<CommandRuntime>,
     selection_mode: CommandSelectionMode,
     selected_values: Vec<String>,
@@ -433,6 +678,7 @@ fn render_command_results_body(
     on_open_change: Option<CommandOpenChangeHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     dialog_enabled: bool,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let command_id = command_id.to_owned();
     let listbox_id = plan.listbox_id().to_owned();
@@ -454,7 +700,7 @@ fn render_command_results_body(
         .p(gpui_px_from_ui(state.listbox().metrics().surface_padding()))
         .text_size(gpui_px_from_ui(state.listbox().metrics().text_size()))
         .line_height(gpui_px_from_ui(state.listbox().metrics().text_size()))
-        .text_color(ThemeResolver::resolve(colors.foreground()))
+        .text_color(theme.resolve(colors.foreground()))
         .ui_role(plan.role())
         .aria_label(plan.label().to_owned())
         .aria_disabled(state.disabled())
@@ -465,6 +711,7 @@ fn render_command_results_body(
             rows,
             metrics,
             colors,
+            overlay_host,
             runtime,
             selection_mode,
             selected_values,
@@ -472,6 +719,7 @@ fn render_command_results_body(
             on_open_change,
             on_selected_values_change,
             dialog_enabled,
+            theme,
         ))
 }
 
@@ -483,6 +731,7 @@ fn command_result_children(
     rows: Vec<CommandRowRenderPlan>,
     metrics: CommandMetrics,
     colors: CommandColors,
+    overlay_host: OverlayLayerHost,
     runtime: Entity<CommandRuntime>,
     selection_mode: CommandSelectionMode,
     selected_values: Vec<String>,
@@ -490,6 +739,7 @@ fn command_result_children(
     on_open_change: Option<CommandOpenChangeHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     dialog_enabled: bool,
+    theme: &ThemeContext,
 ) -> Vec<AnyElement> {
     if state.empty() {
         return vec![
@@ -508,12 +758,13 @@ fn command_result_children(
                 .py(gpui_px_from_ui(
                     state.listbox().metrics().option_padding_y(),
                 ))
-                .text_color(ThemeResolver::resolve(colors.muted_foreground()))
+                .text_color(theme.resolve(colors.muted_foreground()))
                 .child(state.empty_label().to_owned())
                 .into_any_element(),
         ];
     }
 
+    let focus_restore = state.focus_restore_intent().clone();
     rows.into_iter()
         .map(|row| {
             render_command_result_row(
@@ -522,6 +773,7 @@ fn command_result_children(
                 row,
                 metrics,
                 colors,
+                overlay_host.clone(),
                 runtime.clone(),
                 selection_mode,
                 selected_values.clone(),
@@ -529,6 +781,8 @@ fn command_result_children(
                 on_open_change.clone(),
                 on_selected_values_change.clone(),
                 dialog_enabled,
+                focus_restore.clone(),
+                theme,
             )
             .into_any_element()
         })
@@ -542,6 +796,7 @@ fn render_command_result_row(
     row: CommandRowRenderPlan,
     metrics: CommandMetrics,
     colors: CommandColors,
+    overlay_host: OverlayLayerHost,
     runtime: Entity<CommandRuntime>,
     selection_mode: CommandSelectionMode,
     selected_values: Vec<String>,
@@ -549,11 +804,14 @@ fn render_command_result_row(
     on_open_change: Option<CommandOpenChangeHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     dialog_enabled: bool,
+    focus_restore: FocusRestoreIntent,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let option_value = row.value().to_owned();
     let render_key = row.render_key().to_owned();
     let label = row.label().to_owned();
     let shortcut = row.shortcut().map(str::to_owned);
+    let disabled_reason = row.disabled_reason_ref().map(str::to_owned);
     let selection = CommandSelection::from_item(row.item());
     let disabled = row.disabled();
     let selected = row.selected();
@@ -565,6 +823,18 @@ fn render_command_result_row(
     } else {
         UiPx::ZERO
     };
+    let group_label_color = theme.resolve(colors.muted_foreground());
+    let row_background = theme.resolve(command_row_background(active, selected, colors));
+    let row_foreground = theme.resolve(if disabled {
+        colors.muted_foreground()
+    } else {
+        colors.foreground()
+    });
+    let row_hover_background = theme.resolve(command_row_hover_background(colors));
+    let shortcut_foreground = theme.resolve(colors.shortcut_foreground());
+    let option_aria_label = disabled_reason
+        .as_ref()
+        .map_or_else(|| label.clone(), |reason| format!("{label}, {reason}"));
 
     div()
         .id(format!("command-row:{render_key}"))
@@ -591,7 +861,7 @@ fn render_command_result_row(
                     .items_center()
                     .text_xs()
                     .font_weight(FontWeight::BOLD)
-                    .text_color(ThemeResolver::resolve(colors.muted_foreground()))
+                    .text_color(group_label_color)
                     .ui_role(Role::Group)
                     .aria_label(label.clone())
                     .child(label),
@@ -614,16 +884,10 @@ fn render_command_result_row(
                 .justify_between()
                 .gap_2()
                 .rounded(gpui_px_from_ui(metrics.radius()))
-                .bg(ThemeResolver::resolve(command_row_background(
-                    active, selected, colors,
-                )))
-                .text_color(ThemeResolver::resolve(if disabled {
-                    colors.muted_foreground()
-                } else {
-                    colors.foreground()
-                }))
+                .bg(row_background)
+                .text_color(row_foreground)
                 .ui_role(row.role())
-                .aria_label(label.clone())
+                .aria_label(option_aria_label)
                 .aria_selected(selected)
                 .aria_disabled(disabled)
                 .when_some(position, |this, position| {
@@ -632,9 +896,7 @@ fn render_command_result_row(
                 .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                 .when(!disabled, |this| {
                     this.cursor_pointer()
-                        .hover(move |style| {
-                            style.bg(ThemeResolver::resolve(command_row_hover_background(colors)))
-                        })
+                        .hover(move |style| style.bg(row_hover_background))
                         .on_click(move |_event: &ClickEvent, window, cx| {
                             cx.stop_propagation();
                             window.prevent_default();
@@ -642,9 +904,11 @@ fn render_command_result_row(
                                 return;
                             };
                             handle_command_selection(
+                                overlay_host.clone(),
                                 runtime.clone(),
                                 selection_mode,
                                 dialog_enabled,
+                                focus_restore.clone(),
                                 &selected_values,
                                 on_select.clone(),
                                 on_open_change.clone(),
@@ -662,7 +926,7 @@ fn render_command_result_row(
                             .flex_none()
                             .min_w(gpui_px_from_ui(metrics.shortcut_min_width()))
                             .text_xs()
-                            .text_color(ThemeResolver::resolve(colors.shortcut_foreground()))
+                            .text_color(shortcut_foreground)
                             .child(shortcut),
                     )
                 }),
@@ -671,9 +935,11 @@ fn render_command_result_row(
 
 #[allow(clippy::too_many_arguments)]
 fn handle_command_selection(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<CommandRuntime>,
     selection_mode: CommandSelectionMode,
     dialog_enabled: bool,
+    focus_restore: FocusRestoreIntent,
     selected_values: &[String],
     on_select: Option<CommandSelectionHandler>,
     on_open_change: Option<CommandOpenChangeHandler>,
@@ -684,18 +950,30 @@ fn handle_command_selection(
 ) {
     match selection_mode {
         CommandSelectionMode::Single => {
-            runtime.update(cx, |runtime, _| {
-                runtime.selected_value = Some(selection.value().to_owned());
-                runtime.active_value = Some(selection.value().to_owned());
-                if dialog_enabled {
-                    runtime.open = false;
+            if dialog_enabled {
+                let selected_value = selection.value().to_owned();
+                commit_choice_overlay_single_value(
+                    &overlay_host,
+                    runtime.clone(),
+                    focus_restore,
+                    on_open_change,
+                    selected_value,
+                    window,
+                    cx,
+                    move |window, cx| {
+                        if let Some(on_select) = on_select.as_ref() {
+                            on_select(selection, window, cx);
+                        }
+                    },
+                );
+            } else {
+                runtime.update(cx, |runtime, _| {
+                    runtime.selected_value = Some(selection.value().to_owned());
+                    runtime.active_value = Some(selection.value().to_owned());
+                });
+                if let Some(on_select) = on_select.as_ref() {
+                    on_select(selection, window, cx);
                 }
-            });
-            if let Some(on_select) = on_select.as_ref() {
-                on_select(selection, window, cx);
-            }
-            if dialog_enabled && let Some(on_open_change) = on_open_change.as_ref() {
-                on_open_change(false, window, cx);
             }
         }
         CommandSelectionMode::Multiple => {
@@ -712,22 +990,14 @@ fn handle_command_selection(
 }
 
 fn scroll_command_item_into_view(scroll_handle: &ScrollHandle, state: &CommandState, index: usize) {
-    let viewport_extent = resolve_command_viewport_extent(
-        state.metrics(),
-        ui_px_from_gpui(scroll_handle.bounds().size.height),
-    );
-    let current_scroll_offset =
-        UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
-    let target = virtualized_list_scroll_target(
-        VirtualizedListScrollStrategy::Nearest,
+    reveal_fixed_row(
+        scroll_handle,
+        ScrollSurfaceRevealStrategy::Nearest,
         index,
         state.items().len(),
         state.metrics().row_height(),
-        viewport_extent,
-        current_scroll_offset,
+        Some(resolve_command_viewport_extent(state.metrics(), UiPx::ZERO)),
     );
-
-    scroll_handle.set_offset(point(px(0.0), -gpui_px_from_ui(target)));
 }
 
 fn command_row_background(active: bool, selected: bool, colors: CommandColors) -> ColorIntent {
@@ -742,6 +1012,22 @@ fn command_row_background(active: bool, selected: bool, colors: CommandColors) -
 
 fn command_row_hover_background(colors: CommandColors) -> ColorIntent {
     ColorIntent::with_state(colors.surface().token(), ColorState::Hover, 0xf1f5ee)
+}
+
+fn command_status_foreground(
+    intent: CommandStatusIntent,
+    colors: CommandColors,
+    tokens: ThemeTokens,
+) -> ColorIntent {
+    match intent {
+        CommandStatusIntent::Info => colors.muted_foreground(),
+        CommandStatusIntent::Warning => {
+            ColorIntent::with_state(tokens.text_muted, ColorState::Message, 0xbf8700)
+        }
+        CommandStatusIntent::Error => {
+            ColorIntent::with_state(tokens.destructive, ColorState::Invalid, 0xb42318)
+        }
+    }
 }
 
 const fn state_option_padding_x(metrics: CommandMetrics) -> UiPx {
@@ -782,17 +1068,21 @@ pub(super) fn command_scroll_reset_key(state: &CommandState) -> String {
 }
 
 pub(super) fn close_command_dialog(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<CommandRuntime>,
+    focus_restore: FocusRestoreIntent,
     on_open_change: Option<CommandOpenChangeHandler>,
     window: &mut Window,
     cx: &mut App,
 ) {
-    runtime.update(cx, |runtime, _| {
-        runtime.open = false;
-    });
-    if let Some(on_open_change) = on_open_change.as_ref() {
-        on_open_change(false, window, cx);
-    }
+    close_choice_overlay(
+        &overlay_host,
+        runtime,
+        focus_restore,
+        on_open_change,
+        window,
+        cx,
+    );
 }
 
 fn command_selection_change_after_toggle(
@@ -813,6 +1103,7 @@ fn command_selection_change_after_toggle(
 
 #[cfg(test)]
 mod tests {
+    use open_gpui::{KeyDownEvent, Keystroke, Modifiers};
     use open_gpui_ui_core::ui_px;
 
     use super::*;
@@ -831,6 +1122,76 @@ mod tests {
                     .item(CommandItem::new("close-window", "Close Window").shortcut("Alt+F4")),
             )
             .state()
+    }
+
+    fn paged_keyboard_state(selected: &str) -> CommandState {
+        Command::new("paged-palette", "Command palette")
+            .open(true)
+            .row_height(ui_px(20.0))
+            .selected(selected)
+            .item(CommandItem::new("open-file", "Open File"))
+            .item(CommandItem::new("disabled-one", "Disabled One").disabled(true))
+            .item(CommandItem::new("disabled-two", "Disabled Two").disabled(true))
+            .item(CommandItem::new("close-window", "Close Window"))
+            .state()
+    }
+
+    fn grouped_keyboard_state(active: &str) -> CommandState {
+        grouped_keyboard_command(active).state()
+    }
+
+    fn grouped_keyboard_command(active: &str) -> Command {
+        Command::new("grouped-palette", "Command palette")
+            .open(true)
+            .active(active)
+            .item(CommandItem::new("global-open", "Global Open"))
+            .group(
+                CommandGroup::new("file", "File")
+                    .item(CommandItem::new("new-file", "New File"))
+                    .item(CommandItem::new("close-window", "Close Window")),
+            )
+            .group(
+                CommandGroup::new("view", "View")
+                    .item(CommandItem::new("view-sidebar", "View Sidebar"))
+                    .item(CommandItem::new("zoom-in", "Zoom In")),
+            )
+    }
+
+    #[test]
+    fn scroll_reset_key_tracks_query_not_selection_navigation() {
+        let base = Command::new("palette", "Command palette")
+            .open(true)
+            .default_query("file")
+            .selected("open-file")
+            .active("open-file")
+            .item(CommandItem::new("open-file", "Open File"))
+            .item(CommandItem::new("close-file", "Close File"))
+            .state();
+        let selection_changed = Command::new("palette", "Command palette")
+            .open(true)
+            .default_query("file")
+            .selected("close-file")
+            .active("close-file")
+            .item(CommandItem::new("open-file", "Open File"))
+            .item(CommandItem::new("close-file", "Close File"))
+            .state();
+        let query_changed = Command::new("palette", "Command palette")
+            .open(true)
+            .default_query("close")
+            .selected("close-file")
+            .active("close-file")
+            .item(CommandItem::new("open-file", "Open File"))
+            .item(CommandItem::new("close-file", "Close File"))
+            .state();
+
+        assert_eq!(
+            command_scroll_reset_key(&base),
+            command_scroll_reset_key(&selection_changed)
+        );
+        assert_ne!(
+            command_scroll_reset_key(&base),
+            command_scroll_reset_key(&query_changed)
+        );
     }
 
     #[test]
@@ -852,6 +1213,204 @@ mod tests {
                 "New File".to_string(),
                 Some("Ctrl+N".to_string()),
             ))
+        );
+    }
+
+    #[test]
+    fn keyboard_action_supports_vim_navigation_aliases() {
+        let state = keyboard_state(false);
+        let down = command_keyboard_action(&state, "down", ui_px(224.0));
+        let up = command_keyboard_action(&state, "up", ui_px(224.0));
+
+        assert_eq!(
+            command_keyboard_action(&state, "ctrl-j", ui_px(224.0)),
+            down
+        );
+        assert_eq!(
+            command_keyboard_action(&state, "ctrl-n", ui_px(224.0)),
+            down
+        );
+        assert_eq!(command_keyboard_action(&state, "ctrl-k", ui_px(224.0)), up);
+        assert_eq!(command_keyboard_action(&state, "ctrl-p", ui_px(224.0)), up);
+    }
+
+    #[test]
+    fn keyboard_action_supports_home_end_and_configurable_looping() {
+        let looping_last = paged_keyboard_state("close-window");
+        assert_eq!(
+            command_keyboard_action(&looping_last, "down", ui_px(40.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 0,
+                value: "open-file".to_string()
+            })
+        );
+        assert_eq!(
+            command_keyboard_action(&looping_last, "home", ui_px(40.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 0,
+                value: "open-file".to_string()
+            })
+        );
+        let looping_first = paged_keyboard_state("open-file");
+        assert_eq!(
+            command_keyboard_action(&looping_first, "end", ui_px(40.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 3,
+                value: "close-window".to_string()
+            })
+        );
+
+        let bounded_last = Command::new("bounded-palette", "Command palette")
+            .open(true)
+            .loop_navigation(false)
+            .selected("close-window")
+            .item(CommandItem::new("open-file", "Open File"))
+            .item(CommandItem::new("disabled-one", "Disabled One").disabled(true))
+            .item(CommandItem::new("close-window", "Close Window"))
+            .state();
+        assert_eq!(
+            command_keyboard_action(&bounded_last, "down", ui_px(40.0)),
+            CommandKeyboardAction::Ignore
+        );
+        assert_eq!(
+            command_keyboard_action(&bounded_last, "home", ui_px(40.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 0,
+                value: "open-file".to_string()
+            })
+        );
+
+        let bounded_first = Command::new("bounded-palette", "Command palette")
+            .open(true)
+            .loop_navigation(false)
+            .selected("open-file")
+            .item(CommandItem::new("open-file", "Open File"))
+            .item(CommandItem::new("close-window", "Close Window"))
+            .state();
+        assert_eq!(
+            command_keyboard_action(&bounded_first, "up", ui_px(40.0)),
+            CommandKeyboardAction::Ignore
+        );
+
+        let single = Command::new("single-palette", "Command palette")
+            .open(true)
+            .item(CommandItem::new("open-file", "Open File"))
+            .state();
+        let current = CommandKeyboardAction::Navigate(CommandNavigationTarget {
+            index: 0,
+            value: "open-file".to_string(),
+        });
+        assert_eq!(
+            command_keyboard_action(&single, "down", ui_px(40.0)),
+            current
+        );
+        assert_eq!(command_keyboard_action(&single, "up", ui_px(40.0)), current);
+    }
+
+    #[test]
+    fn keyboard_action_supports_group_navigation_aliases() {
+        let file_state = grouped_keyboard_state("new-file");
+        assert_eq!(
+            command_keyboard_action(&file_state, "alt-down", ui_px(224.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 3,
+                value: "view-sidebar".to_string()
+            })
+        );
+
+        let view_state = grouped_keyboard_state("zoom-in");
+        assert_eq!(
+            command_keyboard_action(&view_state, "alt-up", ui_px(224.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 1,
+                value: "new-file".to_string()
+            })
+        );
+
+        let disabled_group_down = grouped_keyboard_command("new-file")
+            .group_navigation(false)
+            .state();
+        assert_eq!(
+            command_keyboard_action(&disabled_group_down, "alt-down", ui_px(224.0)),
+            CommandKeyboardAction::Ignore
+        );
+
+        let disabled_group_up = grouped_keyboard_command("zoom-in")
+            .group_navigation(false)
+            .state();
+        assert_eq!(
+            command_keyboard_action(&disabled_group_up, "alt-up", ui_px(224.0)),
+            CommandKeyboardAction::Ignore
+        );
+    }
+
+    #[test]
+    fn keyboard_event_key_normalizes_control_navigation_aliases() {
+        let event = KeyDownEvent {
+            keystroke: Keystroke {
+                modifiers: Modifiers {
+                    control: true,
+                    ..Modifiers::none()
+                },
+                key: "j".to_string(),
+                key_char: None,
+            },
+            is_held: false,
+            prefer_character_input: false,
+        };
+
+        assert_eq!(command_key_down_event_key(&event), "down");
+    }
+
+    #[test]
+    fn keyboard_event_key_names_group_navigation_aliases() {
+        let down = KeyDownEvent {
+            keystroke: Keystroke {
+                modifiers: Modifiers {
+                    alt: true,
+                    ..Modifiers::none()
+                },
+                key: "down".to_string(),
+                key_char: None,
+            },
+            is_held: false,
+            prefer_character_input: false,
+        };
+        assert_eq!(command_key_down_event_key(&down), "alt-down");
+
+        let up = KeyDownEvent {
+            keystroke: Keystroke {
+                modifiers: Modifiers {
+                    alt: true,
+                    ..Modifiers::none()
+                },
+                key: "up".to_string(),
+                key_char: None,
+            },
+            is_held: false,
+            prefer_character_input: false,
+        };
+        assert_eq!(command_key_down_event_key(&up), "alt-up");
+    }
+
+    #[test]
+    fn keyboard_action_pages_to_nearest_focusable_command() {
+        let down_state = paged_keyboard_state("open-file");
+        assert_eq!(
+            command_keyboard_action(&down_state, "pagedown", ui_px(40.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 3,
+                value: "close-window".to_string()
+            })
+        );
+
+        let up_state = paged_keyboard_state("close-window");
+        assert_eq!(
+            command_keyboard_action(&up_state, "pageup", ui_px(40.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 0,
+                value: "open-file".to_string()
+            })
         );
     }
 

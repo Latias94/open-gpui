@@ -13,11 +13,9 @@ use open_gpui::{
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
+use crate::choice::{ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::roving_focus::{
-    active_index_from_str_keys, roving_navigation_target, selection_index_from_str_keys,
-};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::theme::ThemeResolver;
 
 /// Pure descriptor for one radio item.
@@ -311,17 +309,15 @@ impl RadioGroupState {
         tokens: ThemeTokens,
     ) -> Self {
         let descriptors: Vec<RadioItemDescriptor> = items.into_iter().collect();
-        let values: Vec<String> = descriptors.iter().map(|item| item.value.clone()).collect();
-        let item_disabled: Vec<bool> = descriptors.iter().map(|item| item.disabled).collect();
-        let selected_index = resolve_selected_index(&values, &item_disabled, selected_value);
-        let selected_seed = selected_index
-            .and_then(|index| values.get(index))
-            .map(String::as_str);
-        let focused_index = if disabled {
-            None
-        } else {
-            resolve_radio_index(&values, &item_disabled, focused_value, selected_seed)
-        };
+        let collection = ChoiceCollection::resolve(
+            disabled,
+            radio_choice_items(disabled, &descriptors),
+            selected_value,
+            focused_value,
+            ChoiceInteractionPolicy::single_required(orientation),
+        );
+        let selected_index = collection.selected_index();
+        let focused_index = collection.active_index();
         let metrics = RadioGroupMetrics::from_size(size);
         let colors = ThemeResolver::radio_group_colors(tokens);
         let focus_ring = FocusRing::from_color(colors.focus_ring());
@@ -593,6 +589,7 @@ impl Sizable for RadioGroup {
 
 impl RenderOnce for RadioGroup {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let RadioGroup {
             id,
             label,
@@ -688,6 +685,24 @@ impl RenderOnce for RadioGroup {
                     let is_selected = item.selected();
                     let is_tab_stop = Some(index) == tab_stop_index;
                     let item_value = item.value().to_owned();
+                    let label_color = theme.resolve(if item.disabled() {
+                        colors.label_muted()
+                    } else {
+                        colors.label()
+                    });
+                    let hover_background = theme.resolve(colors.hover_background());
+                    let control_border = theme.resolve(if is_selected {
+                        colors.control_border_selected()
+                    } else {
+                        colors.control_border()
+                    });
+                    let control_background = theme.resolve(if is_selected {
+                        colors.control_background_selected()
+                    } else {
+                        colors.control_background()
+                    });
+                    let indicator_color = theme.resolve(colors.indicator());
+                    let item_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
 
                     div()
                         .id(radio_item_id(item.value()))
@@ -715,16 +730,11 @@ impl RenderOnce for RadioGroup {
                         .rounded(gpui_px_from_ui(metrics.radius()))
                         .text_size(gpui_px_from_ui(metrics.label_text_size()))
                         .line_height(gpui_px_from_ui(metrics.label_text_size()))
-                        .text_color(ThemeResolver::resolve(if item.disabled() {
-                            colors.label_muted()
-                        } else {
-                            colors.label()
-                        }))
-                        .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                        .text_color(label_color)
+                        .focus_visible(move |style| style.shadow(item_focus_shadow.clone()))
                         .when(!item.disabled(), |this| {
-                            this.cursor_pointer().hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.hover_background()))
-                            })
+                            this.cursor_pointer()
+                                .hover(move |style| style.bg(hover_background))
                         })
                         .when(item.disabled(), |this| {
                             this.opacity(0.56).cursor_not_allowed()
@@ -769,12 +779,10 @@ impl RenderOnce for RadioGroup {
                                 }
 
                                 let key = event.keystroke.key.as_str();
-                                let Some(target_index) = roving_navigation_target(
-                                    orientation,
-                                    key,
-                                    item_index,
-                                    &disabled_items,
-                                ) else {
+                                let Some(target_index) =
+                                    ChoiceInteractionPolicy::single_required(orientation)
+                                        .navigation_target_index(key, item_index, &disabled_items)
+                                else {
                                     if !matches!(key, "space" | "enter") {
                                         return;
                                     }
@@ -834,22 +842,14 @@ impl RenderOnce for RadioGroup {
                                 .justify_center()
                                 .rounded(gpui_px_from_ui(metrics.control_size()))
                                 .border_1()
-                                .border_color(ThemeResolver::resolve(if is_selected {
-                                    colors.control_border_selected()
-                                } else {
-                                    colors.control_border()
-                                }))
-                                .bg(ThemeResolver::resolve(if is_selected {
-                                    colors.control_background_selected()
-                                } else {
-                                    colors.control_background()
-                                }))
+                                .border_color(control_border)
+                                .bg(control_background)
                                 .child(if is_selected {
                                     div()
                                         .w(gpui_px_from_ui(metrics.indicator_size()))
                                         .h(gpui_px_from_ui(metrics.indicator_size()))
                                         .rounded(gpui_px_from_ui(metrics.indicator_size()))
-                                        .bg(ThemeResolver::resolve(colors.indicator()))
+                                        .bg(indicator_color)
                                 } else {
                                     div().w(px(0.0)).h(px(0.0))
                                 }),
@@ -902,21 +902,26 @@ impl RadioRuntime {
     }
 }
 
-fn resolve_selected_index(
-    values: &[String],
-    disabled: &[bool],
-    selected: Option<&str>,
-) -> Option<usize> {
-    active_index_from_str_keys(values, selected, disabled)
-}
-
-fn resolve_radio_index(
-    values: &[String],
-    disabled: &[bool],
-    primary: Option<&str>,
-    secondary: Option<&str>,
-) -> Option<usize> {
-    selection_index_from_str_keys(values, disabled, primary, secondary)
+fn radio_choice_items(
+    disabled: bool,
+    items: &[RadioItemDescriptor],
+) -> Vec<ChoiceItemProjection<()>> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let label = item.label().to_owned();
+            ChoiceItemProjection::new(
+                index,
+                None,
+                item.value(),
+                label.clone(),
+                disabled || item.disabled_state(),
+                (),
+            )
+            .text_value(label)
+        })
+        .collect()
 }
 
 fn radio_item_id(value: &str) -> ElementId {
@@ -954,19 +959,21 @@ mod tests {
     }
 
     #[test]
-    fn radio_navigation_uses_roving_focus_helpers() {
+    fn radio_navigation_uses_choice_policy() {
         let disabled = [false, true, false];
+        let horizontal = ChoiceInteractionPolicy::single_required(Orientation::Horizontal);
+        let vertical = ChoiceInteractionPolicy::single_required(Orientation::Vertical);
 
         assert_eq!(
-            roving_navigation_target(Orientation::Horizontal, "right", 0, &disabled),
+            horizontal.navigation_target_index("right", 0, &disabled),
             Some(2)
         );
         assert_eq!(
-            roving_navigation_target(Orientation::Horizontal, "right", 2, &disabled),
+            horizontal.navigation_target_index("right", 2, &disabled),
             Some(0)
         );
         assert_eq!(
-            roving_navigation_target(Orientation::Vertical, "up", 2, &disabled),
+            vertical.navigation_target_index("up", 2, &disabled),
             Some(0)
         );
     }

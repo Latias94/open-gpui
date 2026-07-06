@@ -15,15 +15,20 @@ Open GPUI should productize the current UI crates before reopening standalone he
 `open-gpui-ui-core`, `open-gpui-ui-components`, and `examples/ui-foundation-gallery` are the active
 product boundary for the next phase.
 
+As of the 2026-07-01 follow-up, the next productization slice is narrower than broad component
+rewrites: split the component contract registry, add accessibility contract gates, and add a theme
+JSON schema plus file-loader facade. Do not treat remaining 1k+ component files or
+`open-gpui-ui-headless` as current roadmap work.
+
 # Context
 
 The previous strict-boundary and extraction-design work proved that UI core can stay renderer
 neutral and that several behavior families could move later. That evidence is still useful, but it
 was starting to make the next session look like a crate-extraction task.
 
-The current product risk is different: the component surface is broad enough that runtime
-foundations, shell/navigation behavior, choice/search behavior, gallery conformance, verification
-notes, and memory need to tell one coherent product story.
+The current product risk is different: the component surface is broad enough that registry
+ownership, accessibility contracts, theme portability, gallery conformance, verification notes, and
+memory need to tell one coherent product story.
 
 # Alternatives
 
@@ -38,7 +43,7 @@ boundary before the current component contracts are stable.
 
 - ADR 0008 is the active roadmap decision for the next UI component phase.
 - ADR 0006 and ADR 0007 remain historical boundary references, not the next implementation step.
-- Future work should start with runtime foundations and interaction-family hardening, then use the
+- Future work should start with registry, accessibility, and theme productization, then use the
   gallery and verification docs as release gates.
 
 # Citations

@@ -14,7 +14,27 @@ pub use crate::{
     geometry::{
         UiEdges, UiPoint, UiPx, UiRect, UiSize, ui_edges, ui_point, ui_px, ui_rect, ui_size,
     },
-    grid_viewport::{GridViewport2D, resolve_grid_viewport_2d},
+    grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d},
+    motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec},
+    motion_controller::{
+        MotionExecutionPlan, MotionExecutionState, MotionFrameDemand, MotionFrameReason,
+        MotionScalarController, MotionScalarControllerSample, MotionScalarExecution,
+        MotionScalarExecutionSample, MotionScalarTrack, MotionScalarTrackSample,
+    },
+    motion_policy::{
+        MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
+        MotionPolicyReport, MotionPreviewTargetPolicy, validate_motion_policy,
+    },
+    motion_projection::{MotionProjection, MotionProjectionClip},
+    motion_runtime::{
+        MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionRunState, MotionSnapshot,
+        MotionTimeline, MotionTimelineSample, MotionTimelineState, lerp_rect, motion_source_rect,
+        preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
+    },
+    motion_spring::{
+        MotionModel, MotionPreset, MotionScalarSample, MotionSpring, MotionSpringPhysics,
+        MotionSpringPreset, MotionSpringSpec,
+    },
     overlay::{
         DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
         FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,
@@ -26,6 +46,14 @@ pub use crate::{
         resolve_outside_press,
     },
     sizing::{Density, Sizable, Size},
+    split::{
+        SplitTreeChild, SplitTreeNode, SplitterHandleLayout, SplitterHandlePlacement,
+        SplitterHandleState, SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion,
+        SplitterLayoutScene, SplitterMetrics, SplitterPanelDescriptor, SplitterPanelLayout,
+        SplitterPanelState, SplitterResizeOutcome, SplitterResizeResult, SplitterState,
+        normalize_split_fractions, resize_split_fractions_by_pixels, resolve_split_fractions,
+        resolve_split_fractions_with_fill_child,
+    },
     table::{
         TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
         TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind,

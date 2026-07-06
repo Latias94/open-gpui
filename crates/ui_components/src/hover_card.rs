@@ -7,22 +7,22 @@ use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
-    Task, Window, anchored, deferred, div,
+    Task, Window, div,
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
-    OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role,
-    Sizable, Size, ThemeTokens, UiPx, ui_point, ui_px, ui_size,
+    OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, Role, Sizable, Size,
+    ThemeTokens, UiPx, ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
-    escape_open_change, gpui_overlay_state, outside_press_open_change,
+    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayLayerHost,
+    OverlayOpenRuntimeRequest, OverlayResolvedState, resolve_overlay_open_state,
 };
-use crate::theme::ThemeResolver;
+use crate::theme::{ThemeContext, ThemeResolver};
 
 type HoverCardOpenChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
 
@@ -43,6 +43,15 @@ impl HoverCardOpenMode {
             Self::Uncontrolled => "uncontrolled",
             Self::Controlled => "controlled",
         }
+    }
+}
+
+const fn hover_card_open_mode_from_disclosure(
+    mode: OverlayDisclosureOpenMode,
+) -> HoverCardOpenMode {
+    match mode {
+        OverlayDisclosureOpenMode::Uncontrolled => HoverCardOpenMode::Uncontrolled,
+        OverlayDisclosureOpenMode::Controlled => HoverCardOpenMode::Controlled,
     }
 }
 
@@ -335,11 +344,12 @@ impl HoverCardState {
         focus_restore_intent: FocusRestoreIntent,
         tokens: ThemeTokens,
     ) -> Self {
-        let open_mode = if open.is_some() {
-            HoverCardOpenMode::Controlled
-        } else {
-            HoverCardOpenMode::Uncontrolled
-        };
+        let open_mode = hover_card_open_mode_from_disclosure(
+            OverlayDisclosureConfig::new(OverlayLayerKind::NonModalDismissible)
+                .controlled_open(open)
+                .resolve()
+                .open_mode(),
+        );
         Self::resolve_with_open_mode(
             content_kind,
             size,
@@ -375,14 +385,16 @@ impl HoverCardState {
         focus_restore_intent: FocusRestoreIntent,
         tokens: ThemeTokens,
     ) -> Self {
-        let open = open && !disabled;
-        let presence = OverlayPresence::from_open(open);
-        let overlay =
-            GpuiOverlayAdapterConfig::new(OverlayLayerKind::NonModalDismissible, presence)
-                .outside_press_policy(outside_press_policy)
-                .initial_focus_intent(initial_focus_intent.clone())
-                .focus_restore_intent(focus_restore_intent.clone())
-                .resolved_state();
+        let disclosure = OverlayDisclosureConfig::new(OverlayLayerKind::NonModalDismissible)
+            .controlled_open(Some(open))
+            .default_open(default_open)
+            .disabled(disabled)
+            .outside_press_policy(outside_press_policy)
+            .initial_focus_intent(initial_focus_intent.clone())
+            .focus_restore_intent(focus_restore_intent.clone())
+            .resolve();
+        let open = disclosure.open();
+        let overlay = disclosure.overlay().clone();
         let colors = ThemeResolver::hover_card_colors(tokens, open);
 
         Self {
@@ -724,6 +736,7 @@ impl Sizable for HoverCard {
 
 impl RenderOnce for HoverCard {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, cx| HoverCardRuntime {
             open: self.default_open,
             focus_open: false,
@@ -765,9 +778,11 @@ impl RenderOnce for HoverCard {
         }
 
         let runtime_open = runtime.read(cx).open;
-        let resolved_open = controlled_open.unwrap_or(runtime_open || focus_holds_open);
+        let open_state =
+            resolve_overlay_open_state(controlled_open, runtime_open || focus_holds_open);
+        let resolved_open = open_state.open();
 
-        if controlled_open.is_some() && runtime_open != resolved_open {
+        if open_state.controlled() && runtime_open != resolved_open {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
             });
@@ -805,9 +820,14 @@ impl RenderOnce for HoverCard {
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
         let open = state.open();
+        let trigger_border = theme.resolve(colors.trigger_border());
+        let trigger_background = theme.resolve(colors.trigger_background());
+        let trigger_foreground = theme.resolve(colors.trigger_foreground());
+        let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
+        let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
         let trigger_focus = runtime.read(cx).trigger_focus.clone();
         let content_focus = runtime.read(cx).content_focus.clone();
-        let overlay_adapter = gpui_overlay_state(state.overlay());
+        let overlay_host = OverlayLayerHost::resolve(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 open_gpui_ui_core::OverlayAnchorInput::from_layout_bounds(open_gpui_ui_core::rect(
@@ -819,7 +839,7 @@ impl RenderOnce for HoverCard {
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
             .with_offset(metrics.offset()),
-            overlay_adapter.snap_margin(),
+            overlay_host.adapter().snap_margin(),
         );
 
         div()
@@ -847,9 +867,9 @@ impl RenderOnce for HoverCard {
                     .justify_center()
                     .rounded(gpui_px_from_ui(metrics.radius()))
                     .border_1()
-                    .border_color(ThemeResolver::resolve(colors.trigger_border()))
-                    .bg(ThemeResolver::resolve(colors.trigger_background()))
-                    .text_color(ThemeResolver::resolve(colors.trigger_foreground()))
+                    .border_color(trigger_border)
+                    .bg(trigger_background)
+                    .text_color(trigger_foreground)
                     .text_size(gpui_px_from_ui(metrics.text_size()))
                     .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
@@ -860,17 +880,18 @@ impl RenderOnce for HoverCard {
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)
                     .aria_disabled(disabled)
-                    .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                    .focus_visible(move |style| style.shadow(trigger_focus_shadow))
                     .when(open, |this| {
                         let runtime = runtime.clone();
                         let on_open_change = on_open_change.clone();
-                        let escape_policy = state.overlay().policy().clone();
+                        let overlay_host = overlay_host.clone();
                         this.on_key_down(move |event: &KeyDownEvent, window, cx| {
                             if event.keystroke.key.as_str() == "escape"
-                                && escape_open_change(&escape_policy).is_some()
+                                && overlay_host.escape_open_change().is_some()
                             {
-                                consume_overlay_event(window, cx);
+                                overlay_host.consume_event(window, cx);
                                 close_hover_card(
+                                    overlay_host.clone(),
                                     runtime.clone(),
                                     on_open_change.clone(),
                                     window,
@@ -886,16 +907,17 @@ impl RenderOnce for HoverCard {
                         let delay = state.delay();
                         let opens_on_hover = state.open_intent().opens_on_hover();
                         let opens_manually = state.open_intent().opens_manually();
+                        let overlay_host = overlay_host.clone();
                         this.cursor_pointer()
-                            .hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
-                            })
+                            .hover(move |style| style.bg(trigger_hover_background))
                             .on_hover({
                                 let runtime = runtime.clone();
                                 let on_open_change = on_open_change.clone();
+                                let overlay_host = overlay_host.clone();
                                 move |hovered, window, cx| {
                                     if opens_on_hover {
                                         handle_hover_card_trigger_hover(
+                                            overlay_host.clone(),
                                             runtime.clone(),
                                             *hovered,
                                             delay,
@@ -909,10 +931,12 @@ impl RenderOnce for HoverCard {
                             .when(opens_manually, |this| {
                                 let runtime = runtime.clone();
                                 let on_open_change = on_open_change.clone();
+                                let overlay_host = overlay_host.clone();
                                 this.on_click(move |_event: &ClickEvent, window, cx| {
                                     cx.stop_propagation();
                                     let next_open = !runtime.read(cx).open;
                                     set_hover_card_open(
+                                        overlay_host.clone(),
                                         runtime.clone(),
                                         next_open,
                                         on_open_change.clone(),
@@ -925,24 +949,21 @@ impl RenderOnce for HoverCard {
                     .child(trigger_label),
             )
             .when(open, |this| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .anchor(placement.anchor())
-                            .offset(placement.offset())
-                            .snap_to_window_with_margin(placement.snap_margin())
-                            .child(hover_card_content_element(
-                                content,
-                                content_id.clone(),
-                                state.clone(),
-                                runtime.clone(),
-                                content_focus.clone(),
-                                on_open_change.clone(),
-                                debug_id.clone(),
-                            )),
-                    )
-                    .priority(overlay_adapter.deferred_priority()),
-                )
+                let overlay_host = overlay_host.clone();
+                this.child(overlay_host.relative_layer(
+                    &placement,
+                    hover_card_content_element(
+                        content,
+                        content_id.clone(),
+                        state.clone(),
+                        overlay_host.clone(),
+                        runtime.clone(),
+                        content_focus.clone(),
+                        on_open_change.clone(),
+                        debug_id.clone(),
+                        &theme,
+                    ),
+                ))
             })
     }
 }
@@ -951,16 +972,17 @@ fn hover_card_content_element(
     content: HoverCardContent,
     content_id: ElementId,
     state: HoverCardState,
+    overlay_host: OverlayLayerHost,
     runtime: Entity<HoverCardRuntime>,
     content_focus: FocusHandle,
     on_open_change: Option<HoverCardOpenChangeHandler>,
     debug_id: String,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
-    let outside_change = outside_press_open_change(state.overlay().policy());
+    let outside_change = overlay_host.outside_press_open_change();
     let delay = state.delay();
-    let escape_policy = state.overlay().policy().clone();
 
     div()
         .id(content_id)
@@ -975,9 +997,9 @@ fn hover_card_content_element(
         .gap_2()
         .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(colors.border()))
-        .bg(ThemeResolver::resolve(colors.background()))
-        .text_color(ThemeResolver::resolve(colors.foreground()))
+        .border_color(theme.resolve(colors.border()))
+        .bg(theme.resolve(colors.background()))
+        .text_color(theme.resolve(colors.foreground()))
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .shadow_lg()
@@ -989,8 +1011,10 @@ fn hover_card_content_element(
         .on_hover({
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
+            let overlay_host = overlay_host.clone();
             move |hovered, window, cx| {
                 handle_hover_card_content_hover(
+                    overlay_host.clone(),
                     runtime.clone(),
                     *hovered,
                     delay,
@@ -1003,26 +1027,41 @@ fn hover_card_content_element(
         .on_key_down({
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
+            let overlay_host = overlay_host.clone();
             move |event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key.as_str() == "escape"
-                    && escape_open_change(&escape_policy).is_some()
+                    && overlay_host.escape_open_change().is_some()
                 {
-                    consume_overlay_event(window, cx);
-                    close_hover_card(runtime.clone(), on_open_change.clone(), window, cx);
+                    overlay_host.consume_event(window, cx);
+                    close_hover_card(
+                        overlay_host.clone(),
+                        runtime.clone(),
+                        on_open_change.clone(),
+                        window,
+                        cx,
+                    );
                 }
             }
         })
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
+            let overlay_host = overlay_host.clone();
             this.on_mouse_down_out(move |_, window, cx| {
-                close_hover_card(runtime.clone(), on_open_change.clone(), window, cx);
+                close_hover_card(
+                    overlay_host.clone(),
+                    runtime.clone(),
+                    on_open_change.clone(),
+                    window,
+                    cx,
+                );
             })
         })
         .children(children_from_content(content))
 }
 
 fn handle_hover_card_trigger_hover(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<HoverCardRuntime>,
     hovering: bool,
     delay: HoverCardDelayPolicy,
@@ -1035,13 +1074,28 @@ fn handle_hover_card_trigger_hover(
     });
 
     if hovering {
-        schedule_hover_card_open(runtime, delay.open_delay(), on_open_change, window, cx);
+        schedule_hover_card_open(
+            overlay_host,
+            runtime,
+            delay.open_delay(),
+            on_open_change,
+            window,
+            cx,
+        );
     } else if !runtime.read(cx).hovering_content && !hover_card_has_focus(&runtime, window, cx) {
-        schedule_hover_card_close(runtime, delay.close_delay(), on_open_change, window, cx);
+        schedule_hover_card_close(
+            overlay_host,
+            runtime,
+            delay.close_delay(),
+            on_open_change,
+            window,
+            cx,
+        );
     }
 }
 
 fn handle_hover_card_content_hover(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<HoverCardRuntime>,
     hovering: bool,
     delay: HoverCardDelayPolicy,
@@ -1059,11 +1113,19 @@ fn handle_hover_card_content_hover(
         && !runtime.read(cx).hovering_trigger
         && !hover_card_has_focus(&runtime, window, cx)
     {
-        schedule_hover_card_close(runtime, delay.close_delay(), on_open_change, window, cx);
+        schedule_hover_card_close(
+            overlay_host,
+            runtime,
+            delay.close_delay(),
+            on_open_change,
+            window,
+            cx,
+        );
     }
 }
 
 fn schedule_hover_card_open(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<HoverCardRuntime>,
     delay: std::time::Duration,
     on_open_change: Option<HoverCardOpenChangeHandler>,
@@ -1076,17 +1138,18 @@ fn schedule_hover_card_open(
     let epoch = runtime.read(cx).epoch;
 
     if delay.is_zero() {
-        set_hover_card_open(runtime, true, on_open_change, window, cx);
+        set_hover_card_open(overlay_host, runtime, true, on_open_change, window, cx);
         return;
     }
 
     let task = window.spawn(cx, {
         let runtime = runtime.clone();
+        let overlay_host = overlay_host.clone();
         async move |cx| {
             cx.background_executor().timer(delay).await;
             cx.update(|window, cx| {
                 if runtime.read(cx).epoch == epoch {
-                    set_hover_card_open(runtime, true, on_open_change, window, cx);
+                    set_hover_card_open(overlay_host, runtime, true, on_open_change, window, cx);
                 }
             })
             .ok();
@@ -1098,6 +1161,7 @@ fn schedule_hover_card_open(
 }
 
 fn schedule_hover_card_close(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<HoverCardRuntime>,
     delay: std::time::Duration,
     on_open_change: Option<HoverCardOpenChangeHandler>,
@@ -1110,12 +1174,13 @@ fn schedule_hover_card_close(
     let epoch = runtime.read(cx).epoch;
 
     if delay.is_zero() {
-        close_hover_card(runtime, on_open_change, window, cx);
+        close_hover_card(overlay_host, runtime, on_open_change, window, cx);
         return;
     }
 
     let task = window.spawn(cx, {
         let runtime = runtime.clone();
+        let overlay_host = overlay_host.clone();
         async move |cx| {
             cx.background_executor().timer(delay).await;
             cx.update(|window, cx| {
@@ -1128,7 +1193,7 @@ fn schedule_hover_card_close(
                         && !runtime_state.content_focus.contains_focused(window, cx)
                 };
                 if should_close {
-                    close_hover_card(runtime, on_open_change, window, cx);
+                    close_hover_card(overlay_host, runtime, on_open_change, window, cx);
                 }
             })
             .ok();
@@ -1140,15 +1205,17 @@ fn schedule_hover_card_close(
 }
 
 fn close_hover_card(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<HoverCardRuntime>,
     on_open_change: Option<HoverCardOpenChangeHandler>,
     window: &mut Window,
     cx: &mut App,
 ) {
-    set_hover_card_open(runtime, false, on_open_change, window, cx);
+    set_hover_card_open(overlay_host, runtime, false, on_open_change, window, cx);
 }
 
 fn set_hover_card_open(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<HoverCardRuntime>,
     open: bool,
     on_open_change: Option<HoverCardOpenChangeHandler>,
@@ -1156,16 +1223,29 @@ fn set_hover_card_open(
     cx: &mut App,
 ) {
     let changed = runtime.read(cx).open != open;
-    runtime.update(cx, |runtime, _| {
-        runtime.open = open;
-        if !open {
-            runtime.focus_open = false;
-        }
-        runtime.delayed_task = None;
-        runtime.epoch = runtime.epoch.wrapping_add(1);
-    });
-    if changed && let Some(on_open_change) = on_open_change.as_ref() {
-        on_open_change(open, window, cx);
+    if changed {
+        overlay_host.apply_open_change(
+            OverlayOpenRuntimeRequest::new(runtime, open, on_open_change.as_deref()),
+            window,
+            cx,
+            |runtime| {
+                runtime.open = open;
+                if !open {
+                    runtime.focus_open = false;
+                }
+                runtime.delayed_task = None;
+                runtime.epoch = runtime.epoch.wrapping_add(1);
+            },
+        );
+    } else {
+        runtime.update(cx, |runtime, _| {
+            runtime.open = open;
+            if !open {
+                runtime.focus_open = false;
+            }
+            runtime.delayed_task = None;
+            runtime.epoch = runtime.epoch.wrapping_add(1);
+        });
     }
 }
 

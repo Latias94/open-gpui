@@ -1,6 +1,5 @@
-use crate::{
-    DockGraphDropTarget, DockItemId, DockNodeId, DockSpaceId, split_fraction::normalize_shares,
-};
+use crate::{DockGraphDropTarget, DockItemId, DockNodeId, DockSpaceId};
+use open_gpui_ui_core::normalize_split_fractions;
 
 use super::{DockGraph, DockNode};
 
@@ -68,7 +67,7 @@ impl DockGraph {
             return false;
         }
 
-        normalize_shares(&mut next);
+        normalize_split_fractions(&mut next);
         if fractions.len() == next.len()
             && fractions
                 .iter()

@@ -3,12 +3,13 @@ use crate::{
     DockSpaceId, DockViewportRuntimeHandle, DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     geometry::{self, DockDropBoxKind, DockDropBoxSet},
+    presentation_scene::DockPresentationScene,
 };
 use open_gpui::{
     App, AppContext as _, Bounds, Context, Entity, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, Modifiers, MouseButton, ParentElement, Pixels, Render, Styled, TestAppContext,
-    VisualTestContext, Window, WindowBounds, WindowHandle, WindowOptions, div, point, px, rgb,
-    size,
+    IntoElement, Modifiers, MouseButton, ParentElement, Pixels, Point, Render, Styled,
+    TestAppContext, VisualTestContext, Window, WindowBounds, WindowHandle, WindowOptions, div,
+    point, px, rgb, size,
 };
 
 const SPACE: &str = "main";
@@ -220,6 +221,52 @@ pub(crate) fn assert_close(actual: f32, expected: f32) {
         (actual - expected).abs() <= 2.0,
         "expected {actual} to be within 2px of {expected}"
     );
+}
+
+pub(crate) fn assert_bounds_close(actual: Bounds<Pixels>, expected: Bounds<Pixels>, context: &str) {
+    assert_close(f32::from(actual.origin.x), f32::from(expected.origin.x));
+    assert_close(f32::from(actual.origin.y), f32::from(expected.origin.y));
+    assert_close(f32::from(actual.size.width), f32::from(expected.size.width));
+    assert_close(
+        f32::from(actual.size.height),
+        f32::from(expected.size.height),
+    );
+    assert!(
+        expected.contains(&actual.center()),
+        "{context} center should remain inside expected drop box: actual={actual:?}, expected={expected:?}"
+    );
+}
+
+pub(crate) fn assert_scene_pane_matches_render_region(
+    visual: &mut VisualTestContext,
+    host: &Entity<DockHost>,
+    scene: &DockPresentationScene,
+    node: DockNodeId,
+    region: DockDebugRegion,
+    context: &str,
+) {
+    let expected = scene
+        .pane_for_node(node)
+        .unwrap_or_else(|| panic!("{context} pane should be in presentation scene"))
+        .bounds;
+    assert_render_region_matches_bounds(visual, host, region, expected, context);
+}
+
+pub(crate) fn assert_render_region_matches_bounds(
+    visual: &mut VisualTestContext,
+    host: &Entity<DockHost>,
+    region: DockDebugRegion,
+    expected: Bounds<Pixels>,
+    context: &str,
+) {
+    let selector = selector_for(visual, host, region)
+        .unwrap_or_else(|| panic!("{context} debug selector should be emitted"));
+    assert_bounds_close(debug_bounds(visual, &selector), expected, context);
+}
+
+pub(crate) fn assert_point_close(actual: Point<Pixels>, expected: Point<Pixels>) {
+    assert_close(f32::from(actual.x), f32::from(expected.x));
+    assert_close(f32::from(actual.y), f32::from(expected.y));
 }
 
 pub(crate) fn center_drop_position(bounds: Bounds<Pixels>) -> open_gpui::Point<Pixels> {

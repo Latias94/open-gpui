@@ -5,14 +5,14 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
+    AnyView, App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::theme::ThemeResolver;
 
 /// Visual intent for a [`Button`].
@@ -220,6 +220,7 @@ pub struct Button {
     selected: bool,
     tokens: ThemeTokens,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    tooltip: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
 }
 
 impl Button {
@@ -234,6 +235,7 @@ impl Button {
             selected: false,
             tokens: ThemeTokens::default(),
             on_click: None,
+            tooltip: None,
         }
     }
 
@@ -270,6 +272,12 @@ impl Button {
         self
     }
 
+    /// Adds a hover/focus tooltip to the button.
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip = Some(Rc::new(tooltip));
+        self
+    }
+
     /// Returns the resolved button state.
     pub fn state(&self) -> ButtonState {
         ButtonState::resolve(
@@ -290,13 +298,20 @@ impl Sizable for Button {
 }
 
 impl RenderOnce for Button {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let label = self.label.clone();
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
+        let theme_context = ThemeResolver::current(cx);
+        let theme = &theme_context;
+        let border_color = theme.resolve(colors.border());
+        let background = theme.resolve(colors.background());
+        let foreground = theme.resolve(colors.foreground());
+        let hover_background = theme.resolve(colors.hover_background());
+        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, theme);
 
         div()
             .id(self.id)
@@ -309,9 +324,9 @@ impl RenderOnce for Button {
             .gap_2()
             .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
-            .border_color(ThemeResolver::resolve(colors.border()))
-            .bg(ThemeResolver::resolve(colors.background()))
-            .text_color(ThemeResolver::resolve(colors.foreground()))
+            .border_color(border_color)
+            .bg(background)
+            .text_color(foreground)
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
             .focusable()
@@ -319,17 +334,20 @@ impl RenderOnce for Button {
             .ui_role(state.role())
             .aria_label(label.clone())
             .aria_selected(state.selected())
-            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+            .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| {
                 this.cursor_pointer()
-                    .hover(move |style| style.bg(ThemeResolver::resolve(colors.hover_background())))
+                    .hover(move |style| style.bg(hover_background))
             })
             .when_some(self.on_click.filter(|_| !disabled), |this, on_click| {
                 this.on_click(move |event, window, cx| {
                     cx.stop_propagation();
                     on_click(event, window, cx);
                 })
+            })
+            .when_some(self.tooltip, |this, tooltip| {
+                this.tooltip(move |window, cx| tooltip(window, cx))
             })
             .child(label)
     }

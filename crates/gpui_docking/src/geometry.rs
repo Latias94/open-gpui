@@ -1,9 +1,30 @@
-use crate::{DropZone, SplitAxis, split_fraction};
+use crate::DropZone;
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
+use open_gpui_ui_core::{UiRect, ui_point, ui_px, ui_rect, ui_size};
 
 const DEFAULT_DROP_GUIDE_FONT_SIZE: f32 = 16.0;
 const DEFAULT_MIN_SPLIT_PREVIEW_EXTENT: f32 = 8.0;
 const DEFAULT_MAX_SPLIT_PREVIEW_EXTENT: f32 = 48.0;
+
+pub(crate) fn ui_rect_from_bounds(bounds: Bounds<Pixels>) -> UiRect {
+    ui_rect(
+        ui_point(
+            ui_px(f32::from(bounds.origin.x)),
+            ui_px(f32::from(bounds.origin.y)),
+        ),
+        ui_size(
+            ui_px(f32::from(bounds.size.width)),
+            ui_px(f32::from(bounds.size.height)),
+        ),
+    )
+}
+
+pub(crate) fn bounds_from_ui_rect(rect: UiRect) -> Bounds<Pixels> {
+    Bounds::new(
+        point(px(rect.origin.x.as_f32()), px(rect.origin.y.as_f32())),
+        size(px(rect.size.width.as_f32()), px(rect.size.height.as_f32())),
+    )
+}
 
 /// Style inputs used to calculate dock drop guide hit rectangles.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -121,26 +142,18 @@ impl LocalRect {
             height: max_y - min_y,
         })
     }
-}
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockSplitGeometry {
-    pub(crate) pane_bounds: Vec<Bounds<Pixels>>,
-    pub(crate) handle_hit_bounds: Vec<Bounds<Pixels>>,
-    pub(crate) handle_centers: Vec<Pixels>,
-    pub(crate) shares: Vec<f32>,
-    pub(crate) extent: Pixels,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockSplitLayout {
-    shares: Vec<f32>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct DockSplitHandleLayout {
-    pub(crate) index: usize,
-    pub(crate) center_share: f32,
+    fn expand(self, amount: f32) -> Self {
+        if !amount.is_finite() || amount <= 0.0 {
+            return self;
+        }
+        Self {
+            x: self.x - amount,
+            y: self.y - amount,
+            width: self.width + amount * 2.0,
+            height: self.height + amount * 2.0,
+        }
+    }
 }
 
 pub(crate) fn resolve_inner_drop_geometry_with_style(
@@ -198,12 +211,15 @@ pub(crate) fn drop_boxes_with_style(
             boxes.push(drop_box(
                 bounds,
                 DockDropBoxKind::Center,
-                LocalRect::from_center(
-                    width / 2.0,
-                    height / 2.0,
-                    metrics.center_half,
-                    metrics.center_half,
-                ),
+                {
+                    let draw = LocalRect::from_center(
+                        width / 2.0,
+                        height / 2.0,
+                        metrics.center_half,
+                        metrics.center_half,
+                    );
+                    (draw, draw.expand(inner_hit_expand(metrics)))
+                },
                 preview_bounds(
                     DropZone::Center,
                     width,
@@ -238,223 +254,8 @@ fn resolve_drop_geometry(
         .map(|drop_box| DockDropGeometry { drop_box })
 }
 
-fn split_shares(child_count: usize, fractions: &[f32]) -> Vec<f32> {
-    split_fraction::cleaned_shares(child_count, fractions)
-}
-
-fn split_shares_with_central(
-    child_count: usize,
-    fractions: &[f32],
-    central_child_index: Option<usize>,
-) -> Vec<f32> {
-    let Some(central_child_index) = central_child_index else {
-        return split_shares(child_count, fractions);
-    };
-    if child_count == 0 || central_child_index >= child_count {
-        return split_shares(child_count, fractions);
-    }
-    if child_count == 1 {
-        return vec![1.0];
-    }
-
-    let mut shares: Vec<f32> = (0..child_count)
-        .map(|index| {
-            if index == central_child_index {
-                0.0
-            } else {
-                clean_fraction(fractions.get(index).copied().unwrap_or(0.0))
-            }
-        })
-        .collect();
-
-    let non_central_sum: f32 = shares.iter().sum();
-    if non_central_sum > 1.0 {
-        for (index, share) in shares.iter_mut().enumerate() {
-            if index != central_child_index {
-                *share /= non_central_sum;
-            }
-        }
-        shares[central_child_index] = 0.0;
-    } else {
-        shares[central_child_index] = 1.0 - non_central_sum;
-    }
-
-    shares
-}
-
-impl DockSplitLayout {
-    pub(crate) fn from_fractions(
-        child_count: usize,
-        fractions: &[f32],
-        central_child_index: Option<usize>,
-    ) -> Self {
-        Self {
-            shares: split_shares_with_central(child_count, fractions, central_child_index),
-        }
-    }
-
-    pub(crate) fn child_share(&self, index: usize) -> Option<f32> {
-        self.shares.get(index).copied()
-    }
-
-    pub(crate) fn handles(&self) -> Vec<DockSplitHandleLayout> {
-        let mut cursor = 0.0_f32;
-        self.shares
-            .iter()
-            .take(self.shares.len().saturating_sub(1))
-            .enumerate()
-            .map(|(index, share)| {
-                cursor += *share;
-                DockSplitHandleLayout {
-                    index,
-                    center_share: cursor,
-                }
-            })
-            .collect()
-    }
-
-    pub(crate) fn geometry(
-        &self,
-        axis: SplitAxis,
-        split_bounds: Bounds<Pixels>,
-        handle_thickness: Pixels,
-    ) -> DockSplitGeometry {
-        let extent = split_extent(axis, split_bounds);
-        let handle_centers = split_handle_centers(axis, split_bounds, self.handles());
-        let pane_bounds = split_pane_bounds(axis, split_bounds, &self.shares);
-        let handle_hit_bounds = handle_centers
-            .iter()
-            .copied()
-            .map(|center| split_handle_hit_bounds(axis, split_bounds, center, handle_thickness))
-            .collect();
-
-        DockSplitGeometry {
-            pane_bounds,
-            handle_hit_bounds,
-            handle_centers,
-            shares: self.shares.clone(),
-            extent,
-        }
-    }
-}
-
-fn clean_fraction(value: f32) -> f32 {
-    if value.is_finite() && value >= 0.0 {
-        value
-    } else {
-        0.0
-    }
-}
-
-pub(crate) fn resize_adjacent_split_fractions(
-    fractions: &[f32],
-    child_count: usize,
-    handle_index: usize,
-    split_extent: Pixels,
-    delta: Pixels,
-    min_pane_size: Pixels,
-) -> Option<Vec<f32>> {
-    if child_count < 2 || handle_index + 1 >= child_count {
-        return None;
-    }
-
-    let extent = f32::from(split_extent);
-    if !extent.is_finite() || extent <= f32::EPSILON {
-        return None;
-    }
-
-    let mut shares = split_shares(child_count, fractions);
-    let pair_total = shares[handle_index] + shares[handle_index + 1];
-    if !pair_total.is_finite() || pair_total <= f32::EPSILON {
-        return None;
-    }
-
-    let min_fraction = (f32::from(min_pane_size).max(0.0) / extent).clamp(0.0, pair_total / 2.0);
-    let delta_fraction = f32::from(delta) / extent;
-    let next_first =
-        (shares[handle_index] + delta_fraction).clamp(min_fraction, pair_total - min_fraction);
-
-    shares[handle_index] = next_first;
-    shares[handle_index + 1] = pair_total - next_first;
-    split_fraction::normalize_shares(&mut shares);
-    Some(shares)
-}
-
 fn valid_extent(value: f32) -> bool {
     value.is_finite() && value > 0.0
-}
-
-fn split_extent(axis: SplitAxis, split_bounds: Bounds<Pixels>) -> Pixels {
-    match axis {
-        SplitAxis::Horizontal => split_bounds.size.width,
-        SplitAxis::Vertical => split_bounds.size.height,
-    }
-}
-
-fn split_pane_bounds(
-    axis: SplitAxis,
-    split_bounds: Bounds<Pixels>,
-    shares: &[f32],
-) -> Vec<Bounds<Pixels>> {
-    let mut cursor = axis_origin(axis, split_bounds);
-    let extent = split_extent(axis, split_bounds);
-    shares
-        .iter()
-        .map(|share| {
-            let pane_extent = extent * *share;
-            let bounds = match axis {
-                SplitAxis::Horizontal => Bounds::new(
-                    point(cursor, split_bounds.origin.y),
-                    size(pane_extent, split_bounds.size.height),
-                ),
-                SplitAxis::Vertical => Bounds::new(
-                    point(split_bounds.origin.x, cursor),
-                    size(split_bounds.size.width, pane_extent),
-                ),
-            };
-            cursor += pane_extent;
-            bounds
-        })
-        .collect()
-}
-
-fn split_handle_centers(
-    axis: SplitAxis,
-    split_bounds: Bounds<Pixels>,
-    handles: Vec<DockSplitHandleLayout>,
-) -> Vec<Pixels> {
-    let origin = axis_origin(axis, split_bounds);
-    let extent = split_extent(axis, split_bounds);
-    handles
-        .into_iter()
-        .map(|handle| origin + extent * handle.center_share)
-        .collect()
-}
-
-fn split_handle_hit_bounds(
-    axis: SplitAxis,
-    split_bounds: Bounds<Pixels>,
-    center: Pixels,
-    handle_thickness: Pixels,
-) -> Bounds<Pixels> {
-    let half_thickness = handle_thickness / 2.0;
-    match axis {
-        SplitAxis::Horizontal => Bounds::new(
-            point(center - half_thickness, split_bounds.origin.y),
-            size(handle_thickness, split_bounds.size.height),
-        ),
-        SplitAxis::Vertical => Bounds::new(
-            point(split_bounds.origin.x, center - half_thickness),
-            size(split_bounds.size.width, handle_thickness),
-        ),
-    }
-}
-
-fn axis_origin(axis: SplitAxis, split_bounds: Bounds<Pixels>) -> Pixels {
-    match axis {
-        SplitAxis::Horizontal => split_bounds.origin.x,
-        SplitAxis::Vertical => split_bounds.origin.y,
-    }
 }
 
 fn drop_box_metrics(width: f32, height: f32, style: DockDropGuideStyle) -> DockDropBoxMetrics {
@@ -546,7 +347,7 @@ fn edge_drop_box(
     let center_x = width / 2.0;
     let center_y = height / 2.0;
     let zone = kind.zone();
-    let hit = match kind {
+    let draw = match kind {
         DockDropBoxKind::Center => return None,
         DockDropBoxKind::InnerEdge(DropZone::Left) => LocalRect::from_center(
             center_x - metrics.inner_offset,
@@ -599,8 +400,13 @@ fn edge_drop_box(
         DockDropBoxKind::InnerEdge(DropZone::Center)
         | DockDropBoxKind::OuterEdge(DropZone::Center) => return None,
     };
+    let hit = if matches!(kind, DockDropBoxKind::InnerEdge(_)) {
+        draw.expand(inner_hit_expand(metrics))
+    } else {
+        draw
+    };
+    let draw_bounds = local_bounds(bounds.origin, draw.clamp_to_bounds(width, height)?);
     let hit_bounds = local_bounds(bounds.origin, hit.clamp_to_bounds(width, height)?);
-    let draw_bounds = hit_bounds;
     let preview_bounds = offset_bounds(
         bounds.origin,
         preview_bounds(zone, width, height, metrics.split_preview_extent),
@@ -620,13 +426,20 @@ fn drop_box_contains_position(
     set: DockDropBoxSet,
     style: DockDropGuideStyle,
 ) -> bool {
-    if drop_box.hit_bounds.contains(&position) {
-        return true;
-    }
-    if set != DockDropBoxSet::Inner {
-        return false;
+    if set == DockDropBoxSet::Inner
+        && let Some(kind) = inner_radial_drop_box_kind(bounds, position, style)
+    {
+        return drop_box.kind == kind;
     }
 
+    drop_box.hit_bounds.contains(&position)
+}
+
+fn inner_radial_drop_box_kind(
+    bounds: Bounds<Pixels>,
+    position: Point<Pixels>,
+    style: DockDropGuideStyle,
+) -> Option<DockDropBoxKind> {
     let width = f32::from(bounds.size.width);
     let height = f32::from(bounds.size.height);
     let metrics = drop_box_metrics(width, height, style);
@@ -640,15 +453,19 @@ fn drop_box_contains_position(
     let distance_squared = delta_x * delta_x + delta_y * delta_y;
     let center_threshold = metrics.center_half * 1.4;
     if distance_squared < center_threshold * center_threshold {
-        return drop_box.kind == DockDropBoxKind::Center;
+        return Some(DockDropBoxKind::Center);
     }
 
     let side_threshold = metrics.center_half * (1.4 + 1.2);
     if distance_squared < side_threshold * side_threshold {
-        return drop_box.kind == DockDropBoxKind::InnerEdge(quadrant_zone(delta_x, delta_y));
+        return Some(DockDropBoxKind::InnerEdge(quadrant_zone(delta_x, delta_y)));
     }
 
-    false
+    None
+}
+
+fn inner_hit_expand(metrics: DockDropBoxMetrics) -> f32 {
+    metrics.center_half * 0.30
 }
 
 fn quadrant_zone(delta_x: f32, delta_y: f32) -> DropZone {
@@ -668,20 +485,26 @@ fn quadrant_zone(delta_x: f32, delta_y: f32) -> DropZone {
 fn drop_box(
     bounds: Bounds<Pixels>,
     kind: DockDropBoxKind,
-    hit: LocalRect,
+    rects: (LocalRect, LocalRect),
     preview: Bounds<Pixels>,
 ) -> DockDropBox {
     let width = f32::from(bounds.size.width);
     let height = f32::from(bounds.size.height);
+    let (draw, hit) = rects;
     let hit_bounds = local_bounds(
         bounds.origin,
         hit.clamp_to_bounds(width, height)
             .expect("center drop box should fit inside valid bounds"),
     );
+    let draw_bounds = local_bounds(
+        bounds.origin,
+        draw.clamp_to_bounds(width, height)
+            .expect("center drop box should fit inside valid bounds"),
+    );
     DockDropBox {
         kind,
         hit_bounds,
-        draw_bounds: hit_bounds,
+        draw_bounds,
         preview_bounds: offset_bounds(bounds.origin, preview),
     }
 }
@@ -736,6 +559,10 @@ mod tests {
         Bounds::new(point(px(10.0), px(20.0)), size(px(width), px(height)))
     }
 
+    fn area(bounds: Bounds<Pixels>) -> f32 {
+        f32::from(bounds.size.width) * f32::from(bounds.size.height)
+    }
+
     #[test]
     fn drop_geometry_resolves_center_and_preview_bounds() {
         let bounds = bounds(300.0, 200.0);
@@ -754,6 +581,29 @@ mod tests {
         assert!(
             resolve_inner_drop_geometry(bounds, point(px(12.0), px(120.0))).is_none(),
             "near-edge points outside the visible guide cluster must not split"
+        );
+
+        let left_box = drop_boxes(bounds, DockDropBoxSet::Inner)
+            .into_iter()
+            .find(|drop_box| drop_box.kind == DockDropBoxKind::InnerEdge(DropZone::Left))
+            .expect("left box should exist");
+        let expanded_only_left = point(
+            left_box.draw_bounds.origin.x - px(1.0),
+            left_box.draw_bounds.center().y,
+        );
+        assert!(
+            !left_box.draw_bounds.contains(&expanded_only_left),
+            "expanded-only point should be outside the visible guide"
+        );
+        assert!(
+            left_box.hit_bounds.contains(&expanded_only_left),
+            "expanded-only point should remain inside the ImGui-style hit area"
+        );
+        let expanded_left = resolve_inner_drop_geometry(bounds, expanded_only_left)
+            .expect("expanded hit area should resolve");
+        assert_eq!(
+            expanded_left.drop_box.kind,
+            DockDropBoxKind::InnerEdge(DropZone::Left)
         );
 
         let left_hit = point(px(125.0), px(120.0));
@@ -826,14 +676,14 @@ mod tests {
         let box_set = drop_boxes(bounds, DockDropBoxSet::Inner);
 
         for drop_box in box_set {
-            assert_eq!(
-                drop_box.draw_bounds, drop_box.hit_bounds,
-                "current draw bounds default to the visible hit box for {:?}",
-                drop_box.kind
-            );
             assert!(
                 bounds.contains(&drop_box.draw_bounds.center()),
                 "draw bounds should remain inside the target container for {:?}",
+                drop_box.kind
+            );
+            assert!(
+                area(drop_box.hit_bounds) > area(drop_box.draw_bounds),
+                "inner {:?} should use an expanded hit target around the visible guide",
                 drop_box.kind
             );
         }
@@ -859,6 +709,14 @@ mod tests {
             DockDropBoxKind::OuterEdge(DropZone::Left)
         );
         assert_eq!(left.zone(), DropZone::Left);
+
+        for drop_box in drop_boxes(bounds, DockDropBoxSet::Outer) {
+            assert_eq!(
+                drop_box.hit_bounds, drop_box.draw_bounds,
+                "outer {:?} should keep exact visible hit bounds",
+                drop_box.kind
+            );
+        }
     }
 
     #[test]
@@ -927,143 +785,5 @@ mod tests {
             .find(|drop_box| drop_box.kind == kind)
             .map(|drop_box| drop_box.hit_bounds.center())
             .unwrap_or_else(|| panic!("{kind:?} should exist"))
-    }
-
-    #[test]
-    fn splitter_handle_geometry_matches_fraction_boundaries() {
-        let geometry = DockSplitLayout::from_fractions(2, &[0.25, 0.75], None).geometry(
-            SplitAxis::Horizontal,
-            bounds(400.0, 100.0),
-            px(6.0),
-        );
-
-        assert_eq!(geometry.pane_bounds.len(), 2);
-        assert_eq!(geometry.pane_bounds[0].origin.x, px(10.0));
-        assert_eq!(geometry.pane_bounds[0].size.width, px(100.0));
-        assert_eq!(geometry.pane_bounds[1].origin.x, px(110.0));
-        assert_eq!(geometry.pane_bounds[1].size.width, px(300.0));
-        assert_eq!(geometry.handle_centers, vec![px(110.0)]);
-        assert_eq!(geometry.handle_hit_bounds.len(), 1);
-        assert_eq!(geometry.handle_hit_bounds[0].origin.x, px(107.0));
-        assert_eq!(geometry.handle_hit_bounds[0].size.width, px(6.0));
-        assert_eq!(geometry.handle_hit_bounds[0].size.height, px(100.0));
-    }
-
-    #[test]
-    fn vertical_split_geometry_matches_fraction_boundaries() {
-        let geometry = DockSplitLayout::from_fractions(2, &[0.25, 0.75], None).geometry(
-            SplitAxis::Vertical,
-            bounds(200.0, 400.0),
-            px(8.0),
-        );
-
-        assert_eq!(geometry.pane_bounds[0].origin.y, px(20.0));
-        assert_eq!(geometry.pane_bounds[0].size.height, px(100.0));
-        assert_eq!(geometry.pane_bounds[1].origin.y, px(120.0));
-        assert_eq!(geometry.pane_bounds[1].size.height, px(300.0));
-        assert_eq!(geometry.handle_centers, vec![px(120.0)]);
-        assert_eq!(geometry.handle_hit_bounds[0].origin.y, px(116.0));
-        assert_eq!(geometry.handle_hit_bounds[0].size.height, px(8.0));
-    }
-
-    #[test]
-    fn split_geometry_repairs_fraction_input_once() {
-        let geometry = DockSplitLayout::from_fractions(3, &[f32::NAN], None).geometry(
-            SplitAxis::Horizontal,
-            bounds(300.0, 100.0),
-            px(6.0),
-        );
-
-        assert_eq!(geometry.pane_bounds.len(), 3);
-        assert_eq!(geometry.handle_hit_bounds.len(), 2);
-        assert_close(geometry.shares.iter().sum(), 1.0);
-        assert_close(geometry.shares[0], 0.0);
-        assert_close(geometry.shares[1], 0.5);
-        assert_close(geometry.shares[2], 0.5);
-    }
-
-    #[test]
-    fn central_split_child_receives_remaining_space() {
-        let geometry = DockSplitLayout::from_fractions(3, &[0.2, 0.0, 0.3], Some(1)).geometry(
-            SplitAxis::Horizontal,
-            bounds(1000.0, 100.0),
-            px(6.0),
-        );
-
-        assert_close(geometry.shares[0], 0.2);
-        assert_close(geometry.shares[1], 0.5);
-        assert_close(geometry.shares[2], 0.3);
-        assert_eq!(geometry.pane_bounds[0].size.width, px(200.0));
-        assert_eq!(geometry.pane_bounds[1].size.width, px(500.0));
-        assert_eq!(geometry.pane_bounds[2].size.width, px(300.0));
-    }
-
-    #[test]
-    fn central_split_child_yields_space_when_neighbors_over_allocate() {
-        let geometry = DockSplitLayout::from_fractions(3, &[0.8, 0.0, 0.7], Some(1)).geometry(
-            SplitAxis::Horizontal,
-            bounds(1000.0, 100.0),
-            px(6.0),
-        );
-
-        assert_close(geometry.shares[0], 0.5333);
-        assert_close(geometry.shares[1], 0.0);
-        assert_close(geometry.shares[2], 0.4667);
-        assert_close(geometry.shares.iter().sum(), 1.0);
-    }
-
-    fn assert_close(actual: f32, expected: f32) {
-        assert!(
-            (actual - expected).abs() <= 0.001,
-            "expected {actual} to be close to {expected}"
-        );
-    }
-
-    #[test]
-    fn positive_resize_delta_grows_first_adjacent_pane() {
-        let next =
-            resize_adjacent_split_fractions(&[0.25, 0.75], 2, 0, px(400.0), px(40.0), px(48.0))
-                .expect("resize should be valid");
-
-        assert_close(next[0], 0.35);
-        assert_close(next[1], 0.65);
-    }
-
-    #[test]
-    fn negative_resize_delta_shrinks_first_adjacent_pane() {
-        let next =
-            resize_adjacent_split_fractions(&[0.5, 0.5], 2, 0, px(400.0), px(-80.0), px(48.0))
-                .expect("resize should be valid");
-
-        assert_close(next[0], 0.3);
-        assert_close(next[1], 0.7);
-    }
-
-    #[test]
-    fn resize_clamps_at_minimum_pane_size() {
-        let next =
-            resize_adjacent_split_fractions(&[0.5, 0.5], 2, 0, px(400.0), px(-300.0), px(100.0))
-                .expect("resize should be valid");
-
-        assert_close(next[0], 0.25);
-        assert_close(next[1], 0.75);
-    }
-
-    #[test]
-    fn impossible_minimum_splits_adjacent_pair_evenly() {
-        let next =
-            resize_adjacent_split_fractions(&[0.5, 0.5], 2, 0, px(120.0), px(100.0), px(80.0))
-                .expect("resize should be valid");
-
-        assert_close(next[0], 0.5);
-        assert_close(next[1], 0.5);
-    }
-
-    #[test]
-    fn invalid_resize_handle_index_returns_none() {
-        assert!(
-            resize_adjacent_split_fractions(&[0.5, 0.5], 2, 1, px(400.0), px(10.0), px(48.0))
-                .is_none()
-        );
     }
 }

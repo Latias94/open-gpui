@@ -1,29 +1,42 @@
 use crate::{
     DockHost, DockNode, DockNodeId, DropZone,
+    accessibility_scene::DockAccessibilityScene,
     debug::DockDebugRegion,
+    divider_hit_map::{DockDividerAffordanceState, DockDividerHitMap, DockDividerHitTarget},
     drag::DockDragPayload,
-    drop_preview::{DockDropPreview, DockDropRoutePreview, DockPreviewDropBox},
-    drop_runtime::DockHostDropSceneFact,
+    drop_preview::{
+        DockDropPreview, DockDropRoutePreview, DockPreviewDropBox, DockPreviewTabInsertionIndex,
+    },
     drop_scene_fact, geometry,
     host_render_session::{DockHostRenderSession, selected_index},
     interaction::{
         DockPayloadDropRelease, DockRenderedOutsideReleaseDecision,
         DockRenderedOutsideReleaseRequest,
     },
+    presentation_scene::DockPresentationScene,
     render_split::DockRenderSplitInput,
+    transition_executor::{
+        DockDividerSample, DockPaneClipSample, DockTransitionSample, DockVisualAffordanceSample,
+    },
+    transition_geometry::{DockMotionPreference, DockTransitionPlan},
     viewport_drop_scene::DockViewportHostSceneFrame,
+    visual_affordance_scene::{
+        DockPayloadTabPreviewLayout, DockPayloadTabPreviewPlacement, DockVisualAffordanceLayer,
+        DockVisualAffordanceScene,
+    },
 };
 use open_gpui::{
-    AnyElement, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
+    AnyElement, BorderStyle, Bounds, Context, CursorStyle, DispatchPhase, DragMoveEvent,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, ParentElement, Pixels, Render, Rgba, SharedString, Styled, Window, black, canvas,
-    div, point, px, rgb, rgba,
+    div, point, px, quad, rgb, rgba,
 };
+use open_gpui_ui_core::MotionSpec;
 use std::{cell::RefCell, rc::Rc};
 
 pub(crate) type DockViewportHostSceneFrameSlot = Rc<RefCell<Option<DockViewportHostSceneFrame>>>;
 
 const DROP_PREVIEW_TAB_HEIGHT: f32 = 26.0;
-const DROP_PREVIEW_TAB_HORIZONTAL_INSET: f32 = 8.0;
 const DROP_PREVIEW_TAB_GAP: f32 = 6.0;
 const DROP_PREVIEW_TAB_MIN_WIDTH: f32 = 72.0;
 const DROP_PREVIEW_TAB_MAX_WIDTH: f32 = 180.0;
@@ -31,15 +44,9 @@ const DROP_PREVIEW_TAB_TEXT_PADDING: f32 = 22.0;
 const DROP_PREVIEW_TAB_MIN_VISIBLE_WIDTH: f32 = 18.0;
 
 #[derive(Debug, Clone, PartialEq)]
-struct DockDropPreviewTabLayout {
-    body_bounds: Bounds<Pixels>,
-    tab_bounds: Vec<DockDropPreviewTabPlacement>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct DockDropPreviewTabPlacement {
+struct DockDropPreviewPayloadTab {
     index: usize,
-    tab_bounds: Bounds<Pixels>,
+    title: String,
 }
 
 impl Render for DockHost {
@@ -53,11 +60,13 @@ impl Render for DockHost {
         let drop_host_space = session.space().clone();
         let outside_release_host_space = session.space().clone();
         let viewport_host_scene_frame = Rc::new(RefCell::new(None));
+        let transition_sample = self.sample_transition_for_render(Some(window));
 
         let selector = self.record_debug_selector(
             DockDebugRegion::Host,
             format!("{}:host", session.selector_prefix()),
         );
+        let active_docking_drag = cx.active_drag_value::<DockDragPayload>().is_some();
 
         let mut host = div()
             .id(selector.clone())
@@ -137,6 +146,24 @@ impl Render for DockHost {
                 }),
             );
 
+        if active_docking_drag {
+            let host_focus = self.host_focus_handle();
+            host = host.track_focus(&host_focus).capture_key_down(cx.listener(
+                move |this, event: &KeyDownEvent, window, cx| {
+                    if event.keystroke.key != "escape" || event.keystroke.modifiers.modified() {
+                        return;
+                    }
+                    let Some(payload) = cx.active_drag_value::<DockDragPayload>().cloned() else {
+                        return;
+                    };
+                    if this.cancel_payload_drag_from_render(&payload, window, cx) {
+                        window.refresh();
+                    }
+                    cx.stop_propagation();
+                },
+            ));
+        }
+
         if session.empty_central_passthrough() {
             host = host.bg(rgba(0x00000000));
         } else {
@@ -145,8 +172,10 @@ impl Render for DockHost {
 
         host = host.child(self.render_viewport_host_scene_probe(
             &viewport_host_scene_frame,
+            &session,
             session.drop_guide_style(),
             session.empty_central_requests_platform_pointer_passthrough(),
+            cx,
         ));
 
         if let Some(root) = session.root() {
@@ -183,6 +212,21 @@ impl Render for DockHost {
             ));
         }
 
+        host = host.child(self.render_divider_event_layer(&session, cx));
+        if active_docking_drag {
+            host = host.child(self.render_payload_drag_event_layer(cx));
+        }
+
+        if let Some(sample) = transition_sample.as_ref() {
+            host = host.child(self.render_transition_sample_layer(
+                &session,
+                &viewport_host_scene_frame,
+                sample,
+                window,
+                cx,
+            ));
+        }
+
         if let Some(preview) = self.render_host_drop_preview(&session, window, cx) {
             host = host.child(preview);
         }
@@ -194,17 +238,22 @@ impl Render for DockHost {
 }
 
 impl DockHost {
-    fn drop_preview_tab_layout(
+    fn drop_preview_payload_tab_layout(
         &self,
         session: &DockHostRenderSession,
         preview_bounds: Bounds<Pixels>,
-        payload_tabs: &crate::drop_preview::DockPreviewPayloadTabs,
+        affordance_scene: &DockVisualAffordanceScene,
         window: &Window,
-    ) -> Option<DockDropPreviewTabLayout> {
-        let target_tabs = payload_tabs.target_tabs?;
+    ) -> Option<DockPayloadTabPreviewLayout> {
+        let insertion = affordance_scene.tab_insertion()?;
+        let target_tabs = insertion.target_node?;
         let DockNode::Tabs { items, .. } = session.node(target_tabs)?.clone() else {
             return None;
         };
+        let payload_tabs = affordance_payload_tabs(affordance_scene);
+        if payload_tabs.is_empty() {
+            return None;
+        }
         let tab_height = px(f32::from(preview_bounds.size.height)
             .min(DROP_PREVIEW_TAB_HEIGHT)
             .max(0.0));
@@ -215,27 +264,29 @@ impl DockHost {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
         let tab_gap = px(DROP_PREVIEW_TAB_GAP);
-        let insert_index = payload_tabs
-            .insert_index
+        let insert_index = insertion
+            .tab_insertion
+            .as_ref()
+            .map(|insertion| match insertion.index {
+                DockPreviewTabInsertionIndex::At(index) => index,
+                DockPreviewTabInsertionIndex::Append => items.len(),
+            })
             .unwrap_or(items.len())
             .min(items.len());
+        let slot_insertion_x = insertion
+            .tab_insertion
+            .as_ref()
+            .and_then(|insertion| insertion.slot_bounds)
+            .map(|bounds| bounds.center().x);
         let mut tab_left = self
             .viewport_runtime()
             .rendered_tab_bar_bounds_for_tabs(self.space(), None, target_tabs)
-            .map(|tab_bar_bounds| tab_bar_bounds.origin.x + px(DROP_PREVIEW_TAB_HORIZONTAL_INSET))
-            .unwrap_or(preview_bounds.origin.x + px(DROP_PREVIEW_TAB_HORIZONTAL_INSET));
+            .map(|tab_bar_bounds| tab_bar_bounds.origin.x)
+            .unwrap_or(preview_bounds.origin.x);
 
-        if let Some(label_bounds) = insert_index.checked_sub(1).and_then(|target_index| {
-            self.viewport_runtime().rendered_tab_label_bounds_for_tabs(
-                self.space(),
-                None,
-                target_tabs,
-                target_index,
-            )
-        }) {
-            tab_left = label_bounds.right() + tab_gap;
-        } else {
-            for item in items.iter().take(insert_index) {
+        let existing_tab_widths = items
+            .iter()
+            .map(|item| {
                 let title = session.panel_title(item);
                 let title_line = window.text_system().shape_line(
                     SharedString::from(title.clone()),
@@ -243,16 +294,15 @@ impl DockHost {
                     &[text_style.to_run(title.len())],
                     None,
                 );
-                tab_left += preview_tab_width(title_line.width()) + tab_gap;
-            }
-        }
+                preview_tab_width(title_line.width())
+            })
+            .collect::<Vec<_>>();
+        tab_left = slot_insertion_x.unwrap_or_else(|| {
+            stable_tab_preview_insert_left(tab_left, insert_index, &existing_tab_widths)
+        });
 
-        let tab_strip_left = f32::from(preview_bounds.origin.x);
-        let tab_strip_right = f32::from(preview_bounds.origin.x + preview_bounds.size.width);
-        let tab_gap = f32::from(tab_gap);
-        let requested_left = f32::from(tab_left).max(tab_strip_left);
-        let mut tab_widths = Vec::with_capacity(payload_tabs.tabs.len());
-        for payload_tab in &payload_tabs.tabs {
+        let mut tab_widths = Vec::with_capacity(payload_tabs.len());
+        for payload_tab in &payload_tabs {
             let payload_title = payload_tab.title.as_str();
             let payload_line = window.text_system().shape_line(
                 SharedString::from(payload_title.to_string()),
@@ -262,6 +312,11 @@ impl DockHost {
             );
             tab_widths.push(f32::from(preview_tab_width(payload_line.width())));
         }
+
+        let tab_strip_left = f32::from(preview_bounds.origin.x);
+        let tab_strip_right = f32::from(preview_bounds.origin.x + preview_bounds.size.width);
+        let tab_gap = f32::from(tab_gap);
+        let requested_left = f32::from(tab_left).max(tab_strip_left);
         let mut visible_count = tab_widths.len();
         while visible_count > 0 {
             let total_gap = tab_gap * visible_count.saturating_sub(1) as f32;
@@ -290,11 +345,11 @@ impl DockHost {
         let tab_strip_width = tab_widths.iter().sum::<f32>() + total_gap;
         let mut tab_left =
             requested_left.min((tab_strip_right - tab_strip_width).max(tab_strip_left));
-        let mut tab_bounds = Vec::with_capacity(payload_tabs.tabs.len());
-        for (index, tab_width) in tab_widths.into_iter().enumerate() {
-            tab_bounds.push(DockDropPreviewTabPlacement {
-                index,
-                tab_bounds: Bounds::new(
+        let mut tab_bounds = Vec::with_capacity(payload_tabs.len());
+        for (payload_tab, tab_width) in payload_tabs.iter().zip(tab_widths) {
+            tab_bounds.push(DockPayloadTabPreviewPlacement {
+                payload_index: payload_tab.index,
+                bounds: Bounds::new(
                     point(px(tab_left), preview_bounds.origin.y),
                     open_gpui::size(px(tab_width), tab_height),
                 ),
@@ -302,7 +357,17 @@ impl DockHost {
             tab_left += tab_width + tab_gap;
         }
 
-        let first_tab_bounds = tab_bounds.first()?.tab_bounds;
+        let first_tab_bounds = tab_bounds.first()?.bounds;
+        let insertion_width = px(3.0);
+        let insertion_x = slot_insertion_x
+            .unwrap_or_else(|| stable_tab_preview_insertion_x(first_tab_bounds.origin.x));
+        let insertion_bounds = Bounds::new(
+            point(
+                insertion_x - insertion_width / 2.0,
+                first_tab_bounds.origin.y,
+            ),
+            open_gpui::size(insertion_width, first_tab_bounds.size.height),
+        );
 
         let body_origin_y = first_tab_bounds.origin.y + first_tab_bounds.size.height;
         let body_height =
@@ -312,9 +377,10 @@ impl DockHost {
             open_gpui::size(preview_bounds.size.width, body_height),
         );
 
-        Some(DockDropPreviewTabLayout {
+        Some(DockPayloadTabPreviewLayout {
             body_bounds,
-            tab_bounds,
+            insertion_bounds,
+            payload_tabs: tab_bounds,
         })
     }
 
@@ -375,7 +441,18 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let root_child = self.render_node(root, session, viewport_host_scene_frame, window, cx);
+        let rendered_root = self
+            .zoom_state()
+            .target(session.space())
+            .filter(|target| session.node(*target).is_some())
+            .unwrap_or(root);
+        let root_child = self.render_node(
+            rendered_root,
+            session,
+            viewport_host_scene_frame,
+            window,
+            cx,
+        );
         let mut root_container = div()
             .relative()
             .flex()
@@ -397,19 +474,375 @@ impl DockHost {
                     );
                 },
             ));
-        root_container = root_container.child(
-            self.render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
-                drop_scene_fact::root(root, bounds)
-            }),
-        );
         root_container = root_container.child(root_child);
         root_container.into_any_element()
+    }
+
+    fn render_divider_event_layer(
+        &self,
+        session: &DockHostRenderSession,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let entity = cx.entity();
+        let session = session.clone();
+
+        canvas(
+            |_, _, _| (),
+            move |bounds, _, window, app| {
+                let scene = entity.update(app, |host, _| {
+                    host.resolved_render_presentation_scene(&session, bounds)
+                });
+                let hit_map = DockDividerHitMap::from_scene(&scene);
+                let hover_position = Some(window.mouse_position());
+                let corner_dragging = entity.read(app).interaction().corner_splitter_drag_active();
+                let corner_affordances =
+                    hit_map.corner_affordances(hover_position, corner_dragging, true);
+
+                if let Some(target) = hit_map.hit(window.mouse_position()) {
+                    window.set_window_cursor_style(cursor_for_divider_target(target));
+                }
+                for affordance in &corner_affordances {
+                    window.paint_quad(quad(
+                        affordance.corner.bounds,
+                        px(3.0),
+                        background_for_divider_affordance_state(affordance.state),
+                        px(1.0),
+                        rgba(0xffffffb3),
+                        BorderStyle::Solid,
+                    ));
+                }
+
+                window.on_mouse_event({
+                    let entity = entity.clone();
+                    let scene = scene.clone();
+                    let hit_map = hit_map.clone();
+                    move |event: &MouseDownEvent, _, _, app| {
+                        if event.button != MouseButton::Left {
+                            return;
+                        }
+                        let Some(target) = hit_map.hit(event.position).cloned() else {
+                            return;
+                        };
+                        entity.update(app, |host, cx| {
+                            host.begin_divider_drag_from_scene(&scene, &target, event.position, cx);
+                        });
+                        app.stop_propagation();
+                    }
+                });
+
+                window.on_mouse_event({
+                    let entity = entity.clone();
+                    move |event: &MouseMoveEvent, _, _, app| {
+                        if event.pressed_button != Some(MouseButton::Left) {
+                            return;
+                        }
+                        entity.update(app, |host, cx| {
+                            host.update_splitter_drag_from_render(event.position, cx);
+                        });
+                    }
+                });
+
+                window.on_mouse_event(move |event: &MouseUpEvent, _, _, app| {
+                    if event.button != MouseButton::Left {
+                        return;
+                    }
+                    entity.update(app, |host, cx| {
+                        host.finish_splitter_drag_from_render(cx);
+                    });
+                });
+            },
+        )
+        .absolute()
+        .top(px(0.0))
+        .left(px(0.0))
+        .size_full()
+        .into_any_element()
+    }
+
+    fn resolved_render_presentation_scene(
+        &mut self,
+        session: &DockHostRenderSession,
+        bounds: Bounds<Pixels>,
+    ) -> DockPresentationScene {
+        let base = DockPresentationScene::from_render_session(session, bounds);
+        let space = session.space().clone();
+        self.zoom_state_mut().clear_missing_target(&space, &base);
+        self.zoom_state()
+            .resolve(&base, DockMotionPreference::Animated)
+            .map(|zoom| zoom.scene)
+            .unwrap_or(base)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn divider_event_scene_for_test(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        cx: &Context<Self>,
+    ) -> DockPresentationScene {
+        let session = self.render_session(cx);
+        self.resolved_render_presentation_scene(&session, bounds)
+    }
+
+    fn render_payload_drag_event_layer(&self, cx: &mut Context<Self>) -> AnyElement {
+        let entity = cx.entity();
+
+        canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _app| {
+                window.on_mouse_event({
+                    let entity = entity.clone();
+                    move |event: &MouseMoveEvent, phase, window, app| {
+                        if phase != DispatchPhase::Capture
+                            || event.pressed_button != Some(MouseButton::Left)
+                        {
+                            return;
+                        }
+                        if !bounds.contains(&event.position) {
+                            return;
+                        }
+                        let Some(payload) = app.active_drag_value::<DockDragPayload>().cloned()
+                        else {
+                            return;
+                        };
+                        let changed = entity.update(app, |host, cx| {
+                            host.update_payload_drag_hover_from_rendered_host_scene(
+                                &payload,
+                                event.position,
+                                window,
+                                cx,
+                            )
+                        });
+                        if changed {
+                            window.refresh();
+                        }
+                    }
+                });
+
+                window.on_mouse_event({
+                    let entity = entity.clone();
+                    move |event: &MouseUpEvent, phase, window, app| {
+                        if phase != DispatchPhase::Capture || event.button != MouseButton::Left {
+                            return;
+                        }
+                        if !bounds.contains(&event.position) {
+                            return;
+                        }
+                        let Some(payload) = app.active_drag_value::<DockDragPayload>().cloned()
+                        else {
+                            return;
+                        };
+                        entity.update(app, |host, cx| {
+                            host.drop_payload_release_from_rendered_host_scene(
+                                payload,
+                                event.position,
+                                window,
+                                cx,
+                            );
+                        });
+                        app.stop_active_drag(window);
+                        app.stop_propagation();
+                        window.refresh();
+                    }
+                });
+            },
+        )
+        .absolute()
+        .top(px(0.0))
+        .left(px(0.0))
+        .size_full()
+        .into_any_element()
+    }
+
+    fn render_transition_sample_layer(
+        &mut self,
+        session: &DockHostRenderSession,
+        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        sample: &crate::transition_executor::DockTransitionSample,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let selector = self.record_debug_selector(
+            DockDebugRegion::TransitionLayer,
+            format!("{}:transition-layer", session.selector_prefix()),
+        );
+        let mut layer = div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .absolute()
+            .top(px(0.0))
+            .left(px(0.0))
+            .size_full()
+            .overflow_hidden();
+
+        for clip in &sample.pane_clips {
+            layer = layer.child(self.render_transition_pane_occlusion(session, clip));
+        }
+        for clip in &sample.pane_clips {
+            layer = layer.child(self.render_transition_pane_clip(
+                session,
+                viewport_host_scene_frame,
+                clip,
+                window,
+                cx,
+            ));
+        }
+        for divider in &sample.dividers {
+            layer = layer.child(self.render_transition_divider(session, divider));
+        }
+        for (index, affordance) in sample.visual_affordances.iter().enumerate() {
+            layer =
+                layer.child(self.render_transition_visual_affordance(session, index, affordance));
+        }
+
+        layer.into_any_element()
+    }
+
+    fn render_transition_pane_occlusion(
+        &mut self,
+        session: &DockHostRenderSession,
+        clip: &DockPaneClipSample,
+    ) -> AnyElement {
+        let selector = self.record_debug_selector(
+            DockDebugRegion::TransitionPaneOcclusion { node: clip.node },
+            format!(
+                "{}:transition:pane-occlusion:{}",
+                session.selector_prefix(),
+                clip.node.as_u64()
+            ),
+        );
+        let background = if session.empty_central_passthrough() {
+            rgba(0x00000000)
+        } else {
+            rgba(0xf7f8faff)
+        };
+        div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .absolute()
+            .left(clip.occlusion_bounds.origin.x)
+            .top(clip.occlusion_bounds.origin.y)
+            .w(clip.occlusion_bounds.size.width)
+            .h(clip.occlusion_bounds.size.height)
+            .bg(background)
+            .into_any_element()
+    }
+
+    fn render_transition_pane_clip(
+        &mut self,
+        session: &DockHostRenderSession,
+        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        clip: &DockPaneClipSample,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let selector = self.record_debug_selector(
+            DockDebugRegion::TransitionPaneClip { node: clip.node },
+            format!(
+                "{}:transition:pane-clip:{}",
+                session.selector_prefix(),
+                clip.node.as_u64()
+            ),
+        );
+        let content_offset = point(
+            clip.content_bounds.origin.x - clip.visible_bounds.origin.x,
+            clip.content_bounds.origin.y - clip.visible_bounds.origin.y,
+        );
+        let content_selector = self.record_debug_selector(
+            DockDebugRegion::TransitionPaneContent { node: clip.node },
+            format!(
+                "{}:transition:pane-content:{}",
+                session.selector_prefix(),
+                clip.node.as_u64()
+            ),
+        );
+        let content = self.with_debug_selector_recording_suppressed(|host| {
+            host.render_node(clip.node, session, viewport_host_scene_frame, window, cx)
+        });
+        div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .absolute()
+            .left(clip.visible_bounds.origin.x)
+            .top(clip.visible_bounds.origin.y)
+            .w(clip.visible_bounds.size.width)
+            .h(clip.visible_bounds.size.height)
+            .overflow_hidden()
+            .child(
+                div()
+                    .id(content_selector.clone())
+                    .debug_selector(move || content_selector)
+                    .absolute()
+                    .left(content_offset.x)
+                    .top(content_offset.y)
+                    .w(clip.content_bounds.size.width)
+                    .h(clip.content_bounds.size.height)
+                    .child(content),
+            )
+            .into_any_element()
+    }
+
+    fn render_transition_divider(
+        &mut self,
+        session: &DockHostRenderSession,
+        divider: &DockDividerSample,
+    ) -> AnyElement {
+        let selector = self.record_debug_selector(
+            DockDebugRegion::TransitionDivider {
+                split: divider.split,
+                index: divider.index,
+            },
+            format!(
+                "{}:transition:divider:{}:{}",
+                session.selector_prefix(),
+                divider.split.as_u64(),
+                divider.index
+            ),
+        );
+        div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .absolute()
+            .left(divider.bounds.origin.x)
+            .top(divider.bounds.origin.y)
+            .w(divider.bounds.size.width)
+            .h(divider.bounds.size.height)
+            .rounded_sm()
+            .bg(rgba(0x2563ebcc))
+            .into_any_element()
+    }
+
+    fn render_transition_visual_affordance(
+        &mut self,
+        session: &DockHostRenderSession,
+        index: usize,
+        affordance: &DockVisualAffordanceSample,
+    ) -> AnyElement {
+        let selector = self.record_debug_selector(
+            DockDebugRegion::TransitionVisualAffordance { index },
+            format!(
+                "{}:transition:visual-affordance:{index}",
+                session.selector_prefix()
+            ),
+        );
+        div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .absolute()
+            .left(affordance.bounds.origin.x)
+            .top(affordance.bounds.origin.y)
+            .w(affordance.bounds.size.width)
+            .h(affordance.bounds.size.height)
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(0x2563eb))
+            .bg(rgba(0x3b82f633))
+            .into_any_element()
     }
 
     fn render_empty_space(
         &mut self,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        _viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -417,7 +850,6 @@ impl DockHost {
             DockDebugRegion::EmptySpace,
             format!("{}:empty", session.selector_prefix()),
         );
-        let space = session.space().clone();
         let mut empty = div()
             .id(selector.clone())
             .debug_selector(move || selector)
@@ -445,11 +877,6 @@ impl DockHost {
                     );
                 },
             ));
-        empty = empty.child(
-            self.render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
-                drop_scene_fact::empty_space(space, bounds)
-            }),
-        );
         empty = empty.child(session.empty_message().to_string());
         empty.into_any_element()
     }
@@ -457,7 +884,7 @@ impl DockHost {
     fn render_passthrough_empty_central_space(
         &mut self,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        _viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -465,8 +892,7 @@ impl DockHost {
             DockDebugRegion::EmptySpace,
             format!("{}:empty-central", session.selector_prefix()),
         );
-        let space = session.space().clone();
-        let mut empty = div()
+        let empty = div()
             .id(selector.clone())
             .debug_selector(move || selector)
             .relative()
@@ -489,11 +915,6 @@ impl DockHost {
                     );
                 },
             ));
-        empty = empty.child(
-            self.render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
-                drop_scene_fact::empty_central_space(space, bounds)
-            }),
-        );
         empty.into_any_element()
     }
 
@@ -549,7 +970,14 @@ impl DockHost {
             return Some(self.render_target_drop_preview(session, routed_preview.preview, window));
         }
 
-        route_preview.map(|preview| self.render_route_drop_preview(session, preview))
+        if let Some(preview) = route_preview {
+            return Some(self.render_route_drop_preview(session, preview, window));
+        }
+
+        if self.clear_visual_affordance_transition_for_render() {
+            self.clear_visual_affordance_debug_summary(window.window_handle().window_id());
+        }
+        None
     }
 
     fn render_target_drop_preview(
@@ -559,6 +987,7 @@ impl DockHost {
         window: &Window,
     ) -> AnyElement {
         let scene = &preview.scene;
+        let mut affordance_scene = DockVisualAffordanceScene::from_preview(scene);
         let bounds = scene
             .payload_tabs
             .as_ref()
@@ -568,6 +997,24 @@ impl DockHost {
                     .rendered_leaf_bounds_for_tabs(self.space(), None, tabs)
             })
             .unwrap_or(scene.body.future_bounds);
+        let payload_tab_layout = if affordance_scene.has_payload_tab_preview() {
+            self.drop_preview_payload_tab_layout(session, bounds, &affordance_scene, window)
+        } else {
+            None
+        };
+        if let Some(layout) = payload_tab_layout.as_ref() {
+            affordance_scene.apply_payload_tab_layout(layout);
+        }
+        let visual_affordance_sample = self.sync_visual_affordance_transition_for_render(
+            session,
+            &affordance_scene,
+            bounds,
+            window,
+        );
+        let affordance_opacity = visual_affordance_sample
+            .as_ref()
+            .map(|sample| preview_transition_opacity(sample.progress))
+            .unwrap_or(1.0);
         let selector = self.record_debug_selector(
             DockDebugRegion::DropPreview,
             format!("{}:drop-preview", session.selector_prefix()),
@@ -582,12 +1029,18 @@ impl DockHost {
             .top(bounds.origin.y)
             .w(bounds.size.width)
             .h(bounds.size.height)
-            .overflow_hidden();
+            .overflow_hidden()
+            .opacity(affordance_opacity);
 
-        if let Some(payload_tabs) = payload_tabs_for_render(scene)
-            && let Some(layout) =
-                self.drop_preview_tab_layout(session, bounds, &payload_tabs, window)
-        {
+        if affordance_scene.has_payload_tab_preview() && payload_tab_layout.is_some() {
+            let body_layer = affordance_scene.target_body();
+            let insertion_layer = affordance_scene.tab_insertion();
+            let Some(body_layer) = body_layer else {
+                return element.into_any_element();
+            };
+            let Some(insertion_layer) = insertion_layer else {
+                return element.into_any_element();
+            };
             let body_selector = self.record_debug_selector(
                 DockDebugRegion::DropPreviewBody,
                 format!("{}:drop-preview:body", session.selector_prefix()),
@@ -596,19 +1049,39 @@ impl DockHost {
                 .id(body_selector.clone())
                 .debug_selector(move || body_selector)
                 .absolute()
-                .left(layout.body_bounds.origin.x - bounds.origin.x)
-                .top(layout.body_bounds.origin.y - bounds.origin.y)
-                .w(layout.body_bounds.size.width)
-                .h(layout.body_bounds.size.height)
+                .left(body_layer.bounds.origin.x - bounds.origin.x)
+                .top(body_layer.bounds.origin.y - bounds.origin.y)
+                .w(body_layer.bounds.size.width)
+                .h(body_layer.bounds.size.height)
                 .border_1()
                 .border_color(palette.border)
                 .bg(palette.body_background);
-            if layout.body_bounds.size.height > px(0.0) {
+            if body_layer.bounds.size.height > px(0.0) {
                 body = body.rounded_b_sm().border_t_0();
             }
             element = element.child(body);
-            for placement in layout.tab_bounds {
-                let tab = &payload_tabs.tabs[placement.index];
+            let insertion_selector = self.record_debug_selector(
+                DockDebugRegion::DropTabInsertionPreview,
+                format!("{}:drop-preview:tab-insertion", session.selector_prefix()),
+            );
+            element = element.child(
+                div()
+                    .id(insertion_selector.clone())
+                    .debug_selector(move || insertion_selector)
+                    .absolute()
+                    .left(insertion_layer.bounds.origin.x - bounds.origin.x)
+                    .top(insertion_layer.bounds.origin.y - bounds.origin.y)
+                    .w(insertion_layer.bounds.size.width)
+                    .h(insertion_layer.bounds.size.height)
+                    .rounded_sm()
+                    .bg(palette.border),
+            );
+            for placement in affordance_payload_tabs(&affordance_scene) {
+                let placement_bounds = affordance_scene
+                    .payload_tabs()
+                    .find(|layer| layer.payload_index == Some(placement.index))
+                    .map(|layer| layer.bounds)
+                    .unwrap_or(insertion_layer.bounds);
                 let tab_selector = self.record_debug_selector(
                     DockDebugRegion::DropPayloadTabPreview {
                         index: placement.index,
@@ -624,13 +1097,13 @@ impl DockHost {
                         .id(tab_selector.clone())
                         .debug_selector(move || tab_selector)
                         .absolute()
-                        .left(placement.tab_bounds.origin.x - bounds.origin.x)
-                        .top(placement.tab_bounds.origin.y - bounds.origin.y)
+                        .left(placement_bounds.origin.x - bounds.origin.x)
+                        .top(placement_bounds.origin.y - bounds.origin.y)
                         .flex()
                         .items_center()
                         .justify_start()
-                        .h(placement.tab_bounds.size.height)
-                        .w(placement.tab_bounds.size.width)
+                        .h(placement_bounds.size.height)
+                        .w(placement_bounds.size.width)
                         .px_2()
                         .border_1()
                         .border_color(palette.border)
@@ -642,10 +1115,12 @@ impl DockHost {
                         .rounded_t_sm()
                         .rounded_br_sm()
                         .border_b_0()
-                        .child(tab.title.clone()),
+                        .child(placement.title),
                 );
             }
-        } else {
+        } else if scene.body.body_bounds.size.width > px(0.0)
+            && scene.body.body_bounds.size.height > px(0.0)
+        {
             let body_selector = self.record_debug_selector(
                 DockDebugRegion::DropPreviewBody,
                 format!("{}:drop-preview:body", session.selector_prefix()),
@@ -666,10 +1141,23 @@ impl DockHost {
             );
         }
 
-        for layer in &scene.layers {
-            for drop_box in &layer.drop_boxes {
-                element = element.child(self.render_scene_drop_guide(session, bounds, *drop_box));
-            }
+        for drop_box in affordance_scene.guide_drop_boxes() {
+            element = element.child(self.render_scene_drop_guide(session, bounds, drop_box));
+        }
+
+        for accessible in
+            DockAccessibilityScene::visual_affordance_elements_for_render(&affordance_scene)
+        {
+            let local_bounds = localize_bounds(accessible.bounds, bounds.origin);
+            let marker = div()
+                .id(accessible.id_str().to_string())
+                .absolute()
+                .left(local_bounds.origin.x)
+                .top(local_bounds.origin.y)
+                .w(local_bounds.size.width)
+                .h(local_bounds.size.height)
+                .bg(rgba(0x00000000));
+            element = element.child(accessible.apply_to(marker));
         }
 
         element.into_any_element()
@@ -679,8 +1167,24 @@ impl DockHost {
         &mut self,
         session: &DockHostRenderSession,
         preview: DockDropRoutePreview,
+        window: &Window,
     ) -> AnyElement {
-        let bounds = preview.bounds;
+        let affordance_scene = DockVisualAffordanceScene::from_route_preview(&preview);
+        let bounds = affordance_scene
+            .layers
+            .first()
+            .map(|layer| layer.bounds)
+            .unwrap_or(preview.bounds);
+        let visual_affordance_sample = self.sync_visual_affordance_transition_for_render(
+            session,
+            &affordance_scene,
+            bounds,
+            window,
+        );
+        let affordance_opacity = visual_affordance_sample
+            .as_ref()
+            .map(|sample| preview_transition_opacity(sample.progress))
+            .unwrap_or(1.0);
         let selector = self.record_debug_selector(
             DockDebugRegion::DropRoutePreview { kind: preview.kind },
             format!("{}:drop-route-preview", session.selector_prefix()),
@@ -699,7 +1203,37 @@ impl DockHost {
             .border_1()
             .border_color(palette.border)
             .bg(palette.background)
+            .opacity(affordance_opacity)
             .into_any_element()
+    }
+
+    fn sync_visual_affordance_transition_for_render(
+        &mut self,
+        session: &DockHostRenderSession,
+        affordance_scene: &DockVisualAffordanceScene,
+        fallback_bounds: Bounds<Pixels>,
+        window: &Window,
+    ) -> Option<DockTransitionSample> {
+        if self.last_visual_affordance_scene() != Some(affordance_scene) {
+            let final_scene = self.last_presentation_scene().cloned().unwrap_or_else(|| {
+                DockPresentationScene::from_render_session(session, fallback_bounds)
+            });
+            let plan = DockTransitionPlan::from_visual_affordance_scene(
+                &final_scene,
+                affordance_scene,
+                DockMotionPreference::Animated,
+            );
+            self.set_last_visual_affordance_scene(affordance_scene.clone());
+            self.execute_visual_affordance_transition_plan(
+                plan,
+                MotionSpec::affordance(DockMotionPreference::Animated),
+                Some(window),
+            );
+        }
+
+        let sample = self.sample_visual_affordance_transition_for_render(Some(window));
+        self.publish_visual_affordance_debug_summary(window.window_handle().window_id());
+        sample
     }
 
     fn render_scene_drop_guide(
@@ -751,14 +1285,26 @@ impl DockHost {
     pub(crate) fn render_viewport_host_scene_probe(
         &self,
         frame_slot: &DockViewportHostSceneFrameSlot,
+        session: &DockHostRenderSession,
         drop_guide_style: geometry::DockDropGuideStyle,
         passthrough_pointer_input: bool,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
+        let entity = cx.entity();
         let runtime = self.viewport_runtime().clone();
         let space = self.space().clone();
+        let session = session.clone();
         let frame_slot = frame_slot.clone();
         canvas(
             move |bounds, window, app| {
+                let initial_facts = entity.update(app, |host, _| {
+                    let scene = host.resolved_render_presentation_scene(&session, bounds);
+                    host.set_last_presentation_scene(scene);
+                    let scene = host
+                        .last_presentation_scene()
+                        .expect("scene should be stored");
+                    drop_scene_fact::presentation_scene_drop_facts(scene, &session)
+                });
                 let mouse_position = window.mouse_position();
                 let host_position = point(
                     mouse_position.x - bounds.origin.x,
@@ -772,9 +1318,16 @@ impl DockHost {
                     host_position,
                     drop_guide_style,
                     passthrough_pointer_input,
+                    initial_facts,
                 );
+                let interaction_frame_changed = entity.update(app, |host, _| {
+                    host.publish_rendered_viewport_host_scene_frame_from_render(
+                        preparation.frame.clone(),
+                        window,
+                    )
+                });
                 *frame_slot.borrow_mut() = preparation.frame;
-                if preparation.changed {
+                if preparation.changed || interaction_frame_changed {
                     window.refresh();
                 }
             },
@@ -787,23 +1340,31 @@ impl DockHost {
         .into_any_element()
     }
 
-    /// Publishes target bounds during prepaint for runtime-routed drops.
-    pub(crate) fn render_viewport_drop_scene_fact_probe(
+    /// Publishes render-measured tab-label bounds whose size depends on text shaping.
+    pub(crate) fn render_tab_label_drop_scene_fact_probe(
         &self,
         frame_slot: &DockViewportHostSceneFrameSlot,
-        fact_for_bounds: impl FnOnce(Bounds<Pixels>) -> DockHostDropSceneFact + 'static,
+        tabs: DockNodeId,
+        target_index: usize,
+        is_central: bool,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
+        let entity = cx.entity();
         let runtime = self.viewport_runtime().clone();
         let frame_slot = frame_slot.clone();
         canvas(
-            move |bounds, _window, _| {
+            move |bounds, window, app| {
                 let Some(frame) = frame_slot.borrow().as_ref().cloned() else {
                     return;
                 };
-                if let Some(next_frame) =
-                    runtime.push_viewport_host_scene_frame_fact(&frame, fact_for_bounds(bounds))
+                let fact = drop_scene_fact::tab_label(tabs, target_index, bounds, is_central);
+                if let Some(next_frame) = runtime.push_viewport_host_scene_frame_fact(&frame, fact)
                 {
+                    let frame = Some(next_frame.clone());
                     *frame_slot.borrow_mut() = Some(next_frame);
+                    entity.update(app, |host, _| {
+                        host.publish_rendered_viewport_host_scene_frame_from_render(frame, window);
+                    });
                 }
             },
             |_, _, _, _| (),
@@ -816,14 +1377,64 @@ impl DockHost {
     }
 }
 
-fn payload_tabs_for_render(
-    scene: &crate::drop_preview::DockPreviewScene,
-) -> Option<crate::drop_preview::DockPreviewPayloadTabs> {
-    let payload_tabs = scene.payload_tabs.as_ref()?;
-    if !scene.decision.is_allowed() || scene.active_split().is_some() {
-        return None;
+fn affordance_payload_tabs(
+    affordance_scene: &DockVisualAffordanceScene,
+) -> Vec<DockDropPreviewPayloadTab> {
+    let mut tabs = affordance_scene
+        .payload_tabs()
+        .filter_map(payload_tab_from_affordance_layer)
+        .collect::<Vec<_>>();
+    tabs.sort_by_key(|tab| tab.index);
+    tabs
+}
+
+fn payload_tab_from_affordance_layer(
+    layer: &DockVisualAffordanceLayer,
+) -> Option<DockDropPreviewPayloadTab> {
+    Some(DockDropPreviewPayloadTab {
+        index: layer.payload_index?,
+        title: layer.payload_title.clone().unwrap_or_default(),
+    })
+}
+
+fn preview_transition_opacity(progress: f32) -> f32 {
+    0.68 + (0.32 * progress.clamp(0.0, 1.0))
+}
+
+fn stable_tab_preview_insert_left(
+    tab_strip_start: Pixels,
+    insert_index: usize,
+    existing_tab_widths: &[Pixels],
+) -> Pixels {
+    existing_tab_widths
+        .iter()
+        .take(insert_index)
+        .fold(tab_strip_start, |left, width| {
+            left + *width + px(DROP_PREVIEW_TAB_GAP)
+        })
+}
+
+fn stable_tab_preview_insertion_x(payload_tab_left: Pixels) -> Pixels {
+    payload_tab_left
+}
+
+fn cursor_for_divider_target(target: &DockDividerHitTarget) -> CursorStyle {
+    match target {
+        DockDividerHitTarget::Single(handle) => match handle.key.axis {
+            crate::SplitAxis::Horizontal => CursorStyle::ResizeColumn,
+            crate::SplitAxis::Vertical => CursorStyle::ResizeRow,
+        },
+        DockDividerHitTarget::Corner(_) => CursorStyle::ResizeUpRightDownLeft,
     }
-    (!payload_tabs.tabs.is_empty()).then(|| payload_tabs.clone())
+}
+
+fn background_for_divider_affordance_state(state: DockDividerAffordanceState) -> Rgba {
+    match state {
+        DockDividerAffordanceState::Idle => rgba(0x64748b4d),
+        DockDividerAffordanceState::Hover => rgba(0x2563eb99),
+        DockDividerAffordanceState::Active => rgba(0x1d4ed8cc),
+        DockDividerAffordanceState::Disabled => rgba(0x94a3b84d),
+    }
 }
 
 fn guide_directional_cue(
@@ -1044,6 +1655,7 @@ mod tests {
         let payload_tabs = payload_tab.then(|| crate::drop_preview::DockPreviewPayloadTabs {
             target_tabs,
             insert_index,
+            insertion: None,
             tabs: vec![crate::drop_preview::DockPreviewPayloadTab {
                 title: "Panel".to_string(),
             }],
@@ -1067,6 +1679,45 @@ mod tests {
             bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(56.0), px(40.0))),
             rejected,
         }
+    }
+
+    #[test]
+    fn payload_tab_render_inputs_come_from_visual_affordance_layers() {
+        let mut preview = preview(false, true);
+        preview.scene.payload_tabs.as_mut().unwrap().insertion =
+            Some(crate::drop_preview::DockPreviewTabInsertion {
+                target_tabs: None,
+                index: crate::drop_preview::DockPreviewTabInsertionIndex::Append,
+                slot_bounds: Some(Bounds::new(
+                    point(px(0.0), px(0.0)),
+                    size(px(3.0), px(26.0)),
+                )),
+                clipping_bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(80.0), px(26.0))),
+            });
+        preview.scene.payload_tabs.as_mut().unwrap().tabs = vec![
+            crate::drop_preview::DockPreviewPayloadTab {
+                title: "Diff".to_string(),
+            },
+            crate::drop_preview::DockPreviewPayloadTab {
+                title: "Preview".to_string(),
+            },
+        ];
+        let affordance_scene = DockVisualAffordanceScene::from_preview(&preview.scene);
+
+        assert!(affordance_scene.has_payload_tab_preview());
+        assert_eq!(
+            affordance_payload_tabs(&affordance_scene),
+            vec![
+                DockDropPreviewPayloadTab {
+                    index: 0,
+                    title: "Diff".to_string(),
+                },
+                DockDropPreviewPayloadTab {
+                    index: 1,
+                    title: "Preview".to_string(),
+                },
+            ]
+        );
     }
 
     #[test]
@@ -1118,12 +1769,51 @@ mod tests {
     }
 
     #[test]
+    fn divider_affordance_states_have_distinct_feedback_colors() {
+        let states = [
+            DockDividerAffordanceState::Idle,
+            DockDividerAffordanceState::Hover,
+            DockDividerAffordanceState::Active,
+            DockDividerAffordanceState::Disabled,
+        ];
+
+        for (index, state) in states.iter().enumerate() {
+            for other in states.iter().skip(index + 1) {
+                assert_ne!(
+                    background_for_divider_affordance_state(*state),
+                    background_for_divider_affordance_state(*other),
+                    "{state:?} and {other:?} should be visually distinguishable"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn preview_tab_width_stays_within_bounds() {
         assert_eq!(preview_tab_width(px(8.0)), px(DROP_PREVIEW_TAB_MIN_WIDTH));
         assert_eq!(preview_tab_width(px(240.0)), px(DROP_PREVIEW_TAB_MAX_WIDTH));
         assert_eq!(
             preview_tab_width(px(90.0)),
             px(90.0 + DROP_PREVIEW_TAB_TEXT_PADDING)
+        );
+    }
+
+    #[test]
+    fn stable_tab_preview_insert_left_uses_deterministic_tab_widths() {
+        let tab_strip_start = px(8.0);
+        let widths = [px(72.0), px(90.0), px(120.0)];
+
+        assert_eq!(
+            stable_tab_preview_insert_left(tab_strip_start, 0, &widths),
+            px(8.0)
+        );
+        assert_eq!(
+            stable_tab_preview_insert_left(tab_strip_start, 1, &widths),
+            px(86.0)
+        );
+        assert_eq!(
+            stable_tab_preview_insert_left(tab_strip_start, 2, &widths),
+            px(182.0)
         );
     }
 }

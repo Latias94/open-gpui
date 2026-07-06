@@ -2,7 +2,7 @@
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
@@ -399,11 +399,13 @@ impl Sizable for Slider {
 }
 
 impl RenderOnce for Slider {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
+        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
         let disabled = state.disabled();
         let label = self.label.clone();
         let value_fraction = state.normalized_value();
@@ -416,7 +418,7 @@ impl RenderOnce for Slider {
             .flex()
             .flex_col()
             .gap_2()
-            .text_color(ThemeResolver::resolve(colors.label()))
+            .text_color(theme.resolve(colors.label()))
             .text_size(gpui_px_from_ui(metrics.label_text_size()))
             .focusable()
             .tab_stop(!disabled)
@@ -425,7 +427,7 @@ impl RenderOnce for Slider {
             .aria_numeric_value(state.value() as f64)
             .aria_min_numeric_value(state.min() as f64)
             .aria_max_numeric_value(state.max() as f64)
-            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+            .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| this.cursor_pointer())
             .when_some(self.on_change.filter(|_| !disabled), |this, on_change| {
@@ -479,12 +481,12 @@ impl RenderOnce for Slider {
                             .w_full()
                             .rounded(gpui_px_from_ui(metrics.track_height()))
                             .overflow_hidden()
-                            .bg(ThemeResolver::resolve(colors.track()))
+                            .bg(theme.resolve(colors.track()))
                             .child(
                                 div()
                                     .h_full()
                                     .w(relative(value_fraction))
-                                    .bg(ThemeResolver::resolve(colors.range())),
+                                    .bg(theme.resolve(colors.range())),
                             ),
                     )
                     .child(
@@ -495,8 +497,8 @@ impl RenderOnce for Slider {
                             .size(gpui_px_from_ui(metrics.thumb_size()))
                             .rounded(gpui_px_from_ui(metrics.thumb_size()))
                             .border_1()
-                            .border_color(ThemeResolver::resolve(colors.thumb_border()))
-                            .bg(ThemeResolver::resolve(colors.thumb())),
+                            .border_color(theme.resolve(colors.thumb_border()))
+                            .bg(theme.resolve(colors.thumb())),
                     ),
             )
     }

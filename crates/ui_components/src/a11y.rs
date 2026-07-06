@@ -6,6 +6,356 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{AccessibleAction, Orientation, Role, Toggled};
 
+/// Source that provides an accessible name for a component or component part.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum A11yLabelSource {
+    /// No accessible name is required for this role in the current contract.
+    NotRequired,
+    /// The visible text label is the accessible name.
+    VisibleText,
+    /// The caller supplied an explicit accessible label.
+    ExplicitLabel,
+    /// The component is associated with a separate label element.
+    AssociatedLabel,
+    /// The component derives its name from placeholder-like text.
+    Placeholder,
+    /// The component generates a stable name from semantic state.
+    Generated,
+}
+
+impl A11yLabelSource {
+    /// Returns whether this source provides an accessible name.
+    pub const fn provides_name(self) -> bool {
+        !matches!(self, Self::NotRequired)
+    }
+}
+
+/// Source that provides an accessible description for a component or component part.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum A11yDescriptionSource {
+    /// No accessible description is supplied or required.
+    None,
+    /// The caller supplied an explicit description.
+    ExplicitDescription,
+    /// Help text describes the control.
+    HelpText,
+    /// Error text describes the invalid state.
+    ErrorText,
+    /// The component generates a stable description from semantic state.
+    Generated,
+}
+
+/// Kind of value metadata exposed by an accessibility contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum A11yValueKind {
+    /// Editable or display text value.
+    Text,
+    /// Numeric scalar value.
+    Number,
+    /// Percentage progress or slider value.
+    Percent,
+    /// Count or collection-size value.
+    Count,
+    /// Selected item or selected-value value.
+    Selection,
+}
+
+/// Renderer-neutral value metadata for accessibility assertions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct A11yValueMetadata {
+    kind: A11yValueKind,
+    present: bool,
+}
+
+impl A11yValueMetadata {
+    /// Creates value metadata for a present semantic value.
+    pub const fn present(kind: A11yValueKind) -> Self {
+        Self {
+            kind,
+            present: true,
+        }
+    }
+
+    /// Creates value metadata for a supported value that is currently absent.
+    pub const fn absent(kind: A11yValueKind) -> Self {
+        Self {
+            kind,
+            present: false,
+        }
+    }
+
+    /// Returns the value kind.
+    pub const fn kind(self) -> A11yValueKind {
+        self.kind
+    }
+
+    /// Returns whether the value is currently present.
+    pub const fn is_present(self) -> bool {
+        self.present
+    }
+}
+
+/// Validation failure for a component accessibility contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum A11yContractError {
+    /// The role requires an accessible name but no label source was recorded.
+    MissingAccessibleName,
+    /// The role requires value metadata but no value contract was recorded.
+    MissingValueMetadata,
+    /// The role requires at least one supported action but none were recorded.
+    MissingSupportedAction,
+}
+
+/// One failed accessibility contract check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct A11yContractViolation {
+    component: &'static str,
+    role: Role,
+    error: A11yContractError,
+}
+
+impl A11yContractViolation {
+    /// Returns the component or component part that failed validation.
+    pub const fn component(self) -> &'static str {
+        self.component
+    }
+
+    /// Returns the role that failed validation.
+    pub const fn role(self) -> Role {
+        self.role
+    }
+
+    /// Returns the validation error.
+    pub const fn error(self) -> A11yContractError {
+        self.error
+    }
+}
+
+/// Renderer-neutral accessibility contract for one component or component part.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComponentA11yContract {
+    component: &'static str,
+    role: Role,
+    label_source: A11yLabelSource,
+    description_source: A11yDescriptionSource,
+    selected: Option<bool>,
+    checked: Option<Toggled>,
+    expanded: Option<bool>,
+    disabled: Option<bool>,
+    value: Option<A11yValueMetadata>,
+    orientation: Option<Orientation>,
+    actions: &'static [AccessibleAction],
+}
+
+impl ComponentA11yContract {
+    /// Creates a contract for a component or component part.
+    pub const fn new(component: &'static str, role: Role) -> Self {
+        Self {
+            component,
+            role,
+            label_source: A11yLabelSource::NotRequired,
+            description_source: A11yDescriptionSource::None,
+            selected: None,
+            checked: None,
+            expanded: None,
+            disabled: None,
+            value: None,
+            orientation: None,
+            actions: &[],
+        }
+    }
+
+    /// Returns the component or component part name.
+    pub const fn component(self) -> &'static str {
+        self.component
+    }
+
+    /// Returns the semantic role.
+    pub const fn role(self) -> Role {
+        self.role
+    }
+
+    /// Returns the accessible-name source.
+    pub const fn label_source(self) -> A11yLabelSource {
+        self.label_source
+    }
+
+    /// Returns the accessible-description source.
+    pub const fn description_source(self) -> A11yDescriptionSource {
+        self.description_source
+    }
+
+    /// Returns selected state metadata.
+    pub const fn selected(self) -> Option<bool> {
+        self.selected
+    }
+
+    /// Returns checked/toggled state metadata.
+    pub const fn checked(self) -> Option<Toggled> {
+        self.checked
+    }
+
+    /// Returns expanded state metadata.
+    pub const fn expanded(self) -> Option<bool> {
+        self.expanded
+    }
+
+    /// Returns disabled state metadata.
+    pub const fn disabled(self) -> Option<bool> {
+        self.disabled
+    }
+
+    /// Returns value metadata.
+    pub const fn value(self) -> Option<A11yValueMetadata> {
+        self.value
+    }
+
+    /// Returns orientation metadata.
+    pub const fn orientation(self) -> Option<Orientation> {
+        self.orientation
+    }
+
+    /// Returns supported accessibility actions.
+    pub const fn actions(self) -> &'static [AccessibleAction] {
+        self.actions
+    }
+
+    /// Applies the accessible-name source.
+    pub const fn with_label_source(mut self, source: A11yLabelSource) -> Self {
+        self.label_source = source;
+        self
+    }
+
+    /// Applies the accessible-description source.
+    pub const fn with_description_source(mut self, source: A11yDescriptionSource) -> Self {
+        self.description_source = source;
+        self
+    }
+
+    /// Applies selected state metadata.
+    pub const fn selected_state(mut self, selected: bool) -> Self {
+        self.selected = Some(selected);
+        self
+    }
+
+    /// Applies checked/toggled state metadata.
+    pub const fn checked_state(mut self, checked: Toggled) -> Self {
+        self.checked = Some(checked);
+        self
+    }
+
+    /// Applies expanded state metadata.
+    pub const fn expanded_state(mut self, expanded: bool) -> Self {
+        self.expanded = Some(expanded);
+        self
+    }
+
+    /// Applies disabled state metadata.
+    pub const fn disabled_state(mut self, disabled: bool) -> Self {
+        self.disabled = Some(disabled);
+        self
+    }
+
+    /// Applies value metadata.
+    pub const fn with_value_metadata(mut self, value: A11yValueMetadata) -> Self {
+        self.value = Some(value);
+        self
+    }
+
+    /// Applies orientation metadata.
+    pub const fn with_orientation(mut self, orientation: Orientation) -> Self {
+        self.orientation = Some(orientation);
+        self
+    }
+
+    /// Applies supported accessibility actions.
+    pub const fn with_actions(mut self, actions: &'static [AccessibleAction]) -> Self {
+        self.actions = actions;
+        self
+    }
+
+    /// Validates the contract against the current component-library a11y rules.
+    pub const fn validate(self) -> Result<(), A11yContractViolation> {
+        if role_requires_name(self.role) && !self.label_source.provides_name() {
+            return Err(self.violation(A11yContractError::MissingAccessibleName));
+        }
+        if role_requires_value(self.role) && self.value.is_none() {
+            return Err(self.violation(A11yContractError::MissingValueMetadata));
+        }
+        if role_requires_action(self.role) && self.actions.is_empty() {
+            return Err(self.violation(A11yContractError::MissingSupportedAction));
+        }
+
+        Ok(())
+    }
+
+    const fn violation(self, error: A11yContractError) -> A11yContractViolation {
+        A11yContractViolation {
+            component: self.component,
+            role: self.role,
+            error,
+        }
+    }
+}
+
+const fn role_requires_name(role: Role) -> bool {
+    matches!(
+        role,
+        Role::Button
+            | Role::Link
+            | Role::CheckBox
+            | Role::Switch
+            | Role::RadioButton
+            | Role::RadioGroup
+            | Role::Toolbar
+            | Role::Navigation
+            | Role::Tree
+            | Role::TreeItem
+            | Role::Table
+            | Role::ColumnHeader
+            | Role::ListBox
+            | Role::ListBoxOption
+            | Role::Menu
+            | Role::MenuItem
+            | Role::TextInput
+            | Role::EditableComboBox
+            | Role::Dialog
+            | Role::AlertDialog
+            | Role::Window
+            | Role::ProgressIndicator
+            | Role::SpinButton
+            | Role::Slider
+            | Role::Splitter
+            | Role::TabList
+            | Role::Tab
+            | Role::TabPanel
+    )
+}
+
+const fn role_requires_value(role: Role) -> bool {
+    matches!(
+        role,
+        Role::ProgressIndicator | Role::SpinButton | Role::Slider
+    )
+}
+
+const fn role_requires_action(role: Role) -> bool {
+    matches!(
+        role,
+        Role::Button
+            | Role::Link
+            | Role::CheckBox
+            | Role::Switch
+            | Role::RadioButton
+            | Role::ListBoxOption
+            | Role::MenuItem
+            | Role::SpinButton
+            | Role::Slider
+            | Role::Splitter
+            | Role::Tab
+    )
+}
+
 /// Converts a renderer-neutral role into GPUI's AccessKit role.
 pub fn gpui_role_from_ui(role: Role) -> GpuiRole {
     match role {
@@ -40,6 +390,7 @@ pub fn gpui_role_from_ui(role: Role) -> GpuiRole {
         Role::Separator => GpuiRole::Group,
         Role::SpinButton => GpuiRole::SpinButton,
         Role::Slider => GpuiRole::Slider,
+        Role::Splitter => GpuiRole::Splitter,
         Role::TabList => GpuiRole::TabList,
         Role::Tab => GpuiRole::Tab,
         Role::TabPanel => GpuiRole::TabPanel,
@@ -105,6 +456,16 @@ pub trait UiA11yElementExt: StatefulInteractiveElement + Sized {
         StatefulInteractiveElement::aria_toggled(self, gpui_toggled_from_ui(toggled))
     }
 
+    /// Sets renderer-neutral selected state.
+    fn ui_aria_selected(self, selected: bool) -> Self {
+        StatefulInteractiveElement::aria_selected(self, selected)
+    }
+
+    /// Sets renderer-neutral disabled state.
+    fn ui_aria_disabled(self, disabled: bool) -> Self {
+        StatefulInteractiveElement::aria_disabled(self, disabled)
+    }
+
     /// Sets renderer-neutral orientation.
     fn ui_aria_orientation(self, orientation: Orientation) -> Self {
         StatefulInteractiveElement::aria_orientation(self, gpui_orientation_from_ui(orientation))
@@ -129,3 +490,48 @@ pub trait UiA11yElementExt: StatefulInteractiveElement + Sized {
 }
 
 impl<T> UiA11yElementExt for T where T: StatefulInteractiveElement + Sized {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gpui_adapter_maps_splitter_role() {
+        assert_eq!(gpui_role_from_ui(Role::Splitter), GpuiRole::Splitter);
+    }
+
+    #[test]
+    fn gpui_adapter_maps_tab_roles() {
+        assert_eq!(gpui_role_from_ui(Role::TabList), GpuiRole::TabList);
+        assert_eq!(gpui_role_from_ui(Role::Tab), GpuiRole::Tab);
+        assert_eq!(gpui_role_from_ui(Role::TabPanel), GpuiRole::TabPanel);
+    }
+
+    #[test]
+    fn gpui_adapter_maps_accessibility_actions_used_by_docking() {
+        assert_eq!(
+            gpui_accessible_action_from_ui(AccessibleAction::Click),
+            GpuiAccessibleAction::Click
+        );
+        assert_eq!(
+            gpui_accessible_action_from_ui(AccessibleAction::Focus),
+            GpuiAccessibleAction::Focus
+        );
+        assert_eq!(
+            gpui_accessible_action_from_ui(AccessibleAction::Increment),
+            GpuiAccessibleAction::Increment
+        );
+        assert_eq!(
+            gpui_accessible_action_from_ui(AccessibleAction::Decrement),
+            GpuiAccessibleAction::Decrement
+        );
+    }
+
+    #[test]
+    fn gpui_adapter_maps_horizontal_orientation() {
+        assert_eq!(
+            gpui_orientation_from_ui(Orientation::Horizontal),
+            GpuiOrientation::Horizontal
+        );
+    }
+}

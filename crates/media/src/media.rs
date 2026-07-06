@@ -20,7 +20,9 @@ pub mod core_media {
         impl_CFTypeDescription, impl_TCFType,
         string::CFString,
     };
-    use core_video::image_buffer::{CVImageBuffer, CVImageBufferRef};
+    use objc2_core_foundation::CFRetained;
+    use objc2_core_video::CVImageBuffer;
+    use std::ptr::NonNull;
     use std::{ffi::c_void, ptr};
 
     #[repr(C)]
@@ -46,14 +48,11 @@ pub mod core_media {
             }
         }
 
-        pub fn image_buffer(&self) -> Option<CVImageBuffer> {
+        pub fn image_buffer(&self) -> Option<CFRetained<CVImageBuffer>> {
             unsafe {
                 let ptr = CMSampleBufferGetImageBuffer(self.as_concrete_TypeRef());
-                if ptr.is_null() {
-                    None
-                } else {
-                    Some(CVImageBuffer::wrap_under_get_rule(ptr))
-                }
+                let ptr = NonNull::new(ptr.cast_mut())?;
+                Some(CFRetained::retain(ptr))
             }
         }
 
@@ -101,7 +100,7 @@ pub mod core_media {
             buffer: CMSampleBufferRef,
             create_if_necessary: bool,
         ) -> CFArrayRef;
-        fn CMSampleBufferGetImageBuffer(buffer: CMSampleBufferRef) -> CVImageBufferRef;
+        fn CMSampleBufferGetImageBuffer(buffer: CMSampleBufferRef) -> *const CVImageBuffer;
         fn CMSampleBufferGetSampleTimingInfo(
             buffer: CMSampleBufferRef,
             index: CMItemIndex,
@@ -212,141 +211,10 @@ pub mod core_media {
 
 #[cfg(target_os = "macos")]
 pub mod core_video {
-    #![allow(non_snake_case)]
-
-    #[cfg(target_os = "macos")]
-    use core_foundation::{
-        base::{CFTypeID, TCFType},
-        declare_TCFType, impl_CFTypeDescription, impl_TCFType,
-    };
-    #[cfg(target_os = "macos")]
-    use std::ffi::c_void;
-
-    use crate::bindings::{CVReturn, kCVReturnSuccess};
-    pub use crate::bindings::{
+    pub use objc2_core_video::{
+        CVImageBuffer, CVMetalTexture, CVMetalTextureCache, CVMetalTextureGetTexture, CVReturn,
         kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8Planar,
+        kCVReturnSuccess,
     };
-    use anyhow::Result;
-    use core_foundation::{
-        base::kCFAllocatorDefault, dictionary::CFDictionaryRef, mach_port::CFAllocatorRef,
-    };
-    use foreign_types::ForeignTypeRef;
-
-    use metal::{MTLDevice, MTLPixelFormat};
-    use std::ptr;
-
-    #[repr(C)]
-    pub struct __CVMetalTextureCache(c_void);
-    pub type CVMetalTextureCacheRef = *const __CVMetalTextureCache;
-
-    declare_TCFType!(CVMetalTextureCache, CVMetalTextureCacheRef);
-    impl_TCFType!(
-        CVMetalTextureCache,
-        CVMetalTextureCacheRef,
-        CVMetalTextureCacheGetTypeID
-    );
-    impl_CFTypeDescription!(CVMetalTextureCache);
-
-    impl CVMetalTextureCache {
-        /// # Safety
-        ///
-        /// metal_device must be valid according to CVMetalTextureCacheCreate
-        pub unsafe fn new(metal_device: *mut MTLDevice) -> Result<Self> {
-            let mut this = ptr::null();
-            let result = unsafe {
-                CVMetalTextureCacheCreate(
-                    kCFAllocatorDefault,
-                    ptr::null(),
-                    metal_device,
-                    ptr::null(),
-                    &mut this,
-                )
-            };
-            anyhow::ensure!(
-                result == kCVReturnSuccess,
-                "could not create texture cache, code: {result}"
-            );
-            unsafe { Ok(CVMetalTextureCache::wrap_under_create_rule(this)) }
-        }
-
-        /// # Safety
-        ///
-        /// The arguments to this function must be valid according to CVMetalTextureCacheCreateTextureFromImage
-        pub unsafe fn create_texture_from_image(
-            &self,
-            source: ::core_video::image_buffer::CVImageBufferRef,
-            texture_attributes: CFDictionaryRef,
-            pixel_format: MTLPixelFormat,
-            width: usize,
-            height: usize,
-            plane_index: usize,
-        ) -> Result<CVMetalTexture> {
-            let mut this = ptr::null();
-            let result = unsafe {
-                CVMetalTextureCacheCreateTextureFromImage(
-                    kCFAllocatorDefault,
-                    self.as_concrete_TypeRef(),
-                    source,
-                    texture_attributes,
-                    pixel_format,
-                    width,
-                    height,
-                    plane_index,
-                    &mut this,
-                )
-            };
-            anyhow::ensure!(
-                result == kCVReturnSuccess,
-                "could not create texture, code: {result}"
-            );
-            unsafe { Ok(CVMetalTexture::wrap_under_create_rule(this)) }
-        }
-    }
-
-    #[link(name = "CoreVideo", kind = "framework")]
-    unsafe extern "C" {
-        fn CVMetalTextureCacheGetTypeID() -> CFTypeID;
-        fn CVMetalTextureCacheCreate(
-            allocator: CFAllocatorRef,
-            cache_attributes: CFDictionaryRef,
-            metal_device: *const MTLDevice,
-            texture_attributes: CFDictionaryRef,
-            cache_out: *mut CVMetalTextureCacheRef,
-        ) -> CVReturn;
-        fn CVMetalTextureCacheCreateTextureFromImage(
-            allocator: CFAllocatorRef,
-            texture_cache: CVMetalTextureCacheRef,
-            source_image: ::core_video::image_buffer::CVImageBufferRef,
-            texture_attributes: CFDictionaryRef,
-            pixel_format: MTLPixelFormat,
-            width: usize,
-            height: usize,
-            plane_index: usize,
-            texture_out: *mut CVMetalTextureRef,
-        ) -> CVReturn;
-    }
-
-    #[repr(C)]
-    pub struct __CVMetalTexture(c_void);
-    pub type CVMetalTextureRef = *const __CVMetalTexture;
-
-    declare_TCFType!(CVMetalTexture, CVMetalTextureRef);
-    impl_TCFType!(CVMetalTexture, CVMetalTextureRef, CVMetalTextureGetTypeID);
-    impl_CFTypeDescription!(CVMetalTexture);
-
-    impl CVMetalTexture {
-        pub fn as_texture_ref(&self) -> &metal::TextureRef {
-            unsafe {
-                let texture = CVMetalTextureGetTexture(self.as_concrete_TypeRef());
-                metal::TextureRef::from_ptr(texture as *mut _)
-            }
-        }
-    }
-
-    #[link(name = "CoreVideo", kind = "framework")]
-    unsafe extern "C" {
-        fn CVMetalTextureGetTypeID() -> CFTypeID;
-        fn CVMetalTextureGetTexture(texture: CVMetalTextureRef) -> *mut c_void;
-    }
 }

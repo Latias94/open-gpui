@@ -26,7 +26,10 @@ pub(crate) type PlatformScreenCaptureFrame = scap::frame::Frame;
 #[cfg(not(feature = "screen-capture"))]
 pub(crate) type PlatformScreenCaptureFrame = ();
 #[cfg(all(target_os = "macos", feature = "screen-capture"))]
-pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBuffer;
+pub(crate) type PlatformScreenCaptureFrame = PlatformPixelBuffer;
+/// A retained macOS CoreVideo pixel buffer used by screen capture and surface painting.
+#[cfg(target_os = "macos")]
+pub type PlatformPixelBuffer = objc2_core_foundation::CFRetained<objc2_core_video::CVPixelBuffer>;
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
@@ -83,6 +86,8 @@ pub use visual_test::VisualTestPlatform;
 /// Platform support relevant to ImGui-style multi-viewport docking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PlatformViewportCapabilities {
+    /// Independent application viewport windows can be opened for docking tear-off.
+    pub platform_viewport_windows: bool,
     /// Window bounds are reported in a shared desktop coordinate space.
     pub global_window_bounds: bool,
     /// The platform can report application windows in front-to-back order.
@@ -97,6 +102,21 @@ pub struct PlatformViewportCapabilities {
     pub no_input_windows: bool,
     /// Hovered-window queries pass through native no-input/click-through application windows.
     pub hovered_window_ignores_no_input: bool,
+}
+
+/// Platform support for ImGui-style viewport window flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PlatformViewportFlagCapabilities {
+    /// Native no-focus-on-appearing viewport windows are supported.
+    pub no_focus_on_appearing_windows: bool,
+    /// Native no-focus-on-click viewport windows are supported.
+    pub no_focus_on_click_windows: bool,
+    /// Native alpha/transparent viewport windows are supported.
+    pub alpha_windows: bool,
+    /// Native always-on-top viewport windows are supported.
+    pub topmost_windows: bool,
+    /// Native taskbar-hidden viewport windows are supported.
+    pub no_taskbar_windows: bool,
 }
 
 /// Backend hovered-window signal for multi-viewport routing.
@@ -224,6 +244,9 @@ pub trait Platform: 'static {
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities::default()
     }
+    fn viewport_flag_capabilities(&self) -> PlatformViewportFlagCapabilities {
+        PlatformViewportFlagCapabilities::default()
+    }
     fn mouse_button_is_pressed(&self, _button: MouseButton) -> Option<bool> {
         None
     }
@@ -277,6 +300,7 @@ pub trait Platform: 'static {
 
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
+    fn on_system_wake(&self, callback: Box<dyn FnMut()>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
@@ -305,8 +329,6 @@ pub trait Platform: 'static {
     }
     fn app_path(&self) -> Result<PathBuf>;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
-
-    fn set_cursor_style(&self, style: CursorStyle);
 
     /// Hides the mouse cursor until the user moves the mouse over one of
     /// this application's windows.
@@ -565,7 +587,7 @@ pub struct WindowButtonLayout {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl WindowButtonLayout {
-    /// Returns Zed's built-in fallback button layout for Linux titlebars.
+    /// Returns Open GPUI's built-in fallback button layout for Linux titlebars.
     pub fn linux_default() -> Self {
         Self {
             left: [None; MAX_BUTTONS_PER_SIDE],
@@ -719,6 +741,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn appearance(&self) -> WindowAppearance;
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn mouse_position(&self) -> Point<Pixels>;
+    fn set_cursor_style(&self, style: CursorStyle);
     fn modifiers(&self) -> Modifiers;
     fn capslock(&self) -> Capslock;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
@@ -1445,7 +1468,7 @@ pub struct UTF16Selection {
     pub reversed: bool,
 }
 
-/// Zed's interface for handling text input from the platform's IME system
+/// Open GPUI's interface for handling text input from the platform's IME system.
 /// This is currently a 1:1 exposure of the NSTextInputClient API:
 ///
 /// <https://developer.apple.com/documentation/appkit/nstextinputclient>

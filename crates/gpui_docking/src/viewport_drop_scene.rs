@@ -1,4 +1,3 @@
-#[cfg(test)]
 use crate::drop_target::DockResolvedDropTarget;
 use crate::{
     DockNodeId, DockPolicy, DockSpaceId, DockViewportIdentity,
@@ -32,10 +31,6 @@ impl DockViewportHostSceneFrame {
     /// Reports whether this render frame still belongs to the supplied viewport binding.
     pub(crate) fn matches_viewport(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
         self.identity.matches(space, window_id)
-    }
-
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
     }
 
     fn space(&self) -> &DockSpaceId {
@@ -86,6 +81,29 @@ impl DockViewportHostSceneSnapshot {
         }
     }
 
+    pub(crate) fn new_with_facts(
+        space: DockSpaceId,
+        window_id: WindowId,
+        current_bounds: DockViewportWindowBoundsFrame,
+        host_bounds: Bounds<Pixels>,
+        host_position: Point<Pixels>,
+        drop_guide_style: DockDropGuideStyle,
+        initial_facts: impl IntoIterator<Item = DockHostDropSceneFact>,
+    ) -> Self {
+        let mut snapshot = Self::new(
+            space,
+            window_id,
+            current_bounds,
+            host_bounds,
+            host_position,
+            drop_guide_style,
+        );
+        for fact in initial_facts {
+            snapshot.push_fact(fact);
+        }
+        snapshot
+    }
+
     fn same_content_as(&self, other: &Self) -> bool {
         self.space == other.space
             && self.window_id == other.window_id
@@ -105,8 +123,8 @@ impl DockViewportHostSceneSnapshot {
         DockViewportIdentity::new(self.space.clone(), self.window_id)
     }
 
-    pub(crate) fn push_fact(&mut self, fact: DockHostDropSceneFact) {
-        self.scene.push_fact(fact);
+    pub(crate) fn push_fact(&mut self, fact: DockHostDropSceneFact) -> bool {
+        self.scene.push_fact(fact)
     }
 
     fn leaf_bounds_for_tabs(&self, tabs: DockNodeId) -> Option<Bounds<Pixels>> {
@@ -157,7 +175,23 @@ pub(crate) struct DockViewportHostSceneRegistry {
 pub(crate) struct DockViewportResolvedFrame {
     pub(crate) frame: DockViewportHostSceneFrame,
     pub(crate) drop_guide_style: DockDropGuideStyle,
-    pub(crate) resolution: DockDropResolution,
+    pub(crate) resolution: DockViewportFrameResolution,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum DockViewportFrameResolution {
+    Drop(DockDropResolution),
+    GuideOnly(DockResolvedDropTarget),
+}
+
+impl DockViewportFrameResolution {
+    #[cfg(test)]
+    pub(crate) fn target(self) -> Option<DockResolvedDropTarget> {
+        match self {
+            Self::Drop(resolution) => resolution.target(),
+            Self::GuideOnly(target) => Some(target),
+        }
+    }
 }
 
 impl DockViewportHostSceneRegistry {
@@ -165,6 +199,13 @@ impl DockViewportHostSceneRegistry {
         &mut self,
         mut snapshot: DockViewportHostSceneSnapshot,
     ) -> DockViewportHostSceneRegistration {
+        if let Some(existing) = self.scenes.get(&snapshot.space) {
+            if existing.identity() == snapshot.identity() {
+                snapshot
+                    .scene
+                    .preserve_measured_tab_labels_from(&existing.scene);
+            }
+        }
         let changed = self
             .scenes
             .get(&snapshot.space)
@@ -204,7 +245,9 @@ impl DockViewportHostSceneRegistry {
         if !frame.matches_snapshot(scene) {
             return None;
         }
-        scene.push_fact(fact);
+        if !scene.push_fact(fact) {
+            return None;
+        }
         self.next_generation = self.next_generation.wrapping_add(1);
         scene.generation = self.next_generation;
         Some(scene.frame())
@@ -248,6 +291,19 @@ impl DockViewportHostSceneRegistry {
             return None;
         }
         snapshot.tab_label_bounds_for_tabs(tabs, target_index)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scene_for_window(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<DockHostDropScene> {
+        let snapshot = self.scenes.get(space)?;
+        if !snapshot.identity().matches(space, window_id) {
+            return None;
+        }
+        Some(snapshot.scene.clone())
     }
 
     #[cfg(test)]
@@ -306,7 +362,9 @@ impl DockViewportHostSceneRegistry {
         target_validator: Option<&DockDropTargetValidator<'_>>,
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
     ) -> Option<DockViewportResolvedFrame> {
-        let snapshot = self.scenes.get(space)?;
+        let Some(snapshot) = self.scenes.get(space) else {
+            return None;
+        };
         if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
             return None;
         }
@@ -318,8 +376,21 @@ impl DockViewportHostSceneRegistry {
             snapshot.host_bounds.origin.y + host_position.y,
         );
         scene = scene.with_payload_size(payload_size);
-        let resolution =
-            scene.resolve_drop_with_validator(policy, target_validator, edge_plan_resolver)?;
+        let resolution = scene
+            .resolve_drop_with_validator(policy, target_validator, edge_plan_resolver)
+            .map(DockViewportFrameResolution::Drop)
+            .or_else(|| {
+                scene
+                    .resolve_guide_target_with_validator(
+                        policy,
+                        target_validator,
+                        edge_plan_resolver,
+                    )
+                    .map(DockViewportFrameResolution::GuideOnly)
+            });
+        let Some(resolution) = resolution else {
+            return None;
+        };
         Some(DockViewportResolvedFrame {
             frame,
             drop_guide_style,
@@ -349,7 +420,10 @@ mod tests {
     use super::*;
     use crate::{
         DockGraph, DockNode, DockPolicy,
-        drop_target::{DockEmptySpaceDropTarget, DockLeafDropTarget, DockResolvedDropTargetKind},
+        drop_target::{
+            DockEmptySpaceDropTarget, DockLeafDropTarget, DockResolvedDropTargetKind,
+            DockTabBarDropTarget, DockTabLabelDropTarget,
+        },
         viewport_test_support::{bounds, space},
     };
     use open_gpui::{WindowId, point, px};
@@ -485,6 +559,105 @@ mod tests {
                 .push_frame_fact(&first, empty_space_fact(space.clone()))
                 .is_some(),
             "the preserved frame should remain current after identical re-render registration"
+        );
+    }
+
+    #[test]
+    fn host_scene_preserves_measured_tab_labels_without_generation_churn() {
+        let space = space("main");
+        let window_id = WindowId::from(1);
+        let mut graph = DockGraph::new();
+        let tabs = graph.insert_node(DockNode::Tabs {
+            items: Vec::new(),
+            selected: None,
+        });
+        let tab_bar_fact = tab_bar_fact(tabs, 2, false);
+        let label_bounds = bounds(8.0, 4.0, 72.0, 28.0);
+        let label_fact = tab_label_fact(tabs, 0, label_bounds, false);
+        let mut registry = DockViewportHostSceneRegistry::default();
+
+        let first = registry
+            .register(snapshot_with_facts(
+                space.clone(),
+                window_id,
+                vec![tab_bar_fact.clone()],
+            ))
+            .frame;
+        let measured = registry
+            .push_frame_fact(&first, label_fact.clone())
+            .expect("measured tab-label fact should advance the frame once");
+
+        assert_eq!(
+            registry.tab_label_bounds_for_tabs(&space, Some(window_id), tabs, 0),
+            Some(label_bounds)
+        );
+        assert!(
+            registry
+                .push_frame_fact(&measured, label_fact.clone())
+                .is_none(),
+            "pushing the same measured label should be a no-op"
+        );
+
+        let rerender = registry
+            .register(snapshot_with_facts(
+                space.clone(),
+                window_id,
+                vec![tab_bar_fact],
+            ))
+            .frame;
+        assert_eq!(
+            rerender, measured,
+            "base-scene re-registration should preserve current measured labels"
+        );
+        assert_eq!(
+            registry.tab_label_bounds_for_tabs(&space, Some(window_id), tabs, 0),
+            Some(label_bounds)
+        );
+
+        let next_bounds = bounds(10.0, 4.0, 74.0, 28.0);
+        let next = registry
+            .push_frame_fact(&rerender, tab_label_fact(tabs, 0, next_bounds, false))
+            .expect("changed measured tab-label bounds should advance the frame");
+        assert_ne!(next, rerender);
+        assert_eq!(
+            registry.tab_label_bounds_for_tabs(&space, Some(window_id), tabs, 0),
+            Some(next_bounds)
+        );
+    }
+
+    #[test]
+    fn host_scene_drops_measured_tab_labels_without_matching_tab_slot() {
+        let space = space("main");
+        let window_id = WindowId::from(1);
+        let mut graph = DockGraph::new();
+        let tabs = graph.insert_node(DockNode::Tabs {
+            items: Vec::new(),
+            selected: None,
+        });
+        let stale_label_bounds = bounds(90.0, 4.0, 72.0, 28.0);
+        let mut registry = DockViewportHostSceneRegistry::default();
+
+        let first = registry
+            .register(snapshot_with_facts(
+                space.clone(),
+                window_id,
+                vec![tab_bar_fact(tabs, 2, false)],
+            ))
+            .frame;
+        registry
+            .push_frame_fact(&first, tab_label_fact(tabs, 1, stale_label_bounds, false))
+            .expect("second tab label should be measured in the first frame");
+
+        registry.register(snapshot_with_facts(
+            space.clone(),
+            window_id,
+            vec![tab_bar_fact(tabs, 1, false)],
+        ));
+
+        assert_eq!(
+            registry.tab_label_bounds_for_tabs(&space, Some(window_id), tabs, 1),
+            None,
+            "measured labels beyond the current tab-bar insert index must not persist"
         );
     }
 
@@ -646,11 +819,54 @@ mod tests {
         )
     }
 
+    fn snapshot_with_facts(
+        space: DockSpaceId,
+        window_id: WindowId,
+        facts: Vec<DockHostDropSceneFact>,
+    ) -> DockViewportHostSceneSnapshot {
+        DockViewportHostSceneSnapshot::new_with_facts(
+            space,
+            window_id,
+            DockViewportWindowBoundsFrame::GlobalScreen(bounds(0.0, 0.0, 200.0, 120.0)),
+            bounds(0.0, 0.0, 200.0, 120.0),
+            point(px(10.0), px(10.0)),
+            crate::DockDropGuideStyle::default(),
+            facts,
+        )
+    }
+
     fn empty_space_fact(space: DockSpaceId) -> DockHostDropSceneFact {
         DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
             space,
             bounds: bounds(0.0, 0.0, 200.0, 120.0),
             is_central: false,
+        })
+    }
+
+    fn tab_bar_fact(
+        target_tabs: DockNodeId,
+        insert_index: usize,
+        is_central: bool,
+    ) -> DockHostDropSceneFact {
+        DockHostDropSceneFact::TabBar(DockTabBarDropTarget {
+            target_tabs,
+            insert_index,
+            bounds: bounds(0.0, 0.0, 200.0, 36.0),
+            is_central,
+        })
+    }
+
+    fn tab_label_fact(
+        target_tabs: DockNodeId,
+        target_index: usize,
+        label_bounds: Bounds<Pixels>,
+        is_central: bool,
+    ) -> DockHostDropSceneFact {
+        DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+            target_tabs,
+            target_index,
+            bounds: label_bounds,
+            is_central,
         })
     }
 

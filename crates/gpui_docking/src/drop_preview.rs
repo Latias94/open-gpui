@@ -30,6 +30,7 @@ pub(crate) struct DockPreviewScene {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockPreviewDecision {
     Allowed,
+    GuideOnly,
     Rejected { reason: Option<DockPolicyError> },
 }
 
@@ -115,7 +116,22 @@ pub(crate) struct DockPreviewBody {
 pub(crate) struct DockPreviewPayloadTabs {
     pub(crate) target_tabs: Option<DockNodeId>,
     pub(crate) insert_index: Option<usize>,
+    pub(crate) insertion: Option<DockPreviewTabInsertion>,
     pub(crate) tabs: Vec<DockPreviewPayloadTab>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPreviewTabInsertion {
+    pub(crate) target_tabs: Option<DockNodeId>,
+    pub(crate) index: DockPreviewTabInsertionIndex,
+    pub(crate) slot_bounds: Option<Bounds<Pixels>>,
+    pub(crate) clipping_bounds: Bounds<Pixels>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockPreviewTabInsertionIndex {
+    At(usize),
+    Append,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,6 +143,49 @@ pub(crate) struct DockPreviewPayloadTab {
 pub(crate) struct DockDropRoutePreview {
     pub(crate) kind: DockDropRoutePreviewKind,
     pub(crate) bounds: Bounds<Pixels>,
+    pub(crate) rejected: bool,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPreviewVisualDescriptor {
+    pub(crate) decision: DockPreviewVisualDecision,
+    pub(crate) active_layer: Option<DockPreviewLayerKind>,
+    pub(crate) active_zone: Option<DropZone>,
+    pub(crate) tab_insertion: Option<DockPreviewTabInsertionVisualDescriptor>,
+    pub(crate) payload_tabs: Vec<DockPreviewPayloadTabVisualDescriptor>,
+    pub(crate) has_body: bool,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockPreviewVisualDecision {
+    Allowed,
+    GuideOnly,
+    Rejected,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockPreviewPayloadTabVisualDescriptor {
+    pub(crate) index: usize,
+    pub(crate) title: String,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPreviewTabInsertionVisualDescriptor {
+    pub(crate) target_tabs: Option<DockNodeId>,
+    pub(crate) index: DockPreviewTabInsertionIndex,
+    pub(crate) has_slot_bounds: bool,
+    pub(crate) slot_bounds: Option<Bounds<Pixels>>,
+    pub(crate) clipping_bounds: Bounds<Pixels>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DockRoutePreviewVisualDescriptor {
+    pub(crate) kind: DockDropRoutePreviewKind,
     pub(crate) rejected: bool,
 }
 
@@ -150,6 +209,13 @@ impl DockDropPreview {
         style: DockDropGuideStyle,
     ) -> Option<Self> {
         Self::from_target(target, DockPreviewDecision::allowed(), style)
+    }
+
+    pub(crate) fn from_guide_target(
+        target: &DockResolvedDropTarget,
+        style: DockDropGuideStyle,
+    ) -> Option<Self> {
+        Self::from_target(target, DockPreviewDecision::guide_only(), style)
     }
 
     pub(crate) fn from_rejected_target(
@@ -206,8 +272,14 @@ impl DockDropPreview {
         *payload_tabs = DockPreviewPayloadTabs::from_payload(
             payload_tabs.target_tabs,
             payload_tabs.insert_index,
+            payload_tabs.insertion.clone(),
             payload,
         );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn visual_descriptor(&self) -> DockPreviewVisualDescriptor {
+        self.scene.visual_descriptor()
     }
 }
 
@@ -221,7 +293,13 @@ impl DockPreviewScene {
         decision: DockPreviewDecision,
         style: DockDropGuideStyle,
     ) -> Self {
-        let payload_tabs = payload_tabs_for_target(target, target_tabs, insert_index, &decision);
+        let body_bounds = if decision.is_guide_only() {
+            Bounds::new(body_bounds.origin, size(px(0.0), px(0.0)))
+        } else {
+            body_bounds
+        };
+        let payload_tabs =
+            payload_tabs_for_target(target, target_tabs, insert_index, &decision, body_bounds);
         let layers = preview_layers_for_target(target, target_bounds, &decision, style);
         Self {
             decision,
@@ -241,11 +319,48 @@ impl DockPreviewScene {
     }
 
     #[cfg(test)]
+    pub(crate) fn visual_descriptor(&self) -> DockPreviewVisualDescriptor {
+        let active_drop_box = self
+            .layers
+            .iter()
+            .flat_map(|layer| layer.drop_boxes.iter())
+            .find(|drop_box| drop_box.active);
+        DockPreviewVisualDescriptor {
+            decision: DockPreviewVisualDecision::from(&self.decision),
+            active_layer: active_drop_box.map(|drop_box| drop_box.layer),
+            active_zone: active_drop_box.map(|drop_box| drop_box.zone),
+            tab_insertion: self
+                .payload_tabs
+                .as_ref()
+                .and_then(|payload_tabs| payload_tabs.insertion.as_ref())
+                .map(DockPreviewTabInsertionVisualDescriptor::from),
+            payload_tabs: self
+                .payload_tabs
+                .as_ref()
+                .map(|payload_tabs| payload_tabs.visual_descriptors())
+                .unwrap_or_default(),
+            has_body: self.body.body_bounds.size.width > px(0.0)
+                && self.body.body_bounds.size.height > px(0.0),
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn active_drop_box(&self) -> Option<&DockPreviewDropBox> {
         self.layers
             .iter()
             .flat_map(|layer| layer.drop_boxes.iter())
             .find(|drop_box| drop_box.active)
+    }
+}
+
+#[cfg(test)]
+impl From<&DockPreviewDecision> for DockPreviewVisualDecision {
+    fn from(decision: &DockPreviewDecision) -> Self {
+        match decision {
+            DockPreviewDecision::Allowed => Self::Allowed,
+            DockPreviewDecision::GuideOnly => Self::GuideOnly,
+            DockPreviewDecision::Rejected { .. } => Self::Rejected,
+        }
     }
 }
 
@@ -258,14 +373,23 @@ impl DockPreviewDecision {
         Self::Rejected { reason }
     }
 
+    pub(crate) fn guide_only() -> Self {
+        Self::GuideOnly
+    }
+
     pub(crate) fn is_allowed(&self) -> bool {
         matches!(self, Self::Allowed)
+    }
+
+    pub(crate) fn is_guide_only(&self) -> bool {
+        matches!(self, Self::GuideOnly)
     }
 
     #[cfg(test)]
     pub(crate) fn rejection_reason(&self) -> Option<&DockPolicyError> {
         match self {
             Self::Allowed => None,
+            Self::GuideOnly => None,
             Self::Rejected { reason } => reason.as_ref(),
         }
     }
@@ -275,6 +399,7 @@ impl DockPreviewPayloadTabs {
     pub(crate) fn from_payload(
         target_tabs: Option<DockNodeId>,
         insert_index: Option<usize>,
+        insertion: Option<DockPreviewTabInsertion>,
         payload: &DockDragPayload,
     ) -> Self {
         let tabs = payload
@@ -287,7 +412,33 @@ impl DockPreviewPayloadTabs {
         Self {
             target_tabs,
             insert_index,
+            insertion,
             tabs,
+        }
+    }
+
+    #[cfg(test)]
+    fn visual_descriptors(&self) -> Vec<DockPreviewPayloadTabVisualDescriptor> {
+        self.tabs
+            .iter()
+            .enumerate()
+            .map(|(index, tab)| DockPreviewPayloadTabVisualDescriptor {
+                index,
+                title: tab.title.clone(),
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+impl From<&DockPreviewTabInsertion> for DockPreviewTabInsertionVisualDescriptor {
+    fn from(insertion: &DockPreviewTabInsertion) -> Self {
+        Self {
+            target_tabs: insertion.target_tabs,
+            index: insertion.index,
+            has_slot_bounds: insertion.slot_bounds.is_some(),
+            slot_bounds: insertion.slot_bounds,
+            clipping_bounds: insertion.clipping_bounds,
         }
     }
 }
@@ -297,6 +448,7 @@ fn payload_tabs_for_target(
     target_tabs: Option<DockNodeId>,
     insert_index: Option<usize>,
     decision: &DockPreviewDecision,
+    clipping_bounds: Bounds<Pixels>,
 ) -> Option<DockPreviewPayloadTabs> {
     if !decision.is_allowed() {
         return None;
@@ -309,6 +461,14 @@ fn payload_tabs_for_target(
         | DockResolvedDropTargetKind::EmptyDockSpace { .. } => Some(DockPreviewPayloadTabs {
             target_tabs,
             insert_index,
+            insertion: Some(DockPreviewTabInsertion {
+                target_tabs,
+                index: insert_index
+                    .map(DockPreviewTabInsertionIndex::At)
+                    .unwrap_or(DockPreviewTabInsertionIndex::Append),
+                slot_bounds: target.tab_insertion_bounds,
+                clipping_bounds,
+            }),
             tabs: Vec::new(),
         }),
         DockResolvedDropTargetKind::InnerEdge { .. }
@@ -351,7 +511,7 @@ fn preview_layer_for_target(
     decision: &DockPreviewDecision,
     style: DockDropGuideStyle,
 ) -> DockPreviewLayer {
-    let active = active_layer_for_target(target) == Some(kind);
+    let active = active_layer_for_target(target) == Some(kind) && !decision.is_guide_only();
     let zone = active
         .then(|| target.zone())
         .flatten()
@@ -413,7 +573,7 @@ fn availability_for_target(
         (DockResolvedDropTargetKind::RootEdge { .. }, DockPreviewLayerKind::Inner) => {
             DockPreviewAvailability {
                 center: false,
-                sides: false,
+                sides: !target.is_central_region && target.availability.sides,
             }
         }
         (DockResolvedDropTargetKind::RootEdge { .. }, DockPreviewLayerKind::Outer) => {
@@ -539,8 +699,8 @@ fn debug_node_for_target(
         | DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
         | DockResolvedDropTargetKind::InnerEdge { target_tabs, .. }
         | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => Some(target_tabs),
-        DockResolvedDropTargetKind::RootEdge { .. }
-        | DockResolvedDropTargetKind::EmptyDockSpace { .. } => None,
+        DockResolvedDropTargetKind::RootEdge { leaf_tabs, .. } => leaf_tabs,
+        DockResolvedDropTargetKind::EmptyDockSpace { .. } => None,
     }
 }
 
@@ -564,6 +724,14 @@ impl DockDropRoutePreview {
             bounds: route_bounds(host_position),
             rejected,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn visual_descriptor(&self) -> DockRoutePreviewVisualDescriptor {
+        DockRoutePreviewVisualDescriptor {
+            kind: self.kind,
+            rejected: self.rejected,
+        }
     }
 }
 
@@ -629,7 +797,9 @@ mod tests {
             inner_target_bounds: Some(bounds(0.0, 0.0, 320.0, 200.0)),
             availability: DockResolvedDropTargetAvailability::all(),
             drop_box,
+            hit_bounds: Some(bounds(0.0, 0.0, 320.0, 200.0)),
             preview_bounds: Some(bounds(0.0, 0.0, 320.0, 200.0)),
+            tab_insertion_bounds: None,
             edge_sizing,
             edge_plan: None,
             is_central_region: false,
@@ -674,6 +844,73 @@ mod tests {
                 .filter(|drop_box| drop_box.active)
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn guide_only_target_builds_drop_boxes_without_delivery_body() {
+        let tabs = DockNodeId::null();
+        let preview = DockDropPreview::from_guide_target(
+            &resolved_target(
+                DockResolvedDropTargetKind::LeafCenter {
+                    root: tabs,
+                    target_tabs: tabs,
+                },
+                None,
+            ),
+            DockDropGuideStyle::default(),
+        )
+        .expect("guide target should produce preview");
+        let visual = preview.visual_descriptor();
+
+        assert_eq!(visual.decision, DockPreviewVisualDecision::GuideOnly);
+        assert_eq!(visual.active_layer, None);
+        assert_eq!(visual.active_zone, None);
+        assert_eq!(visual.payload_tabs, Vec::new());
+        assert!(!visual.has_body);
+        assert_eq!(preview.scene.layers[0].kind, DockPreviewLayerKind::Inner);
+        assert_eq!(preview.scene.layers[0].drop_boxes.len(), 5);
+        assert!(
+            preview
+                .scene
+                .layers
+                .iter()
+                .flat_map(|layer| layer.drop_boxes.iter())
+                .all(|drop_box| !drop_box.active),
+            "guide-only preview should render passive drop boxes without selecting a drop target"
+        );
+    }
+
+    #[test]
+    fn guide_only_root_target_does_not_activate_split_preview() {
+        let root = DockNodeId::null();
+        let preview = DockDropPreview::from_guide_target(
+            &resolved_target(
+                DockResolvedDropTargetKind::RootEdge {
+                    root,
+                    leaf_tabs: None,
+                    zone: DropZone::Left,
+                },
+                None,
+            ),
+            DockDropGuideStyle::default(),
+        )
+        .expect("root guide target should produce preview");
+        let visual = preview.visual_descriptor();
+
+        assert_eq!(visual.decision, DockPreviewVisualDecision::GuideOnly);
+        assert_eq!(visual.active_layer, None);
+        assert_eq!(visual.active_zone, None);
+        assert_eq!(preview.scene.active_split(), None);
+        assert!(!visual.has_body);
+        assert_eq!(preview.scene.layers.len(), 2);
+        assert!(
+            preview
+                .scene
+                .layers
+                .iter()
+                .flat_map(|layer| layer.drop_boxes.iter())
+                .all(|drop_box| !drop_box.active)
         );
     }
 
@@ -723,13 +960,14 @@ mod tests {
     }
 
     #[test]
-    fn root_edge_target_preserves_inner_layer_but_activates_outer_layer() {
+    fn root_edge_target_keeps_passive_inner_side_guides_while_outer_layer_is_active() {
         let root = DockNodeId::null();
+        let leaf_tabs = DockNodeId::null();
         let preview = DockDropPreview::from_resolved_target(
             &resolved_target(
                 DockResolvedDropTargetKind::RootEdge {
                     root,
-                    leaf_tabs: None,
+                    leaf_tabs: Some(leaf_tabs),
                     zone: DropZone::Right,
                 },
                 Some(drop_box(DockDropBoxKind::OuterEdge(DropZone::Right))),
@@ -742,8 +980,16 @@ mod tests {
         assert_eq!(preview.scene.layers[0].kind, DockPreviewLayerKind::Inner);
         assert_eq!(preview.scene.layers[1].kind, DockPreviewLayerKind::Outer);
         assert!(!preview.scene.layers[0].availability.center);
-        assert!(!preview.scene.layers[0].availability.sides);
-        assert!(preview.scene.layers[0].drop_boxes.is_empty());
+        assert!(preview.scene.layers[0].availability.sides);
+        assert_eq!(preview.scene.layers[0].drop_boxes.len(), 4);
+        assert!(
+            preview.scene.layers[0].drop_boxes.iter().all(|drop_box| {
+                matches!(drop_box.kind, DockDropBoxKind::InnerEdge(_))
+                    && drop_box.debug_node == Some(leaf_tabs)
+                    && !drop_box.active
+            }),
+            "inner layer should keep passive leaf side guides while the outer layer owns delivery"
+        );
         assert!(!preview.scene.layers[1].availability.center);
         assert!(preview.scene.layers[1].availability.sides);
         assert_eq!(
@@ -753,6 +999,32 @@ mod tests {
                 .map(|drop_box| drop_box.layer),
             Some(DockPreviewLayerKind::Outer)
         );
+    }
+
+    #[test]
+    fn root_edge_target_over_central_root_keeps_inner_side_guides_hidden() {
+        let root = DockNodeId::null();
+        let mut target = resolved_target(
+            DockResolvedDropTargetKind::RootEdge {
+                root,
+                leaf_tabs: Some(root),
+                zone: DropZone::Right,
+            },
+            Some(drop_box(DockDropBoxKind::OuterEdge(DropZone::Right))),
+        );
+        target.is_central_region = true;
+
+        let preview = DockDropPreview::from_resolved_target(&target, DockDropGuideStyle::default())
+            .expect("root edge target should produce preview");
+
+        assert_eq!(preview.scene.layers.len(), 2);
+        assert_eq!(preview.scene.layers[0].kind, DockPreviewLayerKind::Inner);
+        assert!(!preview.scene.layers[0].availability.center);
+        assert!(!preview.scene.layers[0].availability.sides);
+        assert!(preview.scene.layers[0].drop_boxes.is_empty());
+        assert_eq!(preview.scene.layers[1].kind, DockPreviewLayerKind::Outer);
+        assert!(!preview.scene.layers[1].availability.center);
+        assert!(preview.scene.layers[1].availability.sides);
     }
 
     #[test]

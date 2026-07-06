@@ -69,9 +69,9 @@ impl TextSystem {
             wrapper_pool: Mutex::default(),
             font_runs_pool: Mutex::default(),
             fallback_font_stack: smallvec![
-                // TODO: Remove this when Linux have implemented setting fallbacks.
-                font(".ZedMono"),
-                font(".ZedSans"),
+                // TODO: Remove this when Linux has implemented setting fallbacks.
+                font(".OpenGpuiMono"),
+                font(".OpenGpuiSans"),
                 font("Helvetica"),
                 font("Segoe UI"),     // Windows
                 font("Ubuntu"),       // Gnome (Ubuntu)
@@ -1177,11 +1177,12 @@ impl FontMetrics {
 /// Maps well-known virtual font names to their concrete equivalents.
 #[allow(unused)]
 pub fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'a str {
-    // Note: the "Zed Plex" fonts were deprecated as we are not allowed to use "Plex"
-    // in a derived font name. They are essentially indistinguishable from IBM Plex/Lilex,
-    // and so retained here for backward compatibility.
+    // The Zed names are kept as compatibility aliases for code written
+    // against upstream GPUI. New code should prefer the Open GPUI aliases.
     match name {
         ".SystemUIFont" => system,
+        ".OpenGpuiSans" | ".UiSans" => system,
+        ".OpenGpuiMono" | ".UiMono" => "JetBrains Mono",
         ".ZedSans" | "Zed Plex Sans" => "IBM Plex Sans",
         ".ZedMono" | "Zed Plex Mono" => "Lilex",
         _ => name,
@@ -1194,13 +1195,42 @@ pub fn font_name_with_fallbacks_shared<'a>(
     name: &'a SharedString,
     system: &'a SharedString,
 ) -> &'a SharedString {
-    // Note: the "Zed Plex" fonts were deprecated as we are not allowed to use "Plex"
-    // in a derived font name. They are essentially indistinguishable from IBM Plex/Lilex,
-    // and so retained here for backward compatibility.
+    // The Zed names are kept as compatibility aliases for code written
+    // against upstream GPUI. New code should prefer the Open GPUI aliases.
     match name.as_str() {
         ".SystemUIFont" => system,
+        ".OpenGpuiSans" | ".UiSans" => system,
+        ".OpenGpuiMono" | ".UiMono" => const { &SharedString::new_static("JetBrains Mono") },
         ".ZedSans" | "Zed Plex Sans" => const { &SharedString::new_static("IBM Plex Sans") },
         ".ZedMono" | "Zed Plex Mono" => const { &SharedString::new_static("Lilex") },
         _ => name,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_open_gpui_virtual_font_names() {
+        assert_eq!(font_name_with_fallbacks(".OpenGpuiSans", "Inter"), "Inter");
+        assert_eq!(
+            font_name_with_fallbacks(".OpenGpuiMono", "Inter"),
+            "JetBrains Mono"
+        );
+        assert_eq!(font_name_with_fallbacks(".UiSans", "Inter"), "Inter");
+        assert_eq!(
+            font_name_with_fallbacks(".UiMono", "Inter"),
+            "JetBrains Mono"
+        );
+    }
+
+    #[test]
+    fn keeps_upstream_zed_virtual_font_aliases() {
+        assert_eq!(
+            font_name_with_fallbacks(".ZedSans", "Inter"),
+            "IBM Plex Sans"
+        );
+        assert_eq!(font_name_with_fallbacks(".ZedMono", "Inter"), "Lilex");
     }
 }

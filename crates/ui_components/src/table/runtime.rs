@@ -1,11 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
-use open_gpui::{Context, FocusHandle, ScrollHandle};
+use open_gpui::{Context, FocusHandle};
 use open_gpui_ui_core::{
     TableColumnResizeState, TableExpansionState, TableResolvedState, TableRowId,
     TableStateCacheKey, UiPx,
 };
+
+use crate::scroll_surface::ScrollSurfaceRuntime;
 
 use super::content_fit::TableContentFitMeasureCache;
 use super::{TableColumnRenderPlan, TableRenderPlan, nonnegative_px};
@@ -19,8 +21,8 @@ pub(super) struct TableResolvedCache {
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct TableRuntime {
-    pub(super) scroll_handle: ScrollHandle,
-    pub(super) horizontal_scroll_handle: ScrollHandle,
+    pub(super) scroll_surface: ScrollSurfaceRuntime,
+    pub(super) horizontal_scroll_surface: ScrollSurfaceRuntime,
     pub(super) resolved: Option<TableResolvedCache>,
     pub(super) content_fit: TableContentFitMeasureCache,
     pub(super) row_measurements: BTreeMap<String, UiPx>,
@@ -34,8 +36,8 @@ pub(super) struct TableRuntime {
 impl TableRuntime {
     pub(super) fn new(default_focused_row: Option<TableRowId>) -> Self {
         Self {
-            scroll_handle: ScrollHandle::new(),
-            horizontal_scroll_handle: ScrollHandle::new(),
+            scroll_surface: ScrollSurfaceRuntime::new(None),
+            horizontal_scroll_surface: ScrollSurfaceRuntime::new(None),
             resolved: None,
             content_fit: TableContentFitMeasureCache::default(),
             row_measurements: BTreeMap::new(),

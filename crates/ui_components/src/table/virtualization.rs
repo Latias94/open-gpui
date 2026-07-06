@@ -5,11 +5,10 @@ use open_gpui_ui_core::{
     VirtualizerState,
 };
 
-use super::{TableRowMeasureMode, TableRowRenderPlan};
+use super::TableRowRenderPlan;
 
 pub(super) fn measured_virtualizer_state(
     rows: &[TableResolvedRow],
-    row_measure_mode: TableRowMeasureMode,
     row_measurements: &BTreeMap<String, UiPx>,
     fallback_row_height: UiPx,
     overscan: usize,
@@ -28,23 +27,16 @@ pub(super) fn measured_virtualizer_state(
         .collect::<Vec<_>>();
     state = state.with_item_keys(item_keys);
 
-    if row_measure_mode.measured() {
-        return state.resolve_known_size_window(|index| {
-            let row = &rows[index];
-            let render_key = row_render_key(row, duplicate_row_ids);
-            (
-                VirtualizerItemKey::new(render_key.clone()),
-                row_measurements
-                    .get(&render_key)
-                    .copied()
-                    .unwrap_or(fallback_row_height),
-            )
-        });
-    }
-
-    state.resolve_fixed_window(|index| {
+    state.resolve_known_size_window(|index| {
         let row = &rows[index];
-        VirtualizerItemKey::new(row_render_key(row, duplicate_row_ids))
+        let render_key = row_render_key(row, duplicate_row_ids);
+        (
+            VirtualizerItemKey::new(render_key.clone()),
+            row_measurements
+                .get(&render_key)
+                .copied()
+                .unwrap_or(fallback_row_height),
+        )
     })
 }
 

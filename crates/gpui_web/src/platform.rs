@@ -1,11 +1,11 @@
-use crate::dispatcher::WebDispatcher;
+use crate::dispatcher::{WebDispatcher, WebDispatcherMode};
 use crate::display::WebDisplay;
 use crate::keyboard::WebKeyboardLayout;
 use crate::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
 use open_gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DummyKeyboardMapper,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DummyKeyboardMapper,
     ForegroundExecutor, Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
     ThermalState, WindowAppearance, WindowParams,
@@ -20,21 +20,13 @@ use std::{
 };
 use wasm_bindgen::prelude::*;
 
-static BUNDLED_FONTS: &[&[u8]] = &[
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf"),
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf"),
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf"),
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-Bold.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-Italic.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-BoldItalic.ttf"),
-];
+static BUNDLED_FONTS: &[&[u8]] = damascene_fonts::DEFAULT_FONTS;
 
 pub struct WebPlatform {
     browser_window: web_sys::Window,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
+    dispatcher_mode: WebDispatcherMode,
     text_system: Arc<dyn PlatformTextSystem>,
     active_window: RefCell<Option<AnyWindowHandle>>,
     active_display: Rc<dyn PlatformDisplay>,
@@ -65,17 +57,22 @@ impl WebPlatform {
             browser_window.clone(),
             allow_multi_threading,
         ));
+        let dispatcher_mode = dispatcher.mode();
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let text_system = Arc::new(open_gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
-            "IBM Plex Sans",
+            "Inter",
         ));
-        let fonts = BUNDLED_FONTS
-            .iter()
-            .map(|bytes| Cow::Borrowed(*bytes))
-            .collect();
-        if let Err(error) = text_system.add_fonts(fonts) {
-            log::error!("failed to load bundled fonts: {error:#}");
+        if BUNDLED_FONTS.is_empty() {
+            log::warn!("WebPlatform started without bundled fonts");
+        } else {
+            let fonts = BUNDLED_FONTS
+                .iter()
+                .map(|bytes| Cow::Borrowed(*bytes))
+                .collect();
+            if let Err(error) = text_system.add_fonts(fonts) {
+                log::error!("failed to load bundled fonts: {error:#}");
+            }
         }
         let text_system: Arc<dyn PlatformTextSystem> = text_system;
         let active_display: Rc<dyn PlatformDisplay> =
@@ -93,6 +90,7 @@ impl WebPlatform {
             browser_window,
             background_executor,
             foreground_executor,
+            dispatcher_mode,
             text_system,
             active_window: RefCell::new(None),
             active_display,
@@ -102,6 +100,10 @@ impl WebPlatform {
             last_cursor_css,
             _cursor_restore_listeners: cursor_restore_listeners,
         }
+    }
+
+    pub fn dispatcher_mode(&self) -> WebDispatcherMode {
+        self.dispatcher_mode
     }
 }
 
@@ -171,7 +173,14 @@ impl Platform for WebPlatform {
             anyhow::anyhow!("WebGPU context not initialized. Was Platform::run() called?")
         })?;
 
-        let window = WebWindow::new(handle, params, context, self.browser_window.clone())?;
+        let window = WebWindow::new(
+            handle,
+            params,
+            context,
+            self.browser_window.clone(),
+            self.cursor_visible.clone(),
+            self.last_cursor_css.clone(),
+        )?;
         *self.active_window.borrow_mut() = Some(handle);
         Ok(Box::new(window))
     }
@@ -246,6 +255,8 @@ impl Platform for WebPlatform {
         self.callbacks.borrow_mut().reopen = Some(callback);
     }
 
+    fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
+
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
 
     fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {}
@@ -282,37 +293,6 @@ impl Platform for WebPlatform {
         Err(anyhow::anyhow!(
             "path_for_auxiliary_executable is not available on the web"
         ))
-    }
-
-    fn set_cursor_style(&self, style: CursorStyle) {
-        let css_cursor = match style {
-            CursorStyle::Arrow => "default",
-            CursorStyle::IBeam => "text",
-            CursorStyle::Crosshair => "crosshair",
-            CursorStyle::ClosedHand => "grabbing",
-            CursorStyle::OpenHand => "grab",
-            CursorStyle::PointingHand => "pointer",
-            CursorStyle::ResizeLeft | CursorStyle::ResizeRight | CursorStyle::ResizeLeftRight => {
-                "ew-resize"
-            }
-            CursorStyle::ResizeUp | CursorStyle::ResizeDown | CursorStyle::ResizeUpDown => {
-                "ns-resize"
-            }
-            CursorStyle::ResizeUpLeftDownRight => "nesw-resize",
-            CursorStyle::ResizeUpRightDownLeft => "nwse-resize",
-            CursorStyle::ResizeColumn => "col-resize",
-            CursorStyle::ResizeRow => "row-resize",
-            CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
-            CursorStyle::OperationNotAllowed => "not-allowed",
-            CursorStyle::DragLink => "alias",
-            CursorStyle::DragCopy => "copy",
-            CursorStyle::ContextualMenu => "context-menu",
-        };
-
-        self.last_cursor_css.set(css_cursor);
-        if self.cursor_visible.get() {
-            set_body_cursor(&self.browser_window, css_cursor);
-        }
     }
 
     fn hide_cursor_until_mouse_moves(&self) {
@@ -425,7 +405,7 @@ fn cursor_restore_listeners(
     handles
 }
 
-fn set_body_cursor(browser_window: &web_sys::Window, css_cursor: &str) {
+pub(crate) fn set_body_cursor(browser_window: &web_sys::Window, css_cursor: &str) {
     if let Some(document) = browser_window.document()
         && let Some(body) = document.body()
         && let Err(error) = body.style().set_property("cursor", css_cursor)

@@ -6,6 +6,507 @@ status: active
 
 # Log
 
+- 2026-07-06: Started `docs/plans/2026-07-06-001-refactor-runtime-ui-hardening-plan.md` with the
+  S1 platform/web runtime honesty slice. Windows `hide_other_apps` and `unhide_other_apps` now
+  degrade to debug diagnostics instead of `unimplemented!()` panics, and `open-gpui-web` exposes
+  typed `WebDispatcherMode` facts from `WebDispatcher` and `WebPlatform` without changing the
+  generic `PlatformDispatcher` trait. Worker startup failure now reports
+  `SingleThreaded { reason: WorkerStartupFailed }` instead of panicking, and focused regression
+  coverage checks dispatcher mode selection plus Windows no-op lifecycle calls. Stable wasm checks
+  for `open-gpui-web`, `open-gpui-platform`,
+  and `open-gpui-wgpu` passed, as did the local `open-gpui-windows --all-features` smoke; Windows
+  CI remains the final owner for Windows API coverage. The nightly `hello_web` shared-memory wasm
+  compile check also passed with the expected atomics target-feature warning. The docking
+  capability parity audit passed
+  the focused `host_viewport_route host_viewport_platform_capability viewport_runtime` nextest gate
+  with 191/191 tests passing and no docking code changes required. Motion/component/gallery nextest
+  filters hit the known macOS test-binary list-stage stall, so the local verification tail used
+  `open-gpui-ui-core --tests`, component/gallery ordinary checks, `scan-ui-contract`,
+  `scan-import-boundary`, stable wasm checks, and `cargo check --workspace --locked`.
+- 2026-07-04: Wired GPUI Splitter structural layout transitions on
+  `feat/ui-motion-projection-clips`. `SplitterRuntime` now stores previous semantic state, runs a
+  separate layout-transition scalar track for identity/count/collapse/expand changes, renders the
+  final flex layout plus a projection-clip overlay, and adds `SplitterPanel::view` as the explicit
+  retained-content path for real leaving-panel content.
+- 2026-07-04: Added shared projection clip sampling on
+  `feat/ui-motion-projection-clips`. `MotionProjectionClip` now lives in `ui_core`,
+  Docking pane clip execution reuses it for enter/leave/move/resize samples, and
+  `SplitterLayoutTransition::sample` exposes final-content bounds plus visible clip bounds for
+  renderer-neutral insert/remove/resize/collapse/expand transition evidence.
+- 2026-07-04: Added command keymap resolution on `feat/command-keymap-scopes`.
+  `CommandCenter` and `GpuiCommandActionMap` can now resolve typed GPUI key sequences into command
+  ids, chord pending state, command-specific continuations, and disabled/hidden/missing-command
+  preflight state while keeping GPUI as the key dispatch authority.
+- 2026-07-04: Dogfooded command keymap resolution in the Components gallery Command samples.
+  The `keymap-resolution` sample now renders pending chord, matched command, disabled, hidden, and
+  missing-command readouts backed by `CommandCenter::resolve_key_sequence_for_keymap`, with gallery
+  contracts and smoke tests covering the rendered selectors.
+- 2026-07-04: Added command palette pending provider request handoff on
+  `feat/command-navigation-polish`. `CommandPaletteControllerUpdate` now exposes
+  `CommandPalettePendingProviderRequest` values for app-owned async providers while preserving
+  `missing_provider_ids()` as a compatibility summary, and public exports/docs/tests were updated.
+- 2026-07-04: Added command palette navigation polish on
+  `feat/command-navigation-polish`. `CommandNavigationBehavior` now controls Up/Down loop behavior
+  and Alt+Up/Alt+Down group jumps, Home/End are first-class command navigation keys, and the public
+  API inventory, docs, gallery readouts, and focused runtime/public-surface/gallery tests were
+  updated together.
+- 2026-07-04: Started the UI motion value foundation on
+  `feat/ui-motion-value-foundation`. ADR 0017 accepts explicit model/preset resolution,
+  proof-gated scalar value/run state, frame-demand reasons, production policy gates, and projection
+  honesty while deferring keyframes, grouped playback, public subscribers, DOM/React APIs, and
+  compositor-backed execution.
+- 2026-07-04: Completed the first UI motion value foundation code checkpoint on
+  `feat/ui-motion-value-foundation`. `MotionRunState` now names shared run state, `MotionPreset`
+  makes default spring selection explicit, Splitter programmatic motion resolves an explicit layout
+  preset, and Docking exposes explicit model/preset execution while `MotionSpec` compatibility
+  paths remain timeline-backed.
+- 2026-07-04: Added proof-gated scalar motion value state on
+  `feat/ui-motion-value-foundation`. `MotionValue` now owns current, previous, previous-frame,
+  velocity, jump/cancel, and active-owner state, and `MotionScalarTrack` stores its source through
+  `MotionValue` so Splitter/Docking consume it through the existing scalar controller path.
+- 2026-07-04: Added UI motion frame-demand reasons and production policy gates on
+  `feat/ui-motion-value-foundation`. `MotionFrameDemand` now reports `UpdateRender`, Splitter
+  programmatic motion validates committed-layout models before scheduling, and Docking transition
+  execution records the policy report for the resolved continuity model.
+- 2026-07-04: Narrowed the Splitter motion public surface on
+  `feat/ui-motion-value-foundation`. `Splitter::motion_preference` now drives the real render-path
+  committed-layout motion policy, panel identity/count changes are explicitly immediate, and
+  Splitter transition descriptors were removed from component default exports until the GPUI adapter
+  executes insert/remove/collapse/expand transitions.
+- 2026-07-04: Rendered Docking projection clips on `feat/ui-motion-value-foundation`.
+  `MotionProjection::visual_bounds()` is now the public core visual-bounds helper, Docking
+  moving/resizing pane transitions mount final-size pane content through projection clip/occlusion
+  layers, and the scalar sample type was renamed from `MotionSpringSample` to
+  `MotionScalarSample`.
+- 2026-07-04: Completed the UI motion value foundation proof pass on
+  `feat/ui-motion-value-foundation`. Native runtime motion proof output now reports
+  value/run/scalar-sample/model/policy/projection-clip capabilities, verification docs describe
+  projection clips as rendered behavior, and final focused gates passed before merge.
+- 2026-07-04: Added command palette status rows on `feat/command-palette-polish`.
+  `CommandPaletteProjection` now adapts failed provider statuses and shortcut diagnostics into
+  `CommandStatusItem` rows, `CommandState` / `Command` expose status counters and builder hooks,
+  and the gallery has a `diagnostics-empty` sample that renders provider failure, warning rows, and
+  the empty list state inside the component surface.
+- 2026-07-04: Added command keybinding conflict reporting on
+  `feat/command-keybinding-conflicts`. `CommandKeyBindingProjection` now reports conservative
+  same-context shortcut conflicts, and `CommandKeyBindingInstallReport` summarizes append-only
+  installation into GPUI keymaps while preserving GPUI as the dispatch precedence authority.
+- 2026-07-03: Implemented the UI motion spring foundation on
+  `feat/ui-motion-spring-foundation`. `open_gpui_ui_core` now owns deterministic spring sampling,
+  layout projection data, scalar motion controllers, and motion policy validation; Splitter uses
+  shared scalar motion for programmatic changes while pointer drag stays direct; docking transition
+  progress uses a scalar motion track and projection-derived pane/divider bounds while current
+  facts remain release authority.
+- 2026-07-03: Started the UI motion spring foundation on
+  `feat/ui-motion-spring-foundation`. ADR 0016 accepts a narrow renderer-neutral spring,
+  projection, grouped-controller, and motion policy primitive in `open_gpui_ui_core` while keeping
+  GPUI frame requests, compositor backends, public animation builders, docking release authority,
+  and pointer-coupled interactions out of the shared core.
+- 2026-07-03: Added the command keybinding registry on `feat/command-keybinding-registry`.
+  `CommandKeyBindingRegistry` lets apps/plugins register command-id keyed shortcut dictionaries and
+  project valid entries into GPUI `KeyBinding` values through `CommandCenter`. Invalid entries now
+  report missing-action or parse diagnostics instead of panicking, while GPUI remains the authority
+  for chords, key context predicates, and focused-window precedence. Focused `open-gpui-command`,
+  public surface, and full command crate nextest gates passed.
+- 2026-07-03: Added command query-history ergonomics on `feat/command-query-history`.
+  `CommandCenter` now exposes app-facing query record/list/previous/next/reset methods, duplicate
+  query recording promotes the newest occurrence, and `CommandPaletteController` wraps
+  keymap/window query-history navigation by capturing the current query as a prefix and restoring
+  the draft query after the newest matching history entry. Focused `open-gpui-command` and
+  `open-gpui-ui-components command_palette_controller` nextest gates passed.
+- 2026-07-03: Added explicit command lifecycle handles on
+  `feat/command-source-handles`. `CommandSourceHandle` and `CommandProviderHandle` are now the
+  recommended names for plugin-like registrations, with `CommandSourceRegistration` and
+  `CommandProviderRegistration` retained as compatibility aliases. Handles can unregister
+  themselves against an app-owned `CommandCenter`, and borrowed center unregister methods remain
+  available for hosts that store handles in registries.
+- 2026-07-03: Added `CommandContextStack` on `feat/command-context-keymap`. The stack carries
+  command scopes and GPUI key contexts separately, so `CommandCenter` can project focused command
+  scopes while app-level keymap shortcut display and diagnostics respect the same GPUI key context
+  stack. The gallery now has a `context-stack` command sample proving focused descriptor override
+  and context-aware shortcut labels.
+- 2026-07-03: Added `CommandPaletteController` on `feat/command-palette-controller`. The UI-side
+  controller owns palette query/provider refresh lifecycle, refreshes registered synchronous
+  providers, reports configured providers that need app-owned async work, accepts external async
+  responses through the existing request-id stale guard, and returns a complete
+  `CommandPaletteProjection` update for `Command`. Root/prelude exports and the gallery
+  `provider-search` sample now use the controller. Focused `cargo nextest` verification passed for
+  controller, command palette, public surface, and gallery command sample gates.
+- 2026-07-03: Added `CommandPaletteProjection` on `feat/command-palette-session`. The UI-side
+  projection now adapts a `CommandCenter` query plus keymap/window shortcut precedence into a
+  `PreFiltered` `CommandIndexSnapshot`, provider statuses, and shortcut diagnostics.
+  `Command::palette_projection` consumes it directly. The gallery `provider-search` sample now
+  binds dynamic provider command ids to GPUI actions and shortcuts before projecting the palette,
+  so provider results are dispatch-ready and diagnostic-clean.
+- 2026-07-03: Added command shortcut diagnostics on
+  `feat/command-app-integration-diagnostics`. `GpuiCommandActionMap` now reports strict
+  command/action/keymap drift for missing actions, orphan actions, missing shortcuts, and duplicated
+  projected shortcut labels. `CommandCenter` exposes the same check for app-owned validation while
+  filtering hidden-but-still-registered commands out of orphan diagnostics. The gallery
+  `registry-dispatch` sample now proves a healthy empty diagnostic set.
+- 2026-07-03: Added the UI-side command refresh bridge on
+  `feat/command-refresh-ui-bridge`. `CommandProviderPaletteProjection` now adapts
+  `CommandProviderRefreshProjection` into a `PreFiltered` `CommandIndexSnapshot`, loading metadata,
+  and provider-status readout while keeping `open_gpui_command` UI-neutral.
+  `Command::provider_refresh_projection` binds the provider query and snapshot without app-owned
+  snapshot glue, and the gallery `provider-search` sample now consumes the adapter.
+- 2026-07-03: Added `CommandProviderRefreshController` on
+  `feat/command-provider-refresh-controller`. The controller starts provider requests when the
+  query changes, optionally applies loading status, can refresh registered synchronous providers,
+  applies async responses for captured requests, returns stale outcomes without mutating sources,
+  and projects the current `CommandRegistrySnapshot`. The gallery `provider-search` sample now uses
+  the controller instead of manually stitching provider refresh and snapshot projection.
+- 2026-07-03: Added provider lifecycle request tracking on
+  `feat/command-provider-lifecycle`. `CommandCenter` now issues per-provider
+  `CommandProviderRequestId` values through `begin_provider_request` and synchronous
+  `refresh_provider`; responses can bind to a request with `for_request`; applying an old bound
+  response after a newer request returns `CommandProviderApplyOutcome::Stale` without replacing
+  registry sources. Provider status now records request id and query, and the gallery
+  `provider-search` sample/readout/tests expose that metadata.
+- 2026-07-03: Added the provider-backed command gallery proof on
+  `feat/command-provider-gallery`. The Components page now has a sixth command sample,
+  `provider-search`, which registers a query-dependent `CommandCenter` provider, refreshes it for
+  `alpha`, records provider status, projects the dynamic provider source into
+  `CommandIndexSnapshot`, and renders it through the existing `Command` component. The existing
+  `registry-dispatch` sample remains at index 4; provider contracts live in the appended index 5
+  sample.
+- 2026-07-03: Implemented
+  `docs/plans/2026-07-03-002-refactor-docking-affordance-authority-cleanup-plan.md` on
+  `refactor/docking-visual-affordance-runtime`. Target preview rendering now consumes
+  `DockVisualAffordanceScene` directly, overlay motion APIs were renamed to visual-affordance
+  motion APIs, the old `DockOverlayScene` bridge was deleted, native visual diagnostics are
+  published through `DockViewportRuntimeStatus`, and `ui_core` owns reusable rect motion helpers for
+  preferred edge selection, offscreen source rects, reveal rects, and interpolation. Docking graph
+  layout now reuses the shared split layout scene path. Focused docking/native/ui-core checks and
+  the broad `open-gpui-docking` nextest suite passed before merging.
+- 2026-07-03: Implemented U1-U6 of
+  `docs/plans/2026-07-03-001-refactor-docking-visual-affordance-runtime-plan.md` on
+  `refactor/docking-visual-affordance-runtime`. The branch now has `DockVisualAffordanceScene` as
+  the visual feedback authority for preview layers, route markers, divider/corner affordances,
+  focus/zoom indicators, accessibility overlay descriptors, overlay motion identity, and native
+  runtime diagnostics. The old route-marker overlay adapter was removed; `DockOverlayScene` remains
+  only as a render adapter for drop-preview drawing and measured payload-tab layout. Focused
+  preview/render/transition/accessibility/debug gates and native checks passed.
+- 2026-07-03: Extracted the command ecosystem into `open_gpui_command` on
+  `refactor/open-gpui-command-crate`. `open_gpui_ui_core::command` was deleted; first-party code now
+  imports command metadata and registry types from `open_gpui_command` or the intentional
+  `ui_components` default re-export. `GpuiCommandActionMap` moved out of `ui_components`; GPUI
+  command dispatch now works on stable command ids and can share availability projection and
+  in-memory usage recording. Verification so far passed for command crate tests, UI component
+  command/menu/public-surface tests, and gallery check.
+- 2026-07-03: Continued the `open-gpui-command` ecosystem on
+  `feat/open-gpui-command-ecosystem` through U3-U5. `open_gpui_ui_components::gpui_adapter` now
+  exposes `GpuiCommandAction`, `GpuiCommandActionMap`, keymap/window shortcut projection, and
+  `CommandSelection` dispatch adapters for GPUI `App` and `Window`; the foundation gallery has a
+  registry-backed `registry-dispatch` command sample; and `docs/ui/command-ecosystem.md` records
+  the split between GPUI action/keymap execution, core registry metadata, and component adapter
+  projection.
+- 2026-07-03: Implemented the first `open-gpui-command` ecosystem slice on
+  `feat/open-gpui-command-ecosystem`. `open_gpui_ui_core` now owns a deterministic
+  `CommandRegistry`, `CommandContribution`, `CommandRegistrySnapshot`, and duplicate-id
+  `CommandRegistryError`; `open_gpui_ui_components::CommandIndexSnapshot` can project a registry
+  snapshot into the existing command palette state; and the component root/prelude default surface
+  exports the new command registry types explicitly. Focused verification passed for ui-core command
+  tests, ui-components command tests, and the public-surface suite.
+- 2026-07-03: Closed the `refactor/docking-render-authority-convergence` review tail after
+  U1-U5. Code review found and fixed three runtime/maintainability follow-ups: tab-label render
+  probes no longer churn viewport host-scene generations for identical measured facts; divider
+  event hit maps now use the same zoom-resolved scene as viewport host-scene facts; and
+  `split_geometry` exposes iterator-backed panel/handle resolution instead of materializing
+  docking-side Vecs. The render/scene parity tests were moved into
+  `host_render_geometry_parity_tests.rs`, with shared assertion helpers promoted to
+  `host_test_support`.
+- 2026-07-03: Implemented U1-U5 of
+  `docs/plans/2026-07-02-004-refactor-docking-render-authority-convergence-plan.md` on
+  `refactor/docking-render-authority-convergence`. The branch now has scene/render parity tests,
+  scene-owned deterministic viewport facts, shared `split_geometry`, shared `chrome_geometry`, and
+  a tab-label-only `render_tab_label_drop_scene_fact_probe` for the remaining text-shaped
+  measurement exception. Characterization caught the old tab-bar policy drift: scene facts used
+  28px while the rendered tab strip measured 36px, so the shared chrome policy now uses 36px.
+  Focused gates passed for host render/presentation/interaction, tab/floating chrome, tab-label
+  probe exception, scene-seeded deterministic facts, and `cargo check -p open-gpui-docking`.
+- 2026-07-03: Completed the deep UI framework module refactor on
+  `refactor/ui-framework-deepening`. The branch now uses runtime `ThemeContext` / explicit
+  snapshots for component color resolution, centralizes overlay placement in
+  `open_gpui_ui_core::overlay::resolve_overlay_placement`, shares
+  `open_gpui_ui_core::grid_viewport::RowWindow` across Table / VirtualizedList / Tree, derives
+  gallery focus and selector traversal from `StoryContract`, and adds
+  `open_gpui_ui_core::CommandDescriptor` as the then-current minimal app-command metadata
+  projection for Command, Menu, and ContextMenu. That owner note was superseded later on
+  2026-07-03 by the `open_gpui_command` crate extraction. Focused checks passed for UI-core,
+  UI-components, foundation
+  gallery, theme drift/schema scans, `scan-ui-contract`, and the no-production-hit
+  `ThemeResolver::resolve` search; `origin/main` was fetched during closeout and had no new commits
+  relative to this branch.
+- 2026-07-02: Merged `refactor/docking-flat-motion-runtime` into local `main`. The merge keeps the
+  latest native/gallery/table productization state from `origin/main` and adds the docking motion
+  runtime work. Because `main` already used ADR 0013 and ADR 0014 for the native UI hybrid registry
+  experiment/removal, the UI motion runtime decision was renumbered to ADR 0015 during conflict
+  resolution.
+- 2026-07-02: Applied the ImGui-aligned overlay preview geometry cleanup on
+  `refactor/docking-flat-motion-runtime`. Removed `DockOverlayTransition::from_bounds`, deleted
+  overlay sample-to-layer bounds interpolation, and changed overlay replacement tests so all drop
+  preview layers remain pinned to the current semantic target. Pane, divider, zoom, and
+  programmatic Splitter interpolation remain because those represent real layout motion rather than
+  hover preview affordance geometry.
+- 2026-07-02: Closed out
+  `docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md` on
+  `refactor/docking-flat-motion-runtime`. The shared runtime, Splitter migration, docking executor
+  migration, native proof surface, and ADR 0015 are implemented and verified. Final broad docking
+  nextest and native checks passed; the local `ui-components` nextest filter for
+  `splitter component_api_inventory` compiled but repeatedly hung, so equivalent focused direct
+  `cargo test` gates were used for the Splitter runtime and public-surface inventory. A local ImGui
+  comparison confirmed that `DockNodePreviewDockSetup` / `DockNodePreviewDockRender` compute dock
+  preview geometry from the current hovered target each frame instead of interpolating from previous
+  preview bounds. The follow-up cleanup removed Open GPUI overlay `from_bounds` interpolation while
+  keeping pane/divider/zoom retarget motion.
+- 2026-07-02: Started and implemented the shared UI motion runtime foundation from
+  `docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md` on
+  `refactor/docking-flat-motion-runtime`. `open_gpui_ui_core` now owns renderer-neutral
+  `MotionTimeline` sampling and stable-identity retarget helpers. `ui_components::Splitter`
+  consumes the shared timeline for programmatic fraction animation while keeping pointer drag
+  immediate. `gpui_docking::DockTransitionExecutor` consumes the same timeline and retarget helper
+  for pane, divider, and overlay transition retargeting while keeping docking semantics local.
+  Added ADR 0015 for the new boundary and extended the native runtime panel with a `motion proof`
+  capability line. Focused verification has passed; final broad gates and wiki validation remain
+  the next action.
+- 2026-07-02: Implemented the flat motion runtime plan on
+  `refactor/docking-flat-motion-runtime` through `b7a8290`. Docking now uses shared motion sampling
+  tokens, transition retargeting from sampled pane/divider/overlay geometry, real final-size pane
+  content reveal with occlusion masks, presentation-scene-seeded viewport drop facts, independent
+  overlay preview transition execution, programmatic Splitter fraction motion, and zoom/unzoom
+  retargeting from active samples. `docs/verification.md`, `examples/docking-native`, and
+  `docs/knowledge/engineering/current-state.md` now describe the shipped capability without
+  claiming pixel-perfect or native compositor parity. Focused gates passed for UI-core motion,
+  Splitter adapter, docking transition/render/zoom/presentation, and preview/routing suites. Final
+  closeout passed `cargo nextest run -p open-gpui-docking --no-fail-fast` (860/860),
+  `cargo check -p open-gpui-docking-native`, and engineering wiki validation. Next action is the
+  closeout commit and normal branch integration.
+- 2026-07-02: Created
+  `docs/plans/2026-07-02-002-refactor-docking-flat-motion-runtime-plan.md` as the next docking
+  UI/UX runtime-quality plan. It supersedes the June 30 descriptor/runtime plans for the animation
+  execution layer while preserving ADR 0010/0011/0012 as accepted boundaries. The plan focuses on
+  flat presentation-scene render authority, real pane-content reveal instead of placeholder
+  transition rectangles, interruptible transition retargeting, shared motion curve/reduced-motion
+  vocabulary, root-level overlay stability, programmatic splitter motion, and zoom/focus polish.
+  Added engineering memory at
+  `docs/knowledge/engineering/progress/2026-07-02-docking-flat-motion-runtime-plan.md`.
+- 2026-07-02: Split `examples/ui-foundation-gallery/src/shell.rs` into a shell facade plus
+  `src/shell/support.rs`, `src/shell/components.rs`, and `src/shell/overlay.rs`. `GalleryShell`,
+  snapshot derivation, navigation/content rendering, and window open entry points stay in the
+  facade; shared pills/formatting/card helpers, Components sample rendering helpers, and Overlay
+  sample rendering helpers now have local owners. Updated the source-inspection contract test that
+  validates choice active metadata to read `shell/components.rs`. Verified with `cargo fmt --all
+  --check`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, full `cargo nextest run -p
+  open-gpui-ui-foundation-gallery --test foundation_gallery --no-fail-fast`, and `git diff
+  --check`.
+- 2026-07-02: Split `crates/ui_components/tests/table.rs` into a helper facade plus
+  `tests/table/` modules for behavior rows, filters/toolbar, editing contracts, layout contracts,
+  public exports, runtime interactions, and runtime layout. The facade is now about 196 lines; the
+  largest remaining owner is `runtime_layout.rs`. Verified with `cargo check -p
+  open-gpui-ui-components --test table`, focused Table nextest, full `--test table` nextest,
+  `cargo fmt --all --check`, and `git diff --check`.
+- 2026-07-02: Split the 8k-line foundation gallery integration test into a small helper facade plus
+  `tests/foundation_gallery/` modules for foundation contracts, overlay contracts/smoke, component
+  catalog/sample contracts, shell/navigation smoke, Table interaction/model smoke, and
+  Tree/VirtualizedList smoke. The facade is now about 533 lines and the largest test owner is the
+  component catalog contract module. Verified with gallery test compilation, focused metadata,
+  Table, Tree/VirtualizedList nextest runs, full `foundation_gallery` nextest, `cargo fmt --all
+  --check`, and `git diff --check`.
+- 2026-07-02: Removed the native UI hybrid registry layer after deciding it duplicated crate source
+  and typed contract facts in an AI-assisted workflow. Deleted the manifest/schema projection,
+  scaffold recipe metadata, export examples, committed registry JSON/schema artifacts,
+  `scan-ui-registry`, the registry validation plan, and the active architecture guide. Gallery tests
+  now validate catalog/story evidence directly against `COMPONENT_CONTRACT_ROWS`. ADR 0014
+  supersedes ADR 0013, and current strategy returns to Cargo crates, direct source inspection,
+  typed component contract tables, `scan-ui-contract`, and focused behavior gates. Next fearless
+  refactor candidates are Table/runtime simplification, gallery sample/runtime decomposition, and
+  cleanup of remaining source-inspection contract friction.
+- 2026-07-02: Confirmed `main` and `origin/main` at `e257d52f` after the native UI hybrid registry
+  close-out, deleted the remote feature branch `origin/refactor/native-ui-hybrid-registry`, and
+  refreshed engineering memory so it no longer points at the merged feature branch as active work.
+  Created `docs/plans/2026-07-02-003-refactor-registry-v1-real-usage-validation-plan.md` as the next
+  implementation-ready slice: validate registry manifest version 1 through a real
+  `table-filters-toolbar` recipe metadata mutation, regenerated JSON/schema artifacts,
+  `scan-ui-registry` diagnostics, gallery-side evidence tests, docs, and verification memory. Hosted
+  registry, public scaffolding CLI, third-party publishing, manifest version negotiation, and
+  `open-gpui-ui-headless` remain deferred.
+- 2026-07-02: Implemented the native UI hybrid registry MVP on
+  `refactor/native-ui-hybrid-registry`. Added the manifest projection and scaffold recipe metadata
+  under `crates/ui_components/src/component_contract/`, generated
+  `docs/registry/open-gpui-component-registry-v1.json` and
+  `docs/schemas/open-gpui-component-registry-v1.schema.json`, added export examples, introduced
+  `cargo run -p xtask -- scan-ui-registry`, and wired the scan into `xtask verify` before
+  `scan-ui-contract`. Gallery-side tests now prove manifest rows claiming gallery evidence have
+  catalog/story coverage without moving selector constants into the component crate. Focused gates
+  passed for `scan-ui-registry`, `cargo test -p xtask ui_registry`, `cargo test -p xtask commands`,
+  component registry manifest nextest, and gallery catalog/story manifest evidence nextest.
+  Recorded ADR 0013 with concrete artifact paths, export commands, alternatives, and consequences.
+  Final `cargo run -p xtask -- verify`, engineering wiki validation, and `git diff --check` passed.
+- 2026-07-02: Created
+  `docs/plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md`, an
+  implementation-ready plan for the native UI hybrid registry architecture MVP. The plan keeps
+  Cargo as the official distribution authority and adds a metadata manifest, scaffold recipe
+  vocabulary, JSON/schema artifacts, gallery evidence alignment, `xtask` registry drift checks,
+  docs, memory, and ADR 0013 after implementation proof. Plan review applied three clarity fixes:
+  `docs/architecture` and `docs/registry` were added to scope, registry JSON moved to
+  `docs/registry` while schema stays in `docs/schemas`, and recipe metadata now precedes artifact
+  export so the manifest is complete before it is generated.
+- 2026-07-02: Completed the 28-item native UI framework design research report in
+  `native-ui-framework-design-research/report.md`. The research compared shadcn/ui, Radix,
+  Floating UI, React Aria, Zag, Ark, Base UI, fret, gpui-component, Zed UI / GPUI, native UI
+  frameworks, Cargo tooling, design tokens, AccessKit, Storybook-style gallery tooling, TanStack,
+  and AI-era component distribution. The durable conclusion is to prefer Cargo/crates.io for core
+  distribution plus a machine-readable metadata registry for component contracts, theme tokens,
+  a11y claims, gallery samples, scaffold recipes, and verification commands. Added decision,
+  handoff, and verification memory entries. Verification passed for the generated report script,
+  report shape, and 28/28 JSON files with 36/36 required fields covered.
+- 2026-07-01: Completed U11 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. Added ADR 0012 for the docking runtime capability boundary, deleted the unused overlay
+  `FocusRing` layer variant, removed unconstructed corner affordance visual states, narrowed
+  descriptor-only helpers such as payload ghost inspection and overlay-to-transition conversion to
+  tests, and wired stale zoom-target cleanup into the render path. `open-gpui-docking` now checks
+  without the docking-local dead-code warnings that appeared during U10 native compile. Focused U11
+  tests passed 32/32, and final gates passed for `cargo fmt --all -- --check`,
+  `cargo nextest run -p open-gpui-ui-core split motion --no-fail-fast`,
+  `cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast`,
+  the 97-test docking runtime capability sweep, and `cargo check -p open-gpui-docking-native`.
+  `$emil-design-eng` / `$review-animations` review then found one behavior correction: public
+  `focus_pane` / `focus_neighbor_pane` commands are high-frequency and keyboard reachable, so they
+  now execute immediate focus-ring semantic feedback instead of scheduling a 120ms pulse. Explicit
+  test/internal `focus_pane_with_scene` still accepts a caller-provided `MotionSpec` for
+  low-frequency or future pointer-driven focus-ring transition proofs. The follow-up
+  `host_zoom_focus_tests` sweep passed 12/12 after the correction. Committed in the U11 cleanup
+  changeset.
+- 2026-07-01: Completed U10 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. The native runtime status panel proof string now includes
+  `corner-drag` and `route-cleanup` alongside presentation scene, overlay layers, tab insertion,
+  motion, zoom, divider hit map, accessibility, and reduced motion. `docs/verification.md` now
+  matches the proof panel and keeps the manual dogfood steps focused on routed target replacement
+  and Escape cleanup. Verified `cargo check -p open-gpui-docking-native` and
+  `cargo nextest run -p open-gpui-docking-native runtime_status_panel_formats_platform_capabilities --no-fail-fast`.
+  Next action is commit U10, then do final U11 ADR/helper cleanup; the native check exposed two
+  docking-local dead-code warnings to resolve or document there.
+- 2026-07-01: Completed U9 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. Routed cross-window feedback now has explicit source-marker versus target-preview ownership:
+  route markers enter transition descriptors, target previews own payload tab previews, replacing a
+  routed target clears stale target overlays, and Escape during a real GPUI docking drag clears the
+  source marker, target preview, runtime session, and active drag together. The drag-focused Escape
+  handler is scoped to active docking drags so ordinary failed panel focus still preserves current
+  GPUI focus. Verification passed with `cargo check -p open-gpui-docking --tests`, the focused
+  6-test U9 nextest command, the 2-test Escape/focus regression command, and the 78-test
+  `host_viewport_preview_tests host_render_tests host_transition_tests` sweep. Next action is
+  commit U9, then continue U10 native dogfood closeout.
+- 2026-07-01: Completed U8 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. Corner splitter junctions now expose scene-derived affordance states, render visible grip
+  feedback, use resize cursors, and resize both axes through the rendered mouse-event path. The
+  interaction runtime has a clamp regression proving one constrained axis does not corrupt the
+  other axis. Splitter a11y tests cover horizontal increment and vertical decrement. Added
+  docking-private rectangle-neighbor pane navigation from presentation-scene bounds plus a public
+  `DockSpatialDirection` command input for `DockHost::focus_neighbor_pane`. Verification passed
+  with `cargo check -p open-gpui-docking --tests`, the focused 17-test U8 nextest command,
+  `cargo fmt --all -- --check`, and `git diff --check`. Next action is commit U8, then implement
+  U9 cross-window overlay animation and cleanup proof.
+- 2026-07-01: Completed U7 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. `open_gpui_ui_core::split` now owns generic split fraction normalization, one-fill-child
+  share resolution, `SplitterState::resize_by_pixels`, and pixel-delta adjacent resize helpers.
+  Docking consumes those shared helpers for graph canonicalization, edge-dock fraction insertion,
+  graph mutation normalization, render flex shares, presentation-scene split layout, and splitter
+  drag resize transactions. Deleted the docking-local `split_fraction.rs` module and the
+  `DockSplitLayout` wrapper so docking-local geometry is narrowed to drop-guide hit boxes and GPUI
+  bounds conversion. Verification passed with `cargo check -p open-gpui-ui-core --tests`,
+  `cargo check -p open-gpui-docking --tests`,
+  `cargo nextest run -p open-gpui-ui-core split --no-fail-fast`,
+  `cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast`,
+  and focused docking geometry/resize/render splitter gates. Next action is commit U7, then continue
+  U8 corner drag and docking-private spatial navigation.
+- 2026-07-01: Completed U6 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. Docking accessibility descriptors now map into GPUI-facing stable element IDs, roles,
+  labels, selected/disabled/orientation/numeric state, tab focus/select actions, splitter
+  increment/decrement actions, and short-lived overlay descriptors for active drop, drag-source,
+  and rejected-target feedback. Splitter accessibility actions route through the existing resize
+  transaction path instead of mutating graph state directly, while final-scene and overlay nodes
+  stay separated so cleanup removes stale active nodes. Added focused host/UI-core/UI-components
+  tests for tab roles/actions, splitter state/actions, reduced-vs-animated final semantics,
+  deterministic ID order, overlay cleanup, and GPUI adapter mappings. Verification passed with
+  `cargo check -p open-gpui-docking --tests`,
+  `cargo check -p open-gpui-ui-core --tests`,
+  `cargo check -p open-gpui-ui-components --tests`,
+  `cargo nextest run -p open-gpui-docking host_accessibility_tests --no-fail-fast`,
+  `cargo nextest run -p open-gpui-ui-core a11y --no-fail-fast`,
+  `cargo nextest run -p open-gpui-ui-components a11y --no-fail-fast`,
+  `cargo nextest run -p open-gpui-docking host_render_tests host_interaction_tests host_transition_tests host_zoom_focus_tests --no-fail-fast`,
+  `cargo fmt --all -- --check`, and `git diff --check`. Next action is commit U6, then continue U7
+  split primitive consumption and cleanup.
+- 2026-07-01: Completed U5 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. Public host zoom/unzoom/focus commands now consume the last rendered presentation scene when
+  available, schedule transition executor plans, and preserve `DockGraph` authority. Zoom egress
+  reuses `DockZoomScene.egress` so sibling panes leave through deterministic touching-preferred
+  edges, while focus presentation preserves `FocusRing` descriptors aligned with GPUI focus
+  requests. Applied `$emil-design-eng` / `$review-animations` guidance by keeping zoom layout motion
+  at the existing 180ms ease-out budget and making public high-frequency focus commands immediate
+  instead of animated. Verification passed with focused `host_zoom_focus_tests`,
+  `host_transition_tests`, `host_render_tests::transition_sample_overlay_renders_from_executor`,
+  `cargo check -p open-gpui-docking --tests`, `cargo fmt --all -- --check`, and `git diff --check`.
+  During verification, stale background `cargo test -- --list` processes from prior interrupted
+  work caused temporary dyld-start hangs; after killing those stale test processes, nextest resumed
+  normally.
+- 2026-07-01: Completed Phase B / P0 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. Center/tab preview now has explicit `PayloadTab` and `PayloadGhost` overlay layers, overlay
+  descriptors can carry applied insertion/body/payload geometry, tab-bar hover resolves rendered tab
+  label hit targets before append fallback, and same-stack reorder hold no longer freezes a changed
+  insert slot. Routed target previews expose the same payload tab/ghost contract while source route
+  markers stay separate. Verified focused U4/U9 gates, `cargo fmt --all -- --check`,
+  `cargo check -p open-gpui-docking --tests`, and `git diff --check`; next action is commit Phase B
+  and continue U5-U8.
+- 2026-07-01: Implemented Phase A / P0 for
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md`.
+  `DockTransitionExecutor` now samples deterministic transition progress, reduced motion completes
+  through a one-shot final sample, entering pane content stays final-size while reveal clips animate,
+  and `DockHost::render` consumes sampled overlay/clip/divider output through a root transition
+  layer. Important runtime decision: transition execution notifies the host, while continuous
+  `request_animation_frame` calls happen only during render-time sampling so GPUI render-phase
+  invariants are respected. Verified with focused `host_transition_tests` / `host_render_tests`,
+  `cargo fmt --all -- --check`, `cargo check -p open-gpui-docking --tests`, and `git diff --check`.
+- 2026-06-30: Fast-forwarded local `main` to `3497a85`, merging
+  `feat/docking-split-motion-primitives` into the local main branch. Spawned read-only research
+  lanes for animation/a11y, docking UX, split core fit, BonSplit/ImGui reference, and docs follow-up.
+  Created `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` for the
+  next runtime capability alignment pass: real transition sampling, sampled overlay/clip/divider
+  rendering, precise tab insertion, payload ghost cleanup, zoom/focus user surfaces, GPUI
+  accessibility mapping, corner drag proof, split primitive continuation, native dogfood, and
+  documentation cleanup.
+- 2026-06-30: Continued `docs/plans/2026-06-30-003-refactor-docking-split-motion-primitives-plan.md`
+  on `feat/docking-split-motion-primitives` through U10. U1-U9 are committed through `8373b99`.
+  U10 now extends docking accessibility descriptors with orientation, selected/disabled state, and
+  action metadata; adds `Role::Splitter` GPUI adapter coverage; removes the old docking-local split
+  handle-center / handle-hit geometry path; and records ADR 0011 for the `ui_core` /
+  `ui_components` / docking primitive boundary. Focused verification passed with
+  `cargo check -p open-gpui-docking --tests` and
+  `cargo nextest run -p open-gpui-docking geometry host_accessibility_tests --no-fail-fast`.
+  Next action is final required gates, `ce-code-review`, eligible fixes, final verification memory,
+  and commit.
+- 2026-06-30: Completed and verified the docking presentation scene and motion model implementation
+  for `docs/plans/2026-06-30-002-refactor-docking-presentation-scene-motion-plan.md`. Added
+  crate-private presentation, overlay, transition, zoom/focus, divider-hit-map, and accessibility
+  descriptor models; added tab insertion preview descriptors/rendering; and fixed zoomed
+  presentation geometry so tab labels, focus regions, and overlay anchors use zoomed bounds. Final
+  checks passed for docking nextest, docking-native nextest/check, `open-gpui` check, formatting,
+  diff whitespace, and engineering wiki validation.
+- 2026-06-30: Wrote `docs/plans/2026-06-30-002-refactor-docking-presentation-scene-motion-plan.md`
+  and `docs/adr/0010-docking-presentation-scene-motion-model.md` for the next docking UI/UX
+  capability refactor. The plan uses the SuperSplit notes and local BonSplit reference as
+  capability inputs, keeps `DockGraph` and current-facts delivery as authorities, and makes a flat
+  `DockPresentationScene` the planned geometry source for overlay, tab insertion, motion,
+  zoom/focus, divider hit maps, accessibility, reduced motion, native dogfood, and deletion cleanup.
 - 2026-06-30: Started the P2/P3 fearless component refactor goal on
   `refactor/component-p2-p3-cleanup` from `main` / `origin/main`. Read-only subagent lanes are
   `contracts`, `large_modules`, `runtime_patterns`, and `exports_tests`; the first main-thread
@@ -63,7 +564,7 @@ status: active
   `docs/plans/2026-06-28-001-refactor-ui-choice-surface-plan.md` in the working tree.
   `ui_components::choice` now centralizes stable-value projection, query normalization, and
   multi-select dedupe for `Command`, `Combobox`, and `Select`; `roving_focus.rs` owns shared
-  vertical, paged, and typeahead target helpers; and `menu_runtime.rs` owns Menu / ContextMenu
+  vertical, paged, and typeahead target helpers; and `menu/runtime.rs` owns Menu / ContextMenu
   runtime state, submenu hover timers, branch switching, and local submenu scroll handles. The
   Components gallery now exposes a `choice-surfaces` conformance gate plus state readouts for
   stable values, selected chips, query/typeahead metadata, and shared navigation behavior. Verified
@@ -180,13 +681,14 @@ status: active
   add the pure Tree move target contract.
 - 2026-06-26: Completed
   `docs/plans/2026-06-26-003-feat-ui-tree-virtualized-window-plan.md` in the working tree.
-  `TreeRenderPlan` / `TreeRowRenderPlan` now resolve a fixed-row overscan window from `TreeState`
-  and `VirtualizerState`, the GPUI `Tree` adapter exposes opt-in virtualized rendering with
-  viewport and overscan controls, and the Components gallery now includes a large
-  `release-outline` Tree sample plus focused verification for render-plan exports and gallery
-  metadata. A deeper far-row gallery scroll proof was attempted and then trimmed back to the
-  stable slice boundary; the remaining Tree follow-ups are drag-and-drop hierarchy editing and any
-  later scroll-proof hardening the runtime still needs.
+  Tree now keeps its fixed-row overscan render plan crate-private, exposes
+  `TreeBehaviorSnapshot` for diagnostics, resolves windows from `TreeState` and
+  `VirtualizerState`, and the GPUI `Tree` adapter exposes opt-in virtualized rendering with
+  viewport and overscan controls. The Components gallery now includes a large `release-outline`
+  Tree sample plus focused verification for behavior snapshots and gallery metadata. A deeper
+  far-row gallery scroll proof was attempted and then trimmed back to the stable slice boundary;
+  the remaining Tree follow-ups are drag-and-drop hierarchy editing and any later scroll-proof
+  hardening the runtime still needs.
 - 2026-06-26: Completed
   `docs/plans/2026-06-26-002-feat-ui-tree-typeahead-plan.md` in the working tree.
   `TreeState::typeahead_target` now performs renderer-neutral prefix matching over visible,
@@ -509,6 +1011,8 @@ status: active
   `cargo nextest run -p open-gpui-ui-components table component_api_inventory`, and
   `cargo nextest run -p open-gpui-ui-foundation-gallery table`. Next action is docs validation and
   commit.
+- 2026-06-30: Implemented the descriptor-first docking presentation scene and motion model from `docs/plans/2026-06-30-002-refactor-docking-presentation-scene-motion-plan.md`. Added crate-private `DockPresentationScene`, `DockOverlayScene`, `DockTransitionPlan`, `DockZoomState`, `DockDividerHitMap`, and `DockAccessibilityScene`; center/tab preview now carries and renders a tab-insertion affordance while edge/root previews suppress payload tab insertion. Focused gates passed: 24/24 `open-gpui-docking` presentation/overlay/motion/zoom/divider/a11y tests and 1/1 native runtime proof-summary test. Next action is final broad verification, simplification, review, and commit.
+- 2026-07-02: Created `docs/plans/2026-07-02-004-refactor-docking-render-authority-convergence-plan.md` after the flat motion runtime merge. The plan narrows the next docking pass to scene/render/drop-fact geometry parity, keeping `DockPresentationScene` as deterministic geometry authority while leaving tab-label render probes as documented intrinsic-measurement exceptions. Next action is U1 parity tests for root split, nested pane, floating container, empty central region, and zoomed scene.
 - 2026-06-23: Wrote `docs/plans/2026-06-23-006-feat-ui-table-manual-expansion-plan.md` for the next Table slice. The plan narrows the follow-up to manual expansion and async child metadata: source rows can be expandable before children load, the core resolver keeps the current client-expanded path intact, and the gallery proof will simulate app-owned child loading instead of introducing a real fetch layer.
 - 2026-06-23: Completed U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the working tree. The Components gallery now includes `dependency-tree`, a nested source-tree Table sample with pinned identity/status lanes, controlled expansion, row activation logging, tree-depth summary metadata, and a focused smoke that proves disclosure expansion and keyboard activation work on the rendered sample. Focused Table tests now pass in `open-gpui-ui-components` and `open-gpui-ui-foundation-gallery`. Next action is U6: update the component contract, verification docs, and engineering memory, then run the final broad verification set and commit.
 - 2026-06-23: Wrote `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` for the next Table slice. The plan keeps source tree rows separate from synthetic grouped rows, reuses `TableExpansionState` for nested source hierarchy, adds row focus / activation / expansion payloads, and scopes the first gallery proof to a focused tree-data Table sample. Next action is U1: add source-row hierarchy to the core Table contract.

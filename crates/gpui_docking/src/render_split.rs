@@ -1,12 +1,16 @@
 use crate::{
-    DockHost, DockNodeId, SplitAxis, debug::DockDebugRegion, geometry::DockSplitLayout,
-    host_render_session::DockHostRenderSession, render::DockViewportHostSceneFrameSlot,
+    DockHost, DockNodeId, SplitAxis,
+    accessibility_scene::{DockAccessibilityScene, gpui_accessible_action_from_ui},
+    debug::DockDebugRegion,
+    host_render_session::DockHostRenderSession,
+    render::DockViewportHostSceneFrameSlot,
+    split_geometry::{dock_split_handle_center_shares, resolve_dock_split_shares},
 };
 use open_gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Styled, Window, canvas, div, px, relative,
-    rgb,
+    AnyElement, Context, CursorStyle, InteractiveElement, IntoElement, ParentElement,
+    StatefulInteractiveElement, Styled, Window, div, px, relative, rgb,
 };
+use open_gpui_ui_core::AccessibleAction;
 
 pub(crate) struct DockRenderSplitInput {
     node: DockNodeId,
@@ -55,7 +59,7 @@ impl DockHost {
             DockDebugRegion::Split { node },
             format!("{}:split:{}", session.selector_prefix(), node.as_u64()),
         );
-        let layout = DockSplitLayout::from_fractions(
+        let shares = resolve_dock_split_shares(
             children.len(),
             &fractions,
             session.central_child_index(&children),
@@ -83,7 +87,7 @@ impl DockHost {
                     index
                 ),
             );
-            let share = layout.child_share(index).unwrap_or(1.0);
+            let share = shares.get(index).copied().unwrap_or(1.0);
             split = split.child(
                 div()
                     .id(selector.clone())
@@ -97,40 +101,78 @@ impl DockHost {
             );
         }
 
-        let handles = layout.handles();
-        if !handles.is_empty() {
+        if shares.len() >= 2 {
             let handle_size = session.splitter_handle_size();
             let handle_offset = -handle_size / 2.0;
-            for handle_layout in &handles {
+            for (handle_index, handle_center_share) in
+                dock_split_handle_center_shares(&shares).enumerate()
+            {
                 let selector = self.record_debug_selector(
                     DockDebugRegion::SplitterHandle {
                         split: node,
-                        index: handle_layout.index,
+                        index: handle_index,
                     },
                     format!(
                         "{}:split:{}:handle:{}",
                         session.selector_prefix(),
                         node.as_u64(),
-                        handle_layout.index
+                        handle_index
                     ),
                 );
+                let accessible = DockAccessibilityScene::splitter_element_for_render(
+                    node,
+                    axis,
+                    handle_index,
+                    handle_center_share,
+                );
+                let increment_entity = cx.entity();
+                let decrement_entity = cx.entity();
                 let mut handle = div()
-                    .id(selector.clone())
+                    .id(accessible.id_str().to_string())
                     .debug_selector(move || selector)
                     .absolute()
                     .bg(rgb(0xc8d0dc))
                     .hover(|this| this.bg(rgb(0x94a3b8)))
-                    .cursor_pointer();
+                    .cursor(cursor_for_split_axis(axis))
+                    .on_a11y_action(
+                        gpui_accessible_action_from_ui(AccessibleAction::Increment),
+                        move |_, _, cx| {
+                            increment_entity.update(cx, |host, cx| {
+                                host.resize_splitter_from_accessibility(
+                                    node,
+                                    axis,
+                                    handle_index,
+                                    AccessibleAction::Increment,
+                                    cx,
+                                );
+                            });
+                        },
+                    )
+                    .on_a11y_action(
+                        gpui_accessible_action_from_ui(AccessibleAction::Decrement),
+                        move |_, _, cx| {
+                            decrement_entity.update(cx, |host, cx| {
+                                host.resize_splitter_from_accessibility(
+                                    node,
+                                    axis,
+                                    handle_index,
+                                    AccessibleAction::Decrement,
+                                    cx,
+                                );
+                            });
+                        },
+                    );
+                handle = accessible.apply_to(handle);
 
                 handle = match axis {
                     SplitAxis::Horizontal => handle
-                        .left(relative(handle_layout.center_share))
+                        .left(relative(handle_center_share))
                         .top(px(0.0))
                         .ml(handle_offset)
                         .h_full()
                         .w(handle_size),
                     SplitAxis::Vertical => handle
-                        .top(relative(handle_layout.center_share))
+                        .top(relative(handle_center_share))
                         .left(px(0.0))
                         .mt(handle_offset)
                         .w_full()
@@ -141,102 +183,13 @@ impl DockHost {
             }
         }
 
-        split = split.child(self.render_splitter_event_layer(
-            node,
-            axis,
-            layout,
-            session.splitter_handle_size(),
-            cx,
-        ));
-
         split.into_any_element()
     }
+}
 
-    fn render_splitter_event_layer(
-        &self,
-        node: DockNodeId,
-        axis: SplitAxis,
-        layout: DockSplitLayout,
-        handle_size: Pixels,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let entity = cx.entity();
-
-        div()
-            .absolute()
-            .top(px(0.0))
-            .left(px(0.0))
-            .size_full()
-            .child(
-                canvas(
-                    |_, _, _| (),
-                    move |split_bounds, _, window, _| {
-                        window.on_mouse_event({
-                            let entity = entity.clone();
-                            let layout = layout.clone();
-                            move |event: &MouseDownEvent, _, _, app| {
-                                if event.button != MouseButton::Left {
-                                    return;
-                                }
-
-                                let geometry = layout.geometry(axis, split_bounds, handle_size);
-                                let Some(handle_index) = geometry
-                                    .handle_hit_bounds
-                                    .iter()
-                                    .position(|bounds| bounds.contains(&event.position))
-                                else {
-                                    return;
-                                };
-
-                                let start_position = match axis {
-                                    SplitAxis::Horizontal => event.position.x,
-                                    SplitAxis::Vertical => event.position.y,
-                                };
-
-                                entity.update(app, |host, cx| {
-                                    host.begin_splitter_drag_from_render(
-                                        node,
-                                        handle_index,
-                                        start_position,
-                                        geometry.extent,
-                                        geometry.shares.clone(),
-                                        cx,
-                                    );
-                                });
-                                app.stop_propagation();
-                            }
-                        });
-
-                        window.on_mouse_event({
-                            let entity = entity.clone();
-                            move |event: &MouseMoveEvent, _, _, app| {
-                                if event.pressed_button != Some(MouseButton::Left) {
-                                    return;
-                                }
-
-                                let position = match axis {
-                                    SplitAxis::Horizontal => event.position.x,
-                                    SplitAxis::Vertical => event.position.y,
-                                };
-                                entity.update(app, |host, cx| {
-                                    host.update_splitter_drag_from_render(position, cx);
-                                });
-                            }
-                        });
-
-                        window.on_mouse_event(move |event: &MouseUpEvent, _, _, app| {
-                            if event.button != MouseButton::Left {
-                                return;
-                            }
-
-                            entity.update(app, |host, cx| {
-                                host.finish_splitter_drag_from_render(cx);
-                            });
-                        });
-                    },
-                )
-                .size_full(),
-            )
-            .into_any_element()
+fn cursor_for_split_axis(axis: SplitAxis) -> CursorStyle {
+    match axis {
+        SplitAxis::Horizontal => CursorStyle::ResizeColumn,
+        SplitAxis::Vertical => CursorStyle::ResizeRow,
     }
 }

@@ -1,22 +1,27 @@
 //! Tooltip component.
 
 use crate::geometry::gpui_px_from_ui;
+use crate::kbd::Kbd;
 use std::time::Duration;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div,
+    Action, AnyElement, AnyView, App, Context, ElementId, IntoElement, KeyBinding, KeyContext,
+    ParentElement, Render, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window,
+    div,
 };
 use open_gpui_ui_core::{
-    InitialFocusIntent, OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementSide,
-    OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
+    InitialFocusIntent, OverlayAnchorInput, OverlayLayerKind, OverlayPlacementAlignment,
+    OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role, Sizable, Size, ThemeTokens,
+    UiPx, rect, ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::overlay::{GpuiOverlayAdapterConfig, OverlayResolvedState};
-use crate::theme::ThemeResolver;
+use crate::overlay::{
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayLayerHost, OverlayResolvedState,
+};
+use crate::theme::{ThemeContext, ThemeResolver};
 
 /// Open affordance for a tooltip trigger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -368,6 +373,34 @@ impl Tooltip {
         }
     }
 
+    /// Creates a GPUI tooltip-builder closure for attaching text tooltips to interactive elements.
+    pub fn text(
+        text: impl Into<SharedString>,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+        let text = text.into();
+        move |_, cx| cx.new(|_| TextTooltipView { text: text.clone() }).into()
+    }
+
+    /// Creates a tooltip builder that appends the active keybinding for an action when available.
+    pub fn for_action(
+        label: impl Into<SharedString>,
+        action: impl Action + 'static,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+        action_tooltip_builder(label, Box::new(action), None)
+    }
+
+    /// Creates a tooltip builder that appends the keybinding for an action in a specific key context.
+    pub fn for_action_in_context<C, E>(
+        label: impl Into<SharedString>,
+        action: impl Action + 'static,
+        key_context: C,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static
+    where
+        C: TryInto<KeyContext, Error = E>,
+    {
+        action_tooltip_builder(label, Box::new(action), key_context.try_into().ok())
+    }
+
     /// Marks the tooltip trigger as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
@@ -433,6 +466,78 @@ impl Tooltip {
     }
 }
 
+fn action_tooltip_builder(
+    label: impl Into<SharedString>,
+    action: Box<dyn Action>,
+    key_context: Option<KeyContext>,
+) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let label = label.into();
+    move |window, cx| {
+        let key_binding =
+            key_binding_text_for_action(window, action.as_ref(), key_context.as_ref());
+        cx.new(|_| ActionTooltipView {
+            label: label.clone(),
+            key_binding,
+        })
+        .into()
+    }
+}
+
+fn key_binding_text_for_action(
+    window: &Window,
+    action: &dyn Action,
+    key_context: Option<&KeyContext>,
+) -> Option<SharedString> {
+    let binding = match key_context {
+        Some(key_context) => {
+            window.highest_precedence_binding_for_action_in_context(action, key_context.clone())
+        }
+        None => window.highest_precedence_binding_for_action(action),
+    }?;
+
+    Some(key_binding_text(&binding).into())
+}
+
+fn key_binding_text(binding: &KeyBinding) -> String {
+    binding
+        .keystrokes()
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+struct TextTooltipView {
+    text: SharedString,
+}
+
+impl Render for TextTooltipView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        Tooltip::new("tooltip", self.text.clone())
+    }
+}
+
+struct ActionTooltipView {
+    label: SharedString,
+    key_binding: Option<SharedString>,
+}
+
+impl Render for ActionTooltipView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        Tooltip::element(
+            "tooltip",
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(div().child(self.label.clone()))
+                .when_some(self.key_binding.clone(), |this, key_binding| {
+                    this.child(Kbd::new("tooltip-keybinding", key_binding).xsmall())
+                }),
+        )
+    }
+}
+
 impl Sizable for Tooltip {
     fn with_size(mut self, size: Size) -> Self {
         self.size = size;
@@ -441,33 +546,87 @@ impl Sizable for Tooltip {
 }
 
 impl RenderOnce for Tooltip {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
-        let colors = state.colors();
         let id = self.id;
         let debug_id = id.to_string();
         let accessible_label = accessible_label_for_content(&self.content);
         let children = children_from_content(self.content);
+        let content_id: ElementId = (id.clone(), "content").into();
+        let overlay_host = OverlayLayerHost::resolve(state.overlay());
+        let placement = GpuiOverlayPlacement::resolve(
+            OverlayPlacementInput::new(
+                OverlayAnchorInput::from_layout_bounds(rect(
+                    ui_point(UiPx::ZERO, UiPx::ZERO),
+                    ui_size(UiPx::ONE, UiPx::ONE),
+                )),
+                ui_size(
+                    metrics.max_width(),
+                    metrics.text_size() + metrics.padding_y() * 2.0,
+                ),
+            )
+            .with_side(state.placement_side())
+            .with_alignment(state.placement_alignment())
+            .with_offset(ui_px(4.0)),
+            overlay_host.adapter().snap_margin(),
+        );
 
         div()
             .id(id)
-            .debug_selector(move || format!("tooltip:{debug_id}:content"))
-            .max_w(gpui_px_from_ui(metrics.max_width()))
-            .px(gpui_px_from_ui(metrics.padding_x()))
-            .py(gpui_px_from_ui(metrics.padding_y()))
-            .rounded(gpui_px_from_ui(metrics.radius()))
-            .border_1()
-            .border_color(ThemeResolver::resolve(colors.border()))
-            .bg(ThemeResolver::resolve(colors.background()))
-            .text_color(ThemeResolver::resolve(colors.foreground()))
-            .text_size(gpui_px_from_ui(metrics.text_size()))
-            .line_height(gpui_px_from_ui(metrics.text_size()))
-            .shadow_lg()
-            .ui_role(state.role())
-            .aria_label(accessible_label)
-            .children(children)
+            .debug_selector({
+                let debug_id = debug_id.clone();
+                move || format!("tooltip:{debug_id}:root")
+            })
+            .relative()
+            .when(
+                overlay_host.adapter().should_render_deferred_layer(),
+                |this| {
+                    this.child(overlay_host.relative_layer(
+                        &placement,
+                        tooltip_surface_element(
+                            content_id,
+                            debug_id,
+                            state,
+                            accessible_label,
+                            children,
+                            &theme,
+                        ),
+                    ))
+                },
+            )
     }
+}
+
+fn tooltip_surface_element(
+    content_id: ElementId,
+    debug_id: String,
+    state: TooltipState,
+    accessible_label: SharedString,
+    children: Vec<AnyElement>,
+    theme: &ThemeContext,
+) -> impl IntoElement {
+    let metrics = state.metrics();
+    let colors = state.colors();
+
+    div()
+        .id(content_id)
+        .debug_selector(move || format!("tooltip:{debug_id}:content"))
+        .max_w(gpui_px_from_ui(metrics.max_width()))
+        .px(gpui_px_from_ui(metrics.padding_x()))
+        .py(gpui_px_from_ui(metrics.padding_y()))
+        .rounded(gpui_px_from_ui(metrics.radius()))
+        .border_1()
+        .border_color(theme.resolve(colors.border()))
+        .bg(theme.resolve(colors.background()))
+        .text_color(theme.resolve(colors.foreground()))
+        .text_size(gpui_px_from_ui(metrics.text_size()))
+        .line_height(gpui_px_from_ui(metrics.text_size()))
+        .shadow_lg()
+        .ui_role(state.role())
+        .aria_label(accessible_label)
+        .children(children)
 }
 
 fn accessible_label_for_content(content: &TooltipContent) -> SharedString {

@@ -7,23 +7,23 @@ use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
-    Window, anchored, deferred, div,
+    Window, div,
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
-    OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role,
-    Sizable, Size, ThemeTokens, UiPx, ui_point, ui_px, ui_size,
+    OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, Role, Sizable, Size,
+    ThemeTokens, UiPx, ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
-    escape_open_change, focus_restore_requests_trigger, gpui_overlay_state,
-    outside_press_open_change,
+    GpuiOverlayPlacement, OverlayCloseRuntimeRequest, OverlayDisclosureConfig,
+    OverlayDisclosureOpenMode, OverlayLayerHost, OverlayOpenRuntimeRequest, OverlayResolvedState,
+    resolve_overlay_open_state, set_overlay_open,
 };
-use crate::theme::ThemeResolver;
+use crate::theme::{ThemeContext, ThemeResolver};
 
 /// Popover open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -42,6 +42,13 @@ impl PopoverOpenMode {
             Self::Uncontrolled => "uncontrolled",
             Self::Controlled => "controlled",
         }
+    }
+}
+
+const fn popover_open_mode_from_disclosure(mode: OverlayDisclosureOpenMode) -> PopoverOpenMode {
+    match mode {
+        OverlayDisclosureOpenMode::Uncontrolled => PopoverOpenMode::Uncontrolled,
+        OverlayDisclosureOpenMode::Controlled => PopoverOpenMode::Controlled,
     }
 }
 
@@ -204,23 +211,17 @@ impl PopoverState {
         focus_restore_intent: FocusRestoreIntent,
         tokens: ThemeTokens,
     ) -> Self {
-        let open_mode = if open.is_some() {
-            PopoverOpenMode::Controlled
-        } else {
-            PopoverOpenMode::Uncontrolled
-        };
-        let open = open.unwrap_or(default_open) && !disabled;
-        let presence = if open {
-            OverlayPresence::open()
-        } else {
-            OverlayPresence::hidden()
-        };
-        let overlay =
-            GpuiOverlayAdapterConfig::new(OverlayLayerKind::NonModalDismissible, presence)
-                .outside_press_policy(outside_press_policy)
-                .initial_focus_intent(initial_focus_intent.clone())
-                .focus_restore_intent(focus_restore_intent.clone())
-                .resolved_state();
+        let disclosure = OverlayDisclosureConfig::new(OverlayLayerKind::NonModalDismissible)
+            .controlled_open(open)
+            .default_open(default_open)
+            .disabled(disabled)
+            .outside_press_policy(outside_press_policy)
+            .initial_focus_intent(initial_focus_intent.clone())
+            .focus_restore_intent(focus_restore_intent.clone())
+            .resolve();
+        let open = disclosure.open();
+        let open_mode = popover_open_mode_from_disclosure(disclosure.open_mode());
+        let overlay = disclosure.overlay().clone();
         let colors = ThemeResolver::popover_colors(tokens, open);
 
         Self {
@@ -512,11 +513,10 @@ impl RenderOnce for Popover {
             trigger_focus: cx.focus_handle(),
             content_focus: cx.focus_handle(),
         });
-        let runtime_open = runtime.read(cx).open;
-        let controlled_open = self.open;
-        let resolved_open = controlled_open.unwrap_or(runtime_open);
+        let open_state = resolve_overlay_open_state(self.open, runtime.read(cx).open);
+        let resolved_open = open_state.open();
 
-        if controlled_open.is_some() && runtime_open != resolved_open {
+        if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
             });
@@ -545,11 +545,17 @@ impl RenderOnce for Popover {
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
+        let theme = ThemeResolver::current(cx);
+        let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+        let trigger_border = theme.resolve(colors.trigger_border());
+        let trigger_background = theme.resolve(colors.trigger_background());
+        let trigger_foreground = theme.resolve(colors.trigger_foreground());
+        let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
         let disabled = state.disabled();
         let open = state.open();
         let trigger_focus = runtime.read(cx).trigger_focus.clone();
         let content_focus = runtime.read(cx).content_focus.clone();
-        let overlay_adapter = gpui_overlay_state(state.overlay());
+        let overlay_host = OverlayLayerHost::resolve(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 open_gpui_ui_core::OverlayAnchorInput::from_layout_bounds(open_gpui_ui_core::rect(
@@ -561,7 +567,7 @@ impl RenderOnce for Popover {
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
             .with_offset(ui_px(6.0)),
-            overlay_adapter.snap_margin(),
+            overlay_host.adapter().snap_margin(),
         );
 
         div()
@@ -589,9 +595,9 @@ impl RenderOnce for Popover {
                     .justify_center()
                     .rounded(gpui_px_from_ui(metrics.radius()))
                     .border_1()
-                    .border_color(ThemeResolver::resolve(colors.trigger_border()))
-                    .bg(ThemeResolver::resolve(colors.trigger_background()))
-                    .text_color(ThemeResolver::resolve(colors.trigger_foreground()))
+                    .border_color(trigger_border)
+                    .bg(trigger_background)
+                    .text_color(trigger_foreground)
                     .text_size(gpui_px_from_ui(metrics.text_size()))
                     .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
@@ -602,18 +608,19 @@ impl RenderOnce for Popover {
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)
                     .aria_disabled(disabled)
-                    .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                    .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                     .when(open, |this| {
                         let runtime = runtime.clone();
                         let on_escape_close = on_escape_close.clone();
                         let focus_restore = state.focus_restore_intent().clone();
-                        let escape_policy = state.overlay().policy().clone();
+                        let overlay_host = overlay_host.clone();
                         this.on_key_down(move |event: &KeyDownEvent, window, cx| {
                             if event.keystroke.key.as_str() == "escape"
-                                && escape_open_change(&escape_policy).is_some()
+                                && overlay_host.escape_open_change().is_some()
                             {
-                                consume_overlay_event(window, cx);
+                                overlay_host.consume_event(window, cx);
                                 close_popover(
+                                    overlay_host.clone(),
                                     runtime.clone(),
                                     focus_restore.clone(),
                                     on_escape_close.clone(),
@@ -628,49 +635,60 @@ impl RenderOnce for Popover {
                         let runtime = runtime.clone();
                         let on_open_change = on_open_change.clone();
                         let initial_focus = state.initial_focus_intent().clone();
+                        let overlay_host = overlay_host.clone();
                         this.cursor_pointer()
-                            .hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
-                            })
+                            .hover(move |style| style.bg(trigger_hover_background))
                             .on_click(move |_event: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 let next_open = !open;
-                                runtime.update(cx, |runtime, _| {
-                                    runtime.open = next_open;
-                                });
-                                if next_open
-                                    && let Some(focus) =
-                                        popover_initial_focus_handle(&runtime, &initial_focus, cx)
-                                {
-                                    window.defer(cx, move |window, cx| focus.focus(window, cx));
-                                }
-                                if let Some(on_open_change) = on_open_change.as_ref() {
-                                    on_open_change(next_open, window, cx);
-                                }
+                                let focus_runtime = runtime.clone();
+                                let initial_focus = initial_focus.clone();
+                                overlay_host.apply_open_change_with_after_update(
+                                    OverlayOpenRuntimeRequest::new(
+                                        runtime.clone(),
+                                        next_open,
+                                        on_open_change.as_deref(),
+                                    ),
+                                    window,
+                                    cx,
+                                    |runtime| {
+                                        set_overlay_open(&mut runtime.open, next_open);
+                                    },
+                                    move |window, cx| {
+                                        if next_open
+                                            && let Some(focus) = popover_initial_focus_handle(
+                                                &focus_runtime,
+                                                &initial_focus,
+                                                cx,
+                                            )
+                                        {
+                                            window.defer(cx, move |window, cx| {
+                                                focus.focus(window, cx)
+                                            });
+                                        }
+                                    },
+                                );
                             })
                     })
                     .child(trigger_label),
             )
             .when(open, |this| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .anchor(placement.anchor())
-                            .offset(placement.offset())
-                            .snap_to_window_with_margin(placement.snap_margin())
-                            .child(popover_content_element(
-                                content,
-                                content_id.clone(),
-                                debug_id.clone(),
-                                state.clone(),
-                                runtime.clone(),
-                                content_focus.clone(),
-                                on_escape_close.clone(),
-                                on_open_change.clone(),
-                            )),
-                    )
-                    .priority(overlay_adapter.deferred_priority()),
-                )
+                let overlay_host = overlay_host.clone();
+                this.child(overlay_host.relative_layer(
+                    &placement,
+                    popover_content_element(
+                        content,
+                        content_id.clone(),
+                        debug_id.clone(),
+                        state.clone(),
+                        overlay_host.clone(),
+                        &theme,
+                        runtime.clone(),
+                        content_focus.clone(),
+                        on_escape_close.clone(),
+                        on_open_change.clone(),
+                    ),
+                ))
             })
     }
 }
@@ -680,6 +698,8 @@ fn popover_content_element(
     content_id: ElementId,
     debug_id: String,
     state: PopoverState,
+    overlay_host: OverlayLayerHost,
+    theme: &ThemeContext,
     runtime: Entity<PopoverRuntime>,
     content_focus: FocusHandle,
     on_escape_close: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
@@ -687,10 +707,14 @@ fn popover_content_element(
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
-    let outside_change = outside_press_open_change(state.overlay().policy());
+    let outside_change = overlay_host.outside_press_open_change();
     let escape_runtime = runtime.clone();
     let escape_open_change = on_escape_close.clone();
     let escape_focus_restore = state.focus_restore_intent().clone();
+    let key_overlay_host = overlay_host.clone();
+    let border = theme.resolve(colors.border());
+    let background = theme.resolve(colors.background());
+    let foreground = theme.resolve(colors.foreground());
 
     div()
         .id(content_id)
@@ -703,9 +727,9 @@ fn popover_content_element(
         .gap_2()
         .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(colors.border()))
-        .bg(ThemeResolver::resolve(colors.background()))
-        .text_color(ThemeResolver::resolve(colors.foreground()))
+        .border_color(border)
+        .bg(background)
+        .text_color(foreground)
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .shadow_lg()
@@ -716,8 +740,9 @@ fn popover_content_element(
         .ui_role(state.content_role())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             if event.keystroke.key.as_str() == "escape" {
-                consume_overlay_event(window, cx);
+                key_overlay_host.consume_event(window, cx);
                 close_popover(
+                    key_overlay_host.clone(),
                     escape_runtime.clone(),
                     escape_focus_restore.clone(),
                     escape_open_change.clone(),
@@ -730,8 +755,10 @@ fn popover_content_element(
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
             let focus_restore = state.focus_restore_intent().clone();
+            let overlay_host = overlay_host.clone();
             this.on_mouse_down_out(move |_, window, cx| {
                 close_popover(
+                    overlay_host.clone(),
                     runtime.clone(),
                     focus_restore.clone(),
                     on_open_change.clone(),
@@ -744,6 +771,7 @@ fn popover_content_element(
 }
 
 fn close_popover(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<PopoverRuntime>,
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
@@ -751,15 +779,20 @@ fn close_popover(
     cx: &mut App,
 ) {
     let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    runtime.update(cx, |runtime, _| {
-        runtime.open = false;
-    });
-    if let Some(on_open_change) = on_open_change.as_ref() {
-        on_open_change(false, window, cx);
-    }
-    if focus_restore_requests_trigger(&focus_restore) {
-        window.defer(cx, move |window, cx| trigger_focus.focus(window, cx));
-    }
+    overlay_host.close_runtime(
+        OverlayCloseRuntimeRequest::new(
+            runtime,
+            &focus_restore,
+            trigger_focus,
+            on_open_change.as_deref(),
+        )
+        .defer_focus_restore(true),
+        window,
+        cx,
+        |runtime| {
+            set_overlay_open(&mut runtime.open, false);
+        },
+    );
 }
 
 fn popover_initial_focus_handle(

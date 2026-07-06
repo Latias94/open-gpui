@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ThemeJsonSchemaFile",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "id": {
+      "type": "string"
+    },
+    "label": {
+      "type": "string"
+    },
+    "mode": {
+      "$ref": "#/$defs/ThemeJsonMode"
+    },
+    "revision": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "fallback_mode": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ThemeJsonMode"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "colors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ThemeJsonColorEntry"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "label",
+    "mode",
+    "revision",
+    "colors"
+  ],
+  "$defs": {
+    "ThemeJsonMode": {
+      "type": "string",
+      "enum": [
+        "light",
+        "dark",
+        "high-contrast"
+      ]
+    },
+    "ThemeJsonColorEntry": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "$ref": "#/$defs/ThemeJsonToken"
+        },
+        "state": {
+          "$ref": "#/$defs/ThemeJsonColorState"
+        },
+        "rgb": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "token",
+        "state",
+        "rgb"
+      ]
+    },
+    "ThemeJsonToken": {
+      "type": "string",
+      "enum": [
+        "semantic.surface",
+        "semantic.surface_muted",
+        "semantic.border",
+        "semantic.text",
+        "semantic.text_muted",
+        "semantic.accent",
+        "semantic.accent_foreground",
+        "semantic.focus_ring",
+        "semantic.destructive",
+        "semantic.destructive_foreground",
+        "semantic.overlay",
+        "semantic.modal_overlay"
+      ]
+    },
+    "ThemeJsonColorState": {
+      "type": "string",
+      "enum": [
+        "default",
+        "hover",
+        "selected",
+        "disabled",
+        "read-only",
+        "invalid",
+        "required",
+        "placeholder",
+        "message",
+        "focus-visible",
+        "overlay",
+        "modal-overlay"
+      ]
+    }
+  }
+}

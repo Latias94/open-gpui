@@ -7,21 +7,22 @@ use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, Pixels, RenderOnce, SharedString, StatefulInteractiveElement,
-    Styled, Window, anchored, deferred, div, point, px,
+    Styled, Window, div, px,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
-    OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
+    Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, OverlayResolvedState, consume_overlay_event, escape_open_change,
-    focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
+    OverlayCloseRuntimeRequest, OverlayDisclosureConfig, OverlayDisclosureOpenMode,
+    OverlayLayerHost, OverlayOpenRuntimeRequest, OverlayResolvedState, resolve_overlay_open_state,
+    set_overlay_open,
 };
-use crate::theme::ThemeResolver;
+use crate::theme::{ThemeContext, ThemeResolver};
 
 /// Dialog open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -40,6 +41,13 @@ impl DialogOpenMode {
             Self::Uncontrolled => "uncontrolled",
             Self::Controlled => "controlled",
         }
+    }
+}
+
+const fn dialog_open_mode_from_disclosure(mode: OverlayDisclosureOpenMode) -> DialogOpenMode {
+    match mode {
+        OverlayDisclosureOpenMode::Uncontrolled => DialogOpenMode::Uncontrolled,
+        OverlayDisclosureOpenMode::Controlled => DialogOpenMode::Controlled,
     }
 }
 
@@ -217,23 +225,18 @@ impl DialogState {
         focus_restore_intent: FocusRestoreIntent,
         tokens: ThemeTokens,
     ) -> Self {
-        let open_mode = if open.is_some() {
-            DialogOpenMode::Controlled
-        } else {
-            DialogOpenMode::Uncontrolled
-        };
-        let open = open.unwrap_or(default_open) && !disabled;
-        let presence = if open {
-            OverlayPresence::open()
-        } else {
-            OverlayPresence::hidden()
-        };
-        let overlay = GpuiOverlayAdapterConfig::new(OverlayLayerKind::Modal, presence)
+        let disclosure = OverlayDisclosureConfig::new(OverlayLayerKind::Modal)
+            .controlled_open(open)
+            .default_open(default_open)
+            .disabled(disabled)
             .outside_press_policy(outside_press_policy)
             .escape_key_policy(escape_key_policy)
             .initial_focus_intent(initial_focus_intent.clone())
             .focus_restore_intent(focus_restore_intent.clone())
-            .resolved_state();
+            .resolve();
+        let open = disclosure.open();
+        let open_mode = dialog_open_mode_from_disclosure(disclosure.open_mode());
+        let overlay = disclosure.overlay().clone();
         let colors = ThemeResolver::dialog_colors(tokens, open);
 
         Self {
@@ -537,11 +540,10 @@ impl RenderOnce for Dialog {
             trigger_focus: cx.focus_handle(),
             surface_focus: cx.focus_handle(),
         });
-        let runtime_open = runtime.read(cx).open;
-        let controlled_open = self.open;
-        let resolved_open = controlled_open.unwrap_or(runtime_open);
+        let open_state = resolve_overlay_open_state(self.open, runtime.read(cx).open);
+        let resolved_open = open_state.open();
 
-        if controlled_open.is_some() && runtime_open != resolved_open {
+        if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
             });
@@ -572,11 +574,17 @@ impl RenderOnce for Dialog {
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
+        let theme = ThemeResolver::current(cx);
+        let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+        let trigger_border = theme.resolve(colors.trigger_border());
+        let trigger_background = theme.resolve(colors.trigger_background());
+        let trigger_foreground = theme.resolve(colors.trigger_foreground());
+        let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
         let disabled = state.disabled();
         let open = state.open();
         let trigger_focus = runtime.read(cx).trigger_focus.clone();
         let surface_focus = runtime.read(cx).surface_focus.clone();
-        let overlay_adapter = gpui_overlay_state(state.overlay());
+        let overlay_host = OverlayLayerHost::resolve(state.overlay());
 
         div()
             .id(id.clone())
@@ -603,9 +611,9 @@ impl RenderOnce for Dialog {
                     .justify_center()
                     .rounded(gpui_px_from_ui(metrics.radius()))
                     .border_1()
-                    .border_color(ThemeResolver::resolve(colors.trigger_border()))
-                    .bg(ThemeResolver::resolve(colors.trigger_background()))
-                    .text_color(ThemeResolver::resolve(colors.trigger_foreground()))
+                    .border_color(trigger_border)
+                    .bg(trigger_background)
+                    .text_color(trigger_foreground)
                     .text_size(gpui_px_from_ui(metrics.text_size()))
                     .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
@@ -616,18 +624,19 @@ impl RenderOnce for Dialog {
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)
                     .aria_disabled(disabled)
-                    .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                    .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                     .when(open, |this| {
                         let runtime = runtime.clone();
                         let on_escape_close = on_escape_close.clone();
                         let focus_restore = state.focus_restore_intent().clone();
-                        let escape_policy = state.overlay().policy().clone();
+                        let overlay_host = overlay_host.clone();
                         this.on_key_down(move |event: &KeyDownEvent, window, cx| {
                             if event.keystroke.key.as_str() == "escape"
-                                && escape_open_change(&escape_policy).is_some()
+                                && overlay_host.escape_open_change().is_some()
                             {
-                                consume_overlay_event(window, cx);
+                                overlay_host.consume_event(window, cx);
                                 close_dialog(
+                                    overlay_host.clone(),
                                     runtime.clone(),
                                     focus_restore.clone(),
                                     on_escape_close.clone(),
@@ -642,49 +651,58 @@ impl RenderOnce for Dialog {
                         let runtime = runtime.clone();
                         let on_open_change = on_open_change.clone();
                         let initial_focus = state.initial_focus_intent().clone();
+                        let overlay_host = overlay_host.clone();
                         this.cursor_pointer()
-                            .hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
-                            })
+                            .hover(move |style| style.bg(trigger_hover_background))
                             .on_click(move |_event: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 let next_open = !open;
-                                runtime.update(cx, |runtime, _| {
-                                    runtime.open = next_open;
-                                });
-                                if next_open
-                                    && let Some(focus) =
-                                        dialog_initial_focus_handle(&runtime, &initial_focus, cx)
-                                {
-                                    window.defer(cx, move |window, cx| focus.focus(window, cx));
-                                }
-                                if let Some(on_open_change) = on_open_change.as_ref() {
-                                    on_open_change(next_open, window, cx);
-                                }
+                                let focus_runtime = runtime.clone();
+                                let initial_focus = initial_focus.clone();
+                                overlay_host.apply_open_change_with_after_update(
+                                    OverlayOpenRuntimeRequest::new(
+                                        runtime.clone(),
+                                        next_open,
+                                        on_open_change.as_deref(),
+                                    ),
+                                    window,
+                                    cx,
+                                    |runtime| {
+                                        set_overlay_open(&mut runtime.open, next_open);
+                                    },
+                                    move |window, cx| {
+                                        if next_open
+                                            && let Some(focus) = dialog_initial_focus_handle(
+                                                &focus_runtime,
+                                                &initial_focus,
+                                                cx,
+                                            )
+                                        {
+                                            window.defer(cx, move |window, cx| {
+                                                focus.focus(window, cx)
+                                            });
+                                        }
+                                    },
+                                );
                             })
                     })
                     .child(trigger_label),
             )
             .when(open, |this| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .position(point(px(0.0), px(0.0)))
-                            .snap_to_window()
-                            .child(dialog_layer_element(
-                                content,
-                                content_id.clone(),
-                                debug_id.clone(),
-                                state.clone(),
-                                viewport,
-                                runtime.clone(),
-                                surface_focus.clone(),
-                                on_escape_close.clone(),
-                                on_open_change.clone(),
-                            )),
-                    )
-                    .priority(overlay_adapter.deferred_priority()),
-                )
+                let overlay_host = overlay_host.clone();
+                this.child(overlay_host.full_window_layer(dialog_layer_element(
+                    content,
+                    content_id.clone(),
+                    debug_id.clone(),
+                    state.clone(),
+                    overlay_host.clone(),
+                    &theme,
+                    viewport,
+                    runtime.clone(),
+                    surface_focus.clone(),
+                    on_escape_close.clone(),
+                    on_open_change.clone(),
+                )))
             })
     }
 }
@@ -694,6 +712,8 @@ fn dialog_layer_element(
     content_id: ElementId,
     debug_id: String,
     state: DialogState,
+    overlay_host: OverlayLayerHost,
+    theme: &ThemeContext,
     viewport: open_gpui::Size<Pixels>,
     runtime: Entity<DialogRuntime>,
     surface_focus: FocusHandle,
@@ -702,11 +722,21 @@ fn dialog_layer_element(
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
-    let outside_change = outside_press_open_change(state.overlay().policy());
-    let escape_change = escape_open_change(state.overlay().policy());
+    let outside_change = overlay_host.outside_press_open_change();
+    let escape_change = overlay_host.escape_open_change();
     let escape_runtime = runtime.clone();
     let escape_open_change = on_escape_close.clone();
     let escape_focus_restore = state.focus_restore_intent().clone();
+    let key_overlay_host = overlay_host.clone();
+    let barrier_overlay_host = overlay_host.clone();
+    let barrier = theme.resolve(colors.barrier());
+    let border = theme.resolve(colors.border());
+    let surface = theme.resolve(colors.surface());
+    let foreground = theme.resolve(colors.foreground());
+    let muted_foreground = theme.resolve(ColorIntent::new(
+        ThemeTokens::default().text_muted,
+        0x5a6472,
+    ));
     let x = ((viewport.width - gpui_px_from_ui(metrics.width())) / 2.0).max(px(12.0));
     let y = (viewport.height / 10.0).max(px(24.0));
 
@@ -721,18 +751,20 @@ fn dialog_layer_element(
         .top(px(0.0))
         .w(viewport.width)
         .h(viewport.height)
-        .bg(ThemeResolver::resolve(colors.barrier()))
+        .bg(barrier)
         .occlude()
-        .on_any_mouse_down(|_, window, cx| {
-            consume_overlay_event(window, cx);
+        .on_any_mouse_down(move |_, window, cx| {
+            barrier_overlay_host.consume_event(window, cx);
         })
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
             let focus_restore = state.focus_restore_intent().clone();
+            let overlay_host = overlay_host.clone();
             this.on_click(move |_: &ClickEvent, window, cx| {
-                consume_overlay_event(window, cx);
+                overlay_host.consume_event(window, cx);
                 close_dialog(
+                    overlay_host.clone(),
                     runtime.clone(),
                     focus_restore.clone(),
                     on_open_change.clone(),
@@ -756,9 +788,9 @@ fn dialog_layer_element(
                 .gap_3()
                 .rounded(gpui_px_from_ui(metrics.radius()))
                 .border_1()
-                .border_color(ThemeResolver::resolve(colors.border()))
-                .bg(ThemeResolver::resolve(colors.surface()))
-                .text_color(ThemeResolver::resolve(colors.foreground()))
+                .border_color(border)
+                .bg(surface)
+                .text_color(foreground)
                 .text_size(gpui_px_from_ui(metrics.text_size()))
                 .line_height(gpui_px_from_ui(metrics.text_size()))
                 .shadow_lg()
@@ -773,8 +805,9 @@ fn dialog_layer_element(
                 .aria_label(state.title().to_owned())
                 .on_key_down(move |event: &KeyDownEvent, window, cx| {
                     if event.keystroke.key.as_str() == "escape" && escape_change.is_some() {
-                        consume_overlay_event(window, cx);
+                        key_overlay_host.consume_event(window, cx);
                         close_dialog(
+                            key_overlay_host.clone(),
                             escape_runtime.clone(),
                             escape_focus_restore.clone(),
                             escape_open_change.clone(),
@@ -793,14 +826,7 @@ fn dialog_layer_element(
                 .when_some(
                     state.description().map(ToOwned::to_owned),
                     |this, description| {
-                        this.child(
-                            div()
-                                .text_color(ThemeResolver::resolve(ColorIntent::new(
-                                    ThemeTokens::default().text_muted,
-                                    0x5a6472,
-                                )))
-                                .child(description),
-                        )
+                        this.child(div().text_color(muted_foreground).child(description))
                     },
                 )
                 .children(children_from_content(content)),
@@ -808,6 +834,7 @@ fn dialog_layer_element(
 }
 
 fn close_dialog(
+    overlay_host: OverlayLayerHost,
     runtime: Entity<DialogRuntime>,
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
@@ -815,15 +842,19 @@ fn close_dialog(
     cx: &mut App,
 ) {
     let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    runtime.update(cx, |runtime, _| {
-        runtime.open = false;
-    });
-    if let Some(on_open_change) = on_open_change.as_ref() {
-        on_open_change(false, window, cx);
-    }
-    if focus_restore_requests_trigger(&focus_restore) {
-        trigger_focus.focus(window, cx);
-    }
+    overlay_host.close_runtime(
+        OverlayCloseRuntimeRequest::new(
+            runtime,
+            &focus_restore,
+            trigger_focus,
+            on_open_change.as_deref(),
+        ),
+        window,
+        cx,
+        |runtime| {
+            set_overlay_open(&mut runtime.open, false);
+        },
+    );
 }
 
 fn dialog_initial_focus_handle(

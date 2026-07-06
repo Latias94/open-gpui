@@ -1,4 +1,5 @@
-use crate::{DockNodeId, DockSpaceId, split_fraction::normalize_shares};
+use crate::{DockNodeId, DockSpaceId};
+use open_gpui_ui_core::normalize_split_fractions;
 #[cfg(test)]
 use std::collections::HashSet;
 
@@ -101,7 +102,7 @@ impl DockGraph {
                     return Some(next_children[0]);
                 }
 
-                normalize_shares(&mut next_fractions);
+                normalize_split_fractions(&mut next_fractions);
 
                 if let Some(DockNode::Split {
                     children: current_children,
@@ -149,7 +150,7 @@ impl DockGraph {
 
                 changed = true;
                 let mut shares = grand_fractions.clone();
-                normalize_shares(&mut shares);
+                normalize_split_fractions(&mut shares);
                 for (&grand_child, &share) in grand_children.iter().zip(shares.iter()) {
                     out_children.push(grand_child);
                     out_fractions.push(parent_share * share);

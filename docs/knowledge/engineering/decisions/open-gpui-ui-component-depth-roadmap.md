@@ -30,6 +30,11 @@ Priority order:
 5. Polish track: `Sidebar`, `ScrollArea`, `TextInput`, `Avatar`, and `Overlay` should receive
    targeted ergonomic and regression-hardening work when real usage exposes gaps.
 
+2026-07-01 update: the first deepening pass for `Command`, `Menu`, `ContextMenu`, `Tree`, and
+Table behavior snapshots has landed. The next risk has moved from complex-family depth to shared
+product contracts: component registry ownership, accessibility gates, and theme loading. Broadly
+splitting every remaining 1k+ component file is not a current priority.
+
 # Context
 
 The component library now has official coverage for the core layout, selection, form, feedback,
@@ -51,9 +56,13 @@ The chosen path is to deepen complex families first. Leaf additions are easy to 
 but Command, Menu, Table, and Tree determine whether the library can support real application
 workflows.
 
+That path has now produced the first family-boundary baseline. The next chosen path is to harden
+the shared product contract layer before opening another large component-family split.
+
 # Consequences
 
-- The next `ce-plan` should start with `Command` unless a new user-facing regression appears first.
+- The next `ce-plan` should start with registry, accessibility, and theme productization unless a
+  new user-facing regression appears first.
 - Each new component-depth slice should update the API inventory, component contract, gallery
   catalog/focused mode, and targeted `cargo nextest` gates.
 - Visual regression tooling remains valuable, but it should follow a concrete rendering pain point

@@ -215,7 +215,7 @@ The adapters should keep render-time layout and event wiring thin around those s
 - **Goal:** Pull submenu hover, branch switching, and scroll-handle bookkeeping out of render-time assembly.
 - **Requirements:** R5, R6
 - **Files:**
-  - Add `crates/ui_components/src/menu_runtime.rs`
+  - Add `crates/ui_components/src/menu/runtime.rs`
   - Modify `crates/ui_components/src/menu.rs`
   - Modify `crates/ui_components/src/context_menu.rs`
   - Modify `crates/ui_components/tests/components.rs`

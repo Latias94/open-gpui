@@ -1,5 +1,5 @@
 use crate::{
-    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
+    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, CursorStyle, DevicePixels,
     DispatchEventResult, GpuSpecs, Pixels, Platform, PlatformAtlas, PlatformDisplay,
     PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
@@ -37,6 +37,7 @@ pub(crate) struct TestWindowState {
     is_minimized: bool,
     is_fullscreen: bool,
     accepts_pointer_input: bool,
+    pub(crate) cursor_style: CursorStyle,
 }
 
 #[derive(Clone)]
@@ -92,6 +93,7 @@ impl TestWindow {
             is_minimized: false,
             is_fullscreen: false,
             accepts_pointer_input: params.accepts_pointer_input,
+            cursor_style: CursorStyle::Arrow,
         })))
     }
 
@@ -201,6 +203,17 @@ impl PlatformWindow for TestWindow {
 
     fn mouse_position(&self) -> Point<Pixels> {
         Point::default()
+    }
+
+    fn set_cursor_style(&self, style: CursorStyle) {
+        let platform = {
+            let mut lock = self.0.lock();
+            lock.cursor_style = style;
+            lock.platform.upgrade()
+        };
+        if let Some(platform) = platform {
+            platform.set_window_cursor_style(self, style);
+        }
     }
 
     fn modifiers(&self) -> crate::Modifiers {

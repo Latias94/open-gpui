@@ -20,6 +20,7 @@ doctest = false
 
 [dependencies]
 open_gpui.workspace = true
+open_gpui_ui_core.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true

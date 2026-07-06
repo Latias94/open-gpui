@@ -14,10 +14,12 @@ pub mod breadcrumb;
 pub mod button;
 pub mod checkbox;
 mod choice;
+mod choice_overlay_runtime;
 pub mod collapsible;
 pub mod color;
 pub mod combobox;
 pub mod command;
+pub mod component_contract;
 pub mod context_menu;
 pub mod dialog;
 pub mod feedback;
@@ -31,16 +33,17 @@ pub mod label;
 pub mod link;
 pub mod listbox;
 pub mod menu;
-mod menu_runtime;
 pub mod number_input;
 mod overlay;
 pub mod popover;
 pub mod prelude;
 pub mod primitives;
 pub mod progress;
+mod public_api;
 pub mod radio;
-pub mod roving_focus;
+mod roving_focus;
 pub mod scroll_area;
+mod scroll_surface;
 pub mod select;
 pub mod separator;
 pub mod sheet;
@@ -73,7 +76,7 @@ pub mod gpui_adapter {
         UiA11yElementExt, gpui_accessible_action_from_ui, gpui_orientation_from_ui,
         gpui_role_from_ui, gpui_toggled_from_ui,
     };
-    pub use crate::focus::focus_ring_shadow;
+    pub use crate::focus::focus_ring_shadow_with_theme;
     pub use crate::geometry::{gpui_point_from_ui, gpui_px_from_ui, gpui_size_from_ui};
     pub use crate::overlay::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
@@ -83,178 +86,4 @@ pub mod gpui_adapter {
     pub use crate::text_input::adapter::{TextInputController, init as init_text_input};
 }
 
-pub use accordion::{
-    Accordion, AccordionColors, AccordionItem, AccordionItemDescriptor, AccordionItemState,
-    AccordionMetrics, AccordionMode, AccordionOpenChange, AccordionState,
-};
-pub use alert_dialog::{
-    AlertDialog, AlertDialogActionKind, AlertDialogActionState, AlertDialogColors,
-    AlertDialogIntent, AlertDialogMetrics, AlertDialogOpenMode, AlertDialogState,
-};
-pub use avatar::{
-    Avatar, AvatarColors, AvatarGroup, AvatarGroupCount, AvatarGroupCountColors,
-    AvatarGroupCountState, AvatarGroupState, AvatarMetrics, AvatarSource, AvatarState,
-};
-pub use badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVariant};
-pub use breadcrumb::{
-    Breadcrumb, BreadcrumbActivation, BreadcrumbColors, BreadcrumbItemDescriptor,
-    BreadcrumbItemState, BreadcrumbMetrics, BreadcrumbState,
-};
-pub use button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
-pub use checkbox::{Checkbox, CheckboxColors, CheckboxMetrics, CheckboxState};
-pub use collapsible::{Collapsible, CollapsibleColors, CollapsibleMetrics, CollapsibleState};
-pub use color::{ColorIntent, ColorState};
-pub use combobox::{
-    Combobox, ComboboxColors, ComboboxGroup, ComboboxGroupDescriptor, ComboboxMetrics,
-    ComboboxOpenMode, ComboboxOption, ComboboxOptionDescriptor, ComboboxSelection, ComboboxState,
-};
-pub use command::{
-    Command, CommandColors, CommandDialogState, CommandGroup, CommandGroupDescriptor,
-    CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItem, CommandItemDescriptor,
-    CommandItemState, CommandLoadingState, CommandMatchSource, CommandMetrics, CommandOpenMode,
-    CommandQueryMode, CommandRenderPlan, CommandRowRenderPlan, CommandSelectedChipState,
-    CommandSelection, CommandSelectionChange, CommandSelectionMode, CommandState,
-};
-pub use context_menu::{ContextMenu, ContextMenuState};
-pub use dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
-pub use feedback::{
-    EmptyState, EmptyStateMetrics, EmptyStateState, FeedbackColors, FeedbackIntent, StatusCue,
-    StatusCueMetrics, StatusCueState,
-};
-pub use field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
-pub use focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing};
-pub use hover_card::{
-    HoverCard, HoverCardColors, HoverCardContentKind, HoverCardDelayPolicy, HoverCardMetrics,
-    HoverCardOpenIntent, HoverCardOpenMode, HoverCardState,
-};
-pub use icon_button::{IconButton, IconButtonColors, IconButtonMetrics, IconButtonState};
-pub use kbd::{Kbd, KbdColors, KbdMetrics, KbdState};
-pub use label::{Label, LabelColors, LabelMetrics, LabelState};
-pub use link::{Link, LinkActivation, LinkColors, LinkMetrics, LinkState};
-pub use listbox::{
-    Listbox, ListboxColors, ListboxGroup, ListboxGroupDescriptor, ListboxGroupState,
-    ListboxMetrics, ListboxOption, ListboxOptionDescriptor, ListboxOptionKind, ListboxOptionState,
-    ListboxSelection, ListboxState, listbox_navigation_target,
-};
-pub use menu::{
-    Menu, MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuItemState, MenuMetrics,
-    MenuOpenMode, MenuSafeHoverCorridor, MenuSelection, MenuState, MenuSubmenuNavigation,
-    MenuSubmenuSurface, menu_navigation_target,
-};
-pub use number_input::{
-    NumberInput, NumberInputChange, NumberInputColors, NumberInputMetrics, NumberInputState,
-    NumberInputStepAction,
-};
-pub use open_gpui_ui_core::{
-    GridViewport2D, TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
-    TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind, TableAggregation,
-    TableCellEditor, TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup,
-    TableColumnGroupId, TableColumnId, TableColumnNode, TableColumnPinning, TableColumnRegion,
-    TableColumnRegions, TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState,
-    TableColumnResizeUpdate, TableColumnSizing, TableColumnVisibilityOverrides,
-    TableColumnWidthPolicy, TableExpansionMode, TableExpansionState, TableFacetRange,
-    TableFacetValueCount, TableFilter, TableFilterKind, TableGlobalFacetSummary, TableGroupRow,
-    TableNumericFilterBound, TableNumericFilterOperator, TablePagination,
-    TableResolvedColumnSizing, TableResolvedColumnSizingRegions, TableResolvedHeaderCell,
-    TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions, TableResolvedHeaderKind,
-    TableResolvedRow, TableResolvedRowKind, TableResolvedState, TableRow,
-    TableRowChildrenLoadState, TableRowId, TableRowModel, TableRowModelStage, TableRowPinning,
-    TableRowPinningPolicy, TableRowRegion, TableRowRegions, TableSelectOption, TableSort,
-    TableSortDirection, TableStageMode, TableState, TableStateCacheKey, TableTextFilterOperator,
-    TableTreeRow, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
-    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
-    drag_table_column_resize, end_table_column_resize, resolve_grid_viewport_2d,
-};
-pub use open_gpui_ui_core::{
-    TableSelectionActivationMode, TableSelectionMode, TableSelectionPolicy, TableSelectionSummary,
-    TableSelectionSummaryState, TableSubRowSelectionPolicy,
-};
-pub use overlay::OverlayResolvedState;
-pub use popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
-pub use progress::{Progress, ProgressColors, ProgressMetrics, ProgressState, ProgressVisualMode};
-pub use radio::{
-    RadioGroup, RadioGroupColors, RadioGroupMetrics, RadioGroupState, RadioItem,
-    RadioItemDescriptor, RadioItemState, RadioSelection,
-};
-pub use roving_focus::{active_index_from_str_keys, first_enabled, last_enabled, next_enabled};
-pub use scroll_area::{
-    ScrollArea, ScrollAreaAxis, ScrollAreaMetrics, ScrollAreaState, ScrollResetPolicy,
-};
-pub use select::{
-    Select, SelectColors, SelectMetrics, SelectOpenMode, SelectSelection, SelectState,
-};
-pub use separator::{Separator, SeparatorColors, SeparatorMetrics, SeparatorState};
-pub use sheet::{
-    Sheet, SheetCloseAffordance, SheetColors, SheetMetrics, SheetModalMode, SheetOpenMode,
-    SheetSide, SheetState,
-};
-pub use sidebar::{
-    Sidebar, SidebarCollapseMode, SidebarColors, SidebarItem, SidebarItemDescriptor,
-    SidebarItemState, SidebarMetrics, SidebarSection, SidebarSectionDescriptor,
-    SidebarSectionState, SidebarSelection, SidebarSide, SidebarState, SidebarVariant,
-    sidebar_navigation_target,
-};
-pub use skeleton::{Skeleton, SkeletonColors, SkeletonMetrics, SkeletonState};
-pub use slider::{Slider, SliderChange, SliderColors, SliderMetrics, SliderState};
-pub use splitter::{
-    Splitter, SplitterHandleState, SplitterMetrics, SplitterPanel, SplitterPanelDescriptor,
-    SplitterPanelState, SplitterState,
-};
-pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
-pub use table::{
-    Table, TableCellEditApplyOutcome, TableCellEditChange, TableCellRenderPlan,
-    TableCenterColumnWindowPlan, TableColumnOrderChange, TableColumnOrderPlacement,
-    TableColumnRegionRenderPlan, TableColumnRenderPlan, TableColumnSizingChange,
-    TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
-    TableColumnVisibilityItemState, TableColumnVisibilityState, TableFacetedFilter,
-    TableFacetedFilterChange, TableFacetedFilterOptionState, TableFacetedFilterState,
-    TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction,
-    TableHeaderCellRenderPlan, TableHeaderGroupRegionRenderPlan, TableHeaderGroupRegionsRenderPlan,
-    TableHeaderGroupRenderPlan, TableInputModifiers, TableMetrics, TablePinnedLayoutPlan,
-    TablePredicateFilter, TablePredicateFilterChange, TablePredicateFilterOperator,
-    TablePredicateFilterOperatorOptionState, TablePredicateFilterState, TableRangeFilter,
-    TableRangeFilterChange, TableRangeFilterState, TableRenderPlan, TableRowAction,
-    TableRowActivation, TableRowActivationKind, TableRowExpansionToggle, TableRowMeasureMode,
-    TableRowRenderPlan, TableRowSelectionChange, TableSelectionScope, TableToolbar,
-    TableToolbarState,
-};
-pub use tabs::{
-    Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
-    TabsSelection, TabsState,
-};
-pub use tag::{Tag, TagColors, TagMetrics, TagRemove, TagState, TagVariant};
-pub use text_input::{
-    TextInput, TextInputColors, TextInputDisplayMode, TextInputMetrics, TextInputState,
-};
-pub use textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
-pub use theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
-pub use toast::{
-    Toast, ToastAction, ToastColors, ToastDismiss, ToastDismissReason, ToastIntent, ToastMetrics,
-    ToastStack, ToastStackState, ToastState,
-};
-pub use toggle::{Toggle, ToggleColors, ToggleMetrics, ToggleState, ToggleVariant};
-pub use toggle_group::{
-    ToggleGroup, ToggleGroupColors, ToggleGroupItem, ToggleGroupItemDescriptor,
-    ToggleGroupItemState, ToggleGroupMetrics, ToggleGroupSelectionChange, ToggleGroupSelectionMode,
-    ToggleGroupState, toggle_group_navigation_target,
-};
-pub use toolbar::{
-    Toolbar, ToolbarColors, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarItemState,
-    ToolbarMetrics, ToolbarSelection, ToolbarState, toolbar_navigation_target,
-};
-pub use tooltip::{
-    Tooltip, TooltipColors, TooltipContentKind, TooltipDelayPolicy, TooltipMetrics,
-    TooltipOpenIntent, TooltipState,
-};
-pub use tree::{
-    Tree, TreeChildrenLoadState, TreeDropPosition, TreeFocusTarget, TreeItemDescriptor,
-    TreeItemState, TreeKeyboardAction, TreeMetrics, TreeMove, TreeMoveTarget, TreeRenderPlan,
-    TreeRowRenderPlan, TreeSelection, TreeState, TreeToggle, apply_tree_move,
-    tree_navigation_target,
-};
-pub use virtualized_list::{
-    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
-    VirtualizedListScrollStrategy, VirtualizedListState, virtualized_list_navigation_target,
-    virtualized_list_scroll_target,
-};
+pub use public_api::default::*;

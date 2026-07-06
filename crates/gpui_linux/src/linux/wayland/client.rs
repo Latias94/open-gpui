@@ -78,10 +78,10 @@ use super::{
 };
 
 use crate::linux::{
-    DOUBLE_CLICK_INTERVAL, LinuxClient, LinuxCommon, LinuxKeyboardLayout, SCROLL_LINES,
-    capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state, is_within_click_distance,
-    keystroke_from_xkb, keystroke_underlying_dead_key, modifiers_from_xkb, open_uri_internal,
-    read_fd, reveal_path_internal,
+    DOUBLE_CLICK_INTERVAL, LinuxClient, LinuxCommon, LinuxKeyboardLayout, PIPE_READ_TIMEOUT,
+    SCROLL_LINES, capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state,
+    is_within_click_distance, keystroke_from_xkb, keystroke_underlying_dead_key,
+    modifiers_from_xkb, open_uri_internal, read_fd_with_timeout, reveal_path_internal,
     wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
@@ -360,10 +360,44 @@ impl WaylandClientStatePtr {
         client.borrow().ime_enabled
     }
 
+    pub fn set_cursor_style_for_window(&self, window: &WaylandWindowStatePtr, style: CursorStyle) {
+        let client = self.get_client();
+        let mut state = client.borrow_mut();
+        let Some(focused_window) = state.mouse_focused_window.clone() else {
+            return;
+        };
+        if !focused_window.ptr_eq(window) || focused_window.is_blocked() {
+            return;
+        }
+
+        state.cursor_style = Some(style);
+
+        // Don't clobber the invisible cursor; restore reads back from `cursor_style`.
+        if state.cursor_hidden_window.is_some() {
+            return;
+        }
+
+        let serial = state.serial_tracker.get(SerialKind::MouseEnter);
+        if let Some(cursor_shape_device) = &state.cursor_shape_device {
+            cursor_shape_device.set_shape(serial, to_shape(style));
+        } else {
+            let Some(wl_pointer) = state.wl_pointer.clone() else {
+                return;
+            };
+            let scale = focused_window.primary_output_scale();
+            state.cursor.set_icon(
+                &wl_pointer,
+                serial,
+                cursor_style_to_icon_names(style),
+                scale,
+            );
+        }
+    }
+
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let client = self.get_client();
         let state = client.borrow_mut();
-        if state.composing || state.text_input.is_none() || state.pre_edit_text.is_some() {
+        if state.text_input.is_none() || state.pre_edit_text.is_some() {
             return;
         }
 
@@ -576,7 +610,7 @@ impl WaylandClient {
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver, wake_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
         handle
@@ -594,6 +628,17 @@ impl WaylandClient {
                     }
                 }
             })
+            .unwrap();
+
+        handle
+            .insert_source(
+                wake_receiver,
+                |event, _, client: &mut WaylandClientStatePtr| {
+                    if let calloop::channel::Event::Msg(()) = event {
+                        client.get_client().borrow_mut().common.handle_system_wake();
+                    }
+                },
+            )
             .unwrap();
 
         let compositor_gpu = detect_compositor_gpu();
@@ -836,46 +881,6 @@ impl LinuxClient for WaylandClient {
         state.windows.insert(surface_id, window.0.clone());
 
         Ok(Box::new(window))
-    }
-
-    fn set_cursor_style(&self, style: CursorStyle) {
-        let mut state = self.0.borrow_mut();
-
-        let need_update = state.cursor_style != Some(style)
-            && (state.mouse_focused_window.is_none()
-                || state
-                    .mouse_focused_window
-                    .as_ref()
-                    .is_some_and(|w| !w.is_blocked()));
-
-        if !need_update {
-            return;
-        }
-
-        state.cursor_style = Some(style);
-
-        // Don't clobber the invisible cursor; restore reads back from `cursor_style`.
-        if state.cursor_hidden_window.is_some() {
-            return;
-        }
-
-        let serial = state.serial_tracker.get(SerialKind::MouseEnter);
-        if let Some(cursor_shape_device) = &state.cursor_shape_device {
-            cursor_shape_device.set_shape(serial, to_shape(style));
-        } else if let Some(focused_window) = &state.mouse_focused_window {
-            // cursor-shape-v1 isn't supported, set the cursor using a surface.
-            let wl_pointer = state
-                .wl_pointer
-                .clone()
-                .expect("window is focused by pointer");
-            let scale = focused_window.primary_output_scale();
-            state.cursor.set_icon(
-                &wl_pointer,
-                serial,
-                cursor_style_to_icon_names(style),
-                scale,
-            );
-        }
     }
 
     fn hide_cursor_until_mouse_moves(&self) {
@@ -1718,7 +1723,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                 if let Some(commit_text) = text {
                     drop(state);
                     // IBus Intercepts keys like `a`, `b`, but those keys are needed for vim mode.
-                    // We should only send ASCII characters to Zed, otherwise a user could remap a letter like `か` or `相`.
+                    // We should only send ASCII characters to Open GPUI, otherwise a user could remap a letter like `か` or `相`.
                     if commit_text.len() == 1 {
                         window.handle_input(PlatformInput::KeyDown(KeyDownEvent {
                             keystroke: Keystroke {
@@ -1821,18 +1826,18 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         state.enter_token = None;
                     }
                     state.restore_cursor_after_hide();
-                    if let Some(style) = state.cursor_style {
-                        if let Some(cursor_shape_device) = &state.cursor_shape_device {
-                            cursor_shape_device.set_shape(serial, to_shape(style));
-                        } else {
-                            let scale = window.primary_output_scale();
-                            state.cursor.set_icon(
-                                wl_pointer,
-                                serial,
-                                cursor_style_to_icon_names(style),
-                                scale,
-                            );
-                        }
+                    let style = window.cursor_style();
+                    state.cursor_style = Some(style);
+                    if let Some(cursor_shape_device) = &state.cursor_shape_device {
+                        cursor_shape_device.set_shape(serial, to_shape(style));
+                    } else {
+                        let scale = window.primary_output_scale();
+                        state.cursor.set_icon(
+                            wl_pointer,
+                            serial,
+                            cursor_style_to_icon_names(style),
+                            scale,
+                        );
                     }
                     drop(state);
                     window.set_hovered(true);
@@ -2306,7 +2311,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     drop(pipe.write);
 
                     let read_task = state.common.background_executor.spawn(async {
-                        let buffer = unsafe { read_fd(fd)? };
+                        let buffer = read_fd_with_timeout(fd, PIPE_READ_TIMEOUT)?;
                         let text = String::from_utf8(buffer)?;
                         anyhow::Ok(text)
                     });

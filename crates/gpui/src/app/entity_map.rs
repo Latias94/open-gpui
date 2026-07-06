@@ -1165,7 +1165,7 @@ impl fmt::Debug for BacktraceFormatter {
                         strip = false;
                         continue;
                     }
-                    "zed::main" => {
+                    "open_gpui::main" => {
                         strip = true;
                         f.frame().backtrace_frame(frame)?;
                     }

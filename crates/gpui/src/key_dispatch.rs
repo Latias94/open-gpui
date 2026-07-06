@@ -26,8 +26,7 @@
 //!```
 //!
 //! The keybindings themselves are managed independently by calling cx.bind_keys().
-//! (Though mostly when developing Zed itself, you just need to add a new line to
-//!  assets/keymaps/default-{platform}.json).
+//! Applications can also load equivalent bindings from their own default keymap files.
 //!
 //! ```ignore
 //! cx.bind_keys([
@@ -41,8 +40,10 @@
 //!
 //! In real apps, it is a little more complicated than this, because typically you have
 //! several nested views that each register keyboard handlers. In this case action matching
-//! bubbles up from the bottom. For example in Zed, the Workspace is the top-level view, which contains Pane's, which contain Editors. If there are conflicting keybindings defined
-//! then the Editor's bindings take precedence over the Pane's bindings, which take precedence over the Workspace.
+//! bubbles up from the bottom. For example, an application might have a Workspace top-level view
+//! containing panes, which contain editors. If there are conflicting keybindings defined, then the
+//! editor's bindings take precedence over the pane's bindings, which take precedence over the
+//! workspace.
 //!
 //! In GPUI, keybindings are not limited to just single keystrokes, you can define
 //! sequences by separating the keys with a space:
@@ -621,8 +622,8 @@ impl DispatchTree {
 #[cfg(test)]
 mod tests {
     use crate::{
-        self as gpui, AppContext, DispatchResult, Element, ElementId, GlobalElementId,
-        InspectorElementId, Keystroke, LayoutId, Style,
+        AppContext, DispatchResult, Element, ElementId, GlobalElementId, InspectorElementId,
+        Keystroke, LayoutId, Style,
     };
     use core::panic;
     use smallvec::SmallVec;

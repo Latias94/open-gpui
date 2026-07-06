@@ -73,6 +73,20 @@ fn test_scheduler_drops_with_stalled_detached_background_task() {
 }
 
 #[test]
+fn test_scheduler_drops_with_never_polled_dedicated_task() {
+    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
+    let weak_scheduler = Arc::downgrade(&scheduler);
+
+    scheduler
+        .background()
+        .spawn_dedicated(|_executor| async move {})
+        .detach();
+
+    drop(scheduler);
+    assert!(weak_scheduler.upgrade().is_none());
+}
+
+#[test]
 fn test_foreground_ordering() {
     let mut traces = HashSet::new();
 

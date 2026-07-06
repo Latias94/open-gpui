@@ -51,11 +51,11 @@ use crate::{
     KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, MouseButton, OwnedMenu,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformFocusedWindow,
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformViewportCapabilities, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem,
-    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
-    WindowInvalidator,
+    PlatformViewportCapabilities, PlatformViewportFlagCapabilities, Point, Priority, PromptBuilder,
+    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
+    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
+    WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -142,6 +142,11 @@ impl Drop for AppRefMut<'_> {
     }
 }
 
+#[cfg(target_family = "wasm")]
+thread_local! {
+    static RUNNING_WEB_APPLICATIONS: RefCell<Vec<Rc<AppCell>>> = RefCell::new(Vec::new());
+}
+
 /// A reference to a GPUI application, typically constructed in the `main` function of your app.
 /// You won't interact with this type much outside of initial configuration and startup.
 pub struct Application(Rc<AppCell>);
@@ -206,10 +211,16 @@ impl Application {
     {
         let this = self.0.clone();
         let platform = self.0.borrow().platform.clone();
+        #[cfg(target_family = "wasm")]
+        let keep_alive = this.clone();
         platform.run(Box::new(move || {
             let cx = &mut *this.borrow_mut();
             on_finish_launching(cx);
         }));
+        #[cfg(target_family = "wasm")]
+        RUNNING_WEB_APPLICATIONS.with(|applications| {
+            applications.borrow_mut().push(keep_alive);
+        });
     }
 
     /// Register a handler to be invoked when the platform instructs the application
@@ -234,6 +245,23 @@ impl Application {
                 callback(&mut app.borrow_mut());
             }
         }));
+        self
+    }
+
+    /// Invokes a handler when the system wakes from sleep.
+    pub fn on_system_wake<F>(&self, mut callback: F) -> &Self
+    where
+        F: 'static + FnMut(&mut App),
+    {
+        let this = Rc::downgrade(&self.0);
+        self.0
+            .borrow_mut()
+            .platform
+            .on_system_wake(Box::new(move || {
+                if let Some(app) = this.upgrade() {
+                    callback(&mut app.borrow_mut());
+                }
+            }));
         self
     }
 
@@ -1133,6 +1161,11 @@ impl App {
         self.platform.viewport_capabilities()
     }
 
+    /// Returns platform support for ImGui-style viewport window flags.
+    pub fn viewport_flag_capabilities(&self) -> PlatformViewportFlagCapabilities {
+        self.platform.viewport_flag_capabilities()
+    }
+
     /// Returns the backend hovered-window signal for the current pointer snapshot.
     pub fn hovered_window(&self) -> PlatformHoveredWindow {
         self.platform.hovered_window()
@@ -1351,7 +1384,7 @@ impl App {
         self.platform.open_url(url);
     }
 
-    /// Registers the given URL scheme (e.g. `zed` for `zed://` urls) to be
+    /// Registers the given URL scheme (e.g. `open-gpui` for `open-gpui://` URLs) to be
     /// opened by the current app.
     ///
     /// On some platforms (e.g. macOS) you may be able to register URL schemes
@@ -2822,7 +2855,10 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
 
 #[cfg(test)]
 mod test {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
 
     use crate::{AppContext, Empty, TestAppContext, px, size};
 
@@ -2857,6 +2893,20 @@ mod test {
         });
 
         assert_eq!(*observation_count.borrow(), 2);
+    }
+
+    #[crate::test]
+    fn application_on_system_wake_runs_callback(cx: &mut TestAppContext) {
+        let wake_count = Rc::new(Cell::new(0));
+        super::Application(cx.app.clone()).on_system_wake({
+            let wake_count = wake_count.clone();
+            move |_| wake_count.set(wake_count.get() + 1)
+        });
+
+        cx.simulate_system_wake();
+        cx.simulate_system_wake();
+
+        assert_eq!(wake_count.get(), 2);
     }
 
     #[crate::test]

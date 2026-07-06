@@ -109,11 +109,11 @@ fn checked_resize_reports_split_errors_without_mutation() {
         graph
             .apply_op_checked(&DockOp::SetSplitFractionsMany {
                 updates: vec![
-                    SplitFractionsUpdate {
+                    DockSplitResize {
                         split,
                         fractions: vec![0.25, 0.75],
                     },
-                    SplitFractionsUpdate {
+                    DockSplitResize {
                         split,
                         fractions: vec![0.75, 0.25],
                     },
@@ -126,7 +126,7 @@ fn checked_resize_reports_split_errors_without_mutation() {
     assert!(
         !graph
             .apply_op_checked(&DockOp::SetSplitFractionsMany {
-                updates: vec![SplitFractionsUpdate {
+                updates: vec![DockSplitResize {
                     split,
                     fractions: vec![0.5, 0.5],
                 }],
@@ -136,7 +136,7 @@ fn checked_resize_reports_split_errors_without_mutation() {
     assert!(
         graph
             .apply_op_checked(&DockOp::SetSplitFractionsMany {
-                updates: vec![SplitFractionsUpdate {
+                updates: vec![DockSplitResize {
                     split,
                     fractions: vec![0.25, 0.75],
                 }],

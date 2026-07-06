@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use async_compression::futures::bufread::{BzDecoder, GzipDecoder};
 use futures::{AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, io::BufReader};
 use sha2::{Digest, Sha256};
+use tokio_util::compat::FuturesAsyncReadCompatExt as _;
 
 use crate::{HttpClient, github::AssetKind};
 
@@ -289,7 +290,7 @@ async fn unpack_tar_archive(
     // We don't need to set the modified time. It's irrelevant to downloaded
     // archive verification, and some filesystems return errors when asked to
     // apply it after extraction.
-    let archive = async_tar::ArchiveBuilder::new(archive_bytes)
+    let archive = async_tar::ArchiveBuilder::new(archive_bytes.compat())
         .set_preserve_mtime(false)
         .build();
     archive

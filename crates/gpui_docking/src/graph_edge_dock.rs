@@ -1,4 +1,5 @@
-use crate::{DockEdgeDockSizingScope, DockNodeId, DockSpaceId, split_fraction::normalize_shares};
+use crate::{DockEdgeDockSizingScope, DockNodeId, DockSpaceId};
+use open_gpui_ui_core::normalize_split_fractions;
 use std::collections::HashMap;
 
 use super::{DockEdgeDockPlan, DockEdgeDockSizing, DockGraph, DockNode, DropZone, SplitAxis};
@@ -445,6 +446,6 @@ fn split_share_and_insert(
     }
     children.insert(insert_index, new_child);
     fractions.insert(insert_index, take);
-    normalize_shares(fractions);
+    normalize_split_fractions(fractions);
     true
 }

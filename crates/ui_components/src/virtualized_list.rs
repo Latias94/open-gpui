@@ -1,19 +1,23 @@
 //! Renderer-neutral state for virtualized list surfaces.
 
 use crate::a11y::UiA11yElementExt;
-use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
+use crate::geometry::gpui_px_from_ui;
 use crate::roving_focus::paged_navigation_target;
 use crate::scroll_area::ScrollArea;
+use crate::scroll_surface::{
+    ScrollSurfaceRevealStrategy, ScrollSurfaceRuntime, fixed_row_scroll_target, reveal_fixed_row,
+    scroll_surface_handle, vertical_scroll_offset, vertical_viewport_extent,
+};
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
-    Window, div, point, px, rgb,
+    Window, div, px, rgb,
 };
 #[cfg(test)]
 use open_gpui_ui_core::ui_px;
 use open_gpui_ui_core::{
-    Role, Sizable, Size, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
+    Role, RowWindow, Sizable, Size, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
     VirtualizerResolvedState, VirtualizerState,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -274,9 +278,237 @@ impl VirtualizedListState {
     }
 }
 
+/// Public behavior snapshot for one virtualized-list row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VirtualizedListRowBehaviorSnapshot {
+    item: VirtualizedListItemDescriptor,
+    render_key: String,
+    index: usize,
+    position_in_set: usize,
+    size_of_set: usize,
+    virtual_start: UiPx,
+    virtual_size: UiPx,
+    active: bool,
+    selected: bool,
+    disabled: bool,
+    role: Role,
+}
+
+impl VirtualizedListRowBehaviorSnapshot {
+    fn from_render_plan(row: &VirtualizedListRowRenderPlan) -> Self {
+        Self {
+            item: row.item().clone(),
+            render_key: row.render_key().to_owned(),
+            index: row.index(),
+            position_in_set: row.position_in_set(),
+            size_of_set: row.size_of_set(),
+            virtual_start: row.virtual_start(),
+            virtual_size: row.virtual_size(),
+            active: row.active(),
+            selected: row.selected(),
+            disabled: row.disabled(),
+            role: row.role(),
+        }
+    }
+
+    /// Returns the source descriptor.
+    pub const fn item(&self) -> &VirtualizedListItemDescriptor {
+        &self.item
+    }
+
+    /// Returns the stable source item key.
+    pub fn key(&self) -> &str {
+        self.item.key()
+    }
+
+    /// Returns the visible item label.
+    pub fn label(&self) -> &str {
+        self.item.label()
+    }
+
+    /// Returns the stable render key.
+    pub fn render_key(&self) -> &str {
+        &self.render_key
+    }
+
+    /// Returns the zero-based item index.
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Returns the one-based position within the rendered set.
+    pub const fn position_in_set(&self) -> usize {
+        self.position_in_set
+    }
+
+    /// Returns the total set size.
+    pub const fn size_of_set(&self) -> usize {
+        self.size_of_set
+    }
+
+    /// Returns the virtual row start offset.
+    pub const fn virtual_start(&self) -> UiPx {
+        self.virtual_start
+    }
+
+    /// Returns the virtual row size.
+    pub const fn virtual_size(&self) -> UiPx {
+        self.virtual_size
+    }
+
+    /// Returns whether this row is active.
+    pub const fn active(&self) -> bool {
+        self.active
+    }
+
+    /// Returns whether this row is selected.
+    pub const fn selected(&self) -> bool {
+        self.selected
+    }
+
+    /// Returns whether this row is disabled.
+    pub const fn disabled(&self) -> bool {
+        self.disabled
+    }
+
+    /// Returns the accessibility role for this row.
+    pub const fn role(&self) -> Role {
+        self.role
+    }
+}
+
+/// Public behavior snapshot for a concrete virtualized list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VirtualizedListBehaviorSnapshot {
+    list_id: String,
+    label: String,
+    state: VirtualizedListState,
+    metrics: VirtualizedListMetrics,
+    total_size: UiPx,
+    viewport_extent: UiPx,
+    scroll_offset: UiPx,
+    visible_range: open_gpui_ui_core::VirtualizerRange,
+    overscan_range: open_gpui_ui_core::VirtualizerRange,
+    rows: Vec<VirtualizedListRowBehaviorSnapshot>,
+    visible_row_count: usize,
+    overscan_count: usize,
+    role: Role,
+    row_role: Role,
+}
+
+impl VirtualizedListBehaviorSnapshot {
+    fn from_render_plan(plan: &VirtualizedListRenderPlan) -> Self {
+        Self {
+            list_id: plan.list_id().to_owned(),
+            label: plan.label().to_owned(),
+            state: plan.state().clone(),
+            metrics: plan.metrics(),
+            total_size: plan.virtualizer().total_size(),
+            viewport_extent: plan.virtualizer().viewport_extent(),
+            scroll_offset: plan.virtualizer().scroll_offset(),
+            visible_range: plan.virtualizer().visible_range().clone(),
+            overscan_range: plan.virtualizer().overscan_range().clone(),
+            rows: plan
+                .rows()
+                .iter()
+                .map(VirtualizedListRowBehaviorSnapshot::from_render_plan)
+                .collect(),
+            visible_row_count: plan.visible_row_count(),
+            overscan_count: plan.overscan_count(),
+            role: plan.role(),
+            row_role: plan.row_role(),
+        }
+    }
+
+    /// Returns the stable list id.
+    pub fn list_id(&self) -> &str {
+        &self.list_id
+    }
+
+    /// Returns the accessible list label.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Returns the resolved renderer-neutral state.
+    pub const fn state(&self) -> &VirtualizedListState {
+        &self.state
+    }
+
+    /// Returns the resolved metrics.
+    pub const fn metrics(&self) -> VirtualizedListMetrics {
+        self.metrics
+    }
+
+    /// Returns the virtualized total size.
+    pub const fn total_size(&self) -> UiPx {
+        self.total_size
+    }
+
+    /// Returns the viewport extent used to resolve the snapshot.
+    pub const fn viewport_extent(&self) -> UiPx {
+        self.viewport_extent
+    }
+
+    /// Returns the scroll offset used to resolve the snapshot.
+    pub const fn scroll_offset(&self) -> UiPx {
+        self.scroll_offset
+    }
+
+    /// Returns the viewport-visible source row range.
+    pub const fn visible_range(&self) -> &open_gpui_ui_core::VirtualizerRange {
+        &self.visible_range
+    }
+
+    /// Returns the rendered source row range after overscan.
+    pub const fn overscan_range(&self) -> &open_gpui_ui_core::VirtualizerRange {
+        &self.overscan_range
+    }
+
+    /// Returns rows in render order.
+    pub fn rows(&self) -> &[VirtualizedListRowBehaviorSnapshot] {
+        &self.rows
+    }
+
+    /// Returns the accessibility role for the root list container.
+    pub const fn role(&self) -> Role {
+        self.role
+    }
+
+    /// Returns the accessibility role for row containers.
+    pub const fn row_role(&self) -> Role {
+        self.row_role
+    }
+
+    /// Returns the number of rows visible before overscan.
+    pub const fn visible_row_count(&self) -> usize {
+        self.visible_row_count
+    }
+
+    /// Returns the number of rows rendered after overscan.
+    pub fn rendered_row_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Returns the overscan budget.
+    pub const fn overscan_count(&self) -> usize {
+        self.overscan_count
+    }
+
+    /// Returns the active row, when it is inside the rendered window.
+    pub fn active_row(&self) -> Option<&VirtualizedListRowBehaviorSnapshot> {
+        self.rows.iter().find(|row| row.active())
+    }
+
+    /// Returns the selected row, when it is inside the rendered window.
+    pub fn selected_row(&self) -> Option<&VirtualizedListRowBehaviorSnapshot> {
+        self.rows.iter().find(|row| row.selected())
+    }
+}
+
 /// One resolved virtualized row in render order.
 #[derive(Debug, Clone, PartialEq)]
-pub struct VirtualizedListRowRenderPlan {
+pub(crate) struct VirtualizedListRowRenderPlan {
     item: VirtualizedListItemDescriptor,
     render_key: String,
     index: usize,
@@ -319,11 +551,6 @@ impl VirtualizedListRowRenderPlan {
     /// Returns the source descriptor.
     pub fn item(&self) -> &VirtualizedListItemDescriptor {
         &self.item
-    }
-
-    /// Returns the stable item key.
-    pub fn key(&self) -> &str {
-        self.item.key()
     }
 
     /// Returns the visible item label.
@@ -384,13 +611,15 @@ impl VirtualizedListRowRenderPlan {
 
 /// Fully resolved render contract for a concrete virtualized list.
 #[derive(Debug, Clone, PartialEq)]
-pub struct VirtualizedListRenderPlan {
+pub(crate) struct VirtualizedListRenderPlan {
     list_id: String,
     label: String,
     state: VirtualizedListState,
     metrics: VirtualizedListMetrics,
     virtualizer: VirtualizerResolvedState,
     rows: Vec<VirtualizedListRowRenderPlan>,
+    visible_row_count: usize,
+    overscan_count: usize,
     role: Role,
     row_role: Role,
 }
@@ -426,22 +655,22 @@ impl VirtualizedListRenderPlan {
                 let item = &items[index];
                 VirtualizerItemKey::new(virtualized_list_render_key(item, index, &duplicate_keys))
             });
-        let rows = virtualizer
-            .items()
-            .iter()
-            .filter_map(|measurement| {
-                items.get(measurement.index()).cloned().map(|item| {
-                    let render_key =
-                        virtualized_list_render_key(&item, measurement.index(), &duplicate_keys);
-                    VirtualizedListRowRenderPlan::new(
-                        item,
-                        render_key,
-                        measurement.index(),
-                        measurement.clone(),
-                        state.item_count(),
-                        &state,
-                    )
-                })
+        let row_window = RowWindow::project(&virtualizer, |index| items.get(index).cloned());
+        let visible_row_count = row_window.visible_row_count();
+        let overscan_count = row_window.overscan_count();
+        let rows = row_window
+            .into_rows()
+            .into_iter()
+            .map(|projected| {
+                let (index, render_key, measurement, item) = projected.into_parts();
+                VirtualizedListRowRenderPlan::new(
+                    item,
+                    render_key,
+                    index,
+                    measurement,
+                    state.item_count(),
+                    &state,
+                )
             })
             .collect();
 
@@ -452,6 +681,8 @@ impl VirtualizedListRenderPlan {
             metrics,
             virtualizer,
             rows,
+            visible_row_count,
+            overscan_count,
             role: Role::ListBox,
             row_role: Role::ListBoxOption,
         }
@@ -497,35 +728,20 @@ impl VirtualizedListRenderPlan {
         self.row_role
     }
 
-    /// Returns the number of rows rendered after overscan.
-    pub fn rendered_row_count(&self) -> usize {
-        self.rows.len()
-    }
-
     /// Returns the number of rows visible before overscan.
-    pub fn visible_row_count(&self) -> usize {
-        self.virtualizer.visible_items().len()
+    pub const fn visible_row_count(&self) -> usize {
+        self.visible_row_count
     }
 
     /// Returns the overscan budget.
     pub const fn overscan_count(&self) -> usize {
-        self.virtualizer.overscan()
-    }
-
-    /// Returns the active row, when one is resolved.
-    pub fn active_row(&self) -> Option<&VirtualizedListRowRenderPlan> {
-        self.rows.iter().find(|row| row.active())
-    }
-
-    /// Returns the selected row, when one is resolved.
-    pub fn selected_row(&self) -> Option<&VirtualizedListRowRenderPlan> {
-        self.rows.iter().find(|row| row.selected())
+        self.overscan_count
     }
 }
 
 #[derive(Debug, Clone)]
 struct VirtualizedListRuntime {
-    scroll_handle: ScrollHandle,
+    scroll_surface: ScrollSurfaceRuntime,
     focus_handle: FocusHandle,
     active_index: Option<usize>,
     selected_index: Option<usize>,
@@ -628,20 +844,35 @@ impl VirtualizedList {
         self
     }
 
-    /// Returns the resolved render plan at the default viewport origin.
-    pub fn state(&self) -> VirtualizedListRenderPlan {
-        self.render_plan(
+    /// Returns resolved renderer-neutral list state from the builder seed.
+    pub fn state(&self) -> VirtualizedListState {
+        self.resolved_state(
+            self.active_index,
+            self.selected_index,
+            self.viewport_item_count,
+        )
+    }
+
+    /// Returns the public behavior snapshot at the default viewport origin.
+    pub fn behavior_snapshot(&self) -> VirtualizedListBehaviorSnapshot {
+        self.behavior_snapshot_with_viewport(
             UiPx::ZERO,
             self.metrics.row_height() * self.viewport_item_count as f32,
         )
     }
 
-    /// Resolves the renderer-neutral state and virtual window for the current list.
-    pub fn render_plan(
+    /// Resolves the public behavior snapshot for a viewport.
+    pub fn behavior_snapshot_with_viewport(
         &self,
         scroll_offset: UiPx,
         viewport_extent: UiPx,
-    ) -> VirtualizedListRenderPlan {
+    ) -> VirtualizedListBehaviorSnapshot {
+        let plan = self.render_plan(scroll_offset, viewport_extent);
+        VirtualizedListBehaviorSnapshot::from_render_plan(&plan)
+    }
+
+    /// Resolves the renderer-neutral state and virtual window for the current list.
+    fn render_plan(&self, scroll_offset: UiPx, viewport_extent: UiPx) -> VirtualizedListRenderPlan {
         let state = self.resolved_state(
             self.active_index,
             self.selected_index,
@@ -688,16 +919,16 @@ impl RenderOnce for VirtualizedList {
         let runtime_id = format!("virtualized-list:{}:runtime", self.id);
         let debug_id = self.id.to_string();
         let runtime = window.use_keyed_state(runtime_id, cx, |_, cx| VirtualizedListRuntime {
-            scroll_handle: ScrollHandle::new(),
+            scroll_surface: ScrollSurfaceRuntime::new(None),
             focus_handle: cx.focus_handle(),
             active_index: self.active_index,
             selected_index: self.selected_index,
             pending_scroll_to_active: None,
         });
         let runtime_state = runtime.read(cx).clone();
-        let scroll_handle = runtime_state.scroll_handle.clone();
+        let scroll_handle = scroll_surface_handle(&runtime_state.scroll_surface, None);
         let focus_handle = runtime_state.focus_handle.clone();
-        let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
+        let viewport_extent = vertical_viewport_extent(&scroll_handle);
         let viewport_item_count = resolve_viewport_item_count(
             self.metrics.row_height(),
             viewport_extent,
@@ -712,8 +943,7 @@ impl RenderOnce for VirtualizedList {
                 runtime.pending_scroll_to_active = None;
             });
         }
-        let scroll_offset =
-            UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
+        let scroll_offset = vertical_scroll_offset(&scroll_handle);
         let plan = VirtualizedListRenderPlan::resolve(
             self.id.clone(),
             self.label.to_string(),
@@ -976,19 +1206,14 @@ fn handle_virtualized_list_key_down(
 }
 
 fn scroll_active_index(scroll_handle: &ScrollHandle, state: &VirtualizedListState, index: usize) {
-    let viewport_extent =
-        resolve_viewport_extent(state, ui_px_from_gpui(scroll_handle.bounds().size.height));
-    let current_scroll_offset =
-        UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
-    let target = virtualized_list_scroll_target(
-        VirtualizedListScrollStrategy::Nearest,
+    reveal_fixed_row(
+        scroll_handle,
+        ScrollSurfaceRevealStrategy::Nearest,
         index,
         state.item_count(),
         state.metrics().row_height(),
-        viewport_extent,
-        current_scroll_offset,
+        Some(state.viewport_extent()),
     );
-    scroll_handle.set_offset(point(px(0.0), -gpui_px_from_ui(target)));
 }
 
 fn resolve_viewport_item_count(row_height: UiPx, viewport_extent: UiPx, fallback: usize) -> usize {
@@ -1032,40 +1257,25 @@ pub fn virtualized_list_scroll_target(
     viewport_extent: UiPx,
     current_scroll_offset: UiPx,
 ) -> UiPx {
-    let row_height = nonnegative_px(row_height);
-    let viewport_extent = nonnegative_px(viewport_extent);
-    if item_count == 0 || row_height.as_f32() <= 0.0 {
-        return UiPx::ZERO;
+    fixed_row_scroll_target(
+        scroll_surface_reveal_strategy(strategy),
+        target_index,
+        item_count,
+        row_height,
+        viewport_extent,
+        current_scroll_offset,
+    )
+}
+
+const fn scroll_surface_reveal_strategy(
+    strategy: VirtualizedListScrollStrategy,
+) -> ScrollSurfaceRevealStrategy {
+    match strategy {
+        VirtualizedListScrollStrategy::Nearest => ScrollSurfaceRevealStrategy::Nearest,
+        VirtualizedListScrollStrategy::Top => ScrollSurfaceRevealStrategy::Top,
+        VirtualizedListScrollStrategy::Center => ScrollSurfaceRevealStrategy::Center,
+        VirtualizedListScrollStrategy::Bottom => ScrollSurfaceRevealStrategy::Bottom,
     }
-
-    let target_index = target_index.min(item_count - 1);
-    let total_size = row_height * item_count as f32;
-    let max_scroll_offset = nonnegative_px(total_size - viewport_extent);
-    let current_scroll_offset = nonnegative_px(current_scroll_offset).min(max_scroll_offset);
-    let row_start = row_height * target_index as f32;
-    let row_end = row_start + row_height;
-    let target = match strategy {
-        VirtualizedListScrollStrategy::Nearest => {
-            let viewport_start = current_scroll_offset;
-            let viewport_end = viewport_start + viewport_extent;
-            if row_start < viewport_start {
-                row_start
-            } else if row_end > viewport_end {
-                row_end - viewport_extent
-            } else {
-                viewport_start
-            }
-        }
-        VirtualizedListScrollStrategy::Top => row_start,
-        VirtualizedListScrollStrategy::Center => {
-            let row_center = row_start + row_height.half();
-            let viewport_center = viewport_extent.half();
-            row_center - viewport_center
-        }
-        VirtualizedListScrollStrategy::Bottom => row_end - viewport_extent,
-    };
-
-    nonnegative_px(target).min(max_scroll_offset)
 }
 
 const fn valid_index(index: usize, item_count: usize) -> Option<usize> {
@@ -1162,48 +1372,44 @@ mod tests {
     }
 
     #[test]
-    fn virtualized_list_render_plan_preserves_roles_metadata_and_keys() {
+    fn virtualized_list_behavior_snapshot_preserves_roles_metadata_and_keys() {
         let items = vec![
             VirtualizedListItemDescriptor::new("root", "Root"),
             VirtualizedListItemDescriptor::new("duplicate", "First"),
             VirtualizedListItemDescriptor::new("duplicate", "Second").disabled(true),
             VirtualizedListItemDescriptor::new("tail", "Tail"),
         ];
-        let state = VirtualizedListState::resolve(Size::Small, false, 4, Some(2), Some(1), Some(2));
-        let plan = VirtualizedListRenderPlan::resolve(
-            "virtualized-list",
-            "Virtualized list",
-            state,
-            &items,
-            ui_px(56.0),
-            ui_px(56.0),
-        );
+        let snapshot = VirtualizedList::new("virtualized-list", "Virtualized list", items)
+            .with_size(Size::Small)
+            .default_active_index(2)
+            .default_selected_index(1)
+            .viewport_item_count(2)
+            .behavior_snapshot_with_viewport(ui_px(56.0), ui_px(56.0));
 
-        assert_eq!(plan.role(), Role::ListBox);
-        assert_eq!(plan.row_role(), Role::ListBoxOption);
-        assert_eq!(plan.list_id(), "virtualized-list");
-        assert_eq!(plan.label(), "Virtualized list");
-        assert_eq!(plan.visible_row_count(), 2);
-        assert_eq!(plan.overscan_count(), 4);
-        assert_eq!(plan.rendered_row_count(), 4);
-        assert_eq!(plan.rows()[0].key(), "root");
-        assert_eq!(plan.rows()[1].render_key(), "1:duplicate");
-        assert_eq!(plan.rows()[2].render_key(), "2:duplicate");
-        assert!(plan.rows()[1].selected());
-        assert!(plan.rows()[2].disabled());
-        assert!(plan.rows()[2].active());
-        assert_eq!(plan.rows()[2].position_in_set(), 3);
-        assert_eq!(plan.rows()[2].size_of_set(), 4);
-        assert_eq!(plan.rows()[2].virtual_start(), ui_px(56.0));
-        assert_eq!(plan.rows()[2].virtual_size(), ui_px(28.0));
-        assert!(plan.active_row().is_some());
-        assert!(plan.selected_row().is_some());
-        assert_eq!(plan.virtualizer().items().len(), 4);
+        assert_eq!(snapshot.role(), Role::ListBox);
+        assert_eq!(snapshot.row_role(), Role::ListBoxOption);
+        assert_eq!(snapshot.list_id(), "virtualized-list");
+        assert_eq!(snapshot.label(), "Virtualized list");
+        assert_eq!(snapshot.visible_row_count(), 2);
+        assert_eq!(snapshot.overscan_count(), 4);
+        assert_eq!(snapshot.rows().len(), 4);
+        assert_eq!(snapshot.rows()[0].item().key(), "root");
+        assert_eq!(snapshot.rows()[1].render_key(), "1:duplicate");
+        assert_eq!(snapshot.rows()[2].render_key(), "2:duplicate");
+        assert!(snapshot.rows()[1].selected());
+        assert!(snapshot.rows()[2].disabled());
+        assert!(snapshot.rows()[2].active());
+        assert_eq!(snapshot.rows()[2].position_in_set(), 3);
+        assert_eq!(snapshot.rows()[2].size_of_set(), 4);
+        assert_eq!(snapshot.rows()[2].virtual_start(), ui_px(56.0));
+        assert_eq!(snapshot.rows()[2].virtual_size(), ui_px(28.0));
+        assert!(snapshot.active_row().is_some());
+        assert!(snapshot.selected_row().is_some());
         assert_eq!(
-            plan.virtualizer()
-                .items()
+            snapshot
+                .rows()
                 .iter()
-                .map(|measurement| measurement.key().as_str())
+                .map(|row| row.render_key())
                 .collect::<Vec<_>>(),
             ["root", "1:duplicate", "2:duplicate", "tail"]
         );

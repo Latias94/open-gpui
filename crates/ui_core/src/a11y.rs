@@ -65,6 +65,8 @@ pub enum Role {
     SpinButton,
     /// A numeric slider.
     Slider,
+    /// A split view resize handle.
+    Splitter,
     /// A tab list container.
     TabList,
     /// A tab item.
@@ -146,4 +148,37 @@ pub enum AccessibleAction {
     SetValue,
     /// Show the context menu.
     ShowContextMenu,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn tab_and_splitter_roles_are_renderer_neutral_vocabulary() {
+        let roles = BTreeSet::from([Role::TabList, Role::Tab, Role::TabPanel, Role::Splitter]);
+
+        assert_eq!(roles.len(), 4);
+        assert!(roles.contains(&Role::TabList));
+        assert!(roles.contains(&Role::Tab));
+        assert!(roles.contains(&Role::TabPanel));
+        assert!(roles.contains(&Role::Splitter));
+    }
+
+    #[test]
+    fn docking_actions_are_renderer_neutral_vocabulary() {
+        let actions = BTreeSet::from([
+            AccessibleAction::Click,
+            AccessibleAction::Focus,
+            AccessibleAction::Increment,
+            AccessibleAction::Decrement,
+        ]);
+
+        assert_eq!(actions.len(), 4);
+        assert!(actions.contains(&AccessibleAction::Click));
+        assert!(actions.contains(&AccessibleAction::Focus));
+        assert!(actions.contains(&AccessibleAction::Increment));
+        assert!(actions.contains(&AccessibleAction::Decrement));
+    }
 }

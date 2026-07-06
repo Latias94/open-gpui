@@ -1,12 +1,12 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
-    Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions, app::GpuiMode, platform::RequestFrameOptions,
-    window::ElementArenaScope,
+    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, CursorStyle, DrawPhase,
+    Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task,
+    TestDispatcher, TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext,
+    Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
+    platform::RequestFrameOptions, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -384,6 +384,11 @@ impl TestAppContext {
         rx
     }
 
+    /// Simulates the system waking from sleep.
+    pub fn simulate_system_wake(&self) {
+        self.test_platform.simulate_system_wake();
+    }
+
     /// Causes the given sources to be returned if the application queries for screen
     /// capture sources.
     pub fn set_screen_capture_sources(&self, sources: Vec<TestScreenCaptureSource>) {
@@ -517,6 +522,11 @@ impl TestAppContext {
         self.test_platform.set_hovered_window(test_window);
     }
 
+    /// Returns the cursor style most recently requested by the test platform.
+    pub fn platform_cursor_style(&self) -> CursorStyle {
+        self.test_platform.cursor_style()
+    }
+
     /// Overrides the platform-reported window stack for tests.
     pub fn set_platform_window_stack(&self, windows: Option<Vec<AnyWindowHandle>>) {
         let test_windows = windows.map(|windows| {
@@ -546,6 +556,16 @@ impl TestAppContext {
         self.test_platform.set_hovered_window_available(available);
     }
 
+    /// Overrides whether the test platform can apply native no-input windows.
+    pub fn set_platform_no_input_windows(&self, supported: bool) {
+        self.test_platform.set_no_input_windows(supported);
+    }
+
+    /// Overrides whether the test platform can open independent platform viewport windows.
+    pub fn set_platform_viewport_windows(&self, supported: bool) {
+        self.test_platform.set_platform_viewport_windows(supported);
+    }
+
     /// Simulate dispatching an action to the currently focused node in the window.
     pub fn dispatch_action<A>(&mut self, window: AnyWindowHandle, action: A)
     where
@@ -562,7 +582,7 @@ impl TestAppContext {
 
     /// simulate_keystrokes takes a space-separated list of keys to type.
     /// cx.simulate_keystrokes("cmd-shift-p b k s p enter")
-    /// in Zed, this will run backspace on the current editor through the command palette.
+    /// in an editor app, this can run backspace on the current editor through the command palette.
     /// This will also run the background executor until it's parked.
     pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
         for keystroke in keystrokes
@@ -922,6 +942,33 @@ impl VisualTestContext {
         })
     }
 
+    /// Simulate a mouse exit event at the given point.
+    pub fn simulate_mouse_exit(
+        &mut self,
+        position: Point<Pixels>,
+        button: impl Into<Option<MouseButton>>,
+        modifiers: Modifiers,
+    ) {
+        self.simulate_event(MouseExitEvent {
+            position,
+            modifiers,
+            pressed_button: button.into(),
+        })
+    }
+
+    /// Simulate a mouse drag from one point to another on the current window.
+    pub fn simulate_drag(
+        &mut self,
+        start: Point<Pixels>,
+        end: Point<Pixels>,
+        button: MouseButton,
+        modifiers: Modifiers,
+    ) {
+        self.simulate_mouse_down(start, button, modifiers);
+        self.simulate_mouse_move(end, Some(button), modifiers);
+        self.simulate_mouse_up(end, button, modifiers);
+    }
+
     /// Simulate a primary mouse click at the given point
     pub fn simulate_click(&mut self, position: Point<Pixels>, modifiers: Modifiers) {
         self.simulate_event(MouseDownEvent {
@@ -1242,15 +1289,49 @@ impl AnyWindowHandle {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Context, Empty, FocusHandle, InteractiveElement, IntoElement, ParentElement,
-        PathPromptOptions, PlatformHoveredWindow, QuitMode, Render, StatefulInteractiveElement,
-        TestAppContext, VisualContext, div, px, size,
+        AnyDrag, AppContext as _, Context, CursorStyle, Empty, FocusHandle, InteractiveElement,
+        IntoElement, Modifiers, MouseButton, ParentElement, PathPromptOptions,
+        PlatformHoveredWindow, QuitMode, Render, StatefulInteractiveElement, Styled,
+        TestAppContext, VisualContext, VisualTestContext, Window, canvas, div, point, px, size,
     };
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     struct FocusDebugView {
         first: FocusHandle,
         second: FocusHandle,
+    }
+
+    struct CursorProbeView {
+        pointer: bool,
+    }
+
+    struct WindowCursorProbeView {
+        style: CursorStyle,
+    }
+
+    impl Render for CursorProbeView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let element = div().size_full();
+            if self.pointer {
+                element.cursor_pointer().into_any_element()
+            } else {
+                element.into_any_element()
+            }
+        }
+    }
+
+    impl Render for WindowCursorProbeView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let style = self.style;
+            canvas(
+                |_, _, _| (),
+                move |_, _, window, _| {
+                    window.set_window_cursor_style(style);
+                },
+            )
+            .size_full()
+        }
     }
 
     impl Render for FocusDebugView {
@@ -1377,6 +1458,100 @@ mod tests {
     }
 
     #[open_gpui::test]
+    fn cursor_style_uses_platform_hovered_window_not_active_window(cx: &mut TestAppContext) {
+        let active = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| CursorProbeView {
+                pointer: false,
+            })
+            .into();
+        let hovered = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| CursorProbeView {
+                pointer: true,
+            })
+            .into();
+
+        cx.update_window(active, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.run_until_parked();
+        cx.set_platform_hovered_window(Some(hovered));
+        cx.run_until_parked();
+
+        cx.update_window(hovered, |_, window, cx| {
+            window.draw(cx).clear();
+        })
+        .unwrap();
+        cx.update_window(active, |_, window, cx| {
+            window.draw(cx).clear();
+        })
+        .unwrap();
+
+        assert_eq!(cx.platform_cursor_style(), CursorStyle::PointingHand);
+    }
+
+    #[open_gpui::test]
+    fn mouse_exit_clears_window_cursor_style(cx: &mut TestAppContext) {
+        let window_handle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| WindowCursorProbeView {
+                style: CursorStyle::ResizeColumn,
+            })
+            .into();
+
+        cx.set_platform_hovered_window(Some(window_handle));
+        cx.update_window(window_handle, |_, window, cx| {
+            window.draw(cx).clear();
+        })
+        .unwrap();
+        assert_eq!(cx.platform_cursor_style(), CursorStyle::ResizeColumn);
+
+        let mut visual = VisualTestContext::from_window(window_handle, cx);
+        visual.simulate_mouse_exit(point(px(400.0), px(220.0)), None, Modifiers::none());
+
+        assert_eq!(cx.platform_cursor_style(), CursorStyle::Arrow);
+    }
+
+    #[open_gpui::test]
+    fn active_drag_cursor_is_only_applied_by_hovered_window(cx: &mut TestAppContext) {
+        let hovered = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| CursorProbeView {
+                pointer: true,
+            })
+            .into();
+        let background = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| CursorProbeView {
+                pointer: true,
+            })
+            .into();
+
+        cx.set_platform_hovered_window(Some(hovered));
+        let mut visual = VisualTestContext::from_window(hovered, cx);
+        visual.simulate_mouse_move(point(px(16.0), px(16.0)), None, Modifiers::none());
+        cx.update(|app| {
+            app.active_drag = Some(AnyDrag {
+                value: Arc::new("drag"),
+                view: app.new(|_| Empty).into(),
+                cursor_offset: point(px(0.0), px(0.0)),
+                cursor_style: Some(CursorStyle::ClosedHand),
+            });
+        });
+
+        cx.update_window(hovered, |_, window, cx| {
+            window.draw(cx).clear();
+        })
+        .unwrap();
+        assert_eq!(cx.platform_cursor_style(), CursorStyle::ClosedHand);
+
+        cx.update_window(background, |_, window, cx| {
+            window.draw(cx).clear();
+        })
+        .unwrap();
+        assert_eq!(
+            cx.platform_cursor_style(),
+            CursorStyle::ClosedHand,
+            "a non-hovered window repaint must not overwrite the active drag cursor"
+        );
+    }
+
+    #[open_gpui::test]
     fn test_focused_debug_selector_tracks_rendered_focus(cx: &mut TestAppContext) {
         let (view, cx) = cx.add_window_view(|_, cx| FocusDebugView {
             first: cx.focus_handle(),
@@ -1410,5 +1585,56 @@ mod tests {
         );
         assert!(cx.debug_selector_is_focused("focus-debug:second"));
         assert!(!cx.debug_selector_is_focused("focus-debug:first"));
+    }
+
+    #[open_gpui::test]
+    fn test_simulate_drag_dispatches_mouse_sequence(cx: &mut TestAppContext) {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        #[derive(Clone)]
+        struct DragRecorder {
+            events: Rc<RefCell<Vec<&'static str>>>,
+        }
+
+        impl Render for DragRecorder {
+            fn render(
+                &mut self,
+                _window: &mut crate::Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
+                div()
+                    .id("drag-recorder")
+                    .w(px(200.0))
+                    .h(px(120.0))
+                    .on_mouse_down(MouseButton::Left, {
+                        let events = self.events.clone();
+                        move |_, _, _| events.borrow_mut().push("down")
+                    })
+                    .on_mouse_move({
+                        let events = self.events.clone();
+                        move |_, _, _| events.borrow_mut().push("move")
+                    })
+                    .on_mouse_up(MouseButton::Left, {
+                        let events = self.events.clone();
+                        move |_, _, _| events.borrow_mut().push("up")
+                    })
+            }
+        }
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let events_for_view = events.clone();
+        let (_view, visual_cx) = cx.add_window_view(move |_, _| DragRecorder {
+            events: events_for_view.clone(),
+        });
+
+        visual_cx.simulate_drag(
+            point(px(20.0), px(20.0)),
+            point(px(120.0), px(80.0)),
+            MouseButton::Left,
+            crate::Modifiers::none(),
+        );
+
+        assert_eq!(events.borrow().as_slice(), ["down", "move", "up"]);
     }
 }

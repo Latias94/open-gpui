@@ -5,14 +5,14 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
+    AnyView, App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
 
 use crate::a11y::UiA11yElementExt;
 use crate::button::{ButtonColors, ButtonVariant};
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::theme::ThemeResolver;
 
 /// Resolved icon button color intents.
@@ -58,6 +58,7 @@ pub struct IconButtonState {
     variant: ButtonVariant,
     size: Size,
     disabled: bool,
+    selected: bool,
     accessible_label: SharedString,
     metrics: IconButtonMetrics,
     colors: IconButtonColors,
@@ -70,15 +71,17 @@ impl IconButtonState {
         variant: ButtonVariant,
         size: Size,
         disabled: bool,
+        selected: bool,
         accessible_label: impl Into<SharedString>,
         tokens: ThemeTokens,
     ) -> Self {
-        let colors = ThemeResolver::button_colors(tokens, variant, false);
+        let colors = ThemeResolver::button_colors(tokens, variant, selected);
 
         Self {
             variant,
             size,
             disabled,
+            selected,
             accessible_label: accessible_label.into(),
             metrics: IconButtonMetrics::from_size(size),
             colors,
@@ -99,6 +102,11 @@ impl IconButtonState {
     /// Returns whether the button is disabled.
     pub const fn disabled(&self) -> bool {
         self.disabled
+    }
+
+    /// Returns whether the icon button is selected.
+    pub const fn selected(&self) -> bool {
+        self.selected
     }
 
     /// Returns whether activation handlers should run.
@@ -141,8 +149,10 @@ pub struct IconButton {
     variant: ButtonVariant,
     size: Size,
     disabled: bool,
+    selected: bool,
     tokens: ThemeTokens,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    tooltip: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
 }
 
 impl IconButton {
@@ -159,8 +169,10 @@ impl IconButton {
             variant: ButtonVariant::Ghost,
             size: Size::Medium,
             disabled: false,
+            selected: false,
             tokens: ThemeTokens::default(),
             on_click: None,
+            tooltip: None,
         }
     }
 
@@ -173,6 +185,12 @@ impl IconButton {
     /// Marks the button as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Marks the icon button as selected.
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 
@@ -191,6 +209,12 @@ impl IconButton {
         self
     }
 
+    /// Adds a hover/focus tooltip to the icon button.
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip = Some(Rc::new(tooltip));
+        self
+    }
+
     /// Returns the accessible label.
     pub fn accessible_label(&self) -> &str {
         &self.accessible_label
@@ -202,6 +226,7 @@ impl IconButton {
             self.variant,
             self.size,
             self.disabled,
+            self.selected,
             self.accessible_label.clone(),
             self.tokens,
         )
@@ -216,13 +241,20 @@ impl Sizable for IconButton {
 }
 
 impl RenderOnce for IconButton {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let label = self.accessible_label.clone();
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
+        let theme_context = ThemeResolver::current(cx);
+        let theme = &theme_context;
+        let border_color = theme.resolve(colors.border());
+        let background = theme.resolve(colors.background());
+        let foreground = theme.resolve(colors.foreground());
+        let hover_background = theme.resolve(colors.hover_background());
+        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, theme);
 
         div()
             .id(self.id)
@@ -235,21 +267,22 @@ impl RenderOnce for IconButton {
             .justify_center()
             .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
-            .border_color(ThemeResolver::resolve(colors.border()))
-            .bg(ThemeResolver::resolve(colors.background()))
-            .text_color(ThemeResolver::resolve(colors.foreground()))
+            .border_color(border_color)
+            .bg(background)
+            .text_color(foreground)
             .text_size(gpui_px_from_ui(metrics.icon_size()))
             .line_height(gpui_px_from_ui(metrics.icon_size()))
             .focusable()
             .tab_stop(!disabled)
             .ui_role(state.role())
             .aria_label(label)
+            .aria_selected(state.selected())
             .aria_disabled(disabled)
-            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+            .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| {
                 this.cursor_pointer()
-                    .hover(move |style| style.bg(ThemeResolver::resolve(colors.hover_background())))
+                    .hover(move |style| style.bg(hover_background))
             })
             .when_some(self.on_click.filter(|_| !disabled), |this, on_click| {
                 this.on_click(move |event, window, cx| {
@@ -257,6 +290,26 @@ impl RenderOnce for IconButton {
                     on_click(event, window, cx);
                 })
             })
+            .when_some(self.tooltip, |this, tooltip| {
+                this.tooltip(move |window, cx| tooltip(window, cx))
+            })
             .child(self.icon)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icon_button_state_tracks_selected_builder_value() {
+        let inactive = IconButton::new("reader-select", "S", "Select text").state();
+        assert!(!inactive.selected());
+
+        let active = IconButton::new("reader-select", "S", "Select text")
+            .selected(true)
+            .state();
+        assert!(active.selected());
+        assert_eq!(active.accessible_label(), "Select text");
     }
 }

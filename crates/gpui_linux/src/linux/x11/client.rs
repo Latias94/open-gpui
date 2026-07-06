@@ -305,6 +305,48 @@ impl X11ClientStatePtr {
         state.ximc = Some(ximc);
         state.xim_handler = Some(xim_handler);
     }
+
+    pub fn set_cursor_style_for_window(&self, x_window: xproto::Window, style: CursorStyle) {
+        let Some(client) = self.get_client() else {
+            return;
+        };
+        let mut state = client.0.borrow_mut();
+        let current_style = state
+            .cursor_styles
+            .get(&x_window)
+            .unwrap_or(&CursorStyle::Arrow);
+        let window = state.windows.get(&x_window);
+        let should_change =
+            *current_style != style && window.is_none_or(|window| !window.is_blocked());
+
+        if !should_change {
+            return;
+        }
+
+        state.cursor_styles.insert(x_window, style);
+
+        // Don't clobber the invisible cursor; restore reads back from `cursor_styles`.
+        if state.cursor_hidden_window == Some(x_window) {
+            return;
+        }
+
+        let Some(cursor) = state.get_cursor_icon(style) else {
+            return;
+        };
+
+        check_reply(
+            || "Failed to set cursor style",
+            state.xcb_connection.change_window_attributes(
+                x_window,
+                &xproto::ChangeWindowAttributesAux {
+                    cursor: Some(cursor),
+                    ..Default::default()
+                },
+            ),
+        )
+        .log_err();
+        state.xcb_connection.flush().log_err();
+    }
 }
 
 #[derive(Clone)]
@@ -314,7 +356,7 @@ impl X11Client {
     pub(crate) fn new() -> anyhow::Result<Self> {
         let event_loop = EventLoop::try_new()?;
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver, wake_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
 
@@ -338,6 +380,16 @@ impl X11Client {
             })
             .map_err(|err| {
                 anyhow!("Failed to initialize event loop handling of foreground tasks: {err:?}")
+            })?;
+
+        handle
+            .insert_source(wake_receiver, |event, _, client: &mut X11Client| {
+                if let calloop::channel::Event::Msg(()) = event {
+                    client.0.borrow_mut().common.handle_system_wake();
+                }
+            })
+            .map_err(|err| {
+                anyhow!("Failed to initialize event loop handling of wake events: {err:?}")
             })?;
 
         let (xcb_connection, x_root_index) = XCBConnection::connect(None)?;
@@ -1659,52 +1711,6 @@ impl LinuxClient for X11Client {
         Ok(Box::new(window))
     }
 
-    fn set_cursor_style(&self, style: CursorStyle) {
-        let mut state = self.0.borrow_mut();
-        let Some(focused_window) = state.mouse_focused_window else {
-            return;
-        };
-        let current_style = state
-            .cursor_styles
-            .get(&focused_window)
-            .unwrap_or(&CursorStyle::Arrow);
-
-        let window = state
-            .mouse_focused_window
-            .and_then(|w| state.windows.get(&w));
-
-        let should_change = *current_style != style
-            && (window.is_none() || window.is_some_and(|w| !w.is_blocked()));
-
-        if !should_change {
-            return;
-        }
-
-        state.cursor_styles.insert(focused_window, style);
-
-        // Don't clobber the invisible cursor; restore reads back from `cursor_styles`.
-        if state.cursor_hidden_window == Some(focused_window) {
-            return;
-        }
-
-        let Some(cursor) = state.get_cursor_icon(style) else {
-            return;
-        };
-
-        check_reply(
-            || "Failed to set cursor style",
-            state.xcb_connection.change_window_attributes(
-                focused_window,
-                &ChangeWindowAttributesAux {
-                    cursor: Some(cursor),
-                    ..Default::default()
-                },
-            ),
-        )
-        .log_err();
-        state.xcb_connection.flush().log_err();
-    }
-
     fn hide_cursor_until_mouse_moves(&self) {
         self.0.borrow_mut().hide_cursor_until_mouse_moves();
     }
@@ -1869,6 +1875,7 @@ impl LinuxClient for X11Client {
 
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities {
+            platform_viewport_windows: true,
             global_window_bounds: true,
             // XInput enter/leave tracks cached pointer focus, not a current global hit-test.
             window_stack: true,

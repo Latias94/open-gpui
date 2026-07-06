@@ -1,10 +1,9 @@
 use crate::{
     BoolExt, MacDispatcher, MacDisplay, MacKeyboardLayout, MacKeyboardMapper, MacWindow,
     events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
-    set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
-use block::ConcreteBlock;
+use block2::RcBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
@@ -36,9 +35,9 @@ use objc::{
     sel, sel_impl,
 };
 use open_gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    KeyContext, Keymap, Menu, MenuItem, MouseButton, NavigationDirection, OsMenu, OwnedMenu,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ForegroundExecutor, KeyContext,
+    Keymap, Menu, MenuItem, MouseButton, NavigationDirection, OsMenu, OwnedMenu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformViewportCapabilities, PlatformWindow, Result, SystemMenuType, Task, ThermalState,
     WindowAppearance, WindowParams,
@@ -156,6 +155,11 @@ unsafe fn build_classes() {
                 on_thermal_state_change as extern "C" fn(&mut Object, Sel, id),
             );
 
+            decl.add_method(
+                sel!(onSystemWake:),
+                on_system_wake as extern "C" fn(&mut Object, Sel, id),
+            );
+
             decl.register()
         }
     }
@@ -174,6 +178,8 @@ pub(crate) struct MacPlatformState {
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     on_thermal_state_change: Option<Box<dyn FnMut()>>,
+    on_system_wake: Option<Box<dyn FnMut()>>,
+    system_wake_observer_registered: bool,
     quit: Option<Box<dyn FnMut()>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
@@ -220,6 +226,8 @@ impl MacPlatform {
             dock_menu: None,
             on_keyboard_layout_change: None,
             on_thermal_state_change: None,
+            on_system_wake: None,
+            system_wake_observer_registered: false,
             menus: None,
             keyboard_mapper,
             cursor_visible: Arc::new(AtomicBool::new(true)),
@@ -634,6 +642,7 @@ impl Platform for MacPlatform {
 
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities {
+            platform_viewport_windows: true,
             global_window_bounds: true,
             window_stack: true,
             display_work_area: true,
@@ -732,7 +741,8 @@ impl Platform for MacPlatform {
                 )));
             }
             let done_tx = Cell::new(Some(done_tx));
-            let block = ConcreteBlock::new(move |error: id| {
+            let block: RcBlock<dyn Fn(*mut c_void)> = RcBlock::new(move |error| {
+                let error = error as id;
                 let result = if error == nil {
                     Ok(())
                 } else {
@@ -744,8 +754,7 @@ impl Platform for MacPlatform {
                     let _ = done_tx.send(result);
                 }
             });
-            let block = block.copy();
-            let _: () = msg_send![workspace, setDefaultApplicationAtURL: app toOpenURLsWithScheme: scheme completionHandler: block];
+            let _: () = msg_send![workspace, setDefaultApplicationAtURL: app toOpenURLsWithScheme: scheme completionHandler: &*block];
         }
 
         self.background_executor()
@@ -772,8 +781,9 @@ impl Platform for MacPlatform {
                     panel.setCanCreateDirectories(true.to_objc());
                     panel.setResolvesAliases_(false.to_objc());
                     let done_tx = Cell::new(Some(done_tx));
-                    let block = ConcreteBlock::new(move |response: NSModalResponse| {
-                        let result = if response == NSModalResponse::NSModalResponseOk {
+                    let block: RcBlock<dyn Fn(NSInteger)> = RcBlock::new(move |response| {
+                        let result = if response == NSModalResponse::NSModalResponseOk as NSInteger
+                        {
                             let mut result = Vec::new();
                             let urls = panel.URLs();
                             for i in 0..urls.count() {
@@ -793,13 +803,12 @@ impl Platform for MacPlatform {
                             let _ = done_tx.send(Ok(result));
                         }
                     });
-                    let block = block.copy();
 
                     if let Some(prompt) = options.prompt {
                         let _: () = msg_send![panel, setPrompt: ns_string(&prompt)];
                     }
 
-                    let _: () = msg_send![panel, beginWithCompletionHandler: block];
+                    let _: () = msg_send![panel, beginWithCompletionHandler: &*block];
                 }
             })
             .detach();
@@ -828,9 +837,9 @@ impl Platform for MacPlatform {
                     }
 
                     let done_tx = Cell::new(Some(done_tx));
-                    let block = ConcreteBlock::new(move |response: NSModalResponse| {
+                    let block: RcBlock<dyn Fn(NSInteger)> = RcBlock::new(move |response| {
                         let mut result = None;
-                        if response == NSModalResponse::NSModalResponseOk {
+                        if response == NSModalResponse::NSModalResponseOk as NSInteger {
                             let url = panel.URL();
                             if url.isFileURL() == YES {
                                 result = ns_url_to_path(panel.URL()).ok().map(|mut result| {
@@ -869,8 +878,7 @@ impl Platform for MacPlatform {
                             let _ = done_tx.send(Ok(result));
                         }
                     });
-                    let block = block.copy();
-                    let _: () = msg_send![panel, beginWithCompletionHandler: block];
+                    let _: () = msg_send![panel, beginWithCompletionHandler: &*block];
                 }
             })
             .detach();
@@ -927,6 +935,25 @@ impl Platform for MacPlatform {
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().reopen = Some(callback);
+    }
+
+    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
+        let mut state = self.0.lock();
+        state.on_system_wake = Some(callback);
+        if state.system_wake_observer_registered {
+            return;
+        }
+        drop(state);
+
+        unsafe {
+            // SAFETY: APP_CLASS is registered during startup and returns the shared NSApplication.
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            let delegate: id = msg_send![app, delegate];
+            if delegate != nil {
+                register_system_wake_observer(delegate);
+                self.0.lock().system_wake_observer_registered = true;
+            }
+        }
     }
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
@@ -1026,14 +1053,6 @@ impl Platform for MacPlatform {
             let url: id = msg_send![bundle, URLForAuxiliaryExecutable: name];
             anyhow::ensure!(!url.is_null(), "resource not found");
             ns_url_to_path(url)
-        }
-    }
-
-    /// Match cursor style to one of the styles available
-    /// in macOS's [NSCursor](https://developer.apple.com/documentation/appkit/nscursor).
-    fn set_cursor_style(&self, style: CursorStyle) {
-        unsafe {
-            set_active_window_cursor_style(style);
         }
     }
 
@@ -1241,11 +1260,33 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
             object: process_info
         ];
 
+        let observer = this as *mut Object as id;
         let platform = get_mac_platform(this);
-        let callback = platform.0.lock().finish_launching.take();
+        let callback = {
+            let mut state = platform.0.lock();
+            if state.on_system_wake.is_some() && !state.system_wake_observer_registered {
+                register_system_wake_observer(observer);
+                state.system_wake_observer_registered = true;
+            }
+            state.finish_launching.take()
+        };
         if let Some(callback) = callback {
             callback();
         }
+    }
+}
+
+unsafe fn register_system_wake_observer(observer: id) {
+    unsafe {
+        // SAFETY: observer is an Objective-C object implementing onSystemWake:.
+        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let workspace_center: *mut Object = msg_send![workspace, notificationCenter];
+        let wake_name = ns_string("NSWorkspaceDidWakeNotification");
+        let _: () = msg_send![workspace_center, addObserver: observer
+            selector: sel!(onSystemWake:)
+            name: wake_name
+            object: nil
+        ];
     }
 }
 
@@ -1308,6 +1349,25 @@ extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
                 .lock()
                 .on_thermal_state_change
                 .get_or_insert(callback);
+        }
+    }
+}
+
+extern "C" fn on_system_wake(this: &mut Object, _: Sel, _: id) {
+    // Defer to the next run loop iteration to avoid re-entrant borrows of the App RefCell.
+    let platform = unsafe { get_mac_platform(this) };
+    let platform_ptr = platform as *const MacPlatform as *mut c_void;
+    unsafe {
+        DispatchQueue::main().exec_async_f(platform_ptr, on_system_wake);
+    }
+
+    extern "C" fn on_system_wake(context: *mut c_void) {
+        let platform = unsafe { &*(context as *const MacPlatform) };
+        let mut lock = platform.0.lock();
+        if let Some(mut callback) = lock.on_system_wake.take() {
+            drop(lock);
+            callback();
+            platform.0.lock().on_system_wake.get_or_insert(callback);
         }
     }
 }

@@ -1,1618 +1,63 @@
 //! Command palette component built from search input, grouped command items, and listbox state.
 
+mod descriptor;
+mod model;
 mod render_plan;
 mod runtime;
+mod style;
 
-use crate::choice;
-use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
+use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, anchored, deferred, div, point, px,
+    App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
+use open_gpui_command::CommandDescriptor;
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
-    OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
+    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, Role, Sizable,
+    Size, ThemeTokens, UiPx,
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::color::{ColorIntent, ColorState};
-use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::listbox::{ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState};
-use crate::overlay::{GpuiOverlayAdapterConfig, OverlayResolvedState, gpui_overlay_state};
-use crate::scroll_area::{ScrollAreaAxis, ScrollAreaState};
+use crate::focus::focus_ring_shadow_with_theme;
+use crate::overlay::{
+    OverlayLayerHost, OverlayOpenRuntimeRequest, resolve_overlay_open_state, set_overlay_open,
+};
+use crate::scroll_surface::{
+    scroll_surface_handle, set_vertical_scroll_offset, should_reset_scroll_surface,
+    vertical_scroll_offset, vertical_viewport_extent,
+};
+use crate::text_editing::TextEditingPolicy;
+use crate::text_input::TextInputDisplayMode;
 use crate::text_input::adapter::TextInputController;
-use crate::text_input::{TextInputDisplayMode, TextInputState};
 use crate::theme::ThemeResolver;
-pub use render_plan::{CommandRenderPlan, CommandRowRenderPlan};
+pub use descriptor::{
+    CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
+    CommandKeyBindingCaptureState, CommandKeyBindingEditorFilter,
+    CommandKeyBindingEditorFilterMode, CommandKeyBindingEditorPreviewState,
+    CommandKeyBindingEditorRow, CommandKeyBindingEditorState, CommandLoadingState,
+    CommandMatchSource, CommandOpenMode, CommandPaletteController, CommandPaletteControllerUpdate,
+    CommandPaletteKeymapPreflight, CommandPalettePendingProviderRequest, CommandPaletteProjection,
+    CommandProviderPaletteProjection, CommandQueryMode, CommandSelectionMode,
+    CommandShortcutInspectorCommand, CommandShortcutInspectorState, CommandStatusIntent,
+    CommandStatusItem,
+};
+pub use model::{
+    CommandDialogState, CommandGroupState, CommandItemState, CommandNavigationBehavior,
+    CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandState,
+    CommandStateDataSource, CommandStateRequest,
+};
+pub use render_plan::{CommandBehaviorSnapshot, CommandRowBehaviorSnapshot};
+pub(crate) use render_plan::{CommandRenderPlan, CommandRowRenderPlan};
 use runtime::{
     CommandOpenChangeHandler, CommandQueryChangeHandler, CommandRuntime,
     CommandSelectedValuesChangeHandler, CommandSelectionHandler, command_content_element,
     command_dialog_layer_element, command_scroll_reset_key,
 };
-
-/// Command dialog open-state ownership.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CommandOpenMode {
-    /// Open state is owned by the component adapter after initialization.
-    #[default]
-    Uncontrolled,
-    /// Open state is provided by the caller.
-    Controlled,
-}
-
-/// Command query ownership.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CommandQueryMode {
-    /// Query is owned by the component adapter after initialization.
-    #[default]
-    Uncontrolled,
-    /// Query is provided by the caller.
-    Controlled,
-}
-
-/// Command selection behavior.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CommandSelectionMode {
-    /// Activating a command emits an action selection and may close dialog content.
-    #[default]
-    Single,
-    /// Activating a command toggles persistent selected values.
-    Multiple,
-}
-
-impl CommandSelectionMode {
-    const fn is_multiple(self) -> bool {
-        matches!(self, Self::Multiple)
-    }
-}
-
-/// How a caller-owned command index snapshot should be interpreted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CommandIndexSnapshotMode {
-    /// Apply the local deterministic filter and ranking pipeline.
-    #[default]
-    LocalRanked,
-    /// Apply local filtering, but preserve the caller's snapshot order.
-    PreRankedFilter,
-    /// Treat the snapshot as already filtered and ranked by the caller.
-    PreFiltered,
-}
-
-impl CommandIndexSnapshotMode {
-    const fn should_filter_locally(self, query_is_empty: bool) -> bool {
-        !query_is_empty && !matches!(self, Self::PreFiltered)
-    }
-
-    const fn should_rank_locally(self, query_is_empty: bool) -> bool {
-        !query_is_empty && matches!(self, Self::LocalRanked)
-    }
-}
-
-/// Command loading state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandLoadingState {
-    message: String,
-    progress_percent: Option<u8>,
-}
-
-impl CommandLoadingState {
-    /// Creates command loading metadata.
-    pub fn new(message: impl Into<String>, progress_percent: Option<u8>) -> Self {
-        Self {
-            message: message.into(),
-            progress_percent: progress_percent.map(|progress| progress.min(100)),
-        }
-    }
-
-    /// Returns loading message text.
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    /// Returns optional progress percentage.
-    pub const fn progress_percent(&self) -> Option<u8> {
-        self.progress_percent
-    }
-
-    /// Returns loading accessibility role.
-    pub const fn role(&self) -> Role {
-        Role::ProgressIndicator
-    }
-}
-
-/// Command descriptor field that produced the strongest search match.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CommandMatchSource {
-    /// The visible label matched the query.
-    Label,
-    /// The stable command value matched the query.
-    Value,
-    /// The displayed shortcut matched the query.
-    Shortcut,
-    /// One of the command keywords matched the query.
-    Keyword,
-}
-
-impl CommandMatchSource {
-    const fn base_score(self) -> u16 {
-        match self {
-            Self::Label => 3200,
-            Self::Value => 3100,
-            Self::Shortcut => 2000,
-            Self::Keyword => 1000,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CommandMatchRank {
-    source: Option<CommandMatchSource>,
-    score: u16,
-}
-
-impl CommandMatchRank {
-    const fn unfiltered() -> Self {
-        Self {
-            source: None,
-            score: 0,
-        }
-    }
-}
-
-/// Pure descriptor for one command item.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandItemDescriptor {
-    value: String,
-    label: String,
-    keywords: Vec<String>,
-    shortcut: Option<String>,
-    disabled: bool,
-}
-
-impl CommandItemDescriptor {
-    /// Creates a selectable command item descriptor.
-    pub fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
-        Self {
-            value: value.into(),
-            label: label.into(),
-            keywords: Vec::new(),
-            shortcut: None,
-            disabled: false,
-        }
-    }
-
-    /// Adds one filtering keyword.
-    pub fn keyword(mut self, keyword: impl Into<String>) -> Self {
-        self.keywords.push(keyword.into());
-        self
-    }
-
-    /// Adds many filtering keywords.
-    pub fn keywords(mut self, keywords: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.keywords.extend(keywords.into_iter().map(Into::into));
-        self
-    }
-
-    /// Adds a display shortcut label.
-    pub fn shortcut(mut self, shortcut: impl Into<String>) -> Self {
-        self.shortcut = Some(shortcut.into());
-        self
-    }
-
-    /// Marks the item as disabled.
-    pub fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
-        self
-    }
-
-    /// Returns stable item value.
-    pub fn value(&self) -> &str {
-        &self.value
-    }
-
-    /// Returns visible item label.
-    pub fn label(&self) -> &str {
-        &self.label
-    }
-
-    /// Returns filtering keywords.
-    pub fn keywords_ref(&self) -> &[String] {
-        &self.keywords
-    }
-
-    /// Returns the display shortcut label.
-    pub fn shortcut_ref(&self) -> Option<&str> {
-        self.shortcut.as_deref()
-    }
-
-    /// Returns whether the item is disabled.
-    pub const fn disabled_state(&self) -> bool {
-        self.disabled
-    }
-
-    fn match_rank(&self, normalized_query: &str) -> Option<CommandMatchRank> {
-        if normalized_query.is_empty() {
-            return Some(CommandMatchRank::unfiltered());
-        }
-
-        let best = command_text_match_rank(
-            self.label.as_str(),
-            normalized_query,
-            CommandMatchSource::Label,
-        )
-        .into_iter()
-        .chain(command_text_match_rank(
-            self.value.as_str(),
-            normalized_query,
-            CommandMatchSource::Value,
-        ))
-        .chain(self.shortcut.as_ref().and_then(|shortcut| {
-            command_text_match_rank(
-                shortcut.as_str(),
-                normalized_query,
-                CommandMatchSource::Shortcut,
-            )
-        }));
-
-        let keyword_best = self
-            .keywords
-            .iter()
-            .filter_map(|keyword| {
-                command_text_match_rank(
-                    keyword.as_str(),
-                    normalized_query,
-                    CommandMatchSource::Keyword,
-                )
-            })
-            .max_by_key(|rank| rank.score);
-
-        best.chain(keyword_best).max_by_key(|rank| rank.score)
-    }
-
-    fn to_listbox_descriptor(&self) -> ListboxOptionDescriptor {
-        ListboxOptionDescriptor::option(self.value.clone(), self.label.clone())
-            .disabled(self.disabled)
-    }
-}
-
-/// Pure descriptor for one command group.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandGroupDescriptor {
-    value: String,
-    label: String,
-    items: Vec<CommandItemDescriptor>,
-}
-
-impl CommandGroupDescriptor {
-    /// Creates an empty command group descriptor.
-    pub fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
-        Self {
-            value: value.into(),
-            label: label.into(),
-            items: Vec::new(),
-        }
-    }
-
-    /// Adds one command item.
-    pub fn item(mut self, item: CommandItemDescriptor) -> Self {
-        self.items.push(item);
-        self
-    }
-
-    /// Adds many command items.
-    pub fn items(mut self, items: impl IntoIterator<Item = CommandItemDescriptor>) -> Self {
-        self.items.extend(items);
-        self
-    }
-
-    /// Returns stable group value.
-    pub fn value(&self) -> &str {
-        &self.value
-    }
-
-    /// Returns visible group label.
-    pub fn label(&self) -> &str {
-        &self.label
-    }
-
-    /// Returns group items.
-    pub fn items_ref(&self) -> &[CommandItemDescriptor] {
-        &self.items
-    }
-}
-
-/// Caller-owned indexed command snapshot.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandIndexSnapshot {
-    revision: String,
-    mode: CommandIndexSnapshotMode,
-    loading_state: Option<CommandLoadingState>,
-    groups: Vec<CommandGroupDescriptor>,
-    items: Vec<CommandItemDescriptor>,
-}
-
-impl CommandIndexSnapshot {
-    /// Creates an empty command index snapshot for the given revision.
-    pub fn new(revision: impl Into<String>) -> Self {
-        Self {
-            revision: revision.into(),
-            mode: CommandIndexSnapshotMode::LocalRanked,
-            loading_state: None,
-            groups: Vec::new(),
-            items: Vec::new(),
-        }
-    }
-
-    /// Applies snapshot ordering/filtering semantics.
-    pub fn mode(mut self, mode: CommandIndexSnapshotMode) -> Self {
-        self.mode = mode;
-        self
-    }
-
-    /// Applies loading metadata that belongs to this snapshot.
-    pub fn loading(mut self, loading_state: CommandLoadingState) -> Self {
-        self.loading_state = Some(loading_state);
-        self
-    }
-
-    /// Clears snapshot loading metadata.
-    pub fn idle(mut self) -> Self {
-        self.loading_state = None;
-        self
-    }
-
-    /// Adds one standalone command item descriptor.
-    pub fn item(mut self, item: CommandItemDescriptor) -> Self {
-        self.items.push(item);
-        self
-    }
-
-    /// Adds many standalone command item descriptors.
-    pub fn items(mut self, items: impl IntoIterator<Item = CommandItemDescriptor>) -> Self {
-        self.items.extend(items);
-        self
-    }
-
-    /// Adds one command group descriptor.
-    pub fn group(mut self, group: CommandGroupDescriptor) -> Self {
-        self.groups.push(group);
-        self
-    }
-
-    /// Adds many command group descriptors.
-    pub fn groups(mut self, groups: impl IntoIterator<Item = CommandGroupDescriptor>) -> Self {
-        self.groups.extend(groups);
-        self
-    }
-
-    /// Returns snapshot revision metadata.
-    pub fn revision(&self) -> &str {
-        &self.revision
-    }
-
-    /// Returns snapshot ordering/filtering semantics.
-    pub const fn snapshot_mode(&self) -> CommandIndexSnapshotMode {
-        self.mode
-    }
-
-    /// Returns snapshot loading metadata.
-    pub const fn loading_state(&self) -> Option<&CommandLoadingState> {
-        self.loading_state.as_ref()
-    }
-
-    /// Returns standalone command item descriptors.
-    pub fn items_ref(&self) -> &[CommandItemDescriptor] {
-        &self.items
-    }
-
-    /// Returns command group descriptors.
-    pub fn groups_ref(&self) -> &[CommandGroupDescriptor] {
-        &self.groups
-    }
-}
-
-/// Resolved command color intents.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CommandColors {
-    surface: ColorIntent,
-    foreground: ColorIntent,
-    muted_foreground: ColorIntent,
-    border: ColorIntent,
-    shortcut_foreground: ColorIntent,
-    focus_ring: ColorIntent,
-}
-
-impl CommandColors {
-    /// Returns surface color intent.
-    pub const fn surface(self) -> ColorIntent {
-        self.surface
-    }
-
-    /// Returns foreground color intent.
-    pub const fn foreground(self) -> ColorIntent {
-        self.foreground
-    }
-
-    /// Returns muted foreground color intent.
-    pub const fn muted_foreground(self) -> ColorIntent {
-        self.muted_foreground
-    }
-
-    /// Returns border color intent.
-    pub const fn border(self) -> ColorIntent {
-        self.border
-    }
-
-    /// Returns shortcut label color intent.
-    pub const fn shortcut_foreground(self) -> ColorIntent {
-        self.shortcut_foreground
-    }
-
-    /// Returns focus-ring color intent.
-    pub const fn focus_ring(self) -> ColorIntent {
-        self.focus_ring
-    }
-}
-
-/// Resolved command metrics.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CommandMetrics {
-    padding: UiPx,
-    radius: UiPx,
-    min_width: UiPx,
-    max_width: UiPx,
-    max_height: UiPx,
-    row_height: UiPx,
-    overscan_count: usize,
-    shortcut_min_width: UiPx,
-}
-
-impl CommandMetrics {
-    /// Resolves metrics from the shared foundation size vocabulary.
-    pub const fn from_size(size: Size) -> Self {
-        Self {
-            padding: ui_px(6.0),
-            radius: size.control_radius(),
-            min_width: ui_px(320.0),
-            max_width: ui_px(560.0),
-            max_height: match size {
-                Size::XSmall => ui_px(220.0),
-                Size::Small => ui_px(260.0),
-                Size::Medium => ui_px(340.0),
-                Size::Large => ui_px(420.0),
-            },
-            row_height: size.list_row_h(),
-            overscan_count: match size {
-                Size::XSmall | Size::Small => 4,
-                Size::Medium => 6,
-                Size::Large => 8,
-            },
-            shortcut_min_width: match size {
-                Size::XSmall | Size::Small => ui_px(48.0),
-                Size::Medium => ui_px(64.0),
-                Size::Large => ui_px(76.0),
-            },
-        }
-    }
-
-    /// Returns panel padding.
-    pub const fn padding(self) -> UiPx {
-        self.padding
-    }
-
-    /// Returns panel radius.
-    pub const fn radius(self) -> UiPx {
-        self.radius
-    }
-
-    /// Returns minimum panel width.
-    pub const fn min_width(self) -> UiPx {
-        self.min_width
-    }
-
-    /// Returns maximum panel width.
-    pub const fn max_width(self) -> UiPx {
-        self.max_width
-    }
-
-    /// Returns maximum command list height.
-    pub const fn max_height(self) -> UiPx {
-        self.max_height
-    }
-
-    /// Returns the fixed command result row height used by the virtualizer.
-    pub const fn row_height(self) -> UiPx {
-        self.row_height
-    }
-
-    /// Returns the number of rows kept beyond the visible command result viewport.
-    pub const fn overscan_count(self) -> usize {
-        self.overscan_count
-    }
-
-    /// Returns minimum shortcut label width.
-    pub const fn shortcut_min_width(self) -> UiPx {
-        self.shortcut_min_width
-    }
-
-    /// Returns the same metrics with a different fixed result row height.
-    pub fn with_row_height(mut self, row_height: UiPx) -> Self {
-        self.row_height = nonnegative_px(row_height);
-        self
-    }
-
-    /// Returns the same metrics with a different overscan row budget.
-    pub const fn with_overscan_count(mut self, overscan_count: usize) -> Self {
-        self.overscan_count = overscan_count;
-        self
-    }
-}
-
-/// Selection payload emitted by a command surface.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandSelection {
-    index: usize,
-    value: String,
-    label: String,
-    shortcut: Option<String>,
-}
-
-impl CommandSelection {
-    /// Creates a command selection payload.
-    pub fn new(
-        index: usize,
-        value: impl Into<String>,
-        label: impl Into<String>,
-        shortcut: Option<String>,
-    ) -> Self {
-        Self {
-            index,
-            value: value.into(),
-            label: label.into(),
-            shortcut,
-        }
-    }
-
-    /// Creates a selection payload from an item state.
-    pub fn from_item(item: &CommandItemState) -> Option<Self> {
-        item.activation_enabled().then(|| {
-            Self::new(
-                item.index,
-                item.value.clone(),
-                item.label.clone(),
-                item.shortcut.clone(),
-            )
-        })
-    }
-
-    /// Returns the flattened item index.
-    pub const fn index(&self) -> usize {
-        self.index
-    }
-
-    /// Returns selected item value.
-    pub fn value(&self) -> &str {
-        &self.value
-    }
-
-    /// Returns selected item label.
-    pub fn label(&self) -> &str {
-        &self.label
-    }
-
-    /// Returns optional shortcut label.
-    pub fn shortcut(&self) -> Option<&str> {
-        self.shortcut.as_deref()
-    }
-}
-
-/// Persistent selected-values change emitted by multi-select command surfaces.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandSelectionChange {
-    values: Vec<String>,
-    toggled: CommandSelection,
-    selected: bool,
-}
-
-impl CommandSelectionChange {
-    /// Creates a multi-selection change payload.
-    pub fn new(values: Vec<String>, toggled: CommandSelection, selected: bool) -> Self {
-        Self {
-            values,
-            toggled,
-            selected,
-        }
-    }
-
-    /// Returns the next selected values.
-    pub fn values(&self) -> &[String] {
-        &self.values
-    }
-
-    /// Returns the command selection that was toggled.
-    pub const fn toggled(&self) -> &CommandSelection {
-        &self.toggled
-    }
-
-    /// Returns whether the toggled value is now selected.
-    pub const fn selected(&self) -> bool {
-        self.selected
-    }
-}
-
-/// Resolved command group state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandGroupState {
-    index: usize,
-    value: String,
-    label: String,
-    item_count: usize,
-    standalone: bool,
-    match_score: u16,
-}
-
-impl CommandGroupState {
-    /// Returns group index.
-    pub const fn index(&self) -> usize {
-        self.index
-    }
-
-    /// Returns stable group value.
-    pub fn value(&self) -> &str {
-        &self.value
-    }
-
-    /// Returns visible group label.
-    pub fn label(&self) -> &str {
-        &self.label
-    }
-
-    /// Returns visible item count.
-    pub const fn item_count(&self) -> usize {
-        self.item_count
-    }
-
-    /// Returns the deterministic search score for this group.
-    pub const fn match_score(&self) -> u16 {
-        self.match_score
-    }
-
-    /// Returns whether this is the synthetic standalone command group.
-    pub const fn standalone(&self) -> bool {
-        self.standalone
-    }
-
-    /// Returns group accessibility role.
-    pub const fn role(&self) -> Role {
-        Role::Group
-    }
-}
-
-/// Resolved selected chip state for multi-select command surfaces.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandSelectedChipState {
-    index: usize,
-    value: String,
-    label: String,
-}
-
-impl CommandSelectedChipState {
-    /// Returns chip index in the selected-values list.
-    pub const fn index(&self) -> usize {
-        self.index
-    }
-
-    /// Returns selected command value.
-    pub fn value(&self) -> &str {
-        &self.value
-    }
-
-    /// Returns selected command label.
-    pub fn label(&self) -> &str {
-        &self.label
-    }
-}
-
-/// Resolved command item state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandItemState {
-    index: usize,
-    group_index: Option<usize>,
-    value: String,
-    label: String,
-    shortcut: Option<String>,
-    disabled: bool,
-    selected: bool,
-    active: bool,
-    match_source: Option<CommandMatchSource>,
-    match_score: u16,
-    position_in_set: Option<usize>,
-    size_of_set: usize,
-}
-
-impl CommandItemState {
-    /// Returns flattened item index.
-    pub const fn index(&self) -> usize {
-        self.index
-    }
-
-    /// Returns containing group index when grouped.
-    pub const fn group_index(&self) -> Option<usize> {
-        self.group_index
-    }
-
-    /// Returns stable item value.
-    pub fn value(&self) -> &str {
-        &self.value
-    }
-
-    /// Returns visible item label.
-    pub fn label(&self) -> &str {
-        &self.label
-    }
-
-    /// Returns optional shortcut label.
-    pub fn shortcut(&self) -> Option<&str> {
-        self.shortcut.as_deref()
-    }
-
-    /// Returns whether the item is disabled.
-    pub const fn disabled(&self) -> bool {
-        self.disabled
-    }
-
-    /// Returns whether the item can be activated.
-    pub const fn activation_enabled(&self) -> bool {
-        !self.disabled
-    }
-
-    /// Returns whether the item is selected.
-    pub const fn selected(&self) -> bool {
-        self.selected
-    }
-
-    /// Returns whether the item is active.
-    pub const fn active(&self) -> bool {
-        self.active
-    }
-
-    /// Returns the descriptor field that produced the strongest query match.
-    pub const fn match_source(&self) -> Option<CommandMatchSource> {
-        self.match_source
-    }
-
-    /// Returns the deterministic search score for this item.
-    pub const fn match_score(&self) -> u16 {
-        self.match_score
-    }
-
-    /// Returns the item's accessibility role.
-    pub const fn role(&self) -> Role {
-        Role::ListBoxOption
-    }
-
-    /// Returns one-based position among command items.
-    pub const fn position_in_set(&self) -> Option<usize> {
-        self.position_in_set
-    }
-
-    /// Returns total command item count in the visible set.
-    pub const fn size_of_set(&self) -> usize {
-        self.size_of_set
-    }
-}
-
-/// Dialog wrapper state for command surfaces.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CommandDialogState {
-    enabled: bool,
-    open: bool,
-    title: String,
-    description: Option<String>,
-    overlay: OverlayResolvedState,
-}
-
-impl CommandDialogState {
-    /// Returns whether this command is presented as a dialog.
-    pub const fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    /// Returns whether the dialog is open.
-    pub const fn open(&self) -> bool {
-        self.open
-    }
-
-    /// Returns dialog role.
-    pub const fn role(&self) -> Role {
-        Role::Window
-    }
-
-    /// Returns dialog content role.
-    pub const fn content_role(&self) -> Role {
-        Role::Window
-    }
-
-    /// Returns dialog title.
-    pub fn title(&self) -> &str {
-        &self.title
-    }
-
-    /// Returns optional dialog description.
-    pub fn description(&self) -> Option<&str> {
-        self.description.as_deref()
-    }
-
-    /// Returns renderer-neutral overlay state.
-    pub const fn overlay(&self) -> &OverlayResolvedState {
-        &self.overlay
-    }
-}
-
-#[derive(Debug, Clone)]
-struct FlattenedCommandItem {
-    group_index: Option<usize>,
-    descriptor: CommandItemDescriptor,
-    rank: CommandMatchRank,
-    source_index: usize,
-}
-
-#[derive(Debug, Clone)]
-struct RankedCommandGroup {
-    source_index: usize,
-    value: String,
-    label: String,
-    items: Vec<FlattenedCommandItem>,
-    best_score: u16,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct CommandDataSource {
-    revision: Option<String>,
-    mode: CommandIndexSnapshotMode,
-    loading_state: Option<CommandLoadingState>,
-    groups: Vec<CommandGroupDescriptor>,
-    items: Vec<CommandItemDescriptor>,
-}
-
-impl CommandDataSource {
-    fn local(
-        groups: impl IntoIterator<Item = CommandGroupDescriptor>,
-        items: impl IntoIterator<Item = CommandItemDescriptor>,
-    ) -> Self {
-        Self {
-            revision: None,
-            mode: CommandIndexSnapshotMode::LocalRanked,
-            loading_state: None,
-            groups: groups.into_iter().collect(),
-            items: items.into_iter().collect(),
-        }
-    }
-
-    fn snapshot(snapshot: CommandIndexSnapshot) -> Self {
-        Self {
-            revision: Some(snapshot.revision),
-            mode: snapshot.mode,
-            loading_state: snapshot.loading_state,
-            groups: snapshot.groups,
-            items: snapshot.items,
-        }
-    }
-}
-
-/// Resolved command state used by tests, demos, and rendering.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CommandState {
-    size: Size,
-    disabled: bool,
-    label: String,
-    placeholder: String,
-    query: String,
-    query_mode: CommandQueryMode,
-    open: bool,
-    default_open: bool,
-    open_mode: CommandOpenMode,
-    selection_mode: CommandSelectionMode,
-    overlay: OverlayResolvedState,
-    dialog: Option<CommandDialogState>,
-    loading_state: Option<CommandLoadingState>,
-    index_revision: Option<String>,
-    index_mode: CommandIndexSnapshotMode,
-    empty_label: String,
-    escape_key_policy: EscapeKeyPolicy,
-    focus_restore_intent: FocusRestoreIntent,
-    total_item_count: usize,
-    filtered_item_count: usize,
-    groups: Vec<CommandGroupState>,
-    items: Vec<CommandItemState>,
-    selected_values: Vec<String>,
-    selected_chips: Vec<CommandSelectedChipState>,
-    input: TextInputState,
-    listbox: ListboxState,
-    scroll_area: ScrollAreaState,
-    metrics: CommandMetrics,
-    colors: CommandColors,
-    focus_ring: FocusRing,
-}
-
-impl CommandState {
-    /// Resolves public state for a command surface.
-    #[allow(clippy::too_many_arguments)]
-    pub fn resolve(
-        size: Size,
-        disabled: bool,
-        open: Option<bool>,
-        default_open: bool,
-        dialog_enabled: bool,
-        label: impl Into<String>,
-        placeholder: impl Into<String>,
-        query: impl Into<String>,
-        query_mode: CommandQueryMode,
-        selection_mode: CommandSelectionMode,
-        selected_value: Option<&str>,
-        selected_values: impl IntoIterator<Item = impl Into<String>>,
-        active_value: Option<&str>,
-        loading_state: Option<CommandLoadingState>,
-        empty_label: impl Into<String>,
-        dialog_title: Option<String>,
-        dialog_description: Option<String>,
-        groups: impl IntoIterator<Item = CommandGroupDescriptor>,
-        items: impl IntoIterator<Item = CommandItemDescriptor>,
-        outside_press_policy: OutsidePressPolicy,
-        escape_key_policy: EscapeKeyPolicy,
-        initial_focus_intent: InitialFocusIntent,
-        focus_restore_intent: FocusRestoreIntent,
-        tokens: ThemeTokens,
-    ) -> Self {
-        Self::resolve_from_data_source(
-            size,
-            disabled,
-            open,
-            default_open,
-            dialog_enabled,
-            label,
-            placeholder,
-            query,
-            query_mode,
-            selection_mode,
-            selected_value,
-            selected_values,
-            active_value,
-            loading_state,
-            empty_label,
-            dialog_title,
-            dialog_description,
-            CommandDataSource::local(groups, items),
-            outside_press_policy,
-            escape_key_policy,
-            initial_focus_intent,
-            focus_restore_intent,
-            tokens,
-        )
-    }
-
-    /// Resolves public state from a caller-owned command index snapshot.
-    #[allow(clippy::too_many_arguments)]
-    pub fn resolve_from_index_snapshot(
-        size: Size,
-        disabled: bool,
-        open: Option<bool>,
-        default_open: bool,
-        dialog_enabled: bool,
-        label: impl Into<String>,
-        placeholder: impl Into<String>,
-        query: impl Into<String>,
-        query_mode: CommandQueryMode,
-        selection_mode: CommandSelectionMode,
-        selected_value: Option<&str>,
-        selected_values: impl IntoIterator<Item = impl Into<String>>,
-        active_value: Option<&str>,
-        loading_state: Option<CommandLoadingState>,
-        empty_label: impl Into<String>,
-        dialog_title: Option<String>,
-        dialog_description: Option<String>,
-        index_snapshot: CommandIndexSnapshot,
-        outside_press_policy: OutsidePressPolicy,
-        escape_key_policy: EscapeKeyPolicy,
-        initial_focus_intent: InitialFocusIntent,
-        focus_restore_intent: FocusRestoreIntent,
-        tokens: ThemeTokens,
-    ) -> Self {
-        Self::resolve_from_data_source(
-            size,
-            disabled,
-            open,
-            default_open,
-            dialog_enabled,
-            label,
-            placeholder,
-            query,
-            query_mode,
-            selection_mode,
-            selected_value,
-            selected_values,
-            active_value,
-            loading_state,
-            empty_label,
-            dialog_title,
-            dialog_description,
-            CommandDataSource::snapshot(index_snapshot),
-            outside_press_policy,
-            escape_key_policy,
-            initial_focus_intent,
-            focus_restore_intent,
-            tokens,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn resolve_from_data_source(
-        size: Size,
-        disabled: bool,
-        open: Option<bool>,
-        default_open: bool,
-        dialog_enabled: bool,
-        label: impl Into<String>,
-        placeholder: impl Into<String>,
-        query: impl Into<String>,
-        query_mode: CommandQueryMode,
-        selection_mode: CommandSelectionMode,
-        selected_value: Option<&str>,
-        selected_values: impl IntoIterator<Item = impl Into<String>>,
-        active_value: Option<&str>,
-        loading_state: Option<CommandLoadingState>,
-        empty_label: impl Into<String>,
-        dialog_title: Option<String>,
-        dialog_description: Option<String>,
-        data_source: CommandDataSource,
-        outside_press_policy: OutsidePressPolicy,
-        escape_key_policy: EscapeKeyPolicy,
-        initial_focus_intent: InitialFocusIntent,
-        focus_restore_intent: FocusRestoreIntent,
-        tokens: ThemeTokens,
-    ) -> Self {
-        let label = label.into();
-        let placeholder = placeholder.into();
-        let query = query.into();
-        let empty_label = empty_label.into();
-        let open_mode = if open.is_some() {
-            CommandOpenMode::Controlled
-        } else {
-            CommandOpenMode::Uncontrolled
-        };
-        let open = open.unwrap_or(default_open) && !disabled;
-        let normalized_query = choice::normalize_query(query.as_str());
-        let query_is_empty = normalized_query.is_empty();
-        let CommandDataSource {
-            revision: index_revision,
-            mode: index_mode,
-            loading_state: index_loading_state,
-            groups: raw_groups,
-            items: raw_items,
-        } = data_source;
-        let loading_state = index_loading_state.or(loading_state);
-        let total_item_count = raw_items.len()
-            + raw_groups
-                .iter()
-                .map(|group| group.items_ref().len())
-                .sum::<usize>();
-        let selected_item = choice::resolve_enabled_value(
-            &raw_items,
-            raw_groups.iter().map(|group| group.items_ref()),
-            selected_value,
-            CommandItemDescriptor::value,
-            CommandItemDescriptor::disabled_state,
-        );
-        let selected_value = selected_item.map(|item| item.value().to_owned());
-        let selected_values = choice::resolve_selected_values(
-            selection_mode.is_multiple(),
-            &raw_items,
-            raw_groups.iter().map(|group| group.items_ref()),
-            selected_value.as_deref(),
-            selected_values,
-            CommandItemDescriptor::value,
-            CommandItemDescriptor::disabled_state,
-        );
-        let listbox_selected_value = (!selection_mode.is_multiple())
-            .then_some(selected_value.as_deref())
-            .flatten();
-
-        let mut standalone_items = raw_items
-            .iter()
-            .enumerate()
-            .filter_map(|(source_index, item)| {
-                let rank =
-                    command_item_rank_for_source(item, normalized_query.as_str(), index_mode)?;
-                Some(FlattenedCommandItem {
-                    group_index: None,
-                    descriptor: item.clone(),
-                    rank,
-                    source_index,
-                })
-            })
-            .collect::<Vec<_>>();
-        if index_mode.should_rank_locally(query_is_empty) {
-            sort_ranked_command_items(&mut standalone_items);
-        }
-
-        let mut ranked_groups = raw_groups
-            .iter()
-            .enumerate()
-            .filter_map(|(group_source_index, group)| {
-                let mut items = group
-                    .items_ref()
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(source_index, item)| {
-                        let rank = command_item_rank_for_source(
-                            item,
-                            normalized_query.as_str(),
-                            index_mode,
-                        )?;
-                        Some(FlattenedCommandItem {
-                            group_index: None,
-                            descriptor: item.clone(),
-                            rank,
-                            source_index,
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                if items.is_empty() {
-                    return None;
-                }
-
-                if index_mode.should_rank_locally(query_is_empty) {
-                    sort_ranked_command_items(&mut items);
-                }
-
-                let best_score = items.iter().map(|item| item.rank.score).max().unwrap_or(0);
-
-                Some(RankedCommandGroup {
-                    source_index: group_source_index,
-                    value: group.value().to_owned(),
-                    label: group.label().to_owned(),
-                    items,
-                    best_score,
-                })
-            })
-            .collect::<Vec<_>>();
-        if index_mode.should_rank_locally(query_is_empty) {
-            ranked_groups.sort_by(|a, b| {
-                b.best_score
-                    .cmp(&a.best_score)
-                    .then_with(|| a.source_index.cmp(&b.source_index))
-            });
-        }
-
-        let mut filtered_group_descriptors = Vec::new();
-        let mut filtered_item_descriptors = Vec::new();
-        let mut command_groups = Vec::new();
-        let mut flattened = Vec::new();
-        let standalone_best_score = standalone_items
-            .iter()
-            .map(|item| item.rank.score)
-            .max()
-            .unwrap_or(0);
-
-        if !standalone_items.is_empty() {
-            let group_index = command_groups.len();
-            command_groups.push(CommandGroupState {
-                index: group_index,
-                value: "commands".to_string(),
-                label: "Commands".to_string(),
-                item_count: standalone_items.len(),
-                standalone: true,
-                match_score: standalone_best_score,
-            });
-            filtered_item_descriptors = standalone_items
-                .iter()
-                .map(|item| item.descriptor.to_listbox_descriptor())
-                .collect::<Vec<_>>();
-            for item in &mut standalone_items {
-                item.group_index = Some(group_index);
-            }
-            flattened.extend(standalone_items);
-        }
-
-        for group in ranked_groups {
-            let group_index = command_groups.len();
-            command_groups.push(CommandGroupState {
-                index: group_index,
-                value: group.value.clone(),
-                label: group.label.clone(),
-                item_count: group.items.len(),
-                standalone: false,
-                match_score: group.best_score,
-            });
-            filtered_group_descriptors.push(
-                ListboxGroupDescriptor::new(group.value.clone(), group.label.clone()).options(
-                    group
-                        .items
-                        .iter()
-                        .map(|item| item.descriptor.to_listbox_descriptor()),
-                ),
-            );
-            flattened.extend(group.items.into_iter().map(|mut item| {
-                item.group_index = Some(group_index);
-                item
-            }));
-        }
-
-        let filtered_item_count = flattened.len();
-        let listbox = ListboxState::resolve(
-            size,
-            disabled,
-            label.clone(),
-            listbox_selected_value,
-            active_value,
-            (!query_is_empty).then_some(query.as_str()),
-            empty_label.clone(),
-            filtered_group_descriptors,
-            filtered_item_descriptors,
-            tokens,
-        );
-        let items = flattened
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, item)| {
-                let option = listbox.options().get(index)?;
-                let selected = if selection_mode.is_multiple() {
-                    selected_values
-                        .iter()
-                        .any(|value| value == item.descriptor.value())
-                } else {
-                    option.selected()
-                };
-                Some(CommandItemState {
-                    index,
-                    group_index: item.group_index,
-                    value: item.descriptor.value,
-                    label: item.descriptor.label,
-                    shortcut: item.descriptor.shortcut,
-                    disabled: item.descriptor.disabled,
-                    selected,
-                    active: option.active(),
-                    match_source: item.rank.source,
-                    match_score: item.rank.score,
-                    position_in_set: option.position_in_set(),
-                    size_of_set: option.size_of_set(),
-                })
-            })
-            .collect::<Vec<_>>();
-        let selected_chips = selected_values
-            .iter()
-            .enumerate()
-            .filter_map(|(index, value)| {
-                choice::find_value_in_flat_groups(
-                    &raw_items,
-                    raw_groups.iter().map(|group| group.items_ref()),
-                    value,
-                    CommandItemDescriptor::value,
-                )
-                .map(|item| CommandSelectedChipState {
-                    index,
-                    value: item.value().to_owned(),
-                    label: item.label().to_owned(),
-                })
-            })
-            .collect::<Vec<_>>();
-        let input = TextInputState::resolve(
-            query.clone(),
-            Some(placeholder.clone()),
-            size,
-            disabled,
-            false,
-            false,
-            false,
-            true,
-            tokens,
-        );
-        let presence = if dialog_enabled && open {
-            OverlayPresence::open()
-        } else {
-            OverlayPresence::hidden()
-        };
-        let overlay =
-            GpuiOverlayAdapterConfig::new(OverlayLayerKind::NonModalDismissible, presence)
-                .outside_press_policy(outside_press_policy)
-                .escape_key_policy(escape_key_policy)
-                .initial_focus_intent(initial_focus_intent.clone())
-                .focus_restore_intent(focus_restore_intent.clone())
-                .resolved_state();
-        let dialog_overlay = GpuiOverlayAdapterConfig::new(OverlayLayerKind::Modal, presence)
-            .outside_press_policy(outside_press_policy)
-            .escape_key_policy(escape_key_policy)
-            .initial_focus_intent(initial_focus_intent)
-            .focus_restore_intent(focus_restore_intent.clone())
-            .resolved_state();
-        let dialog = dialog_enabled.then(|| CommandDialogState {
-            enabled: true,
-            open,
-            title: dialog_title.unwrap_or_else(|| label.clone()),
-            description: dialog_description,
-            overlay: dialog_overlay,
-        });
-        let scroll_area = ScrollAreaState::resolve(
-            format!("{label}:command-list-scroll"),
-            ScrollAreaAxis::Vertical,
-            size,
-            crate::scroll_area::ScrollResetPolicy::Preserve,
-            None,
-        );
-        let colors = ThemeResolver::command_colors(tokens);
-
-        Self {
-            size,
-            disabled,
-            label,
-            placeholder,
-            query,
-            query_mode,
-            open,
-            default_open,
-            open_mode,
-            selection_mode,
-            overlay,
-            dialog,
-            loading_state,
-            index_revision,
-            index_mode,
-            empty_label,
-            escape_key_policy,
-            focus_restore_intent,
-            total_item_count,
-            filtered_item_count,
-            groups: command_groups,
-            items,
-            selected_values,
-            selected_chips,
-            input,
-            listbox,
-            scroll_area,
-            metrics: CommandMetrics::from_size(size),
-            colors,
-            focus_ring: FocusRing::from_color(colors.focus_ring()),
-        }
-    }
-
-    /// Returns foundation size.
-    pub const fn size(&self) -> Size {
-        self.size
-    }
-
-    /// Returns whether the command surface is disabled.
-    pub const fn disabled(&self) -> bool {
-        self.disabled
-    }
-
-    /// Returns accessible label.
-    pub fn label(&self) -> &str {
-        &self.label
-    }
-
-    /// Returns placeholder text.
-    pub fn placeholder(&self) -> &str {
-        &self.placeholder
-    }
-
-    /// Returns current search query.
-    pub fn query(&self) -> &str {
-        &self.query
-    }
-
-    /// Returns query ownership.
-    pub const fn query_mode(&self) -> CommandQueryMode {
-        self.query_mode
-    }
-
-    /// Returns selected command value.
-    pub fn selected_value(&self) -> Option<&str> {
-        self.listbox.selected_value()
-    }
-
-    /// Returns active command value.
-    pub fn active_value(&self) -> Option<&str> {
-        self.listbox.active_value()
-    }
-
-    /// Returns whether the dialog wrapper is open.
-    pub const fn open(&self) -> bool {
-        self.open
-    }
-
-    /// Returns uncontrolled initial open state.
-    pub const fn default_open(&self) -> bool {
-        self.default_open
-    }
-
-    /// Returns open-state ownership.
-    pub const fn open_mode(&self) -> CommandOpenMode {
-        self.open_mode
-    }
-
-    /// Returns selection behavior.
-    pub const fn selection_mode(&self) -> CommandSelectionMode {
-        self.selection_mode
-    }
-
-    /// Returns dialog wrapper state.
-    pub const fn overlay(&self) -> &OverlayResolvedState {
-        &self.overlay
-    }
-
-    /// Returns optional dialog wrapper state.
-    pub const fn dialog(&self) -> Option<&CommandDialogState> {
-        self.dialog.as_ref()
-    }
-
-    /// Returns loading state.
-    pub const fn loading_state(&self) -> Option<&CommandLoadingState> {
-        self.loading_state.as_ref()
-    }
-
-    /// Returns optional loading metadata.
-    pub const fn loading(&self) -> Option<&CommandLoadingState> {
-        self.loading_state.as_ref()
-    }
-
-    /// Returns caller-owned command index revision metadata.
-    pub fn index_revision(&self) -> Option<&str> {
-        self.index_revision.as_deref()
-    }
-
-    /// Returns command index ordering/filtering semantics.
-    pub const fn index_mode(&self) -> CommandIndexSnapshotMode {
-        self.index_mode
-    }
-
-    /// Returns empty-state label.
-    pub fn empty_label(&self) -> &str {
-        &self.empty_label
-    }
-
-    /// Returns Escape key policy.
-    pub const fn escape_key_policy(&self) -> EscapeKeyPolicy {
-        self.escape_key_policy
-    }
-
-    /// Returns focus restore intent.
-    pub fn focus_restore_intent(&self) -> &FocusRestoreIntent {
-        &self.focus_restore_intent
-    }
-
-    /// Returns unfiltered command count.
-    pub const fn total_item_count(&self) -> usize {
-        self.total_item_count
-    }
-
-    /// Returns filtered command count.
-    pub const fn filtered_item_count(&self) -> usize {
-        self.filtered_item_count
-    }
-
-    /// Returns whether the visible list is empty.
-    pub const fn empty(&self) -> bool {
-        self.filtered_item_count == 0
-    }
-
-    /// Returns whether query filtering removed commands.
-    pub const fn filtered(&self) -> bool {
-        self.filtered_item_count != self.total_item_count
-    }
-
-    /// Returns whether command content should be rendered.
-    pub const fn content_visible(&self) -> bool {
-        self.dialog.is_none() || self.open
-    }
-
-    /// Returns input role.
-    pub const fn input_role(&self) -> Role {
-        Role::TextInput
-    }
-
-    /// Returns list role.
-    pub const fn list_role(&self) -> Role {
-        Role::ListBox
-    }
-
-    /// Returns list role.
-    pub const fn content_role(&self) -> Role {
-        self.list_role()
-    }
-
-    /// Returns resolved group states.
-    pub fn groups(&self) -> &[CommandGroupState] {
-        &self.groups
-    }
-
-    /// Returns resolved standalone command items.
-    pub fn standalone_items(&self) -> impl Iterator<Item = &CommandItemState> + '_ {
-        let standalone_group_index = self.groups.iter().find(|group| group.standalone());
-        self.items
-            .iter()
-            .filter(move |item| match standalone_group_index {
-                Some(group) => item.group_index() == Some(group.index()),
-                None => item.group_index().is_none(),
-            })
-    }
-
-    /// Returns resolved non-synthetic command groups.
-    pub fn grouped_groups(&self) -> impl Iterator<Item = &CommandGroupState> + '_ {
-        self.groups.iter().filter(|group| !group.standalone())
-    }
-
-    /// Returns resolved items for one command group.
-    pub fn group_items(&self, group_index: usize) -> impl Iterator<Item = &CommandItemState> + '_ {
-        self.items
-            .iter()
-            .filter(move |item| item.group_index() == Some(group_index))
-    }
-
-    /// Returns resolved item states.
-    pub fn items(&self) -> &[CommandItemState] {
-        &self.items
-    }
-
-    /// Returns persistent selected values.
-    pub fn selected_values(&self) -> &[String] {
-        &self.selected_values
-    }
-
-    /// Returns selected chip states.
-    pub fn selected_chips(&self) -> &[CommandSelectedChipState] {
-        &self.selected_chips
-    }
-
-    /// Returns resolved input state.
-    pub const fn input(&self) -> &TextInputState {
-        &self.input
-    }
-
-    /// Returns nested listbox state.
-    pub const fn listbox(&self) -> &ListboxState {
-        &self.listbox
-    }
-
-    /// Returns scroll area state.
-    pub const fn scroll_area(&self) -> &ScrollAreaState {
-        &self.scroll_area
-    }
-
-    /// Returns metrics.
-    pub const fn metrics(&self) -> CommandMetrics {
-        self.metrics
-    }
-
-    /// Returns color intents.
-    pub const fn colors(&self) -> CommandColors {
-        self.colors
-    }
-
-    /// Returns focus-ring metadata.
-    pub const fn focus_ring(&self) -> FocusRing {
-        self.focus_ring
-    }
-
-    /// Returns the same state with an adjusted metric bundle.
-    pub const fn with_metrics(mut self, metrics: CommandMetrics) -> Self {
-        self.metrics = metrics;
-        self
-    }
-
-    /// Resolves an activation payload for an APG-style activation key.
-    pub fn activation_for_key(&self, key: &str) -> Option<CommandSelection> {
-        if !matches!(key, "enter" | "space") {
-            return None;
-        }
-        self.items
-            .iter()
-            .find(|item| item.active())
-            .and_then(CommandSelection::from_item)
-    }
-}
+pub use style::{CommandColors, CommandMetrics};
+pub(crate) use style::{DEFAULT_COMMAND_VIEWPORT_ITEM_COUNT, nonnegative_px};
 
 /// A concrete GPUI command surface.
 #[derive(IntoElement)]
@@ -1629,6 +74,7 @@ pub struct Command {
     open: Option<bool>,
     default_open: bool,
     dialog_enabled: bool,
+    navigation_behavior: CommandNavigationBehavior,
     query: Option<String>,
     default_query: String,
     selection_mode: CommandSelectionMode,
@@ -1638,6 +84,7 @@ pub struct Command {
     viewport_item_count: usize,
     metrics: CommandMetrics,
     loading_state: Option<CommandLoadingState>,
+    status_items: Vec<CommandStatusItem>,
     empty_label: SharedString,
     dialog_title: Option<String>,
     dialog_description: Option<String>,
@@ -1669,6 +116,7 @@ impl Command {
             open: None,
             default_open: false,
             dialog_enabled: false,
+            navigation_behavior: CommandNavigationBehavior::default(),
             query: None,
             default_query: String::new(),
             selection_mode: CommandSelectionMode::Single,
@@ -1678,6 +126,7 @@ impl Command {
             viewport_item_count: DEFAULT_COMMAND_VIEWPORT_ITEM_COUNT,
             metrics: CommandMetrics::from_size(size),
             loading_state: None,
+            status_items: Vec::new(),
             empty_label: "No commands".into(),
             dialog_title: None,
             dialog_description: None,
@@ -1735,6 +184,28 @@ impl Command {
         self
     }
 
+    /// Applies a provider-backed refresh projection to the command query and index snapshot.
+    pub fn provider_refresh_projection(
+        mut self,
+        projection: &open_gpui_command::CommandProviderRefreshProjection,
+    ) -> Self {
+        let palette_projection =
+            CommandProviderPaletteProjection::from_refresh_projection(projection);
+        self.query =
+            Some(TextEditingPolicy::single_line().normalize_text(palette_projection.query()));
+        self.status_items = palette_projection.status_items().to_vec();
+        self.index_snapshot = Some(palette_projection.into_index_snapshot());
+        self
+    }
+
+    /// Applies an app-owned command-center palette projection to the command query and snapshot.
+    pub fn palette_projection(mut self, projection: &CommandPaletteProjection) -> Self {
+        self.query = Some(TextEditingPolicy::single_line().normalize_text(projection.query()));
+        self.index_snapshot = Some(projection.index_snapshot().clone());
+        self.status_items = projection.status_items().to_vec();
+        self
+    }
+
     /// Marks the command surface as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
@@ -1776,15 +247,35 @@ impl Command {
         self
     }
 
+    /// Applies command keyboard navigation behavior.
+    pub fn navigation_behavior(mut self, behavior: CommandNavigationBehavior) -> Self {
+        self.navigation_behavior = behavior;
+        self
+    }
+
+    /// Enables or disables loop navigation across the first and last command rows.
+    pub fn loop_navigation(mut self, enabled: bool) -> Self {
+        self.navigation_behavior = self.navigation_behavior.with_loop_navigation(enabled);
+        self
+    }
+
+    /// Enables or disables group-jump navigation aliases.
+    pub fn group_navigation(mut self, enabled: bool) -> Self {
+        self.navigation_behavior = self.navigation_behavior.with_group_navigation(enabled);
+        self
+    }
+
     /// Applies controlled search query text.
     pub fn query(mut self, query: impl Into<String>) -> Self {
-        self.query = Some(query.into());
+        let query = query.into();
+        self.query = Some(TextEditingPolicy::single_line().normalize_text(query.as_str()));
         self
     }
 
     /// Applies the default search query for adapter-owned input state.
     pub fn default_query(mut self, query: impl Into<String>) -> Self {
-        self.default_query = query.into();
+        let query = query.into();
+        self.default_query = TextEditingPolicy::single_line().normalize_text(query.as_str());
         self
     }
 
@@ -1850,6 +341,27 @@ impl Command {
     /// Clears loading metadata.
     pub fn idle(mut self) -> Self {
         self.loading_state = None;
+        self
+    }
+
+    /// Adds one command palette status item.
+    pub fn status_item(mut self, item: CommandStatusItem) -> Self {
+        if !item.is_empty() {
+            self.status_items.push(item);
+        }
+        self
+    }
+
+    /// Adds many command palette status items.
+    pub fn status_items(mut self, items: impl IntoIterator<Item = CommandStatusItem>) -> Self {
+        self.status_items
+            .extend(items.into_iter().filter(|item| !item.is_empty()));
+        self
+    }
+
+    /// Clears command palette status items.
+    pub fn clear_status_items(mut self) -> Self {
+        self.status_items.clear();
         self
     }
 
@@ -1945,16 +457,25 @@ impl Command {
         )
     }
 
-    /// Returns the default virtualized result render plan at the viewport origin.
-    pub fn render_plan(&self) -> CommandRenderPlan {
-        self.render_plan_with_viewport(
+    /// Returns the default command behavior snapshot at the viewport origin.
+    pub fn behavior_snapshot(&self) -> CommandBehaviorSnapshot {
+        self.behavior_snapshot_with_viewport(
             UiPx::ZERO,
             self.metrics.row_height() * self.viewport_item_count as f32,
         )
     }
 
-    /// Resolves the renderer-neutral command result render plan for a viewport snapshot.
-    pub fn render_plan_with_viewport(
+    /// Resolves the command behavior snapshot for a viewport.
+    pub fn behavior_snapshot_with_viewport(
+        &self,
+        scroll_offset: UiPx,
+        viewport_extent: UiPx,
+    ) -> CommandBehaviorSnapshot {
+        let plan = self.render_plan_with_viewport(scroll_offset, viewport_extent);
+        CommandBehaviorSnapshot::from_render_plan(&plan)
+    }
+
+    fn render_plan_with_viewport(
         &self,
         scroll_offset: UiPx,
         viewport_extent: UiPx,
@@ -1980,62 +501,44 @@ impl Command {
         selected_values: impl IntoIterator<Item = impl Into<String>>,
         active_value: Option<&str>,
     ) -> CommandState {
-        let state = if let Some(index_snapshot) = self.index_snapshot.clone() {
-            CommandState::resolve_from_index_snapshot(
-                self.size,
-                self.disabled,
-                open,
-                self.default_open,
-                self.dialog_enabled,
-                self.label.to_string(),
-                self.placeholder.to_string(),
-                query,
-                query_mode,
-                self.selection_mode,
-                selected_value,
-                selected_values,
-                active_value,
-                self.loading_state.clone(),
-                self.empty_label.to_string(),
-                self.dialog_title.clone(),
-                self.dialog_description.clone(),
-                index_snapshot,
-                self.outside_press_policy,
-                self.escape_key_policy,
-                self.initial_focus_intent.clone(),
-                self.focus_restore_intent.clone(),
-                self.tokens,
-            )
-        } else {
-            CommandState::resolve(
-                self.size,
-                self.disabled,
-                open,
-                self.default_open,
-                self.dialog_enabled,
-                self.label.to_string(),
-                self.placeholder.to_string(),
-                query,
-                query_mode,
-                self.selection_mode,
-                selected_value,
-                selected_values,
-                active_value,
-                self.loading_state.clone(),
-                self.empty_label.to_string(),
-                self.dialog_title.clone(),
-                self.dialog_description.clone(),
-                self.groups.iter().map(CommandGroup::descriptor),
-                self.items.iter().map(CommandItem::descriptor),
-                self.outside_press_policy,
-                self.escape_key_policy,
-                self.initial_focus_intent.clone(),
-                self.focus_restore_intent.clone(),
-                self.tokens,
-            )
-        };
+        let state = CommandState::resolve(CommandStateRequest {
+            size: self.size,
+            disabled: self.disabled,
+            open,
+            default_open: self.default_open,
+            dialog_enabled: self.dialog_enabled,
+            label: self.label.to_string(),
+            placeholder: self.placeholder.to_string(),
+            query: query.to_string(),
+            query_mode,
+            selection_mode: self.selection_mode,
+            selected_value: selected_value.map(str::to_owned),
+            selected_values: selected_values.into_iter().map(Into::into).collect(),
+            active_value: active_value.map(str::to_owned),
+            loading_state: self.loading_state.clone(),
+            empty_label: self.empty_label.to_string(),
+            dialog_title: self.dialog_title.clone(),
+            dialog_description: self.dialog_description.clone(),
+            data_source: self.index_snapshot.clone().map_or_else(
+                || {
+                    CommandStateDataSource::local(
+                        self.groups.iter().map(CommandGroup::descriptor),
+                        self.items.iter().map(CommandItem::descriptor),
+                    )
+                },
+                CommandStateDataSource::snapshot,
+            ),
+            outside_press_policy: self.outside_press_policy,
+            escape_key_policy: self.escape_key_policy,
+            initial_focus_intent: self.initial_focus_intent.clone(),
+            focus_restore_intent: self.focus_restore_intent.clone(),
+            tokens: self.tokens,
+        });
 
-        state.with_metrics(self.metrics)
+        state
+            .with_metrics(self.metrics)
+            .with_navigation_behavior(self.navigation_behavior)
+            .with_status_items(self.status_items.clone())
     }
 }
 
@@ -2049,6 +552,7 @@ impl Sizable for Command {
 
 impl RenderOnce for Command {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let initial_query = self
             .query
             .clone()
@@ -2057,13 +561,13 @@ impl RenderOnce for Command {
             .selected_values
             .clone()
             .unwrap_or_else(|| self.selected_value.iter().cloned().collect());
-        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| {
+        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, cx| {
             CommandRuntime::new(
                 self.default_open,
                 self.active_value.clone(),
                 self.selected_value.clone(),
                 initial_selected_values.clone(),
-                initial_query.clone(),
+                cx.focus_handle(),
             )
         });
         let input_state_key: ElementId = (self.id.clone(), "input-state").into();
@@ -2073,9 +577,10 @@ impl RenderOnce for Command {
             input
         });
         let runtime_state = runtime.read(cx).clone();
-        let scroll_handle = runtime_state.scroll_handle.clone();
-        let resolved_open = self.open.unwrap_or(runtime_state.open);
-        if self.open.is_some() && runtime_state.open != resolved_open {
+        let scroll_handle = scroll_surface_handle(&runtime_state.scroll_surface, None);
+        let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
+        let resolved_open = open_state.open();
+        if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
             });
@@ -2114,10 +619,18 @@ impl RenderOnce for Command {
             active_value,
         );
         let scroll_reset_key = command_scroll_reset_key(&state);
-        if runtime_state.scroll_reset_key != scroll_reset_key {
-            scroll_handle.set_offset(point(px(0.0), px(0.0)));
+        let previous_scroll_reset_key = runtime_state.scroll_surface.reset_key();
+        let reset_key_changed = previous_scroll_reset_key != Some(scroll_reset_key.as_str());
+        if should_reset_scroll_surface(
+            true,
+            previous_scroll_reset_key,
+            Some(scroll_reset_key.as_str()),
+        ) {
+            set_vertical_scroll_offset(&scroll_handle, UiPx::ZERO);
+        }
+        if reset_key_changed {
             runtime.update(cx, |runtime, _| {
-                runtime.scroll_reset_key = scroll_reset_key.clone();
+                runtime.scroll_surface.set_reset_key(Some(scroll_reset_key));
             });
         }
         let query_change_handler = self.on_query_change.clone();
@@ -2139,19 +652,18 @@ impl RenderOnce for Command {
         let input_id: ElementId = (id.clone(), "input").into();
         let content_id: ElementId = (id.clone(), "content").into();
         let listbox_id: ElementId = (id.clone(), "listbox").into();
-        let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
-        let scroll_offset =
-            UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
+        let viewport_extent = vertical_viewport_extent(&scroll_handle);
+        let scroll_offset = vertical_scroll_offset(&scroll_handle);
         let metrics = state.metrics();
         let colors = state.colors();
         let disabled = state.disabled();
         let focus_ring = state.focus_ring();
         let dialog_state = state.dialog().cloned();
         let dialog_open = dialog_state.clone().filter(|_| state.open());
-        let dialog_priority = dialog_state
+        let dialog_overlay_host = dialog_state
             .as_ref()
-            .map(|dialog| gpui_overlay_state(dialog.overlay()).deferred_priority())
-            .unwrap_or_else(|| gpui_overlay_state(state.overlay()).deferred_priority());
+            .map(|dialog| OverlayLayerHost::resolve(dialog.overlay()))
+            .unwrap_or_else(|| OverlayLayerHost::resolve(state.overlay()));
         let viewport = window.viewport_size();
         let dialog_enabled = self.dialog_enabled;
         let trigger_label = self.trigger_label;
@@ -2160,6 +672,8 @@ impl RenderOnce for Command {
         let on_select = self.on_select;
         let on_selected_values_change = self.on_selected_values_change;
         let tokens = self.tokens;
+        let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+        let trigger_focus = runtime_state.trigger_focus.clone();
 
         div()
             .id(id)
@@ -2176,6 +690,8 @@ impl RenderOnce for Command {
                 let runtime = runtime.clone();
                 let on_open_change = on_open_change.clone();
                 let trigger_label = trigger_label.clone();
+                let open = state.open();
+                let overlay_host = dialog_overlay_host.clone();
                 this.child(
                     div()
                         .id(trigger_id)
@@ -2188,26 +704,35 @@ impl RenderOnce for Command {
                         .py(gpui_px_from_ui(state.size().button_py()))
                         .rounded(gpui_px_from_ui(metrics.radius()))
                         .border_1()
-                        .border_color(ThemeResolver::resolve(colors.border()))
-                        .bg(ThemeResolver::resolve(colors.surface()))
-                        .text_color(ThemeResolver::resolve(colors.foreground()))
+                        .border_color(theme.resolve(colors.border()))
+                        .bg(theme.resolve(colors.surface()))
+                        .text_color(theme.resolve(colors.foreground()))
                         .focusable()
+                        .track_focus(&trigger_focus)
                         .tab_stop(!disabled)
                         .ui_role(Role::Button)
                         .aria_label(trigger_label.clone())
-                        .aria_expanded(state.open())
+                        .aria_expanded(open)
                         .aria_disabled(disabled)
-                        .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                        .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                         .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                         .when(!disabled, |this| {
                             this.cursor_pointer().on_click(
                                 move |_event: &ClickEvent, window, cx| {
                                     cx.stop_propagation();
-                                    runtime.update(cx, |runtime, _| {
-                                        runtime.open = true;
-                                    });
-                                    if let Some(on_open_change) = on_open_change.as_ref() {
-                                        on_open_change(true, window, cx);
+                                    if !open {
+                                        overlay_host.apply_open_change(
+                                            OverlayOpenRuntimeRequest::new(
+                                                runtime.clone(),
+                                                true,
+                                                on_open_change.as_deref(),
+                                            ),
+                                            window,
+                                            cx,
+                                            |runtime| {
+                                                set_overlay_open(&mut runtime.open, true);
+                                            },
+                                        );
                                     }
                                 },
                             )
@@ -2232,47 +757,34 @@ impl RenderOnce for Command {
                     on_select.clone(),
                     on_selected_values_change.clone(),
                     tokens,
+                    None,
+                    &theme,
                 ))
             })
             .when_some(dialog_open, |this, dialog_state| {
-                this.child(
-                    deferred(
-                        anchored()
-                            .position(point(px(0.0), px(0.0)))
-                            .snap_to_window()
-                            .child(command_dialog_layer_element(
-                                content_id,
-                                input_id,
-                                listbox_id,
-                                debug_id,
-                                state,
-                                scroll_handle,
-                                viewport_extent,
-                                scroll_offset,
-                                dialog_state,
-                                viewport,
-                                input_controller,
-                                runtime,
-                                on_open_change,
-                                on_query_change,
-                                on_select,
-                                on_selected_values_change,
-                                tokens,
-                            )),
-                    )
-                    .priority(dialog_priority),
-                )
+                let overlay_host = dialog_overlay_host.clone();
+                this.child(overlay_host.full_window_layer(command_dialog_layer_element(
+                    content_id,
+                    input_id,
+                    listbox_id,
+                    debug_id,
+                    state,
+                    scroll_handle,
+                    viewport_extent,
+                    scroll_offset,
+                    dialog_state,
+                    overlay_host.clone(),
+                    viewport,
+                    input_controller,
+                    runtime,
+                    on_open_change,
+                    on_query_change,
+                    on_select,
+                    on_selected_values_change,
+                    tokens,
+                    &theme,
+                )))
             })
-    }
-}
-
-const DEFAULT_COMMAND_VIEWPORT_ITEM_COUNT: usize = 8;
-
-const fn nonnegative_px(value: UiPx) -> UiPx {
-    if value.as_f32() < 0.0 {
-        UiPx::ZERO
-    } else {
-        value
     }
 }
 
@@ -2291,6 +803,13 @@ impl CommandItem {
         }
     }
 
+    /// Creates a command item from shared app-command metadata.
+    pub fn from_command_descriptor(descriptor: &CommandDescriptor) -> Self {
+        Self {
+            descriptor: CommandItemDescriptor::from_command_descriptor(descriptor),
+        }
+    }
+
     /// Adds one filtering keyword.
     pub fn keyword(mut self, keyword: impl Into<String>) -> Self {
         self.descriptor = self.descriptor.keyword(keyword);
@@ -2306,6 +825,18 @@ impl CommandItem {
     /// Marks the command as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.descriptor = self.descriptor.disabled(disabled);
+        self
+    }
+
+    /// Marks the command as disabled with a user-displayable reason.
+    pub fn disabled_reason(mut self, reason: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.disabled_reason(reason);
+        self
+    }
+
+    /// Applies caller-owned availability metadata without evaluating it.
+    pub fn when(mut self, when: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.when(when);
         self
     }
 
@@ -2351,82 +882,6 @@ impl CommandGroup {
             .fold(self.descriptor.clone(), |descriptor, item| {
                 descriptor.item(item.descriptor())
             })
-    }
-}
-
-fn command_text_match_rank(
-    text: &str,
-    normalized_query: &str,
-    source: CommandMatchSource,
-) -> Option<CommandMatchRank> {
-    let text = choice::normalize_query(text);
-    if text.is_empty() || normalized_query.is_empty() {
-        return None;
-    }
-
-    let quality = if text == normalized_query {
-        300
-    } else if text.starts_with(normalized_query) {
-        220
-    } else if command_words_start_with(text.as_str(), normalized_query) {
-        180
-    } else if text.contains(normalized_query) {
-        120
-    } else {
-        return None;
-    };
-
-    Some(CommandMatchRank {
-        source: Some(source),
-        score: source.base_score() + quality,
-    })
-}
-
-fn command_words_start_with(text: &str, normalized_query: &str) -> bool {
-    text.split(|ch: char| !ch.is_ascii_alphanumeric())
-        .any(|word| word.starts_with(normalized_query))
-}
-
-fn command_item_rank_for_source(
-    item: &CommandItemDescriptor,
-    normalized_query: &str,
-    mode: CommandIndexSnapshotMode,
-) -> Option<CommandMatchRank> {
-    let query_is_empty = normalized_query.is_empty();
-    if !mode.should_filter_locally(query_is_empty) {
-        return Some(CommandMatchRank::unfiltered());
-    }
-
-    item.match_rank(normalized_query)
-}
-
-fn sort_ranked_command_items(items: &mut [FlattenedCommandItem]) {
-    items.sort_by(|a, b| {
-        b.rank
-            .score
-            .cmp(&a.rank.score)
-            .then_with(|| a.source_index.cmp(&b.source_index))
-    });
-}
-
-impl ThemeResolver {
-    pub(crate) const fn command_colors(tokens: ThemeTokens) -> CommandColors {
-        CommandColors {
-            surface: ColorIntent::new(tokens.surface, 0xffffff),
-            foreground: ColorIntent::new(tokens.text, 0x18202a),
-            muted_foreground: ColorIntent::new(tokens.text_muted, 0x5a6472),
-            border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            shortcut_foreground: ColorIntent::with_state(
-                tokens.text_muted,
-                ColorState::Message,
-                0x5a6472,
-            ),
-            focus_ring: ColorIntent::with_state(
-                tokens.focus_ring,
-                ColorState::FocusVisible,
-                0x2f80ed,
-            ),
-        }
     }
 }
 

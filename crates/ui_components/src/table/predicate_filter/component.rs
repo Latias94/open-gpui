@@ -176,6 +176,7 @@ impl Sizable for TablePredicateFilter {
 
 impl RenderOnce for TablePredicateFilter {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let runtime_id = format!("{}-runtime", self.id);
         let runtime = window.use_keyed_state(runtime_id, cx, |_, _| TablePredicateFilterRuntime {
             operator: self.default_operator,
@@ -240,7 +241,7 @@ impl RenderOnce for TablePredicateFilter {
             .items_center()
             .gap_2()
             .text_size(gpui_px_from_ui(size.control_text_px()))
-            .text_color(ThemeResolver::resolve(state.input().colors().foreground()))
+            .text_color(theme.resolve(state.input().colors().foreground()))
             .child(
                 div()
                     .flex_none()

@@ -390,7 +390,7 @@ impl LineWrapper {
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc. Trailing punctuation like `,`, `.`, `:`, `;`
         // is included so it stays attached to the preceding word when wrapping.
         matches!(c, '-' | '_' | '.' | '\'' | '’' | '‘' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':' | ';') ||
-        // `⋯` character is special used in Zed, to keep this at the end of the line.
+        // `⋯` is kept attached to the preceding text so it stays at the end of the line.
         matches!(c, '⋯')
     }
 
@@ -535,7 +535,7 @@ mod tests {
     fn build_wrapper() -> LineWrapper {
         let dispatcher = TestDispatcher::new(0);
         let cx = TestAppContext::build(dispatcher, None);
-        let id = cx.text_system().resolve_font(&font(".ZedMono"));
+        let id = cx.text_system().resolve_font(&font(".OpenGpuiMono"));
         LineWrapper::new(id, px(16.), cx.text_system().clone())
     }
 
@@ -1022,10 +1022,6 @@ mod tests {
         assert_not_word("()[]{}<>");
     }
 
-    // For compatibility with the test macro
-    #[cfg(target_os = "macos")]
-    use crate as gpui;
-
     // These seem to vary wildly based on the text system.
     #[cfg(target_os = "macos")]
     #[crate::test]
@@ -1087,7 +1083,7 @@ mod tests {
     fn test_multiline_truncation_fits_within_wrapped_lines() {
         let mut wrapper = build_wrapper();
 
-        // With .ZedMono at 16px, each char is 9.6px wide.
+        // With .OpenGpuiMono at 16px, each char is 9.6px wide.
         // wrap_width = 72px fits ~7 chars per line.
         //
         // "aa bbbbbb cccccc dddddd eeee ffff" with wrap_width=72px wraps as:

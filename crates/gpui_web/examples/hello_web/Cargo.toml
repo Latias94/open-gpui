@@ -11,6 +11,10 @@ name = "hello_web"
 path = "main.rs"
 
 [dependencies]
-open_gpui = { path = "../../../gpui" }
-open_gpui_platform = { path = "../../../gpui_platform" }
+open_gpui = { package = "open-gpui", path = "../../../gpui", default-features = false }
 web-time = "1"
+
+[dependencies.open_gpui_platform]
+package = "open-gpui-platform"
+path = "../../../gpui_platform"
+features = ["web-multithreaded"]

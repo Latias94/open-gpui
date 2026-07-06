@@ -2,7 +2,7 @@
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
@@ -293,7 +293,8 @@ impl Sizable for Link {
 }
 
 impl RenderOnce for Link {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -301,6 +302,9 @@ impl RenderOnce for Link {
         let disabled = state.disabled();
         let label = self.label.clone();
         let visible_label = label.to_string();
+        let text_color = theme.resolve(colors.text());
+        let hover_text = theme.resolve(colors.hover_text());
+        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
 
         div()
             .id(self.id)
@@ -309,18 +313,17 @@ impl RenderOnce for Link {
             .rounded(gpui_px_from_ui(metrics.radius()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
-            .text_color(ThemeResolver::resolve(colors.text()))
+            .text_color(text_color)
             .underline()
             .focusable()
             .tab_stop(!disabled)
             .ui_role(state.role())
             .aria_label(label)
-            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+            .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| {
-                this.cursor_pointer().hover(move |style| {
-                    style.text_color(ThemeResolver::resolve(colors.hover_text()))
-                })
+                this.cursor_pointer()
+                    .hover(move |style| style.text_color(hover_text))
             })
             .when_some(
                 self.on_activate

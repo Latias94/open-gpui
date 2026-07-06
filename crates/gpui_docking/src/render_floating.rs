@@ -1,5 +1,6 @@
 use crate::{
     DockFloatingContainer, DockHost, DockNodeId,
+    chrome_geometry::dock_floating_chrome_bounds,
     debug::DockDebugRegion,
     drag::{DockDragPayload, DockDragPayloadKind, DockDragTearOffGeometry},
     drop_scene_fact,
@@ -8,7 +9,7 @@ use crate::{
 };
 use open_gpui::{
     AnyElement, AppContext, Bounds, Context, DragMoveEvent, Empty, InteractiveElement, IntoElement,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
     StatefulInteractiveElement, Styled, Window, canvas, div, px, rgb, rgba, white,
 };
 
@@ -57,6 +58,7 @@ impl DockHost {
         );
         let child = session.floating_child(container.node);
         let bounds = container.bounds;
+        let chrome_bounds = dock_floating_chrome_bounds(bounds);
         let content = child
             .map(|child| self.render_node(child, session, viewport_host_scene_frame, window, cx))
             .unwrap_or_else(|| self.render_missing_node(container.node, session));
@@ -81,6 +83,7 @@ impl DockHost {
             .shadow_md()
             .child(self.render_floating_handle(
                 container,
+                chrome_bounds.title_bar_bounds.size.height,
                 title,
                 session,
                 viewport_host_scene_frame,
@@ -100,9 +103,10 @@ impl DockHost {
     fn render_floating_handle(
         &mut self,
         container: DockFloatingContainer,
+        handle_height: Pixels,
         title: String,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        _viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -121,13 +125,13 @@ impl DockHost {
         let entity = cx.entity();
         let chrome_target = session.floating_chrome_target(floating);
 
-        let mut handle = div()
+        let handle = div()
             .id(selector.clone())
             .debug_selector(move || selector)
             .relative()
             .flex()
             .flex_none()
-            .h(px(24.0))
+            .h(handle_height)
             .items_center()
             .px_2()
             .bg(rgb(0xe7ebf0))
@@ -138,12 +142,6 @@ impl DockHost {
             .cursor_pointer();
 
         if let Some(DockFloatingChromeTarget::SingleTabs(target_tabs)) = chrome_target {
-            handle = handle.child(self.render_viewport_drop_scene_fact_probe(
-                viewport_host_scene_frame,
-                move |title_bounds| {
-                    drop_scene_fact::floating_title_bar(floating, target_tabs, title_bounds, bounds)
-                },
-            ));
             let mut payload = DockDragPayload::new_floating(space.clone(), floating, title.clone());
             if let Some(preview_titles) = session.multi_preview_tab_titles_for_node(floating) {
                 payload = payload.with_preview_tabs(preview_titles);
@@ -176,6 +174,7 @@ impl DockHost {
                                 tear_off_geometry.with_display_work_area(display.visible_bounds());
                         }
                         drag_entity.update(cx, |host, cx| {
+                            host.focus_host_for_drag_from_render(window, cx);
                             host.begin_payload_drag_from_render(payload, cx);
                             host.update_payload_drag_tear_off_geometry_from_render(
                                 payload,

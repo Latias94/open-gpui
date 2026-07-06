@@ -7,7 +7,7 @@ use smol::Unblock;
 use std::collections::BTreeMap;
 use std::ffi::{CString, OsStr, OsString};
 use std::io;
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::io::FromRawFd;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
@@ -349,12 +349,33 @@ fn spawn_posix_spawn(
     stderr_cfg: Stdio,
     kill_on_drop: bool,
 ) -> io::Result<Child> {
-    let program_cstr = CString::new(program.as_bytes()).map_err(|_| invalid_input_error())?;
+    // `posix_spawnp` resolves programs against the parent's cwd/PATH. Resolve
+    // here when the caller supplies child-specific cwd or PATH.
+    let resolved_program = if program.as_bytes().contains(&b'/') {
+        std::path::absolute(current_dir.join(program)).map_or_else(
+            |_| program.as_bytes().to_vec(),
+            |path| path.into_os_string().into_vec(),
+        )
+    } else {
+        envs.and_then(|envs| {
+            envs.iter()
+                .find(|(key, _)| key.as_os_str() == OsStr::new("PATH"))
+                .and_then(|(_, value)| {
+                    which::which_in(program, Some(value.as_os_str()), current_dir).ok()
+                })
+        })
+        .map_or_else(
+            || program.as_bytes().to_vec(),
+            |path| path.into_os_string().into_vec(),
+        )
+    };
+    let program_cstr = CString::new(resolved_program).map_err(|_| invalid_input_error())?;
+    let argv0_cstr = CString::new(program.as_bytes()).map_err(|_| invalid_input_error())?;
 
     let current_dir_cstr =
         CString::new(current_dir.as_os_str().as_bytes()).map_err(|_| invalid_input_error())?;
 
-    let mut argv_cstrs = vec![program_cstr.clone()];
+    let mut argv_cstrs = vec![argv0_cstr];
     for arg in args {
         let cstr = CString::new(arg.as_bytes()).map_err(|_| invalid_input_error())?;
         argv_cstrs.push(cstr);
@@ -898,6 +919,107 @@ mod tests {
             let output = child.output().await.expect("failed to get output");
             assert!(output.status.success());
             assert_eq!(output.stdout, b"piped input");
+        });
+    }
+
+    #[test]
+    fn test_bare_program_resolved_via_custom_path() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let link_path = temp_dir.path().join("open-gpui-test-echo");
+        std::os::unix::fs::symlink("/bin/echo", &link_path).expect("failed to create symlink");
+        let custom_path = temp_dir.path().to_string_lossy().into_owned();
+
+        smol::block_on(async {
+            let output = Command::new("open-gpui-test-echo")
+                .args(["-n", "from-custom-path"])
+                .env("PATH", &custom_path)
+                .output()
+                .await
+                .expect("failed to spawn with custom PATH");
+
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"from-custom-path");
+        });
+    }
+
+    #[test]
+    fn test_bare_program_preserves_argv0_when_resolved_via_custom_path() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let link_path = temp_dir.path().join("open-gpui-test-sh");
+        std::os::unix::fs::symlink("/bin/sh", &link_path).expect("failed to create symlink");
+        let custom_path = temp_dir.path().to_string_lossy().into_owned();
+
+        smol::block_on(async {
+            let output = Command::new("open-gpui-test-sh")
+                .args(["-c", "printf %s \"$0\""])
+                .env("PATH", &custom_path)
+                .output()
+                .await
+                .expect("failed to spawn with custom PATH");
+
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"open-gpui-test-sh");
+        });
+    }
+
+    #[test]
+    fn test_bare_program_with_custom_path_falls_back_when_not_found() {
+        smol::block_on(async {
+            let result = Command::new("open-gpui-nonexistent-binary-xyz")
+                .env("PATH", "/nonexistent/path")
+                .spawn();
+
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_bare_program_with_custom_env_no_path_key() {
+        smol::block_on(async {
+            let output = Command::new("echo")
+                .args(["-n", "from-inherited-path"])
+                .env("OPEN_GPUI_TEST_VAR", "test")
+                .output()
+                .await
+                .expect("failed to spawn with custom env but no PATH override");
+
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"from-inherited-path");
+        });
+    }
+
+    #[test]
+    fn test_relative_path_resolved_against_current_dir() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let link_path = temp_dir.path().join("open-gpui-test-echo");
+        std::os::unix::fs::symlink("/bin/echo", &link_path).expect("failed to create symlink");
+
+        smol::block_on(async {
+            let output = Command::new("./open-gpui-test-echo")
+                .args(["-n", "from-relative-path"])
+                .current_dir(temp_dir.path())
+                .env("PATH", "/nonexistent/path")
+                .output()
+                .await
+                .expect("failed to spawn with relative path");
+
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"from-relative-path");
+        });
+    }
+
+    #[test]
+    fn test_absolute_path_passes_through_unchanged() {
+        smol::block_on(async {
+            let output = Command::new("/bin/echo")
+                .args(["-n", "from-absolute-path"])
+                .env("PATH", "/nonexistent/path")
+                .output()
+                .await
+                .expect("failed to spawn with absolute path");
+
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"from-absolute-path");
         });
     }
 }

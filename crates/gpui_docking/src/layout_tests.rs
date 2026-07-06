@@ -83,6 +83,37 @@ fn compute_layout_gives_central_child_remaining_split_space() {
 }
 
 #[test]
+fn compute_layout_uses_shared_split_layout_when_neighbors_over_allocate() {
+    let mut graph = DockGraph::new();
+    let left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("left")],
+        selected: Some(item("left")),
+    });
+    let main = graph.insert_node(DockNode::Tabs {
+        items: vec![item("main")],
+        selected: Some(item("main")),
+    });
+    let right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("right")],
+        selected: Some(item("right")),
+    });
+    let split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left, main, right],
+        fractions: vec![0.8, 0.0, 0.7],
+    });
+    graph.set_root(space(), split);
+    graph.set_central_region(space(), DockCentralRegion::with_node(main));
+
+    let mut layout = std::collections::HashMap::new();
+    graph.compute_layout(split, dock_bounds(0.0, 0.0, 1000.0, 100.0), &mut layout);
+
+    assert_px_close(layout[&left].size.width, 533.3334);
+    assert_eq!(layout[&main].size.width, open_gpui::px(0.0));
+    assert_px_close(layout[&right].size.width, 466.6667);
+}
+
+#[test]
 fn layout_roundtrips_roots_splits_and_floatings() {
     let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
     assert!(
@@ -119,6 +150,13 @@ fn layout_roundtrips_roots_splits_and_floatings() {
         dock_bounds(10.0, 20.0, 300.0, 200.0)
     );
     imported.assert_canonical_space(&space());
+}
+
+fn assert_px_close(actual: open_gpui::Pixels, expected: f32) {
+    assert!(
+        (f32::from(actual) - expected).abs() <= 0.001,
+        "expected {actual:?} to be close to {expected}"
+    );
 }
 
 #[test]

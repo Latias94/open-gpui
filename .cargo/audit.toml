@@ -1,0 +1,10 @@
+[advisories]
+# quick-xml is currently pinned below the fixed 0.41 line by upstream codegen
+# crates: wayland-scanner 0.31.10 and zbus_xml 5.1.1. Both enter this
+# workspace through proc-macro/code-generation paths rather than runtime XML
+# parsing. Remove these ignores as soon as those upstream crates publish
+# releases that accept quick-xml >= 0.41.
+ignore = [
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
