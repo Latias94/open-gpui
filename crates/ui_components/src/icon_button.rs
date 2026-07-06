@@ -296,3 +296,20 @@ impl RenderOnce for IconButton {
             .child(self.icon)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icon_button_state_tracks_selected_builder_value() {
+        let inactive = IconButton::new("reader-select", "S", "Select text").state();
+        assert!(!inactive.selected());
+
+        let active = IconButton::new("reader-select", "S", "Select text")
+            .selected(true)
+            .state();
+        assert!(active.selected());
+        assert_eq!(active.accessible_label(), "Select text");
+    }
+}
