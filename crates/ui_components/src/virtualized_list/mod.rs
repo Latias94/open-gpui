@@ -1,24 +1,25 @@
 //! Renderer-neutral state for virtualized list surfaces.
 
 use crate::a11y::UiA11yElementExt;
-use crate::geometry::gpui_px_from_ui;
+use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use crate::roving_focus::paged_navigation_target;
 use crate::scroll_area::ScrollArea;
 use crate::scroll_surface::{
-    ScrollSurfaceRevealStrategy, ScrollSurfaceRuntime, fixed_row_scroll_target, reveal_fixed_row,
-    scroll_surface_handle, vertical_scroll_offset, vertical_viewport_extent,
+    ScrollSurfaceRevealStrategy, ScrollSurfaceRuntime, fixed_row_scroll_target,
+    scroll_surface_handle, set_vertical_scroll_offset, vertical_scroll_offset,
+    vertical_viewport_extent,
 };
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
-    Window, div, px, rgb,
+    App, ClickEvent, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
+    ParentElement, Pixels, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement,
+    Styled, Window, div, px, rgb,
 };
 #[cfg(test)]
 use open_gpui_ui_core::ui_px;
 use open_gpui_ui_core::{
     Role, RowWindow, Sizable, Size, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
-    VirtualizerResolvedState, VirtualizerState,
+    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -120,6 +121,31 @@ impl VirtualizedListRowKind {
             Self::Loading => Role::ProgressIndicator,
             Self::Empty => Role::Section,
             Self::Error => Role::AlertDialog,
+        }
+    }
+}
+
+/// Body row height ownership for virtualized-list rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VirtualizedListRowMeasureMode {
+    /// Rows keep the shared fixed-height contract.
+    #[default]
+    Fixed,
+    /// Rows may grow to fit rendered content and feed measurements back into the virtualizer.
+    Measured,
+}
+
+impl VirtualizedListRowMeasureMode {
+    /// Returns whether row heights should be measured from rendered content.
+    pub const fn measured(self) -> bool {
+        matches!(self, Self::Measured)
+    }
+
+    /// Returns the stable row measurement mode label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fixed => "fixed",
+            Self::Measured => "measured",
         }
     }
 }
@@ -883,6 +909,49 @@ impl VirtualizedListState {
         ))
     }
 
+    /// Returns a key-based reveal target using keyed measured row sizes when available.
+    pub fn scroll_target_for_key_with_snapshot(
+        &self,
+        key: &str,
+        strategy: VirtualizedListScrollStrategy,
+        viewport_extent: UiPx,
+        current_scroll_offset: UiPx,
+        snapshot: &VirtualizerSnapshot,
+    ) -> VirtualizedListRevealResult {
+        let matches = self
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| (item.key() == key).then_some(index))
+            .collect::<Vec<_>>();
+
+        let index = match matches.as_slice() {
+            [] => return VirtualizedListRevealResult::NotFound(key.to_owned()),
+            [index] => *index,
+            _ => return VirtualizedListRevealResult::NotSelectable(key.to_owned()),
+        };
+        if !self.items[index].kind().selectable() {
+            return VirtualizedListRevealResult::NotSelectable(key.to_owned());
+        }
+
+        let (scroll_offset, estimated) = virtualized_list_measured_scroll_target(
+            strategy,
+            index,
+            self.items.as_ref(),
+            self.metrics.row_height(),
+            viewport_extent,
+            current_scroll_offset,
+            snapshot,
+        );
+        let target = VirtualizedListRevealTarget::new(key, index, scroll_offset, estimated);
+
+        if estimated {
+            VirtualizedListRevealResult::Estimated(target)
+        } else {
+            VirtualizedListRevealResult::Revealed(target)
+        }
+    }
+
     /// Clamps a requested item index into the list range.
     pub fn clamped_index(&self, index: usize) -> Option<usize> {
         valid_index(index, self.item_count()).or_else(|| self.item_count().checked_sub(1))
@@ -956,6 +1025,7 @@ pub struct VirtualizedListRowBehaviorSnapshot {
     size_of_set: usize,
     virtual_start: UiPx,
     virtual_size: UiPx,
+    measured: bool,
     active: bool,
     selected: bool,
     disabled: bool,
@@ -972,6 +1042,7 @@ impl VirtualizedListRowBehaviorSnapshot {
             size_of_set: row.size_of_set(),
             virtual_start: row.virtual_start(),
             virtual_size: row.virtual_size(),
+            measured: row.measured(),
             active: row.active(),
             selected: row.selected(),
             disabled: row.disabled(),
@@ -1064,6 +1135,11 @@ impl VirtualizedListRowBehaviorSnapshot {
         self.virtual_size
     }
 
+    /// Returns whether the virtual row size came from measured content.
+    pub const fn measured(&self) -> bool {
+        self.measured
+    }
+
     /// Returns whether this row is active.
     pub const fn active(&self) -> bool {
         self.active
@@ -1092,9 +1168,11 @@ pub struct VirtualizedListBehaviorSnapshot {
     label: String,
     state: VirtualizedListState,
     metrics: VirtualizedListMetrics,
+    row_measure_mode: VirtualizedListRowMeasureMode,
     total_size: UiPx,
     viewport_extent: UiPx,
     scroll_offset: UiPx,
+    virtualizer_snapshot: VirtualizerSnapshot,
     visible_range: open_gpui_ui_core::VirtualizerRange,
     overscan_range: open_gpui_ui_core::VirtualizerRange,
     rows: Vec<VirtualizedListRowBehaviorSnapshot>,
@@ -1111,9 +1189,11 @@ impl VirtualizedListBehaviorSnapshot {
             label: plan.label().to_owned(),
             state: plan.state().clone(),
             metrics: plan.metrics(),
+            row_measure_mode: plan.row_measure_mode(),
             total_size: plan.virtualizer().total_size(),
             viewport_extent: plan.virtualizer().viewport_extent(),
             scroll_offset: plan.virtualizer().scroll_offset(),
+            virtualizer_snapshot: plan.virtualizer().snapshot().clone(),
             visible_range: plan.virtualizer().visible_range().clone(),
             overscan_range: plan.virtualizer().overscan_range().clone(),
             rows: plan
@@ -1148,6 +1228,11 @@ impl VirtualizedListBehaviorSnapshot {
         self.metrics
     }
 
+    /// Returns the row measurement mode used by the snapshot.
+    pub const fn row_measure_mode(&self) -> VirtualizedListRowMeasureMode {
+        self.row_measure_mode
+    }
+
     /// Returns the virtualized total size.
     pub const fn total_size(&self) -> UiPx {
         self.total_size
@@ -1161,6 +1246,11 @@ impl VirtualizedListBehaviorSnapshot {
     /// Returns the scroll offset used to resolve the snapshot.
     pub const fn scroll_offset(&self) -> UiPx {
         self.scroll_offset
+    }
+
+    /// Returns the virtualizer snapshot emitted by this resolution.
+    pub const fn virtualizer_snapshot(&self) -> &VirtualizerSnapshot {
+        &self.virtualizer_snapshot
     }
 
     /// Returns the viewport-visible source row range.
@@ -1327,6 +1417,11 @@ impl VirtualizedListRowRenderPlan {
         self.measurement.size()
     }
 
+    /// Returns whether this row size came from a measurement cache.
+    pub const fn measured(&self) -> bool {
+        self.measurement.measured()
+    }
+
     /// Returns the accessibility role for this row.
     pub const fn role(&self) -> Role {
         self.role
@@ -1340,6 +1435,7 @@ pub(crate) struct VirtualizedListRenderPlan {
     label: String,
     state: VirtualizedListState,
     metrics: VirtualizedListMetrics,
+    row_measure_mode: VirtualizedListRowMeasureMode,
     virtualizer: VirtualizerResolvedState,
     rows: Vec<VirtualizedListRowRenderPlan>,
     visible_row_count: usize,
@@ -1355,6 +1451,9 @@ impl VirtualizedListRenderPlan {
         label: impl Into<String>,
         state: VirtualizedListState,
         items: &[VirtualizedListItemDescriptor],
+        row_measure_mode: VirtualizedListRowMeasureMode,
+        row_measurements: &BTreeMap<String, UiPx>,
+        snapshot: Option<&VirtualizerSnapshot>,
         scroll_offset: UiPx,
         viewport_extent: UiPx,
     ) -> Self {
@@ -1383,14 +1482,16 @@ impl VirtualizedListRenderPlan {
             .iter()
             .filter(|position| position.is_some())
             .count();
-        let virtualizer = VirtualizerState::new(items.len(), metrics.row_height())
-            .with_viewport_extent(viewport_extent)
-            .with_overscan(metrics.overscan_count())
-            .with_scroll_offset(nonnegative_px(scroll_offset))
-            .resolve_fixed_window(|index| {
-                let item = &items[index];
-                VirtualizerItemKey::new(virtualized_list_render_key(item, index, &duplicate_keys))
-            });
+        let virtualizer = resolve_virtualized_list_virtualizer(
+            items,
+            metrics,
+            row_measure_mode,
+            row_measurements,
+            snapshot,
+            nonnegative_px(scroll_offset),
+            viewport_extent,
+            &duplicate_keys,
+        );
         let row_window = RowWindow::project(&virtualizer, |index| items.get(index).cloned());
         let visible_row_count = row_window.visible_row_count();
         let overscan_count = row_window.overscan_count();
@@ -1416,6 +1517,7 @@ impl VirtualizedListRenderPlan {
             label: label.into(),
             state,
             metrics,
+            row_measure_mode,
             virtualizer,
             rows,
             visible_row_count,
@@ -1443,6 +1545,11 @@ impl VirtualizedListRenderPlan {
     /// Returns the resolved metrics.
     pub const fn metrics(&self) -> VirtualizedListMetrics {
         self.metrics
+    }
+
+    /// Returns the row measurement mode used by the plan.
+    pub const fn row_measure_mode(&self) -> VirtualizedListRowMeasureMode {
+        self.row_measure_mode
     }
 
     /// Returns the resolved virtualizer state.
@@ -1482,7 +1589,18 @@ struct VirtualizedListRuntime {
     focus_handle: FocusHandle,
     active_key: Option<String>,
     selected_keys: BTreeSet<String>,
+    row_measurements: BTreeMap<String, UiPx>,
     pending_scroll_to_active: Option<String>,
+}
+
+impl VirtualizedListRuntime {
+    fn set_row_measurement(&mut self, render_key: String, height: UiPx, cx: &mut Context<Self>) {
+        let height = nonnegative_px(height);
+        if self.row_measurements.get(&render_key).copied() != Some(height) {
+            self.row_measurements.insert(render_key, height);
+            cx.notify();
+        }
+    }
 }
 
 /// A concrete GPUI virtualized list renderer.
@@ -1498,6 +1616,8 @@ pub struct VirtualizedList {
     selection_mode: VirtualizedListSelectionMode,
     viewport_item_count: usize,
     metrics: VirtualizedListMetrics,
+    row_measure_mode: VirtualizedListRowMeasureMode,
+    snapshot: Option<VirtualizerSnapshot>,
     on_activate: Option<VirtualizedListActivationHandler>,
     on_selection_change: Option<VirtualizedListSelectionChangeHandler>,
 }
@@ -1535,6 +1655,8 @@ impl VirtualizedList {
             selection_mode: VirtualizedListSelectionMode::Single,
             viewport_item_count: DEFAULT_VIRTUALIZED_LIST_VIEWPORT_ITEM_COUNT,
             metrics: VirtualizedListMetrics::from_size(size),
+            row_measure_mode: VirtualizedListRowMeasureMode::default(),
+            snapshot: None,
             on_activate: None,
             on_selection_change: None,
         }
@@ -1584,6 +1706,18 @@ impl VirtualizedList {
     /// Applies a fixed row height.
     pub fn row_height(mut self, row_height: UiPx) -> Self {
         self.metrics = self.metrics.with_row_height(row_height);
+        self
+    }
+
+    /// Applies the body row measurement mode.
+    pub fn row_measure_mode(mut self, row_measure_mode: VirtualizedListRowMeasureMode) -> Self {
+        self.row_measure_mode = row_measure_mode;
+        self
+    }
+
+    /// Seeds measured-row virtualizer measurements from a snapshot.
+    pub fn virtualizer_snapshot(mut self, snapshot: VirtualizerSnapshot) -> Self {
+        self.snapshot = Some(snapshot);
         self
     }
 
@@ -1650,6 +1784,9 @@ impl VirtualizedList {
             self.label.to_string(),
             state,
             self.items.as_ref(),
+            self.row_measure_mode,
+            &BTreeMap::new(),
+            self.snapshot.as_ref(),
             scroll_offset,
             viewport_extent,
         )
@@ -1694,6 +1831,7 @@ impl RenderOnce for VirtualizedList {
             focus_handle: cx.focus_handle(),
             active_key: self.active_key.clone(),
             selected_keys: self.selected_keys.clone(),
+            row_measurements: BTreeMap::new(),
             pending_scroll_to_active: None,
         });
         let runtime_state = runtime.read(cx).clone();
@@ -1710,25 +1848,37 @@ impl RenderOnce for VirtualizedList {
             runtime_state.selected_keys.iter().map(String::as_str),
             viewport_item_count,
         );
-        if let Some(pending_scroll_to_active) = runtime_state.pending_scroll_to_active.as_deref() {
-            scroll_active_key(&scroll_handle, &state, pending_scroll_to_active);
-            runtime.update(cx, |runtime, _| {
-                runtime.pending_scroll_to_active = None;
-            });
-        }
         let scroll_offset = vertical_scroll_offset(&scroll_handle);
         let plan = VirtualizedListRenderPlan::resolve(
             self.id.clone(),
             self.label.to_string(),
             state.clone(),
             self.items.as_ref(),
+            self.row_measure_mode,
+            &runtime_state.row_measurements,
+            self.snapshot.as_ref(),
             scroll_offset,
             viewport_extent,
         );
+        if let Some(pending_scroll_to_active) = runtime_state.pending_scroll_to_active.as_deref() {
+            scroll_active_key(
+                &scroll_handle,
+                &state,
+                pending_scroll_to_active,
+                plan.row_measure_mode(),
+                plan.virtualizer().snapshot(),
+            );
+            runtime.update(cx, |runtime, _| {
+                runtime.pending_scroll_to_active = None;
+            });
+        }
         let on_activate = self.on_activate.clone();
         let on_selection_change = self.on_selection_change.clone();
         let list_state = plan.state().clone();
         let rows = plan.rows().to_vec();
+        let row_measure_mode = plan.row_measure_mode();
+        let estimated_row_height = plan.metrics().row_height();
+        let virtualizer_snapshot = plan.virtualizer().snapshot().clone();
         let list_id = plan.list_id().to_owned();
         let scroll_viewport_id = format!("virtualized-list:{}:viewport", plan.list_id());
         let root_click_state = list_state.clone();
@@ -1787,6 +1937,8 @@ impl RenderOnce for VirtualizedList {
                 let on_activate = on_activate.clone();
                 let on_selection_change = on_selection_change.clone();
                 let plan_state = list_state.clone();
+                let row_measure_mode = row_measure_mode;
+                let virtualizer_snapshot = virtualizer_snapshot.clone();
                 move |event: &KeyDownEvent, window, cx| {
                     handle_virtualized_list_key_down(
                         &plan_state,
@@ -1794,6 +1946,8 @@ impl RenderOnce for VirtualizedList {
                         scroll_handle.clone(),
                         on_activate.clone(),
                         on_selection_change.clone(),
+                        row_measure_mode,
+                        &virtualizer_snapshot,
                         event,
                         window,
                         cx,
@@ -1808,6 +1962,8 @@ impl RenderOnce for VirtualizedList {
                             &list_id,
                             &rows,
                             plan.virtualizer().total_size(),
+                            row_measure_mode,
+                            estimated_row_height,
                             list_state.clone(),
                             runtime.clone(),
                             focus_handle,
@@ -1827,6 +1983,8 @@ fn render_virtualized_list_body(
     list_id: &str,
     rows: &[VirtualizedListRowRenderPlan],
     total_size: UiPx,
+    row_measure_mode: VirtualizedListRowMeasureMode,
+    estimated_row_height: UiPx,
     list_state: VirtualizedListState,
     runtime: Entity<VirtualizedListRuntime>,
     focus_handle: FocusHandle,
@@ -1850,6 +2008,8 @@ fn render_virtualized_list_body(
             render_virtualized_list_row(
                 list_id.clone(),
                 row,
+                row_measure_mode,
+                estimated_row_height,
                 list_state.clone(),
                 runtime.clone(),
                 focus_handle.clone(),
@@ -1862,6 +2022,8 @@ fn render_virtualized_list_body(
 fn render_virtualized_list_row(
     list_id: String,
     row: VirtualizedListRowRenderPlan,
+    row_measure_mode: VirtualizedListRowMeasureMode,
+    estimated_row_height: UiPx,
     list_state: VirtualizedListState,
     runtime: Entity<VirtualizedListRuntime>,
     focus_handle: FocusHandle,
@@ -1894,6 +2056,26 @@ fn render_virtualized_list_row(
     };
 
     div()
+        .on_children_prepainted({
+            let runtime = runtime.clone();
+            let render_key = render_key.clone();
+            move |row_bounds, _window, cx| {
+                if row_measure_mode.measured() {
+                    let measured_height = row_bounds
+                        .iter()
+                        .map(|bounds| bounds.size.height)
+                        .fold(Pixels::ZERO, Pixels::max);
+                    let measured_height = measured_height.ceil();
+                    runtime.update(cx, |runtime, cx| {
+                        runtime.set_row_measurement(
+                            render_key.clone(),
+                            ui_px_from_gpui(measured_height),
+                            cx,
+                        );
+                    });
+                }
+            }
+        })
         .id(format!("virtualized-list:{list_id}:row:{render_key}"))
         .debug_selector({
             let list_id = list_id.clone();
@@ -1904,7 +2086,12 @@ fn render_virtualized_list_row(
         .top(gpui_px_from_ui(row.virtual_start()))
         .left(px(0.0))
         .right(px(0.0))
-        .h(gpui_px_from_ui(row.virtual_size()))
+        .when(row_measure_mode.measured(), |this| {
+            this.min_h(gpui_px_from_ui(estimated_row_height))
+        })
+        .when(!row_measure_mode.measured(), |this| {
+            this.h(gpui_px_from_ui(row.virtual_size()))
+        })
         .min_w(px(0.0))
         .flex()
         .items_center()
@@ -2026,6 +2213,8 @@ fn handle_virtualized_list_key_down(
     scroll_handle: ScrollHandle,
     on_activate: Option<VirtualizedListActivationHandler>,
     on_selection_change: Option<VirtualizedListSelectionChangeHandler>,
+    row_measure_mode: VirtualizedListRowMeasureMode,
+    virtualizer_snapshot: &VirtualizerSnapshot,
     event: &KeyDownEvent,
     window: &mut Window,
     cx: &mut App,
@@ -2045,7 +2234,13 @@ fn handle_virtualized_list_key_down(
             runtime.active_key = Some(target.key().to_owned());
             runtime.pending_scroll_to_active = Some(target.key().to_owned());
         });
-        scroll_active_key(&scroll_handle, state, target.key());
+        scroll_active_key(
+            &scroll_handle,
+            state,
+            target.key(),
+            row_measure_mode,
+            virtualizer_snapshot,
+        );
         return;
     }
 
@@ -2066,7 +2261,13 @@ fn handle_virtualized_list_key_down(
             }
             runtime.pending_scroll_to_active = Some(activation.key().to_owned());
         });
-        scroll_active_key(&scroll_handle, state, activation.key());
+        scroll_active_key(
+            &scroll_handle,
+            state,
+            activation.key(),
+            row_measure_mode,
+            virtualizer_snapshot,
+        );
         if let (Some(on_selection_change), Some(selection_change)) =
             (on_selection_change.as_ref(), selection_change)
         {
@@ -2090,13 +2291,31 @@ fn handle_virtualized_list_key_down(
     }
 }
 
-fn scroll_active_key(scroll_handle: &ScrollHandle, state: &VirtualizedListState, key: &str) {
-    let target = match state.scroll_target_for_key(
-        key,
-        VirtualizedListScrollStrategy::Nearest,
-        state.viewport_extent(),
-        vertical_scroll_offset(scroll_handle),
-    ) {
+fn scroll_active_key(
+    scroll_handle: &ScrollHandle,
+    state: &VirtualizedListState,
+    key: &str,
+    row_measure_mode: VirtualizedListRowMeasureMode,
+    virtualizer_snapshot: &VirtualizerSnapshot,
+) {
+    let viewport_extent = state.viewport_extent();
+    let current_scroll_offset = vertical_scroll_offset(scroll_handle);
+    let target = match if row_measure_mode.measured() {
+        state.scroll_target_for_key_with_snapshot(
+            key,
+            VirtualizedListScrollStrategy::Nearest,
+            viewport_extent,
+            current_scroll_offset,
+            virtualizer_snapshot,
+        )
+    } else {
+        state.scroll_target_for_key(
+            key,
+            VirtualizedListScrollStrategy::Nearest,
+            viewport_extent,
+            current_scroll_offset,
+        )
+    } {
         VirtualizedListRevealResult::Revealed(target)
         | VirtualizedListRevealResult::Estimated(target) => target,
         VirtualizedListRevealResult::NotFound(_)
@@ -2105,14 +2324,9 @@ fn scroll_active_key(scroll_handle: &ScrollHandle, state: &VirtualizedListState,
         }
     };
 
-    reveal_fixed_row(
-        scroll_handle,
-        ScrollSurfaceRevealStrategy::Nearest,
-        target.index(),
-        state.item_count(),
-        state.metrics().row_height(),
-        Some(state.viewport_extent()),
-    );
+    if target.scroll_offset() != current_scroll_offset {
+        set_vertical_scroll_offset(scroll_handle, target.scroll_offset());
+    }
 }
 
 fn resolve_viewport_item_count(row_height: UiPx, viewport_extent: UiPx, fallback: usize) -> usize {
@@ -2164,6 +2378,73 @@ pub fn virtualized_list_scroll_target(
         viewport_extent,
         current_scroll_offset,
     )
+}
+
+fn virtualized_list_measured_scroll_target(
+    strategy: VirtualizedListScrollStrategy,
+    target_index: usize,
+    items: &[VirtualizedListStateItem],
+    estimated_row_height: UiPx,
+    viewport_extent: UiPx,
+    current_scroll_offset: UiPx,
+    snapshot: &VirtualizerSnapshot,
+) -> (UiPx, bool) {
+    let estimated_row_height = nonnegative_px(estimated_row_height);
+    let viewport_extent = nonnegative_px(viewport_extent);
+    if items.is_empty() {
+        return (UiPx::ZERO, true);
+    }
+
+    let target_index = target_index.min(items.len() - 1);
+    let measurements_by_key = snapshot
+        .measurements()
+        .iter()
+        .map(|item| (item.key().as_str().to_owned(), nonnegative_px(item.size())))
+        .collect::<BTreeMap<_, _>>();
+    let mut cursor = UiPx::ZERO;
+    let mut estimated = false;
+    let mut target_start = UiPx::ZERO;
+    let mut target_size = estimated_row_height;
+
+    for (index, item) in items.iter().enumerate() {
+        let measured_size = measurements_by_key.get(item.key()).copied();
+        let size = measured_size.unwrap_or_else(|| {
+            estimated = true;
+            estimated_row_height
+        });
+
+        if index == target_index {
+            target_start = cursor;
+            target_size = size;
+        }
+
+        cursor = cursor + size;
+    }
+
+    let total_size = cursor;
+    let max_scroll_offset = nonnegative_px(total_size - viewport_extent);
+    let current_scroll_offset = nonnegative_px(current_scroll_offset).min(max_scroll_offset);
+    let target_end = target_start + target_size;
+    let target = match scroll_surface_reveal_strategy(strategy) {
+        ScrollSurfaceRevealStrategy::Nearest => {
+            let viewport_start = current_scroll_offset;
+            let viewport_end = viewport_start + viewport_extent;
+            if target_start < viewport_start {
+                target_start
+            } else if target_end > viewport_end {
+                target_end - viewport_extent
+            } else {
+                viewport_start
+            }
+        }
+        ScrollSurfaceRevealStrategy::Top => target_start,
+        ScrollSurfaceRevealStrategy::Center => {
+            target_start + target_size.half() - viewport_extent.half()
+        }
+        ScrollSurfaceRevealStrategy::Bottom => target_end - viewport_extent,
+    };
+
+    (nonnegative_px(target).min(max_scroll_offset), estimated)
 }
 
 const fn scroll_surface_reveal_strategy(
@@ -2277,6 +2558,42 @@ fn virtualized_list_render_key(
     } else {
         item.key().to_owned()
     }
+}
+
+fn resolve_virtualized_list_virtualizer(
+    items: &[VirtualizedListItemDescriptor],
+    metrics: VirtualizedListMetrics,
+    row_measure_mode: VirtualizedListRowMeasureMode,
+    row_measurements: &BTreeMap<String, UiPx>,
+    snapshot: Option<&VirtualizerSnapshot>,
+    scroll_offset: UiPx,
+    viewport_extent: UiPx,
+    duplicate_keys: &BTreeSet<String>,
+) -> VirtualizerResolvedState {
+    let mut state = VirtualizerState::new(items.len(), metrics.row_height())
+        .with_viewport_extent(viewport_extent)
+        .with_overscan(metrics.overscan_count())
+        .with_scroll_offset(nonnegative_px(scroll_offset));
+
+    if !row_measure_mode.measured() {
+        return state.resolve_fixed_window(|index| {
+            let item = &items[index];
+            VirtualizerItemKey::new(virtualized_list_render_key(item, index, duplicate_keys))
+        });
+    }
+
+    if let Some(snapshot) = snapshot.cloned() {
+        state = state.with_snapshot(snapshot);
+    }
+    for (key, height) in row_measurements {
+        state = state.with_measurement(key.clone(), *height);
+    }
+    state = state.with_scroll_offset(nonnegative_px(scroll_offset));
+
+    state.resolve_measured_window(|index| {
+        let item = &items[index];
+        VirtualizerItemKey::new(virtualized_list_render_key(item, index, duplicate_keys))
+    })
 }
 
 #[cfg(test)]
@@ -2678,6 +2995,151 @@ mod tests {
         assert_eq!(loading.rows()[0].size_of_set(), 0);
         assert_eq!(empty.rows()[0].role(), Role::Section);
         assert_eq!(error.rows()[0].role(), Role::AlertDialog);
+    }
+
+    #[test]
+    fn virtualized_list_measured_mode_restores_snapshot_by_key() {
+        let mut items = vec![
+            VirtualizedListItemDescriptor::new("beta", "Beta"),
+            VirtualizedListItemDescriptor::new("alpha", "Alpha"),
+        ];
+        items.extend((2..100).map(|index| {
+            VirtualizedListItemDescriptor::new(format!("row-{index}"), format!("Row {index}"))
+        }));
+        let snapshot = VirtualizerSnapshot::new(
+            ui_px(0.0),
+            [
+                open_gpui_ui_core::VirtualizerSnapshotItem::new(
+                    VirtualizerItemKey::new("beta"),
+                    ui_px(44.0),
+                ),
+                open_gpui_ui_core::VirtualizerSnapshotItem::new(
+                    VirtualizerItemKey::new("removed"),
+                    ui_px(96.0),
+                ),
+            ],
+        );
+        let behavior = VirtualizedList::new("measured-list", "Measured list", items)
+            .row_height(ui_px(20.0))
+            .overscan(2)
+            .row_measure_mode(VirtualizedListRowMeasureMode::Measured)
+            .virtualizer_snapshot(snapshot)
+            .behavior_snapshot_with_viewport(ui_px(0.0), ui_px(48.0));
+
+        assert_eq!(
+            behavior.row_measure_mode(),
+            VirtualizedListRowMeasureMode::Measured
+        );
+        assert_eq!(behavior.state().item_count(), 100);
+        assert!(behavior.rendered_row_count() < behavior.state().item_count());
+        assert_eq!(behavior.rows()[0].key(), "beta");
+        assert_eq!(behavior.rows()[0].virtual_size(), ui_px(44.0));
+        assert!(behavior.rows()[0].measured());
+        assert_eq!(
+            behavior
+                .virtualizer_snapshot()
+                .measurements()
+                .iter()
+                .map(|item| item.key().as_str())
+                .collect::<Vec<_>>(),
+            ["beta"]
+        );
+    }
+
+    #[test]
+    fn virtualized_list_measured_scroll_target_uses_snapshot_sizes() {
+        let state = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            [
+                VirtualizedListStateItem::new("alpha", "Alpha"),
+                VirtualizedListStateItem::new("beta", "Beta"),
+                VirtualizedListStateItem::new("gamma", "Gamma"),
+            ],
+            Some("alpha"),
+            std::iter::empty::<&str>(),
+            VirtualizedListSelectionMode::Single,
+            Some(2),
+        )
+        .with_metrics(VirtualizedListMetrics::from_size(Size::Medium).with_row_height(ui_px(20.0)));
+        let exact_snapshot = VirtualizerSnapshot::new(
+            ui_px(0.0),
+            [
+                open_gpui_ui_core::VirtualizerSnapshotItem::new(
+                    VirtualizerItemKey::new("alpha"),
+                    ui_px(10.0),
+                ),
+                open_gpui_ui_core::VirtualizerSnapshotItem::new(
+                    VirtualizerItemKey::new("beta"),
+                    ui_px(50.0),
+                ),
+                open_gpui_ui_core::VirtualizerSnapshotItem::new(
+                    VirtualizerItemKey::new("gamma"),
+                    ui_px(30.0),
+                ),
+            ],
+        );
+
+        assert_eq!(
+            state.scroll_target_for_key_with_snapshot(
+                "beta",
+                VirtualizedListScrollStrategy::Top,
+                ui_px(30.0),
+                UiPx::ZERO,
+                &exact_snapshot,
+            ),
+            VirtualizedListRevealResult::Revealed(VirtualizedListRevealTarget::new(
+                "beta",
+                1,
+                ui_px(10.0),
+                false,
+            ))
+        );
+        assert_eq!(
+            state.scroll_target_for_key_with_snapshot(
+                "beta",
+                VirtualizedListScrollStrategy::Center,
+                ui_px(30.0),
+                UiPx::ZERO,
+                &exact_snapshot,
+            ),
+            VirtualizedListRevealResult::Revealed(VirtualizedListRevealTarget::new(
+                "beta",
+                1,
+                ui_px(20.0),
+                false,
+            ))
+        );
+        let estimated_snapshot = VirtualizerSnapshot::new(
+            ui_px(0.0),
+            [open_gpui_ui_core::VirtualizerSnapshotItem::new(
+                VirtualizerItemKey::new("alpha"),
+                ui_px(10.0),
+            )],
+        );
+        assert_eq!(
+            state.scroll_target_for_key_with_snapshot(
+                "beta",
+                VirtualizedListScrollStrategy::Top,
+                ui_px(30.0),
+                UiPx::ZERO,
+                &estimated_snapshot,
+            ),
+            VirtualizedListRevealResult::Estimated(VirtualizedListRevealTarget::new(
+                "beta",
+                1,
+                ui_px(10.0),
+                true,
+            ))
+        );
+    }
+
+    #[test]
+    fn virtualized_list_row_measure_mode_labels_are_stable() {
+        assert_eq!(VirtualizedListRowMeasureMode::Fixed.as_str(), "fixed");
+        assert_eq!(VirtualizedListRowMeasureMode::Measured.as_str(), "measured");
+        assert!(!VirtualizedListRowMeasureMode::Fixed.measured());
+        assert!(VirtualizedListRowMeasureMode::Measured.measured());
     }
 
     #[test]

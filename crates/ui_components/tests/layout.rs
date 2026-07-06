@@ -552,6 +552,7 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     .with_size(Size::Small)
     .default_active_key("root-item-4")
     .default_selected_key("root-item-4")
+    .row_measure_mode(root::VirtualizedListRowMeasureMode::Fixed)
     .viewport_item_count(3);
     let prelude_virtualized_items = (0..12)
         .map(|index| {
@@ -569,6 +570,7 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     .with_size(Size::Small)
     .default_active_key("prelude-item-4")
     .default_selected_key("prelude-item-4")
+    .row_measure_mode(prelude::VirtualizedListRowMeasureMode::Fixed)
     .viewport_item_count(3);
     let root_virtualized_snapshot: root::VirtualizedListBehaviorSnapshot =
         root_virtualized_list.behavior_snapshot_with_viewport(ui_px(28.0), ui_px(56.0));
@@ -616,6 +618,10 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         root::VirtualizedListRowKind::Item;
     let prelude_virtualized_row_kind: prelude::VirtualizedListRowKind =
         prelude::VirtualizedListRowKind::Section;
+    let root_virtualized_measure_mode: root::VirtualizedListRowMeasureMode =
+        root::VirtualizedListRowMeasureMode::Measured;
+    let prelude_virtualized_measure_mode: prelude::VirtualizedListRowMeasureMode =
+        prelude::VirtualizedListRowMeasureMode::Fixed;
     let root_virtualized_selection_mode: root::VirtualizedListSelectionMode =
         root::VirtualizedListSelectionMode::Multiple;
     let prelude_virtualized_selection_mode: prelude::VirtualizedListSelectionMode =
@@ -631,6 +637,8 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     assert_eq!(prelude_empty_state.state().role(), Role::Section);
     assert_eq!(root_tree_component_state.role(), Role::Tree);
     assert_eq!(prelude_tree_component_state.item_role(), Role::TreeItem);
+    assert!(root_virtualized_measure_mode.measured());
+    assert!(!prelude_virtualized_measure_mode.measured());
     assert_eq!(root_tree_component_state.focused_value(), Some("root"));
     assert_eq!(root_tree_component_snapshot.role(), Role::Tree);
     assert_eq!(prelude_tree_component_snapshot.row_role(), Role::TreeItem);
