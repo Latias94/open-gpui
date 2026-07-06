@@ -17,8 +17,8 @@ pub mod runtime;
 pub mod spring;
 
 pub use controller::{
-    MotionExecutionPlan, MotionExecutionState, MotionFrameDemand, MotionFrameReason,
-    MotionScalarController, MotionScalarControllerSample, MotionScalarExecution,
+    MotionClockSample, MotionExecutionPlan, MotionExecutionState, MotionFrameDemand,
+    MotionFrameReason, MotionScalarController, MotionScalarControllerSample, MotionScalarExecution,
     MotionScalarExecutionSample, MotionScalarTrack, MotionScalarTrackSample,
 };
 pub use geometry::{

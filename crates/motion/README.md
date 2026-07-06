@@ -10,7 +10,12 @@ runtime.
 - Timeline and spring scalar sampling from explicit elapsed time.
 - Policy-resolved execution plans for committed layout, continuity, affordance previews, and
   input-coupled paths.
-- Scalar controllers, retargeting, cancellation, completion, and adapter-owned frame demand.
+- Scalar controllers, retargeting, cancellation, explicit finish, terminal pruning, and
+  adapter-owned frame demand.
+- `MotionClockSample` for mapping adapter `Instant` values into deterministic controller
+  `Duration` samples with non-monotonic elapsed time clamped.
+- `MotionFrameDemand::combine` and `MotionFrameDemand::combine_all` for aggregating many motion
+  sources into one adapter frame request.
 - Neutral logical-pixel geometry plus projection, reveal, and clip helpers for final-size content.
 
 Adapters keep authority over rendering, input, focus, accessibility, and frame scheduling. A
@@ -33,8 +38,8 @@ helpers in adapter crates to map `MotionRect` to renderer-specific geometry.
 
 ```rust
 use open_gpui_motion::{
-    MotionDuration, MotionEasing, MotionExecutionPlan, MotionModel, MotionPolicyContext,
-    MotionPolicyInput, MotionPreference, MotionScalarExecution, MotionSpec,
+    MotionClockSample, MotionDuration, MotionEasing, MotionExecutionPlan, MotionModel,
+    MotionPolicyContext, MotionPolicyInput, MotionPreference, MotionScalarExecution, MotionSpec,
 };
 use std::time::Duration;
 
@@ -49,7 +54,8 @@ let plan = MotionExecutionPlan::resolve(
         .with_reduced_motion_final_state(true),
 );
 let execution = MotionScalarExecution::start(plan, 0.0, 1.0, 0.0, Duration::ZERO);
-let sample = execution.sample_at(Duration::from_millis(90));
+let clock = MotionClockSample::from_elapsed(Duration::ZERO, Duration::from_millis(90));
+let sample = execution.sample_clock(clock);
 
 if sample.frame_demand().needs_frame() {
     // Ask the owning adapter to request a GPUI frame.
@@ -64,6 +70,11 @@ use open_gpui_motion::{MotionPreference, MotionSpec};
 let spec = MotionSpec::committed_layout(MotionPreference::Reduced);
 assert!(spec.is_immediate());
 ```
+
+Lifecycle ordering is intentionally small: start or retarget creates active sampled state, each
+sample returns a frame demand, `cancel` freezes the sampled value and goes idle without reaching the
+semantic final state, `finish` publishes the target value as completed, reduced motion publishes
+the final state immediately, and adapters may prune terminal tracks after observing idle demand.
 
 ## Testing
 

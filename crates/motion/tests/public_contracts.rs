@@ -1,8 +1,8 @@
 use open_gpui_motion::{
-    MotionDuration, MotionEasing, MotionExecutionPlan, MotionFrameReason, MotionModel,
-    MotionPolicyContext, MotionPolicyInput, MotionPreference, MotionProjection,
-    MotionProjectionClip, MotionScalarExecution, MotionSpec, motion_point, motion_px, motion_rect,
-    motion_size,
+    MotionClockSample, MotionDuration, MotionEasing, MotionExecutionPlan, MotionFrameDemand,
+    MotionFrameReason, MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPreference,
+    MotionProjection, MotionProjectionClip, MotionRunState, MotionScalarController,
+    MotionScalarExecution, MotionSpec, motion_point, motion_px, motion_rect, motion_size,
 };
 use std::time::Duration;
 
@@ -62,6 +62,56 @@ fn reduced_projection_clip_publishes_final_semantic_bounds_immediately() {
     assert_eq!(clip.visible_bounds(), target);
     assert_eq!(clip.occlusion_bounds(), target);
     assert_eq!(clip.progress(), 1.0);
+}
+
+#[test]
+fn frame_demand_and_clock_samples_are_public_adapter_contracts() {
+    let active = MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender);
+    let combined = MotionFrameDemand::combine_all([MotionFrameDemand::Idle, active]);
+    let clock =
+        MotionClockSample::from_elapsed(Duration::from_millis(90), Duration::from_millis(30));
+
+    assert_eq!(combined, active);
+    assert_eq!(combined.reason(), Some(MotionFrameReason::UpdateRender));
+    assert_eq!(clock.elapsed(), Duration::from_millis(90));
+    assert_eq!(clock.delta(), Duration::ZERO);
+    assert!(clock.clamped());
+}
+
+#[test]
+fn scalar_controller_lifecycle_is_public_and_demand_driven() {
+    let model = MotionModel::timeline(MotionSpec::new(
+        MotionPreference::Animated,
+        MotionDuration::Custom(Duration::from_millis(200)),
+        MotionEasing::Linear,
+    ));
+    let mut controller = MotionScalarController::new();
+
+    controller.start("indicator", model, 0.0, 1.0, 0.0, Duration::ZERO);
+    assert!(
+        controller
+            .sample_clock(MotionClockSample::from_elapsed(
+                Duration::ZERO,
+                Duration::from_millis(50),
+            ))
+            .frame_demand()
+            .needs_frame()
+    );
+
+    controller.finish(&"indicator", Duration::from_millis(80));
+    let sample = controller
+        .sample_at(Duration::from_millis(90))
+        .track(&"indicator")
+        .expect("indicator sample")
+        .sample();
+    assert_eq!(sample.state(), MotionRunState::Completed);
+    assert_eq!(sample.value(), 1.0);
+    assert_eq!(controller.prune_terminal_at(Duration::from_millis(90)), 1);
+    assert!(
+        !controller
+            .frame_demand_at(Duration::from_millis(90))
+            .needs_frame()
+    );
 }
 
 #[test]

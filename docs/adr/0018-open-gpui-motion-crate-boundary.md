@@ -23,8 +23,12 @@ The crate owns:
 
 - motion preferences, durations, easing, and reduced-motion final-state semantics;
 - deterministic timeline and spring scalar sampling;
-- policy-resolved execution plans and frame-demand reporting;
-- scalar tracks, scalar controllers, cancellation, completion, and retargeting;
+- `MotionClockSample` values that map adapter clocks into deterministic elapsed `Duration`
+  samples and clamp non-monotonic elapsed time;
+- policy-resolved execution plans and public frame-demand aggregation through
+  `MotionFrameDemand::combine` / `combine_all`;
+- scalar tracks, scalar controllers, cancellation, explicit finish, terminal pruning, completion,
+  and retargeting;
 - renderer-neutral motion geometry and projection/reveal/clip helpers.
 
 `open-gpui-ui-core` no longer declares or re-exports motion modules. Splitter, UI components, and
@@ -45,6 +49,8 @@ orchestration are not accepted as stable core promises.
   web, or renderer crates.
 - Adapter crates remain responsible for rendering, input, focus, accessibility, hit testing,
   semantic ownership, and GPUI frame requests.
+- `open-gpui-motion` exposes frame demand, but it does not own a global scheduler or call
+  `request_frame`; adapters aggregate demand and decide when to ask GPUI for another frame.
 - ADR 0017's decision to defer a public value graph remains current; this ADR supersedes only the
   location and import path of the proven shared motion contracts.
 
