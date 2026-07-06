@@ -12,7 +12,7 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
     PublicSurfaceOwnerEntry {
         name: "VirtualizedListState",
         owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
-        home: "virtualized_list.rs",
+        home: "virtualized_list/mod.rs",
     },
     PublicSurfaceOwnerEntry {
         name: "GpuiOverlayAdapterConfig",
@@ -72,7 +72,7 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
     PublicSurfaceOwnerEntry {
         name: "VirtualizedListBehaviorSnapshot",
         owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
-        home: "virtualized_list.rs",
+        home: "virtualized_list/mod.rs",
     },
     PublicSurfaceOwnerEntry {
         name: "CommandBehaviorSnapshot",

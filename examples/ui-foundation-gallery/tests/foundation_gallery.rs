@@ -17,7 +17,7 @@ use open_gpui_ui_components::{
     SheetModalMode, SheetOpenMode, SheetSide, TableColumnOrderChange, TableGlobalFilterChange,
     TablePredicateFilterChange, TablePredicateFilterOperator, TableRangeFilterChange,
     TextInputDisplayMode, ThemeMode, ToggleVariant, TooltipOpenIntent, TreeKeyboardAction,
-    VirtualizedListScrollStrategy,
+    VirtualizedListRowMeasureMode, VirtualizedListScrollStrategy,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state, init_text_input,
     },

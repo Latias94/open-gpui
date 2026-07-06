@@ -307,7 +307,8 @@ without persistent selection ownership, and `on_toggle` for expansion or tri-sta
 Seed-shaped runtime builders must stay explicit in the API inventory. Current examples include
 `Tabs::default_selected`, `RadioGroup::default_selected`, `Toolbar::default_focused`,
 `Sidebar::default_focused`, `Tree::default_selected`, `Tree::default_focused`,
-`VirtualizedList::default_active_index`, `VirtualizedList::default_selected_index`,
+`VirtualizedList::default_active_key`, `VirtualizedList::default_selected_key`,
+`VirtualizedList::default_selected_keys`,
 `Combobox::default_query`, `Command::default_query`, `Menu::default_focused_value`, and
 `ContextMenu::default_focused_value`. Direct names such as `Sidebar::selected`,
 `Listbox::selected`, `Select::selected`, `Combobox::selected`, and `Command::selected` remain
@@ -1112,10 +1113,41 @@ and activation rules.
 crate-private, exposes `VirtualizedListBehaviorSnapshot` for diagnostics, owns a keyed GPUI
 runtime plus persistent `ScrollHandle`, and keeps row rendering inside its viewport.
 `VirtualizedListState` remains the renderer-neutral keyboard/navigation contract:
-active/selected indices, page navigation, activation payloads, viewport item count, fixed row
-metrics, overscan, and semantic scroll strategy labels. Rendered range calculation remains owned
-by `open_gpui_ui_core::VirtualizerState`. `TreeBehaviorSnapshot` and `CommandBehaviorSnapshot`
-follow the same public boundary: behavior probes are stable, renderer assembly plans are internal.
+active/selected keys with index diagnostics, page navigation, activation payloads, viewport item
+count, row metrics, overscan, and semantic scroll strategy labels. `VirtualizedListRowMeasureMode`
+keeps fixed rows as the default hot path and exposes measured rows as an explicit opt-in;
+`VirtualizedList::virtualizer_snapshot` seeds measured heights by stable render key, removed keys
+are dropped from emitted snapshots, and missing measurements fall back to the estimated row height
+with estimated reveal targets. `VirtualizedListItemDescriptor` is the typed row descriptor: item
+rows can carry primary text, secondary text, text value, disabled reason, leading/trailing metadata,
+badge, and status; section, separator, loading, empty, and error rows are non-selectable and expose
+their row kind through behavior snapshots. `VirtualizedList::render_row` is the custom content
+escape hatch: it receives `VirtualizedListRowRenderContext`, but the outer row keeps virtual
+layout, measured-height feedback, role/ARIA metadata, focus, hit testing, selection, and activation
+ownership. The active-descendant indicator uses `open_gpui_motion` as paint-only chrome keyed by
+the active row; `VirtualizedList::motion_preference` controls reduced-motion behavior, and the
+motion sample must not change row layout, scroll offsets, selection state, focus order, hit
+testing, or accessibility roles. Row enter/exit animation, public presence, keyframes,
+repeat/reverse/speed controls, shared-layout orchestration, and MotionValue subscriptions remain
+deferred. Rendered range calculation remains owned by `open_gpui_ui_core::VirtualizerState`.
+`TreeBehaviorSnapshot` and `CommandBehaviorSnapshot` follow the same public boundary: behavior
+probes are stable, renderer assembly plans are internal.
+
+Collection component selection is intentionally narrow:
+
+- Use `VirtualizedList` when the application already has flat row descriptors and needs local
+  virtualized rendering, key-based active/selection state, optional measured row heights, or a
+  constrained row content renderer.
+- Use `Listbox` when the surface is a finite option picker with grouped choices, typeahead, and
+  listbox semantics but no large virtualized window.
+- Use `Command` when query ownership, ranked command results, provider/index snapshots, shortcuts,
+  loading/status metadata, or dialog/inline command presentation are part of the workflow.
+- Use `Table` when rows need columns, sorting/filtering/grouping, expansion, pinning, editing,
+  column sizing, or row-region behavior.
+- Use `Tree` when hierarchy, expansion, lazy children, tree roles, and branch/leaf state are the
+  primary model.
+- Use low-level `open_gpui_ui_core::VirtualizerState` only when building a new adapter or domain
+  component that owns its own row semantics, focus, accessibility, and callbacks.
 `command/mod.rs` is the reference split facade: descriptor, model, style, render-plan, and runtime
 owners stay in sibling modules, while `open_gpui_command::CommandDescriptor` is the cross-surface
 app-command descriptor consumed by Command, Menu, and ContextMenu projections. `Menu`,

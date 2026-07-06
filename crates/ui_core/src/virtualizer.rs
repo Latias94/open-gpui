@@ -1,7 +1,7 @@
 //! Renderer-neutral one-dimensional virtualizer contracts for Open GPUI components.
 
 use crate::geometry::{UiPx, ui_px};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 /// Stable renderer-neutral identity for a virtualized item.
@@ -339,12 +339,8 @@ impl VirtualizerState {
         let overscan_range = overscan_range(visible_range.clone(), self.count, self.overscan);
         let visible_items = measurements[visible_range.as_range()].to_vec();
         let items = measurements[overscan_range.as_range()].to_vec();
-        let snapshot = VirtualizerSnapshot::new(
-            scroll_offset,
-            self.measurements_by_key
-                .iter()
-                .map(|(key, size)| VirtualizerSnapshotItem::new(key.clone(), *size)),
-        );
+        let snapshot =
+            self.snapshot_for_current_keys(scroll_offset, |index| self.key_for_index(index));
 
         VirtualizerResolvedState {
             count: self.count,
@@ -490,6 +486,76 @@ impl VirtualizerState {
         }
     }
 
+    /// Resolves a virtual window using keyed measured sizes when present and estimates otherwise.
+    ///
+    /// Unlike [`VirtualizerState::resolve`], this path scans the collection to compute total
+    /// geometry but only materializes visible and overscan item measurements in the returned
+    /// output. The snapshot keeps only measurements whose keys are still present in the current
+    /// collection.
+    pub fn resolve_measured_window(
+        &self,
+        key_for_index: impl Fn(usize) -> VirtualizerItemKey,
+    ) -> VirtualizerResolvedState {
+        let viewport_extent = nonnegative_px(self.viewport_extent);
+        let scroll_offset = nonnegative_px(self.scroll_offset);
+        let estimated_size = nonnegative_px(self.estimated_size);
+        let gap = nonnegative_px(self.gap);
+        let scroll_margin = nonnegative_px(self.scroll_margin);
+        let item_for_index = |index| {
+            let key = key_for_index(index);
+            let measured_size = self.measurements_by_key.get(&key).copied();
+            (
+                key,
+                measured_size.unwrap_or(estimated_size),
+                measured_size.is_some(),
+            )
+        };
+        let (total_size, visible_range) = measured_window_geometry(
+            self.count,
+            scroll_offset,
+            viewport_extent,
+            gap,
+            scroll_margin,
+            &item_for_index,
+        );
+        let overscan_range = overscan_range(visible_range.clone(), self.count, self.overscan);
+        let items = measured_window_items(
+            overscan_range.as_range(),
+            self.count,
+            gap,
+            scroll_margin,
+            &item_for_index,
+        );
+        let visible_items = if visible_range.is_empty() {
+            Vec::new()
+        } else {
+            let visible = visible_range.as_range();
+            items
+                .iter()
+                .filter(|item| visible.contains(&item.index()))
+                .cloned()
+                .collect()
+        };
+        let snapshot = self.snapshot_for_current_keys(scroll_offset, key_for_index);
+
+        VirtualizerResolvedState {
+            count: self.count,
+            viewport_extent,
+            scroll_offset,
+            estimated_size,
+            overscan: self.overscan,
+            gap,
+            scroll_margin,
+            total_size,
+            visible_range,
+            overscan_range,
+            measurements: items.clone(),
+            visible_items,
+            items,
+            snapshot,
+        }
+    }
+
     fn resolve_measurements(
         &self,
         estimated_size: UiPx,
@@ -523,6 +589,25 @@ impl VirtualizerState {
             .get(index)
             .cloned()
             .unwrap_or_else(|| VirtualizerItemKey::new(index.to_string()))
+    }
+
+    fn snapshot_for_current_keys(
+        &self,
+        scroll_offset: UiPx,
+        key_for_index: impl Fn(usize) -> VirtualizerItemKey,
+    ) -> VirtualizerSnapshot {
+        if self.measurements_by_key.is_empty() {
+            return VirtualizerSnapshot::new(scroll_offset, []);
+        }
+
+        let current_keys = (0..self.count).map(key_for_index).collect::<BTreeSet<_>>();
+        VirtualizerSnapshot::new(
+            scroll_offset,
+            self.measurements_by_key
+                .iter()
+                .filter(|(key, _)| current_keys.contains(*key))
+                .map(|(key, size)| VirtualizerSnapshotItem::new(key.clone(), *size)),
+        )
     }
 }
 
@@ -677,6 +762,95 @@ fn known_size_items(
         if range.contains(&index) {
             items.push(VirtualizerItemMeasurement::new(
                 index, key, start, size, false,
+            ));
+        }
+
+        cursor = end;
+        if index + 1 < count {
+            cursor += gap;
+        }
+    }
+
+    items
+}
+
+fn measured_window_geometry(
+    count: usize,
+    scroll_offset: UiPx,
+    viewport_extent: UiPx,
+    gap: UiPx,
+    scroll_margin: UiPx,
+    item_for_index: &impl Fn(usize) -> (VirtualizerItemKey, UiPx, bool),
+) -> (UiPx, VirtualizerRange) {
+    if count == 0 {
+        return (UiPx::ZERO, VirtualizerRange::empty());
+    }
+
+    let scroll_margin = scroll_margin.as_f32();
+    let gap = gap.as_f32();
+    let viewport_start = scroll_offset.as_f32();
+    let viewport_end = viewport_start + viewport_extent.as_f32();
+    let can_resolve_visible = viewport_extent.as_f32() > 0.0;
+    let mut cursor = scroll_margin;
+    let mut visible_start = None;
+    let mut visible_end = None;
+
+    for index in 0..count {
+        let (_, size, _) = item_for_index(index);
+        let size = nonnegative_px(size).as_f32();
+        let start = cursor;
+        let end = start + size;
+
+        if can_resolve_visible {
+            if visible_start.is_none() && end > viewport_start {
+                visible_start = Some(index);
+            }
+            if start < viewport_end {
+                visible_end = Some(index + 1);
+            }
+        }
+
+        cursor = end;
+        if index + 1 < count {
+            cursor += gap;
+        }
+    }
+
+    let total_size = ui_px(cursor + scroll_margin);
+    let visible_range = if let Some(start) = visible_start {
+        VirtualizerRange::new(start, visible_end.unwrap_or(start).max(start))
+    } else {
+        VirtualizerRange::empty()
+    };
+
+    (total_size, visible_range)
+}
+
+fn measured_window_items(
+    range: Range<usize>,
+    count: usize,
+    gap: UiPx,
+    scroll_margin: UiPx,
+    item_for_index: &impl Fn(usize) -> (VirtualizerItemKey, UiPx, bool),
+) -> Vec<VirtualizerItemMeasurement> {
+    if range.is_empty() {
+        return Vec::new();
+    }
+
+    let scroll_margin = scroll_margin.as_f32();
+    let gap = gap.as_f32();
+    let mut cursor = scroll_margin;
+    let mut items = Vec::with_capacity(range.len());
+
+    for index in 0..range.end.min(count) {
+        let (key, size, measured) = item_for_index(index);
+        let size = nonnegative_px(size);
+        let start = ui_px(cursor);
+        let end = cursor + size.as_f32();
+
+        if range.contains(&index) {
+            items.push(VirtualizerItemMeasurement::new(
+                index, key, start, size, measured,
             ));
         }
 
@@ -1187,5 +1361,70 @@ mod tests {
         assert!(!restored.measurements()[0].measured());
         assert_eq!(restored.measurements()[1].size(), ui_px(30.0));
         assert!(restored.measurements()[1].measured());
+        assert_eq!(
+            restored
+                .snapshot()
+                .measurements()
+                .iter()
+                .map(|item| item.key().as_str())
+                .collect::<Vec<_>>(),
+            ["b"]
+        );
+    }
+
+    #[test]
+    fn measured_window_restores_keyed_measurements_without_full_materialization() {
+        let restored = VirtualizerState::new(100, ui_px(20.0))
+            .with_viewport_extent(ui_px(48.0))
+            .with_overscan(2)
+            .with_snapshot(VirtualizerSnapshot::new(
+                ui_px(0.0),
+                [
+                    VirtualizerSnapshotItem::new(VirtualizerItemKey::new("b"), ui_px(34.0)),
+                    VirtualizerSnapshotItem::new(VirtualizerItemKey::new("removed"), ui_px(88.0)),
+                ],
+            ))
+            .resolve_measured_window(|index| match index {
+                0 => VirtualizerItemKey::new("b"),
+                1 => VirtualizerItemKey::new("a"),
+                _ => VirtualizerItemKey::new(format!("row-{index}")),
+            });
+
+        assert_eq!(restored.count(), 100);
+        assert_eq!(restored.items()[0].key().as_str(), "b");
+        assert_eq!(restored.items()[0].size(), ui_px(34.0));
+        assert!(restored.items()[0].measured());
+        assert!(restored.measurements().len() < restored.count());
+        assert_eq!(
+            restored
+                .snapshot()
+                .measurements()
+                .iter()
+                .map(|item| item.key().as_str())
+                .collect::<Vec<_>>(),
+            ["b"]
+        );
+    }
+
+    #[test]
+    fn measured_window_clamps_invalid_measurements() {
+        let resolved = VirtualizerState::new(3, ui_px(20.0))
+            .with_viewport_extent(ui_px(80.0))
+            .with_overscan(3)
+            .with_measurement("a", ui_px(-5.0))
+            .with_measurement("b", ui_px(35.0))
+            .resolve_measured_window(|index| {
+                VirtualizerItemKey::new(match index {
+                    0 => "a".to_owned(),
+                    1 => "b".to_owned(),
+                    _ => "c".to_owned(),
+                })
+            });
+
+        assert_eq!(resolved.total_size(), ui_px(55.0));
+        assert_eq!(resolved.measurements()[0].size(), ui_px(0.0));
+        assert!(resolved.measurements()[0].measured());
+        assert_eq!(resolved.measurements()[1].size(), ui_px(35.0));
+        assert!(resolved.measurements()[1].measured());
     }
 }

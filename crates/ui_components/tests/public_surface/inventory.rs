@@ -407,20 +407,26 @@ fn component_api_inventory_keeps_regression_sentinels_for_stateful_components() 
     assert_inventory_contains_default_seed("Tree", "default_focused", "focused");
     assert_inventory_contains_callback("Tree", "on_toggle", "TreeToggle");
     assert_inventory_contains_callback("Tree", "on_move", "TreeMove");
+    assert_inventory_contains_default_seed("VirtualizedList", "default_active_key", "active_key");
     assert_inventory_contains_default_seed(
         "VirtualizedList",
-        "default_active_index",
-        "active_index",
+        "default_selected_key",
+        "selected_keys",
     );
     assert_inventory_contains_default_seed(
         "VirtualizedList",
-        "default_selected_index",
-        "selected_index",
+        "default_selected_keys",
+        "selected_keys",
     );
     assert_inventory_contains_callback(
         "VirtualizedList",
         "on_activate",
         "VirtualizedListActivation",
+    );
+    assert_inventory_contains_callback(
+        "VirtualizedList",
+        "on_selection_change",
+        "VirtualizedListSelectionChange",
     );
     assert_inventory_contains_default_seed("Menu", "default_focused_value", "focused_value");
     assert_inventory_contains_default_seed("ContextMenu", "default_focused_value", "focused_value");

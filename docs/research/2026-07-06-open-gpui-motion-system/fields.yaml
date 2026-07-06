@@ -1,0 +1,47 @@
+research_topic: Open GPUI general-purpose motion and animation system
+created: 2026-07-06
+fields:
+  - name: architecture_layers
+    description: Runtime, value, generator, driver, adapter, layout, presence, gesture, and backend layers.
+  - name: execution_thread_model
+    description: Whether animation work runs on the application thread, UI thread, render thread, compositor, browser WAAPI, or adapter frame loop.
+  - name: frame_invalidation_contract
+    description: Who requests the next frame, how frame demand is coalesced, how animation stops, and how deterministic test clocks are supported.
+  - name: value_graph_model
+    description: Animated value ownership, previous value, velocity, subscriptions, derived values, dependency dirtying, and public mutation rules.
+  - name: generator_model
+    description: Tween, keyframes, spring, inertia, repeat, reverse, mirror, delay, and playback-control semantics.
+  - name: measurement_phase_model
+    description: How before/after layout facts are captured, resolved, and used without read/write interleaving.
+  - name: identity_matching_model
+    description: Stable element keys, layout ids, presence keys, shared element identifiers, and same-identity retarget rules.
+  - name: interruption_and_retargeting_semantics
+    description: Cancel, finish, restart, snap, preserve velocity, retarget from sampled state, and unrelated-identity behavior.
+  - name: semantic_vs_visual_authority
+    description: Whether animation changes semantic layout/application state or only emits presentation evidence.
+  - name: layout_projection_strategy
+    description: FLIP, snapshot, transform, clip/reveal, scale correction, final-size content, and occlusion handling.
+  - name: presence_lifecycle
+    description: Enter, update, exit-before-remove, safe removal, cancellation, and interaction gating while exiting.
+  - name: input_coupling_policy
+    description: Pointer drag, resize, keyboard focus, hover, press, gesture inertia, and latency budgets.
+  - name: reduced_motion_source_and_semantics
+    description: OS/browser/app preference source and whether reduced motion disables motion or completes to final semantic state.
+  - name: accessibility_motion_contract
+    description: Focus, hit testing, roles, bounds, announcements, and semantic tree stability during animation.
+  - name: backend_capability_matrix
+    description: Native GPUI, web/wasm, wgpu/canvas, and future platform compositor support.
+  - name: public_api_layering
+    description: Core runtime API, GPUI adapter API, component API, domain adapters, compatibility re-exports, and semver risk.
+  - name: feature_boundary
+    description: Default features, optional features, platform features, test utilities, and deferred crates.
+  - name: testability_hooks
+    description: Fake clocks, manual frame advance, semantic snapshots, visual smoke tests, and nextest coverage.
+  - name: performance_budget
+    description: O(n) measurement costs, large virtualized lists/tables, allocation pressure, and layout thrash risk.
+  - name: license_and_commercial_constraints
+    description: License, commercial constraints, and whether source code can be copied or only used as conceptual prior art.
+  - name: migration_escape_hatches
+    description: Feature flags, compatibility aliases, deprecated re-exports, adapter-local fallbacks, and publish order.
+  - name: open_gpui_implication
+    description: What the reference implies for Open GPUI's motion crate, UI components, docking, canvas, and web/native boundary.

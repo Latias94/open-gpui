@@ -31,7 +31,7 @@ use open_gpui::{
     MouseUpEvent, ParentElement, Pixels, Render, Rgba, SharedString, Styled, Window, black, canvas,
     div, point, px, quad, rgb, rgba,
 };
-use open_gpui_ui_core::MotionSpec;
+use open_gpui_motion::MotionSpec;
 use std::{cell::RefCell, rc::Rc};
 
 pub(crate) type DockViewportHostSceneFrameSlot = Rc<RefCell<Option<DockViewportHostSceneFrame>>>;

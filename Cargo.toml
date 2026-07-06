@@ -18,6 +18,7 @@ members = [
     "crates/http_client",
     "crates/http_client_tls",
     "crates/media",
+    "crates/motion",
     "crates/ui_components",
     "crates/ui_core",
     "crates/refineable",
@@ -39,7 +40,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Mingzhen Zhuang <superfrankie621@gmail.com>"]
 license = "Apache-2.0"
@@ -50,32 +51,33 @@ readme = "README.md"
 publish = false
 
 [workspace.dependencies]
-open_gpui = { package = "open-gpui", version = "0.1.0", path = "crates/gpui", default-features = false }
-open_gpui_canvas = { package = "open-gpui-canvas", version = "0.1.0", path = "crates/canvas" }
-open_gpui_collections = { package = "open-gpui-collections", version = "0.1.0", path = "crates/collections" }
-open_gpui_command = { package = "open-gpui-command", version = "0.1.0", path = "crates/open-gpui-command" }
-open_gpui_docking = { package = "open-gpui-docking", version = "0.1.0", path = "crates/gpui_docking" }
-open_gpui_core_util = { package = "open-gpui-core-util", version = "0.1.0", path = "crates/gpui_util" }
-open_gpui_ui_components = { package = "open-gpui-ui-components", version = "0.1.0", path = "crates/ui_components" }
-open_gpui_ui_core = { package = "open-gpui-ui-core", version = "0.1.0", path = "crates/ui_core" }
-open_gpui_http_client = { package = "open-gpui-http-client", version = "0.1.0", path = "crates/http_client" }
-open_gpui_http_client_tls = { package = "open-gpui-http-client-tls", version = "0.1.0", path = "crates/http_client_tls" }
-open_gpui_linux = { package = "open-gpui-linux", version = "0.1.0", path = "crates/gpui_linux", default-features = false }
-open_gpui_macos = { package = "open-gpui-macos", version = "0.1.0", path = "crates/gpui_macos", default-features = false }
-open_gpui_macros = { package = "open-gpui-macros", version = "0.1.0", path = "crates/gpui_macros" }
-open_gpui_media = { package = "open-gpui-media", version = "0.1.0", path = "crates/media" }
-open_gpui_platform = { package = "open-gpui-platform", version = "0.1.0", path = "crates/gpui_platform", default-features = false }
-open_gpui_refineable = { package = "open-gpui-refineable", version = "0.1.0", path = "crates/refineable" }
-open_gpui_refineable_derive = { package = "open-gpui-refineable-derive", version = "0.1.0", path = "crates/refineable/derive_refineable" }
-open_gpui_reqwest_client = { package = "open-gpui-reqwest-client", version = "0.1.0", path = "crates/reqwest_client" }
-open_gpui_scheduler = { package = "open-gpui-scheduler", version = "0.1.0", path = "crates/scheduler" }
-open_gpui_shared_string = { package = "open-gpui-shared-string", version = "0.1.0", path = "crates/gpui_shared_string" }
-open_gpui_sum_tree = { package = "open-gpui-sum-tree", version = "0.1.0", path = "crates/sum_tree" }
-open_gpui_util = { package = "open-gpui-util", version = "0.1.0", path = "crates/util" }
-open_gpui_util_macros = { package = "open-gpui-util-macros", version = "0.1.0", path = "crates/util_macros" }
-open_gpui_web = { package = "open-gpui-web", version = "0.1.0", path = "crates/gpui_web" }
-open_gpui_wgpu = { package = "open-gpui-wgpu", version = "0.1.0", path = "crates/gpui_wgpu" }
-open_gpui_windows = { package = "open-gpui-windows", version = "0.1.0", path = "crates/gpui_windows", default-features = false }
+open_gpui = { package = "open-gpui", version = "0.2.0", path = "crates/gpui", default-features = false }
+open_gpui_canvas = { package = "open-gpui-canvas", version = "0.2.0", path = "crates/canvas" }
+open_gpui_collections = { package = "open-gpui-collections", version = "0.2.0", path = "crates/collections" }
+open_gpui_command = { package = "open-gpui-command", version = "0.2.0", path = "crates/open-gpui-command" }
+open_gpui_docking = { package = "open-gpui-docking", version = "0.2.0", path = "crates/gpui_docking" }
+open_gpui_core_util = { package = "open-gpui-core-util", version = "0.2.0", path = "crates/gpui_util" }
+open_gpui_ui_components = { package = "open-gpui-ui-components", version = "0.2.0", path = "crates/ui_components" }
+open_gpui_ui_core = { package = "open-gpui-ui-core", version = "0.2.0", path = "crates/ui_core" }
+open_gpui_http_client = { package = "open-gpui-http-client", version = "0.2.0", path = "crates/http_client" }
+open_gpui_http_client_tls = { package = "open-gpui-http-client-tls", version = "0.2.0", path = "crates/http_client_tls" }
+open_gpui_linux = { package = "open-gpui-linux", version = "0.2.0", path = "crates/gpui_linux", default-features = false }
+open_gpui_macos = { package = "open-gpui-macos", version = "0.2.0", path = "crates/gpui_macos", default-features = false }
+open_gpui_macros = { package = "open-gpui-macros", version = "0.2.0", path = "crates/gpui_macros" }
+open_gpui_media = { package = "open-gpui-media", version = "0.2.0", path = "crates/media" }
+open_gpui_motion = { package = "open-gpui-motion", version = "0.2.0", path = "crates/motion" }
+open_gpui_platform = { package = "open-gpui-platform", version = "0.2.0", path = "crates/gpui_platform", default-features = false }
+open_gpui_refineable = { package = "open-gpui-refineable", version = "0.2.0", path = "crates/refineable" }
+open_gpui_refineable_derive = { package = "open-gpui-refineable-derive", version = "0.2.0", path = "crates/refineable/derive_refineable" }
+open_gpui_reqwest_client = { package = "open-gpui-reqwest-client", version = "0.2.0", path = "crates/reqwest_client" }
+open_gpui_scheduler = { package = "open-gpui-scheduler", version = "0.2.0", path = "crates/scheduler" }
+open_gpui_shared_string = { package = "open-gpui-shared-string", version = "0.2.0", path = "crates/gpui_shared_string" }
+open_gpui_sum_tree = { package = "open-gpui-sum-tree", version = "0.2.0", path = "crates/sum_tree" }
+open_gpui_util = { package = "open-gpui-util", version = "0.2.0", path = "crates/util" }
+open_gpui_util_macros = { package = "open-gpui-util-macros", version = "0.2.0", path = "crates/util_macros" }
+open_gpui_web = { package = "open-gpui-web", version = "0.2.0", path = "crates/gpui_web" }
+open_gpui_wgpu = { package = "open-gpui-wgpu", version = "0.2.0", path = "crates/gpui_wgpu" }
+open_gpui_windows = { package = "open-gpui-windows", version = "0.2.0", path = "crates/gpui_windows", default-features = false }
 
 accesskit = "0.24.0"
 accesskit_macos = "0.26.0"

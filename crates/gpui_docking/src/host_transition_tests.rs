@@ -18,7 +18,7 @@ use crate::{
     },
 };
 use open_gpui::{Bounds, TestAppContext, point, px, size};
-use open_gpui_ui_core::{
+use open_gpui_motion::{
     MotionDuration, MotionEasing, MotionModel, MotionPreference, MotionPreset, MotionSpec,
     MotionSpringPreset,
 };

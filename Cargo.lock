@@ -4136,7 +4136,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -4215,7 +4215,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-canvas"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "indexmap",
@@ -4244,7 +4244,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-canvas-notes"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "open-gpui",
  "open-gpui-canvas",
@@ -4253,7 +4253,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-collections"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "indexmap",
  "open-gpui-core-util",
@@ -4262,14 +4262,14 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-command"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "open-gpui",
 ]
 
 [[package]]
 name = "open-gpui-core-util"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "log",
@@ -4277,10 +4277,11 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-docking"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "log",
  "open-gpui",
+ "open-gpui-motion",
  "open-gpui-ui-core",
  "serde",
  "serde_json",
@@ -4290,7 +4291,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-docking-native"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "env_logger",
  "log",
@@ -4325,7 +4326,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-http-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -4350,7 +4351,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-http-client-tls"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rustls",
  "rustls-platform-verifier 0.5.3",
@@ -4358,7 +4359,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-linux"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -4408,7 +4409,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-macos"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -4456,7 +4457,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-macros"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "heck",
  "open-gpui",
@@ -4467,7 +4468,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-media"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bindgen 0.72.1",
@@ -4479,8 +4480,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-motion"
+version = "0.2.0"
+
+[[package]]
 name = "open-gpui-platform"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "console_error_panic_hook",
  "open-gpui",
@@ -4492,14 +4497,14 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-refineable"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "open-gpui-refineable-derive",
 ]
 
 [[package]]
 name = "open-gpui-refineable-derive"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4508,7 +4513,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-reqwest-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4546,7 +4551,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-scheduler"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-task",
  "backtrace",
@@ -4560,7 +4565,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-shared-string"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "schemars",
  "serde",
@@ -4569,7 +4574,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-smoke-native"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "open-gpui",
  "open-gpui-canvas",
@@ -4578,7 +4583,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-sum-tree"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ctor",
  "heapless 0.9.3",
@@ -4591,10 +4596,11 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-ui-components"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "open-gpui",
  "open-gpui-command",
+ "open-gpui-motion",
  "open-gpui-ui-core",
  "schemars",
  "serde",
@@ -4604,14 +4610,18 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-ui-core"
-version = "0.1.0"
+version = "0.2.0"
+dependencies = [
+ "open-gpui-motion",
+]
 
 [[package]]
 name = "open-gpui-ui-foundation-gallery"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "open-gpui",
  "open-gpui-command",
+ "open-gpui-motion",
  "open-gpui-platform",
  "open-gpui-ui-components",
  "open-gpui-ui-core",
@@ -4619,7 +4629,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-util"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-fs",
@@ -4661,7 +4671,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-util-macros"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "quote",
  "syn",
@@ -4669,7 +4679,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-web"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -4693,7 +4703,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-wgpu"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -4722,7 +4732,7 @@ dependencies = [
 
 [[package]]
 name = "open-gpui-windows"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -8463,7 +8473,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde_json",
  "toml 1.1.2+spec-1.1.0",

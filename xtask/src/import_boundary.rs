@@ -18,6 +18,29 @@ const DISALLOWED_ZED_GIT_SOURCES: &[&str] = &[
     "zed-industries/wgpu",
     "zed-industries/xim",
 ];
+const MOTION_MANIFEST_PATH: &str = "crates/motion/Cargo.toml";
+const DISALLOWED_MOTION_DEPENDENCY_NAMES: &[&str] = &[
+    "open-gpui",
+    "open-gpui-docking",
+    "open-gpui-linux",
+    "open-gpui-macos",
+    "open-gpui-platform",
+    "open-gpui-ui-components",
+    "open-gpui-ui-core",
+    "open-gpui-web",
+    "open-gpui-wgpu",
+    "open-gpui-windows",
+    "open_gpui",
+    "open_gpui_docking",
+    "open_gpui_linux",
+    "open_gpui_macos",
+    "open_gpui_platform",
+    "open_gpui_ui_components",
+    "open_gpui_ui_core",
+    "open_gpui_web",
+    "open_gpui_wgpu",
+    "open_gpui_windows",
+];
 
 pub(crate) fn scan_import_boundary(root: &Path) -> Result<(), ()> {
     println!("==> scan import boundary");
@@ -124,11 +147,23 @@ fn scan_manifest_dependency_table(
                 "{relative}:{section}.{alias}: disallowed dependency name `{alias_name}`"
             ));
         }
+        if relative == MOTION_MANIFEST_PATH && is_disallowed_motion_dependency_name(alias_name) {
+            failures.push(format!(
+                "{relative}:{section}.{alias}: motion crate must not depend on UI/domain/platform crate `{alias_name}`"
+            ));
+        }
 
         if let Some(package_name) = dependency_package_field(spec) {
             if package_name != alias_name && is_disallowed_dependency_name(package_name) {
                 failures.push(format!(
                     "{relative}:{section}.{alias}: disallowed dependency package `{package_name}`"
+                ));
+            }
+            if relative == MOTION_MANIFEST_PATH
+                && is_disallowed_motion_dependency_name(package_name)
+            {
+                failures.push(format!(
+                    "{relative}:{section}.{alias}: motion crate must not depend on UI/domain/platform package `{package_name}`"
                 ));
             }
         }
@@ -206,6 +241,10 @@ fn dependency_git_source(spec: &toml::Value) -> Option<&str> {
 
 fn is_disallowed_dependency_name(name: &str) -> bool {
     DISALLOWED_DEPENDENCY_NAMES.contains(&name)
+}
+
+fn is_disallowed_motion_dependency_name(name: &str) -> bool {
+    DISALLOWED_MOTION_DEPENDENCY_NAMES.contains(&name)
 }
 
 fn is_zed_monorepo_source(source: &str) -> bool {
@@ -293,8 +332,12 @@ mod tests {
     use super::*;
 
     fn manifest_failures(contents: &str) -> Vec<String> {
+        manifest_failures_at("Cargo.toml", contents)
+    }
+
+    fn manifest_failures_at(relative: &str, contents: &str) -> Vec<String> {
         let mut failures = Vec::new();
-        scan_manifest_dependencies("Cargo.toml", contents, &mut failures);
+        scan_manifest_dependencies(relative, contents, &mut failures);
         failures
     }
 
@@ -409,6 +452,43 @@ scap = { git = 'https://github.com/Latias94/scap', branch = 'main', package = 'o
         assert!(
             failures.is_empty(),
             "expected Open GPUI scap fork to be allowed, got: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn manifest_scan_rejects_motion_crate_ui_domain_and_platform_dependencies() {
+        let failures = manifest_failures_at(
+            MOTION_MANIFEST_PATH,
+            r#"
+[dependencies]
+open_gpui_ui_core.workspace = true
+renderer = { package = "open-gpui-wgpu", workspace = true }
+
+[dev-dependencies]
+open_gpui_docking.workspace = true
+"#,
+        );
+
+        assert!(has_failure(&failures, "open_gpui_ui_core"));
+        assert!(has_failure(&failures, "open-gpui-wgpu"));
+        assert!(has_failure(&failures, "open_gpui_docking"));
+    }
+
+    #[test]
+    fn manifest_scan_allows_motion_crate_without_ui_domain_or_platform_dependencies() {
+        let failures = manifest_failures_at(
+            MOTION_MANIFEST_PATH,
+            r#"
+[package]
+name = "open-gpui-motion"
+
+[dependencies]
+"#,
+        );
+
+        assert!(
+            failures.is_empty(),
+            "expected pure motion manifest to be allowed, got: {failures:?}"
         );
     }
 

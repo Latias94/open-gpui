@@ -1,0 +1,147 @@
+research_topic: Open GPUI general-purpose motion and animation system
+created: 2026-07-06
+scope:
+  purpose: >
+    Establish the prior-art and repository evidence needed to refactor Open GPUI's
+    current UI motion primitives into a general-purpose animation and motion system
+    without creating a future large migration.
+  primary_question: >
+    Should Open GPUI extract an independent motion crate now, and what runtime,
+    value, driver, layout, presence, and adapter boundaries should it own?
+  assumptions:
+    - The user has authorized fearless breaking refactors when they reduce future migration cost.
+    - Current release-prep working tree changes are unrelated and must not be reverted or staged by this plan.
+    - Local reference repositories are architectural inputs, not sources to copy verbatim.
+items:
+  - id: local-open-gpui-motion
+    source: local
+    paths:
+      - crates/ui_core/src/motion.rs
+      - crates/ui_core/src/motion_runtime.rs
+      - crates/ui_core/src/motion_spring.rs
+      - crates/ui_core/src/motion_controller.rs
+      - crates/ui_core/src/motion_policy.rs
+      - crates/ui_core/src/motion_projection.rs
+      - crates/ui_core/src/motion_value.rs
+      - crates/ui_components/src/splitter.rs
+      - crates/gpui_docking/src/transition_executor.rs
+      - crates/gpui_docking/src/transition_geometry.rs
+    notes:
+      - Current primitives already prove deterministic timeline, spring, policy, projection, and reduced-motion semantics.
+      - The major extraction breakpoint is geometry: current projection helpers use ui_core-specific rect and pixel types.
+      - First-party consumers are concentrated in Splitter and docking transition paths; canvas is intentionally immediate today.
+  - id: repo-ref-motion
+    source: local-reference
+    paths:
+      - repo-ref/motion/packages/motion-dom/src/value/index.ts
+      - repo-ref/motion/packages/motion-dom/src/frameloop
+      - repo-ref/motion/packages/motion-dom/src/animation/JSAnimation.ts
+      - repo-ref/motion/packages/motion-dom/src/animation/generators
+      - repo-ref/motion/packages/motion-dom/src/projection
+      - repo-ref/motion/packages/framer-motion/src/components/AnimatePresence
+      - repo-ref/motion/packages/framer-motion/src/gestures
+    notes:
+      - Useful concepts are MotionValue, generator-based sampling, playback controls, frame phases, layout projection, presence, and gesture state machines.
+      - React hooks, DOM style parsing, CSS strings, WAAPI details, and browser lifecycle concerns are not portable to GPUI core.
+  - id: repo-ref-react-spring
+    source: local-reference
+    paths:
+      - repo-ref/react-spring/packages/core/src/SpringValue.ts
+      - repo-ref/react-spring/packages/core/src/Controller.ts
+      - repo-ref/react-spring/packages/shared/src/FrameLoop.ts
+      - repo-ref/react-spring/packages/rafz/src/index.ts
+      - repo-ref/react-spring/packages/core/src/hooks/useTransition.tsx
+    notes:
+      - Reinforces separation among animated values, controllers, frame loop, and host adapters.
+      - Keyed transition/presence concepts are useful, but React hook ergonomics are not the target API.
+  - id: repo-ref-fret
+    source: local-reference
+    paths:
+      - repo-ref/fret/ecosystem/fret-ui-kit/src/declarative/motion_value.rs
+      - repo-ref/fret/ecosystem/fret-ui-kit/src/declarative/motion_springs.rs
+      - repo-ref/fret/ecosystem/fret-ui-kit/src/declarative/overlay_motion.rs
+      - repo-ref/fret/ecosystem/fret-ui-kit/src/declarative/reduced_motion_queries.rs
+      - repo-ref/fret/ecosystem/fret-ui-kit/src/declarative/scheduling.rs
+      - repo-ref/fret/ecosystem/fret-dnd/src
+    notes:
+      - Strong Rust-adjacent prior art for deterministic frame ids, continuous frame leases, reduced motion, and separating paint-only transforms from layout semantics.
+      - DnD policy is valuable later but should not be bundled into the first motion-core extraction.
+  - id: repo-ref-iced
+    source: local-reference
+    paths:
+      - repo-ref/iced/core/src/animation.rs
+      - repo-ref/iced/widget/src/transition.rs
+      - repo-ref/iced/core/src/shell.rs
+      - repo-ref/iced/core/src/window/redraw_request.rs
+      - repo-ref/iced/widget/src/pane_grid
+    notes:
+      - Supports explicit redraw requests and widget-owned state with deterministic sampling on redraw.
+      - Pane grid confirms docking state and geometry should remain domain-owned.
+  - id: repo-ref-egui-tiles
+    source: local-reference
+    paths:
+      - repo-ref/egui_tiles/src/tree.rs
+      - repo-ref/egui_tiles/src/behavior.rs
+      - repo-ref/egui_tiles/src/container
+    notes:
+      - Docking behavior/tree separation is useful for Open GPUI docking.
+      - Smooth preview rect suggests a small AnimatedRect/projection-lite primitive can create real value before full shared layout.
+  - id: repo-ref-ui
+    source: local-reference
+    paths:
+      - repo-ref/ui/skills/migrate-radix-to-base/overlays.md
+      - repo-ref/ui/skills/migrate-radix-to-base/menus.md
+      - repo-ref/ui/skills/migrate-radix-to-base/disclosure.md
+      - repo-ref/ui/apps/v4/styles
+    notes:
+      - Useful as a semantic motion protocol reference: starting/ending state, mounted lifecycle, transform origin, available size, anchor geometry, and activation direction.
+      - Rust should model these as typed state and geometry tokens rather than DOM attributes.
+  - id: web-animations-and-view-transitions
+    source: web-reference
+    links:
+      - https://developer.mozilla.org/en-US/docs/Web/API/Animation
+      - https://developer.mozilla.org/en-US/docs/Web/API/View_Transition_API
+    notes:
+      - Useful backend and shared-element prior art for timeline controls, keyframes, finish/cancel semantics, compositor execution, and view snapshots.
+      - These should influence backend capability design, not force browser-native assumptions into the core crate.
+  - id: state-driven-ui-animation-frameworks
+    source: web-reference
+    links:
+      - https://developer.android.com/develop/ui/compose/animation/quick-guide
+      - https://docs.flutter.dev/ui/animations
+      - https://developer.apple.com/documentation/swiftui/animations
+      - https://reactnative.dev/docs/animations
+      - https://docs.swmansion.com/react-native-reanimated/docs/category/layout-animations/
+    notes:
+      - Prior art for state-driven animation APIs, explicit animated values, transitions, visibility/content animation, and native-thread worklets.
+      - Open GPUI should keep semantic state authoritative and let motion emit presentation evidence.
+  - id: desktop-rust-and-cross-platform-animation
+    source: web-reference
+    links:
+      - https://doc.qt.io/qt-6/qtquick-statesanimations-animations.html
+      - https://docs.slint.dev/latest/docs/slint/guide/language/coding/animation/
+      - https://docs.avaloniaui.net/docs/graphics-animation/control-transitions
+      - https://learn.microsoft.com/en-us/windows/apps/develop/composition/composition-animation
+      - https://docs.rs/egui/latest/egui/struct.Context.html
+      - https://docs.rs/glissade
+      - https://docs.rs/dioxus-motion
+    notes:
+      - Useful for feature flags, renderer-independent interpolation, compositor capability boundaries, and reduced-motion immediate-final-state semantics.
+      - License and maturity must be checked before adopting any API shape directly.
+  - id: timeline-and-asset-animation-libraries
+    source: web-reference
+    links:
+      - https://gsap.com/docs/v3/Installation/
+      - https://animejs.com/documentation/
+      - https://svelte.dev/docs/svelte-transition
+      - https://auto-animate.formkit.com/
+    notes:
+      - Useful for composition, sequence, stagger, FLIP, crossfade, and automatic layout transition vocabulary.
+      - Asset-driven animation and heavy timeline DSLs are follow-up scope, not the extraction baseline.
+recommended_plan_direction:
+  - Extract `open-gpui-motion` now, because leaving motion in `ui_core` while adding general animation APIs would force a larger later migration.
+  - Put neutral geometry in the motion crate to break the current `ui_core` cycle before it hardens.
+  - Keep frame scheduling adapter-owned; the core crate should return frame demand and expose deterministic test clocks.
+  - Migrate first-party Splitter and docking consumers to the new crate in the same slice, deleting old `ui_core` motion exports instead of preserving pre-release compatibility paths.
+  - Stabilize only the value/generator/control APIs proven by current consumers; keep richer MotionValue subscriptions, keyframes, repeat/reverse/speed controls, builders, and presence experimental or crate-private until a first-party consumer proves them.
+  - Treat `open-gpui-motion` as the only motion import path; there is no historical motion API burden from v0.1.0.

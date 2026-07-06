@@ -257,8 +257,8 @@ fn representative_component_a11y_contracts_are_valid() {
             VirtualizedListItemDescriptor::new("beta", "Beta"),
         ],
     )
-    .default_active_index(0)
-    .default_selected_index(0)
+    .default_active_key("alpha")
+    .default_selected_key("alpha")
     .behavior_snapshot_with_viewport(ui_px(0.0), ui_px(80.0));
     let virtualized_row = virtualized_list
         .rows()

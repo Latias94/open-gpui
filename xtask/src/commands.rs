@@ -53,10 +53,17 @@ fn verify(root: &Path) -> Result<(), ()> {
     run(root, "cargo", &["fmt", "--all", "--check"])?;
     run(root, "cargo", &["check", "--workspace"])?;
     run(root, "cargo", &["check", "-p", "open-gpui-smoke-native"])?;
+    run_motion_tests(root)?;
     run_ui_component_tests(root)?;
     scan_theme_drift(root)?;
     scan_import_boundary(root)?;
     scan_ui_contract(root)?;
+    Ok(())
+}
+
+fn run_motion_tests(root: &Path) -> Result<(), ()> {
+    run(root, "cargo", &["nextest", "run", "-p", "open-gpui-motion"])?;
+    run(root, "cargo", &["test", "-p", "open-gpui-motion", "--doc"])?;
     Ok(())
 }
 
