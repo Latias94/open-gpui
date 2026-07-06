@@ -1,6 +1,6 @@
 //! Component sample descriptors and resolved-state builders for the foundation gallery.
 
-use open_gpui::{AppContext, ParentElement, Styled, div, rgb};
+use open_gpui::{AppContext, ParentElement, Styled, div, prelude::FluentBuilder, rgb};
 use open_gpui_command::CommandContextStack;
 use open_gpui_ui_components::{
     Accordion, AccordionItem, AccordionMode, AccordionState, Avatar, AvatarState, Badge,
@@ -26,8 +26,8 @@ use open_gpui_ui_components::{
     ToggleGroupState, ToggleState, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
     ToolbarItemKind, ToolbarState, Tree, TreeBehaviorSnapshot, TreeItemDescriptor, TreeState,
     VirtualizedList, VirtualizedListBehaviorSnapshot, VirtualizedListItemDescriptor,
-    VirtualizedListMetrics, VirtualizedListScrollStrategy, VirtualizedListSelectionMode,
-    VirtualizedListState,
+    VirtualizedListMetrics, VirtualizedListRowMeasureMode, VirtualizedListRowRenderContext,
+    VirtualizedListScrollStrategy, VirtualizedListSelectionMode, VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -35,7 +35,7 @@ use open_gpui_ui_core::{
     TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId,
     TableColumnPinning, TableColumnSizing, TableFacetValueCount, TableFilter, TablePagination,
     TableRow, TableRowPinning, TableSelectOption, TableSort, TableStageMode, TableState,
-    ThemeTokens, UiPx, ui_px,
+    ThemeTokens, UiPx, VirtualizerItemKey, VirtualizerSnapshot, VirtualizerSnapshotItem, ui_px,
 };
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -93,8 +93,9 @@ pub use text::{
 };
 pub use tree::{TreeSample, TreeStateContractSample, tree_samples, tree_state_contract_samples};
 pub use virtualized_list::{
-    VirtualizedListSample, VirtualizedListSampleStateSummary, VirtualizedListStateContractSample,
-    virtualized_list_samples, virtualized_list_state_contract_samples,
+    VirtualizedListSample, VirtualizedListSampleRenderer, VirtualizedListSampleStateSummary,
+    VirtualizedListStateContractSample, virtualized_list_samples,
+    virtualized_list_state_contract_samples,
 };
 
 macro_rules! impl_component_sample_selectors {

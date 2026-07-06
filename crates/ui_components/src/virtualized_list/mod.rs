@@ -11,9 +11,9 @@ use crate::scroll_surface::{
 };
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Pixels, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement,
-    Styled, Window, div, px, rgb,
+    AnyElement, App, ClickEvent, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
+    KeyDownEvent, ParentElement, Pixels, RenderOnce, ScrollHandle, SharedString,
+    StatefulInteractiveElement, Styled, Window, div, px, rgb,
 };
 #[cfg(test)]
 use open_gpui_ui_core::ui_px;
@@ -29,6 +29,8 @@ type VirtualizedListActivationHandler =
     Rc<dyn Fn(VirtualizedListActivation, &mut Window, &mut App)>;
 type VirtualizedListSelectionChangeHandler =
     Rc<dyn Fn(VirtualizedListSelectionChange, &mut Window, &mut App)>;
+type VirtualizedListRowRenderer =
+    Rc<dyn Fn(VirtualizedListRowRenderContext, &mut Window, &mut App) -> AnyElement>;
 
 /// Scroll alignment requested when a virtualized row should be revealed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1161,6 +1163,167 @@ impl VirtualizedListRowBehaviorSnapshot {
     }
 }
 
+/// Read-only context passed to a custom `VirtualizedList` row renderer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VirtualizedListRowRenderContext {
+    item: VirtualizedListItemDescriptor,
+    render_key: String,
+    index: usize,
+    position_in_set: Option<usize>,
+    size_of_set: usize,
+    virtual_start: UiPx,
+    virtual_size: UiPx,
+    measured: bool,
+    row_measure_mode: VirtualizedListRowMeasureMode,
+    active: bool,
+    selected: bool,
+    disabled: bool,
+    role: Role,
+}
+
+impl VirtualizedListRowRenderContext {
+    fn from_render_plan(
+        row: &VirtualizedListRowRenderPlan,
+        row_measure_mode: VirtualizedListRowMeasureMode,
+    ) -> Self {
+        Self {
+            item: row.item().clone(),
+            render_key: row.render_key().to_owned(),
+            index: row.index(),
+            position_in_set: row.position_in_set(),
+            size_of_set: row.size_of_set(),
+            virtual_start: row.virtual_start(),
+            virtual_size: row.virtual_size(),
+            measured: row.measured(),
+            row_measure_mode,
+            active: row.active(),
+            selected: row.selected(),
+            disabled: row.disabled(),
+            role: row.role(),
+        }
+    }
+
+    /// Returns the source descriptor.
+    pub const fn item(&self) -> &VirtualizedListItemDescriptor {
+        &self.item
+    }
+
+    /// Returns the stable source item key.
+    pub fn key(&self) -> &str {
+        self.item.key()
+    }
+
+    /// Returns the visible item label.
+    pub fn label(&self) -> &str {
+        self.item.label()
+    }
+
+    /// Returns the row kind.
+    pub const fn kind(&self) -> VirtualizedListRowKind {
+        self.item.kind()
+    }
+
+    /// Returns whether this row participates in active selection and activation.
+    pub const fn selectable(&self) -> bool {
+        self.item.kind().selectable() && !self.disabled
+    }
+
+    /// Returns secondary row text.
+    pub fn secondary_text(&self) -> Option<&str> {
+        self.item.secondary_text_ref()
+    }
+
+    /// Returns the text value used by typeahead and activation.
+    pub fn text_value(&self) -> &str {
+        self.item.text_value()
+    }
+
+    /// Returns disabled reason text.
+    pub fn disabled_reason(&self) -> Option<&str> {
+        self.item.disabled_reason_ref()
+    }
+
+    /// Returns leading metadata text.
+    pub fn leading_metadata(&self) -> Option<&str> {
+        self.item.leading_metadata_ref()
+    }
+
+    /// Returns trailing metadata text.
+    pub fn trailing_metadata(&self) -> Option<&str> {
+        self.item.trailing_metadata_ref()
+    }
+
+    /// Returns badge text.
+    pub fn badge(&self) -> Option<&str> {
+        self.item.badge_ref()
+    }
+
+    /// Returns status text.
+    pub fn status(&self) -> Option<&str> {
+        self.item.status_ref()
+    }
+
+    /// Returns the stable render key used for element identity.
+    pub fn render_key(&self) -> &str {
+        &self.render_key
+    }
+
+    /// Returns the zero-based source row index.
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Returns the one-based position within the selectable option set.
+    pub const fn position_in_set(&self) -> Option<usize> {
+        self.position_in_set
+    }
+
+    /// Returns the total selectable option set size.
+    pub const fn size_of_set(&self) -> usize {
+        self.size_of_set
+    }
+
+    /// Returns the virtual row start offset.
+    pub const fn virtual_start(&self) -> UiPx {
+        self.virtual_start
+    }
+
+    /// Returns the virtual row size enforced by the outer row.
+    pub const fn virtual_size(&self) -> UiPx {
+        self.virtual_size
+    }
+
+    /// Returns whether the virtual row size came from measured content.
+    pub const fn measured(&self) -> bool {
+        self.measured
+    }
+
+    /// Returns the row measurement mode for this render pass.
+    pub const fn row_measure_mode(&self) -> VirtualizedListRowMeasureMode {
+        self.row_measure_mode
+    }
+
+    /// Returns whether this row is active.
+    pub const fn active(&self) -> bool {
+        self.active
+    }
+
+    /// Returns whether this row is selected.
+    pub const fn selected(&self) -> bool {
+        self.selected
+    }
+
+    /// Returns whether this row is disabled.
+    pub const fn disabled(&self) -> bool {
+        self.disabled
+    }
+
+    /// Returns the accessibility role owned by the outer row element.
+    pub const fn role(&self) -> Role {
+        self.role
+    }
+}
+
 /// Public behavior snapshot for a concrete virtualized list.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VirtualizedListBehaviorSnapshot {
@@ -1426,6 +1589,13 @@ impl VirtualizedListRowRenderPlan {
     pub const fn role(&self) -> Role {
         self.role
     }
+
+    fn render_context(
+        &self,
+        row_measure_mode: VirtualizedListRowMeasureMode,
+    ) -> VirtualizedListRowRenderContext {
+        VirtualizedListRowRenderContext::from_render_plan(self, row_measure_mode)
+    }
 }
 
 /// Fully resolved render contract for a concrete virtualized list.
@@ -1562,6 +1732,15 @@ impl VirtualizedListRenderPlan {
         &self.rows
     }
 
+    /// Returns custom-renderer contexts in render order.
+    #[cfg(test)]
+    pub fn row_contexts(&self) -> Vec<VirtualizedListRowRenderContext> {
+        self.rows
+            .iter()
+            .map(|row| row.render_context(self.row_measure_mode))
+            .collect()
+    }
+
     /// Returns the accessibility role for the root list container.
     pub const fn role(&self) -> Role {
         self.role
@@ -1618,6 +1797,7 @@ pub struct VirtualizedList {
     metrics: VirtualizedListMetrics,
     row_measure_mode: VirtualizedListRowMeasureMode,
     snapshot: Option<VirtualizerSnapshot>,
+    row_renderer: Option<VirtualizedListRowRenderer>,
     on_activate: Option<VirtualizedListActivationHandler>,
     on_selection_change: Option<VirtualizedListSelectionChangeHandler>,
 }
@@ -1657,6 +1837,7 @@ impl VirtualizedList {
             metrics: VirtualizedListMetrics::from_size(size),
             row_measure_mode: VirtualizedListRowMeasureMode::default(),
             snapshot: None,
+            row_renderer: None,
             on_activate: None,
             on_selection_change: None,
         }
@@ -1718,6 +1899,23 @@ impl VirtualizedList {
     /// Seeds measured-row virtualizer measurements from a snapshot.
     pub fn virtualizer_snapshot(mut self, snapshot: VirtualizerSnapshot) -> Self {
         self.snapshot = Some(snapshot);
+        self
+    }
+
+    /// Registers a custom row-content renderer.
+    ///
+    /// The outer row keeps ownership of virtual layout, accessibility, focus, hit testing, and
+    /// selection behavior. The renderer replaces only the row content.
+    pub fn render_row<E>(
+        mut self,
+        renderer: impl Fn(VirtualizedListRowRenderContext, &mut Window, &mut App) -> E + 'static,
+    ) -> Self
+    where
+        E: IntoElement + 'static,
+    {
+        self.row_renderer = Some(Rc::new(move |context, window, cx| {
+            renderer(context, window, cx).into_any_element()
+        }));
         self
     }
 
@@ -1879,6 +2077,7 @@ impl RenderOnce for VirtualizedList {
         let row_measure_mode = plan.row_measure_mode();
         let estimated_row_height = plan.metrics().row_height();
         let virtualizer_snapshot = plan.virtualizer().snapshot().clone();
+        let row_renderer = self.row_renderer.clone();
         let list_id = plan.list_id().to_owned();
         let scroll_viewport_id = format!("virtualized-list:{}:viewport", plan.list_id());
         let root_click_state = list_state.clone();
@@ -1964,11 +2163,14 @@ impl RenderOnce for VirtualizedList {
                             plan.virtualizer().total_size(),
                             row_measure_mode,
                             estimated_row_height,
+                            row_renderer,
                             list_state.clone(),
                             runtime.clone(),
                             focus_handle,
                             on_activate,
                             on_selection_change,
+                            window,
+                            cx,
                         ),
                     )
                     .vertical()
@@ -1985,15 +2187,38 @@ fn render_virtualized_list_body(
     total_size: UiPx,
     row_measure_mode: VirtualizedListRowMeasureMode,
     estimated_row_height: UiPx,
+    row_renderer: Option<VirtualizedListRowRenderer>,
     list_state: VirtualizedListState,
     runtime: Entity<VirtualizedListRuntime>,
     focus_handle: FocusHandle,
     on_activate: Option<VirtualizedListActivationHandler>,
     on_selection_change: Option<VirtualizedListSelectionChangeHandler>,
-) -> impl IntoElement {
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
     let rows = rows.to_vec();
     let list_id = list_id.to_owned();
     let body_id = format!("virtualized-list:{list_id}:body");
+    let mut row_elements = Vec::with_capacity(rows.len());
+    for row in rows {
+        row_elements.push(
+            render_virtualized_list_row(
+                list_id.clone(),
+                row,
+                row_measure_mode,
+                estimated_row_height,
+                row_renderer.clone(),
+                list_state.clone(),
+                runtime.clone(),
+                focus_handle.clone(),
+                on_activate.clone(),
+                on_selection_change.clone(),
+                window,
+                cx,
+            )
+            .into_any_element(),
+        );
+    }
 
     div()
         .id(body_id.clone())
@@ -2004,19 +2229,8 @@ fn render_virtualized_list_body(
         .relative()
         .w_full()
         .h(gpui_px_from_ui(total_size))
-        .children(rows.into_iter().map(move |row| {
-            render_virtualized_list_row(
-                list_id.clone(),
-                row,
-                row_measure_mode,
-                estimated_row_height,
-                list_state.clone(),
-                runtime.clone(),
-                focus_handle.clone(),
-                on_activate.clone(),
-                on_selection_change.clone(),
-            )
-        }))
+        .children(row_elements)
+        .into_any_element()
 }
 
 fn render_virtualized_list_row(
@@ -2024,11 +2238,14 @@ fn render_virtualized_list_row(
     row: VirtualizedListRowRenderPlan,
     row_measure_mode: VirtualizedListRowMeasureMode,
     estimated_row_height: UiPx,
+    row_renderer: Option<VirtualizedListRowRenderer>,
     list_state: VirtualizedListState,
     runtime: Entity<VirtualizedListRuntime>,
     focus_handle: FocusHandle,
     on_activate: Option<VirtualizedListActivationHandler>,
     on_selection_change: Option<VirtualizedListSelectionChangeHandler>,
+    window: &mut Window,
+    cx: &mut App,
 ) -> impl IntoElement {
     let render_key = row.render_key().to_owned();
     let target = row.target();
@@ -2053,6 +2270,19 @@ fn render_virtualized_list_row(
         rgb(0x8b93a1)
     } else {
         rgb(0x2f3845)
+    };
+    let row_content = if let Some(row_renderer) = row_renderer.as_ref() {
+        row_renderer(row.render_context(row_measure_mode), window, cx)
+    } else {
+        render_default_virtualized_list_row_content(
+            row_kind,
+            primary_text,
+            secondary_text,
+            leading_metadata,
+            trailing_metadata,
+            badge,
+            status,
+        )
     };
 
     div()
@@ -2141,70 +2371,86 @@ fn render_virtualized_list_row(
                 }
             })
         })
-        .when(row_kind == VirtualizedListRowKind::Separator, |this| {
-            this.child(div().mx(px(8.0)).h(px(1.0)).w_full().bg(rgb(0xe2e4dc)))
-        })
-        .when(row_kind != VirtualizedListRowKind::Separator, |this| {
-            this.px(px(10.0)).child(
+        .child(row_content)
+}
+
+fn render_default_virtualized_list_row_content(
+    row_kind: VirtualizedListRowKind,
+    primary_text: String,
+    secondary_text: Option<String>,
+    leading_metadata: Option<String>,
+    trailing_metadata: Option<String>,
+    badge: Option<String>,
+    status: Option<String>,
+) -> AnyElement {
+    if row_kind == VirtualizedListRowKind::Separator {
+        return div()
+            .mx(px(8.0))
+            .h(px(1.0))
+            .w_full()
+            .bg(rgb(0xe2e4dc))
+            .into_any_element();
+    }
+
+    div()
+        .w_full()
+        .min_w(px(0.0))
+        .px(px(10.0))
+        .flex()
+        .items_center()
+        .gap_2()
+        .when_some(leading_metadata, |this, metadata| {
+            this.child(
                 div()
-                    .w_full()
-                    .min_w(px(0.0))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .when_some(leading_metadata, |this, metadata| {
-                        this.child(
-                            div()
-                                .text_color(rgb(0x667085))
-                                .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
-                                .child(metadata),
-                        )
-                    })
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .flex()
-                            .flex_col()
-                            .child(primary_text)
-                            .when_some(secondary_text, |this, secondary_text| {
-                                this.child(
-                                    div()
-                                        .text_color(rgb(0x667085))
-                                        .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
-                                        .child(secondary_text),
-                                )
-                            }),
-                    )
-                    .when_some(badge, |this, badge| {
-                        this.child(
-                            div()
-                                .rounded(px(4.0))
-                                .bg(rgb(0xeef2f7))
-                                .px_1()
-                                .text_color(rgb(0x475467))
-                                .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
-                                .child(badge),
-                        )
-                    })
-                    .when_some(status, |this, status| {
-                        this.child(
-                            div()
-                                .text_color(rgb(0x475467))
-                                .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
-                                .child(status),
-                        )
-                    })
-                    .when_some(trailing_metadata, |this, metadata| {
-                        this.child(
-                            div()
-                                .text_color(rgb(0x667085))
-                                .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
-                                .child(metadata),
-                        )
-                    }),
+                    .text_color(rgb(0x667085))
+                    .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
+                    .child(metadata),
             )
         })
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex()
+                .flex_col()
+                .child(primary_text)
+                .when_some(secondary_text, |this, secondary_text| {
+                    this.child(
+                        div()
+                            .text_color(rgb(0x667085))
+                            .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
+                            .child(secondary_text),
+                    )
+                }),
+        )
+        .when_some(badge, |this, badge| {
+            this.child(
+                div()
+                    .rounded(px(4.0))
+                    .bg(rgb(0xeef2f7))
+                    .px_1()
+                    .text_color(rgb(0x475467))
+                    .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
+                    .child(badge),
+            )
+        })
+        .when_some(status, |this, status| {
+            this.child(
+                div()
+                    .text_color(rgb(0x475467))
+                    .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
+                    .child(status),
+            )
+        })
+        .when_some(trailing_metadata, |this, metadata| {
+            this.child(
+                div()
+                    .text_color(rgb(0x667085))
+                    .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
+                    .child(metadata),
+            )
+        })
+        .into_any_element()
 }
 
 fn handle_virtualized_list_key_down(
@@ -3140,6 +3386,58 @@ mod tests {
         assert_eq!(VirtualizedListRowMeasureMode::Measured.as_str(), "measured");
         assert!(!VirtualizedListRowMeasureMode::Fixed.measured());
         assert!(VirtualizedListRowMeasureMode::Measured.measured());
+    }
+
+    #[test]
+    fn virtualized_list_row_context_carries_custom_renderer_invariants() {
+        let items = [
+            VirtualizedListItemDescriptor::section("recent", "Recent"),
+            VirtualizedListItemDescriptor::new("alpha", "Alpha"),
+            VirtualizedListItemDescriptor::new("beta", "Beta").disabled_reason("Offline"),
+            VirtualizedListItemDescriptor::empty("empty", "No results"),
+        ];
+        let state = VirtualizedListState::resolve(
+            Size::Small,
+            false,
+            items.iter().map(VirtualizedListStateItem::from),
+            Some("alpha"),
+            ["alpha"],
+            VirtualizedListSelectionMode::Single,
+            Some(4),
+        )
+        .with_metrics(VirtualizedListMetrics::from_size(Size::Small).with_row_height(ui_px(28.0)));
+        let plan = VirtualizedListRenderPlan::resolve(
+            "custom-list",
+            "Custom list",
+            state,
+            &items,
+            VirtualizedListRowMeasureMode::Fixed,
+            &BTreeMap::new(),
+            None,
+            UiPx::ZERO,
+            ui_px(112.0),
+        );
+        let contexts = plan.row_contexts();
+
+        assert_eq!(contexts.len(), plan.rows().len());
+        assert_eq!(contexts[0].key(), "recent");
+        assert_eq!(contexts[0].kind(), VirtualizedListRowKind::Section);
+        assert_eq!(contexts[0].role(), Role::Group);
+        assert_eq!(contexts[0].position_in_set(), None);
+        assert_eq!(
+            contexts[0].row_measure_mode(),
+            VirtualizedListRowMeasureMode::Fixed
+        );
+        assert_eq!(contexts[1].key(), "alpha");
+        assert!(contexts[1].active());
+        assert!(contexts[1].selected());
+        assert_eq!(contexts[1].position_in_set(), Some(1));
+        assert_eq!(contexts[1].size_of_set(), 2);
+        assert_eq!(contexts[1].virtual_start(), ui_px(28.0));
+        assert_eq!(contexts[1].virtual_size(), ui_px(28.0));
+        assert_eq!(contexts[2].disabled_reason(), Some("Offline"));
+        assert_eq!(contexts[3].kind(), VirtualizedListRowKind::Empty);
+        assert!(!contexts[3].selectable());
     }
 
     #[test]

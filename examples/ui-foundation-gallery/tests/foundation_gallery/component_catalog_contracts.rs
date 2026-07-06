@@ -1454,8 +1454,24 @@ fn components_page_samples_expose_component_metadata() {
         ["server-workspace", "server-cache", "server-failed"]
     );
 
-    assert_eq!(virtualized_lists.len(), 1);
-    let release_navigation = &virtualized_lists[0];
+    assert_eq!(virtualized_lists.len(), 5);
+    assert_eq!(
+        virtualized_lists
+            .iter()
+            .map(|sample| sample.id)
+            .collect::<Vec<_>>(),
+        [
+            "release-navigation",
+            "primary-options",
+            "section-status",
+            "custom-renderer",
+            "measured-notes"
+        ]
+    );
+    let release_navigation = virtualized_lists
+        .iter()
+        .find(|sample| sample.id == "release-navigation")
+        .expect("release navigation virtualized list sample");
     assert_eq!(release_navigation.id, "release-navigation");
     assert_eq!(release_navigation.items.len(), 10_000);
     assert_eq!(release_navigation.state.item_count(), 10_000);
@@ -1497,6 +1513,36 @@ fn components_page_samples_expose_component_metadata() {
     assert!(
         release_navigation_snapshot.rendered_row_count()
             <= release_navigation_snapshot.visible_row_count() + release_navigation.overscan
+    );
+
+    let custom_renderer = virtualized_lists
+        .iter()
+        .find(|sample| sample.id == "custom-renderer")
+        .expect("custom renderer virtualized list sample");
+    assert_eq!(
+        custom_renderer.renderer,
+        pages::components::VirtualizedListSampleRenderer::CompactMetadata
+    );
+    assert_eq!(
+        custom_renderer.behavior_snapshot().row_role(),
+        Role::ListBoxOption
+    );
+
+    let measured_notes = virtualized_lists
+        .iter()
+        .find(|sample| sample.id == "measured-notes")
+        .expect("measured virtualized list sample");
+    assert_eq!(
+        measured_notes.row_measure_mode,
+        VirtualizedListRowMeasureMode::Measured
+    );
+    assert!(measured_notes.snapshot.is_some());
+    assert!(
+        measured_notes
+            .behavior_snapshot()
+            .rows()
+            .iter()
+            .any(|row| row.measured())
     );
 }
 

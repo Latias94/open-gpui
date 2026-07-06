@@ -6,8 +6,8 @@ use open_gpui_ui_components::{
     ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Splitter, SplitterPanel,
     SplitterPanelDescriptor, SplitterState, Tree, TreeChildrenLoadState, TreeDropPosition,
     TreeItemDescriptor, TreeMove, TreeMoveTarget, VirtualizedList, VirtualizedListActivation,
-    VirtualizedListItemDescriptor, VirtualizedListScrollStrategy, apply_tree_move,
-    virtualized_list_scroll_target,
+    VirtualizedListItemDescriptor, VirtualizedListRowRenderContext, VirtualizedListScrollStrategy,
+    apply_tree_move, virtualized_list_scroll_target,
 };
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, VirtualizerRange, ui_px};
 use std::cell::RefCell;
@@ -553,6 +553,9 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     .default_active_key("root-item-4")
     .default_selected_key("root-item-4")
     .row_measure_mode(root::VirtualizedListRowMeasureMode::Fixed)
+    .render_row(|context: root::VirtualizedListRowRenderContext, _, _| {
+        div().px(px(4.0)).child(context.label().to_owned())
+    })
     .viewport_item_count(3);
     let prelude_virtualized_items = (0..12)
         .map(|index| {
@@ -571,6 +574,9 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     .default_active_key("prelude-item-4")
     .default_selected_key("prelude-item-4")
     .row_measure_mode(prelude::VirtualizedListRowMeasureMode::Fixed)
+    .render_row(|context: prelude::VirtualizedListRowRenderContext, _, _| {
+        div().px(px(4.0)).child(context.label().to_owned())
+    })
     .viewport_item_count(3);
     let root_virtualized_snapshot: root::VirtualizedListBehaviorSnapshot =
         root_virtualized_list.behavior_snapshot_with_viewport(ui_px(28.0), ui_px(56.0));
@@ -614,6 +620,7 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         root::VirtualizedListStateItem::new("root-item", "Root item");
     let _prelude_virtualized_state_item: prelude::VirtualizedListStateItem =
         prelude::VirtualizedListStateItem::new("prelude-item", "Prelude item");
+    let _direct_virtualized_context_type: Option<VirtualizedListRowRenderContext> = None;
     let root_virtualized_row_kind: root::VirtualizedListRowKind =
         root::VirtualizedListRowKind::Item;
     let prelude_virtualized_row_kind: prelude::VirtualizedListRowKind =

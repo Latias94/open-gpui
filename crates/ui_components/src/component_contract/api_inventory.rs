@@ -739,6 +739,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             "row_measure_mode",
             "virtualizer_snapshot",
             "overscan",
+            "render_row",
         ],
         callbacks: &[
             CallbackApi {
@@ -1218,6 +1219,7 @@ pub fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "row_measure_mode",
             "virtualizer_snapshot",
             "overscan",
+            "render_row",
         ],
         "StatusCue" => &["intent"],
         "EmptyState" => &["description", "intent"],
@@ -1780,6 +1782,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "row_height",
             "row_measure_mode",
             "virtualizer_snapshot",
+            "render_row",
             "overscan",
             "on_activate",
             "on_selection_change",
