@@ -9,7 +9,7 @@ mod logging;
 mod platform;
 mod window;
 
-pub use dispatcher::WebDispatcher;
+pub use dispatcher::{WebDispatcher, WebDispatcherMode, WebDispatcherSingleThreadedReason};
 pub use display::WebDisplay;
 pub use http_client::FetchHttpClient;
 pub use keyboard::WebKeyboardLayout;

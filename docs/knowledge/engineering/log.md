@@ -6,6 +6,23 @@ status: active
 
 # Log
 
+- 2026-07-06: Started `docs/plans/2026-07-06-001-refactor-runtime-ui-hardening-plan.md` with the
+  S1 platform/web runtime honesty slice. Windows `hide_other_apps` and `unhide_other_apps` now
+  degrade to debug diagnostics instead of `unimplemented!()` panics, and `open-gpui-web` exposes
+  typed `WebDispatcherMode` facts from `WebDispatcher` and `WebPlatform` without changing the
+  generic `PlatformDispatcher` trait. Worker startup failure now reports
+  `SingleThreaded { reason: WorkerStartupFailed }` instead of panicking, and focused regression
+  coverage checks dispatcher mode selection plus Windows no-op lifecycle calls. Stable wasm checks
+  for `open-gpui-web`, `open-gpui-platform`,
+  and `open-gpui-wgpu` passed, as did the local `open-gpui-windows --all-features` smoke; Windows
+  CI remains the final owner for Windows API coverage. The nightly `hello_web` shared-memory wasm
+  compile check also passed with the expected atomics target-feature warning. The docking
+  capability parity audit passed
+  the focused `host_viewport_route host_viewport_platform_capability viewport_runtime` nextest gate
+  with 191/191 tests passing and no docking code changes required. Motion/component/gallery nextest
+  filters hit the known macOS test-binary list-stage stall, so the local verification tail used
+  `open-gpui-ui-core --tests`, component/gallery ordinary checks, `scan-ui-contract`,
+  `scan-import-boundary`, stable wasm checks, and `cargo check --workspace --locked`.
 - 2026-07-04: Wired GPUI Splitter structural layout transitions on
   `feat/ui-motion-projection-clips`. `SplitterRuntime` now stores previous semantic state, runs a
   separate layout-transition scalar track for identity/count/collapse/expand changes, renders the

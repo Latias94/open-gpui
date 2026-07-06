@@ -1,4 +1,4 @@
-use crate::dispatcher::WebDispatcher;
+use crate::dispatcher::{WebDispatcher, WebDispatcherMode};
 use crate::display::WebDisplay;
 use crate::keyboard::WebKeyboardLayout;
 use crate::window::WebWindow;
@@ -26,6 +26,7 @@ pub struct WebPlatform {
     browser_window: web_sys::Window,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
+    dispatcher_mode: WebDispatcherMode,
     text_system: Arc<dyn PlatformTextSystem>,
     active_window: RefCell<Option<AnyWindowHandle>>,
     active_display: Rc<dyn PlatformDisplay>,
@@ -56,6 +57,7 @@ impl WebPlatform {
             browser_window.clone(),
             allow_multi_threading,
         ));
+        let dispatcher_mode = dispatcher.mode();
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let text_system = Arc::new(open_gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
@@ -88,6 +90,7 @@ impl WebPlatform {
             browser_window,
             background_executor,
             foreground_executor,
+            dispatcher_mode,
             text_system,
             active_window: RefCell::new(None),
             active_display,
@@ -97,6 +100,10 @@ impl WebPlatform {
             last_cursor_css,
             _cursor_restore_listeners: cursor_restore_listeners,
         }
+    }
+
+    pub fn dispatcher_mode(&self) -> WebDispatcherMode {
+        self.dispatcher_mode
     }
 }
 

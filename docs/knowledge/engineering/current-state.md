@@ -166,6 +166,21 @@ verified_by:
   platform-window tear-off/multi-viewport while preserving single-window docking behavior. Durable
   evidence is recorded in
   `docs/knowledge/engineering/verification/web-docking-viewport-capability-gates-20260705.md`.
+- Done on `runtime-ui-hardening`: Windows `hide_other_apps` and `unhide_other_apps` no longer
+  panic; unsupported behavior is a debug diagnostic/no-op. `open-gpui-web` now exposes
+  `WebDispatcherMode` through `WebDispatcher::mode()` and `WebPlatform::dispatcher_mode()` so
+  stable single-threaded fallback and optional multithreaded shared-memory mode are typed web
+  backend facts rather than loose TODOs. Worker startup failure now degrades to
+  `SingleThreaded { reason: WorkerStartupFailed }` instead of panicking, and regression coverage
+  checks the stable mode-selection path plus the Windows no-op lifecycle calls. Stable wasm checks,
+  the nightly `hello_web` shared-memory compile check, and the local
+  `open-gpui-windows --all-features` smoke passed on 2026-07-06; Windows CI remains the final owner
+  for Windows API-path coverage. The docking capability parity audit also passed 191 focused
+  route/runtime/status tests with no code changes needed. Motion/component/gallery nextest filters
+  hit the known macOS test-binary list-stage stall, so local coverage used compile, scan, stable
+  wasm, docking nextest, and workspace checks; CI remains the owner for full platform test
+  execution. Durable evidence is recorded in
+  `docs/knowledge/engineering/verification/runtime-ui-hardening-s1-20260706.md`.
 - Local nextest list-stage stalls on macOS were diagnosed as dyld/Gatekeeper validation of newly
   built test binaries, not scheduler/UI test logic. Rebuilding affected test binaries restored
   normal execution; the durable verification note is

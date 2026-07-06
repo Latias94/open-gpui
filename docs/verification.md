@@ -21,6 +21,7 @@ The gate runs:
 The GitHub Actions `Verify` workflow also runs stable wasm surface checks on the Linux matrix:
 
 ```sh
+cargo check -p open-gpui-web --target wasm32-unknown-unknown --tests --locked -j 1
 cargo check -p open-gpui-web --target wasm32-unknown-unknown --locked -j 1
 cargo check -p open-gpui-platform --target wasm32-unknown-unknown --locked -j 1
 cargo check -p open-gpui-wgpu --target wasm32-unknown-unknown --locked -j 1
@@ -28,6 +29,37 @@ cargo check -p open-gpui-wgpu --target wasm32-unknown-unknown --locked -j 1
 
 These are stable, single-threaded wasm gates. Nightly shared-memory/atomics checks for
 `hello_web` remain optional verification, not CI requirements.
+
+For the 2026-07 runtime UI hardening slice, the Web dispatcher exposes a typed
+`WebDispatcherMode` through `WebDispatcher::mode()` and `WebPlatform::dispatcher_mode()`. Stable
+web builds report `SingleThreaded { reason: BuiltWithoutMultithreadedFeature }`; multithreaded
+shared-memory mode remains feature-, browser-capability-, and worker-startup gated. If workers
+cannot be started after capability checks pass, the dispatcher reports
+`SingleThreaded { reason: WorkerStartupFailed }` instead of panicking. The focused local gates for
+this slice were:
+
+```sh
+cargo fmt --all
+cargo fmt --all --check
+cargo check -p open-gpui-web --target wasm32-unknown-unknown --tests --locked -j 1
+cargo check -p open-gpui-web --target wasm32-unknown-unknown --locked -j 1
+cargo check -p open-gpui-platform --target wasm32-unknown-unknown --locked -j 1
+cargo check -p open-gpui-wgpu --target wasm32-unknown-unknown --locked -j 1
+cargo check -p open-gpui-windows --all-features --locked
+cargo check --workspace --locked
+cargo run -p xtask -- scan-ui-contract
+cargo run -p xtask -- scan-import-boundary
+git diff --check
+(cd crates/gpui_web/examples/hello_web && cargo check --target wasm32-unknown-unknown -j 1)
+```
+
+The `hello_web` command uses the example's nightly/shared-memory wasm toolchain configuration and
+is expected to emit Rust's `-Ctarget-feature=+atomics` warning.
+
+The Windows platform backend no longer uses `unimplemented!()` for `hide_other_apps` or
+`unhide_other_apps`; unsupported hide-other-apps behavior is a debug diagnostic/no-op on Windows.
+The macOS host check proves the crate configuration still compiles locally, while the Windows CI
+`open-gpui-windows --all-features` gate remains the final owner for Windows API coverage.
 
 For the 2026-07 Zed GPUI upstream-sync utility slice, the focused U7 verification on the Windows
 host was:

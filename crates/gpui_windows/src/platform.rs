@@ -474,14 +474,12 @@ impl Platform for WindowsPlatform {
 
     fn hide(&self) {}
 
-    // todo(windows)
     fn hide_other_apps(&self) {
-        unimplemented!()
+        log::debug!("WindowsPlatform::hide_other_apps is not supported on Windows");
     }
 
-    // todo(windows)
     fn unhide_other_apps(&self) {
-        unimplemented!()
+        log::debug!("WindowsPlatform::unhide_other_apps is not supported on Windows");
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
@@ -1449,7 +1447,7 @@ unsafe extern "system" fn window_procedure(
 #[cfg(test)]
 mod tests {
     use crate::{read_from_clipboard, write_to_clipboard};
-    use open_gpui::ClipboardItem;
+    use open_gpui::{ClipboardItem, Platform as _};
 
     #[test]
     fn test_clipboard() {
@@ -1483,5 +1481,13 @@ mod tests {
         assert!(!message.contains(secret_url));
         assert!(!message.contains(username));
         assert!(!message.contains("secret-password"));
+    }
+
+    #[test]
+    fn unsupported_app_visibility_controls_do_not_panic() {
+        let platform = super::WindowsPlatform::new(true).unwrap();
+
+        platform.hide_other_apps();
+        platform.unhide_other_apps();
     }
 }
