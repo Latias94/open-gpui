@@ -1227,7 +1227,6 @@ impl DockHost {
             self.execute_visual_affordance_transition_plan(
                 plan,
                 MotionSpec::affordance(DockMotionPreference::Animated),
-                Some(window),
             );
         }
 

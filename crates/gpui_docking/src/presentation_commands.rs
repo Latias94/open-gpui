@@ -258,18 +258,10 @@ impl DockHost {
         &mut self,
         plan: DockTransitionPlan,
         spec: MotionSpec,
-        window: Option<&Window>,
     ) -> DockTransitionExecutionState {
-        let state = self
-            .visual_affordance_transition_executor_mut()
+        self.visual_affordance_transition_executor_mut()
             .execute(plan, spec)
-            .state;
-        if state == DockTransitionExecutionState::Scheduled
-            && let Some(window) = window
-        {
-            window.request_animation_frame();
-        }
-        state
+            .state
     }
 
     pub(crate) fn sample_visual_affordance_transition_for_render(

@@ -726,7 +726,7 @@ fn visual_affordance_replacement_keeps_preview_layers_at_current_target_bounds(
 
     host.update(cx, |host, _| {
         assert_eq!(
-            host.execute_visual_affordance_transition_plan(first_plan, spec, None),
+            host.execute_visual_affordance_transition_plan(first_plan, spec),
             DockTransitionExecutionState::Scheduled
         );
         assert!(
@@ -739,7 +739,7 @@ fn visual_affordance_replacement_keeps_preview_layers_at_current_target_bounds(
         );
 
         assert_eq!(
-            host.execute_visual_affordance_transition_plan(replacement_plan, spec, None),
+            host.execute_visual_affordance_transition_plan(replacement_plan, spec),
             DockTransitionExecutionState::Scheduled
         );
         let sample = host
