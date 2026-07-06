@@ -142,6 +142,11 @@ impl Drop for AppRefMut<'_> {
     }
 }
 
+#[cfg(target_family = "wasm")]
+thread_local! {
+    static RUNNING_WEB_APPLICATIONS: RefCell<Vec<Rc<AppCell>>> = RefCell::new(Vec::new());
+}
+
 /// A reference to a GPUI application, typically constructed in the `main` function of your app.
 /// You won't interact with this type much outside of initial configuration and startup.
 pub struct Application(Rc<AppCell>);
@@ -206,10 +211,16 @@ impl Application {
     {
         let this = self.0.clone();
         let platform = self.0.borrow().platform.clone();
+        #[cfg(target_family = "wasm")]
+        let keep_alive = this.clone();
         platform.run(Box::new(move || {
             let cx = &mut *this.borrow_mut();
             on_finish_launching(cx);
         }));
+        #[cfg(target_family = "wasm")]
+        RUNNING_WEB_APPLICATIONS.with(|applications| {
+            applications.borrow_mut().push(keep_alive);
+        });
     }
 
     /// Register a handler to be invoked when the platform instructs the application
@@ -1373,7 +1384,7 @@ impl App {
         self.platform.open_url(url);
     }
 
-    /// Registers the given URL scheme (e.g. `zed` for `zed://` urls) to be
+    /// Registers the given URL scheme (e.g. `open-gpui` for `open-gpui://` URLs) to be
     /// opened by the current app.
     ///
     /// On some platforms (e.g. macOS) you may be able to register URL schemes

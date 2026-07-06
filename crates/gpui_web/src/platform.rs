@@ -20,7 +20,7 @@ use std::{
 };
 use wasm_bindgen::prelude::*;
 
-static BUNDLED_FONTS: &[&[u8]] = &[];
+static BUNDLED_FONTS: &[&[u8]] = damascene_fonts::DEFAULT_FONTS;
 
 pub struct WebPlatform {
     browser_window: web_sys::Window,
@@ -61,7 +61,7 @@ impl WebPlatform {
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let text_system = Arc::new(open_gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
-            "IBM Plex Sans",
+            "Inter",
         ));
         if BUNDLED_FONTS.is_empty() {
             log::warn!("WebPlatform started without bundled fonts");
