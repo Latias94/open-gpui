@@ -1408,7 +1408,7 @@ enum WindowOpenState {
     Windowed,
 }
 
-const WINDOW_CLASS_NAME: PCWSTR = w!("Zed::Window");
+const WINDOW_CLASS_NAME: PCWSTR = w!("OpenGPUI::Window");
 
 fn register_window_class(icon_handle: HICON) {
     static ONCE: Once = Once::new();

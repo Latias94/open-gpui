@@ -19,7 +19,8 @@ use std::{
 ///
 /// This will create actions with names like `editor::MoveUp`, `editor::MoveDown`, etc.
 ///
-/// The namespace argument `editor` can also be omitted, though it is required for Zed actions.
+/// The namespace argument `editor` can also be omitted for application-local actions. Public
+/// actions should use an explicit namespace so keymaps can refer to them unambiguously.
 #[macro_export]
 macro_rules! actions {
     ($namespace:path, [ $( $(#[$attr:meta])* $name:ident),* $(,)? ]) => {
@@ -67,11 +68,11 @@ macro_rules! actions {
 ///
 /// The derive macro for `Action` requires that the type implement `Clone` and `PartialEq`. It also
 /// requires `serde::Deserialize` and `schemars::JsonSchema` unless `#[action(no_json)]` is
-/// specified. In Zed these trait impls are used to load keymaps from JSON.
+/// specified. These trait impls allow actions to be loaded from JSON keymaps.
 ///
 /// Multiple arguments separated by commas may be specified in `#[action(...)]`:
 ///
-/// - `namespace = some_namespace` sets the namespace. In Zed this is required.
+/// - `namespace = some_namespace` sets the namespace used in serialized action names.
 ///
 /// - `name = "ActionName"` overrides the action's name. This must not contain `::`.
 ///
@@ -83,11 +84,11 @@ macro_rules! actions {
 ///
 /// - `deprecated_aliases = ["editor::SomeAction"]` specifies deprecated old names for the action.
 ///   These action names should *not* correspond to any actions that are registered. These old names
-///   can then still be used to refer to invoke this action. In Zed, the keymap JSON schema will
-///   accept these old names and provide warnings.
+///   can then still be used to refer to invoke this action. JSON schema consumers can accept these
+///   old names and provide warnings.
 ///
 /// - `deprecated = "Message about why this action is deprecation"` specifies a deprecation message.
-///   In Zed, the keymap JSON schema will cause this to be displayed as a warning.
+///   JSON schema consumers can display this as a warning.
 ///
 /// # Manual Implementation
 ///
@@ -144,8 +145,7 @@ pub trait Action: Any + Send {
     }
 
     /// A list of alternate, deprecated names for this action. These names can still be used to
-    /// invoke the action. In Zed, the keymap JSON schema will accept these old names and provide
-    /// warnings.
+    /// invoke the action. JSON schema consumers can accept these old names and provide warnings.
     fn deprecated_aliases() -> &'static [&'static str]
     where
         Self: Sized,
@@ -153,8 +153,8 @@ pub trait Action: Any + Send {
         &[]
     }
 
-    /// Returns the deprecation message for this action, if any. In Zed, the keymap JSON schema will
-    /// cause this to be displayed as a warning.
+    /// Returns the deprecation message for this action, if any. JSON schema consumers can display
+    /// this as a warning.
     fn deprecation_message() -> Option<&'static str>
     where
         Self: Sized,
@@ -187,8 +187,8 @@ impl dyn Action {
     }
 }
 
-/// Error type for `Keystroke::parse`. This is used instead of `anyhow::Error` so that Zed can use
-/// markdown to display it.
+/// Error type for constructing actions from JSON. This is used instead of `anyhow::Error` so
+/// callers can display structured, user-friendly diagnostics.
 #[derive(Debug)]
 pub enum ActionBuildError {
     /// Indicates that an action with this name has not been registered.
@@ -426,8 +426,9 @@ mod no_action {
     use serde::Deserialize;
 
     actions!(
-        zed,
+        open_gpui,
         [
+            #[action(deprecated_aliases = ["zed::NoAction"])]
             /// Action with special handling which unbinds the keybinding this is associated with,
             /// if it is the highest precedence match.
             NoAction
@@ -439,9 +440,9 @@ mod no_action {
     ///
     /// In keymap JSON this is written as:
     ///
-    /// `["zed::Unbind", "editor::NewLine"]`
+    /// `["open_gpui::Unbind", "editor::NewLine"]`
     #[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema, open_gpui::Action)]
-    #[action(namespace = zed)]
+    #[action(namespace = open_gpui, deprecated_aliases = ["zed::Unbind"])]
     pub struct Unbind(pub open_gpui::SharedString);
 
     /// Returns whether or not this action represents a removed key binding.

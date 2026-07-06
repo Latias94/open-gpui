@@ -1371,7 +1371,7 @@ fn validate_credential_blob_size(size: usize) -> Result<()> {
     Ok(())
 }
 
-const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("Zed::PlatformWindow");
+const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("OpenGPUI::PlatformWindow");
 
 fn register_platform_window_class() {
     let wc = WNDCLASSW {

@@ -43,7 +43,7 @@ pub async fn capture(
 /// Try to parse the environment output before checking the exit status.
 /// The user's shell rc files may contain commands that fail (e.g. editor
 /// integrations that call posix_spawnp outside a real PTY), causing a
-/// non-zero exit status even though `zed --printenv` ran successfully and
+/// non-zero exit status even though the current app's `--printenv` command ran successfully and
 /// produced valid output on its separate fd.
 fn parse_env_output(
     env_output: &str,
@@ -84,7 +84,7 @@ async fn capture_unix(
     use crate::command::new_std_command;
 
     let shell_kind = ShellKind::new(shell_path, false);
-    let quoted_zed_path = super::get_shell_safe_zed_path(shell_kind)?;
+    let quoted_app_path = super::get_shell_safe_app_path(shell_kind)?;
 
     let mut command_string = String::new();
     let mut command = new_std_command(shell_path);
@@ -145,7 +145,7 @@ async fn capture_unix(
     if let Some(prefix) = shell_kind.command_prefix() {
         command_string.push(prefix);
     }
-    command_string.push_str(&format!("{} --printenv {}", quoted_zed_path, redir));
+    command_string.push_str(&format!("{} --printenv {}", quoted_app_path, redir));
 
     if let ShellKind::Nushell = shell_kind {
         command_string.push_str("; exit");
@@ -214,8 +214,8 @@ async fn capture_windows(
 ) -> Result<open_gpui_collections::HashMap<String, String>> {
     use std::process::Stdio;
 
-    let zed_path =
-        std::env::current_exe().context("Failed to determine current zed executable path.")?;
+    let zed_path = std::env::current_exe()
+        .context("Failed to determine current application executable path.")?;
 
     let shell_kind = ShellKind::new(shell_path, true);
     // Prefix with "./" if the path starts with "-" to prevent cd from interpreting it as a flag
