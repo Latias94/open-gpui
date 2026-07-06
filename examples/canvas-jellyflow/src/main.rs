@@ -363,11 +363,11 @@ impl Render for JellyflowCanvasView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let measurement_consume = self.consume_layout_pass_measurements();
         self.measured_regions.clear();
+        let layout_pass_ready = self.layout_pass_measurements_ready();
         let should_schedule_measurement_frame = self.measurement_refresh_requested
-            || matches!(
-                measurement_consume,
-                LayoutPassMeasurementConsume::NoRegions | LayoutPassMeasurementConsume::Changed
-            );
+            || matches!(measurement_consume, LayoutPassMeasurementConsume::Changed)
+            || (matches!(measurement_consume, LayoutPassMeasurementConsume::NoRegions)
+                && !layout_pass_ready);
         self.measurement_refresh_requested = false;
         if should_schedule_measurement_frame {
             self.schedule_measurement_frame(window, cx);
@@ -944,6 +944,16 @@ impl JellyflowCanvasView {
         self.last_canvas_scene = None;
     }
 
+    fn layout_pass_measurements_ready(&self) -> bool {
+        let node_count = self.store.graph().nodes().len();
+        node_count > 0
+            && self.measurement_coverage.len() >= node_count
+            && self.store.graph().nodes().keys().all(|node_id| {
+                self.measurement_coverage.contains_key(node_id)
+                    && self.store.node_measurement_status(*node_id).is_fresh()
+            })
+    }
+
     fn canvas_input_handler() -> CanvasEditorInputHandler<Self> {
         CanvasEditorInputHandler::new(
             |this: &JellyflowCanvasView| this.is_pointer_interacting(),
@@ -1072,6 +1082,7 @@ impl JellyflowCanvasView {
             window.refresh();
             cx.notify();
         });
+        window.refresh();
     }
 
     fn dispatch_control_authoring_plan(
@@ -4446,11 +4457,12 @@ mod tests {
             assert_product_interaction_report_gates, product_fixture_catalog,
         },
     };
-    use open_gpui::{MouseMoveEvent, MouseUpEvent};
+    use open_gpui::{MouseMoveEvent, MouseUpEvent, RequestFrameOptions, VisualTestContext};
     use open_gpui_canvas::{
         CanvasConnectionEndpointRole, CanvasEditorInputMapper, CanvasGeometryFacts, CanvasRuntime,
         CanvasTransaction, DocumentCommand, connection_hit_options,
     };
+    use std::time::Duration;
 
     #[test]
     fn projects_jellyflow_store_into_canvas_document() {
@@ -4919,6 +4931,97 @@ mod tests {
                 );
             })
             .expect("product gallery stale pending-frame test window updates");
+    }
+
+    #[open_gpui::test]
+    fn mind_map_switch_reaches_readiness_without_pointer_events(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
+        cx.update(|cx| cx.activate(true));
+        let (gallery, store, editor, projection) = product_gallery_state();
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let window = cx.open_window(size(px(CANVAS_WIDTH), px(CANVAS_HEIGHT)), move |_, cx| {
+            JellyflowCanvasView {
+                editor,
+                store,
+                focus_handle: cx.focus_handle(),
+                projection,
+                gallery,
+                adapter: OpenGpuiAdapter::default(),
+                semantic_registry,
+                node_kit_registry,
+                measured_regions: OpenGpuiBoundsCollector::new(),
+                measurement_coverage: BTreeMap::new(),
+                measurement_revision: 1,
+                measurement_refresh_requested: false,
+                measurement_frame_pending: false,
+                measurement_frame_generation: 0,
+                auto_fit_viewport: true,
+                deferred_editor_refresh: false,
+                last_canvas_view_size: None,
+                last_canvas_bounds: None,
+                last_canvas_scene: None,
+            }
+        });
+        let view = window.root(cx).expect("product gallery view root");
+
+        window
+            .update(cx, |this, window, cx| {
+                this.switch_product_gallery_fixture("mind-map.strategy", window, cx);
+            })
+            .expect("switches to mind map fixture");
+
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        for _ in 0..8 {
+            visual
+                .cx
+                .dispatcher
+                .advance_clock(Duration::from_millis(34));
+            assert!(visual.simulate_frame(RequestFrameOptions {
+                require_presentation: true,
+                force_render: true,
+                ..Default::default()
+            }));
+            let ready = visual.cx.read_entity(&view, |this, _| {
+                this.last_canvas_scene.is_some()
+                    && this.measurement_coverage.len() == this.store.graph().nodes().len()
+                    && this
+                        .store
+                        .graph()
+                        .nodes()
+                        .keys()
+                        .all(|node_id| this.store.node_measurement_status(*node_id).is_fresh())
+            });
+            if ready {
+                break;
+            }
+        }
+
+        visual.cx.read_entity(&view, |this, _| {
+            assert_eq!(this.gallery.active_id(), "mind-map.strategy");
+            assert!(
+                this.last_canvas_bounds.is_some(),
+                "canvas bounds must be known without pointer movement"
+            );
+            assert!(
+                this.last_canvas_scene.is_some(),
+                "node widgets must have a prepared scene without pointer movement"
+            );
+            assert_eq!(
+                this.measurement_coverage.len(),
+                this.store.graph().nodes().len(),
+                "every mind map node should publish layout-pass coverage after frame advancement"
+            );
+            assert!(
+                this.store
+                    .graph()
+                    .nodes()
+                    .keys()
+                    .all(|node_id| this.store.node_measurement_status(*node_id).is_fresh()),
+                "mind map node measurements must be fresh without pointer movement"
+            );
+        });
     }
 
     #[test]
@@ -6090,6 +6193,26 @@ mod tests {
 
         gallery.set_active("shader.material_mix");
         assert_eq!(gallery.active_case().fixture_key(), "shader.material_mix");
+    }
+
+    #[test]
+    fn mind_map_fixture_nodes_all_use_registered_product_renderers() {
+        let case = product_gallery::product_gallery_cases()
+            .into_iter()
+            .find(|case| case.id() == "mind-map.strategy")
+            .expect("mind map gallery case");
+        let (_, document, _) =
+            project_product_gallery_case(&case).expect("mind map fixture projects");
+        let registry = demo_node_renderer_registry();
+        let missing = document
+            .nodes()
+            .filter_map(|node| (!registry.contains(&node.kind)).then(|| node.kind.clone()))
+            .collect::<Vec<_>>();
+
+        assert!(
+            missing.is_empty(),
+            "mind map fixture must not fall back to descriptor rendering for product nodes: {missing:?}"
+        );
     }
 
     #[test]

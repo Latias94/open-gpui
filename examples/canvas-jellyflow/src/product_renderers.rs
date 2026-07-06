@@ -165,6 +165,24 @@ fn topic_card_layout(node_size: CanvasSize) -> TopicCardLayout {
     }
 }
 
+struct IdeaCardLayout {
+    title: ProductLayoutRegion,
+    title_control: ProductLayoutRegion,
+}
+
+fn idea_card_layout(node_size: CanvasSize) -> IdeaCardLayout {
+    let mut layout = product_layout_stack(node_size, 0.0);
+    IdeaCardLayout {
+        title: reserve_product_region(&mut layout, "title", PRODUCT_TITLE_ROW_HEIGHT, 28.0),
+        title_control: reserve_product_region(
+            &mut layout,
+            "title-control",
+            PRODUCT_CONTROL_ROW_HEIGHT,
+            30.0,
+        ),
+    }
+}
+
 struct SourceCardLayout {
     preview: ProductLayoutRegion,
     title_control: ProductLayoutRegion,
@@ -190,11 +208,12 @@ fn source_card_layout(node_size: CanvasSize) -> SourceCardLayout {
     }
 }
 
-const PRODUCT_RENDERERS: [(&str, &str); 5] = [
+const PRODUCT_RENDERERS: [(&str, &str); 6] = [
     ("decision-card", "Dify workflow decision card"),
     ("shader-card", "Shader graph material card"),
     ("table-card", "ERD table editor card"),
     ("topic-card", "Mind-map topic card"),
+    ("idea-card", "Mind-map idea card"),
     ("source-card", "Knowledge source card"),
 ];
 
@@ -236,6 +255,7 @@ fn demo_node_components() -> GpuiNodeComponentTable {
         "topic-card".to_owned(),
         Box::new(render_topic_card_component),
     );
+    renderers.insert("idea-card".to_owned(), Box::new(render_idea_card_component));
     renderers.insert(
         "source-card".to_owned(),
         Box::new(render_source_card_component),
@@ -283,6 +303,13 @@ fn render_topic_card_component(
 ) -> AnyElement {
     debug_assert_eq!(component.props().renderer_key, "topic-card");
     render_topic_card(component)
+}
+
+fn render_idea_card_component(
+    component: &node_component_kit::OpenGpuiNodeComponentContext<'_, GpuiNodeRendererServices>,
+) -> AnyElement {
+    debug_assert_eq!(component.props().renderer_key, "idea-card");
+    render_idea_card(component)
 }
 
 fn render_source_card_component(
@@ -715,6 +742,61 @@ fn render_topic_card(
         .into_any_element()
 }
 
+fn render_idea_card(
+    component: &node_component_kit::OpenGpuiNodeComponentContext<'_, GpuiNodeRendererServices>,
+) -> AnyElement {
+    let context = component.semantic();
+    let collector = component.services().collector.clone();
+    let view = component.services().view.clone();
+    let actions = actions_for_component(component);
+    let title_control = context.control("control.idea.title");
+    let layout = idea_card_layout(context.node_size);
+    let summary = node_component_kit::json_path_label(&context.node_data, &["summary"]);
+
+    node_component_kit::render_product_card(context, rgb(0xa855f7), rgb(0xfaf5ff), view.clone())
+        .child(node_component_kit::render_product_header(
+            context,
+            "Mind map",
+            "idea",
+            rgb(0x9333ea),
+            collector.clone(),
+            view,
+        ))
+        .child(node_component_kit::render_product_panel(
+            context,
+            "header.main",
+            collector.clone(),
+            layout.title.top,
+            layout.title.height,
+            node_component_kit::ProductPanelStyle {
+                background: rgb(0xffffff),
+                title: rgb(0x111827),
+                body: rgb(0x6b21a8),
+                ..Default::default()
+            },
+            context.title.clone(),
+            summary.map(|summary| (summary, 1)),
+        ))
+        .child(node_component_kit::render_product_control_row(
+            context,
+            "header.main",
+            title_control.as_ref(),
+            0,
+            layout.title_control.top,
+            layout.title_control.height,
+            layout.title_control.mode,
+            collector.clone(),
+            &actions,
+        ))
+        .child(node_component_kit::render_product_side_anchor(
+            context,
+            "header.main",
+            collector,
+            ProductNodeAnchorSide::Right,
+        ))
+        .into_any_element()
+}
+
 fn render_source_card(
     component: &node_component_kit::OpenGpuiNodeComponentContext<'_, GpuiNodeRendererServices>,
 ) -> AnyElement {
@@ -980,6 +1062,13 @@ mod tests {
             },
         );
         assert_preferred_size_fits_renderer(
+            "demo.idea",
+            CanvasSize {
+                width: 248.0,
+                height: idea_card_required_height(),
+            },
+        );
+        assert_preferred_size_fits_renderer(
             "demo.source",
             CanvasSize {
                 width: 312.0,
@@ -1020,6 +1109,11 @@ mod tests {
     fn topic_card_required_height() -> f32 {
         let layout = topic_card_layout(layout_probe_size(304.0));
         region_bottom(layout.summary_control) + PRODUCT_CARD_PAD
+    }
+
+    fn idea_card_required_height() -> f32 {
+        let layout = idea_card_layout(layout_probe_size(248.0));
+        region_bottom(layout.title_control) + PRODUCT_CARD_PAD
     }
 
     fn source_card_required_height() -> f32 {
@@ -1165,6 +1259,14 @@ mod tests {
             topic_card_layout(topic_size),
             topic_size.height - PRODUCT_CARD_PAD,
         );
+        let idea_size = CanvasSize {
+            width: 248.0,
+            height: 112.0,
+        };
+        assert_layout_stays_inside(
+            idea_card_layout(idea_size),
+            idea_size.height - PRODUCT_CARD_PAD,
+        );
         let source_size = CanvasSize {
             width: 312.0,
             height: 144.0,
@@ -1205,6 +1307,12 @@ mod tests {
     impl ProductLayoutRegions for TopicCardLayout {
         fn regions(&self) -> Vec<ProductLayoutRegion> {
             vec![self.title, self.title_control, self.summary_control]
+        }
+    }
+
+    impl ProductLayoutRegions for IdeaCardLayout {
+        fn regions(&self) -> Vec<ProductLayoutRegion> {
+            vec![self.title, self.title_control]
         }
     }
 
