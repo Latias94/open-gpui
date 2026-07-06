@@ -1114,7 +1114,14 @@ crate-private, exposes `VirtualizedListBehaviorSnapshot` for diagnostics, owns a
 runtime plus persistent `ScrollHandle`, and keeps row rendering inside its viewport.
 `VirtualizedListState` remains the renderer-neutral keyboard/navigation contract:
 active/selected keys with index diagnostics, page navigation, activation payloads, viewport item
-count, row metrics, overscan, and semantic scroll strategy labels. `VirtualizedListRowMeasureMode`
+count, row metrics, overscan, typeahead target resolution, replacement-style multi-select range
+selection, and semantic scroll strategy labels. The GPUI adapter owns the printable-key typeahead
+buffer, anchor-key lifecycle, and reveal side effects: typeahead moves the active row without
+selecting it, while Shift-range interaction replaces selected keys with the current selectable
+anchor-to-target range. `VirtualizedListBehaviorSnapshot::sticky_section` returns an optional
+`VirtualizedListStickySectionSnapshot` for the section row that owns the first visible selectable
+row. This is diagnostic metadata; it does not add a second interactive section row or change
+layout, focus order, hit testing, selection, or accessibility roles. `VirtualizedListRowMeasureMode`
 keeps fixed rows as the default hot path and exposes measured rows as an explicit opt-in;
 `VirtualizedList::virtualizer_snapshot` seeds measured heights by stable render key, removed keys
 are dropped from emitted snapshots, and missing measurements fall back to the estimated row height

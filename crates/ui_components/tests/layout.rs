@@ -1,13 +1,13 @@
 use open_gpui::{
-    Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Render, ScrollDelta,
-    ScrollWheelEvent, Styled, Window, div, point, px,
+    Context, InteractiveElement, IntoElement, Modifiers, MouseButton, ParentElement, Render,
+    ScrollDelta, ScrollWheelEvent, Styled, Window, div, point, px,
 };
 use open_gpui_ui_components::{
     ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Splitter, SplitterPanel,
     SplitterPanelDescriptor, SplitterState, Tree, TreeChildrenLoadState, TreeDropPosition,
     TreeItemDescriptor, TreeMove, TreeMoveTarget, VirtualizedList, VirtualizedListActivation,
     VirtualizedListItemDescriptor, VirtualizedListRowRenderContext, VirtualizedListScrollStrategy,
-    apply_tree_move, virtualized_list_scroll_target,
+    VirtualizedListSelectionMode, apply_tree_move, virtualized_list_scroll_target,
 };
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, VirtualizerRange, ui_px};
 use std::cell::RefCell;
@@ -822,6 +822,145 @@ fn virtualized_list_runtime_reveals_active_row_and_emits_activation(
     });
 
     assert_eq!(activations.borrow().as_slice(), &[4]);
+}
+
+#[open_gpui::test]
+fn virtualized_list_runtime_typeahead_reveals_without_selection(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        selection_changes: Rc<RefCell<Vec<Vec<String>>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selection_changes = self.selection_changes.clone();
+            let mut items = (0..40)
+                .map(|index| {
+                    VirtualizedListItemDescriptor::new(
+                        format!("item-{index:04}"),
+                        format!("Item {index:04}"),
+                    )
+                })
+                .collect::<Vec<_>>();
+            items[20] = VirtualizedListItemDescriptor::new("item-0020", "Zulu Target");
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(84.0)).child(
+                    VirtualizedList::new("runtime-typeahead-list", "Runtime typeahead list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(3)
+                        .overscan(1)
+                        .selection_mode(VirtualizedListSelectionMode::Multiple)
+                        .on_selection_change(move |selection, _, _| {
+                            selection_changes.borrow_mut().push(
+                                selection
+                                    .selected_keys()
+                                    .into_iter()
+                                    .map(str::to_owned)
+                                    .collect(),
+                            );
+                        }),
+                ),
+            )
+        }
+    }
+
+    let selection_changes = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selection_changes: selection_changes.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let root = cx
+        .debug_bounds("virtualized-list:runtime-typeahead-list:root")
+        .expect("virtualized list root should render");
+    cx.simulate_click(root.center(), Modifiers::none());
+    selection_changes.borrow_mut().clear();
+    cx.simulate_keystrokes("z");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("virtualized-list:runtime-typeahead-list:row:item-0020")
+            .is_some(),
+        "typeahead should reveal the matching row"
+    );
+    assert!(
+        selection_changes.borrow().is_empty(),
+        "typeahead should move active state without selecting"
+    );
+}
+
+#[open_gpui::test]
+fn virtualized_list_runtime_shift_navigation_replaces_range_selection(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        selection_changes: Rc<RefCell<Vec<Vec<String>>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selection_changes = self.selection_changes.clone();
+            let items = (0..8).map(|index| {
+                VirtualizedListItemDescriptor::new(
+                    format!("item-{index:04}"),
+                    format!("Item {index:04}"),
+                )
+            });
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(112.0)).child(
+                    VirtualizedList::new("runtime-range-list", "Runtime range list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(4)
+                        .selection_mode(VirtualizedListSelectionMode::Multiple)
+                        .on_selection_change(move |selection, _, _| {
+                            selection_changes.borrow_mut().push(
+                                selection
+                                    .selected_keys()
+                                    .into_iter()
+                                    .map(str::to_owned)
+                                    .collect(),
+                            );
+                        }),
+                ),
+            )
+        }
+    }
+
+    let selection_changes = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selection_changes: selection_changes.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let row_0 = cx
+        .debug_bounds("virtualized-list:runtime-range-list:row:item-0000")
+        .expect("row 0 should render");
+    cx.simulate_click(row_0.center(), Modifiers::none());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    selection_changes.borrow_mut().clear();
+
+    cx.simulate_keystrokes("shift-down");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        selection_changes.borrow().as_slice(),
+        &[vec!["item-0000".to_owned(), "item-0001".to_owned()]]
+    );
 }
 
 #[open_gpui::test]
