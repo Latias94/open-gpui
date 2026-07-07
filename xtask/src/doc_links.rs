@@ -85,20 +85,17 @@ fn markdown_link_failures(root: &Path, file: &Path, contents: &str) -> Vec<Strin
                 continue;
             }
             let target_path = target_path.trim_matches('<').trim_matches('>');
-            let resolved = file
-                .parent()
-                .unwrap_or(root)
-                .join(target_path)
-                .components()
-                .collect::<PathBuf>();
-            if escapes_root(root, &resolved) {
-                failures.push(format!(
-                    "{}:{}: link `{target}` escapes the repository root",
-                    display_path(root, file),
-                    line_index + 1
-                ));
-                continue;
-            }
+            let resolved = match resolve_markdown_link_target(root, file, target_path) {
+                Ok(resolved) => resolved,
+                Err(()) => {
+                    failures.push(format!(
+                        "{}:{}: link `{target}` escapes the repository root",
+                        display_path(root, file),
+                        line_index + 1
+                    ));
+                    continue;
+                }
+            };
             if !resolved.exists() {
                 failures.push(format!(
                     "{}:{}: link `{target}` resolves to missing path `{}`",
@@ -111,6 +108,43 @@ fn markdown_link_failures(root: &Path, file: &Path, contents: &str) -> Vec<Strin
     }
 
     failures
+}
+
+fn resolve_markdown_link_target(
+    root: &Path,
+    file: &Path,
+    target_path: &str,
+) -> Result<PathBuf, ()> {
+    let source_dir = file.parent().unwrap_or(root);
+    let source_relative = source_dir.strip_prefix(root).map_err(|_| ())?;
+    let mut relative = PathBuf::new();
+
+    for component in source_relative.components() {
+        push_normalized_component(&mut relative, component)?;
+    }
+    for component in Path::new(target_path).components() {
+        push_normalized_component(&mut relative, component)?;
+    }
+
+    Ok(root.join(relative))
+}
+
+fn push_normalized_component(relative: &mut PathBuf, component: Component<'_>) -> Result<(), ()> {
+    match component {
+        Component::Normal(part) => {
+            relative.push(part);
+            Ok(())
+        }
+        Component::CurDir => Ok(()),
+        Component::ParentDir => {
+            if relative.pop() {
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+        Component::RootDir | Component::Prefix(_) => Err(()),
+    }
 }
 
 fn markdown_link_targets(line: &str) -> Vec<String> {
@@ -159,23 +193,6 @@ fn should_skip_target(target: &str) -> bool {
         || target.starts_with("tel:")
 }
 
-fn escapes_root(root: &Path, path: &Path) -> bool {
-    let mut depth = root.components().count();
-    for component in path.components() {
-        match component {
-            Component::ParentDir => {
-                if depth == 0 {
-                    return true;
-                }
-                depth -= 1;
-            }
-            Component::Normal(_) => depth += 1,
-            Component::RootDir | Component::Prefix(_) | Component::CurDir => {}
-        }
-    }
-    !path.starts_with(root)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,5 +213,32 @@ mod tests {
         ));
         assert!(should_skip_target("#local"));
         assert!(!should_skip_target("docs/verification.md"));
+    }
+
+    #[test]
+    fn link_target_resolver_normalizes_parent_dirs_inside_root() {
+        let root = PathBuf::from("repo");
+        let file = root.join("docs/adr/README.md");
+
+        assert_eq!(
+            resolve_markdown_link_target(&root, &file, "../verification.md").unwrap(),
+            root.join("docs/verification.md")
+        );
+    }
+
+    #[test]
+    fn link_target_resolver_rejects_parent_dirs_escaping_root() {
+        let root = PathBuf::from("repo");
+        let file = root.join("docs/adr/README.md");
+
+        assert!(resolve_markdown_link_target(&root, &file, "../../../outside.md").is_err());
+    }
+
+    #[test]
+    fn link_target_resolver_rejects_absolute_targets() {
+        let root = PathBuf::from("repo");
+        let file = root.join("README.md");
+
+        assert!(resolve_markdown_link_target(&root, &file, "/tmp/outside.md").is_err());
     }
 }

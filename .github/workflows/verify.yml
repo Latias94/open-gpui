@@ -46,6 +46,10 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@nextest
 
+      - name: Install cargo-audit
+        if: matrix.name == 'windows'
+        uses: taiki-e/install-action@cargo-audit
+
       - name: Install trunk
         if: matrix.name == 'linux'
         uses: taiki-e/install-action@trunk

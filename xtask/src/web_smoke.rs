@@ -110,18 +110,23 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
     let center_y = number_field(rect, "top")? + number_field(rect, "height")? / 2.0;
 
     cdp.mouse_click(center_x, center_y)?;
-    wait_for_state(cdp, "pointer click delivery", |state| {
-        state.pointer("/probe/clickEvents").and_then(Value::as_u64) == Some(1)
-            && state
-                .pointer("/probe/shellInteractions")
-                .and_then(Value::as_u64)
-                .is_some_and(|count| count >= 1)
-    })?;
+    wait_for_state(
+        cdp,
+        "pointer click delivery and hidden input focus",
+        |state| {
+            state.pointer("/probe/clickEvents").and_then(Value::as_u64) == Some(1)
+                && state.pointer("/input/focused").and_then(Value::as_bool) == Some(true)
+                && state
+                    .pointer("/probe/shellInteractions")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|count| count >= 1)
+        },
+    )?;
 
-    cdp.evaluate("document.querySelector('input')?.focus(); true")?;
     cdp.key_press("s", "KeyS", 83)?;
     let final_state = wait_for_state(cdp, "keyboard delivery", |state| {
         state.pointer("/probe/keyEvents").and_then(Value::as_u64) == Some(1)
+            && state.pointer("/input/focused").and_then(Value::as_bool) == Some(true)
             && state
                 .pointer("/probe/shellInteractions")
                 .and_then(Value::as_u64)

@@ -25,7 +25,6 @@ pub(super) fn render_virtualized_list_body(
     rows: &[VirtualizedListRowRenderPlan],
     total_size: UiPx,
     active_indicator: Option<VirtualizedListActiveIndicatorSnapshot>,
-    sticky_overlay: Option<VirtualizedListStickyOverlaySnapshot>,
     colors: VirtualizedListColors,
     row_measure_mode: VirtualizedListRowMeasureMode,
     estimated_row_height: UiPx,
@@ -78,15 +77,6 @@ pub(super) fn render_virtualized_list_body(
                 indicator, colors, cx,
             ))
         })
-        .when_some(sticky_overlay, |this, overlay| {
-            this.child(render_virtualized_list_sticky_overlay(
-                list_id,
-                overlay,
-                colors,
-                estimated_row_height,
-                cx,
-            ))
-        })
         .into_any_element()
 }
 
@@ -113,7 +103,7 @@ fn render_virtualized_list_active_indicator(
         .into_any_element()
 }
 
-fn render_virtualized_list_sticky_overlay(
+pub(super) fn render_virtualized_list_sticky_overlay(
     list_id: String,
     overlay: VirtualizedListStickyOverlaySnapshot,
     colors: VirtualizedListColors,

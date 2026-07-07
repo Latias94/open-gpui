@@ -46,11 +46,16 @@ Release and public-documentation gates are split into two focused commands:
 
 ```sh
 cargo run -p xtask -- verify-release-docs
-cargo run -p xtask -- verify-release-docs --version 0.2.0 --notes-output target/release/release-notes.md
 cargo run -p xtask -- scan-doc-links
 ```
 
-`verify-release-docs` checks the target changelog section, rejects manually wrapped changelog bullets and paragraphs, validates user-facing README dependency versions, requires crate-local README metadata for public entry crates, and checks `docs/release/breaking-changes.md` against `CHANGELOG.md` release-facing breaking notes. `scan-doc-links` checks strict user-facing relative links in root docs, release docs, verification docs, ADR index, and public crate READMEs. Historical plans and engineering logs are intentionally outside the strict link gate until they are archived or indexed.
+Before publishing a prepared release tag, generate the GitHub Release notes from the target version section:
+
+```sh
+cargo run -p xtask -- verify-release-docs --version <version> --notes-output target/release/release-notes.md
+```
+
+`verify-release-docs` checks the target changelog section, rejects manually wrapped changelog bullets and paragraphs, validates user-facing README dependency versions, and requires crate-local README metadata for public entry crates. Daily verification checks `docs/release/breaking-changes.md` against `CHANGELOG.md` `[Unreleased]`; release-note generation checks the same inventory against the selected version section because that is the text published to GitHub Releases. `scan-doc-links` checks strict user-facing relative links in root docs, release docs, verification docs, ADR index, and public crate READMEs. Historical plans and engineering logs are intentionally outside the strict link gate until they are archived or indexed.
 
 Dependency health is enforced through:
 

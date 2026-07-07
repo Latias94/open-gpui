@@ -82,6 +82,24 @@ jobs:
           echo "Release version: $version"
           echo "Source commit: $source_sha"
 
+      - name: Verify release tag exists on remote
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_tag="${{ steps.release.outputs.tag }}"
+          source_sha="${{ steps.release.outputs.source_sha }}"
+          git fetch --force origin "refs/tags/${release_tag}:refs/tags/${release_tag}"
+          tag_sha="$(git rev-parse "refs/tags/${release_tag}^{commit}")"
+
+          if [ "$tag_sha" != "$source_sha" ]; then
+            echo "::error::Release tag ${release_tag} points at ${tag_sha}, but checked out ${source_sha}."
+            exit 1
+          fi
+
+          echo "Release tag ${release_tag} is present on origin and points at ${source_sha}."
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 

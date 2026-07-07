@@ -80,6 +80,11 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
         home: "virtualized_list/render_plan.rs",
     },
     PublicSurfaceOwnerEntry {
+        name: "VirtualizedListStickyOverlaySnapshot",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        home: "virtualized_list/render_plan.rs",
+    },
+    PublicSurfaceOwnerEntry {
         name: "CommandBehaviorSnapshot",
         owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
         home: "command/render_plan.rs",

@@ -904,7 +904,15 @@ fn virtualized_list_runtime_renders_sticky_overlay_as_inert_presentation(
     let overlay = cx
         .debug_bounds("virtualized-list:runtime-sticky-list:sticky-overlay:archived")
         .expect("sticky overlay should render as a presentation layer");
+    let viewport = cx
+        .debug_bounds("scroll-area:virtualized-list:runtime-sticky-list:viewport")
+        .expect("sticky list viewport should render");
     assert!(overlay.size.height > px(0.0));
+    assert_eq!(
+        overlay.top(),
+        viewport.top(),
+        "sticky overlay should stay pinned to the viewport after scrolling; viewport={viewport:?} overlay={overlay:?}"
+    );
 
     cx.simulate_click(overlay.center(), Modifiers::none());
     cx.update(|window, cx| {

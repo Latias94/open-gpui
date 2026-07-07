@@ -7,6 +7,7 @@ use crate::scroll_surface::{
     vertical_scroll_offset, vertical_viewport_extent,
 };
 use crate::theme::ThemeResolver;
+use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
     AnyElement, App, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
@@ -26,7 +27,7 @@ use super::model::{
     virtualized_list_state_items,
 };
 use super::motion::VirtualizedListActiveIndicatorRuntime;
-use super::render::render_virtualized_list_body;
+use super::render::{render_virtualized_list_body, render_virtualized_list_sticky_overlay};
 use super::render_plan::{
     VirtualizedListBehaviorSnapshot, VirtualizedListRenderPlan, VirtualizedListRowMeasureMode,
     VirtualizedListRowRenderContext,
@@ -508,32 +509,45 @@ impl RenderOnce for VirtualizedList {
                 }
             })
             .child(
-                div().flex_1().min_h(px(0.0)).child(
-                    ScrollArea::new(
-                        scroll_viewport_id,
-                        render_virtualized_list_body(
-                            &list_id,
-                            &rows,
-                            plan.virtualizer().total_size(),
-                            active_indicator,
-                            sticky_overlay,
-                            colors,
-                            row_measure_mode,
-                            estimated_row_height,
-                            row_renderer,
-                            list_state.clone(),
-                            runtime.clone(),
-                            focus_handle,
-                            on_activate,
-                            on_selection_change,
-                            window,
-                            cx,
-                        ),
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_hidden()
+                    .child(
+                        ScrollArea::new(
+                            scroll_viewport_id,
+                            render_virtualized_list_body(
+                                &list_id,
+                                &rows,
+                                plan.virtualizer().total_size(),
+                                active_indicator,
+                                colors,
+                                row_measure_mode,
+                                estimated_row_height,
+                                row_renderer,
+                                list_state.clone(),
+                                runtime.clone(),
+                                focus_handle,
+                                on_activate,
+                                on_selection_change,
+                                window,
+                                cx,
+                            ),
+                        )
+                        .vertical()
+                        .scroll_handle(&scroll_handle)
+                        .with_size(self.size),
                     )
-                    .vertical()
-                    .scroll_handle(&scroll_handle)
-                    .with_size(self.size),
-                ),
+                    .when_some(sticky_overlay, |this, overlay| {
+                        this.child(render_virtualized_list_sticky_overlay(
+                            list_id,
+                            overlay,
+                            colors,
+                            estimated_row_height,
+                            cx,
+                        ))
+                    }),
             )
     }
 }

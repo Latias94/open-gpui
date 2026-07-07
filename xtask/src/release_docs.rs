@@ -58,6 +58,12 @@ struct ReleaseDocsOptions {
     notes_output: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BreakingInventoryCoverage {
+    Unreleased,
+    SelectedRelease,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BreakingChangeRow {
     crate_name: String,
@@ -76,7 +82,8 @@ pub(crate) fn verify_release_docs(root: &Path, args: &[String]) -> Result<(), ()
     };
 
     println!("==> verify release docs for {version}");
-    let mut failures = release_doc_failures(root, &version);
+    let breaking_inventory_coverage = options.breaking_inventory_coverage();
+    let mut failures = release_doc_failures(root, &version, breaking_inventory_coverage);
 
     let changelog_path = root.join("CHANGELOG.md");
     let changelog = read_file(&changelog_path, "CHANGELOG.md", &mut failures);
@@ -125,7 +132,11 @@ pub(crate) fn verify_release_docs(root: &Path, args: &[String]) -> Result<(), ()
     }
 }
 
-fn release_doc_failures(root: &Path, version: &str) -> Vec<String> {
+fn release_doc_failures(
+    root: &Path,
+    version: &str,
+    breaking_inventory_coverage: BreakingInventoryCoverage,
+) -> Vec<String> {
     let mut failures = Vec::new();
     let changelog_path = root.join("CHANGELOG.md");
     let Some(changelog) = read_file(&changelog_path, "CHANGELOG.md", &mut failures) else {
@@ -149,14 +160,32 @@ fn release_doc_failures(root: &Path, version: &str) -> Vec<String> {
         selected_section,
     ));
 
-    if let Some(unreleased) = changelog_section(&changelog, "[Unreleased]") {
+    let unreleased = changelog_section(&changelog, "[Unreleased]");
+    if let Some(unreleased) = unreleased {
         failures.extend(changelog_manual_wrap_failures(
             "CHANGELOG.md [Unreleased]",
             unreleased,
         ));
-        failures.extend(breaking_inventory_failures(root, unreleased));
     } else {
         failures.push("CHANGELOG.md: missing `## [Unreleased]` section".to_string());
+    }
+
+    let (inventory_section_label, inventory_section) = match breaking_inventory_coverage {
+        BreakingInventoryCoverage::SelectedRelease => (selected_label.as_str(), selected_section),
+        BreakingInventoryCoverage::Unreleased => {
+            if let Some(unreleased) = unreleased {
+                ("[Unreleased]", unreleased)
+            } else {
+                ("[Unreleased]", "")
+            }
+        }
+    };
+    if !inventory_section.is_empty() {
+        failures.extend(breaking_inventory_failures(
+            root,
+            inventory_section_label,
+            inventory_section,
+        ));
     }
 
     failures.extend(version_snippet_failures(root, version));
@@ -388,7 +417,11 @@ fn crate_readme_failures(root: &Path) -> Vec<String> {
     failures
 }
 
-fn breaking_inventory_failures(root: &Path, unreleased_changelog: &str) -> Vec<String> {
+fn breaking_inventory_failures(
+    root: &Path,
+    changelog_section_label: &str,
+    changelog_section: &str,
+) -> Vec<String> {
     let mut failures = Vec::new();
     let path = root.join(BREAKING_INVENTORY_PATH);
     let Some(contents) = read_file(&path, BREAKING_INVENTORY_PATH, &mut failures) else {
@@ -398,11 +431,11 @@ fn breaking_inventory_failures(root: &Path, unreleased_changelog: &str) -> Vec<S
     if rows.is_empty() {
         return failures;
     }
-    if !unreleased_changelog.contains("### Breaking Changes and Migration Notes") {
-        failures.push(
-            "CHANGELOG.md [Unreleased]: breaking inventory has rows but the changelog has no breaking-change section"
-                .to_string(),
-        );
+    let changelog_failure_prefix = format!("CHANGELOG.md {changelog_section_label}");
+    if !changelog_section.contains("### Breaking Changes and Migration Notes") {
+        failures.push(format!(
+            "{changelog_failure_prefix}: breaking inventory has rows but the changelog has no breaking-change section"
+        ));
     }
 
     for row in rows {
@@ -423,9 +456,9 @@ fn breaking_inventory_failures(root: &Path, unreleased_changelog: &str) -> Vec<S
         }
 
         if let Some(symbol) = old_path_symbol(&row.old_path) {
-            if !unreleased_changelog.contains(&symbol) {
+            if !changelog_section.contains(&symbol) {
                 failures.push(format!(
-                    "CHANGELOG.md [Unreleased]: breaking-change inventory symbol `{symbol}` is missing from release-facing notes"
+                    "{changelog_failure_prefix}: breaking-change inventory symbol `{symbol}` is missing from release-facing notes"
                 ));
             }
         }
@@ -519,6 +552,14 @@ fn display_path(root: &Path, path: &Path) -> String {
 }
 
 impl ReleaseDocsOptions {
+    fn breaking_inventory_coverage(&self) -> BreakingInventoryCoverage {
+        if self.version.is_some() || self.notes_output.is_some() {
+            BreakingInventoryCoverage::SelectedRelease
+        } else {
+            BreakingInventoryCoverage::Unreleased
+        }
+    }
+
     fn from_args(args: &[String]) -> Result<Self, ()> {
         let mut options = Self::default();
         let mut index = 0;
@@ -597,6 +638,30 @@ mod tests {
         assert_eq!(
             version_snippets(r#"open_gpui = { package = "open-gpui", version = "0.2.0" }"#),
             vec![(1, "0.2.0".to_string())]
+        );
+    }
+
+    #[test]
+    fn explicit_release_options_check_breaking_inventory_against_selected_release() {
+        assert_eq!(
+            ReleaseDocsOptions::default().breaking_inventory_coverage(),
+            BreakingInventoryCoverage::Unreleased
+        );
+        assert_eq!(
+            ReleaseDocsOptions {
+                version: Some("0.3.0".to_string()),
+                notes_output: None,
+            }
+            .breaking_inventory_coverage(),
+            BreakingInventoryCoverage::SelectedRelease
+        );
+        assert_eq!(
+            ReleaseDocsOptions {
+                version: None,
+                notes_output: Some(PathBuf::from("release-notes.md")),
+            }
+            .breaking_inventory_coverage(),
+            BreakingInventoryCoverage::SelectedRelease
         );
     }
 

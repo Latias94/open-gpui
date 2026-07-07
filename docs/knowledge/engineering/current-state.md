@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI post-v0.2.0 stabilization state
 status: active
-timestamp: 2026-07-07T17:15:36+08:00
+timestamp: 2026-07-07T17:52:09+08:00
 git_branch: refactor/post-v020-stabilization
 related_plan:
   - ../../plans/2026-07-07-002-refactor-post-v020-stabilization-plan.md
@@ -18,12 +18,12 @@ verified_by:
 
 # Current State
 
-- Snapshot timestamp: 2026-07-07T17:15:36+08:00.
+- Snapshot timestamp: 2026-07-07T17:52:09+08:00.
 - Goal: finish `docs/plans/2026-07-07-002-refactor-post-v020-stabilization-plan.md` for the next pre-1.0 breaking stabilization release after v0.2.0.
 - Branch: `refactor/post-v020-stabilization`.
-- Last fully verified state: after U8, `cargo run -p xtask -- verify` passed with release docs, doc links, dependency health, theme drift, import boundary, and UI contract scans.
-- Current work: U8 user entry points and engineering memory are locally implemented. `examples/docking-minimal` is the common docking example; `examples/docking-native` remains the viewport-runtime dogfood surface.
-- Next action: commit U8, run final code review, then merge/push when the user accepts the completed branch.
+- Last fully verified state: after final review fixes, `cargo run -p xtask -- verify` passed on `refactor/post-v020-stabilization`.
+- Current work: final review fixes are locally implemented. `examples/docking-minimal` is the common docking example; `examples/docking-native` remains the viewport-runtime dogfood surface.
+- Next action: commit the final review fixes, then merge/push the completed stabilization branch when ready.
 - Blocked: none.
 
 # Integrated Summary
