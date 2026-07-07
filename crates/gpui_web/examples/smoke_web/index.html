@@ -39,7 +39,7 @@
                     };
                 }
                 window.addEventListener("error", event => {
-                    push("error", [event.message || event.error || "window error"]);
+                    push("error", [event.error || event.message || "window error"]);
                 });
                 window.addEventListener("unhandledrejection", event => {
                     push("unhandledrejection", [event.reason || "unhandled rejection"]);
