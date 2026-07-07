@@ -265,8 +265,10 @@ pub use layout::{
 };
 pub use op::DockGraphMutationError;
 pub(crate) use op::{DockGraphDropTarget, DockOp};
-pub use panel::DockPanel;
-pub use panel_catalog::{DockPanelCatalog, DockPanelDescriptor};
+pub use panel::{
+    DockPanel, DockPanelCloseOutcome, DockPanelOpenOutcome, DockPanelOpenPlacementSource,
+};
+pub use panel_catalog::{DockPanelCatalog, DockPanelDescriptor, DockPanelReopenPolicy};
 pub use panel_registry::{DockPanelAttachError, DockPanelRegistration, DockPanelRegistry};
 pub use policy::{DockPolicy, DockPolicyError};
 pub use spatial_navigation::DockSpatialDirection;

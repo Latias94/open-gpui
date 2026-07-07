@@ -513,6 +513,17 @@ impl DockGraph {
         }
     }
 
+    /// Infers the current product-level placement for a dock item.
+    pub fn panel_placement_for_item(
+        &self,
+        space: &DockSpaceId,
+        item: &DockItemId,
+    ) -> Option<DockPanelPlacement> {
+        let (tabs, index) = self.find_item_in_space(space, item)?;
+        let target = panel_placement_target_for_tabs(self, space, tabs, index)?;
+        Some(DockPanelPlacement::new(item.clone(), target))
+    }
+
     /// Builds a common editor-style default layout.
     pub fn default_editor_layout(
         space: impl Into<DockSpaceId>,
@@ -660,6 +671,109 @@ fn build_work_area_node(
             Some(builder.split(SplitAxis::Horizontal, children, fractions))
         }
     }
+}
+
+fn panel_placement_target_for_tabs(
+    graph: &DockGraph,
+    space: &DockSpaceId,
+    tabs: DockNodeId,
+    item_index: usize,
+) -> Option<DockPanelPlacementTarget> {
+    if let Some(target) = stack_target_for_item(graph, tabs, item_index) {
+        return Some(target);
+    }
+
+    rail_target_for_tabs(graph, space, tabs).or_else(|| {
+        (center_tabs(graph, space) == Some(tabs)).then_some(DockPanelPlacementTarget::Center)
+    })
+}
+
+fn stack_target_for_item(
+    graph: &DockGraph,
+    tabs: DockNodeId,
+    item_index: usize,
+) -> Option<DockPanelPlacementTarget> {
+    let Some(DockNode::Tabs { items, .. }) = graph.node(tabs) else {
+        return None;
+    };
+    if items.len() <= 1 {
+        return None;
+    }
+    let anchor_index = if item_index > 0 { item_index - 1 } else { 1 };
+    items
+        .get(anchor_index)
+        .cloned()
+        .map(|anchor| DockPanelPlacementTarget::stacked_with(anchor).insert_index(item_index))
+}
+
+fn rail_target_for_tabs(
+    graph: &DockGraph,
+    space: &DockSpaceId,
+    tabs: DockNodeId,
+) -> Option<DockPanelPlacementTarget> {
+    bottom_target_for_tabs(graph, space, tabs)
+        .or_else(|| horizontal_rail_target_for_tabs(graph, space, tabs))
+}
+
+fn bottom_target_for_tabs(
+    graph: &DockGraph,
+    space: &DockSpaceId,
+    tabs: DockNodeId,
+) -> Option<DockPanelPlacementTarget> {
+    let root = graph.root(space)?;
+    let DockNode::Split {
+        axis,
+        children,
+        fractions,
+    } = graph.node(root)?
+    else {
+        return None;
+    };
+    if *axis != SplitAxis::Vertical || children.len() < 2 {
+        return None;
+    }
+    let bottom_index = children.len() - 1;
+    subtree_contains_node(graph, children[bottom_index], tabs).then(|| {
+        DockPanelPlacementTarget::bottom_rail().fraction(
+            *fractions
+                .get(bottom_index)
+                .unwrap_or(&DEFAULT_BOTTOM_RAIL_FRACTION),
+        )
+    })
+}
+
+fn horizontal_rail_target_for_tabs(
+    graph: &DockGraph,
+    space: &DockSpaceId,
+    tabs: DockNodeId,
+) -> Option<DockPanelPlacementTarget> {
+    let root = graph.root(space)?;
+    let work_area = work_area_root(graph, root);
+    let DockNode::Split {
+        axis,
+        children,
+        fractions,
+    } = graph.node(work_area)?
+    else {
+        return None;
+    };
+    if *axis != SplitAxis::Horizontal || children.len() < 2 {
+        return None;
+    }
+    if subtree_contains_node(graph, children[0], tabs) {
+        return Some(
+            DockPanelPlacementTarget::left_rail()
+                .fraction(*fractions.first().unwrap_or(&DEFAULT_LEFT_RAIL_FRACTION)),
+        );
+    }
+    let right_index = children.len() - 1;
+    subtree_contains_node(graph, children[right_index], tabs).then(|| {
+        DockPanelPlacementTarget::right_rail().fraction(
+            *fractions
+                .get(right_index)
+                .unwrap_or(&DEFAULT_RIGHT_RAIL_FRACTION),
+        )
+    })
 }
 
 fn sanitize_fraction(fraction: f32, fallback: f32) -> f32 {

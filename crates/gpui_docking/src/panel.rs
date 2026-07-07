@@ -1,4 +1,7 @@
-use crate::{DockClassId, DockPanelDescriptor, panel_view::DockPanelViewHandle};
+use crate::{
+    DockActionOutcome, DockClassId, DockItemId, DockPanelDescriptor, DockPanelPlacement,
+    DockPanelPlacementTarget, DockPanelReopenPolicy, DockSpaceId, panel_view::DockPanelViewHandle,
+};
 use open_gpui::{AnyView, App, Entity, Focusable, Render};
 use std::fmt;
 
@@ -16,6 +19,127 @@ pub struct DockPanel {
 pub(crate) struct DockPanelParts {
     pub(crate) descriptor: DockPanelDescriptor,
     pub(crate) view: DockPanelViewHandle,
+}
+
+/// Source of the product placement intent used by a panel open transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockPanelOpenPlacementSource {
+    /// The caller supplied an explicit product placement.
+    Explicit,
+    /// The panel reopened from descriptor-recorded last-known placement.
+    LastKnown,
+    /// The panel reopened from descriptor default placement.
+    DescriptorDefault,
+    /// The panel had no product placement metadata, so center placement was used.
+    ImplicitCenter,
+}
+
+/// Product-level outcome of closing a dock panel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DockPanelCloseOutcome {
+    action: DockActionOutcome,
+    space: DockSpaceId,
+    item: DockItemId,
+    placement: Option<DockPanelPlacement>,
+}
+
+impl DockPanelCloseOutcome {
+    pub(crate) fn new(
+        action: DockActionOutcome,
+        space: DockSpaceId,
+        item: DockItemId,
+        placement: Option<DockPanelPlacement>,
+    ) -> Self {
+        Self {
+            action,
+            space,
+            item,
+            placement,
+        }
+    }
+
+    /// Returns the underlying graph action outcome.
+    pub fn action(&self) -> DockActionOutcome {
+        self.action
+    }
+
+    /// Returns true when the close changed docking state.
+    pub fn changed(&self) -> bool {
+        self.action.changed()
+    }
+
+    /// Returns the logical dock space where the panel was closed.
+    pub fn space(&self) -> &DockSpaceId {
+        &self.space
+    }
+
+    /// Returns the panel item id.
+    pub fn item(&self) -> &DockItemId {
+        &self.item
+    }
+
+    /// Returns the product placement inferred before close, when known.
+    pub fn placement(&self) -> Option<&DockPanelPlacement> {
+        self.placement.as_ref()
+    }
+}
+
+/// Product-level outcome of opening or reopening a dock panel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DockPanelOpenOutcome {
+    action: DockActionOutcome,
+    space: DockSpaceId,
+    item: DockItemId,
+    placement: DockPanelPlacement,
+    placement_source: DockPanelOpenPlacementSource,
+}
+
+impl DockPanelOpenOutcome {
+    pub(crate) fn new(
+        action: DockActionOutcome,
+        space: DockSpaceId,
+        item: DockItemId,
+        placement: DockPanelPlacement,
+        placement_source: DockPanelOpenPlacementSource,
+    ) -> Self {
+        Self {
+            action,
+            space,
+            item,
+            placement,
+            placement_source,
+        }
+    }
+
+    /// Returns the underlying graph action outcome.
+    pub fn action(&self) -> DockActionOutcome {
+        self.action
+    }
+
+    /// Returns true when the open changed docking state.
+    pub fn changed(&self) -> bool {
+        self.action.changed()
+    }
+
+    /// Returns the logical dock space where the panel was opened.
+    pub fn space(&self) -> &DockSpaceId {
+        &self.space
+    }
+
+    /// Returns the panel item id.
+    pub fn item(&self) -> &DockItemId {
+        &self.item
+    }
+
+    /// Returns the product placement intent used by the open transaction.
+    pub fn placement(&self) -> &DockPanelPlacement {
+        &self.placement
+    }
+
+    /// Returns where the product placement intent came from.
+    pub fn placement_source(&self) -> DockPanelOpenPlacementSource {
+        self.placement_source
+    }
 }
 
 impl fmt::Debug for DockPanel {
@@ -88,9 +212,33 @@ impl DockPanel {
         self
     }
 
+    /// Sets whether application metadata marks the panel as dirty.
+    pub fn dirty(mut self, dirty: bool) -> Self {
+        self.descriptor.set_dirty(dirty);
+        self
+    }
+
+    /// Sets the descriptor-level close veto reason.
+    pub fn with_close_veto_reason(mut self, reason: impl Into<String>) -> Self {
+        self.descriptor.set_close_veto_reason(Some(reason.into()));
+        self
+    }
+
     /// Sets the docking compatibility class for this panel.
     pub fn with_dock_class(mut self, dock_class: impl Into<DockClassId>) -> Self {
         self.descriptor.set_dock_class(Some(dock_class.into()));
+        self
+    }
+
+    /// Sets the descriptor-level default product placement.
+    pub fn with_default_placement(mut self, placement: DockPanelPlacementTarget) -> Self {
+        self.descriptor = self.descriptor.with_default_placement(placement);
+        self
+    }
+
+    /// Sets the placement selection policy used by product-level reopen operations.
+    pub fn with_reopen_policy(mut self, policy: DockPanelReopenPolicy) -> Self {
+        self.descriptor = self.descriptor.with_reopen_policy(policy);
         self
     }
 
