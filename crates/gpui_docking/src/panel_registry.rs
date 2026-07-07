@@ -1,5 +1,6 @@
 use crate::{
     DockClassId, DockItemId, DockPanel, DockPanelCatalog, DockPanelDescriptor,
+    DockPanelPlacementTarget,
     panel_view::{DockPanelViewHandle, DockPanelViewStore},
 };
 use open_gpui::{AnyView, App, Window};
@@ -139,6 +140,20 @@ impl DockPanelRegistry {
     /// Returns panel metadata without instantiating or exposing a live view.
     pub fn descriptor(&self, item: &DockItemId) -> Option<&DockPanelDescriptor> {
         self.catalog().descriptor(item)
+    }
+
+    pub(crate) fn descriptor_mut(&mut self, item: &DockItemId) -> Option<&mut DockPanelDescriptor> {
+        self.catalog.descriptor_mut(item)
+    }
+
+    pub(crate) fn record_last_known_placement(
+        &mut self,
+        item: &DockItemId,
+        placement: DockPanelPlacementTarget,
+    ) {
+        if let Some(descriptor) = self.descriptor_mut(item) {
+            descriptor.set_last_known_placement(Some(placement));
+        }
     }
 
     /// Returns true when a dock item has registered GPUI view lifecycle state.

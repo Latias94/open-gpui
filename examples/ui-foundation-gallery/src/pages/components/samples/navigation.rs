@@ -82,6 +82,8 @@ pub struct ToolbarItemSample {
     pub disabled: bool,
     /// Whether the toggle item is pressed.
     pub pressed: bool,
+    /// Optional resolved action metadata used by typed action projection samples.
+    pub action: Option<ResolvedActionState>,
 }
 
 /// One toolbar sample in the gallery.
@@ -113,17 +115,21 @@ impl ToolbarSample {
         }
 
         for item in &self.items {
-            let toolbar_item = match item.kind {
-                ToolbarItemKind::Action => match item.icon {
-                    Some(icon) => ToolbarItem::icon(item.value, icon, item.label),
-                    None => ToolbarItem::action(item.value, item.label),
-                },
-                ToolbarItemKind::Toggle => match item.icon {
-                    Some(icon) => ToolbarItem::toggle_icon(item.value, icon, item.label),
-                    None => ToolbarItem::toggle(item.value, item.label),
+            let toolbar_item = if let Some(action) = item.action.as_ref() {
+                ToolbarItem::from_resolved_action(action)
+            } else {
+                match item.kind {
+                    ToolbarItemKind::Action => match item.icon {
+                        Some(icon) => ToolbarItem::icon(item.value, icon, item.label),
+                        None => ToolbarItem::action(item.value, item.label),
+                    },
+                    ToolbarItemKind::Toggle => match item.icon {
+                        Some(icon) => ToolbarItem::toggle_icon(item.value, icon, item.label),
+                        None => ToolbarItem::toggle(item.value, item.label),
+                    }
+                    .pressed(item.pressed),
+                    ToolbarItemKind::Separator => ToolbarItem::separator(item.value),
                 }
-                .pressed(item.pressed),
-                ToolbarItemKind::Separator => ToolbarItem::separator(item.value),
             }
             .disabled(item.disabled);
             toolbar = toolbar.item(toolbar_item);
@@ -303,6 +309,15 @@ pub fn tabs_samples(tokens: ThemeTokens) -> [TabsSample; 2] {
 
 /// Returns toolbar samples backed by real component state.
 pub fn toolbar_samples(tokens: ThemeTokens) -> [ToolbarSample; 2] {
+    let redo_action = gallery_action(
+        "redo",
+        "Redo",
+        "R",
+        "Ctrl+Shift+Z",
+        Some("Nothing to redo"),
+        Some("Redo last edit"),
+        Some("Reapplies the most recently undone edit"),
+    );
     let editor_items = vec![
         ToolbarItemSample {
             value: "undo",
@@ -311,6 +326,7 @@ pub fn toolbar_samples(tokens: ThemeTokens) -> [ToolbarSample; 2] {
             kind: ToolbarItemKind::Action,
             disabled: false,
             pressed: false,
+            action: None,
         },
         ToolbarItemSample {
             value: "redo",
@@ -319,6 +335,7 @@ pub fn toolbar_samples(tokens: ThemeTokens) -> [ToolbarSample; 2] {
             kind: ToolbarItemKind::Action,
             disabled: true,
             pressed: false,
+            action: Some(redo_action),
         },
         ToolbarItemSample {
             value: "history-separator",
@@ -327,6 +344,7 @@ pub fn toolbar_samples(tokens: ThemeTokens) -> [ToolbarSample; 2] {
             kind: ToolbarItemKind::Separator,
             disabled: true,
             pressed: false,
+            action: None,
         },
         ToolbarItemSample {
             value: "bold",
@@ -335,6 +353,7 @@ pub fn toolbar_samples(tokens: ThemeTokens) -> [ToolbarSample; 2] {
             kind: ToolbarItemKind::Toggle,
             disabled: false,
             pressed: true,
+            action: None,
         },
         ToolbarItemSample {
             value: "italic",
@@ -343,6 +362,7 @@ pub fn toolbar_samples(tokens: ThemeTokens) -> [ToolbarSample; 2] {
             kind: ToolbarItemKind::Toggle,
             disabled: false,
             pressed: false,
+            action: None,
         },
         ToolbarItemSample {
             value: "save",
@@ -351,6 +371,7 @@ pub fn toolbar_samples(tokens: ThemeTokens) -> [ToolbarSample; 2] {
             kind: ToolbarItemKind::Action,
             disabled: false,
             pressed: false,
+            action: None,
         },
     ];
     let inspector_items = vec![
@@ -361,6 +382,7 @@ pub fn toolbar_samples(tokens: ThemeTokens) -> [ToolbarSample; 2] {
             kind: ToolbarItemKind::Toggle,
             disabled: false,
             pressed: true,
+            action: None,
         },
         ToolbarItemSample {
             value: "refresh",
@@ -369,6 +391,7 @@ pub fn toolbar_samples(tokens: ThemeTokens) -> [ToolbarSample; 2] {
             kind: ToolbarItemKind::Action,
             disabled: false,
             pressed: false,
+            action: None,
         },
         ToolbarItemSample {
             value: "inspector-separator",
@@ -377,6 +400,7 @@ pub fn toolbar_samples(tokens: ThemeTokens) -> [ToolbarSample; 2] {
             kind: ToolbarItemKind::Separator,
             disabled: true,
             pressed: false,
+            action: None,
         },
         ToolbarItemSample {
             value: "details",
@@ -385,6 +409,7 @@ pub fn toolbar_samples(tokens: ThemeTokens) -> [ToolbarSample; 2] {
             kind: ToolbarItemKind::Action,
             disabled: false,
             pressed: false,
+            action: None,
         },
     ];
 
@@ -729,7 +754,11 @@ fn toolbar_state(
         Some(focused),
         items.iter().map(|item| {
             let descriptor = match item.kind {
-                ToolbarItemKind::Action => ToolbarItemDescriptor::action(item.value, item.label),
+                ToolbarItemKind::Action => item
+                    .action
+                    .as_ref()
+                    .map(ToolbarItemDescriptor::from_resolved_action)
+                    .unwrap_or_else(|| ToolbarItemDescriptor::action(item.value, item.label)),
                 ToolbarItemKind::Toggle => {
                     ToolbarItemDescriptor::toggle(item.value, item.label).pressed(item.pressed)
                 }
@@ -739,4 +768,33 @@ fn toolbar_state(
         }),
         tokens,
     )
+}
+
+fn gallery_action(
+    value: &'static str,
+    label: &'static str,
+    icon_label: &'static str,
+    shortcut: &'static str,
+    disabled_reason: Option<&'static str>,
+    tooltip: Option<&'static str>,
+    accessibility_description: Option<&'static str>,
+) -> ResolvedActionState {
+    let mut descriptor = ActionDescriptor::new(value, label)
+        .icon(ActionIconDescriptor::new(value).fallback_label(icon_label))
+        .shortcut(shortcut);
+    if let Some(reason) = disabled_reason {
+        descriptor = descriptor.disabled_reason(reason);
+    }
+    if let Some(tooltip) = tooltip {
+        descriptor = descriptor.tooltip(tooltip);
+    }
+    if let Some(description) = accessibility_description {
+        descriptor = descriptor.accessibility_description(description);
+    }
+    descriptor.resolve_with(&|icon: &ActionIconDescriptor| {
+        ResolvedActionIcon::resolved(
+            icon.clone(),
+            icon.fallback_label_ref().unwrap_or_else(|| icon.name()),
+        )
+    })
 }

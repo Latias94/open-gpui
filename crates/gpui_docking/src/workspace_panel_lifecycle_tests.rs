@@ -1,6 +1,7 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockNode, DockPanel, DockPanelAttachError,
-    DockPanelDescriptor, DockPanelRegistry, DockWorkspace, host_test_support::*,
+    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockNode, DockPanel,
+    DockPanelAttachError, DockPanelDescriptor, DockPanelOpenPlacementSource, DockPanelPlacement,
+    DockPanelPlacementTarget, DockPanelRegistry, DockWorkspace, host_test_support::*,
 };
 use open_gpui::{AppContext as _, TestAppContext};
 use std::{cell::Cell, rc::Rc};
@@ -87,7 +88,10 @@ fn workspace_actions_can_use_descriptor_only_panel_metadata(_cx: &mut TestAppCon
     let mut workspace = DockWorkspace::new(space(), graph);
     workspace.register_panel_descriptor(
         item("restored"),
-        DockPanelDescriptor::new("Restored").closable(false),
+        DockPanelDescriptor::new("Restored")
+            .closable(false)
+            .dirty(true)
+            .with_close_veto_reason("unsaved changes"),
     );
 
     let err = workspace
@@ -102,6 +106,12 @@ fn workspace_actions_can_use_descriptor_only_panel_metadata(_cx: &mut TestAppCon
             item: item("restored")
         }
     );
+    let descriptor = workspace
+        .panels()
+        .descriptor(&item("restored"))
+        .expect("descriptor-only metadata should stay readable");
+    assert!(descriptor.is_dirty());
+    assert_eq!(descriptor.close_veto_reason(), Some("unsaved changes"));
 
     workspace.register_panel_descriptor(item("restored"), DockPanelDescriptor::new("Restored"));
     let outcome = workspace
@@ -184,6 +194,157 @@ fn workspace_open_item_transaction_reopens_registered_lazy_panel_without_instant
     };
     assert_eq!(items, &vec![item("a"), item("b")]);
     assert_eq!(selected.as_ref(), items.get(1));
+}
+
+#[test]
+fn workspace_open_item_at_placement_uses_product_target_resolution() {
+    let graph = DockGraph::from_panel_placements(
+        space(),
+        [
+            DockPanelPlacement::center("editor"),
+            DockPanelPlacement::right_rail("inspector"),
+        ],
+    );
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_descriptor(item("terminal"), DockPanelDescriptor::new("Terminal"));
+
+    let outcome = workspace
+        .open_item_at_placement(
+            space(),
+            DockPanelPlacement::stacked_with("terminal", "inspector"),
+        )
+        .expect("registered panel should open beside its placement anchor");
+
+    assert_eq!(outcome, DockActionOutcome::Changed);
+    let graph = workspace.graph();
+    let (terminal_tabs, terminal_index) = graph
+        .find_item_in_space(&space(), &item("terminal"))
+        .expect("terminal should open");
+    let (inspector_tabs, inspector_index) = graph
+        .find_item_in_space(&space(), &item("inspector"))
+        .expect("inspector should remain in the right rail");
+    assert_eq!(terminal_tabs, inspector_tabs);
+    assert_eq!((inspector_index, terminal_index), (0, 1));
+}
+
+#[test]
+fn workspace_close_panel_records_last_product_placement_without_instantiating_view() {
+    let graph = DockGraph::from_panel_placements(
+        space(),
+        [
+            DockPanelPlacement::center("editor"),
+            DockPanelPlacement::bottom_rail("terminal").fraction(0.30),
+        ],
+    );
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_factory("terminal", "Terminal", |_| unreachable!());
+
+    let outcome = workspace
+        .close_panel(space(), item("terminal"))
+        .expect("registered lazy panel should close from descriptor metadata");
+
+    assert_eq!(outcome.action(), DockActionOutcome::Changed);
+    assert_eq!(
+        outcome.placement().map(DockPanelPlacement::target),
+        Some(&DockPanelPlacementTarget::bottom_rail().fraction(0.30))
+    );
+    assert_eq!(
+        workspace
+            .panels()
+            .descriptor(&item("terminal"))
+            .and_then(DockPanelDescriptor::last_known_placement),
+        Some(&DockPanelPlacementTarget::bottom_rail().fraction(0.30))
+    );
+    assert!(
+        workspace.panels().has_view_lifecycle(&item("terminal")),
+        "closing should preserve lazy lifecycle without instantiating the view"
+    );
+}
+
+#[test]
+fn workspace_reopen_panel_prefers_recorded_product_placement() {
+    let graph = DockGraph::from_panel_placements(
+        space(),
+        [
+            DockPanelPlacement::center("editor"),
+            DockPanelPlacement::right_rail("inspector"),
+            DockPanelPlacement::stacked_with("terminal", "inspector"),
+        ],
+    );
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_descriptor(
+        item("terminal"),
+        DockPanelDescriptor::new("Terminal")
+            .with_default_placement(DockPanelPlacementTarget::bottom_rail()),
+    );
+
+    workspace
+        .close_panel(space(), item("terminal"))
+        .expect("terminal should close");
+    let outcome = workspace
+        .reopen_panel(space(), item("terminal"))
+        .expect("terminal should reopen from recorded placement");
+
+    assert_eq!(outcome.action(), DockActionOutcome::Changed);
+    assert_eq!(
+        outcome.placement_source(),
+        DockPanelOpenPlacementSource::LastKnown
+    );
+    let (terminal_tabs, terminal_index) = workspace
+        .graph()
+        .find_item_in_space(&space(), &item("terminal"))
+        .expect("terminal should reopen");
+    let (inspector_tabs, inspector_index) = workspace
+        .graph()
+        .find_item_in_space(&space(), &item("inspector"))
+        .expect("inspector should remain");
+    assert_eq!(terminal_tabs, inspector_tabs);
+    assert_eq!((inspector_index, terminal_index), (0, 1));
+}
+
+#[test]
+fn workspace_reopen_panel_falls_back_to_descriptor_default_when_recorded_target_is_invalid() {
+    let graph = DockGraph::from_panel_placements(
+        space(),
+        [
+            DockPanelPlacement::center("editor"),
+            DockPanelPlacement::left_rail("explorer"),
+            DockPanelPlacement::right_rail("inspector"),
+            DockPanelPlacement::stacked_with("terminal", "inspector"),
+        ],
+    );
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_descriptor(item("inspector"), DockPanelDescriptor::new("Inspector"));
+    workspace.register_panel_descriptor(
+        item("terminal"),
+        DockPanelDescriptor::new("Terminal")
+            .with_default_placement(DockPanelPlacementTarget::left_rail()),
+    );
+
+    workspace
+        .close_panel(space(), item("terminal"))
+        .expect("terminal should close");
+    workspace
+        .close_item(space(), item("inspector"))
+        .expect("closing the recorded anchor should make the last placement invalid");
+    let outcome = workspace
+        .reopen_panel(space(), item("terminal"))
+        .expect("terminal should reopen from descriptor default");
+
+    assert_eq!(outcome.action(), DockActionOutcome::Changed);
+    assert_eq!(
+        outcome.placement_source(),
+        DockPanelOpenPlacementSource::DescriptorDefault
+    );
+    let (terminal_tabs, _) = workspace
+        .graph()
+        .find_item_in_space(&space(), &item("terminal"))
+        .expect("terminal should reopen");
+    let (explorer_tabs, _) = workspace
+        .graph()
+        .find_item_in_space(&space(), &item("explorer"))
+        .expect("default left rail should still exist");
+    assert_eq!(terminal_tabs, explorer_tabs);
 }
 
 #[test]

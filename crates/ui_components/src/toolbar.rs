@@ -13,11 +13,13 @@ use open_gpui::{
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
+use crate::action::{ResolvedActionIcon, ResolvedActionState};
 use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
 use crate::choice::{ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::theme::ThemeResolver;
+use crate::tooltip::Tooltip;
 
 /// Item kind for a toolbar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,9 +48,14 @@ impl ToolbarItemKind {
 pub struct ToolbarItemDescriptor {
     value: String,
     label: String,
+    icon: Option<ResolvedActionIcon>,
     kind: ToolbarItemKind,
     disabled: bool,
+    disabled_reason: Option<String>,
     pressed: bool,
+    shortcut: Option<String>,
+    tooltip: Option<String>,
+    accessibility_description: Option<String>,
 }
 
 impl ToolbarItemDescriptor {
@@ -57,9 +64,14 @@ impl ToolbarItemDescriptor {
         Self {
             value: value.into(),
             label: label.into(),
+            icon: None,
             kind: ToolbarItemKind::Action,
             disabled: false,
+            disabled_reason: None,
             pressed: false,
+            shortcut: None,
+            tooltip: None,
+            accessibility_description: None,
         }
     }
 
@@ -68,10 +80,36 @@ impl ToolbarItemDescriptor {
         Self {
             value: value.into(),
             label: label.into(),
+            icon: None,
             kind: ToolbarItemKind::Toggle,
             disabled: false,
+            disabled_reason: None,
             pressed: false,
+            shortcut: None,
+            tooltip: None,
+            accessibility_description: None,
         }
+    }
+
+    /// Creates an action item descriptor from resolved action metadata.
+    pub fn from_resolved_action(action: &ResolvedActionState) -> Self {
+        let mut item = Self::action(action.value(), action.label()).disabled(action.disabled());
+        if let Some(icon) = action.icon() {
+            item.icon = Some(icon.clone());
+        }
+        if let Some(shortcut) = action.shortcut() {
+            item = item.shortcut(shortcut);
+        }
+        if let Some(reason) = action.disabled_reason() {
+            item = item.disabled_reason(reason);
+        }
+        if let Some(tooltip) = action.tooltip() {
+            item = item.tooltip(tooltip);
+        }
+        if let Some(description) = action.accessibility_description() {
+            item = item.accessibility_description(description);
+        }
+        item
     }
 
     /// Creates a separator descriptor.
@@ -79,9 +117,14 @@ impl ToolbarItemDescriptor {
         Self {
             value: value.into(),
             label: String::new(),
+            icon: None,
             kind: ToolbarItemKind::Separator,
             disabled: true,
+            disabled_reason: None,
             pressed: false,
+            shortcut: None,
+            tooltip: None,
+            accessibility_description: None,
         }
     }
 
@@ -89,6 +132,19 @@ impl ToolbarItemDescriptor {
     pub fn disabled(mut self, disabled: bool) -> Self {
         if self.kind != ToolbarItemKind::Separator {
             self.disabled = disabled;
+            if !disabled {
+                self.disabled_reason = None;
+            }
+        }
+        self
+    }
+
+    /// Marks an action or toggle item as disabled with a user-displayable reason.
+    pub fn disabled_reason(mut self, reason: impl Into<String>) -> Self {
+        let reason = reason.into();
+        if self.kind != ToolbarItemKind::Separator && !reason.is_empty() {
+            self.disabled = true;
+            self.disabled_reason = Some(reason);
         }
         self
     }
@@ -97,6 +153,40 @@ impl ToolbarItemDescriptor {
     pub fn pressed(mut self, pressed: bool) -> Self {
         if self.kind == ToolbarItemKind::Toggle {
             self.pressed = pressed;
+        }
+        self
+    }
+
+    /// Applies app-resolved icon metadata.
+    pub fn icon(mut self, icon: ResolvedActionIcon) -> Self {
+        if self.kind != ToolbarItemKind::Separator {
+            self.icon = Some(icon);
+        }
+        self
+    }
+
+    /// Applies a display shortcut label.
+    pub fn shortcut(mut self, shortcut: impl Into<String>) -> Self {
+        if self.kind != ToolbarItemKind::Separator {
+            self.shortcut = Some(shortcut.into());
+        }
+        self
+    }
+
+    /// Applies user-displayable tooltip metadata.
+    pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        let tooltip = tooltip.into();
+        if self.kind != ToolbarItemKind::Separator && !tooltip.is_empty() {
+            self.tooltip = Some(tooltip);
+        }
+        self
+    }
+
+    /// Applies an accessibility description in addition to the visible label.
+    pub fn accessibility_description(mut self, description: impl Into<String>) -> Self {
+        let description = description.into();
+        if self.kind != ToolbarItemKind::Separator && !description.is_empty() {
+            self.accessibility_description = Some(description);
         }
         self
     }
@@ -111,6 +201,16 @@ impl ToolbarItemDescriptor {
         &self.label
     }
 
+    /// Returns app-resolved icon metadata.
+    pub const fn icon_ref(&self) -> Option<&ResolvedActionIcon> {
+        self.icon.as_ref()
+    }
+
+    /// Returns a concrete render label for the resolved icon.
+    pub fn icon_label(&self) -> Option<&str> {
+        self.icon.as_ref().and_then(ResolvedActionIcon::label)
+    }
+
     /// Returns the item kind.
     pub const fn kind(&self) -> ToolbarItemKind {
         self.kind
@@ -121,9 +221,29 @@ impl ToolbarItemDescriptor {
         self.disabled
     }
 
+    /// Returns the optional disabled reason.
+    pub fn disabled_reason_ref(&self) -> Option<&str> {
+        self.disabled_reason.as_deref()
+    }
+
     /// Returns whether the item is pressed.
     pub const fn pressed_state(&self) -> bool {
         self.pressed
+    }
+
+    /// Returns the display shortcut label.
+    pub fn shortcut_ref(&self) -> Option<&str> {
+        self.shortcut.as_deref()
+    }
+
+    /// Returns user-displayable tooltip metadata.
+    pub fn tooltip_ref(&self) -> Option<&str> {
+        self.tooltip.as_deref()
+    }
+
+    /// Returns the optional accessibility description.
+    pub fn accessibility_description_ref(&self) -> Option<&str> {
+        self.accessibility_description.as_deref()
     }
 
     /// Returns whether the item participates in roving focus.
@@ -196,10 +316,15 @@ pub struct ToolbarItemState {
     index: usize,
     value: String,
     label: String,
+    icon: Option<ResolvedActionIcon>,
     kind: ToolbarItemKind,
     disabled: bool,
+    disabled_reason: Option<String>,
     pressed: bool,
     focused: bool,
+    shortcut: Option<String>,
+    tooltip: Option<String>,
+    accessibility_description: Option<String>,
 }
 
 impl ToolbarItemState {
@@ -218,6 +343,16 @@ impl ToolbarItemState {
         &self.label
     }
 
+    /// Returns app-resolved icon metadata.
+    pub const fn icon(&self) -> Option<&ResolvedActionIcon> {
+        self.icon.as_ref()
+    }
+
+    /// Returns a concrete render label for the resolved icon.
+    pub fn icon_label(&self) -> Option<&str> {
+        self.icon.as_ref().and_then(ResolvedActionIcon::label)
+    }
+
     /// Returns the item kind.
     pub const fn kind(&self) -> ToolbarItemKind {
         self.kind
@@ -228,6 +363,11 @@ impl ToolbarItemState {
         self.disabled
     }
 
+    /// Returns the optional disabled reason.
+    pub fn disabled_reason_ref(&self) -> Option<&str> {
+        self.disabled_reason.as_deref()
+    }
+
     /// Returns whether the item can receive roving focus.
     pub const fn focusable(&self) -> bool {
         !matches!(self.kind, ToolbarItemKind::Separator) && !self.disabled
@@ -236,6 +376,21 @@ impl ToolbarItemState {
     /// Returns whether the item is pressed.
     pub const fn pressed(&self) -> bool {
         self.pressed
+    }
+
+    /// Returns the display shortcut label.
+    pub fn shortcut(&self) -> Option<&str> {
+        self.shortcut.as_deref()
+    }
+
+    /// Returns user-displayable tooltip metadata.
+    pub fn tooltip(&self) -> Option<&str> {
+        self.tooltip.as_deref()
+    }
+
+    /// Returns the optional accessibility description.
+    pub fn accessibility_description(&self) -> Option<&str> {
+        self.accessibility_description.as_deref()
     }
 
     /// Returns whether the item has roving focus.
@@ -361,10 +516,15 @@ impl ToolbarState {
                     index,
                     value: descriptor.value,
                     label: descriptor.label,
+                    icon: descriptor.icon,
                     kind: descriptor.kind,
                     disabled: item_disabled,
+                    disabled_reason: descriptor.disabled_reason,
                     pressed: descriptor.pressed,
                     focused,
+                    shortcut: descriptor.shortcut,
+                    tooltip: descriptor.tooltip,
+                    accessibility_description: descriptor.accessibility_description,
                 }
             })
             .collect();
@@ -526,6 +686,16 @@ impl ToolbarItem {
         }
     }
 
+    /// Creates an action item from resolved action metadata.
+    pub fn from_resolved_action(action: &ResolvedActionState) -> Self {
+        Self {
+            descriptor: ToolbarItemDescriptor::from_resolved_action(action),
+            visible_label: action.icon_label().map(SharedString::from),
+            on_select: None,
+            tooltip: None,
+        }
+    }
+
     /// Creates an icon-only action item with an explicit accessible label.
     pub fn icon(
         value: impl Into<String>,
@@ -581,9 +751,28 @@ impl ToolbarItem {
         self
     }
 
+    /// Marks the toolbar item as disabled with a user-displayable reason.
+    pub fn disabled_reason(mut self, reason: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.disabled_reason(reason);
+        self
+    }
+
+    /// Applies app-resolved icon metadata.
+    pub fn resolved_icon(mut self, icon: ResolvedActionIcon) -> Self {
+        self.visible_label = icon.label().map(SharedString::from);
+        self.descriptor = self.descriptor.icon(icon);
+        self
+    }
+
     /// Marks a toggle item as pressed.
     pub fn pressed(mut self, pressed: bool) -> Self {
         self.descriptor = self.descriptor.pressed(pressed);
+        self
+    }
+
+    /// Applies a display shortcut label.
+    pub fn shortcut(mut self, shortcut: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.shortcut(shortcut);
         self
     }
 
@@ -601,6 +790,18 @@ impl ToolbarItem {
         if self.descriptor.kind() != ToolbarItemKind::Separator {
             self.tooltip = Some(Rc::new(tooltip));
         }
+        self
+    }
+
+    /// Adds a text tooltip to a non-separator toolbar item.
+    pub fn tooltip_text(mut self, tooltip: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.tooltip(tooltip);
+        self
+    }
+
+    /// Applies an accessibility description in addition to the visible label.
+    pub fn accessibility_description(mut self, description: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.accessibility_description(description);
         self
     }
 
@@ -799,8 +1000,12 @@ impl RenderOnce for Toolbar {
                 })
                 .children(state.items().iter().enumerate().map(|(index, item)| {
                     let descriptor = item_descriptors[index].clone();
-                    let visible_label = items[index].visible_label.clone();
+                    let visible_label = items[index]
+                        .visible_label
+                        .clone()
+                        .or_else(|| item.icon_label().map(SharedString::from));
                     let item_tooltip = items[index].tooltip.clone();
+                    let item_tooltip_text = item.tooltip().map(str::to_owned);
                     let click_item_handler = items[index].select_handler();
                     let key_item_handler = click_item_handler.clone();
                     let click_toolbar_handler = on_select.clone();
@@ -816,6 +1021,16 @@ impl RenderOnce for Toolbar {
                     let item_tab_stop = Some(index) == tab_stop_index;
                     let item_pressed = item.pressed();
                     let item_value = item.value().to_owned();
+                    let item_accessibility_description =
+                        item.accessibility_description().map(str::to_owned);
+                    let item_disabled_reason = item.disabled_reason_ref().map(str::to_owned);
+                    let item_aria_label = item_accessibility_description
+                        .as_ref()
+                        .or(item_disabled_reason.as_ref())
+                        .map_or_else(
+                            || descriptor.label().to_owned(),
+                            |description| format!("{}, {description}", descriptor.label()),
+                        );
                     let item_position = if item.focusable() {
                         focusable_position += 1;
                         Some(focusable_position)
@@ -865,7 +1080,7 @@ impl RenderOnce for Toolbar {
                         .focusable()
                         .tab_stop(item_tab_stop)
                         .ui_role(item.role().unwrap_or(Role::Button))
-                        .aria_label(descriptor.label())
+                        .aria_label(item_aria_label)
                         .aria_disabled(item_disabled)
                         .when_some(item_position, |this, position| {
                             this.aria_position_in_set(position)
@@ -978,6 +1193,9 @@ impl RenderOnce for Toolbar {
                         })
                         .when_some(item_tooltip, |this, tooltip| {
                             this.tooltip(move |window, cx| tooltip(window, cx))
+                        })
+                        .when_some(item_tooltip_text, |this, tooltip| {
+                            this.tooltip(Tooltip::text(tooltip))
                         })
                         .child(visible_label.unwrap_or_else(|| descriptor.label().into()))
                         .into_any_element()

@@ -339,7 +339,7 @@ mod tests {
                 ui_px(84.0),
                 UiPx::ZERO,
             ),
-            VirtualizedListRevealResult::NotSelectable("duplicate".to_owned())
+            VirtualizedListRevealResult::DuplicateKey("duplicate".to_owned())
         );
     }
 
@@ -423,12 +423,7 @@ mod tests {
                 ui_px(56.0),
                 UiPx::ZERO,
             ),
-            VirtualizedListRevealResult::Revealed(VirtualizedListRevealTarget::new(
-                "beta",
-                1,
-                ui_px(28.0),
-                false
-            ))
+            VirtualizedListRevealResult::Disabled("beta".to_owned())
         );
         assert_eq!(
             state.scroll_target_for_key(
@@ -503,7 +498,7 @@ mod tests {
                 ui_px(84.0),
                 UiPx::ZERO,
             ),
-            VirtualizedListRevealResult::NotSelectable("retry".to_owned())
+            VirtualizedListRevealResult::StatusRow("retry".to_owned())
         );
     }
 
@@ -654,7 +649,7 @@ mod tests {
                 ui_px(84.0),
                 UiPx::ZERO,
             ),
-            VirtualizedListRevealResult::NotSelectable("recent".to_owned())
+            VirtualizedListRevealResult::StructuralRow("recent".to_owned())
         );
     }
 

@@ -1,9 +1,9 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockGraph,
     DockGraphValidationError, DockItemId, DockLayout, DockLayoutValidationError, DockNodeId,
-    DockPanel, DockPanelAttachError, DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry,
-    DockPolicy, DockSpaceId, DockSplitResize, DockWorkspace, EditorDockLayoutSpec,
-    host::DockHostOptions,
+    DockPanel, DockPanelAttachError, DockPanelCloseOutcome, DockPanelDescriptor,
+    DockPanelOpenOutcome, DockPanelPlacement, DockPanelRegistration, DockPanelRegistry, DockPolicy,
+    DockSpaceId, DockSplitResize, DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
 };
 use open_gpui::{AnyView, Bounds, Pixels};
 
@@ -111,6 +111,15 @@ impl DockController {
         self.workspace.close_item(space, item)
     }
 
+    /// Closes one registered dock panel and returns product-level placement facts.
+    pub fn close_panel(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        item: impl Into<DockItemId>,
+    ) -> Result<DockPanelCloseOutcome, DockActionApplyError> {
+        self.workspace.close_panel(space, item)
+    }
+
     /// Opens one registered dock item into an existing tabs node or empty dock space.
     pub fn open_item(
         &mut self,
@@ -121,6 +130,33 @@ impl DockController {
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.workspace
             .open_item(space, target_tabs, item, insert_index)
+    }
+
+    /// Opens one registered dock item by product-level placement intent.
+    pub fn open_item_at_placement(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        placement: DockPanelPlacement,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.workspace.open_item_at_placement(space, placement)
+    }
+
+    /// Opens one registered dock panel by product-level placement intent.
+    pub fn open_panel_at_placement(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        placement: DockPanelPlacement,
+    ) -> Result<DockPanelOpenOutcome, DockActionApplyError> {
+        self.workspace.open_panel_at_placement(space, placement)
+    }
+
+    /// Reopens one registered dock panel from last-known or descriptor-default placement.
+    pub fn reopen_panel(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        item: impl Into<DockItemId>,
+    ) -> Result<DockPanelOpenOutcome, DockActionApplyError> {
+        self.workspace.reopen_panel(space, item)
     }
 
     /// Floats one item inside a dock space without creating a platform window.
@@ -251,6 +287,15 @@ impl DockControllerBuilder {
     /// Replaces the builder graph with the common editor-style layout.
     pub fn default_editor_layout(mut self, spec: EditorDockLayoutSpec) -> Self {
         self.graph = DockGraph::default_editor_layout(self.space.clone(), spec);
+        self
+    }
+
+    /// Replaces the builder graph with product-level panel placements.
+    pub fn panel_placements(
+        mut self,
+        placements: impl IntoIterator<Item = DockPanelPlacement>,
+    ) -> Self {
+        self.graph = DockGraph::from_panel_placements(self.space.clone(), placements);
         self
     }
 

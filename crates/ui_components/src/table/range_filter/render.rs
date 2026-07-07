@@ -54,10 +54,7 @@ pub(in crate::table::range_filter) fn table_range_filter_content_element(
         .flex_col()
         .gap_2()
         .text_color(theme.resolve(state.popover().colors().foreground()))
-        .on_scroll_wheel(|_, window, cx| {
-            window.prevent_default();
-            cx.stop_propagation();
-        })
+        .on_scroll_wheel(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
         .child(
             div()
                 .flex()

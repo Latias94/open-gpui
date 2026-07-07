@@ -720,7 +720,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "VirtualizedList",
-        controlled_inputs: &[],
+        controlled_inputs: &["scroll_handle", "reveal_key"],
         default_seeds: &[
             DefaultSeedApi {
                 builder: "default_active_key",
@@ -1039,9 +1039,28 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
 /// Returns render/input builder methods that shape the component output.
 pub fn component_render_inputs(component: &str) -> &'static [&'static str] {
     match component {
-        "Button" => &["variant", "disabled", "selected", "tooltip"],
+        "Button" => &[
+            "from_resolved_action",
+            "variant",
+            "disabled",
+            "disabled_reason",
+            "icon_label",
+            "selected",
+            "tooltip",
+            "tooltip_text",
+            "accessibility_description",
+        ],
         "Badge" => &["variant"],
-        "IconButton" => &["variant", "disabled", "selected", "tooltip"],
+        "IconButton" => &[
+            "from_resolved_action",
+            "variant",
+            "disabled",
+            "disabled_reason",
+            "selected",
+            "tooltip",
+            "tooltip_text",
+            "accessibility_description",
+        ],
         "Switch" => &["label", "disabled"],
         "Checkbox" => &[
             "label",
@@ -1274,7 +1293,20 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "state",
         ],
         "Button" => &[
-            "new", "variant", "disabled", "selected", "tokens", "on_click", "tooltip", "state",
+            "new",
+            "from_resolved_action",
+            "variant",
+            "disabled",
+            "disabled_reason",
+            "icon_label",
+            "selected",
+            "tokens",
+            "on_click",
+            "tooltip",
+            "tooltip_text",
+            "accessibility_description",
+            "resolved_action",
+            "state",
         ],
         "Badge" => &["new", "variant", "tokens", "state"],
         "Collapsible" => &[
@@ -1325,13 +1357,18 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
         ],
         "IconButton" => &[
             "new",
+            "from_resolved_action",
             "variant",
             "disabled",
+            "disabled_reason",
             "selected",
             "tokens",
             "on_click",
             "tooltip",
+            "tooltip_text",
+            "accessibility_description",
             "accessible_label",
+            "resolved_action",
             "state",
         ],
         "Slider" => &[
@@ -1792,6 +1829,8 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "row_measure_mode",
             "motion_preference",
             "virtualizer_snapshot",
+            "scroll_handle",
+            "reveal_key",
             "render_row",
             "overscan",
             "on_activate",

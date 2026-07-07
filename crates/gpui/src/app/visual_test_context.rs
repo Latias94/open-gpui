@@ -2,8 +2,9 @@ use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AssetSource, BackgroundExecutor,
     Bounds, ClipboardItem, Context, Entity, EntityId, ForegroundExecutor, Global, InputEvent,
     Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, Point, Render, Result, Size, Task, TestDispatcher, TextSystem, VisualTestPlatform,
-    Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
+    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestInputDispatchSnapshot,
+    TextSystem, VisualTestPlatform, Window, WindowBounds, WindowHandle, WindowOptions,
+    app::GpuiMode,
 };
 use anyhow::anyhow;
 use image::RgbaImage;
@@ -323,11 +324,24 @@ impl VisualTestAppContext {
 
     /// Simulates an input event on the given window.
     pub fn simulate_event<E: InputEvent>(&mut self, window: AnyWindowHandle, event: E) {
+        self.simulate_event_with_dispatch_snapshot(window, event);
+    }
+
+    /// Simulates an input event and returns a stable dispatch summary.
+    pub fn simulate_event_with_dispatch_snapshot<E: InputEvent>(
+        &mut self,
+        window: AnyWindowHandle,
+        event: E,
+    ) -> TestInputDispatchSnapshot {
+        let mut snapshot = TestInputDispatchSnapshot::default();
         self.update_window(window, |_, window, cx| {
-            window.dispatch_event(event.to_platform_input(), cx);
+            snapshot = TestInputDispatchSnapshot::from(
+                window.dispatch_event(event.to_platform_input(), cx),
+            );
         })
         .ok();
         self.run_until_parked();
+        snapshot
     }
 
     /// Dispatches an action to the given window.

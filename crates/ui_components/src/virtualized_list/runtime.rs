@@ -3,15 +3,16 @@ use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::gpui_px_from_ui;
 use crate::scroll_area::ScrollArea;
 use crate::scroll_surface::{
-    ScrollSurfaceRuntime, scroll_surface_handle, set_vertical_scroll_offset,
+    ScrollSurfaceRuntime, scroll_surface_handle, set_vertical_scroll_offset_with_source,
     vertical_scroll_offset, vertical_viewport_extent,
 };
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
     AnyElement, App, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
-    Window, div, px,
+    ParentElement, RenderOnce, ScrollHandle, ScrollViewportChangeSource,
+    ScrollViewportProgrammaticSource, SharedString, StatefulInteractiveElement, Styled, Window,
+    div, px,
 };
 use open_gpui_motion::{MotionFrameHost, MotionPreference, MotionPreset};
 use open_gpui_ui_core::{Sizable, Size, ThemeTokens, UiPx, VirtualizerSnapshot};
@@ -105,6 +106,9 @@ pub struct VirtualizedList {
     row_measure_mode: VirtualizedListRowMeasureMode,
     motion_preference: MotionPreference,
     snapshot: Option<VirtualizerSnapshot>,
+    scroll_handle: Option<ScrollHandle>,
+    reveal_key: Option<String>,
+    reveal_strategy: VirtualizedListScrollStrategy,
     row_renderer: Option<VirtualizedListRowRenderer>,
     on_activate: Option<VirtualizedListActivationHandler>,
     on_selection_change: Option<VirtualizedListSelectionChangeHandler>,
@@ -147,6 +151,9 @@ impl VirtualizedList {
             row_measure_mode: VirtualizedListRowMeasureMode::default(),
             motion_preference: MotionPreference::Animated,
             snapshot: None,
+            scroll_handle: None,
+            reveal_key: None,
+            reveal_strategy: VirtualizedListScrollStrategy::Nearest,
             row_renderer: None,
             on_activate: None,
             on_selection_change: None,
@@ -221,6 +228,26 @@ impl VirtualizedList {
     /// Seeds measured-row virtualizer measurements from a snapshot.
     pub fn virtualizer_snapshot(mut self, snapshot: VirtualizerSnapshot) -> Self {
         self.snapshot = Some(snapshot);
+        self
+    }
+
+    /// Uses an externally owned GPUI scroll handle for the list viewport.
+    ///
+    /// The handle remains outside renderer-neutral state so application shells can observe and
+    /// control final committed viewport facts without weakening row semantics.
+    pub fn scroll_handle(mut self, scroll_handle: &ScrollHandle) -> Self {
+        self.scroll_handle = Some(scroll_handle.clone());
+        self
+    }
+
+    /// Requests a key-based reveal during render using the provided scroll strategy.
+    pub fn reveal_key(
+        mut self,
+        key: impl Into<String>,
+        strategy: VirtualizedListScrollStrategy,
+    ) -> Self {
+        self.reveal_key = Some(key.into());
+        self.reveal_strategy = strategy;
         self
     }
 
@@ -366,7 +393,8 @@ impl RenderOnce for VirtualizedList {
             active_indicator_frame_host: MotionFrameHost::new(),
         });
         let runtime_state = runtime.read(cx).clone();
-        let scroll_handle = scroll_surface_handle(&runtime_state.scroll_surface, None);
+        let scroll_handle =
+            scroll_surface_handle(&runtime_state.scroll_surface, self.scroll_handle.as_ref());
         let focus_handle = runtime_state.focus_handle.clone();
         let viewport_extent = vertical_viewport_extent(&scroll_handle);
         let viewport_item_count = resolve_viewport_item_count(
@@ -402,6 +430,16 @@ impl RenderOnce for VirtualizedList {
             runtime.update(cx, |runtime, _| {
                 runtime.pending_scroll_to_active = None;
             });
+        }
+        if let Some(reveal_key) = self.reveal_key.as_deref() {
+            reveal_virtualized_list_key(
+                &scroll_handle,
+                &state,
+                reveal_key,
+                self.reveal_strategy,
+                plan.row_measure_mode(),
+                plan.virtualizer().snapshot(),
+            );
         }
         let on_activate = self.on_activate.clone();
         let on_selection_change = self.on_selection_change.clone();
@@ -481,10 +519,7 @@ impl RenderOnce for VirtualizedList {
                     }
                 }
             })
-            .on_scroll_wheel(|_, window, cx| {
-                window.prevent_default();
-                cx.stop_propagation();
-            })
+            .on_scroll_wheel(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
             .on_key_down({
                 let runtime = runtime.clone();
                 let scroll_handle = scroll_handle.clone();
@@ -775,14 +810,68 @@ fn scroll_active_key(
         VirtualizedListRevealResult::Revealed(target)
         | VirtualizedListRevealResult::Estimated(target) => target,
         VirtualizedListRevealResult::NotFound(_)
+        | VirtualizedListRevealResult::DuplicateKey(_)
+        | VirtualizedListRevealResult::Disabled(_)
+        | VirtualizedListRevealResult::StatusRow(_)
+        | VirtualizedListRevealResult::StructuralRow(_)
         | VirtualizedListRevealResult::NotSelectable(_) => {
             return;
         }
     };
 
     if target.scroll_offset() != current_scroll_offset {
-        set_vertical_scroll_offset(scroll_handle, target.scroll_offset());
+        set_vertical_scroll_offset_with_source(
+            scroll_handle,
+            target.scroll_offset(),
+            ScrollViewportChangeSource::Programmatic(ScrollViewportProgrammaticSource::Reveal),
+        );
     }
+}
+
+fn reveal_virtualized_list_key(
+    scroll_handle: &ScrollHandle,
+    state: &VirtualizedListState,
+    key: &str,
+    strategy: VirtualizedListScrollStrategy,
+    row_measure_mode: VirtualizedListRowMeasureMode,
+    virtualizer_snapshot: &VirtualizerSnapshot,
+) -> VirtualizedListRevealResult {
+    let viewport_extent = state.viewport_extent();
+    let current_scroll_offset = vertical_scroll_offset(scroll_handle);
+    let result = if row_measure_mode.measured() {
+        state.scroll_target_for_key_with_snapshot(
+            key,
+            strategy,
+            viewport_extent,
+            current_scroll_offset,
+            virtualizer_snapshot,
+        )
+    } else {
+        state.scroll_target_for_key(key, strategy, viewport_extent, current_scroll_offset)
+    };
+
+    match &result {
+        VirtualizedListRevealResult::Revealed(target)
+        | VirtualizedListRevealResult::Estimated(target) => {
+            if target.scroll_offset() != current_scroll_offset {
+                set_vertical_scroll_offset_with_source(
+                    scroll_handle,
+                    target.scroll_offset(),
+                    ScrollViewportChangeSource::Programmatic(
+                        ScrollViewportProgrammaticSource::Reveal,
+                    ),
+                );
+            }
+        }
+        VirtualizedListRevealResult::NotFound(_)
+        | VirtualizedListRevealResult::DuplicateKey(_)
+        | VirtualizedListRevealResult::Disabled(_)
+        | VirtualizedListRevealResult::StatusRow(_)
+        | VirtualizedListRevealResult::StructuralRow(_)
+        | VirtualizedListRevealResult::NotSelectable(_) => {}
+    }
+
+    result
 }
 
 fn resolve_viewport_item_count(row_height: UiPx, viewport_extent: UiPx, fallback: usize) -> usize {

@@ -3,7 +3,7 @@ use open_gpui::{
     Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
 };
 use open_gpui_docking::prelude::{
-    DockController, DockHost, DockViewportRuntimeHandle, EditorDockLayoutSpec,
+    DockController, DockHost, DockPanelPlacement, DockViewportRuntimeHandle,
 };
 use open_gpui_platform::application;
 
@@ -129,10 +129,11 @@ fn terminal_panel(cx: &mut App) -> AnyView {
 
 fn build_controller() -> DockController {
     DockController::builder(SPACE)
-        .default_editor_layout(
-            EditorDockLayoutSpec::new(["explorer"], ["editor"], ["terminal"])
-                .with_fractions(0.24, 0.70),
-        )
+        .panel_placements([
+            DockPanelPlacement::left_rail("explorer").fraction(0.24),
+            DockPanelPlacement::center("editor").selected(),
+            DockPanelPlacement::bottom_rail("terminal").fraction(0.30),
+        ])
         .panel_factory("explorer", "Explorer", explorer_panel)
         .panel_factory("editor", "Editor", editor_panel)
         .panel_factory("terminal", "Terminal", terminal_panel)

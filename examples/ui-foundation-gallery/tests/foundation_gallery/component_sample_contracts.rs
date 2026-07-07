@@ -663,6 +663,17 @@ fn components_page_toolbar_samples_expose_roving_focus_contract() {
     );
     assert_eq!(editor.items()[2].role(), None);
     assert_eq!(editor.items()[3].toggled(), Some(Toggled::True));
+    assert_eq!(editor.items()[1].icon_label(), Some("R"));
+    assert_eq!(editor.items()[1].shortcut(), Some("Ctrl+Shift+Z"));
+    assert_eq!(
+        editor.items()[1].disabled_reason_ref(),
+        Some("Nothing to redo")
+    );
+    assert_eq!(editor.items()[1].tooltip(), Some("Redo last edit"));
+    assert_eq!(
+        editor.items()[1].accessibility_description(),
+        Some("Reapplies the most recently undone edit")
+    );
     assert_eq!(inspector.orientation(), Orientation::Vertical);
     assert_eq!(
         inspector.navigation_target("down").map(|item| item.value()),

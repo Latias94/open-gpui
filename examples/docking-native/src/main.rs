@@ -5,9 +5,9 @@ use open_gpui::{
 };
 use open_gpui_docking::{
     DockController, DockItemId, DockLayout, DockLayoutCentralRegion, DockLayoutSpace, DockPanel,
-    DockPanelDescriptor, DockSpaceId, DockViewportClosePolicy, DockViewportPlacement,
-    DockViewportPlacementLayout, DockViewportRuntimeHandle, DockViewportWindowBounds,
-    EditorDockLayoutSpec,
+    DockPanelDescriptor, DockPanelOpenOutcome, DockPanelPlacement, DockSpaceId,
+    DockViewportClosePolicy, DockViewportPlacement, DockViewportPlacementLayout,
+    DockViewportRuntimeHandle, DockViewportWindowBounds,
     advanced::{
         DockViewportCoordinateSpaceRecord, DockViewportLifecycleRecord,
         DockViewportPlatformCapabilityRecord, DockViewportPlatformFlagCapabilityRecord,
@@ -431,19 +431,12 @@ fn restore_secondary_panels(controller: &mut DockController) -> String {
     } else {
         results.push(open_item_result(
             "preview",
-            controller.open_item(secondary_space.clone(), None, preview.clone(), None),
+            controller.open_panel_at_placement(
+                secondary_space.clone(),
+                DockPanelPlacement::center(preview.clone()).selected(),
+            ),
         ));
     }
-
-    let secondary_tabs = controller
-        .graph()
-        .find_item_in_space(&secondary_space, &preview)
-        .or_else(|| {
-            controller
-                .graph()
-                .find_item_in_space(&secondary_space, &diff)
-        })
-        .map(|(tabs, _)| tabs);
 
     if controller
         .graph()
@@ -456,7 +449,10 @@ fn restore_secondary_panels(controller: &mut DockController) -> String {
     } else {
         results.push(open_item_result(
             "diff",
-            controller.open_item(secondary_space, secondary_tabs, diff, None),
+            controller.open_panel_at_placement(
+                secondary_space,
+                DockPanelPlacement::stacked_with(diff, "preview"),
+            ),
         ));
     }
 
@@ -477,20 +473,7 @@ fn restore_outline_panel(controller: &mut DockController) -> String {
         return "outline is open outside primary".to_string();
     }
 
-    let target_tabs = controller
-        .graph()
-        .find_item_in_space(&main_space, &DockItemId::from("explorer"))
-        .or_else(|| {
-            controller
-                .graph()
-                .find_item_in_space(&main_space, &DockItemId::from("workspace"))
-        })
-        .map(|(tabs, _)| tabs);
-
-    open_item_result(
-        "outline",
-        controller.open_item(main_space, target_tabs, outline, Some(1)),
-    )
+    open_item_result("outline", controller.reopen_panel(main_space, outline))
 }
 
 fn restore_central_note_panel(controller: &mut DockController) -> String {
@@ -509,19 +492,20 @@ fn restore_central_note_panel(controller: &mut DockController) -> String {
 
     open_item_result(
         "central note",
-        controller.open_item(central_space, None, note, None),
+        controller.open_panel_at_placement(central_space, DockPanelPlacement::center(note)),
     )
 }
 
 fn open_item_result(
     label: &str,
-    result: std::result::Result<
-        open_gpui_docking::DockActionOutcome,
-        open_gpui_docking::DockActionApplyError,
-    >,
+    result: std::result::Result<DockPanelOpenOutcome, open_gpui_docking::DockActionApplyError>,
 ) -> String {
     match result {
-        Ok(outcome) => format!("opened {label}: {outcome:?}"),
+        Ok(outcome) => format!(
+            "opened {label}: {:?} via {:?}",
+            outcome.action(),
+            outcome.placement_source()
+        ),
         Err(error) => format!("open {label} failed: {error}"),
     }
 }
@@ -769,14 +753,18 @@ impl Render for DemoPanel {
 
 fn restored_demo_layout() -> DockLayout {
     let mut controller = DockController::builder(SPACE)
-        .default_editor_layout(
-            EditorDockLayoutSpec::new(
-                ["explorer", "outline", "workspace"],
-                ["editor", "preview"],
-                ["terminal", "problems", "runtime"],
-            )
-            .with_fractions(0.24, 0.68),
-        )
+        .panel_placements([
+            DockPanelPlacement::left_rail("explorer")
+                .fraction(0.24)
+                .selected(),
+            DockPanelPlacement::stacked_with("outline", "explorer"),
+            DockPanelPlacement::stacked_with("workspace", "explorer"),
+            DockPanelPlacement::center("editor").selected(),
+            DockPanelPlacement::stacked_with("preview", "editor"),
+            DockPanelPlacement::bottom_rail("terminal").fraction(0.32),
+            DockPanelPlacement::stacked_with("problems", "terminal"),
+            DockPanelPlacement::stacked_with("runtime", "terminal"),
+        ])
         .allow_floating(true)
         .allow_platform_viewports(true)
         .allow_dock_class_in_space(SPACE, PRIMARY_DOCK_CLASS)
@@ -814,19 +802,21 @@ fn restored_demo_layout() -> DockLayout {
     let main_space = DockSpaceId::from(SPACE);
     let preview_item: open_gpui_docking::DockItemId = "preview".into();
     controller
-        .close_item(main_space.clone(), preview_item.clone())
+        .close_panel(main_space.clone(), preview_item.clone())
         .expect("preview panel should close before reopening into secondary space");
     controller
-        .open_item(SECONDARY_SPACE, None, preview_item.clone(), None)
+        .open_panel_at_placement(
+            SECONDARY_SPACE,
+            DockPanelPlacement::center(preview_item.clone()).selected(),
+        )
         .expect("preview panel should reopen into the secondary demo dock space");
     let secondary_space = DockSpaceId::from(SECONDARY_SPACE);
     let diff_item: open_gpui_docking::DockItemId = "diff".into();
-    let (secondary_tabs, _) = controller
-        .graph()
-        .find_item_in_space(&secondary_space, &preview_item)
-        .expect("preview panel should create secondary tabs");
     controller
-        .open_item(secondary_space, Some(secondary_tabs), diff_item, Some(1))
+        .open_panel_at_placement(
+            secondary_space,
+            DockPanelPlacement::stacked_with(diff_item, preview_item.clone()).insert_index(1),
+        )
         .expect("diff panel should join the secondary demo tab stack");
     controller
         .float_item_in_window(
@@ -838,15 +828,18 @@ fn restored_demo_layout() -> DockLayout {
         .expect("problems panel should float inside the demo dock space");
 
     let outline_item: open_gpui_docking::DockItemId = "outline".into();
-    let (outline_tabs, _) = controller
-        .graph()
-        .find_item_in_space(&main_space, &outline_item)
-        .expect("outline panel should be in the restored demo layout");
+    assert!(
+        controller
+            .graph()
+            .find_item_in_space(&main_space, &outline_item)
+            .is_some(),
+        "outline panel should be in the restored demo layout"
+    );
     controller
-        .close_item(main_space.clone(), outline_item.clone())
+        .close_panel(main_space.clone(), outline_item.clone())
         .expect("outline panel should close while its registration remains available");
     controller
-        .open_item(main_space, Some(outline_tabs), outline_item, Some(1))
+        .reopen_panel(main_space, outline_item)
         .expect("outline panel should reopen into its original tab stack");
 
     let mut layout = controller.graph().export_layout();
@@ -906,7 +899,7 @@ fn build_controller() -> DockController {
                         &[
                             "DockHost",
                             "DockController::builder",
-                            "DockGraph::default_editor_layout",
+                            "DockPanelPlacement",
                             "Render for DockHost",
                         ],
                     )
@@ -1215,8 +1208,11 @@ mod tests {
     use open_gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext};
     use open_gpui_docking::{
         DockActionApplyError, DockActionOutcome, DockClassId, DockGraph, DockHost, DockNode,
-        DockNodeId, DockPolicyError, DockViewportCoordinateStatusRecord, DockViewportInputStatus,
-        DockViewportPlatformRequestStatus, DockViewportRouteStatus, DropZone, SplitAxis,
+        DockNodeId, DockPolicyError, DropZone, SplitAxis,
+        advanced::{
+            DockViewportCoordinateStatusRecord, DockViewportInputStatus,
+            DockViewportPlatformRequestStatus, DockViewportRouteStatus,
+        },
     };
 
     fn item(id: &str) -> DockItemId {
@@ -1453,7 +1449,7 @@ mod tests {
 
         assert_eq!(
             restore_secondary_panels(&mut controller),
-            "opened preview: Changed; opened diff: Changed"
+            "opened preview: Changed via Explicit; opened diff: Changed via Explicit"
         );
         let (preview_tabs, preview_index) = controller
             .graph()
@@ -1482,7 +1478,7 @@ mod tests {
 
         assert_eq!(
             restore_outline_panel(&mut controller),
-            "opened outline: Changed"
+            "opened outline: Changed via LastKnown"
         );
         assert!(
             controller
@@ -1522,7 +1518,7 @@ mod tests {
         );
         assert_eq!(
             restore_central_note_panel(&mut controller),
-            "opened central note: Changed"
+            "opened central note: Changed via Explicit"
         );
         assert!(
             controller

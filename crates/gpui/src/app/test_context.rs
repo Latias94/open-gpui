@@ -1,12 +1,12 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, CursorStyle, DrawPhase,
-    Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task,
-    TestDispatcher, TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext,
-    Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
-    platform::RequestFrameOptions, window::ElementArenaScope,
+    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, CursorStyle,
+    DispatchEventResult, DrawPhase, Drawable, Element, Empty, EntityId, EventEmitter,
+    ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform,
+    Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
+    TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
+    app::GpuiMode, platform::RequestFrameOptions, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -14,6 +14,53 @@ use futures::{Stream, StreamExt, channel::oneshot};
 use std::{
     cell::RefCell, future::Future, ops::Deref, path::PathBuf, rc::Rc, sync::Arc, time::Duration,
 };
+
+/// Stable test-facing summary for the most recent simulated platform input dispatch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TestInputDispatchSnapshot {
+    propagated: bool,
+    default_prevented: bool,
+}
+
+impl Default for TestInputDispatchSnapshot {
+    fn default() -> Self {
+        Self {
+            propagated: true,
+            default_prevented: false,
+        }
+    }
+}
+
+impl TestInputDispatchSnapshot {
+    /// Returns whether event propagation was still enabled when dispatch finished.
+    pub const fn propagated(&self) -> bool {
+        self.propagated
+    }
+
+    /// Returns whether default behavior was prevented while dispatching the input.
+    pub const fn default_prevented(&self) -> bool {
+        self.default_prevented
+    }
+
+    /// Returns whether GPUI consumed the platform default behavior for the input.
+    pub const fn default_consumed(&self) -> bool {
+        self.default_prevented
+    }
+
+    /// Returns whether propagation was stopped by an input handler.
+    pub const fn propagation_stopped(&self) -> bool {
+        !self.propagated
+    }
+}
+
+impl From<DispatchEventResult> for TestInputDispatchSnapshot {
+    fn from(value: DispatchEventResult) -> Self {
+        Self {
+            propagated: value.propagate,
+            default_prevented: value.default_prevented,
+        }
+    }
+}
 
 /// A TestAppContext is provided to tests created with `#[open_gpui::test]`, it provides
 /// an implementation of `Context` with additional methods that are useful in tests.
@@ -29,6 +76,7 @@ pub struct TestAppContext {
     text_system: Arc<TextSystem>,
     fn_name: Option<&'static str>,
     on_quit: Rc<RefCell<Vec<Box<dyn FnOnce() + 'static>>>>,
+    last_input_dispatch: Rc<RefCell<Option<TestInputDispatchSnapshot>>>,
     #[doc(hidden)]
     pub app: Rc<AppCell>,
 }
@@ -145,6 +193,7 @@ impl TestAppContext {
             text_system,
             fn_name,
             on_quit: Rc::new(RefCell::new(Vec::default())),
+            last_input_dispatch: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -213,6 +262,25 @@ impl TestAppContext {
     pub fn read<R>(&self, f: impl FnOnce(&App) -> R) -> R {
         let cx = self.app.borrow();
         f(&cx)
+    }
+
+    /// Returns the most recent simulated platform input dispatch summary.
+    pub fn last_input_dispatch(&self) -> Option<TestInputDispatchSnapshot> {
+        *self.last_input_dispatch.borrow()
+    }
+
+    /// Clears the most recent simulated platform input dispatch summary.
+    pub fn clear_last_input_dispatch(&self) {
+        self.last_input_dispatch.replace(None);
+    }
+
+    pub(crate) fn record_input_dispatch(
+        &self,
+        result: DispatchEventResult,
+    ) -> TestInputDispatchSnapshot {
+        let snapshot = TestInputDispatchSnapshot::from(result);
+        self.last_input_dispatch.replace(Some(snapshot));
+        snapshot
     }
 
     /// Adds a new window. The Window will always be backed by a `TestWindow` which
@@ -614,6 +682,77 @@ impl TestAppContext {
             window.dispatch_keystroke(keystroke, cx)
         })
         .unwrap();
+    }
+
+    /// Simulates an input event on the given window and returns the resulting dispatch facts.
+    ///
+    /// This is the stable test-harness path for asserting default input consumption and
+    /// propagation after simulated mouse, wheel, or keyboard input.
+    pub fn simulate_event_result<E: InputEvent>(
+        &mut self,
+        window: AnyWindowHandle,
+        event: E,
+    ) -> DispatchEventResult {
+        let result = self
+            .update_window(window, |_, window, cx| {
+                window.dispatch_event(event.to_platform_input(), cx)
+            })
+            .unwrap();
+        self.record_input_dispatch(result);
+        self.background_executor.run_until_parked();
+        result
+    }
+
+    /// Simulates an input event on the given window.
+    pub fn simulate_event<E: InputEvent>(&mut self, window: AnyWindowHandle, event: E) {
+        self.simulate_event_result(window, event);
+    }
+
+    /// Simulates an input event and returns a stable summary of dispatch side effects.
+    pub fn simulate_event_with_dispatch_snapshot<E: InputEvent>(
+        &mut self,
+        window: AnyWindowHandle,
+        event: E,
+    ) -> TestInputDispatchSnapshot {
+        TestInputDispatchSnapshot::from(self.simulate_event_result(window, event))
+    }
+
+    /// Return the most recent dispatch result recorded by the window.
+    pub fn last_dispatch_event_result(
+        &mut self,
+        window: AnyWindowHandle,
+    ) -> Option<DispatchEventResult> {
+        self.update_window(window, |_, window, _| window.last_dispatch_event_result())
+            .unwrap()
+    }
+
+    /// Returns whether the element with the given debug selector owns focus in the window.
+    pub fn debug_selector_is_focused_in_window(
+        &mut self,
+        window: AnyWindowHandle,
+        selector: &str,
+    ) -> bool {
+        self.update_window(window, |_, window, _| {
+            let Some(focus_id) = window.rendered_frame.debug_focus_handles.get(selector) else {
+                return false;
+            };
+            window.focus == Some(*focus_id)
+        })
+        .unwrap()
+    }
+
+    /// Returns the first debug selector associated with the focused element in the window.
+    pub fn focused_debug_selector_in_window(&mut self, window: AnyWindowHandle) -> Option<String> {
+        self.update_window(window, |_, window, _| {
+            let focused = window.focus?;
+            window
+                .rendered_frame
+                .debug_focus_handles
+                .iter()
+                .filter_map(|(selector, focus_id)| (*focus_id == focused).then(|| selector.clone()))
+                .min()
+        })
+        .unwrap()
     }
 
     /// Returns the `TestWindow` backing the given handle.
@@ -1069,9 +1208,29 @@ impl VisualTestContext {
     /// Simulate an event from the platform, e.g. a ScrollWheelEvent
     /// Make sure you've called [VisualTestContext::draw] first!
     pub fn simulate_event<E: InputEvent>(&mut self, event: E) {
-        self.test_window(self.window)
-            .simulate_input(event.to_platform_input());
+        self.simulate_event_with_dispatch_snapshot(event);
+    }
+
+    /// Simulate an event and return a stable summary of dispatch side effects.
+    ///
+    /// This lets tests assert default-input consumption and propagation without
+    /// inspecting a private render plan or reading the transient window flag directly.
+    pub fn simulate_event_with_dispatch_snapshot<E: InputEvent>(
+        &mut self,
+        event: E,
+    ) -> TestInputDispatchSnapshot {
+        let result = self
+            .cx
+            .test_window(self.window)
+            .simulate_input_result(event.to_platform_input());
+        let snapshot = self.cx.record_input_dispatch(result);
         self.background_executor.run_until_parked();
+        snapshot
+    }
+
+    /// Return the most recent dispatch result recorded by this window.
+    pub fn last_dispatch_event_result(&mut self) -> Option<DispatchEventResult> {
+        self.cx.last_dispatch_event_result(self.window)
     }
 
     /// Simulates the user blurring the window.
@@ -1290,9 +1449,10 @@ impl AnyWindowHandle {
 mod tests {
     use crate::{
         AnyDrag, AppContext as _, Context, CursorStyle, Empty, FocusHandle, InteractiveElement,
-        IntoElement, Modifiers, MouseButton, ParentElement, PathPromptOptions,
-        PlatformHoveredWindow, QuitMode, Render, StatefulInteractiveElement, Styled,
-        TestAppContext, VisualContext, VisualTestContext, Window, canvas, div, point, px, size,
+        IntoElement, Modifiers, MouseButton, MouseDownEvent, ParentElement, PathPromptOptions,
+        PlatformHoveredWindow, QuitMode, Render, ScrollDelta, ScrollWheelEvent,
+        StatefulInteractiveElement, Styled, TestAppContext, TestInputDispatchSnapshot, TouchPhase,
+        VisualContext, VisualTestContext, Window, canvas, div, point, px, size,
     };
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1356,6 +1516,43 @@ mod tests {
                         .child("Second"),
                 )
         }
+    }
+
+    struct InputDispatchProbe;
+
+    impl Render for InputDispatchProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("input-dispatch-probe")
+                .size_full()
+                .capture_scroll_wheel(|_, _, _| {
+                    crate::ScrollWheelIntent::handled().stop_propagation()
+                })
+        }
+    }
+
+    #[open_gpui::test]
+    fn test_input_dispatch_snapshot_records_default_and_propagation(cx: &mut TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| InputDispatchProbe);
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+        cx.clear_last_input_dispatch();
+        assert_eq!(cx.last_input_dispatch(), None);
+
+        let dispatch = cx.simulate_event_with_dispatch_snapshot(ScrollWheelEvent {
+            position: point(px(10.0), px(10.0)),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-24.0))),
+            modifiers: Modifiers::none(),
+            touch_phase: TouchPhase::Moved,
+        });
+
+        assert_eq!(cx.last_input_dispatch(), Some(dispatch));
+        assert!(dispatch.default_prevented());
+        assert!(dispatch.default_consumed());
+        assert!(dispatch.propagation_stopped());
+        assert!(!dispatch.propagated());
     }
 
     #[open_gpui::test]
@@ -1455,6 +1652,36 @@ mod tests {
         assert!(cx.simulate_window_close(window));
         assert!(cx.windows().is_empty());
         assert!(cx.did_quit());
+    }
+
+    #[open_gpui::test]
+    fn test_input_dispatch_snapshot_records_simulated_input(cx: &mut TestAppContext) {
+        let window = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+        })
+        .unwrap();
+
+        cx.clear_last_input_dispatch();
+        let mut visual = VisualTestContext::from_window(window, cx);
+        let snapshot = visual.simulate_event_with_dispatch_snapshot(MouseDownEvent {
+            position: point(px(16.0), px(16.0)),
+            modifiers: Modifiers::none(),
+            button: MouseButton::Left,
+            click_count: 1,
+            first_mouse: false,
+        });
+
+        assert_eq!(snapshot, TestInputDispatchSnapshot::default());
+        assert_eq!(visual.last_input_dispatch(), Some(snapshot));
+        assert_eq!(
+            visual
+                .last_dispatch_event_result()
+                .map(TestInputDispatchSnapshot::from),
+            Some(snapshot)
+        );
     }
 
     #[open_gpui::test]

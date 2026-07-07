@@ -88,10 +88,7 @@ fn render_scroll_area_sample(sample: pages::components::ScrollAreaSample) -> imp
         .border_1()
         .border_color(rgb(0xd6d8ce))
         .bg(rgb(0xffffff))
-        .on_scroll_wheel(|_, window, cx| {
-            window.prevent_default();
-            cx.stop_propagation();
-        })
+        .on_scroll_wheel(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
         .p_3()
         .child(
             div()

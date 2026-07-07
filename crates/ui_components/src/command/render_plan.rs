@@ -46,6 +46,11 @@ impl CommandRowBehaviorSnapshot {
         self.item.label()
     }
 
+    /// Returns a concrete render label for the resolved icon.
+    pub fn icon_label(&self) -> Option<&str> {
+        self.item.icon_label()
+    }
+
     /// Returns optional shortcut label.
     pub fn shortcut(&self) -> Option<&str> {
         self.item.shortcut()
@@ -59,6 +64,11 @@ impl CommandRowBehaviorSnapshot {
     /// Returns the optional disabled reason.
     pub fn disabled_reason_ref(&self) -> Option<&str> {
         self.item.disabled_reason_ref()
+    }
+
+    /// Returns the optional accessibility description.
+    pub fn accessibility_description(&self) -> Option<&str> {
+        self.item.accessibility_description()
     }
 
     /// Returns the render key used by element ids and virtualizer measurements.
@@ -278,6 +288,11 @@ impl CommandRowRenderPlan {
         self.item.label()
     }
 
+    /// Returns a concrete render label for the resolved icon.
+    pub fn icon_label(&self) -> Option<&str> {
+        self.item.icon_label()
+    }
+
     /// Returns optional shortcut label.
     pub fn shortcut(&self) -> Option<&str> {
         self.item.shortcut()
@@ -286,6 +301,11 @@ impl CommandRowRenderPlan {
     /// Returns the optional disabled reason.
     pub fn disabled_reason_ref(&self) -> Option<&str> {
         self.item.disabled_reason_ref()
+    }
+
+    /// Returns the optional accessibility description.
+    pub fn accessibility_description(&self) -> Option<&str> {
+        self.item.accessibility_description()
     }
 
     /// Returns the render key used by element ids and virtualizer measurements.

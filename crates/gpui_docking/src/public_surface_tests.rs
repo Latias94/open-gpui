@@ -112,6 +112,14 @@ fn common_import_paths_compile() {
     let prelude_layout = prelude::DockLayout::new(Vec::new(), Vec::new());
     let root_placement = root::DockViewportPlacementLayout::new(Vec::new());
     let prelude_placement = prelude::DockViewportPlacementLayout::new(Vec::new());
+    let root_panel_placement = root::DockPanelPlacement::center("editor");
+    let prelude_panel_target = prelude::DockPanelPlacementTarget::right_rail();
+    let root_descriptor = root::DockPanelDescriptor::new("Editor")
+        .dirty(true)
+        .with_close_veto_reason("unsaved changes")
+        .with_default_placement(root::DockPanelPlacementTarget::center());
+    let prelude_reopen_policy = prelude::DockPanelReopenPolicy::RestoreLastKnown;
+    let prelude_open_source = prelude::DockPanelOpenPlacementSource::DescriptorDefault;
 
     let _ = (
         root_policy.allows_floating(),
@@ -120,6 +128,13 @@ fn common_import_paths_compile() {
         prelude_layout.layout_version,
         root_placement.placement_version,
         prelude_placement.placement_version,
+        root_panel_placement.item(),
+        prelude_panel_target,
+        root_descriptor.default_placement(),
+        root_descriptor.is_dirty(),
+        root_descriptor.close_veto_reason(),
+        prelude_reopen_policy,
+        prelude_open_source,
     );
 }
 

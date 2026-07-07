@@ -54,6 +54,10 @@ pub struct VirtualizedListSample {
     pub row_measure_mode: VirtualizedListRowMeasureMode,
     /// Optional measured virtualizer restore payload.
     pub snapshot: Option<VirtualizerSnapshot>,
+    /// Optional stable key the rendered sample reveals through a host-owned scroll handle.
+    pub host_reveal_key: Option<&'static str>,
+    /// Reveal strategy used when `host_reveal_key` is present.
+    pub host_reveal_strategy: VirtualizedListScrollStrategy,
     /// Concrete content renderer variant used by this sample.
     pub renderer: VirtualizedListSampleRenderer,
     /// Precomputed state summary used by the gallery page.
@@ -67,6 +71,8 @@ pub enum VirtualizedListSampleRenderer {
     Default,
     /// Uses a custom compact metadata renderer.
     CompactMetadata,
+    /// Renders a nested row action while preserving outer row ownership.
+    NestedAction,
 }
 
 /// Precomputed state summary for a virtualized list sample.
@@ -149,8 +155,18 @@ impl VirtualizedListSample {
         }
         list = list.selection_mode(self.state.selection_mode());
 
-        if self.renderer == VirtualizedListSampleRenderer::CompactMetadata {
-            list = list.render_row(|context, _, _| render_compact_virtualized_list_row(context));
+        match self.renderer {
+            VirtualizedListSampleRenderer::Default => {}
+            VirtualizedListSampleRenderer::CompactMetadata => {
+                list =
+                    list.render_row(|context, _, _| render_compact_virtualized_list_row(context));
+            }
+            VirtualizedListSampleRenderer::NestedAction => {
+                let sample_id = self.id.to_owned();
+                list = list.render_row(move |context, _, _| {
+                    render_nested_action_virtualized_list_row(sample_id.clone(), context)
+                });
+            }
         }
 
         list
@@ -205,6 +221,7 @@ fn build_virtualized_list_samples() -> Vec<VirtualizedListSample> {
         primary_options_sample(),
         section_status_sample(),
         custom_renderer_sample(),
+        host_controlled_actions_sample(),
         measured_notes_sample(),
     ]
     .into_iter()
@@ -266,6 +283,8 @@ fn release_navigation_sample() -> VirtualizedListSample {
         tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Fixed,
         snapshot: None,
+        host_reveal_key: None,
+        host_reveal_strategy: VirtualizedListScrollStrategy::Nearest,
         renderer: VirtualizedListSampleRenderer::Default,
         state_summary: VirtualizedListSampleStateSummary::default(),
     }
@@ -314,6 +333,8 @@ fn primary_options_sample() -> VirtualizedListSample {
         tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Fixed,
         snapshot: None,
+        host_reveal_key: None,
+        host_reveal_strategy: VirtualizedListScrollStrategy::Nearest,
         renderer: VirtualizedListSampleRenderer::Default,
         state_summary: VirtualizedListSampleStateSummary::default(),
     }
@@ -374,6 +395,8 @@ fn section_status_sample() -> VirtualizedListSample {
         tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Fixed,
         snapshot: None,
+        host_reveal_key: None,
+        host_reveal_strategy: VirtualizedListScrollStrategy::Nearest,
         renderer: VirtualizedListSampleRenderer::Default,
         state_summary: VirtualizedListSampleStateSummary::default(),
     }
@@ -432,7 +455,62 @@ fn custom_renderer_sample() -> VirtualizedListSample {
         tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Fixed,
         snapshot: None,
+        host_reveal_key: None,
+        host_reveal_strategy: VirtualizedListScrollStrategy::Nearest,
         renderer: VirtualizedListSampleRenderer::CompactMetadata,
+        state_summary: VirtualizedListSampleStateSummary::default(),
+    }
+}
+
+fn host_controlled_actions_sample() -> VirtualizedListSample {
+    let size = Size::Small;
+    let row_height = ui_px(32.0);
+    let overscan = 2;
+    let items = shared_virtualized_items(
+        (0..48)
+            .map(|index| {
+                VirtualizedListItemDescriptor::new(
+                    format!("host-action-{index:04}"),
+                    format!("Action item {index:04}"),
+                )
+                .secondary_text("Host-owned reveal plus nested row action")
+                .badge("action")
+                .status("ready")
+            })
+            .collect(),
+    );
+    let state = VirtualizedListState::resolve(
+        size,
+        false,
+        items.iter().map(|item| item.state_item()),
+        Some("host-action-0000"),
+        ["host-action-0000"],
+        VirtualizedListSelectionMode::Single,
+        Some(6),
+    )
+    .with_metrics(
+        VirtualizedListMetrics::from_size(size)
+            .with_row_height(row_height)
+            .with_overscan_count(overscan),
+    );
+
+    VirtualizedListSample {
+        id: "host-controlled-actions",
+        title: "Host controlled actions",
+        summary: "A host-owned scroll handle reveals a stable key while nested buttons stay inside row actions.",
+        badge: "host",
+        items,
+        state,
+        size,
+        viewport_extent: ui_px(192.0),
+        row_height,
+        overscan,
+        tokens: ThemeTokens::default(),
+        row_measure_mode: VirtualizedListRowMeasureMode::Fixed,
+        snapshot: None,
+        host_reveal_key: Some("host-action-0010"),
+        host_reveal_strategy: VirtualizedListScrollStrategy::Top,
+        renderer: VirtualizedListSampleRenderer::NestedAction,
         state_summary: VirtualizedListSampleStateSummary::default(),
     }
 }
@@ -502,6 +580,8 @@ fn measured_notes_sample() -> VirtualizedListSample {
         tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Measured,
         snapshot: Some(snapshot),
+        host_reveal_key: None,
+        host_reveal_strategy: VirtualizedListScrollStrategy::Nearest,
         renderer: VirtualizedListSampleRenderer::Default,
         state_summary: VirtualizedListSampleStateSummary::default(),
     }
@@ -623,6 +703,79 @@ fn render_compact_virtualized_list_row(
                 .text_xs()
                 .text_color(rgb(0x667085))
                 .child(state_label.to_owned()),
+        )
+}
+
+fn render_nested_action_virtualized_list_row(
+    sample_id: String,
+    context: VirtualizedListRowRenderContext,
+) -> impl open_gpui::IntoElement {
+    let key = context.key().to_owned();
+    let label = context.label().to_owned();
+    let secondary = context.secondary_text().map(str::to_owned);
+    let action_sample_id = sample_id.clone();
+    let action_key = key.clone();
+    let wrapper_sample_id = action_sample_id.clone();
+    let wrapper_key = action_key.clone();
+    let selector_sample_id = sample_id.clone();
+    let selector_key = key.clone();
+    let action_hit_id = format!("component-virtualized-list:{sample_id}:row-action-hit:{key}");
+
+    div()
+        .w_full()
+        .min_w(open_gpui::px(0.0))
+        .px(open_gpui::px(10.0))
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .child(
+            div()
+                .min_w(open_gpui::px(0.0))
+                .flex()
+                .flex_1()
+                .flex_col()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(open_gpui::FontWeight::MEDIUM)
+                        .child(label),
+                )
+                .when_some(secondary, |this, secondary| {
+                    this.child(div().text_xs().text_color(rgb(0x667085)).child(secondary))
+                }),
+        )
+        .child(
+            div()
+                .id(action_hit_id)
+                .flex_none()
+                .debug_selector(move || {
+                    format!(
+                        "virtualized-list:component-virtualized-list:{selector_sample_id}:row-action:{selector_key}"
+                    )
+                })
+                .on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    record_virtualized_list_nested_action(
+                        wrapper_sample_id.clone(),
+                        wrapper_key.clone(),
+                        cx,
+                    );
+                })
+                .child(
+                    Button::new(
+                        format!("component-virtualized-list:{sample_id}:row-action-button:{key}"),
+                        "Open",
+                    )
+                    .with_size(Size::Small)
+                    .on_click(move |_, _, cx| {
+                        record_virtualized_list_nested_action(
+                            action_sample_id.clone(),
+                            action_key.clone(),
+                            cx,
+                        );
+                    }),
+                ),
         )
 }
 

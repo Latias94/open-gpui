@@ -11,9 +11,11 @@ use open_gpui::{
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
 
 use crate::a11y::UiA11yElementExt;
+use crate::action::ResolvedActionState;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::theme::ThemeResolver;
+use crate::tooltip::Tooltip;
 
 /// Visual intent for a [`Button`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -214,11 +216,16 @@ impl ButtonState {
 pub struct Button {
     id: ElementId,
     label: SharedString,
+    icon: Option<SharedString>,
     variant: ButtonVariant,
     size: Size,
     disabled: bool,
+    disabled_reason: Option<SharedString>,
     selected: bool,
     tokens: ThemeTokens,
+    tooltip_text: Option<SharedString>,
+    accessibility_description: Option<SharedString>,
+    resolved_action: Option<ResolvedActionState>,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
     tooltip: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
 }
@@ -229,11 +236,36 @@ impl Button {
         Self {
             id: id.into(),
             label: label.into(),
+            icon: None,
             variant: ButtonVariant::Default,
             size: Size::Medium,
             disabled: false,
+            disabled_reason: None,
             selected: false,
             tokens: ThemeTokens::default(),
+            tooltip_text: None,
+            accessibility_description: None,
+            resolved_action: None,
+            on_click: None,
+            tooltip: None,
+        }
+    }
+
+    /// Creates a button from resolved action metadata.
+    pub fn from_resolved_action(id: impl Into<ElementId>, action: &ResolvedActionState) -> Self {
+        Self {
+            id: id.into(),
+            label: action.label().into(),
+            icon: action.icon_label().map(SharedString::from),
+            variant: ButtonVariant::Default,
+            size: Size::Medium,
+            disabled: action.disabled(),
+            disabled_reason: action.disabled_reason().map(SharedString::from),
+            selected: false,
+            tokens: ThemeTokens::default(),
+            tooltip_text: action.tooltip().map(SharedString::from),
+            accessibility_description: action.accessibility_description().map(SharedString::from),
+            resolved_action: Some(action.clone()),
             on_click: None,
             tooltip: None,
         }
@@ -248,6 +280,25 @@ impl Button {
     /// Marks the button as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        if !disabled {
+            self.disabled_reason = None;
+        }
+        self
+    }
+
+    /// Marks the button as disabled with a user-displayable reason.
+    pub fn disabled_reason(mut self, reason: impl Into<SharedString>) -> Self {
+        let reason = reason.into();
+        if !reason.is_empty() {
+            self.disabled = true;
+            self.disabled_reason = Some(reason);
+        }
+        self
+    }
+
+    /// Applies an icon label resolved by the app.
+    pub fn icon_label(mut self, icon: impl Into<SharedString>) -> Self {
+        self.icon = Some(icon.into());
         self
     }
 
@@ -278,6 +329,23 @@ impl Button {
         self
     }
 
+    /// Adds a hover/focus text tooltip to the button.
+    pub fn tooltip_text(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip_text = Some(tooltip.into());
+        self
+    }
+
+    /// Applies an accessibility description in addition to the visible label.
+    pub fn accessibility_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.accessibility_description = Some(description.into());
+        self
+    }
+
+    /// Returns resolved action metadata used to create this button, if any.
+    pub const fn resolved_action(&self) -> Option<&ResolvedActionState> {
+        self.resolved_action.as_ref()
+    }
+
     /// Returns the resolved button state.
     pub fn state(&self) -> ButtonState {
         ButtonState::resolve(
@@ -300,6 +368,10 @@ impl Sizable for Button {
 impl RenderOnce for Button {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let label = self.label.clone();
+        let icon = self.icon.clone();
+        let disabled_reason = self.disabled_reason.clone();
+        let accessibility_description = self.accessibility_description.clone();
+        let tooltip_text = self.tooltip_text.clone();
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -312,6 +384,14 @@ impl RenderOnce for Button {
         let foreground = theme.resolve(colors.foreground());
         let hover_background = theme.resolve(colors.hover_background());
         let focus_shadow = focus_ring_shadow_with_theme(focus_ring, theme);
+
+        let aria_label = accessibility_description
+            .as_ref()
+            .or(disabled_reason.as_ref())
+            .map_or_else(
+                || label.clone(),
+                |description| format!("{label}, {description}").into(),
+            );
 
         div()
             .id(self.id)
@@ -332,8 +412,9 @@ impl RenderOnce for Button {
             .focusable()
             .tab_stop(!disabled)
             .ui_role(state.role())
-            .aria_label(label.clone())
+            .aria_label(aria_label)
             .aria_selected(state.selected())
+            .aria_disabled(disabled)
             .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| {
@@ -349,6 +430,10 @@ impl RenderOnce for Button {
             .when_some(self.tooltip, |this, tooltip| {
                 this.tooltip(move |window, cx| tooltip(window, cx))
             })
+            .when_some(tooltip_text, |this, tooltip| {
+                this.tooltip(Tooltip::text(tooltip))
+            })
+            .when_some(icon, |this, icon| this.child(icon))
             .child(label)
     }
 }

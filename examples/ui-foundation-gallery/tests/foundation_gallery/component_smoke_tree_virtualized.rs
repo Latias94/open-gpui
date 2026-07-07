@@ -585,3 +585,72 @@ fn components_gallery_smoke_virtualized_list_keyboard_reveals_and_activates(
         "expected Space to activate the same active row after Enter"
     );
 }
+
+#[open_gpui::test]
+fn components_gallery_smoke_virtualized_list_host_reveal_and_nested_action(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE: &str = "gallery:component-virtualized-list-sample:host-controlled-actions";
+    const ROOT: &str = "virtualized-list:component-virtualized-list:host-controlled-actions:root";
+    const REVEALED_ROW: &str =
+        "virtualized-list:component-virtualized-list:host-controlled-actions:row:host-action-0010";
+    const ROW_ACTION: &str = "virtualized-list:component-virtualized-list:host-controlled-actions:row-action:host-action-0010";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::VirtualizedListSampleRuntimeLog::default());
+
+    jump_components_directory_to(cx, "gallery:component-page-jump:virtualized-list");
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    redraw(cx);
+    redraw(cx);
+
+    assert!(
+        cx.debug_bounds(REVEALED_ROW).is_some(),
+        "expected host-controlled reveal to mount row host-action-0010"
+    );
+    scroll_page_selector_into_view(&shell, cx, ROW_ACTION);
+    redraw(cx);
+
+    click(cx, ROOT);
+    redraw(cx);
+    assert!(
+        cx.debug_selector_is_focused(ROOT),
+        "expected clicking the host-controlled sample root to focus the list"
+    );
+    cx.update_global::<pages::components::VirtualizedListSampleRuntimeLog, _>(|log, _| {
+        log.clear();
+    });
+
+    let row_action = bounds(cx, ROW_ACTION);
+    let row_action_point = visible_page_interaction_point(cx, ROW_ACTION);
+    cx.simulate_mouse_move(row_action_point, None, Default::default());
+    redraw(cx);
+    click_point(cx, row_action_point);
+    redraw(cx);
+    let (nested_actions, activations) = cx
+        .read_global::<pages::components::VirtualizedListSampleRuntimeLog, _>(|log, _| {
+            (
+                log.nested_actions()
+                    .iter()
+                    .map(|action| (action.sample_id.clone(), action.key.clone()))
+                    .collect::<Vec<_>>(),
+                log.activations()
+                    .iter()
+                    .map(|activation| (activation.sample_id.clone(), activation.key.clone()))
+                    .collect::<Vec<_>>(),
+            )
+        });
+
+    assert_eq!(
+        nested_actions,
+        vec![(
+            "host-controlled-actions".to_owned(),
+            "host-action-0010".to_owned()
+        )],
+        "expected nested Button click to record the row action; row_action={row_action:?}"
+    );
+    assert!(
+        activations.is_empty(),
+        "nested Button click should not activate the containing VirtualizedList row; activations={activations:?}"
+    );
+}

@@ -74,18 +74,18 @@ paths used by the docking tests.
 
 ```rust
 use open_gpui::{AnyView, App};
-use open_gpui_docking::prelude::{DockController, EditorDockLayoutSpec};
+use open_gpui_docking::prelude::{DockController, DockPanelPlacement};
 
 fn panel_factory(_cx: &mut App) -> AnyView {
     unreachable!("create and return a GPUI view for the panel")
 }
 
 let controller = DockController::builder("main")
-    .default_editor_layout(EditorDockLayoutSpec::new(
-        ["explorer"],
-        ["editor"],
-        ["terminal"],
-    ))
+    .panel_placements([
+        DockPanelPlacement::left_rail("explorer").fraction(0.24),
+        DockPanelPlacement::center("editor").selected(),
+        DockPanelPlacement::bottom_rail("terminal").fraction(0.30),
+    ])
     .panel_factory("explorer", "Explorer", panel_factory)
     .panel_factory("editor", "Editor", panel_factory)
     .panel_factory("terminal", "Terminal", panel_factory)
@@ -95,6 +95,27 @@ let controller = DockController::builder("main")
 
 let _ = controller;
 ```
+
+Use `DockPanelPlacement::stacked_with(item, anchor)` to add tabs beside another panel without
+depending on generated node ids. If an anchor may be missing during restore, attach a fallback such
+as `.fallback(DockPanelPlacementTarget::right_rail())`.
+
+## Product Panel Placement
+
+Product code should describe where a panel belongs with `DockPanelPlacement` and
+`DockPanelPlacementTarget`, not by storing generated graph node ids. The builder accepts
+`panel_placements` for the initial layout, and panel descriptors may carry a default target through
+`DockPanelDescriptor::with_default_placement`.
+
+Close and reopen flows preserve placement as product facts. `DockPanelDescriptor::last_known_placement`
+records the most recent close/open target, and `DockPanelOpenOutcome::placement_source` tells callers
+whether a reopen used an explicit placement, last-known placement, descriptor default, or implicit
+center fallback. This keeps lazy panel restore descriptor-driven without mounting views early.
+
+Product commands should call `DockController::open_panel_at_placement` for explicit destinations
+and `DockController::reopen_panel` for descriptor-backed restore. Graph-targeted operations remain
+available for advanced layout tools, but normal application restore flows should not persist tab or
+split node ids.
 
 Only call `allow_platform_viewports(true)` when the application intends to use platform-window
 docking routes and is prepared for unsupported runtime capability results on web or compositor

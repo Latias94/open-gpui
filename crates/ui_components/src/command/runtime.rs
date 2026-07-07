@@ -267,10 +267,7 @@ pub(super) fn command_content_element(
         .when(dialog_state.is_none(), |this| {
             this.ui_role(state.content_role())
         })
-        .on_scroll_wheel(|_, window, cx| {
-            window.prevent_default();
-            cx.stop_propagation();
-        })
+        .on_scroll_wheel(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
         .aria_label(label.clone())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             let key = command_key_down_event_key(event);
@@ -416,9 +413,8 @@ pub(super) fn command_content_element(
                 .flex_1()
                 .min_h(px(0.0))
                 .overflow_hidden()
-                .on_scroll_wheel(|_, window, cx| {
-                    window.prevent_default();
-                    cx.stop_propagation();
+                .on_scroll_wheel(|_, _, _| {
+                    open_gpui::ScrollWheelIntent::handled().stop_propagation()
                 })
                 .child(
                     ScrollArea::new(
@@ -810,8 +806,10 @@ fn render_command_result_row(
     let option_value = row.value().to_owned();
     let render_key = row.render_key().to_owned();
     let label = row.label().to_owned();
+    let icon_label = row.icon_label().map(str::to_owned);
     let shortcut = row.shortcut().map(str::to_owned);
     let disabled_reason = row.disabled_reason_ref().map(str::to_owned);
+    let accessibility_description = row.accessibility_description().map(str::to_owned);
     let selection = CommandSelection::from_item(row.item());
     let disabled = row.disabled();
     let selected = row.selected();
@@ -832,9 +830,13 @@ fn render_command_result_row(
     });
     let row_hover_background = theme.resolve(command_row_hover_background(colors));
     let shortcut_foreground = theme.resolve(colors.shortcut_foreground());
-    let option_aria_label = disabled_reason
+    let option_aria_label = accessibility_description
         .as_ref()
-        .map_or_else(|| label.clone(), |reason| format!("{label}, {reason}"));
+        .or(disabled_reason.as_ref())
+        .map_or_else(
+            || label.clone(),
+            |description| format!("{label}, {description}"),
+        );
 
     div()
         .id(format!("command-row:{render_key}"))
@@ -919,7 +921,19 @@ fn render_command_result_row(
                             );
                         })
                 })
-                .child(div().min_w(px(0.0)).flex_1().truncate().child(label))
+                .child(
+                    div()
+                        .min_w(px(0.0))
+                        .flex()
+                        .flex_1()
+                        .items_center()
+                        .gap_2()
+                        .truncate()
+                        .when_some(icon_label, |this, icon_label| {
+                            this.child(div().flex_none().child(icon_label))
+                        })
+                        .child(label),
+                )
                 .when_some(shortcut, |this, shortcut| {
                     this.child(
                         div()

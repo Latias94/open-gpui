@@ -3,11 +3,11 @@ use open_gpui::{
     ScrollDelta, ScrollWheelEvent, Styled, Window, div, point, px,
 };
 use open_gpui_ui_components::{
-    ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Splitter, SplitterPanel,
-    SplitterPanelDescriptor, SplitterState, Tree, TreeChildrenLoadState, TreeDropPosition,
-    TreeItemDescriptor, TreeMove, TreeMoveTarget, VirtualizedList, VirtualizedListActivation,
-    VirtualizedListItemDescriptor, VirtualizedListRowRenderContext, VirtualizedListScrollStrategy,
-    VirtualizedListSelectionMode, apply_tree_move,
+    Button, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Splitter,
+    SplitterPanel, SplitterPanelDescriptor, SplitterState, Tree, TreeChildrenLoadState,
+    TreeDropPosition, TreeItemDescriptor, TreeMove, TreeMoveTarget, VirtualizedList,
+    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRowRenderContext,
+    VirtualizedListScrollStrategy, VirtualizedListSelectionMode, apply_tree_move,
 };
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, VirtualizerRange, ui_px};
 use std::cell::RefCell;
@@ -843,6 +843,128 @@ fn virtualized_list_runtime_reveals_active_row_and_emits_activation(
     });
 
     assert_eq!(activations.borrow().as_slice(), &[4]);
+}
+
+#[open_gpui::test]
+fn virtualized_list_runtime_uses_host_scroll_handle_for_controlled_reveal(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        scroll_handle: open_gpui::ScrollHandle,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let items = (0..100).map(|index| {
+                VirtualizedListItemDescriptor::new(
+                    format!("item-{index:04}"),
+                    format!("Item {index:04}"),
+                )
+            });
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(112.0)).child(
+                    VirtualizedList::new("host-scroll-list", "Host scroll list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(4)
+                        .overscan(0)
+                        .scroll_handle(&self.scroll_handle)
+                        .reveal_key("item-0010", VirtualizedListScrollStrategy::Top),
+                ),
+            )
+        }
+    }
+
+    let scroll_handle = open_gpui::ScrollHandle::new();
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        scroll_handle: scroll_handle.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(scroll_handle.offset().y, px(-280.0));
+}
+
+#[open_gpui::test]
+fn virtualized_list_runtime_nested_action_click_does_not_activate_row(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        activations: Rc<RefCell<Vec<String>>>,
+        nested_actions: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let activations = self.activations.clone();
+            let nested_actions = self.nested_actions.clone();
+            let items = [VirtualizedListItemDescriptor::new("alpha", "Alpha")];
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(56.0)).child(
+                    VirtualizedList::new("nested-action-list", "Nested action list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(2)
+                        .render_row(move |context, _, _| {
+                            let key = context.key().to_owned();
+                            let action_key = key.clone();
+                            let selector_key = key.clone();
+                            let nested_actions = nested_actions.clone();
+
+                            div()
+                                .w_full()
+                                .debug_selector(move || {
+                                    format!(
+                                        "virtualized-list:nested-action-list:row-action:{selector_key}"
+                                    )
+                                })
+                                .child(
+                                    Button::new(format!("nested-action-button-{key}"), "Open")
+                                        .with_size(Size::Small)
+                                        .on_click(move |_, _, _| {
+                                            nested_actions.borrow_mut().push(action_key.clone());
+                                        }),
+                                )
+                        })
+                        .on_activate(move |activation, _, _| {
+                            activations
+                                .borrow_mut()
+                                .push(activation.key().to_owned());
+                        }),
+                ),
+            )
+        }
+    }
+
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let nested_actions = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        activations: activations.clone(),
+        nested_actions: nested_actions.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let row_action = cx
+        .debug_bounds("virtualized-list:nested-action-list:row-action:alpha")
+        .expect("nested row action should render inside the item row");
+    cx.simulate_click(row_action.center(), Modifiers::none());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(nested_actions.borrow().as_slice(), &["alpha".to_owned()]);
+    assert!(
+        activations.borrow().is_empty(),
+        "nested action clicks should not bubble into row activation"
+    );
 }
 
 #[open_gpui::test]

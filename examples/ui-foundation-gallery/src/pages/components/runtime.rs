@@ -38,6 +38,7 @@ pub use tree::{
     current_tree_sample_items, record_tree_move, record_tree_selection, record_tree_toggle,
 };
 pub use virtualized_list::{
-    VirtualizedListSampleActivation, VirtualizedListSampleRuntimeLog,
-    record_virtualized_list_activation,
+    VirtualizedListSampleActivation, VirtualizedListSampleNestedAction,
+    VirtualizedListSampleRuntimeLog, record_virtualized_list_activation,
+    record_virtualized_list_nested_action,
 };

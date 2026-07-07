@@ -28,8 +28,8 @@ use crate::{
     AnyWindowHandle, App, AppCell, AppContext, AsyncApp, BackgroundExecutor, BorrowAppContext,
     Bounds, ClipboardItem, Context, Entity, ForegroundExecutor, Global, InputEvent, Keystroke,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform,
-    PlatformTextSystem, Point, Render, Size, Task, TestDispatcher, TestPlatform, TextSystem,
-    Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
+    PlatformTextSystem, Point, Render, Size, Task, TestDispatcher, TestInputDispatchSnapshot,
+    TestPlatform, TextSystem, Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
 };
 use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 
@@ -456,16 +456,25 @@ impl<V: 'static + Render> TestAppWindow<V> {
 
     /// Simulate an input event.
     pub fn simulate_event<E: InputEvent>(&mut self, event: E) {
+        self.simulate_event_with_dispatch_snapshot(event);
+    }
+
+    /// Simulate an input event and return a stable dispatch summary.
+    pub fn simulate_event_with_dispatch_snapshot<E: InputEvent>(
+        &mut self,
+        event: E,
+    ) -> TestInputDispatchSnapshot {
         let platform_input = event.to_platform_input();
-        {
+        let snapshot = {
             let mut app = self.app.borrow_mut();
             let any_handle: AnyWindowHandle = self.handle.into();
             app.update_window(any_handle, |_, window, cx| {
-                window.dispatch_event(platform_input, cx);
+                TestInputDispatchSnapshot::from(window.dispatch_event(platform_input, cx))
             })
-            .unwrap();
-        }
+            .unwrap()
+        };
         self.background_executor.run_until_parked();
+        snapshot
     }
 
     /// Simulate resizing the window.

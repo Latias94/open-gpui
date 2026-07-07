@@ -54,6 +54,23 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_command = root::Command::new("command", "Commands")
         .item(root::CommandItem::new("open", "Open"))
         .status_item(root::CommandStatusItem::warning("Shortcut diagnostics"));
+    let root_action = root::ActionDescriptor::new("workspace.open", "Open Workspace")
+        .icon(root::ActionIconDescriptor::new("missing-workspace").fallback_label("O"))
+        .resolve_with(&|icon: &root::ActionIconDescriptor| {
+            root::ResolvedActionIcon::missing(icon.clone(), "icon asset is not registered")
+        });
+    let root_action_icon_diagnostic: root::ActionIconDiagnostic =
+        root_action.diagnostics()[0].clone();
+    assert_eq!(root_action_icon_diagnostic.icon_name(), "missing-workspace");
+    assert!(root_action.has_diagnostics());
+    let prelude_action = prelude::ActionDescriptor::new("workspace.save", "Save Workspace")
+        .icon(prelude::ActionIconDescriptor::new("workspace-save").fallback_label("S"))
+        .resolve_with(&|icon: &prelude::ActionIconDescriptor| {
+            prelude::ResolvedActionIcon::resolved(icon.clone(), "S")
+        });
+    let prelude_action_icon: prelude::ResolvedActionIcon =
+        prelude_action.icon().expect("resolved icon").clone();
+    assert_eq!(prelude_action_icon.label(), Some("S"));
     let root_command_navigation = root::CommandNavigationBehavior::new()
         .with_loop_navigation(false)
         .with_group_navigation(true);
