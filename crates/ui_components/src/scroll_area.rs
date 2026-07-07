@@ -320,3 +320,104 @@ impl RenderOnce for ScrollArea {
             .child(self.content)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, rc::Rc};
+
+    use open_gpui::{
+        AppContext as _, Context, InputEvent, MouseMoveEvent, Render, ScrollDelta,
+        ScrollViewportChangeSource, ScrollWheelEvent, TestAppContext, TouchPhase, div, point, px,
+    };
+
+    use super::*;
+
+    struct ScrollAreaViewportProbe {
+        scroll_handle: ScrollHandle,
+        events: Rc<RefCell<Vec<(ScrollViewportChangeSource, u64, f32)>>>,
+    }
+
+    impl Render for ScrollAreaViewportProbe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let events = self.events.clone();
+
+            div().w(px(100.)).h(px(100.)).child(
+                ScrollArea::new("scroll-area-viewport-probe", div().w(px(100.)).h(px(300.)))
+                    .scroll_handle(&self.scroll_handle)
+                    .on_scroll_viewport_changed(move |event, _, _| {
+                        events.borrow_mut().push((
+                            event.source(),
+                            event.generation(),
+                            event.offset().y.as_f32(),
+                        ));
+                    }),
+            )
+        }
+    }
+
+    #[test]
+    fn scroll_area_forwards_committed_viewport_changes() {
+        let mut test_app = TestAppContext::single();
+        let scroll_handle = ScrollHandle::new();
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let window = test_app.add_window({
+            let scroll_handle = scroll_handle.clone();
+            let events = events.clone();
+            move |_, _| ScrollAreaViewportProbe {
+                scroll_handle: scroll_handle.clone(),
+                events: events.clone(),
+            }
+        });
+        let any_window = window.into();
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear();
+            })
+            .unwrap();
+        events.borrow_mut().clear();
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(10.), px(10.)),
+                        modifiers: Default::default(),
+                        pressed_button: None,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.dispatch_event(
+                    ScrollWheelEvent {
+                        position: point(px(10.), px(10.)),
+                        delta: ScrollDelta::Pixels(point(px(0.), px(-24.))),
+                        modifiers: Default::default(),
+                        touch_phase: TouchPhase::Moved,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+        assert_eq!(scroll_handle.offset().y, px(-24.));
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear();
+            })
+            .unwrap();
+
+        assert!(
+            events
+                .borrow()
+                .iter()
+                .any(|(source, generation, offset_y)| {
+                    *source == ScrollViewportChangeSource::Wheel
+                        && *generation == 2
+                        && *offset_y == -24.0
+                }),
+            "ScrollArea should forward the committed viewport after a default wheel scroll"
+        );
+    }
+}
