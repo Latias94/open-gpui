@@ -16,7 +16,9 @@ use open_gpui_motion::{
     MotionProjection, MotionProjectionClip, MotionSnapshot, MotionSpec, motion_source_rect,
     preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
 };
-use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::time::Duration;
+use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockTransitionExecution {
@@ -60,7 +62,6 @@ pub(crate) struct DockTransitionSample {
     pub(crate) progress: f32,
     pub(crate) complete: bool,
     pub(crate) frame_demand: MotionFrameDemand,
-    pub(crate) needs_frame: bool,
     pub(crate) pane_bounds: Vec<DockPaneBoundsSample>,
     pub(crate) pane_clips: Vec<DockPaneClipSample>,
     pub(crate) dividers: Vec<DockDividerSample>,
@@ -231,7 +232,6 @@ fn sample_execution(
         progress,
         complete,
         frame_demand,
-        needs_frame: frame_demand.needs_frame(),
         pane_bounds: pane_bounds_samples(&execution.plan, progress),
         pane_clips: execution
             .plan
@@ -605,7 +605,7 @@ mod tests {
             start.frame_demand,
             MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender)
         );
-        assert!(start.needs_frame);
+        assert!(start.frame_demand.needs_frame());
         assert!(!start.complete);
 
         let midpoint = executor
@@ -615,14 +615,14 @@ mod tests {
             midpoint.frame_demand,
             MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender)
         );
-        assert!(midpoint.needs_frame);
+        assert!(midpoint.frame_demand.needs_frame());
         assert!(!midpoint.complete);
 
         let terminal = executor
             .sample_for_test(Duration::from_millis(250))
             .expect("scheduled transition should expose one terminal sample");
         assert_eq!(terminal.frame_demand, MotionFrameDemand::Idle);
-        assert!(!terminal.needs_frame);
+        assert!(!terminal.frame_demand.needs_frame());
         assert!(terminal.complete);
         assert!(
             executor
@@ -650,7 +650,7 @@ mod tests {
             .sample_for_test(Duration::ZERO)
             .expect("immediate transition should expose one final sample");
         assert_eq!(sample.frame_demand, MotionFrameDemand::Idle);
-        assert!(!sample.needs_frame);
+        assert!(!sample.frame_demand.needs_frame());
         assert!(sample.complete);
         assert_eq!(sample.progress, 1.0);
         assert!(

@@ -25,7 +25,9 @@ pub use controller::{
     MotionScalarControllerSample, MotionScalarExecution, MotionScalarExecutionSample,
     MotionScalarTrack, MotionScalarTrackSample,
 };
-pub use frame_host::{MotionFrameHost, MotionFrameHostSample, MotionFrameHostUpdate};
+pub use frame_host::{
+    MotionFrameHost, MotionFrameHostResetReason, MotionFrameHostSample, MotionFrameHostUpdate,
+};
 pub use geometry::{
     MotionEdges, MotionPoint, MotionPx, MotionRect, MotionSize, motion_edges, motion_point,
     motion_px, motion_rect, motion_size,

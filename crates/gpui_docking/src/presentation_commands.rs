@@ -3,7 +3,7 @@ use crate::{
     presentation_scene::DockPresentationScene,
     spatial_navigation::{self, DockSpatialDirection},
     transition_executor::{DockTransitionExecutionState, DockTransitionSample},
-    transition_geometry::{DockMotionPreference, DockTransitionPlan},
+    transition_geometry::DockTransitionPlan,
 };
 use open_gpui::{Context, Window};
 use open_gpui_motion::{MotionModel, MotionPreset, MotionSpec};
@@ -12,10 +12,11 @@ impl DockHost {
     /// Presents one pane as a zoomed full-host pane without mutating the dock graph.
     pub fn zoom_pane(&mut self, target: DockNodeId, cx: &mut Context<Self>) -> bool {
         if let Some(previous) = self.last_presentation_scene().cloned() {
+            let preference = self.motion_preference(cx);
             return self.zoom_pane_with_scene(
                 target,
                 previous,
-                MotionPreset::continuity(DockMotionPreference::Animated).resolve_model(),
+                MotionPreset::continuity(preference).resolve_model(),
                 None,
                 cx,
             );
@@ -63,10 +64,11 @@ impl DockHost {
                 &self.render_session(cx),
                 previous.bounds,
             );
+            let preference = self.motion_preference(cx);
             return self.unzoom_with_scene(
                 previous,
                 final_scene,
-                MotionPreset::continuity(DockMotionPreference::Animated).resolve_model(),
+                MotionPreset::continuity(preference).resolve_model(),
                 None,
                 cx,
             );

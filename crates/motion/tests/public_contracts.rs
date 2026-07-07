@@ -1,9 +1,10 @@
 use open_gpui_motion::{
     MotionClockSample, MotionDuration, MotionEasing, MotionExecutionPlan, MotionFrameDemand,
-    MotionFrameHost, MotionFrameReason, MotionModel, MotionPolicyContext, MotionPolicyInput,
-    MotionPreference, MotionProgressExecution, MotionProjection, MotionProjectionClip,
-    MotionRunState, MotionScalarController, MotionScalarExecution, MotionSequence,
-    MotionSequenceStepState, MotionSpec, motion_point, motion_px, motion_rect, motion_size,
+    MotionFrameHost, MotionFrameHostResetReason, MotionFrameReason, MotionModel,
+    MotionPolicyContext, MotionPolicyInput, MotionPreference, MotionProgressExecution,
+    MotionProjection, MotionProjectionClip, MotionRunState, MotionScalarController,
+    MotionScalarExecution, MotionSequence, MotionSequenceStepState, MotionSpec, motion_point,
+    motion_px, motion_rect, motion_size,
 };
 use std::time::{Duration, Instant};
 
@@ -124,6 +125,34 @@ fn frame_host_is_a_public_adapter_contract() {
     assert_eq!(second.frame_demand(), active);
     assert_eq!(second.update().requested_frames(), 1);
     assert_eq!(frame_host.last_frame_demand(), active);
+}
+
+#[test]
+fn frame_host_reset_starts_a_new_adapter_epoch() {
+    let active = MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender);
+    let mut frame_host = MotionFrameHost::new();
+
+    let active_sample =
+        frame_host.sample_elapsed(Duration::from_millis(90), |clock| (clock.elapsed(), active));
+    assert!(active_sample.should_request_frame());
+    assert_eq!(frame_host.last_elapsed(), Duration::from_millis(90));
+    assert_eq!(frame_host.requested_frames(), 1);
+
+    frame_host.reset(MotionFrameHostResetReason::Retarget);
+
+    assert_eq!(frame_host.last_elapsed(), Duration::ZERO);
+    assert_eq!(frame_host.last_frame_demand(), MotionFrameDemand::Idle);
+    assert_eq!(frame_host.requested_frames(), 0);
+    assert_eq!(
+        frame_host.last_reset_reason(),
+        Some(MotionFrameHostResetReason::Retarget)
+    );
+
+    let new_epoch =
+        frame_host.sample_elapsed(Duration::from_millis(10), |clock| (clock.elapsed(), active));
+    assert_eq!(*new_epoch.value(), Duration::from_millis(10));
+    assert_eq!(new_epoch.clock().delta(), Duration::from_millis(10));
+    assert!(!new_epoch.clock().clamped());
 }
 
 #[test]

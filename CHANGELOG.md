@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Breaking Changes and Migration Notes
 
 - `open-gpui-docking` now keeps diagnostics and transition internals out of the crate root and `prelude`; import `open_gpui_docking::advanced::...` for `DockTransitionPlan`, `DockTransitionExecutionState`, `DockViewportRuntimeStatus`, runtime status record types, `DockVisualAffordanceDebugSummary`, `DockVisualAffordanceDebugLayer`, and `DockViewportTearOffCancelReason`.
+- `open-gpui-motion` now requires `MotionFrameHost::reset(MotionFrameHostResetReason::...)` so adapters document why they start a new local motion epoch; replace bare `reset()` calls with the matching retarget, cancel, finish, prune-terminal, or motion-identity reason.
+- `open-gpui-docking` adds the required `DockHostOptions::motion_preference` field for host-owned reduced-motion policy; struct literals must set it explicitly or use `DockHostOptions::default()`.
 
 ## [0.2.0] - 2026-07-07
 

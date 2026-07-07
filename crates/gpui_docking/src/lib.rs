@@ -268,7 +268,6 @@ pub use panel_catalog::{DockPanelCatalog, DockPanelDescriptor};
 pub use panel_registry::{DockPanelAttachError, DockPanelRegistration, DockPanelRegistry};
 pub use policy::{DockPolicy, DockPolicyError};
 pub use spatial_navigation::DockSpatialDirection;
-pub(crate) use transition_executor::DockTransitionExecutionState;
 pub(crate) use viewport::*;
 #[cfg(test)]
 pub(crate) use viewport_activation::DockViewportWindowActivation;

@@ -20,7 +20,8 @@ runtime.
 - `MotionFrameDemand::combine` and `MotionFrameDemand::combine_all` for aggregating many motion
   sources into one adapter frame request.
 - `MotionFrameHost` for keeping adapter-owned frame request decisions consistent without depending
-  on a GPUI window, browser scheduler, or renderer.
+  on a GPUI window, browser scheduler, or renderer, including explicit reset reasons when an
+  adapter starts a new local motion epoch.
 - Neutral logical-pixel geometry plus projection, reveal, and clip helpers for final-size content.
 
 Adapters keep authority over rendering, input, focus, accessibility, and frame scheduling. A
@@ -112,10 +113,7 @@ let spec = MotionSpec::committed_layout(MotionPreference::Reduced);
 assert!(spec.is_immediate());
 ```
 
-Lifecycle ordering is intentionally small: start or retarget creates active sampled state, each
-sample returns a frame demand, `cancel` freezes the sampled value and goes idle without reaching the
-semantic final state, `finish` publishes the target value as completed, reduced motion publishes
-the final state immediately, and adapters may prune terminal tracks after observing idle demand.
+Lifecycle ordering is intentionally small: start or retarget creates active sampled state, each sample returns a frame demand, `cancel` freezes the sampled value and goes idle without reaching the semantic final state, `finish` publishes the target value as completed, reduced motion publishes the final state immediately, and adapters may prune terminal tracks after observing idle demand. When a host retargets, cancels, finishes, prunes terminal state, or changes motion identity, call `MotionFrameHost::reset(MotionFrameHostResetReason::...)` before observing the next epoch's demand so stale elapsed time and requested-frame diagnostics do not leak into the new run.
 
 ## Testing
 

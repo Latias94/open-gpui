@@ -17,8 +17,8 @@ use open_gpui::{
     StatefulInteractiveElement, Styled, Window, div, px, rgb,
 };
 use open_gpui_motion::{
-    MotionFrameDemand, MotionFrameHost, MotionModel, MotionPreference, MotionPreset,
-    MotionScalarController,
+    MotionFrameDemand, MotionFrameHost, MotionFrameHostResetReason, MotionModel, MotionPreference,
+    MotionPreset, MotionScalarController,
 };
 #[cfg(test)]
 use open_gpui_ui_core::ui_px;
@@ -1981,6 +1981,36 @@ impl VirtualizedListActiveIndicatorSnapshot {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct VirtualizedListActiveIndicatorUpdate {
+    frame_demand: MotionFrameDemand,
+    reset_reason: Option<MotionFrameHostResetReason>,
+}
+
+impl VirtualizedListActiveIndicatorUpdate {
+    const fn new(
+        frame_demand: MotionFrameDemand,
+        reset_reason: Option<MotionFrameHostResetReason>,
+    ) -> Self {
+        Self {
+            frame_demand,
+            reset_reason,
+        }
+    }
+
+    const fn idle() -> Self {
+        Self::new(MotionFrameDemand::Idle, None)
+    }
+
+    const fn frame_demand(self) -> MotionFrameDemand {
+        self.frame_demand
+    }
+
+    const fn reset_reason(self) -> Option<MotionFrameHostResetReason> {
+        self.reset_reason
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct VirtualizedListActiveIndicatorState {
     key: String,
@@ -2007,7 +2037,7 @@ impl VirtualizedListActiveIndicatorState {
         }
     }
 
-    fn sample_at(&mut self, now: Instant) -> MotionFrameDemand {
+    fn sample_motion(&mut self, now: Instant) -> MotionFrameDemand {
         let sample = self.controller.sample_since(self.started_at, now);
         self.sampled = active_indicator_bounds_from_sample(&sample, self.target);
         self.frame_demand = sample.frame_demand();
@@ -2018,16 +2048,31 @@ impl VirtualizedListActiveIndicatorState {
         self.frame_demand
     }
 
+    fn sample_at(&mut self, now: Instant) -> VirtualizedListActiveIndicatorUpdate {
+        let frame_demand = self.sample_motion(now);
+        let reset_reason =
+            (!frame_demand.needs_frame()).then_some(MotionFrameHostResetReason::Finish);
+        VirtualizedListActiveIndicatorUpdate::new(frame_demand, reset_reason)
+    }
+
     fn retarget(
         &mut self,
         target: VirtualizedListActiveIndicatorTarget,
         now: Instant,
         model: MotionModel,
-    ) -> MotionFrameDemand {
+    ) -> VirtualizedListActiveIndicatorUpdate {
         let sampled = self.sampled_after_update(now);
+        let reset_reason = if self.key == target.key {
+            MotionFrameHostResetReason::Retarget
+        } else {
+            MotionFrameHostResetReason::MotionIdentityChanged
+        };
         if model.is_immediate() || sampled.approximately_equals(target.bounds) {
             *self = Self::immediate(target.key, target.bounds, now);
-            return MotionFrameDemand::Idle;
+            return VirtualizedListActiveIndicatorUpdate::new(
+                MotionFrameDemand::Idle,
+                Some(reset_reason),
+            );
         }
 
         self.key = target.key;
@@ -2035,11 +2080,12 @@ impl VirtualizedListActiveIndicatorState {
         self.sampled = sampled;
         self.started_at = now;
         self.controller = active_indicator_controller_for_bounds(sampled, target.bounds, model);
-        self.sample_at(now)
+        let frame_demand = self.sample_motion(now);
+        VirtualizedListActiveIndicatorUpdate::new(frame_demand, Some(reset_reason))
     }
 
     fn sampled_after_update(&mut self, now: Instant) -> VirtualizedListActiveIndicatorBounds {
-        self.sample_at(now);
+        self.sample_motion(now);
         self.sampled
     }
 
@@ -2065,10 +2111,9 @@ impl VirtualizedListActiveIndicatorRuntime {
         plan: &VirtualizedListRenderPlan,
         now: Instant,
         model: MotionModel,
-    ) -> MotionFrameDemand {
+    ) -> VirtualizedListActiveIndicatorUpdate {
         let Some(target) = active_indicator_target(plan) else {
-            self.hide_at(now);
-            return MotionFrameDemand::Idle;
+            return self.hide_at(now);
         };
 
         let Some(state) = self.state.as_mut() else {
@@ -2077,7 +2122,10 @@ impl VirtualizedListActiveIndicatorRuntime {
                 target.bounds,
                 now,
             ));
-            return MotionFrameDemand::Idle;
+            return VirtualizedListActiveIndicatorUpdate::new(
+                MotionFrameDemand::Idle,
+                Some(MotionFrameHostResetReason::MotionIdentityChanged),
+            );
         };
 
         if state.key == target.key && state.target.approximately_equals(target.bounds) {
@@ -2087,11 +2135,16 @@ impl VirtualizedListActiveIndicatorRuntime {
         state.retarget(target, now, model)
     }
 
-    fn hide_at(&mut self, now: Instant) {
+    fn hide_at(&mut self, now: Instant) -> VirtualizedListActiveIndicatorUpdate {
         if let Some(state) = self.state.as_mut() {
             state.cancel_at(now);
+            self.state = None;
+            return VirtualizedListActiveIndicatorUpdate::new(
+                MotionFrameDemand::Idle,
+                Some(MotionFrameHostResetReason::Cancel),
+            );
         }
-        self.state = None;
+        VirtualizedListActiveIndicatorUpdate::idle()
     }
 
     fn snapshot(&self) -> Option<VirtualizedListActiveIndicatorSnapshot> {
@@ -2533,9 +2586,12 @@ impl RenderOnce for VirtualizedList {
                 runtime
                     .active_indicator
                     .sync(&plan, now, active_indicator_model);
+            if let Some(reset_reason) = active_indicator_demand.reset_reason() {
+                runtime.active_indicator_frame_host.reset(reset_reason);
+            }
             runtime
                 .active_indicator_frame_host
-                .observe(active_indicator_demand)
+                .observe(active_indicator_demand.frame_demand())
         });
         if active_indicator_frame.should_request_frame() {
             window.request_animation_frame();
@@ -4354,9 +4410,11 @@ mod tests {
         let mut indicator = VirtualizedListActiveIndicatorRuntime::default();
         let first = indicator_plan("indicator-row-00", UiPx::ZERO);
 
+        let first_update = indicator.sync(&first, start, model);
+        assert_eq!(first_update.frame_demand(), MotionFrameDemand::Idle);
         assert_eq!(
-            indicator.sync(&first, start, model),
-            MotionFrameDemand::Idle
+            first_update.reset_reason(),
+            Some(MotionFrameHostResetReason::MotionIdentityChanged)
         );
         let first_snapshot = indicator.snapshot().expect("visible indicator");
         assert_eq!(
@@ -4369,7 +4427,11 @@ mod tests {
 
         let second = indicator_plan("indicator-row-02", UiPx::ZERO);
         let demand = indicator.sync(&second, start + Duration::from_millis(16), model);
-        assert!(demand.needs_frame());
+        assert!(demand.frame_demand().needs_frame());
+        assert_eq!(
+            demand.reset_reason(),
+            Some(MotionFrameHostResetReason::MotionIdentityChanged)
+        );
         let moving = indicator.snapshot().expect("moving indicator");
         assert_eq!(
             indicator.state.as_ref().map(|state| state.key.as_str()),
@@ -4379,7 +4441,11 @@ mod tests {
         assert!(moving.top().as_f32() < ui_px(40.0).as_f32());
 
         let final_demand = indicator.sync(&second, start + Duration::from_secs(2), model);
-        assert_eq!(final_demand, MotionFrameDemand::Idle);
+        assert_eq!(final_demand.frame_demand(), MotionFrameDemand::Idle);
+        assert_eq!(
+            final_demand.reset_reason(),
+            Some(MotionFrameHostResetReason::Finish)
+        );
         let final_snapshot = indicator.snapshot().expect("settled indicator");
         assert_eq!(final_snapshot.top(), ui_px(40.0));
         assert_eq!(final_snapshot.height(), ui_px(20.0));
@@ -4394,13 +4460,19 @@ mod tests {
         let first = indicator_plan("indicator-row-00", UiPx::ZERO);
         let second = indicator_plan("indicator-row-02", UiPx::ZERO);
 
+        let first_update = indicator.sync(&first, start, animated);
+        assert_eq!(first_update.frame_demand(), MotionFrameDemand::Idle);
         assert_eq!(
-            indicator.sync(&first, start, animated),
-            MotionFrameDemand::Idle
+            first_update.reset_reason(),
+            Some(MotionFrameHostResetReason::MotionIdentityChanged)
         );
         let demand = indicator.sync(&second, start + Duration::from_millis(16), reduced);
 
-        assert_eq!(demand, MotionFrameDemand::Idle);
+        assert_eq!(demand.frame_demand(), MotionFrameDemand::Idle);
+        assert_eq!(
+            demand.reset_reason(),
+            Some(MotionFrameHostResetReason::MotionIdentityChanged)
+        );
         let snapshot = indicator.snapshot().expect("reduced indicator");
         assert_eq!(
             indicator.state.as_ref().map(|state| state.key.as_str()),
@@ -4419,14 +4491,16 @@ mod tests {
         let visible = indicator_plan("indicator-row-00", UiPx::ZERO);
         let offscreen = indicator_plan("indicator-row-00", ui_px(140.0));
 
-        assert_eq!(
-            indicator.sync(&visible, start, model),
-            MotionFrameDemand::Idle
-        );
+        let visible_update = indicator.sync(&visible, start, model);
+        assert_eq!(visible_update.frame_demand(), MotionFrameDemand::Idle);
         assert!(indicator.snapshot().is_some());
 
         let demand = indicator.sync(&offscreen, start + Duration::from_millis(16), model);
-        assert_eq!(demand, MotionFrameDemand::Idle);
+        assert_eq!(demand.frame_demand(), MotionFrameDemand::Idle);
+        assert_eq!(
+            demand.reset_reason(),
+            Some(MotionFrameHostResetReason::Cancel)
+        );
         assert!(indicator.snapshot().is_none());
         assert!(indicator.state.is_none());
     }

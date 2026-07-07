@@ -23,6 +23,8 @@ Diagnostics and transition internals live behind `open_gpui_docking::advanced`. 
 - `DockHost` as the GPUI renderer for one logical dock space, including tab chrome, splitter
   interaction, floating panels, drop previews, accessibility descriptors, and motion-backed visual
   affordances.
+- `DockHostOptions::motion_preference` as the host-owned reduced-motion policy input for zoom,
+  unzoom, and visual-affordance transitions.
 - `DockPanelRegistry` and `DockPanelCatalog` for lazy panel factories, descriptor-only restore
   metadata, GPUI view attachment, close/reopen policy, and tab labels.
 - `DockViewportRuntimeHandle` and internal viewport runtime modules for controller-backed platform
