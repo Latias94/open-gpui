@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `open-gpui-motion` for renderer-neutral motion foundations, including deterministic
   timeline/spring sampling, scalar motion controllers, policy validation, frame-demand reporting,
   neutral geometry, and layout projection primitives.
+- Added `MotionProgressExecution` for policy-resolved normalized 0..1 adapter progress runs.
+- Added `MotionSequence` for renderer-neutral composition of keyed scalar motion tracks with
+  append, with-previous, after-previous, and staggered timing.
 - Added stable wasm surface checks for the web backend and a browser-runnable `hello_web` path.
 - Added platform/system hooks such as system wake callbacks.
 

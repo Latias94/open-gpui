@@ -10,7 +10,8 @@ use open_gpui::{
 use open_gpui_motion::{
     MotionExecutionPlan, MotionFrameDemand, MotionFrameHost, MotionFrameHostUpdate,
     MotionFrameReason, MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPreference,
-    MotionPreset, MotionProjectionClip, MotionScalarController, MotionScalarExecution, MotionSpec,
+    MotionPreset, MotionProgressExecution, MotionProjectionClip, MotionScalarController,
+    MotionSpec,
 };
 use open_gpui_ui_core::split::{
     SplitterLayoutTransition, SplitterLayoutTransitionSample, SplitterPanelTransitionSample,
@@ -259,8 +260,7 @@ impl SplitterRuntime {
         self.layout_transition = Some(SplitterRuntimeLayoutTransition {
             target_state: state.clone(),
             transition,
-            started_at: now,
-            track: MotionScalarExecution::start(motion, 0.0, 1.0, 0.0, Duration::ZERO),
+            progress: MotionProgressExecution::start(motion, now),
         });
         self.last_state = Some(state.clone());
         splitter_frame_demand(true)
@@ -287,7 +287,7 @@ impl SplitterRuntime {
         let Some(transition) = self.layout_transition.as_ref() else {
             return true;
         };
-        let sample = transition.track.sample_since(transition.started_at, now);
+        let sample = transition.progress.sample_since(now);
         let complete = sample.complete();
         if complete {
             self.layout_transition = None;
@@ -298,8 +298,8 @@ impl SplitterRuntime {
 
     fn layout_transition_sample(&self, now: Instant) -> Option<SplitterLayoutTransitionSample> {
         let transition = self.layout_transition.as_ref()?;
-        let sample = transition.track.sample_since(transition.started_at, now);
-        Some(transition.transition.sample(sample.value()))
+        let sample = transition.progress.sample_since(now);
+        Some(transition.transition.sample(sample.progress()))
     }
 
     fn sampled_transition_fractions(&self, now: Instant) -> Vec<f32> {
@@ -325,8 +325,7 @@ struct SplitterRuntimeTransition {
 struct SplitterRuntimeLayoutTransition {
     target_state: SplitterState,
     transition: SplitterLayoutTransition,
-    started_at: Instant,
-    track: MotionScalarExecution,
+    progress: MotionProgressExecution,
 }
 
 fn fractions_equal(left: &[f32], right: &[f32]) -> bool {

@@ -382,6 +382,38 @@ impl MotionScalarExecutionSample {
     }
 }
 
+/// Sample from a normalized 0..1 progress execution.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MotionProgressSample {
+    sample: MotionScalarExecutionSample,
+}
+
+impl MotionProgressSample {
+    const fn new(sample: MotionScalarExecutionSample) -> Self {
+        Self { sample }
+    }
+
+    /// Returns the underlying scalar execution sample.
+    pub const fn scalar_sample(self) -> MotionScalarExecutionSample {
+        self.sample
+    }
+
+    /// Returns the clamped normalized progress.
+    pub fn progress(self) -> f32 {
+        self.sample.value().clamp(0.0, 1.0)
+    }
+
+    /// Returns whether the progress run reached its semantic completion state.
+    pub const fn complete(self) -> bool {
+        self.sample.complete()
+    }
+
+    /// Returns whether the adapter should request another frame.
+    pub const fn frame_demand(self) -> MotionFrameDemand {
+        self.sample.frame_demand()
+    }
+}
+
 /// A single scalar track plus its policy-resolved execution metadata.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MotionScalarExecution {
@@ -466,6 +498,78 @@ impl MotionScalarExecution {
     /// semantics in the controller layer.
     pub fn sample_since(&self, started_at: Instant, now: Instant) -> MotionScalarExecutionSample {
         self.sample_at(now.saturating_duration_since(started_at))
+    }
+}
+
+/// A policy-resolved normalized 0..1 progress run.
+///
+/// This is the renderer-neutral lifecycle primitive for adapters that need one progress value to
+/// drive their own layout, geometry, or paint projection. It deliberately does not schedule frames
+/// itself; callers translate the returned [`MotionFrameDemand`] through their adapter.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MotionProgressExecution {
+    execution: MotionScalarExecution,
+    started_at: Instant,
+}
+
+impl MotionProgressExecution {
+    /// Starts a normalized progress run from an already resolved motion plan.
+    pub fn start(plan: MotionExecutionPlan, started_at: Instant) -> Self {
+        Self {
+            execution: MotionScalarExecution::start(plan, 0.0, 1.0, 0.0, Duration::ZERO),
+            started_at,
+        }
+    }
+
+    /// Resolves policy input and starts a normalized progress run.
+    pub fn start_resolved(input: MotionPolicyInput, started_at: Instant) -> Self {
+        Self::start(MotionExecutionPlan::resolve(input), started_at)
+    }
+
+    /// Returns the underlying scalar execution.
+    pub const fn scalar_execution(&self) -> &MotionScalarExecution {
+        &self.execution
+    }
+
+    /// Returns the resolved execution plan.
+    pub const fn plan(&self) -> &MotionExecutionPlan {
+        self.execution.plan()
+    }
+
+    /// Returns the model that should execute after policy resolution.
+    pub const fn model(&self) -> MotionModel {
+        self.execution.model()
+    }
+
+    /// Returns the policy report produced for the requested model.
+    pub const fn policy_report(&self) -> &MotionPolicyReport {
+        self.execution.policy_report()
+    }
+
+    /// Returns the policy-resolved execution state.
+    pub const fn state(&self) -> MotionExecutionState {
+        self.execution.state()
+    }
+
+    /// Returns the adapter instant at which this progress run started.
+    pub const fn started_at(&self) -> Instant {
+        self.started_at
+    }
+
+    /// Samples the progress run at deterministic elapsed time.
+    pub fn sample_at(&self, now: Duration) -> MotionProgressSample {
+        MotionProgressSample::new(self.execution.sample_at(now))
+    }
+
+    /// Samples the progress run at a deterministic adapter clock sample.
+    pub fn sample_clock(&self, clock: MotionClockSample) -> MotionProgressSample {
+        MotionProgressSample::new(self.execution.sample_clock(clock))
+    }
+
+    /// Samples the progress run from adapter instants while keeping deterministic elapsed-time
+    /// semantics in the controller layer.
+    pub fn sample_since(&self, now: Instant) -> MotionProgressSample {
+        MotionProgressSample::new(self.execution.sample_since(self.started_at, now))
     }
 }
 
@@ -935,5 +1039,32 @@ mod tests {
         assert_eq!(sample.value(), 1.0);
         assert!(sample.complete());
         assert!(!sample.frame_demand().needs_frame());
+    }
+
+    #[test]
+    fn progress_execution_samples_normalized_lifecycle() {
+        let started_at = Instant::now();
+        let progress = MotionProgressExecution::start_resolved(
+            MotionPolicyInput::new(
+                MotionPolicyContext::CommittedLayout,
+                MotionModel::timeline(MotionSpec::new(
+                    MotionPreference::Animated,
+                    MotionDuration::Custom(Duration::from_millis(100)),
+                    MotionEasing::Linear,
+                )),
+            )
+            .with_spatial_motion(true)
+            .with_reduced_motion_final_state(true),
+            started_at,
+        );
+
+        let midpoint = progress.sample_since(started_at + Duration::from_millis(50));
+        assert_eq!(midpoint.progress(), 0.5);
+        assert!(midpoint.frame_demand().needs_frame());
+
+        let complete = progress.sample_at(Duration::from_millis(120));
+        assert_eq!(complete.progress(), 1.0);
+        assert!(complete.complete());
+        assert!(!complete.frame_demand().needs_frame());
     }
 }

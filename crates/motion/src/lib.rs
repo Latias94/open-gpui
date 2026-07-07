@@ -16,12 +16,14 @@ pub mod motion;
 pub mod policy;
 pub mod projection;
 pub mod runtime;
+pub mod sequence;
 pub mod spring;
 
 pub use controller::{
     MotionClockSample, MotionExecutionPlan, MotionExecutionState, MotionFrameDemand,
-    MotionFrameReason, MotionScalarController, MotionScalarControllerSample, MotionScalarExecution,
-    MotionScalarExecutionSample, MotionScalarTrack, MotionScalarTrackSample,
+    MotionFrameReason, MotionProgressExecution, MotionProgressSample, MotionScalarController,
+    MotionScalarControllerSample, MotionScalarExecution, MotionScalarExecutionSample,
+    MotionScalarTrack, MotionScalarTrackSample,
 };
 pub use frame_host::{MotionFrameHost, MotionFrameHostSample, MotionFrameHostUpdate};
 pub use geometry::{
@@ -38,6 +40,10 @@ pub use runtime::{
     MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionRunState, MotionSnapshot,
     MotionTimeline, MotionTimelineSample, lerp_rect, motion_source_rect, preferred_motion_edge,
     retarget_motion_snapshots, reveal_rect_from_edge,
+};
+pub use sequence::{
+    MotionSequence, MotionSequenceSample, MotionSequenceStep, MotionSequenceStepSample,
+    MotionSequenceStepState,
 };
 pub use spring::{
     MotionModel, MotionPreset, MotionScalarSample, MotionSpring, MotionSpringPhysics,

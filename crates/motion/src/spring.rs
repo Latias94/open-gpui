@@ -517,6 +517,17 @@ impl MotionModel {
         }
     }
 
+    /// Returns the duration used when this model participates in a sequence plan.
+    ///
+    /// Timeline models use their exact duration. Spring models use their review-duration hint,
+    /// because physical completion is still determined by sampled rest state.
+    pub const fn sequence_duration_hint(self) -> Duration {
+        match self {
+            Self::Timeline(spec) => spec.duration().as_duration(),
+            Self::Spring(spec) => spec.physics().review_duration(),
+        }
+    }
+
     /// Samples this motion model as a scalar value.
     pub fn sample_scalar_elapsed(
         self,

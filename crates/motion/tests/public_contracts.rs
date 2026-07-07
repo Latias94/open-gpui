@@ -1,11 +1,11 @@
 use open_gpui_motion::{
     MotionClockSample, MotionDuration, MotionEasing, MotionExecutionPlan, MotionFrameDemand,
     MotionFrameHost, MotionFrameReason, MotionModel, MotionPolicyContext, MotionPolicyInput,
-    MotionPreference, MotionProjection, MotionProjectionClip, MotionRunState,
-    MotionScalarController, MotionScalarExecution, MotionSpec, motion_point, motion_px,
-    motion_rect, motion_size,
+    MotionPreference, MotionProgressExecution, MotionProjection, MotionProjectionClip,
+    MotionRunState, MotionScalarController, MotionScalarExecution, MotionSequence,
+    MotionSequenceStepState, MotionSpec, motion_point, motion_px, motion_rect, motion_size,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[test]
 fn scalar_execution_samples_by_explicit_elapsed_controller_time() {
@@ -63,6 +63,36 @@ fn reduced_projection_clip_publishes_final_semantic_bounds_immediately() {
     assert_eq!(clip.visible_bounds(), target);
     assert_eq!(clip.occlusion_bounds(), target);
     assert_eq!(clip.progress(), 1.0);
+}
+
+#[test]
+fn progress_execution_is_public_adapter_lifecycle_contract() {
+    let started_at = Instant::now();
+    let progress = MotionProgressExecution::start_resolved(
+        MotionPolicyInput::new(
+            MotionPolicyContext::Continuity,
+            MotionModel::timeline(MotionSpec::new(
+                MotionPreference::Animated,
+                MotionDuration::Custom(Duration::from_millis(100)),
+                MotionEasing::Linear,
+            )),
+        )
+        .with_spatial_motion(true)
+        .with_reduced_motion_final_state(true),
+        started_at,
+    );
+
+    let midpoint = progress.sample_since(started_at + Duration::from_millis(50));
+    assert_eq!(midpoint.progress(), 0.5);
+    assert_eq!(
+        midpoint.frame_demand().reason(),
+        Some(MotionFrameReason::UpdateRender)
+    );
+
+    let complete = progress.sample_at(Duration::from_millis(120));
+    assert_eq!(complete.progress(), 1.0);
+    assert!(complete.complete());
+    assert!(!complete.frame_demand().needs_frame());
 }
 
 #[test]
@@ -130,6 +160,41 @@ fn scalar_controller_lifecycle_is_public_and_demand_driven() {
             .frame_demand_at(Duration::from_millis(90))
             .needs_frame()
     );
+}
+
+#[test]
+fn sequence_plan_is_public_renderer_neutral_motion_composition() {
+    let model = MotionModel::timeline(MotionSpec::new(
+        MotionPreference::Animated,
+        MotionDuration::Custom(Duration::from_millis(100)),
+        MotionEasing::Linear,
+    ));
+    let mut sequence = MotionSequence::new();
+
+    sequence
+        .append("first", model)
+        .insert_with_previous("parallel", model)
+        .insert_after_previous("after", model, Duration::from_millis(20));
+
+    assert_eq!(sequence.steps()[0].start_at(), Duration::ZERO);
+    assert_eq!(sequence.steps()[1].start_at(), Duration::ZERO);
+    assert_eq!(sequence.steps()[2].start_at(), Duration::from_millis(120));
+    assert_eq!(sequence.duration_hint(), Duration::from_millis(220));
+
+    let active = sequence.sample_at(Duration::from_millis(50));
+    assert_eq!(
+        active.step(&"first").expect("first step").state(),
+        MotionSequenceStepState::Active
+    );
+    assert_eq!(
+        active.step(&"after").expect("after step").state(),
+        MotionSequenceStepState::Pending
+    );
+    assert!(active.frame_demand().needs_frame());
+
+    let complete = sequence.sample_at(Duration::from_millis(240));
+    assert!(complete.complete());
+    assert!(!complete.frame_demand().needs_frame());
 }
 
 #[test]

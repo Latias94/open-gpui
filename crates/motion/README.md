@@ -12,6 +12,9 @@ runtime.
   input-coupled paths.
 - Scalar controllers, retargeting, cancellation, explicit finish, terminal pruning, and
   adapter-owned frame demand.
+- `MotionProgressExecution` for policy-resolved normalized 0..1 adapter progress runs.
+- `MotionSequence` for composing many keyed scalar tracks with absolute starts, append,
+  with-previous, after-previous, and staggered insertion while preserving renderer-neutral sampling.
 - `MotionClockSample` for mapping adapter `Instant` values into deterministic controller
   `Duration` samples with non-monotonic elapsed time clamped.
 - `MotionFrameDemand::combine` and `MotionFrameDemand::combine_all` for aggregating many motion
@@ -34,10 +37,10 @@ The v0.2.0 stable proof is intentionally small:
 - Docking consumes neutral motion geometry and projection helpers for presentation and affordance
   evidence.
 
-These consumers prove deterministic clocks, retargeting, reduced-motion final state, cancellation,
-terminal pruning, and `MotionFrameDemand` aggregation. They do not prove row enter/exit animation,
-public presence, keyframes, repeat/reverse/speed controls, shared-layout orchestration, WAAPI, or a
-global scheduler.
+These consumers prove deterministic clocks, normalized progress runs, retargeting, reduced-motion
+final state, cancellation, terminal pruning, sequence composition, and `MotionFrameDemand`
+aggregation. They do not prove row enter/exit animation, public presence, keyframes,
+repeat/reverse/speed controls, full shared-layout orchestration, WAAPI, or a global scheduler.
 
 ## Where To See It
 
@@ -60,9 +63,10 @@ deterministic samples and frame demand.
 
 This crate deliberately does not provide React hooks, CSS parsing, DOM measurement, WAAPI behavior,
 browser-native acceleration, global animation loops, drag-and-drop policy, asset animation, or full
-shared-layout orchestration. Presence, keyframes, repeat/reverse/speed controls, public value
-subscriptions, and high-level builders are deferred until a first-party Open GPUI adapter proves the
-shape.
+shared-layout orchestration. `MotionProgressExecution` only owns a local 0..1 run lifecycle, and
+`MotionSequence` only owns deterministic keyed timing and sampling; neither mutates properties or
+schedules frames. Presence, keyframes, repeat/reverse/speed controls, public value subscriptions,
+and high-level builders are deferred until a first-party Open GPUI adapter proves the shape.
 
 `open-gpui-motion` must stay below `open-gpui-ui-core`, `open-gpui-ui-components`,
 `open-gpui-docking`, `open-gpui-platform`, `open-gpui-web`, and renderer crates. Use conversion
