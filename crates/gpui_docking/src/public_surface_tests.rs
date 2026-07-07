@@ -168,9 +168,11 @@ fn common_import_paths_compile() {
     let root_panel_placement = root::DockPanelPlacement::center("editor");
     let root_surface_builder = root::DockSurface::builder("main");
     let root_surface_change = root::DockSurfaceChange::Changed;
+    let root_close_policy = root::DockViewportClosePolicy::RetainLayout;
     let prelude_panel_target = prelude::DockPanelPlacementTarget::right_rail();
     let prelude_surface_builder = prelude::DockSurface::builder("main");
     let prelude_surface_change = prelude::DockSurfaceChange::Unchanged;
+    let prelude_close_policy = prelude::DockViewportClosePolicy::Prevent;
     let root_descriptor = root::DockPanelDescriptor::new("Editor")
         .dirty(true)
         .with_close_veto_reason("unsaved changes")
@@ -178,6 +180,12 @@ fn common_import_paths_compile() {
     let prelude_reopen_policy = prelude::DockPanelReopenPolicy::RestoreLastKnown;
     let prelude_open_source = prelude::DockPanelOpenPlacementSource::DescriptorDefault;
     let prelude_open_status = prelude::DockSurfaceViewportOpenStatus::Opened;
+    let root_viewport_spec =
+        root::DockSurfaceViewportSpec::new("main", open_gpui::WindowOptions::default());
+    let prelude_viewport_spec_error = prelude::DockSurfaceViewportSpecError::InvalidPlacement {
+        message: String::new(),
+    };
+    let root_viewport_report_into_outcomes = root::DockSurfaceViewportOpenReport::into_outcomes;
 
     let _ = (
         root_policy.allows_floating(),
@@ -189,15 +197,20 @@ fn common_import_paths_compile() {
         root_panel_placement.item(),
         root_surface_builder,
         root_surface_change.changed(),
+        root_close_policy,
         prelude_panel_target,
         prelude_surface_builder,
         prelude_surface_change.changed(),
+        prelude_close_policy,
         root_descriptor.default_placement(),
         root_descriptor.is_dirty(),
         root_descriptor.close_veto_reason(),
         prelude_reopen_policy,
         prelude_open_source,
         prelude_open_status,
+        root_viewport_spec.space(),
+        prelude_viewport_spec_error,
+        root_viewport_report_into_outcomes,
     );
 }
 

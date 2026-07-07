@@ -2,11 +2,13 @@ use crate::{
     DockController, DockLayout, DockPanelOpenPlacementSource, DockPanelPlacement,
     DockPanelPlacementTarget, DockSpaceId, DockSurface, DockSurfacePanelError,
     DockSurfacePanelOutcome, DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenStatus,
-    DockSurfaceViewportUnavailable, DockViewportClosePolicy, model::DockLayoutSpace,
+    DockSurfaceViewportSpec, DockSurfaceViewportUnavailable, DockViewportClosePolicy,
+    DockViewportPlacement, DockViewportPlacementLayout, DockViewportWindowBounds,
+    DockViewportWindowState, model::DockLayoutSpace,
 };
 use open_gpui::{
-    App, AppContext as _, Bounds, IntoElement, Render, Window, WindowBounds, WindowOptions, div,
-    px, size,
+    App, AppContext as _, Bounds, DisplayId, IntoElement, Render, Window, WindowBounds,
+    WindowOptions, div, px, size,
 };
 
 struct TestPanel;
@@ -109,6 +111,36 @@ fn viewport_options() -> WindowOptions {
 }
 
 #[open_gpui::test]
+fn surface_viewport_spec_applies_saved_placement(cx: &mut open_gpui::TestAppContext) {
+    cx.update(|_| {
+        let saved_bounds = Bounds::new(
+            open_gpui::point(px(120.0), px(160.0)),
+            size(px(720.0), px(420.0)),
+        );
+        let placement = DockViewportPlacementLayout::new(vec![DockViewportPlacement {
+            space: "main".into(),
+            display_id: Some(42),
+            window_bounds: Some(DockViewportWindowBounds {
+                state: DockViewportWindowState::Maximized,
+                bounds: crate::DockLayoutRect::from_bounds(saved_bounds),
+            }),
+            host_bounds: None,
+        }]);
+
+        let spec = DockSurfaceViewportSpec::new("main", viewport_options())
+            .with_saved_placement(&placement)
+            .expect("valid saved placement should apply to facade viewport spec");
+
+        assert_eq!(spec.space(), &DockSpaceId::from("main"));
+        assert_eq!(spec.window_options().display_id, Some(DisplayId::from(42)));
+        assert_eq!(
+            spec.window_options().window_bounds,
+            Some(WindowBounds::Maximized(saved_bounds))
+        );
+    });
+}
+
+#[open_gpui::test]
 fn surface_open_viewport_reports_policy_disabled(cx: &mut open_gpui::TestAppContext) {
     cx.update(|cx| {
         let surface = DockSurface::builder("main")
@@ -185,6 +217,45 @@ fn surface_open_viewport_opens_and_reuses_supported_backend(cx: &mut open_gpui::
         };
         assert_eq!(reused.status(), DockSurfaceViewportOpenStatus::Reused);
         assert_eq!(reused.window(), opened.window());
+    });
+}
+
+#[open_gpui::test]
+fn surface_open_viewports_reports_ordered_batch_outcomes(cx: &mut open_gpui::TestAppContext) {
+    cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel_factory("editor", "Editor", test_panel)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("surface layout should validate");
+
+        let report = surface.open_viewports(
+            [
+                DockSurfaceViewportSpec::new("main", viewport_options()),
+                DockSurfaceViewportSpec::new("main", viewport_options()),
+            ],
+            cx,
+        );
+
+        assert_eq!(report.len(), 2);
+        assert!(!report.is_empty());
+        assert!(report.all_opened());
+        assert_eq!(report.opened_count(), 2);
+        assert_eq!(report.unavailable_count(), 0);
+
+        let outcomes = report.into_outcomes();
+        let first = match &outcomes[0] {
+            DockSurfaceViewportOpenOutcome::Opened(opened) => opened,
+            other => panic!("expected first viewport to open, got {other:?}"),
+        };
+        let second = match &outcomes[1] {
+            DockSurfaceViewportOpenOutcome::Opened(opened) => opened,
+            other => panic!("expected second viewport to reuse, got {other:?}"),
+        };
+        assert_eq!(first.status(), DockSurfaceViewportOpenStatus::Opened);
+        assert_eq!(second.status(), DockSurfaceViewportOpenStatus::Reused);
+        assert_eq!(first.window(), second.window());
     });
 }
 

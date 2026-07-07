@@ -35,13 +35,14 @@
 //! In-window floating and platform viewport tear-off are separate [`DockPolicy`] capabilities so
 //! applications can enable platform windows without changing graph-backed floating behavior.
 //! Multi-window applications should keep one [`DockSurface`] as the graph, panel, and host-window
-//! owner, open controller-backed viewport windows through [`DockSurface::open_viewport`], and let
-//! the surface/runtime install post-close cleanup for those windows. Runtime-opened windows install
-//! a should-close hook so [`DockViewportClosePolicy::Prevent`] can veto platform closes before
-//! cleanup runs. Persist [`DockLayout`] and
-//! [`DockViewportPlacementLayout`] separately: layout restores logical dock spaces, while placement
-//! restores platform-window hints for the runtime adapter. Cross-window drops derive hovered-window
-//! and front-to-back window-stack arbitration from GPUI runtime signals inside the crate.
+//! owner, open controller-backed viewport windows through [`DockSurfaceViewportSpec`] requests, and
+//! let the surface/runtime install post-close cleanup for those windows. Runtime-opened windows
+//! install a should-close hook so [`DockViewportClosePolicy::Prevent`] can veto platform closes
+//! before cleanup runs. Persist [`DockLayout`] and [`DockViewportPlacementLayout`] separately:
+//! layout restores logical dock spaces, while placement restores platform-window hints that
+//! [`DockSurfaceViewportSpec::with_saved_placement`] applies to fallback GPUI window options.
+//! Cross-window drops derive hovered-window and front-to-back window-stack arbitration from GPUI
+//! runtime signals inside the crate.
 //! Panel close/reopen flows should use [`DockController::close_item`],
 //! [`DockController::open_item`], [`DockWorkspace::close_item`], or [`DockWorkspace::open_item`]:
 //! close removes the item from the graph while the panel catalog remains available, and reopen
@@ -280,7 +281,8 @@ pub use policy::{DockPolicy, DockPolicyError};
 pub use surface::{
     DockSurface, DockSurfaceBuildError, DockSurfaceBuilder, DockSurfaceChange,
     DockSurfacePanelError, DockSurfacePanelOutcome, DockSurfaceViewportOpenOutcome,
-    DockSurfaceViewportOpenStatus, DockSurfaceViewportOpened, DockSurfaceViewportUnavailable,
+    DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus, DockSurfaceViewportOpened,
+    DockSurfaceViewportSpec, DockSurfaceViewportSpecError, DockSurfaceViewportUnavailable,
 };
 pub(crate) use viewport::*;
 #[cfg(test)]

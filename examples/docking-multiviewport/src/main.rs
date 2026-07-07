@@ -3,7 +3,8 @@ use open_gpui::{
     Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
 };
 use open_gpui_docking::prelude::{
-    DockPanelPlacement, DockSurface, DockSurfaceViewportOpenOutcome, DockSurfaceViewportUnavailable,
+    DockPanelPlacement, DockSurface, DockSurfaceViewportOpenOutcome, DockSurfaceViewportSpec,
+    DockSurfaceViewportUnavailable,
 };
 use open_gpui_platform::application;
 
@@ -153,7 +154,10 @@ fn main() {
             .open_primary_window(main_window_options(cx), cx)
             .expect("failed to open primary docking window");
 
-        match surface.open_viewport(MAIN_SPACE, secondary_window_options(cx), cx) {
+        let secondary_viewport =
+            DockSurfaceViewportSpec::new(MAIN_SPACE, secondary_window_options(cx));
+
+        match surface.open_viewport_spec(secondary_viewport, cx) {
             DockSurfaceViewportOpenOutcome::Opened(_) => {}
             DockSurfaceViewportOpenOutcome::Unavailable(
                 DockSurfaceViewportUnavailable::BackendUnsupported

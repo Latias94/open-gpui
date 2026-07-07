@@ -14,6 +14,8 @@ Low-level graph, action, workspace, host, and runtime-handle APIs live behind ex
 ## What This Crate Owns
 
 - `DockSurface` as the app-level owner for controller state, host-window creation, panel commands, and typed viewport capability outcomes.
+- `DockSurfaceViewportSpec` and `DockSurfaceViewportOpenReport` as facade-level platform window
+  requests and batch outcomes for multi-viewport applications.
 - `DockGraph` and `DockLayout` for logical dock spaces, tab stacks, splits, in-window floating
   layout, serialization, validation, and graph operations.
 - `DockController` and `DockWorkspace` as the low-level shared owner for rendered hosts and
@@ -39,10 +41,9 @@ Platform viewport windows fail closed unless both gates are true:
 - Application policy allows them through `DockSurfaceBuilder::allow_platform_viewports(true)` or `DockPolicy`.
 - The active backend reports `PlatformViewportCapabilities::platform_viewport_windows`.
 
-`DockSurface::open_viewport` returns `DockSurfaceViewportOpenOutcome` so applications can distinguish policy-disabled, backend-unsupported, and backend-open failures without parsing opaque errors. Unsupported backends should no-op for open or tear-off requests instead of constructing partial runtime state. Web and other backends without platform window support stay on the single-window route.
+`DockSurface::open_viewport_spec` and `DockSurface::open_viewports` return facade outcomes so applications can distinguish policy-disabled, backend-unsupported, and backend-open failures without parsing opaque errors. Unsupported backends should no-op for open or tear-off requests instead of constructing partial runtime state. Web and other backends without platform window support stay on the single-window route.
 
-Persist `DockLayout` separately from viewport placement data. The layout restores logical dock
-spaces; `DockViewportPlacementLayout` restores platform-window hints for the runtime adapter.
+Persist `DockLayout` separately from viewport placement data. The layout restores logical dock spaces; `DockViewportPlacementLayout` restores platform-window hints, and `DockSurfaceViewportSpec::with_saved_placement` applies those hints to fallback GPUI window options before a viewport opens.
 
 ## Examples
 
@@ -60,7 +61,7 @@ Run the facade-level multi-viewport example when checking native platform-window
 cargo run -p open-gpui-docking-multiviewport
 ```
 
-This example opts into platform viewport windows through `DockSurfaceBuilder::allow_platform_viewports(true)` and handles unsupported backends through typed facade outcomes.
+This example opts into platform viewport windows through `DockSurfaceBuilder::allow_platform_viewports(true)`, builds `DockSurfaceViewportSpec` requests, and handles unsupported backends through typed facade outcomes.
 
 Run the normal-checkout native dogfood example when working on viewport runtime behavior or
 diagnostics:

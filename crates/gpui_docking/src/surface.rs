@@ -3,7 +3,8 @@ use crate::{
     DockHost, DockHostOptions, DockItemId, DockLayout, DockLayoutValidationError, DockPanel,
     DockPanelCloseOutcome, DockPanelDescriptor, DockPanelOpenOutcome, DockPanelPlacement,
     DockPolicy, DockPolicyError, DockSpaceId, DockViewportClosePolicy, DockViewportOpenOutcome,
-    DockViewportOpenStatus, DockViewportRuntimeHandle, EditorDockLayoutSpec,
+    DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportRuntimeHandle,
+    EditorDockLayoutSpec,
 };
 use open_gpui::{
     AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, Pixels,
@@ -48,6 +49,34 @@ pub enum DockSurfaceViewportOpenOutcome {
     Opened(DockSurfaceViewportOpened),
     /// The surface rejected the request before opening a window.
     Unavailable(DockSurfaceViewportUnavailable),
+}
+
+/// Facade-level request for opening one logical dock space in a platform viewport window.
+///
+/// This keeps ordinary applications on the `DockSurface` API surface: callers provide a logical
+/// space plus GPUI window options, and can apply serialized placement data without importing the
+/// lower-level runtime tier.
+#[derive(Debug)]
+pub struct DockSurfaceViewportSpec {
+    space: DockSpaceId,
+    options: WindowOptions,
+}
+
+/// Error returned while preparing a facade viewport spec before opening a window.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum DockSurfaceViewportSpecError {
+    /// Serialized viewport placement data failed validation.
+    #[error("saved dock viewport placement is invalid: {message}")]
+    InvalidPlacement {
+        /// Validation message from the placement validator.
+        message: String,
+    },
+}
+
+/// Facade-level report for opening a batch of platform viewport windows.
+#[derive(Debug)]
+pub struct DockSurfaceViewportOpenReport {
+    outcomes: Vec<DockSurfaceViewportOpenOutcome>,
 }
 
 /// Facade-level result for a successfully opened or reused platform viewport.
@@ -153,6 +182,95 @@ impl DockSurfaceViewportOpened {
     /// Whether the surface opened, reused, or replaced a viewport window.
     pub fn status(&self) -> DockSurfaceViewportOpenStatus {
         self.status
+    }
+}
+
+impl DockSurfaceViewportSpec {
+    /// Creates a viewport-open request for one logical dock space.
+    pub fn new(space: impl Into<DockSpaceId>, options: WindowOptions) -> Self {
+        Self {
+            space: space.into(),
+            options,
+        }
+    }
+
+    /// Logical dock space that should be rendered by the opened viewport window.
+    pub fn space(&self) -> &DockSpaceId {
+        &self.space
+    }
+
+    /// GPUI window options that will be used when the viewport window is opened.
+    pub fn window_options(&self) -> &WindowOptions {
+        &self.options
+    }
+
+    /// Mutable access for app code that wants to fill less common GPUI window fields.
+    pub fn window_options_mut(&mut self) -> &mut WindowOptions {
+        &mut self.options
+    }
+
+    /// Applies saved platform-window placement to the spec's fallback GPUI window options.
+    pub fn with_saved_placement(
+        mut self,
+        placement: &DockViewportPlacementLayout,
+    ) -> Result<Self, DockSurfaceViewportSpecError> {
+        self.options = placement
+            .window_options_for_space(&self.space, self.options)
+            .map_err(|error| DockSurfaceViewportSpecError::InvalidPlacement {
+                message: error.to_string(),
+            })?;
+        Ok(self)
+    }
+
+    /// Consumes the spec into its logical space and GPUI window options.
+    pub fn into_parts(self) -> (DockSpaceId, WindowOptions) {
+        (self.space, self.options)
+    }
+}
+
+impl DockSurfaceViewportOpenReport {
+    fn new(outcomes: Vec<DockSurfaceViewportOpenOutcome>) -> Self {
+        Self { outcomes }
+    }
+
+    /// Outcomes in the same order as the requested viewport specs.
+    pub fn outcomes(&self) -> &[DockSurfaceViewportOpenOutcome] {
+        &self.outcomes
+    }
+
+    /// Consumes the report into the ordered outcomes.
+    pub fn into_outcomes(self) -> Vec<DockSurfaceViewportOpenOutcome> {
+        self.outcomes
+    }
+
+    /// Number of viewport requests in the report.
+    pub fn len(&self) -> usize {
+        self.outcomes.len()
+    }
+
+    /// Returns true when no viewport requests were submitted.
+    pub fn is_empty(&self) -> bool {
+        self.outcomes.is_empty()
+    }
+
+    /// Number of requests that opened, reused, or replaced a platform viewport.
+    pub fn opened_count(&self) -> usize {
+        self.outcomes
+            .iter()
+            .filter(|outcome| outcome.opened())
+            .count()
+    }
+
+    /// Number of requests that could not open a platform viewport.
+    pub fn unavailable_count(&self) -> usize {
+        self.len() - self.opened_count()
+    }
+
+    /// Returns true when every requested viewport opened, reused, or replaced a window.
+    pub fn all_opened(&self) -> bool {
+        self.outcomes
+            .iter()
+            .all(DockSurfaceViewportOpenOutcome::opened)
     }
 }
 
@@ -324,6 +442,16 @@ impl DockSurface {
         options: WindowOptions,
         cx: &mut App,
     ) -> DockSurfaceViewportOpenOutcome {
+        self.open_viewport_spec(DockSurfaceViewportSpec::new(space, options), cx)
+    }
+
+    /// Opens or reuses a controller-backed platform viewport from a facade request.
+    pub fn open_viewport_spec(
+        &self,
+        spec: DockSurfaceViewportSpec,
+        cx: &mut App,
+    ) -> DockSurfaceViewportOpenOutcome {
+        let (space, options) = spec.into_parts();
         let policy_result = cx.read_entity(&self.controller, |controller, _| {
             controller.policy().validate_platform_viewports()
         });
@@ -345,6 +473,20 @@ impl DockSurface {
                 DockSurfaceViewportUnavailable::OpenFailed(error.to_string()),
             ),
         }
+    }
+
+    /// Opens a batch of facade viewport requests and returns ordered outcomes.
+    pub fn open_viewports(
+        &self,
+        specs: impl IntoIterator<Item = DockSurfaceViewportSpec>,
+        cx: &mut App,
+    ) -> DockSurfaceViewportOpenReport {
+        DockSurfaceViewportOpenReport::new(
+            specs
+                .into_iter()
+                .map(|spec| self.open_viewport_spec(spec, cx))
+                .collect(),
+        )
     }
 
     /// Opens a registered panel using descriptor last-known or default placement.
