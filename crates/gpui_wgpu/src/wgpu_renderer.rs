@@ -54,6 +54,23 @@ struct GammaParams {
     _pad: u32,
 }
 
+fn adapter_info(context: &WgpuContext) -> wgpu::AdapterInfo {
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = context;
+        let mut info =
+            wgpu::AdapterInfo::new(wgpu::DeviceType::Other, wgpu::Backend::BrowserWebGpu);
+        info.name = "browser adapter".to_string();
+        info.driver = "browser".to_string();
+        info
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    {
+        context.adapter.get_info()
+    }
+}
+
 #[derive(Clone, Debug)]
 #[repr(C)]
 struct PathSprite {
@@ -279,7 +296,7 @@ impl WgpuRenderer {
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "Surface reports no supported texture formats for adapter {:?}",
-                    context.adapter.get_info().name
+                    adapter_info(context).name
                 )
             })?;
 
@@ -293,7 +310,7 @@ impl WgpuRenderer {
                     .ok_or_else(|| {
                         anyhow::anyhow!(
                             "Surface reports no supported alpha modes for adapter {:?}",
-                            context.adapter.get_info().name
+                            adapter_info(context).name
                         )
                     })
             };
@@ -438,7 +455,7 @@ impl WgpuRenderer {
             ],
         });
 
-        let adapter_info = context.adapter.get_info();
+        let adapter_info = adapter_info(context);
 
         let last_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let last_error_clone = Arc::clone(&last_error);

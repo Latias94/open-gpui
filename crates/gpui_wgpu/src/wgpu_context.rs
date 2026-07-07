@@ -82,11 +82,7 @@ impl WgpuContext {
             }
         });
 
-        log::info!(
-            "Selected GPU adapter: {:?} ({:?})",
-            adapter.get_info().name,
-            adapter.get_info().backend
-        );
+        log::info!("Selected browser GPU adapter");
 
         Ok(Self {
             instance,
