@@ -162,6 +162,7 @@ mod viewport_registration;
 mod viewport_registry;
 mod viewport_routed_preview;
 mod viewport_runtime;
+mod viewport_runtime_drop_resolution;
 mod viewport_runtime_effects;
 mod viewport_runtime_handle;
 mod viewport_runtime_status;
@@ -169,6 +170,7 @@ mod viewport_target_context;
 mod viewport_target_resolver;
 mod viewport_tear_off;
 mod viewport_tear_off_move;
+mod viewport_tear_off_placement;
 mod viewport_window_lifecycle;
 mod viewport_window_ownership;
 mod visual_affordance_scene;
@@ -314,6 +316,7 @@ pub(crate) use viewport_registration::*;
 pub(crate) use viewport_registry::{DockViewportSnapshot, DockViewportWindowFacts};
 pub(crate) use viewport_routed_preview::*;
 pub(crate) use viewport_runtime::*;
+pub(crate) use viewport_runtime_drop_resolution::*;
 pub(crate) use viewport_runtime_effects::*;
 pub use viewport_runtime_handle::DockViewportRuntimeHandle;
 pub(crate) use viewport_runtime_status::*;
@@ -327,6 +330,10 @@ pub(crate) use viewport_tear_off::{
     DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
 };
 pub(crate) use viewport_tear_off_move::*;
+pub(crate) use viewport_tear_off_placement::{
+    DockViewportTearOffPlacement, DockViewportTearOffPlacementPolicy,
+    DockViewportTearOffPlacementSource,
+};
 #[allow(unused_imports)]
 pub(crate) use viewport_window_lifecycle::{
     DockViewportReusableWindow, DockViewportReusableWindowOutcome,

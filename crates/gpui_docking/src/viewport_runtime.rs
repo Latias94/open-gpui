@@ -2,6 +2,7 @@
 use crate::drop_runtime::DockHostDropScene;
 #[cfg(test)]
 use crate::viewport_registry::DockViewportRouteUnavailableReason;
+pub(crate) use crate::viewport_tear_off_placement::suggested_tear_off_window_bounds;
 #[cfg(test)]
 use crate::viewport_window_lifecycle::DockViewportReusableWindow;
 use crate::{
@@ -10,28 +11,31 @@ use crate::{
     DockViewportActivationBackendFocusApply, DockViewportActivationBackendFocusObservation,
     DockViewportActivationBackendFocusRecordEffect,
     DockViewportActivationPendingBackendFocusEffect, DockViewportActivationTransaction,
-    DockViewportAdapter, DockViewportBackendFocusState, DockViewportCloseCoordinator,
-    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportCommittedTearOffMove,
-    DockViewportDropActionOutcome, DockViewportDropRoute, DockViewportDropRouteOutcome,
-    DockViewportDropRouteRequest, DockViewportDropRouteResolution, DockViewportFocusCoordinator,
-    DockViewportFocusRequest, DockViewportFocusStampFallbackPermit, DockViewportFrameCoordinator,
-    DockViewportIdentity, DockViewportPayloadDragBegin, DockViewportPayloadDragState,
-    DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportPlatformFocusRestoreGate, DockViewportPlatformFocusRestorePolicy,
-    DockViewportPlatformSyncRecord, DockViewportRegisterOutcome, DockViewportResolvedDropRoute,
+    DockViewportAdapter, DockViewportBackendFocusState, DockViewportBackendRouteRequest,
+    DockViewportCloseCoordinator, DockViewportCloseOutcome, DockViewportClosePolicy,
+    DockViewportCommittedTearOffMove, DockViewportDropActionOutcome, DockViewportDropRoute,
+    DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportDropRouteSnapshot,
+    DockViewportDropRouteSnapshotRefresh, DockViewportFocusCoordinator, DockViewportFocusRequest,
+    DockViewportFocusStampFallbackPermit, DockViewportFrameCoordinator, DockViewportIdentity,
+    DockViewportPayloadDragBegin, DockViewportPayloadDragState, DockViewportPlacementLayout,
+    DockViewportPlacementValidationError, DockViewportPlatformFocusRestoreGate,
+    DockViewportPlatformFocusRestorePolicy, DockViewportPlatformSyncRecord,
+    DockViewportRegisterOutcome, DockViewportResolvedDropRoute,
+    DockViewportResolvedDropRouteOutcome, DockViewportResolvedDropRouteRefresh,
     DockViewportRestoreReadiness, DockViewportRoutePreview, DockViewportRoutedDropPreview,
     DockViewportRoutedDropPreviewReplacement, DockViewportRoutedDropPreviewState,
     DockViewportRuntimeHandle, DockViewportRuntimeStatus, DockViewportRuntimeUpdate,
     DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus, DockViewportTearOffBeginOutcome,
     DockViewportTearOffCancelReason, DockViewportTearOffCancelled, DockViewportTearOffCompleted,
     DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffSourceStatus,
-    DockViewportWindowEffects, DockViewportWindowFacts, DockViewportWindowOwnership,
-    DockViewportWindowRetirement,
+    DockViewportTearOffPending, DockViewportTearOffPlacement, DockViewportTearOffPlacementPolicy,
+    DockViewportTearOffRequest, DockViewportTearOffSourceStatus, DockViewportWindowEffects,
+    DockViewportWindowFacts, DockViewportWindowOwnership, DockViewportWindowRetirement,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     extend_unique_windows,
     interaction::DockRuntimeDragSession,
+    resolved_drop_route_outcome,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_registry::DockViewportPlatformRequests,
     viewport_window_lifecycle::{
@@ -46,8 +50,8 @@ use crate::{
 #[cfg(test)]
 use open_gpui::AppContext as _;
 use open_gpui::{
-    AnyWindowHandle, App, Bounds, Entity, Pixels, PlatformFocusedWindow, Point, WindowBounds,
-    WindowId, WindowOptions, point, px,
+    AnyWindowHandle, App, Bounds, Entity, Pixels, PlatformFocusedWindow, Point, WindowId,
+    WindowOptions,
 };
 
 /// Internal owner for controller-backed platform viewport lifecycle.
@@ -85,178 +89,10 @@ impl DockViewportRuntimeRegistration {
     }
 }
 
-struct DockViewportBackendRouteRequest {
-    request: DockViewportDropRouteRequest,
-    changed: bool,
-}
-
-struct DockViewportDropRouteSnapshotRefresh {
-    snapshot: DockViewportDropRouteSnapshot,
-    changed: bool,
-    window_effects: DockViewportWindowEffects,
-}
-
 #[derive(Debug, Default)]
 struct DockViewportVacatedPayloadDropSource {
     windows: Vec<AnyWindowHandle>,
     affected_windows: Vec<AnyWindowHandle>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct DockViewportResolvedDropRouteOutcome {
-    resolution: DockViewportResolvedDropRoute,
-    changed: bool,
-}
-
-pub(crate) struct DockViewportResolvedDropRouteRefresh {
-    pub(crate) outcome: DockViewportResolvedDropRouteOutcome,
-    window_effects: DockViewportWindowEffects,
-}
-
-impl DockViewportResolvedDropRouteRefresh {
-    pub(crate) fn window_effects(&self) -> DockViewportWindowEffects {
-        self.window_effects.clone()
-    }
-}
-
-impl DockViewportResolvedDropRouteOutcome {
-    fn new(resolution: DockViewportResolvedDropRoute, changed: bool) -> Self {
-        Self {
-            resolution,
-            changed,
-        }
-    }
-
-    pub(crate) fn changed(&self) -> bool {
-        self.changed
-    }
-
-    pub(crate) fn resolution(&self) -> &DockViewportResolvedDropRoute {
-        &self.resolution
-    }
-
-    pub(crate) fn into_resolution(self) -> DockViewportResolvedDropRoute {
-        self.resolution
-    }
-}
-
-#[derive(Debug)]
-struct DockViewportDropRouteSnapshot {
-    request: DockViewportDropRouteRequest,
-    route_resolution: DockViewportDropRouteResolution,
-}
-
-struct DockViewportDropRouteSnapshotSelection {
-    request: DockViewportDropRouteRequest,
-    route_resolution: DockViewportDropRouteResolution,
-}
-
-impl DockViewportDropRouteSnapshot {
-    fn resolve(
-        adapter: &DockViewportAdapter,
-        request: DockViewportDropRouteRequest,
-        policy: &crate::DockPolicy,
-    ) -> Self {
-        let route_resolution = adapter.resolve_payload_drop_route_resolution(&request, policy);
-        Self {
-            request,
-            route_resolution,
-        }
-    }
-
-    fn into_route_selection(self) -> DockViewportDropRouteSnapshotSelection {
-        DockViewportDropRouteSnapshotSelection {
-            request: self.request,
-            route_resolution: self.route_resolution,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DockViewportTearOffPlacementSource {
-    Suggested,
-    DragGeometry,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct DockViewportTearOffPlacement {
-    window_bounds: WindowBounds,
-    source: DockViewportTearOffPlacementSource,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct DockViewportTearOffPlacementPolicy {}
-
-const DOCK_TEAR_OFF_MAX_WORK_AREA_FRACTION: f32 = 0.90;
-
-impl DockViewportTearOffPlacement {
-    fn new(window_bounds: WindowBounds, source: DockViewportTearOffPlacementSource) -> Self {
-        Self {
-            window_bounds,
-            source,
-        }
-    }
-
-    pub(crate) fn window_bounds(&self) -> WindowBounds {
-        self.window_bounds
-    }
-
-    #[cfg(test)]
-    pub(crate) fn source(&self) -> DockViewportTearOffPlacementSource {
-        self.source
-    }
-}
-
-impl Default for DockViewportTearOffPlacementPolicy {
-    fn default() -> Self {
-        Self {}
-    }
-}
-
-impl DockViewportTearOffPlacementPolicy {
-    fn resolve(
-        &self,
-        request: &DockViewportTearOffRequest,
-    ) -> Option<DockViewportTearOffPlacement> {
-        if let Some(window_bounds) = request.suggested_window_bounds() {
-            return Some(DockViewportTearOffPlacement::new(
-                window_bounds,
-                DockViewportTearOffPlacementSource::Suggested,
-            ));
-        }
-
-        if let Some(geometry) = request.tear_off_geometry() {
-            if let Some(release_position) = request.release_position() {
-                return Some(DockViewportTearOffPlacement::new(
-                    WindowBounds::Windowed(
-                        self.bounds_from_drag_geometry(release_position, geometry),
-                    ),
-                    DockViewportTearOffPlacementSource::DragGeometry,
-                ));
-            }
-        }
-        None
-    }
-
-    fn bounds_from_drag_geometry(
-        &self,
-        release_position: Point<Pixels>,
-        geometry: DockDragTearOffGeometry,
-    ) -> Bounds<Pixels> {
-        tear_off_bounds_from_cursor_anchor(release_position, geometry)
-    }
-}
-
-pub(crate) fn suggested_tear_off_window_bounds(
-    source_window_bounds: WindowBounds,
-    host_position: Point<Pixels>,
-    geometry: DockDragTearOffGeometry,
-) -> WindowBounds {
-    let source_window_origin = source_window_bounds.get_bounds().origin;
-    WindowBounds::Windowed(tear_off_bounds_from_cursor_anchor(
-        source_window_origin + host_position,
-        geometry,
-    ))
 }
 
 #[derive(Debug)]
@@ -2364,57 +2200,5 @@ impl DockViewportRuntime {
         let readiness = self.adapter.check_placement_restore(placement)?;
         self.status.record_placement_restore(Some(readiness));
         Ok(readiness)
-    }
-}
-
-fn clamp_bounds_to_work_area(bounds: Bounds<Pixels>, work_area: Bounds<Pixels>) -> Bounds<Pixels> {
-    let max_origin = point(
-        work_area.right() - bounds.size.width,
-        work_area.bottom() - bounds.size.height,
-    );
-    let origin = bounds.origin.clamp(&work_area.origin, &max_origin);
-    Bounds::new(origin, bounds.size)
-}
-
-fn tear_off_bounds_from_cursor_anchor(
-    cursor_anchor: Point<Pixels>,
-    geometry: DockDragTearOffGeometry,
-) -> Bounds<Pixels> {
-    let size = tear_off_window_size(geometry);
-    let cursor_offset = geometry
-        .cursor_offset()
-        .clamp(&point(px(0.0), px(0.0)), &point(size.width, size.height));
-    let bounds = Bounds::new(cursor_anchor - cursor_offset, size);
-    geometry
-        .display_work_area()
-        .map(|work_area| clamp_bounds_to_work_area(bounds, work_area))
-        .unwrap_or(bounds)
-}
-
-fn tear_off_window_size(geometry: DockDragTearOffGeometry) -> open_gpui::Size<Pixels> {
-    let size = geometry
-        .preferred_size()
-        .unwrap_or_else(|| geometry.source_bounds().size);
-    geometry
-        .display_work_area()
-        .map(|work_area| size.min(&undock_limited_work_area_size(work_area)))
-        .unwrap_or(size)
-}
-
-fn undock_limited_work_area_size(work_area: Bounds<Pixels>) -> open_gpui::Size<Pixels> {
-    work_area
-        .size
-        .map(|dimension| (dimension * DOCK_TEAR_OFF_MAX_WORK_AREA_FRACTION).floor())
-}
-
-fn resolved_drop_route_outcome(
-    resolution: DockViewportResolvedDropRoute,
-    update: DockViewportRuntimeUpdate,
-) -> DockViewportResolvedDropRouteRefresh {
-    let changed = update.changed();
-    let window_effects = DockViewportWindowEffects::refresh_only(update.into_windows());
-    DockViewportResolvedDropRouteRefresh {
-        outcome: DockViewportResolvedDropRouteOutcome::new(resolution, changed),
-        window_effects,
     }
 }
