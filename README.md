@@ -59,17 +59,25 @@ During local development, use workspace path dependencies instead of registry ve
 - `crates/gpui_wgpu`: renderer backend
 - `crates/gpui_macros`: Open GPUI proc macros
 - `crates/ui_core`: renderer-neutral UI contracts, geometry, virtualizer math, and component state helpers
-- `crates/ui_components`: official component library surfaces such as Listbox, Command, Table, Tree, and VirtualizedList
-- `crates/motion`: renderer-neutral `open-gpui-motion` timing, spring, policy, projection, and frame-demand primitives
+- `crates/ui_components`: official component library surfaces such as Listbox, Command, Table,
+  Tree, and VirtualizedList; see [crates/ui_components/README.md](crates/ui_components/README.md)
+- `crates/motion`: renderer-neutral `open-gpui-motion` timing, spring, policy, projection, and
+  frame-demand primitives; see [crates/motion/README.md](crates/motion/README.md)
+- `crates/gpui_docking`: retained docking graph, workspace, host, and viewport primitives; see
+  [crates/gpui_docking/README.md](crates/gpui_docking/README.md)
 - `crates/canvas`: reusable `open-gpui-canvas` model and interaction primitives for infinite canvas applications
 - `examples/canvas-notes`: native JSON Canvas note-map example
+- `examples/docking-native`: native docking workspace example
 - `examples/smoke-native`: native smoke example
+- `examples/ui-foundation-gallery`: native UI component gallery and conformance surface
 - `xtask`: workspace verification and import-boundary checks
 
-Run the canvas example with:
+Run normal-checkout examples with:
 
 ```sh
 cargo run -p open-gpui-canvas-notes
+cargo run -p open-gpui-docking-native
+cargo run -p open-gpui-ui-foundation-gallery
 ```
 
 ## Verification

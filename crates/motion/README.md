@@ -16,6 +16,8 @@ runtime.
   `Duration` samples with non-monotonic elapsed time clamped.
 - `MotionFrameDemand::combine` and `MotionFrameDemand::combine_all` for aggregating many motion
   sources into one adapter frame request.
+- `MotionFrameHost` for keeping adapter-owned frame request decisions consistent without depending
+  on a GPUI window, browser scheduler, or renderer.
 - Neutral logical-pixel geometry plus projection, reveal, and clip helpers for final-size content.
 
 Adapters keep authority over rendering, input, focus, accessibility, and frame scheduling. A
@@ -37,6 +39,23 @@ terminal pruning, and `MotionFrameDemand` aggregation. They do not prove row ent
 public presence, keyframes, repeat/reverse/speed controls, shared-layout orchestration, WAAPI, or a
 global scheduler.
 
+## Where To See It
+
+Run the component gallery to inspect Splitter and VirtualizedList motion in a normal checkout:
+
+```sh
+cargo run -p open-gpui-ui-foundation-gallery
+```
+
+Run the docking example to inspect layout and affordance motion through the docking host:
+
+```sh
+cargo run -p open-gpui-docking-native
+```
+
+Both examples keep frame scheduling in their GPUI adapters. `open-gpui-motion` only publishes
+deterministic samples and frame demand.
+
 ## Boundaries
 
 This crate deliberately does not provide React hooks, CSS parsing, DOM measurement, WAAPI behavior,
@@ -53,7 +72,7 @@ helpers in adapter crates to map `MotionRect` to renderer-specific geometry.
 
 ```rust
 use open_gpui_motion::{
-    MotionClockSample, MotionDuration, MotionEasing, MotionExecutionPlan, MotionModel,
+    MotionDuration, MotionEasing, MotionExecutionPlan, MotionFrameHost, MotionModel,
     MotionPolicyContext, MotionPolicyInput, MotionPreference, MotionScalarExecution, MotionSpec,
 };
 use std::time::Duration;
@@ -69,10 +88,13 @@ let plan = MotionExecutionPlan::resolve(
         .with_reduced_motion_final_state(true),
 );
 let execution = MotionScalarExecution::start(plan, 0.0, 1.0, 0.0, Duration::ZERO);
-let clock = MotionClockSample::from_elapsed(Duration::ZERO, Duration::from_millis(90));
-let sample = execution.sample_clock(clock);
+let mut frame_host = MotionFrameHost::new();
+let sample = frame_host.sample_elapsed(Duration::from_millis(90), |clock| {
+    let sample = execution.sample_clock(clock);
+    (sample.value(), sample.frame_demand())
+});
 
-if sample.frame_demand().needs_frame() {
+if sample.should_request_frame() {
     // Ask the owning adapter to request a GPUI frame.
 }
 ```

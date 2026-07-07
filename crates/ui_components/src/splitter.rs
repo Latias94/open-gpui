@@ -8,7 +8,8 @@ use open_gpui::{
     div, px, relative, rgb,
 };
 use open_gpui_motion::{
-    MotionExecutionPlan, MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPreference,
+    MotionExecutionPlan, MotionFrameDemand, MotionFrameHost, MotionFrameHostUpdate,
+    MotionFrameReason, MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPreference,
     MotionPreset, MotionProjectionClip, MotionScalarController, MotionScalarExecution, MotionSpec,
 };
 use open_gpui_ui_core::split::{
@@ -38,6 +39,7 @@ struct SplitterRuntime {
     drag_start: Option<SplitterDragStart>,
     transition: Option<SplitterRuntimeTransition>,
     layout_transition: Option<SplitterRuntimeLayoutTransition>,
+    frame_host: MotionFrameHost,
     retained_views: HashMap<String, AnyView>,
 }
 
@@ -55,7 +57,7 @@ impl SplitterRuntime {
     }
 
     #[cfg(test)]
-    fn sync_at(&mut self, state: &SplitterState, now: Instant) -> bool {
+    fn sync_at(&mut self, state: &SplitterState, now: Instant) -> MotionFrameHostUpdate {
         self.sync_at_with_model(
             state,
             now,
@@ -68,7 +70,17 @@ impl SplitterRuntime {
         state: &SplitterState,
         now: Instant,
         model: MotionModel,
-    ) -> bool {
+    ) -> MotionFrameHostUpdate {
+        let demand = self.sync_motion_at_with_model(state, now, model);
+        self.frame_host.observe(demand)
+    }
+
+    fn sync_motion_at_with_model(
+        &mut self,
+        state: &SplitterState,
+        now: Instant,
+        model: MotionModel,
+    ) -> MotionFrameDemand {
         let panel_ids = state
             .panels()
             .iter()
@@ -83,7 +95,7 @@ impl SplitterRuntime {
         if self.panel_ids.is_empty() {
             self.sync_immediate(panel_ids, target_fractions);
             self.last_state = Some(state.clone());
-            return false;
+            return MotionFrameDemand::Idle;
         }
 
         if self.layout_transition_should_run(state, &panel_ids, &target_fractions) {
@@ -98,13 +110,14 @@ impl SplitterRuntime {
             if complete {
                 self.last_state = Some(state.clone());
             }
-            return !complete;
+            return splitter_frame_demand(!complete);
         }
 
         if fractions_equal(&self.state_fractions, &target_fractions) {
             self.transition = None;
+            self.frame_host.reset();
             self.last_state = Some(state.clone());
-            return false;
+            return MotionFrameDemand::Idle;
         }
 
         let from_fractions = self
@@ -116,8 +129,9 @@ impl SplitterRuntime {
             self.state_fractions = target_fractions;
             self.panel_fractions = from_fractions;
             self.transition = None;
+            self.frame_host.reset();
             self.last_state = Some(state.clone());
-            return false;
+            return MotionFrameDemand::Idle;
         }
         let motion = committed_layout_motion_plan(model);
         if motion.is_immediate() {
@@ -125,9 +139,11 @@ impl SplitterRuntime {
             self.panel_fractions = target_fractions;
             self.transition = None;
             self.layout_transition = None;
+            self.frame_host.reset();
             self.last_state = Some(state.clone());
-            return false;
+            return MotionFrameDemand::Idle;
         }
+        self.frame_host.reset();
         self.panel_fractions = from_fractions.clone();
         self.state_fractions = target_fractions.clone();
         self.transition = Some(SplitterRuntimeTransition {
@@ -142,7 +158,7 @@ impl SplitterRuntime {
             ),
         });
         self.last_state = Some(state.clone());
-        true
+        splitter_frame_demand(true)
     }
 
     fn sync_immediate(&mut self, panel_ids: Vec<String>, panel_fractions: Vec<f32>) {
@@ -152,6 +168,7 @@ impl SplitterRuntime {
         self.drag_start = None;
         self.transition = None;
         self.layout_transition = None;
+        self.frame_host.reset();
     }
 
     fn sync_drag_state(&mut self, state: &SplitterState) {
@@ -174,6 +191,7 @@ impl SplitterRuntime {
 
         self.transition = None;
         self.layout_transition = None;
+        self.frame_host.reset();
         self.last_state = Some(state.clone());
     }
 
@@ -202,7 +220,7 @@ impl SplitterRuntime {
         target_fractions: Vec<f32>,
         now: Instant,
         model: MotionModel,
-    ) -> bool {
+    ) -> MotionFrameDemand {
         if let Some(transition) = self.layout_transition.as_ref()
             && transition.target_state == *state
         {
@@ -210,7 +228,7 @@ impl SplitterRuntime {
             if complete {
                 self.last_state = Some(state.clone());
             }
-            return !complete;
+            return splitter_frame_demand(!complete);
         }
 
         let from_state = self
@@ -223,7 +241,7 @@ impl SplitterRuntime {
         if motion.is_immediate() {
             self.sync_immediate(panel_ids, target_fractions);
             self.last_state = Some(state.clone());
-            return false;
+            return MotionFrameDemand::Idle;
         }
 
         let transition = SplitterLayoutTransition::between(
@@ -232,6 +250,7 @@ impl SplitterRuntime {
             SplitterLayoutScene::from_state(state, transition_scene_bounds()),
             MotionSpec::committed_layout(motion.model().preference()),
         );
+        self.frame_host.reset();
         self.panel_ids = panel_ids;
         self.state_fractions = target_fractions.clone();
         self.panel_fractions = target_fractions;
@@ -244,7 +263,7 @@ impl SplitterRuntime {
             track: MotionScalarExecution::start(motion, 0.0, 1.0, 0.0, Duration::ZERO),
         });
         self.last_state = Some(state.clone());
-        true
+        splitter_frame_demand(true)
     }
 
     fn sample_transition(&mut self, now: Instant) -> bool {
@@ -259,6 +278,7 @@ impl SplitterRuntime {
         if complete {
             self.panel_fractions = transition.to_fractions.clone();
             self.transition = None;
+            self.frame_host.reset();
         }
         complete
     }
@@ -271,6 +291,7 @@ impl SplitterRuntime {
         let complete = sample.complete();
         if complete {
             self.layout_transition = None;
+            self.frame_host.reset();
         }
         complete
     }
@@ -335,6 +356,14 @@ fn committed_layout_motion_plan(model: MotionModel) -> MotionExecutionPlan {
             .with_spatial_motion(!model.is_immediate())
             .with_reduced_motion_final_state(true),
     )
+}
+
+fn splitter_frame_demand(needs_frame: bool) -> MotionFrameDemand {
+    if needs_frame {
+        MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender)
+    } else {
+        MotionFrameDemand::Idle
+    }
 }
 
 fn fraction_samples_for_transition(
@@ -600,13 +629,13 @@ impl RenderOnce for Splitter {
             .collect::<Vec<_>>();
         let runtime =
             window.use_keyed_state(self.id.clone(), cx, |_, _| SplitterRuntime::default());
-        let needs_frame = runtime.update(cx, |runtime, _| {
+        let frame_update = runtime.update(cx, |runtime, _| {
             runtime.retain_panel_views(panel_views);
-            let needs_frame = runtime.sync_at_with_model(&base_state, now, motion_model);
+            let frame_update = runtime.sync_at_with_model(&base_state, now, motion_model);
             runtime.prune_retained_views_to_current_panels();
-            needs_frame
+            frame_update
         });
-        if needs_frame {
+        if frame_update.should_request_frame() {
             window.request_animation_frame();
         }
         let runtime_snapshot = runtime.read(cx).clone();
@@ -955,19 +984,25 @@ mod tests {
         let to = state(0.6, 0.4);
         let mut runtime = SplitterRuntime::default();
 
-        assert!(!runtime.sync_at(&from, start));
+        assert!(!runtime.sync_at(&from, start).should_request_frame());
         assert!(fractions_equal(&runtime.panel_fractions, &[0.3, 0.7]));
 
-        assert!(runtime.sync_at(&to, start));
+        let first_update = runtime.sync_at(&to, start);
+        assert!(first_update.should_request_frame());
+        assert_eq!(first_update.requested_frames(), 1);
         assert!(fractions_equal(&runtime.panel_fractions, &[0.3, 0.7]));
 
-        assert!(runtime.sync_at(&to, start + Duration::from_millis(90)));
+        let midpoint_update = runtime.sync_at(&to, start + Duration::from_millis(90));
+        assert!(midpoint_update.should_request_frame());
+        assert_eq!(midpoint_update.requested_frames(), 2);
         assert!(
             runtime.panel_fractions[0] > 0.3 && runtime.panel_fractions[0] < 0.6,
             "programmatic splitter change should sample between old and new fractions"
         );
 
-        assert!(!runtime.sync_at(&to, start + Duration::from_millis(900)));
+        let terminal_update = runtime.sync_at(&to, start + Duration::from_millis(900));
+        assert!(!terminal_update.should_request_frame());
+        assert_eq!(terminal_update.requested_frames(), 0);
         assert!(fractions_equal(&runtime.panel_fractions, &[0.6, 0.4]));
         assert!(runtime.transition.is_none());
     }
@@ -980,12 +1015,16 @@ mod tests {
         let second_target = state(0.2, 0.8);
         let mut runtime = SplitterRuntime::default();
 
-        runtime.sync_at(&from, start);
-        runtime.sync_at(&first_target, start);
-        runtime.sync_at(&first_target, start + Duration::from_millis(45));
+        let _ = runtime.sync_at(&from, start);
+        let first_update = runtime.sync_at(&first_target, start);
+        let second_update = runtime.sync_at(&first_target, start + Duration::from_millis(45));
+        assert_eq!(first_update.requested_frames(), 1);
+        assert_eq!(second_update.requested_frames(), 2);
         let sampled_left = runtime.panel_fractions[0];
 
-        assert!(runtime.sync_at(&second_target, start + Duration::from_millis(45)));
+        let retarget_update = runtime.sync_at(&second_target, start + Duration::from_millis(45));
+        assert!(retarget_update.should_request_frame());
+        assert_eq!(retarget_update.requested_frames(), 1);
         assert!(
             (runtime.panel_fractions[0] - sampled_left).abs() <= EPSILON,
             "retargeting should start from the sampled fraction instead of the original fraction"
@@ -1010,12 +1049,16 @@ mod tests {
         let to = state(0.6, 0.4);
         let mut runtime = SplitterRuntime::default();
 
-        runtime.sync_at(&from, start);
-        assert!(!runtime.sync_at_with_model(
-            &to,
-            start,
-            MotionPreset::committed_layout(MotionPreference::Reduced).resolve_model()
-        ));
+        let _ = runtime.sync_at(&from, start);
+        assert!(
+            !runtime
+                .sync_at_with_model(
+                    &to,
+                    start,
+                    MotionPreset::committed_layout(MotionPreference::Reduced).resolve_model()
+                )
+                .should_request_frame()
+        );
 
         assert!(fractions_equal(&runtime.state_fractions, &[0.6, 0.4]));
         assert!(fractions_equal(&runtime.panel_fractions, &[0.6, 0.4]));
@@ -1039,8 +1082,12 @@ mod tests {
         );
         let mut runtime = SplitterRuntime::default();
 
-        runtime.sync_at(&from, start);
-        assert!(runtime.sync_at(&replaced, start + Duration::from_millis(16)));
+        let _ = runtime.sync_at(&from, start);
+        assert!(
+            runtime
+                .sync_at(&replaced, start + Duration::from_millis(16))
+                .should_request_frame()
+        );
 
         assert_eq!(
             runtime.panel_ids,
@@ -1068,7 +1115,11 @@ mod tests {
             open_gpui_motion::motion_px(0.0)
         );
 
-        assert!(!runtime.sync_at(&replaced, start + Duration::from_millis(900)));
+        assert!(
+            !runtime
+                .sync_at(&replaced, start + Duration::from_millis(900))
+                .should_request_frame()
+        );
         assert!(runtime.layout_transition.is_none());
     }
 
@@ -1089,12 +1140,16 @@ mod tests {
         );
         let mut runtime = SplitterRuntime::default();
 
-        runtime.sync_at(&from, start);
-        assert!(!runtime.sync_at_with_model(
-            &replaced,
-            start + Duration::from_millis(16),
-            MotionPreset::committed_layout(MotionPreference::Reduced).resolve_model()
-        ));
+        let _ = runtime.sync_at(&from, start);
+        assert!(
+            !runtime
+                .sync_at_with_model(
+                    &replaced,
+                    start + Duration::from_millis(16),
+                    MotionPreset::committed_layout(MotionPreference::Reduced).resolve_model()
+                )
+                .should_request_frame()
+        );
 
         assert_eq!(
             runtime.panel_ids,
@@ -1121,12 +1176,12 @@ mod tests {
         );
         let mut runtime = SplitterRuntime::default();
 
-        runtime.sync_at(&from, start);
-        assert!(runtime.sync_at_with_model(
-            &to,
-            start,
-            MotionPreset::timeline(spec).resolve_model()
-        ));
+        let _ = runtime.sync_at(&from, start);
+        assert!(
+            runtime
+                .sync_at_with_model(&to, start, MotionPreset::timeline(spec).resolve_model())
+                .should_request_frame()
+        );
 
         let transition = runtime
             .transition
@@ -1150,8 +1205,12 @@ mod tests {
         ));
         let mut runtime = SplitterRuntime::default();
 
-        runtime.sync_at(&from, start);
-        assert!(!runtime.sync_at_with_model(&to, start, model));
+        let _ = runtime.sync_at(&from, start);
+        assert!(
+            !runtime
+                .sync_at_with_model(&to, start, model)
+                .should_request_frame()
+        );
 
         assert!(fractions_equal(&runtime.state_fractions, &[0.6, 0.4]));
         assert!(fractions_equal(&runtime.panel_fractions, &[0.6, 0.4]));

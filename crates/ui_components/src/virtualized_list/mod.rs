@@ -1,6 +1,7 @@
 //! Renderer-neutral state for virtualized list surfaces.
 
 use crate::a11y::UiA11yElementExt;
+use crate::choice::{normalize_query, normalized_text_starts_with};
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use crate::roving_focus::paged_navigation_target;
 use crate::scroll_area::ScrollArea;
@@ -16,7 +17,8 @@ use open_gpui::{
     StatefulInteractiveElement, Styled, Window, div, px, rgb,
 };
 use open_gpui_motion::{
-    MotionFrameDemand, MotionModel, MotionPreference, MotionPreset, MotionScalarController,
+    MotionFrameDemand, MotionFrameHost, MotionModel, MotionPreference, MotionPreset,
+    MotionScalarController,
 };
 #[cfg(test)]
 use open_gpui_ui_core::ui_px;
@@ -37,6 +39,7 @@ type VirtualizedListRowRenderer =
     Rc<dyn Fn(VirtualizedListRowRenderContext, &mut Window, &mut App) -> AnyElement>;
 
 const ACTIVE_INDICATOR_EPSILON: f32 = 0.001;
+const VIRTUALIZED_LIST_TYPEAHEAD_RESET: Duration = Duration::from_millis(700);
 
 /// Scroll alignment requested when a virtualized row should be revealed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -847,6 +850,15 @@ impl VirtualizedListState {
         selectable_indices.get(target_position).copied()
     }
 
+    /// Returns the next selectable item whose text value starts with `query`.
+    ///
+    /// The scan starts after the current active row and wraps once. Disabled,
+    /// structural, and duplicate-key rows do not participate in typeahead.
+    pub fn typeahead_target(&self, query: &str) -> Option<&VirtualizedListStateItem> {
+        let index = self.typeahead_target_index(query)?;
+        self.items.get(index)
+    }
+
     /// Returns activation payload for Enter or Space.
     pub fn activation_for_key(&self, key: &str) -> Option<VirtualizedListActivation> {
         if self.disabled {
@@ -875,6 +887,42 @@ impl VirtualizedListState {
 
         let target = self.active_target()?;
         self.selection_change_for_target(&target)
+    }
+
+    /// Returns replacement-style range selection for multi-select lists.
+    pub fn range_selection_change(
+        &self,
+        anchor_key: Option<&str>,
+        target_key: &str,
+    ) -> Option<VirtualizedListSelectionChange> {
+        if self.disabled || self.selection_mode != VirtualizedListSelectionMode::Multiple {
+            return None;
+        }
+
+        let target_index = self.selectable_index_for_key(target_key)?;
+        let anchor_index = self.range_anchor_index(anchor_key, target_index)?;
+        let start = anchor_index.min(target_index);
+        let end = anchor_index.max(target_index);
+        let selected_keys = self
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                (index >= start
+                    && index <= end
+                    && is_selectable_state_item(item, &self.duplicate_keys))
+                .then(|| item.key().to_owned())
+            })
+            .collect::<Vec<_>>();
+        let selected_key_set = selected_keys.iter().cloned().collect::<BTreeSet<_>>();
+        if selected_key_set == self.selected_keys {
+            return None;
+        }
+
+        Some(VirtualizedListSelectionChange::new(
+            target_key.to_owned(),
+            selected_keys,
+        ))
     }
 
     /// Returns a key-based reveal target for fixed-height rows.
@@ -965,6 +1013,38 @@ impl VirtualizedListState {
         valid_index(index, self.item_count()).or_else(|| self.item_count().checked_sub(1))
     }
 
+    fn typeahead_target_index(&self, query: &str) -> Option<usize> {
+        if self.disabled {
+            return None;
+        }
+
+        let query = normalize_query(query);
+        if query.is_empty() || self.items.is_empty() {
+            return None;
+        }
+
+        let selectable_indices = self.selectable_indices();
+        if selectable_indices.is_empty() {
+            return None;
+        }
+
+        let active_position = self.active_index.and_then(|active_index| {
+            selectable_indices
+                .iter()
+                .position(|index| *index == active_index)
+        });
+        let start_position =
+            active_position.map_or(0, |position| (position + 1) % selectable_indices.len());
+
+        (0..selectable_indices.len())
+            .map(|step| selectable_indices[(start_position + step) % selectable_indices.len()])
+            .find(|index| {
+                self.items.get(*index).is_some_and(|item| {
+                    normalized_text_starts_with(item.text_value(), query.as_str())
+                })
+            })
+    }
+
     fn target_at_index(&self, index: usize) -> Option<VirtualizedListItemTarget> {
         let item = self.items.get(index)?;
         is_selectable_state_item(item, &self.duplicate_keys).then(|| {
@@ -980,6 +1060,26 @@ impl VirtualizedListState {
     fn active_target(&self) -> Option<VirtualizedListItemTarget> {
         self.active_index
             .and_then(|index| self.target_at_index(index))
+    }
+
+    fn selectable_index_for_key(&self, key: &str) -> Option<usize> {
+        state_item_index_by_unique_key(self.items.as_ref(), &self.duplicate_keys, key)
+    }
+
+    fn range_anchor_key(&self, anchor_key: Option<&str>, target_key: &str) -> Option<&str> {
+        let target_index = self.selectable_index_for_key(target_key)?;
+        let anchor_index = self.range_anchor_index(anchor_key, target_index)?;
+        Some(self.items[anchor_index].key())
+    }
+
+    fn range_anchor_index(&self, anchor_key: Option<&str>, target_index: usize) -> Option<usize> {
+        anchor_key
+            .and_then(|key| self.selectable_index_for_key(key))
+            .or_else(|| {
+                self.active_index
+                    .filter(|index| self.target_at_index(*index).is_some())
+            })
+            .or(Some(target_index))
     }
 
     fn selection_change_for_target(
@@ -1330,6 +1430,39 @@ impl VirtualizedListRowRenderContext {
     }
 }
 
+/// Current sticky section metadata for grouped virtualized lists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VirtualizedListStickySectionSnapshot {
+    key: String,
+    label: String,
+    index: usize,
+}
+
+impl VirtualizedListStickySectionSnapshot {
+    fn new(index: usize, item: &VirtualizedListItemDescriptor) -> Self {
+        Self {
+            key: item.key().to_owned(),
+            label: item.label().to_owned(),
+            index,
+        }
+    }
+
+    /// Returns the stable section key.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Returns the visible section label.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Returns the zero-based source row index of the section row.
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+}
+
 /// Public behavior snapshot for a concrete virtualized list.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VirtualizedListBehaviorSnapshot {
@@ -1344,6 +1477,7 @@ pub struct VirtualizedListBehaviorSnapshot {
     virtualizer_snapshot: VirtualizerSnapshot,
     visible_range: open_gpui_ui_core::VirtualizerRange,
     overscan_range: open_gpui_ui_core::VirtualizerRange,
+    sticky_section: Option<VirtualizedListStickySectionSnapshot>,
     rows: Vec<VirtualizedListRowBehaviorSnapshot>,
     visible_row_count: usize,
     overscan_count: usize,
@@ -1365,6 +1499,7 @@ impl VirtualizedListBehaviorSnapshot {
             virtualizer_snapshot: plan.virtualizer().snapshot().clone(),
             visible_range: plan.virtualizer().visible_range().clone(),
             overscan_range: plan.virtualizer().overscan_range().clone(),
+            sticky_section: plan.sticky_section().cloned(),
             rows: plan
                 .rows()
                 .iter()
@@ -1430,6 +1565,11 @@ impl VirtualizedListBehaviorSnapshot {
     /// Returns the rendered source row range after overscan.
     pub const fn overscan_range(&self) -> &open_gpui_ui_core::VirtualizerRange {
         &self.overscan_range
+    }
+
+    /// Returns the section that owns the first visible selectable row.
+    pub fn sticky_section(&self) -> Option<&VirtualizedListStickySectionSnapshot> {
+        self.sticky_section.as_ref()
     }
 
     /// Returns rows in render order.
@@ -1613,6 +1753,7 @@ pub(crate) struct VirtualizedListRenderPlan {
     metrics: VirtualizedListMetrics,
     row_measure_mode: VirtualizedListRowMeasureMode,
     virtualizer: VirtualizerResolvedState,
+    sticky_section: Option<VirtualizedListStickySectionSnapshot>,
     rows: Vec<VirtualizedListRowRenderPlan>,
     visible_row_count: usize,
     overscan_count: usize,
@@ -1668,6 +1809,11 @@ impl VirtualizedListRenderPlan {
             viewport_extent,
             &duplicate_keys,
         );
+        let sticky_section = resolve_virtualized_list_sticky_section(
+            items,
+            virtualizer.visible_range(),
+            &duplicate_keys,
+        );
         let row_window = RowWindow::project(&virtualizer, |index| items.get(index).cloned());
         let visible_row_count = row_window.visible_row_count();
         let overscan_count = row_window.overscan_count();
@@ -1695,6 +1841,7 @@ impl VirtualizedListRenderPlan {
             metrics,
             row_measure_mode,
             virtualizer,
+            sticky_section,
             rows,
             visible_row_count,
             overscan_count,
@@ -1731,6 +1878,11 @@ impl VirtualizedListRenderPlan {
     /// Returns the resolved virtualizer state.
     pub const fn virtualizer(&self) -> &VirtualizerResolvedState {
         &self.virtualizer
+    }
+
+    /// Returns the section that owns the first visible selectable row.
+    pub fn sticky_section(&self) -> Option<&VirtualizedListStickySectionSnapshot> {
+        self.sticky_section.as_ref()
     }
 
     /// Returns rows in render order.
@@ -2014,9 +2166,13 @@ struct VirtualizedListRuntime {
     focus_handle: FocusHandle,
     active_key: Option<String>,
     selected_keys: BTreeSet<String>,
+    selection_anchor_key: Option<String>,
     row_measurements: BTreeMap<String, UiPx>,
     pending_scroll_to_active: Option<String>,
+    typeahead_buffer: String,
+    last_typeahead_at: Option<Instant>,
     active_indicator: VirtualizedListActiveIndicatorRuntime,
+    active_indicator_frame_host: MotionFrameHost,
 }
 
 impl VirtualizedListRuntime {
@@ -2026,6 +2182,19 @@ impl VirtualizedListRuntime {
             self.row_measurements.insert(render_key, height);
             cx.notify();
         }
+    }
+
+    fn push_typeahead_key(&mut self, key: &str) -> String {
+        let now = Instant::now();
+        if self.last_typeahead_at.map_or(true, |last| {
+            now.duration_since(last) > VIRTUALIZED_LIST_TYPEAHEAD_RESET
+        }) {
+            self.typeahead_buffer.clear();
+        }
+
+        self.typeahead_buffer.push_str(&key.to_lowercase());
+        self.last_typeahead_at = Some(now);
+        self.typeahead_buffer.clone()
     }
 }
 
@@ -2287,9 +2456,13 @@ impl RenderOnce for VirtualizedList {
             focus_handle: cx.focus_handle(),
             active_key: self.active_key.clone(),
             selected_keys: self.selected_keys.clone(),
+            selection_anchor_key: self.active_key.clone(),
             row_measurements: BTreeMap::new(),
             pending_scroll_to_active: None,
+            typeahead_buffer: String::new(),
+            last_typeahead_at: None,
             active_indicator: VirtualizedListActiveIndicatorRuntime::default(),
+            active_indicator_frame_host: MotionFrameHost::new(),
         });
         let runtime_state = runtime.read(cx).clone();
         let scroll_handle = scroll_surface_handle(&runtime_state.scroll_surface, None);
@@ -2341,7 +2514,7 @@ impl RenderOnce for VirtualizedList {
         let scroll_viewport_id = format!("virtualized-list:{}:viewport", plan.list_id());
         let root_click_state = list_state.clone();
 
-        let active_indicator_demand = runtime.update(cx, |runtime, _| {
+        let active_indicator_frame = runtime.update(cx, |runtime, _| {
             if runtime.active_key.as_deref() != list_state.active_key() {
                 runtime.active_key = list_state.active_key().map(str::to_owned);
                 runtime.pending_scroll_to_active = list_state.active_key().map(str::to_owned);
@@ -2349,11 +2522,22 @@ impl RenderOnce for VirtualizedList {
             if &runtime.selected_keys != list_state.selected_key_set() {
                 runtime.selected_keys = list_state.selected_key_set().clone();
             }
+            let anchor_is_valid = runtime
+                .selection_anchor_key
+                .as_deref()
+                .is_some_and(|key| list_state.selectable_index_for_key(key).is_some());
+            if !anchor_is_valid {
+                runtime.selection_anchor_key = list_state.active_key().map(str::to_owned);
+            }
+            let active_indicator_demand =
+                runtime
+                    .active_indicator
+                    .sync(&plan, now, active_indicator_model);
             runtime
-                .active_indicator
-                .sync(&plan, now, active_indicator_model)
+                .active_indicator_frame_host
+                .observe(active_indicator_demand)
         });
-        if active_indicator_demand.needs_frame() {
+        if active_indicator_frame.should_request_frame() {
             window.request_animation_frame();
         }
         let active_indicator = runtime.read(cx).active_indicator.snapshot();
@@ -2640,12 +2824,31 @@ fn render_virtualized_list_row(
             let activation = activation.clone();
             let activate_on_click =
                 list_state.selection_mode() == VirtualizedListSelectionMode::Single;
-            this.on_click(move |_event: &ClickEvent, window, cx| {
+            this.on_click(move |event: &ClickEvent, window, cx| {
                 cx.stop_propagation();
                 window.prevent_default();
-                let selection_change = list_state.selection_change_for_target(&target);
+                let shift_range = event.modifiers().shift
+                    && list_state.selection_mode() == VirtualizedListSelectionMode::Multiple;
+                let runtime_anchor = runtime.read(cx).selection_anchor_key.clone();
+                let anchor_key = shift_range
+                    .then(|| {
+                        list_state
+                            .range_anchor_key(runtime_anchor.as_deref(), target.key())
+                            .map(str::to_owned)
+                    })
+                    .flatten();
+                let selection_change = if shift_range {
+                    list_state.range_selection_change(anchor_key.as_deref(), target.key())
+                } else {
+                    list_state.selection_change_for_target(&target)
+                };
                 runtime.update(cx, |runtime, _| {
                     runtime.active_key = Some(target.key().to_owned());
+                    runtime.selection_anchor_key = if shift_range {
+                        anchor_key.clone().or_else(|| Some(target.key().to_owned()))
+                    } else {
+                        Some(target.key().to_owned())
+                    };
                     if let Some(selection_change) = selection_change.as_ref() {
                         runtime.selected_keys = selection_change.selected_key_set();
                     }
@@ -2761,14 +2964,36 @@ fn handle_virtualized_list_key_down(
     }
 
     let key = event.keystroke.key.as_str();
+    let shift_only = virtualized_list_shift_only(event);
     if let Some(target) = state.navigation_target(key) {
         let Some(target) = state.target_at_index(target) else {
             return;
         };
         cx.stop_propagation();
         window.prevent_default();
+        let runtime_anchor = runtime.read(cx).selection_anchor_key.clone();
+        let anchor_key = shift_only
+            .then(|| {
+                state
+                    .range_anchor_key(runtime_anchor.as_deref(), target.key())
+                    .map(str::to_owned)
+            })
+            .flatten();
+        let selection_change = if shift_only {
+            state.range_selection_change(anchor_key.as_deref(), target.key())
+        } else {
+            None
+        };
         runtime.update(cx, |runtime, _| {
             runtime.active_key = Some(target.key().to_owned());
+            runtime.selection_anchor_key = if shift_only {
+                anchor_key.clone().or_else(|| Some(target.key().to_owned()))
+            } else {
+                Some(target.key().to_owned())
+            };
+            if let Some(selection_change) = selection_change.as_ref() {
+                runtime.selected_keys = selection_change.selected_key_set();
+            }
             runtime.pending_scroll_to_active = Some(target.key().to_owned());
         });
         scroll_active_key(
@@ -2778,6 +3003,40 @@ fn handle_virtualized_list_key_down(
             row_measure_mode,
             virtualizer_snapshot,
         );
+        if let (Some(on_selection_change), Some(selection_change)) =
+            (on_selection_change.as_ref(), selection_change)
+        {
+            on_selection_change(selection_change, window, cx);
+        }
+        return;
+    }
+
+    if shift_only
+        && key == "space"
+        && state.selection_mode() == VirtualizedListSelectionMode::Multiple
+    {
+        let Some(active_key) = state.active_key() else {
+            return;
+        };
+        cx.stop_propagation();
+        window.prevent_default();
+        let runtime_anchor = runtime.read(cx).selection_anchor_key.clone();
+        let anchor_key = state
+            .range_anchor_key(runtime_anchor.as_deref(), active_key)
+            .map(str::to_owned);
+        let selection_change = state.range_selection_change(anchor_key.as_deref(), active_key);
+        runtime.update(cx, |runtime, _| {
+            runtime.selection_anchor_key =
+                anchor_key.clone().or_else(|| Some(active_key.to_owned()));
+            if let Some(selection_change) = selection_change.as_ref() {
+                runtime.selected_keys = selection_change.selected_key_set();
+            }
+        });
+        if let (Some(on_selection_change), Some(selection_change)) =
+            (on_selection_change.as_ref(), selection_change)
+        {
+            on_selection_change(selection_change, window, cx);
+        }
         return;
     }
 
@@ -2793,6 +3052,7 @@ fn handle_virtualized_list_key_down(
         };
         runtime.update(cx, |runtime, _| {
             runtime.active_key = Some(activation.key().to_owned());
+            runtime.selection_anchor_key = Some(activation.key().to_owned());
             if let Some(selection_change) = selection_change.as_ref() {
                 runtime.selected_keys = selection_change.selected_key_set();
             }
@@ -2821,11 +3081,65 @@ fn handle_virtualized_list_key_down(
         window.prevent_default();
         runtime.update(cx, |runtime, _| {
             runtime.selected_keys = selection_change.selected_key_set();
+            runtime.selection_anchor_key = Some(selection_change.changed_key().to_owned());
         });
         if let Some(on_selection_change) = on_selection_change.as_ref() {
             on_selection_change(selection_change, window, cx);
         }
+        return;
     }
+
+    let Some(typeahead_key) = virtualized_list_typeahead_key(event) else {
+        return;
+    };
+
+    cx.stop_propagation();
+    window.prevent_default();
+    let query = runtime.update(cx, |runtime, _| runtime.push_typeahead_key(&typeahead_key));
+    if let Some(target) = state.typeahead_target(&query) {
+        let target_key = target.key().to_owned();
+        runtime.update(cx, |runtime, _| {
+            runtime.active_key = Some(target_key.clone());
+            runtime.selection_anchor_key = Some(target_key.clone());
+            runtime.pending_scroll_to_active = Some(target_key.clone());
+        });
+        scroll_active_key(
+            &scroll_handle,
+            state,
+            target_key.as_str(),
+            row_measure_mode,
+            virtualizer_snapshot,
+        );
+    }
+}
+
+fn virtualized_list_shift_only(event: &KeyDownEvent) -> bool {
+    let modifiers = event.keystroke.modifiers;
+    modifiers.shift
+        && !modifiers.control
+        && !modifiers.alt
+        && !modifiers.platform
+        && !modifiers.function
+}
+
+fn virtualized_list_typeahead_key(event: &KeyDownEvent) -> Option<String> {
+    let modifiers = event.keystroke.modifiers;
+    if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+        return None;
+    }
+
+    let key = event
+        .keystroke
+        .key_char
+        .as_deref()
+        .unwrap_or(event.keystroke.key.as_str());
+    let mut chars = key.chars();
+    let ch = chars.next()?;
+    if chars.next().is_some() || ch.is_control() {
+        return None;
+    }
+
+    Some(ch.to_string())
 }
 
 fn scroll_active_key(
@@ -3037,6 +3351,30 @@ fn virtualized_list_row_positions(items: &[VirtualizedListItemDescriptor]) -> Ve
         .collect()
 }
 
+fn resolve_virtualized_list_sticky_section(
+    items: &[VirtualizedListItemDescriptor],
+    visible_range: &open_gpui_ui_core::VirtualizerRange,
+    duplicate_keys: &BTreeSet<String>,
+) -> Option<VirtualizedListStickySectionSnapshot> {
+    let visible_selectable_index = visible_range
+        .as_range()
+        .take_while(|index| *index < items.len())
+        .find(|index| {
+            items
+                .get(*index)
+                .is_some_and(|item| item.selectable() && !duplicate_keys.contains(item.key()))
+        })?;
+
+    (0..=visible_selectable_index)
+        .rev()
+        .find_map(|index| match items.get(index) {
+            Some(item) if item.kind() == VirtualizedListRowKind::Section => {
+                Some(VirtualizedListStickySectionSnapshot::new(index, item))
+            }
+            _ => None,
+        })
+}
+
 fn virtualized_list_state_items(
     items: &[VirtualizedListItemDescriptor],
 ) -> Vec<VirtualizedListStateItem> {
@@ -3241,6 +3579,136 @@ mod tests {
 
         assert_eq!(state.navigation_target("down"), Some(2));
         assert_eq!(state.navigation_target("end"), Some(2));
+    }
+
+    #[test]
+    fn virtualized_list_typeahead_targets_selectable_text_values_from_active() {
+        let state = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            [
+                VirtualizedListStateItem::new("recent", "Recent")
+                    .row_kind(VirtualizedListRowKind::Section),
+                VirtualizedListStateItem::new("alpha", "Alpha"),
+                VirtualizedListStateItem::new("beta", "Beta").disabled(true),
+                VirtualizedListStateItem::new("gamma", "Delta Cargo"),
+                VirtualizedListStateItem::new("tail", "Tail"),
+            ],
+            Some("alpha"),
+            std::iter::empty::<&str>(),
+            VirtualizedListSelectionMode::Single,
+            Some(3),
+        );
+
+        assert_eq!(
+            state.typeahead_target("de").map(|item| item.key()),
+            Some("gamma")
+        );
+        assert_eq!(
+            state.typeahead_target("  TA ").map(|item| item.key()),
+            Some("tail")
+        );
+        assert_eq!(
+            state.typeahead_target("AL").map(|item| item.key()),
+            Some("alpha"),
+            "typeahead should wrap after the active row"
+        );
+        assert_eq!(state.typeahead_target("be").map(|item| item.key()), None);
+        assert_eq!(
+            state.typeahead_target("recent").map(|item| item.key()),
+            None
+        );
+        assert_eq!(state.typeahead_target("").map(|item| item.key()), None);
+    }
+
+    #[test]
+    fn virtualized_list_typeahead_skips_duplicate_keys() {
+        let state = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            [
+                VirtualizedListStateItem::new("alpha", "Alpha"),
+                VirtualizedListStateItem::new("duplicate", "Duplicate first"),
+                VirtualizedListStateItem::new("duplicate", "Duplicate second"),
+                VirtualizedListStateItem::new("delta", "Delta"),
+            ],
+            Some("alpha"),
+            std::iter::empty::<&str>(),
+            VirtualizedListSelectionMode::Single,
+            Some(3),
+        );
+
+        assert_eq!(state.typeahead_target("du").map(|item| item.key()), None);
+        assert_eq!(
+            state.typeahead_target("de").map(|item| item.key()),
+            Some("delta")
+        );
+    }
+
+    #[test]
+    fn virtualized_list_range_selection_replaces_selected_keys_in_current_order() {
+        let state = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            [
+                VirtualizedListStateItem::new("recent", "Recent")
+                    .row_kind(VirtualizedListRowKind::Section),
+                VirtualizedListStateItem::new("alpha", "Alpha"),
+                VirtualizedListStateItem::new("beta", "Beta").disabled(true),
+                VirtualizedListStateItem::new("gamma", "Gamma"),
+                VirtualizedListStateItem::new("delta", "Delta"),
+            ],
+            Some("alpha"),
+            ["delta"],
+            VirtualizedListSelectionMode::Multiple,
+            Some(4),
+        );
+
+        let change = state
+            .range_selection_change(Some("alpha"), "delta")
+            .expect("range selection should replace the selected set");
+        assert_eq!(change.changed_key(), "delta");
+        assert_eq!(change.selected_keys(), ["alpha", "gamma", "delta"]);
+    }
+
+    #[test]
+    fn virtualized_list_range_selection_falls_back_to_active_anchor() {
+        let state = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            [
+                VirtualizedListStateItem::new("alpha", "Alpha"),
+                VirtualizedListStateItem::new("beta", "Beta"),
+                VirtualizedListStateItem::new("gamma", "Gamma"),
+            ],
+            Some("beta"),
+            std::iter::empty::<&str>(),
+            VirtualizedListSelectionMode::Multiple,
+            Some(3),
+        );
+
+        let change = state
+            .range_selection_change(Some("missing"), "gamma")
+            .expect("missing anchor should fall back to active row");
+        assert_eq!(change.selected_keys(), ["beta", "gamma"]);
+
+        let single = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            [
+                VirtualizedListStateItem::new("alpha", "Alpha"),
+                VirtualizedListStateItem::new("beta", "Beta"),
+            ],
+            Some("alpha"),
+            std::iter::empty::<&str>(),
+            VirtualizedListSelectionMode::Single,
+            Some(2),
+        );
+        assert!(
+            single
+                .range_selection_change(Some("alpha"), "beta")
+                .is_none()
+        );
     }
 
     #[test]
@@ -3533,6 +4001,56 @@ mod tests {
     }
 
     #[test]
+    fn virtualized_list_snapshot_reports_sticky_section_metadata() {
+        let snapshot = VirtualizedList::new(
+            "grouped-list",
+            "Grouped list",
+            [
+                VirtualizedListItemDescriptor::section("recent", "Recent"),
+                VirtualizedListItemDescriptor::new("alpha", "Alpha"),
+                VirtualizedListItemDescriptor::section("archived", "Archived"),
+                VirtualizedListItemDescriptor::new("gamma", "Gamma"),
+                VirtualizedListItemDescriptor::new("delta", "Delta"),
+            ],
+        )
+        .row_height(ui_px(20.0))
+        .overscan(0)
+        .behavior_snapshot_with_viewport(ui_px(60.0), ui_px(40.0));
+
+        let sticky = snapshot
+            .sticky_section()
+            .expect("visible rows should resolve their owning section");
+        assert_eq!(sticky.key(), "archived");
+        assert_eq!(sticky.label(), "Archived");
+        assert_eq!(sticky.index(), 2);
+        assert_eq!(snapshot.state().active_key(), Some("alpha"));
+        assert_eq!(snapshot.rows()[0].key(), "gamma");
+        assert_eq!(snapshot.rows()[0].position_in_set(), Some(2));
+    }
+
+    #[test]
+    fn virtualized_list_snapshot_omits_sticky_section_without_visible_item() {
+        let ungrouped = VirtualizedList::new(
+            "ungrouped-list",
+            "Ungrouped list",
+            [
+                VirtualizedListItemDescriptor::new("alpha", "Alpha"),
+                VirtualizedListItemDescriptor::new("beta", "Beta"),
+            ],
+        )
+        .behavior_snapshot();
+        let status_only = VirtualizedList::new(
+            "status-list",
+            "Status list",
+            [VirtualizedListItemDescriptor::loading("loading", "Loading")],
+        )
+        .behavior_snapshot();
+
+        assert!(ungrouped.sticky_section().is_none());
+        assert!(status_only.sticky_section().is_none());
+    }
+
+    #[test]
     fn virtualized_list_status_rows_suppress_activation_and_expose_roles() {
         let loading = VirtualizedList::new(
             "loading-list",
@@ -3616,6 +4134,68 @@ mod tests {
                 .map(|item| item.key().as_str())
                 .collect::<Vec<_>>(),
             ["beta"]
+        );
+    }
+
+    #[test]
+    fn virtualized_list_measured_mode_prefers_runtime_measurements_over_snapshot() {
+        let items = [
+            VirtualizedListItemDescriptor::new("alpha", "Alpha"),
+            VirtualizedListItemDescriptor::new("beta", "Beta"),
+            VirtualizedListItemDescriptor::new("gamma", "Gamma"),
+        ];
+        let state = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            items.iter().map(VirtualizedListStateItem::from),
+            Some("alpha"),
+            std::iter::empty::<&str>(),
+            VirtualizedListSelectionMode::Single,
+            Some(3),
+        )
+        .with_metrics(VirtualizedListMetrics::from_size(Size::Medium).with_row_height(ui_px(20.0)));
+        let snapshot = VirtualizerSnapshot::new(
+            ui_px(0.0),
+            [
+                open_gpui_ui_core::VirtualizerSnapshotItem::new(
+                    VirtualizerItemKey::new("alpha"),
+                    ui_px(20.0),
+                ),
+                open_gpui_ui_core::VirtualizerSnapshotItem::new(
+                    VirtualizerItemKey::new("beta"),
+                    ui_px(44.0),
+                ),
+            ],
+        );
+        let mut measurements = BTreeMap::new();
+        measurements.insert("beta".to_owned(), ui_px(72.0));
+        let plan = VirtualizedListRenderPlan::resolve(
+            "measured-list",
+            "Measured list",
+            state,
+            &items,
+            VirtualizedListRowMeasureMode::Measured,
+            &measurements,
+            Some(&snapshot),
+            UiPx::ZERO,
+            ui_px(120.0),
+        );
+
+        let beta = plan
+            .rows()
+            .iter()
+            .find(|row| row.key() == "beta")
+            .expect("beta row should be visible");
+        assert_eq!(beta.virtual_start(), ui_px(20.0));
+        assert_eq!(beta.virtual_size(), ui_px(72.0));
+        assert_eq!(
+            plan.virtualizer()
+                .snapshot()
+                .measurements()
+                .iter()
+                .find(|item| item.key().as_str() == "beta")
+                .map(|item| item.size()),
+            Some(ui_px(72.0))
         );
     }
 

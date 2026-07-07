@@ -1118,6 +1118,17 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         source_home: "virtualized_list/mod.rs",
     },
     ComponentContractEntry {
+        name: "VirtualizedListStickySectionSnapshot",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        family: Some("data"),
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("VirtualizedListStickySectionSnapshot"),
+        default_export: true,
+        source_inputs: &["virtualized_list/mod.rs"],
+        source_home: "virtualized_list/mod.rs",
+    },
+    ComponentContractEntry {
         name: "CommandBehaviorSnapshot",
         owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
         family: None,

@@ -19,8 +19,8 @@ use crate::{
 };
 use open_gpui::{Bounds, TestAppContext, point, px, size};
 use open_gpui_motion::{
-    MotionDuration, MotionEasing, MotionModel, MotionPreference, MotionPreset, MotionSpec,
-    MotionSpringPreset,
+    MotionDuration, MotionEasing, MotionFrameDemand, MotionFrameReason, MotionModel,
+    MotionPreference, MotionPreset, MotionSpec, MotionSpringPreset,
 };
 use slotmap::Key;
 use std::time::Duration;
@@ -317,6 +317,10 @@ fn transition_executor_samples_timeline_and_reveal_geometry(cx: &mut TestAppCont
         assert_eq!(start.progress, 0.0);
         assert!(!start.complete);
         assert!(start.needs_frame);
+        assert_eq!(
+            start.frame_demand,
+            MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender)
+        );
         assert_eq!(start.final_scene, next);
         let entering = start
             .pane_clips
@@ -376,6 +380,10 @@ fn transition_executor_samples_timeline_and_reveal_geometry(cx: &mut TestAppCont
         );
         assert!(!midpoint.complete);
         assert!(midpoint.needs_frame);
+        assert_eq!(
+            midpoint.frame_demand,
+            MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender)
+        );
         let midpoint_clip = midpoint
             .pane_clips
             .iter()
@@ -416,6 +424,7 @@ fn transition_executor_samples_timeline_and_reveal_geometry(cx: &mut TestAppCont
         assert_eq!(end.progress, 1.0);
         assert!(end.complete);
         assert!(!end.needs_frame);
+        assert_eq!(end.frame_demand, MotionFrameDemand::Idle);
         assert_eq!(end.final_scene, next);
         assert!(
             host.sample_transition_for_test(Duration::from_millis(901))
@@ -717,7 +726,7 @@ fn visual_affordance_replacement_keeps_preview_layers_at_current_target_bounds(
 
     host.update(cx, |host, _| {
         assert_eq!(
-            host.execute_visual_affordance_transition_plan(first_plan, spec, None),
+            host.execute_visual_affordance_transition_plan(first_plan, spec),
             DockTransitionExecutionState::Scheduled
         );
         assert!(
@@ -730,7 +739,7 @@ fn visual_affordance_replacement_keeps_preview_layers_at_current_target_bounds(
         );
 
         assert_eq!(
-            host.execute_visual_affordance_transition_plan(replacement_plan, spec, None),
+            host.execute_visual_affordance_transition_plan(replacement_plan, spec),
             DockTransitionExecutionState::Scheduled
         );
         let sample = host

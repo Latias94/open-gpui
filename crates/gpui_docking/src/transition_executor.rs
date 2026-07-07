@@ -9,12 +9,12 @@ use crate::{
     },
     visual_affordance_scene::DockVisualAffordanceId,
 };
-use open_gpui::{Bounds, Pixels, Window, point, size};
+use open_gpui::{Bounds, Pixels, point, size};
 use open_gpui_motion::{
-    MotionExecutionPlan, MotionExecutionState, MotionModel, MotionPolicyContext, MotionPolicyInput,
-    MotionPolicyReport, MotionProjection, MotionProjectionClip, MotionScalarExecution,
-    MotionScalarExecutionSample, MotionSnapshot, MotionSpec, motion_source_rect,
-    preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
+    MotionExecutionPlan, MotionExecutionState, MotionFrameDemand, MotionModel, MotionPolicyContext,
+    MotionPolicyInput, MotionPolicyReport, MotionProjection, MotionProjectionClip,
+    MotionScalarExecution, MotionScalarExecutionSample, MotionSnapshot, MotionSpec,
+    motion_source_rect, preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
 };
 use std::time::{Duration, Instant};
 
@@ -60,6 +60,7 @@ pub(crate) struct DockTransitionSample {
     pub(crate) final_scene: DockPresentationScene,
     pub(crate) progress: f32,
     pub(crate) complete: bool,
+    pub(crate) frame_demand: MotionFrameDemand,
     pub(crate) needs_frame: bool,
     pub(crate) pane_bounds: Vec<DockPaneBoundsSample>,
     pub(crate) pane_clips: Vec<DockPaneClipSample>,
@@ -116,16 +117,14 @@ impl DockTransitionExecutor {
         &mut self,
         plan: DockTransitionPlan,
         spec: MotionSpec,
-        window: Option<&Window>,
     ) -> &DockTransitionExecution {
-        self.execute_model(plan, MotionModel::timeline(spec), window)
+        self.execute_model(plan, MotionModel::timeline(spec))
     }
 
     pub(crate) fn execute_model(
         &mut self,
         plan: DockTransitionPlan,
         model: MotionModel,
-        _window: Option<&Window>,
     ) -> &DockTransitionExecution {
         let mut motion = MotionExecutionPlan::resolve(
             MotionPolicyInput::new(MotionPolicyContext::Continuity, model)
@@ -195,18 +194,12 @@ impl DockTransitionExecutor {
         (!sample.complete).then_some(sample)
     }
 
-    pub(crate) fn sample(&mut self, window: Option<&Window>) -> Option<DockTransitionSample> {
-        let sample = self.sample_motion(|execution| {
+    pub(crate) fn sample(&mut self) -> Option<DockTransitionSample> {
+        self.sample_motion(|execution| {
             execution
                 .track
                 .sample_since(execution.started_at, Instant::now())
-        })?;
-        if sample.needs_frame
-            && let Some(window) = window
-        {
-            window.request_animation_frame();
-        }
-        Some(sample)
+        })
     }
 
     pub(crate) fn clear(&mut self) -> Option<DockTransitionExecution> {
@@ -243,11 +236,13 @@ fn sample_execution(
     let progress = motion_sample.value().clamp(0.0, 1.0);
     let complete =
         execution.state == DockTransitionExecutionState::Immediate || motion_sample.complete();
+    let frame_demand = motion_sample.frame_demand();
     DockTransitionSample {
         final_scene: execution.plan.final_scene.clone(),
         progress,
         complete,
-        needs_frame: motion_sample.frame_demand().needs_frame(),
+        frame_demand,
+        needs_frame: frame_demand.needs_frame(),
         pane_bounds: pane_bounds_samples(&execution.plan, progress),
         pane_clips: execution
             .plan
@@ -548,4 +543,130 @@ fn projected_visual_bounds(
         MotionProjection::between(motion_rect_from_bounds(from), motion_rect_from_bounds(to))
             .visual_bounds(progress),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        DockSpaceId,
+        presentation_scene::{DockPresentationPane, DockPresentationPaneKind},
+    };
+    use open_gpui::{point, px, size};
+    use open_gpui_motion::{
+        MotionDuration, MotionEasing, MotionFrameReason, MotionPreference, MotionSpec,
+    };
+
+    fn node(id: u64) -> DockNodeId {
+        DockNodeId::from(slotmap::KeyData::from_ffi(id))
+    }
+
+    fn bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
+        Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
+    }
+
+    fn scene(node: DockNodeId, bounds: Bounds<Pixels>) -> DockPresentationScene {
+        DockPresentationScene {
+            space: DockSpaceId::from("main"),
+            bounds,
+            root: Some(node),
+            panes: vec![DockPresentationPane {
+                node: Some(node),
+                kind: DockPresentationPaneKind::Tabs,
+                bounds,
+                floating: None,
+                is_central: false,
+            }],
+            tab_bars: Vec::new(),
+            tab_labels: Vec::new(),
+            splitters: Vec::new(),
+            floating_containers: Vec::new(),
+            focus_regions: Vec::new(),
+            overlay_anchors: Vec::new(),
+        }
+    }
+
+    fn resizing_plan(preference: MotionPreference) -> DockTransitionPlan {
+        let node = node(1);
+        let previous = scene(node, bounds(0.0, 0.0, 100.0, 100.0));
+        let next = scene(node, bounds(0.0, 0.0, 200.0, 100.0));
+        DockTransitionPlan::between(&previous, &next, preference)
+    }
+
+    #[test]
+    fn animated_samples_publish_frame_demand_until_terminal() {
+        let mut executor = DockTransitionExecutor::default();
+        let spec = MotionSpec::new(
+            MotionPreference::Animated,
+            MotionDuration::Custom(Duration::from_millis(200)),
+            MotionEasing::Linear,
+        );
+
+        assert_eq!(
+            executor
+                .execute(resizing_plan(MotionPreference::Animated), spec)
+                .state,
+            DockTransitionExecutionState::Scheduled
+        );
+
+        let start = executor
+            .sample_for_test(Duration::ZERO)
+            .expect("scheduled transition should expose a start sample");
+        assert_eq!(
+            start.frame_demand,
+            MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender)
+        );
+        assert!(start.needs_frame);
+        assert!(!start.complete);
+
+        let midpoint = executor
+            .sample_for_test(Duration::from_millis(100))
+            .expect("scheduled transition should expose a midpoint sample");
+        assert_eq!(
+            midpoint.frame_demand,
+            MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender)
+        );
+        assert!(midpoint.needs_frame);
+        assert!(!midpoint.complete);
+
+        let terminal = executor
+            .sample_for_test(Duration::from_millis(250))
+            .expect("scheduled transition should expose one terminal sample");
+        assert_eq!(terminal.frame_demand, MotionFrameDemand::Idle);
+        assert!(!terminal.needs_frame);
+        assert!(terminal.complete);
+        assert!(
+            executor
+                .sample_for_test(Duration::from_millis(260))
+                .is_none(),
+            "completed transition should clear after the terminal sample"
+        );
+    }
+
+    #[test]
+    fn immediate_samples_publish_idle_frame_demand() {
+        let mut executor = DockTransitionExecutor::default();
+
+        assert_eq!(
+            executor
+                .execute(
+                    resizing_plan(MotionPreference::Reduced),
+                    MotionSpec::immediate()
+                )
+                .state,
+            DockTransitionExecutionState::Immediate
+        );
+
+        let sample = executor
+            .sample_for_test(Duration::ZERO)
+            .expect("immediate transition should expose one final sample");
+        assert_eq!(sample.frame_demand, MotionFrameDemand::Idle);
+        assert!(!sample.needs_frame);
+        assert!(sample.complete);
+        assert_eq!(sample.progress, 1.0);
+        assert!(
+            executor.sample_for_test(Duration::from_millis(1)).is_none(),
+            "immediate transition should clear after the final sample"
+        );
+    }
 }

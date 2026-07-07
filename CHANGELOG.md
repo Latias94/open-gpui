@@ -17,8 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   conformance coverage.
 - Added the official `VirtualizedList` component with key-based active/selected state, typed row
   descriptors, section/separator/status rows, multi-select activation payloads, measured-row
-  virtualizer snapshots, a constrained `render_row` content hook, and motion-backed active
-  descendant chrome.
+  virtualizer snapshots, printable-key typeahead, replacement-style range selection, sticky
+  section metadata, a constrained `render_row` content hook, and motion-backed active descendant
+  chrome.
 - Added `open-gpui-command` for command-center workflows, including command providers, keymap
   preflight, shortcut inspection and editing state, conflict diagnostics, palette query history,
   and provider refresh plumbing.
@@ -46,7 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime requests and contract objects, reducing shallow compatibility surfaces before 1.0.
 - `VirtualizedList` is now a collection-backed component instead of an index-primary label list.
   It uses `VirtualizerState` for range math, keeps render plans crate-private, exposes behavior
-  snapshots for probes, and treats active-indicator motion as paint-only chrome.
+  snapshots for probes, resolves typeahead and range selection through renderer-neutral state, and
+  treats active-indicator motion as paint-only chrome.
 - Canvas APIs were tightened so mutation, paint, runtime cache, edge routing, and kind policy stay
   behind the editor/runtime boundaries.
 - Dependency baselines were refreshed, including `windows`/`windows-core` 0.62, `wgpu` 29,
@@ -85,8 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `VirtualizedList` was rebuilt before v0.2.0: index-only activation and text-label-only rows are
   replaced by stable keys, typed descriptors, `VirtualizedListSelectionMode`,
   `VirtualizedListActivation`, `VirtualizedListSelectionChange`,
-  `VirtualizedListBehaviorSnapshot`, `VirtualizedListRowMeasureMode`, and the `render_row`
-  content-renderer boundary.
+  `VirtualizedListBehaviorSnapshot`, `VirtualizedListStickySectionSnapshot`,
+  `VirtualizedListRowMeasureMode`, and the `render_row` content-renderer boundary.
 
 ## [0.1.0] - 2026-06-09
 
