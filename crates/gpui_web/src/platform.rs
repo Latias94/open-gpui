@@ -10,7 +10,7 @@ use open_gpui::{
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
     ThermalState, WindowAppearance, WindowParams,
 };
-use open_gpui_wgpu::WgpuContext;
+use open_gpui_wgpu::{WebGpuContextOptions, WgpuContext};
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
@@ -31,10 +31,17 @@ pub struct WebPlatform {
     active_window: RefCell<Option<AnyWindowHandle>>,
     active_display: Rc<dyn PlatformDisplay>,
     callbacks: RefCell<WebPlatformCallbacks>,
+    webgpu_options: WebGpuContextOptions,
     wgpu_context: Rc<RefCell<Option<WgpuContext>>>,
     cursor_visible: Rc<Cell<bool>>,
     last_cursor_css: Rc<Cell<&'static str>>,
     _cursor_restore_listeners: Vec<EventListenerHandle>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WebPlatformOptions {
+    pub allow_multi_threading: bool,
+    pub force_fallback_adapter: bool,
 }
 
 #[derive(Default)]
@@ -51,11 +58,18 @@ struct WebPlatformCallbacks {
 
 impl WebPlatform {
     pub fn new(allow_multi_threading: bool) -> Self {
+        Self::new_with_options(WebPlatformOptions {
+            allow_multi_threading,
+            ..Default::default()
+        })
+    }
+
+    pub fn new_with_options(options: WebPlatformOptions) -> Self {
         let browser_window =
             web_sys::window().expect("must be running in a browser window context");
         let dispatcher = Arc::new(WebDispatcher::new(
             browser_window.clone(),
-            allow_multi_threading,
+            options.allow_multi_threading,
         ));
         let dispatcher_mode = dispatcher.mode();
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
@@ -95,6 +109,9 @@ impl WebPlatform {
             active_window: RefCell::new(None),
             active_display,
             callbacks: RefCell::new(WebPlatformCallbacks::default()),
+            webgpu_options: WebGpuContextOptions {
+                force_fallback_adapter: options.force_fallback_adapter,
+            },
             wgpu_context: Rc::new(RefCell::new(None)),
             cursor_visible,
             last_cursor_css,
@@ -122,8 +139,9 @@ impl Platform for WebPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         let wgpu_context = self.wgpu_context.clone();
+        let webgpu_options = self.webgpu_options;
         wasm_bindgen_futures::spawn_local(async move {
-            match WgpuContext::new_web().await {
+            match WgpuContext::new_web_with_options(webgpu_options).await {
                 Ok(context) => {
                     log::info!("WebGPU context initialized successfully");
                     *wgpu_context.borrow_mut() = Some(context);

@@ -22,6 +22,12 @@ pub struct CompositorGpuHint {
     pub device_id: u32,
 }
 
+#[cfg(target_family = "wasm")]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WebGpuContextOptions {
+    pub force_fallback_adapter: bool,
+}
+
 fn adapter_info(adapter: &wgpu::Adapter) -> wgpu::AdapterInfo {
     #[cfg(target_family = "wasm")]
     {
@@ -115,6 +121,11 @@ impl WgpuContext {
 
     #[cfg(target_family = "wasm")]
     pub async fn new_web() -> anyhow::Result<Self> {
+        Self::new_web_with_options(WebGpuContextOptions::default()).await
+    }
+
+    #[cfg(target_family = "wasm")]
+    pub async fn new_web_with_options(options: WebGpuContextOptions) -> anyhow::Result<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
             flags: wgpu::InstanceFlags::default(),
@@ -127,7 +138,7 @@ impl WgpuContext {
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::None,
                 compatible_surface: None,
-                force_fallback_adapter: false,
+                force_fallback_adapter: options.force_fallback_adapter,
                 apply_limit_buckets: false,
             })
             .await
@@ -318,7 +329,7 @@ impl WgpuContext {
 
         // Test each adapter by creating a device and configuring the surface
         for adapter in adapters {
-            let info = adapter_info(adapter);
+            let info = adapter_info(&adapter);
 
             if reject_software && info.device_type == wgpu::DeviceType::Cpu {
                 log::info!(

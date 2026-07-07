@@ -5,6 +5,9 @@ pub use open_gpui::Platform;
 
 use std::rc::Rc;
 
+#[cfg(target_family = "wasm")]
+pub use open_gpui_web::WebPlatformOptions;
+
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> open_gpui::BackgroundExecutor {
     current_platform(true).background_executor()
@@ -21,7 +24,16 @@ pub fn headless() -> open_gpui::Application {
 /// Unlike `application`, this function returns a single-threaded web application.
 #[cfg(target_family = "wasm")]
 pub fn single_threaded_web() -> open_gpui::Application {
-    open_gpui::Application::with_platform(Rc::new(open_gpui_web::WebPlatform::new(false)))
+    single_threaded_web_with_options(WebPlatformOptions::default())
+}
+
+/// Unlike `application`, this function returns a single-threaded web application with web options.
+#[cfg(target_family = "wasm")]
+pub fn single_threaded_web_with_options(mut options: WebPlatformOptions) -> open_gpui::Application {
+    options.allow_multi_threading = false;
+    open_gpui::Application::with_platform(Rc::new(open_gpui_web::WebPlatform::new_with_options(
+        options,
+    )))
 }
 
 /// Initializes panic hooks and logging for the web platform.

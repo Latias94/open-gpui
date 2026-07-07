@@ -131,7 +131,13 @@ impl Render for SmokeWeb {
 
 fn main() {
     open_gpui_platform::web_init();
-    open_gpui_platform::single_threaded_web().run(|cx: &mut App| {
+    open_gpui_platform::single_threaded_web_with_options(
+        open_gpui_platform::WebPlatformOptions {
+            force_fallback_adapter: true,
+            ..Default::default()
+        },
+    )
+    .run(|cx: &mut App| {
         let platform_viewport_windows = cx.viewport_capabilities().platform_viewport_windows;
         let bounds = Bounds::centered(None, size(px(640.0), px(420.0)), cx);
         cx.open_window(
