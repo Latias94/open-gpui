@@ -3,23 +3,23 @@ use crate::Inspector;
 #[cfg(target_os = "macos")]
 use crate::PlatformPixelBuffer;
 use crate::{
-    Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
+    Action, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
     Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton,
-    MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority,
-    PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
-    RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
-    SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController,
-    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, profiler, px, rems, size, transparent_black,
+    EntityId, EventEmitter, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler,
+    IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
+    Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
+    ScaledPixels, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
+    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine,
+    Task, TextRenderingMode, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
+    UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, profiler,
+    px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use derive_more::{Deref, DerefMut};
@@ -58,6 +58,7 @@ use uuid::Uuid;
 pub(crate) mod a11y;
 mod frame_journal;
 mod frame_pump;
+mod input_dispatch;
 mod prompts;
 
 use self::a11y::A11y;
@@ -4290,119 +4291,7 @@ impl Window {
         #[cfg(feature = "input-latency-histogram")]
         let dispatch_time = Instant::now();
         let update_count_before = self.invalidator.update_count();
-        // Track input modality for focus-visible styling and hover suppression.
-        // Hover is suppressed during keyboard modality so that keyboard navigation
-        // doesn't show hover highlights on the item under the mouse cursor.
-        let old_modality = self.last_input_modality;
-        self.last_input_modality = match &event {
-            PlatformInput::KeyDown(_) => InputModality::Keyboard,
-            PlatformInput::MouseMove(_) | PlatformInput::MouseDown(_) => InputModality::Mouse,
-            _ => self.last_input_modality,
-        };
-        if self.last_input_modality != old_modality {
-            self.refresh();
-        }
-
-        // Handlers may set this to false by calling `stop_propagation`.
-        cx.propagate_event = true;
-        // Handlers may set this to true by calling `prevent_default`.
-        self.default_prevented = false;
-
-        let event = match event {
-            // Track the mouse position with our own state, since accessing the platform
-            // API for the mouse position can only occur on the main thread.
-            PlatformInput::MouseMove(mouse_move) => {
-                self.mouse_position = mouse_move.position;
-                self.mouse_in_window = true;
-                self.modifiers = mouse_move.modifiers;
-                PlatformInput::MouseMove(mouse_move)
-            }
-            PlatformInput::MouseDown(mouse_down) => {
-                self.mouse_position = mouse_down.position;
-                self.mouse_in_window = true;
-                self.modifiers = mouse_down.modifiers;
-                PlatformInput::MouseDown(mouse_down)
-            }
-            PlatformInput::MouseUp(mouse_up) => {
-                self.mouse_position = mouse_up.position;
-                self.mouse_in_window = true;
-                self.modifiers = mouse_up.modifiers;
-                PlatformInput::MouseUp(mouse_up)
-            }
-            PlatformInput::MousePressure(mouse_pressure) => {
-                PlatformInput::MousePressure(mouse_pressure)
-            }
-            PlatformInput::MouseExited(mouse_exited) => {
-                self.mouse_position = mouse_exited.position;
-                self.mouse_in_window = false;
-                self.modifiers = mouse_exited.modifiers;
-                PlatformInput::MouseExited(mouse_exited)
-            }
-            PlatformInput::ModifiersChanged(modifiers_changed) => {
-                self.modifiers = modifiers_changed.modifiers;
-                self.capslock = modifiers_changed.capslock;
-                PlatformInput::ModifiersChanged(modifiers_changed)
-            }
-            PlatformInput::ScrollWheel(scroll_wheel) => {
-                self.mouse_position = scroll_wheel.position;
-                self.mouse_in_window = true;
-                self.modifiers = scroll_wheel.modifiers;
-                PlatformInput::ScrollWheel(scroll_wheel)
-            }
-            PlatformInput::Pinch(pinch) => {
-                self.mouse_position = pinch.position;
-                self.mouse_in_window = true;
-                self.modifiers = pinch.modifiers;
-                PlatformInput::Pinch(pinch)
-            }
-            // Translate dragging and dropping of external files from the operating system
-            // to internal drag and drop events.
-            PlatformInput::FileDrop(file_drop) => match file_drop {
-                FileDropEvent::Entered { position, paths } => {
-                    self.mouse_position = position;
-                    self.mouse_in_window = true;
-                    if cx.active_drag.is_none() {
-                        cx.active_drag = Some(AnyDrag {
-                            value: Arc::new(paths.clone()),
-                            view: cx.new(|_| paths).into(),
-                            cursor_offset: position,
-                            cursor_style: None,
-                        });
-                    }
-                    PlatformInput::MouseMove(MouseMoveEvent {
-                        position,
-                        pressed_button: Some(MouseButton::Left),
-                        modifiers: Modifiers::default(),
-                    })
-                }
-                FileDropEvent::Pending { position } => {
-                    self.mouse_position = position;
-                    self.mouse_in_window = true;
-                    PlatformInput::MouseMove(MouseMoveEvent {
-                        position,
-                        pressed_button: Some(MouseButton::Left),
-                        modifiers: Modifiers::default(),
-                    })
-                }
-                FileDropEvent::Submit { position } => {
-                    cx.activate(true);
-                    self.mouse_position = position;
-                    self.mouse_in_window = true;
-                    PlatformInput::MouseUp(MouseUpEvent {
-                        button: MouseButton::Left,
-                        position,
-                        modifiers: Modifiers::default(),
-                        click_count: 1,
-                    })
-                }
-                FileDropEvent::Exited => {
-                    self.mouse_in_window = false;
-                    cx.active_drag.take();
-                    PlatformInput::FileDrop(FileDropEvent::Exited)
-                }
-            },
-            PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
-        };
+        let event = input_dispatch::prepare_platform_input(self, cx, event);
 
         if let Some(any_mouse_event) = event.mouse_event() {
             self.dispatch_mouse_event(any_mouse_event, cx);

@@ -32,7 +32,7 @@ pub use headless_app_context::*;
 use open_gpui_collections::{
     FxHashMap, FxHashSet, HashMap, TypeIdHashMap, TypeIdHashSet, VecDeque,
 };
-use open_gpui_core_util::{ResultExt, debug_panic};
+use open_gpui_core_util::debug_panic;
 use open_gpui_http_client::{HttpClient, Url};
 use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
@@ -60,6 +60,7 @@ use crate::{
     hash, init_app_menus,
 };
 
+mod action_dispatch;
 mod async_context;
 #[cfg(any(test, feature = "test-support"))]
 mod bench_context;
@@ -73,6 +74,7 @@ mod test_app;
 mod test_context;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 mod visual_test_context;
+mod window_registry;
 
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(200);
@@ -901,8 +903,7 @@ impl App {
             futures.push(observer(self));
         }
 
-        self.windows.clear();
-        self.window_handles.clear();
+        window_registry::clear(self);
         self.flush_effects();
         self.quitting = true;
 
@@ -1141,10 +1142,7 @@ impl App {
     /// Each handle could be downcast to a handle typed for the root view of that window.
     /// To find all windows of a given type, you could filter on
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
-        self.windows
-            .keys()
-            .flat_map(|window_id| self.window_handles.get(&window_id).copied())
-            .collect()
+        window_registry::handles(self)
     }
 
     /// Returns the window handles ordered by their appearance on screen, front to back.
@@ -1195,7 +1193,7 @@ impl App {
         build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
     ) -> anyhow::Result<WindowHandle<V>> {
         self.update(|cx| {
-            let id = cx.windows.insert(None);
+            let id = window_registry::reserve(cx);
             let handle = WindowHandle::new(id);
             match Window::new(handle.into(), options, cx) {
                 Ok(mut window) => {
@@ -1212,12 +1210,11 @@ impl App {
                     let clear = window.draw(cx);
                     clear.clear();
 
-                    cx.window_handles.insert(id, window.handle);
-                    cx.windows.get_mut(id).unwrap().replace(Box::new(window));
+                    window_registry::commit(cx, id, window);
                     Ok(handle)
                 }
                 Err(e) => {
-                    cx.windows.remove(id);
+                    window_registry::rollback_reserved(cx, id);
                     Err(e)
                 }
             }
@@ -1711,45 +1708,8 @@ impl App {
 
             cx.window_update_stack.push(window.handle.id);
             let result = update(root_view, &mut window, cx);
-            fn trail(id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
-                cx.window_update_stack.pop();
-
-                if window.removed {
-                    cx.window_handles.remove(&id);
-                    cx.windows.remove(id);
-                    if let Some(tracked) = cx.tracked_entities.remove(&id) {
-                        for entity_id in tracked {
-                            if let Some(windows) =
-                                cx.window_invalidators_by_entity.get_mut(&entity_id)
-                            {
-                                windows.remove(&id);
-                            }
-                            if cx.current_window_by_entity.get(&entity_id) == Some(&id) {
-                                cx.current_window_by_entity.remove(&entity_id);
-                            }
-                        }
-                    }
-
-                    cx.window_closed_observers.clone().retain(&(), |callback| {
-                        callback(cx, id);
-                        true
-                    });
-
-                    let quit_on_empty = match cx.quit_mode {
-                        QuitMode::Explicit => false,
-                        QuitMode::LastWindowClosed => true,
-                        QuitMode::Default => cfg!(not(target_os = "macos")),
-                    };
-
-                    if quit_on_empty && cx.windows.is_empty() {
-                        cx.quit();
-                    }
-                } else {
-                    cx.windows.get_mut(id)?.replace(window);
-                }
-                Some(())
-            }
-            trail(id, window, cx)?;
+            cx.window_update_stack.pop();
+            window_registry::finish_window_update(cx, id, window)?;
 
             Some(result)
         })
@@ -2228,18 +2188,7 @@ impl App {
     /// Checks if the given action is bound in the current context, as defined by the app's current focus,
     /// the bindings in the element tree, and any global action listeners.
     pub fn is_action_available(&mut self, action: &dyn Action) -> bool {
-        let mut action_available = false;
-        if let Some(window) = self.focused_action_window()
-            && let Ok(window_action_available) =
-                window.update(self, |_, window, cx| window.is_action_available(action, cx))
-        {
-            action_available = window_action_available;
-        }
-
-        action_available
-            || self
-                .global_action_listeners
-                .contains_key(&action.as_any().type_id())
+        action_dispatch::is_action_available(self, action)
     }
 
     /// Sets the menu bar for this application. This will replace any existing menu bar.
@@ -2284,69 +2233,7 @@ impl App {
     /// Dispatch an action to the currently focused window or global action handler
     /// See [`crate::Action`] for more information on how actions work
     pub fn dispatch_action(&mut self, action: &dyn Action) {
-        if let Some(focused_window) = self.focused_action_window() {
-            focused_window
-                .update(self, |_, window, cx| {
-                    window.dispatch_action(action.boxed_clone(), cx)
-                })
-                .log_err();
-        } else {
-            self.dispatch_global_action(action);
-        }
-    }
-
-    fn focused_action_window(&self) -> Option<AnyWindowHandle> {
-        match self.focused_window() {
-            PlatformFocusedWindow::Window(window) => Some(window),
-            PlatformFocusedWindow::NoWindow | PlatformFocusedWindow::Unavailable => None,
-        }
-    }
-
-    fn dispatch_global_action(&mut self, action: &dyn Action) {
-        self.propagate_event = true;
-
-        if let Some(mut global_listeners) = self
-            .global_action_listeners
-            .remove(&action.as_any().type_id())
-        {
-            for listener in &global_listeners {
-                listener(action.as_any(), DispatchPhase::Capture, self);
-                if !self.propagate_event {
-                    break;
-                }
-            }
-
-            global_listeners.extend(
-                self.global_action_listeners
-                    .remove(&action.as_any().type_id())
-                    .unwrap_or_default(),
-            );
-
-            self.global_action_listeners
-                .insert(action.as_any().type_id(), global_listeners);
-        }
-
-        if self.propagate_event
-            && let Some(mut global_listeners) = self
-                .global_action_listeners
-                .remove(&action.as_any().type_id())
-        {
-            for listener in global_listeners.iter().rev() {
-                listener(action.as_any(), DispatchPhase::Bubble, self);
-                if !self.propagate_event {
-                    break;
-                }
-            }
-
-            global_listeners.extend(
-                self.global_action_listeners
-                    .remove(&action.as_any().type_id())
-                    .unwrap_or_default(),
-            );
-
-            self.global_action_listeners
-                .insert(action.as_any().type_id(), global_listeners);
-        }
+        action_dispatch::dispatch_action(self, action);
     }
 
     /// Is there currently something being dragged?
@@ -2860,7 +2747,11 @@ mod test {
         rc::Rc,
     };
 
-    use crate::{AppContext, Empty, TestAppContext, px, size};
+    use crate::{
+        AnyWindowHandle, AppContext, Context, Empty, Entity, IntoElement, Render, TestAppContext,
+        Window,
+    };
+    use crate::{px, size};
 
     actions!(app_focus_tests, [DispatchProbe]);
 
@@ -2907,6 +2798,61 @@ mod test {
         cx.simulate_system_wake();
 
         assert_eq!(wake_count.get(), 2);
+    }
+
+    struct WindowTrackingView {
+        marker: Entity<usize>,
+    }
+
+    impl Render for WindowTrackingView {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let _ = self.marker.read(cx);
+            Empty
+        }
+    }
+
+    #[crate::test]
+    fn closing_window_cleans_window_registry_and_entity_links(cx: &mut TestAppContext) {
+        let marker = cx.update(|cx| cx.new(|_| 0usize));
+        let marker_id = marker.entity_id();
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| WindowTrackingView {
+                marker: marker.clone(),
+            })
+            .into();
+
+        cx.update(|app| {
+            assert!(app.window_handles.contains_key(&window.id));
+            assert!(app.windows.contains_key(window.id));
+            assert!(
+                app.tracked_entities
+                    .get(&window.id)
+                    .is_some_and(|tracked| tracked.contains(&marker_id))
+            );
+            assert_eq!(
+                app.current_window_by_entity.get(&marker_id),
+                Some(&window.id)
+            );
+            assert!(
+                app.window_invalidators_by_entity
+                    .get(&marker_id)
+                    .is_some_and(|windows| windows.contains_key(&window.id))
+            );
+        });
+
+        assert!(cx.simulate_window_close(window));
+
+        cx.update(|app| {
+            assert!(!app.window_handles.contains_key(&window.id));
+            assert!(!app.windows.contains_key(window.id));
+            assert!(!app.tracked_entities.contains_key(&window.id));
+            assert!(!app.current_window_by_entity.contains_key(&marker_id));
+            assert!(
+                app.window_invalidators_by_entity
+                    .get(&marker_id)
+                    .is_none_or(|windows| !windows.contains_key(&window.id))
+            );
+        });
     }
 
     #[crate::test]
