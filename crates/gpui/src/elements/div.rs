@@ -344,10 +344,28 @@ impl Interactivity {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_scroll_wheel(
         &mut self,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) -> ScrollWheelIntent + 'static,
+    ) {
+        self.scroll_wheel_listeners.push(Box::new(
+            move |event, phase, hitbox, focus_handle, window, cx| {
+                if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
+                    (listener)(event, window, cx).apply(focus_handle, window, cx);
+                }
+            },
+        ));
+    }
+
+    /// Bind a raw callback to scroll wheel events during the bubble phase.
+    ///
+    /// Prefer [`Self::on_scroll_wheel`] for product code. Raw callbacks are an
+    /// advanced escape hatch for integrations that must manipulate dispatch
+    /// state directly.
+    pub fn on_raw_scroll_wheel(
+        &mut self,
         listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
     ) {
         self.scroll_wheel_listeners
-            .push(Box::new(move |event, phase, hitbox, window, cx| {
+            .push(Box::new(move |event, phase, hitbox, _, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     (listener)(event, window, cx);
                 }
@@ -360,10 +378,28 @@ impl Interactivity {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn capture_scroll_wheel(
         &mut self,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) -> ScrollWheelIntent + 'static,
+    ) {
+        self.scroll_wheel_listeners.push(Box::new(
+            move |event, phase, hitbox, focus_handle, window, cx| {
+                if phase == DispatchPhase::Capture && hitbox.should_handle_scroll(window) {
+                    (listener)(event, window, cx).apply(focus_handle, window, cx);
+                }
+            },
+        ));
+    }
+
+    /// Bind a raw callback to scroll wheel events during the capture phase.
+    ///
+    /// Prefer [`Self::capture_scroll_wheel`] for product code. Raw callbacks are
+    /// an advanced escape hatch for integrations that must manipulate dispatch
+    /// state directly.
+    pub fn capture_raw_scroll_wheel(
+        &mut self,
         listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
     ) {
         self.scroll_wheel_listeners
-            .push(Box::new(move |event, phase, hitbox, window, cx| {
+            .push(Box::new(move |event, phase, hitbox, _, window, cx| {
                 if phase == DispatchPhase::Capture && hitbox.should_handle_scroll(window) {
                     (listener)(event, window, cx);
                 }
@@ -968,9 +1004,23 @@ pub trait InteractiveElement: Sized {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_scroll_wheel(
         mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) -> ScrollWheelIntent + 'static,
     ) -> Self {
         self.interactivity().on_scroll_wheel(listener);
+        self
+    }
+
+    /// Bind a raw callback to scroll wheel events during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_raw_scroll_wheel`].
+    ///
+    /// Prefer [`Self::on_scroll_wheel`] for product code. Raw callbacks are an
+    /// advanced escape hatch for integrations that must manipulate dispatch
+    /// state directly.
+    fn on_raw_scroll_wheel(
+        mut self,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().on_raw_scroll_wheel(listener);
         self
     }
 
@@ -980,9 +1030,23 @@ pub trait InteractiveElement: Sized {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn capture_scroll_wheel(
         mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) -> ScrollWheelIntent + 'static,
     ) -> Self {
         self.interactivity().capture_scroll_wheel(listener);
+        self
+    }
+
+    /// Bind a raw callback to scroll wheel events during the capture phase.
+    /// The fluent API equivalent to [`Interactivity::capture_raw_scroll_wheel`].
+    ///
+    /// Prefer [`Self::capture_scroll_wheel`] for product code. Raw callbacks are
+    /// an advanced escape hatch for integrations that must manipulate dispatch
+    /// state directly.
+    fn capture_raw_scroll_wheel(
+        mut self,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().capture_raw_scroll_wheel(listener);
         self
     }
 
@@ -1547,8 +1611,127 @@ pub(crate) type MousePressureListener =
 pub(crate) type MouseMoveListener =
     Box<dyn Fn(&MouseMoveEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
-pub(crate) type ScrollWheelListener =
-    Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+/// The default-action decision returned by a scroll-wheel intent handler.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScrollWheelDefaultAction {
+    /// Allow GPUI's built-in default scroll handling to run.
+    Allow,
+    /// Mark the wheel input as handled and suppress GPUI's default scroll handling.
+    Prevent,
+}
+
+/// The propagation decision returned by a scroll-wheel intent handler.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScrollWheelPropagation {
+    /// Continue dispatching the wheel input to later handlers.
+    Continue,
+    /// Stop dispatching the wheel input to later handlers.
+    Stop,
+}
+
+/// The focus policy returned by a scroll-wheel intent handler.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScrollWheelFocus {
+    /// Preserve the current focus owner.
+    Preserve,
+    /// Move focus to the element that registered the intent handler, if it is focusable.
+    FocusSelf,
+}
+
+/// The typed result of a scroll-wheel capture or bubble handler.
+///
+/// A wheel handler returns this value to describe product intent. GPUI maps the
+/// intent to default scrolling, event propagation, and optional focus transfer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScrollWheelIntent {
+    default_action: ScrollWheelDefaultAction,
+    propagation: ScrollWheelPropagation,
+    focus: ScrollWheelFocus,
+}
+
+impl ScrollWheelIntent {
+    /// Allow GPUI's default scroll behavior and continue propagation.
+    pub const fn allow_default() -> Self {
+        Self {
+            default_action: ScrollWheelDefaultAction::Allow,
+            propagation: ScrollWheelPropagation::Continue,
+            focus: ScrollWheelFocus::Preserve,
+        }
+    }
+
+    /// Mark the wheel input as handled, preventing default scroll while continuing propagation.
+    pub const fn handled() -> Self {
+        Self {
+            default_action: ScrollWheelDefaultAction::Prevent,
+            propagation: ScrollWheelPropagation::Continue,
+            focus: ScrollWheelFocus::Preserve,
+        }
+    }
+
+    /// Stop dispatching this wheel input to later handlers.
+    pub const fn stop_propagation(mut self) -> Self {
+        self.propagation = ScrollWheelPropagation::Stop;
+        self
+    }
+
+    /// Continue dispatching this wheel input to later handlers.
+    pub const fn continue_propagation(mut self) -> Self {
+        self.propagation = ScrollWheelPropagation::Continue;
+        self
+    }
+
+    /// Move focus to the element that registered this handler, if it is focusable.
+    pub const fn focus_on_wheel(mut self) -> Self {
+        self.focus = ScrollWheelFocus::FocusSelf;
+        self
+    }
+
+    /// Preserve the current focus owner.
+    pub const fn preserve_focus(mut self) -> Self {
+        self.focus = ScrollWheelFocus::Preserve;
+        self
+    }
+
+    /// Return the default-action decision.
+    pub const fn default_action(self) -> ScrollWheelDefaultAction {
+        self.default_action
+    }
+
+    /// Return the propagation decision.
+    pub const fn propagation(self) -> ScrollWheelPropagation {
+        self.propagation
+    }
+
+    /// Return the focus policy.
+    pub const fn focus(self) -> ScrollWheelFocus {
+        self.focus
+    }
+
+    fn apply(self, focus_handle: Option<&FocusHandle>, window: &mut Window, cx: &mut App) {
+        if self.focus == ScrollWheelFocus::FocusSelf
+            && let Some(focus_handle) = focus_handle
+        {
+            focus_handle.focus(window, cx);
+        }
+        if self.default_action == ScrollWheelDefaultAction::Prevent {
+            window.prevent_default();
+        }
+        if self.propagation == ScrollWheelPropagation::Stop {
+            cx.stop_propagation();
+        }
+    }
+}
+
+impl Default for ScrollWheelIntent {
+    fn default() -> Self {
+        Self::allow_default()
+    }
+}
+
+pub(crate) type ScrollWheelListener = Box<
+    dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, Option<&FocusHandle>, &mut Window, &mut App)
+        + 'static,
+>;
 
 pub(crate) type ScrollViewportChangedListener =
     Box<dyn Fn(&ScrollViewportChangedEvent, &mut Window, &mut App) + 'static>;
@@ -2676,8 +2859,9 @@ impl Interactivity {
 
         for listener in self.scroll_wheel_listeners.drain(..) {
             let hitbox = hitbox.clone();
+            let focus_handle = self.tracked_focus_handle.clone();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                listener(event, phase, &hitbox, window, cx);
+                listener(event, phase, &hitbox, focus_handle.as_ref(), window, cx);
             })
         }
 
@@ -3140,11 +3324,9 @@ impl Interactivity {
                     scroll_offset.y += delta_y;
                     scroll_offset.x += delta_x;
                     if !delta_x.is_zero() || !delta_y.is_zero() {
-                        // Consume the wheel whenever this scroll container handled it, even if
-                        // it was already pinned at an edge. That keeps nested scrollables from
-                        // leaking wheel input to their ancestors.
+                        // Consume the wheel for default scrolling even when pinned at an edge.
+                        // Intent handlers remain responsible for stopping business observers.
                         window.prevent_default();
-                        cx.stop_propagation();
                         if *scroll_offset != old_scroll_offset {
                             if let Some(scroll_handle) = tracked_scroll_handle.as_ref() {
                                 scroll_handle
@@ -4248,14 +4430,16 @@ mod tests {
     struct ScrollLifecycleProbe {
         handle: ScrollHandle,
         events: Rc<RefCell<Vec<String>>>,
-        prevent_default_in_capture: bool,
+        capture_intent: ScrollWheelIntent,
     }
 
     impl Render for ScrollLifecycleProbe {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             let capture_events = self.events.clone();
+            let bubble_events = self.events.clone();
+            let bubble_handle = self.handle.clone();
             let committed_events = self.events.clone();
-            let prevent_default_in_capture = self.prevent_default_in_capture;
+            let capture_intent = self.capture_intent;
 
             div()
                 .id("scroll-lifecycle-probe")
@@ -4263,11 +4447,15 @@ mod tests {
                 .h(px(100.))
                 .overflow_y_scroll()
                 .track_scroll(&self.handle)
-                .capture_scroll_wheel(move |_, window, _| {
+                .capture_scroll_wheel(move |_, _, _| {
                     capture_events.borrow_mut().push("capture".to_owned());
-                    if prevent_default_in_capture {
-                        window.prevent_default();
-                    }
+                    capture_intent
+                })
+                .on_scroll_wheel(move |_, _, _| {
+                    bubble_events
+                        .borrow_mut()
+                        .push(format!("bubble:{}", bubble_handle.offset().y.as_f32()));
+                    ScrollWheelIntent::allow_default()
                 })
                 .on_scroll_viewport_changed(move |event, _, _| {
                     committed_events.borrow_mut().push(format!(
@@ -4526,7 +4714,7 @@ mod tests {
             move |_, _| ScrollLifecycleProbe {
                 handle: handle.clone(),
                 events: events.clone(),
-                prevent_default_in_capture: false,
+                capture_intent: ScrollWheelIntent::allow_default(),
             }
         });
         let any_window = window.into();
@@ -4582,6 +4770,10 @@ mod tests {
             .filter(|(_, event)| event.starts_with("committed:Wheel:"))
             .collect::<Vec<_>>();
         assert!(
+            events.iter().any(|event| event == "bubble:-24"),
+            "bubble scroll listener should observe the post-default scroll offset"
+        );
+        assert!(
             committed_wheel_events
                 .iter()
                 .any(|(_, event)| event.ends_with(":-24")),
@@ -4603,7 +4795,7 @@ mod tests {
     }
 
     #[test]
-    fn scroll_lifecycle_capture_prevent_default_blocks_default_scroll() {
+    fn scroll_input_capture_handled_suppresses_default_scroll() {
         let mut test_app = TestAppContext::single();
         let handle = ScrollHandle::new();
         let events = Rc::new(RefCell::new(Vec::new()));
@@ -4613,7 +4805,7 @@ mod tests {
             move |_, _| ScrollLifecycleProbe {
                 handle: handle.clone(),
                 events: events.clone(),
-                prevent_default_in_capture: true,
+                capture_intent: ScrollWheelIntent::handled(),
             }
         });
         let any_window = window.into();
@@ -4649,7 +4841,7 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(events.borrow().as_slice(), ["capture"]);
+        assert_eq!(events.borrow().as_slice(), ["capture", "bubble:0"]);
         assert_eq!(handle.offset().y, px(0.));
 
         test_app
@@ -4659,8 +4851,228 @@ mod tests {
             .unwrap();
         assert_eq!(
             events.borrow().as_slice(),
-            ["capture"],
-            "prevent_default in capture should suppress div default scrolling and avoid a committed wheel viewport"
+            ["capture", "bubble:0"],
+            "handled capture intent should suppress div default scrolling and avoid a committed wheel viewport"
+        );
+    }
+
+    struct NestedScrollWheelIntentProbe {
+        events: Rc<RefCell<Vec<&'static str>>>,
+    }
+
+    impl Render for NestedScrollWheelIntentProbe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let inner_events = self.events.clone();
+            let outer_events = self.events.clone();
+
+            div()
+                .id("outer-scroll-intent-probe")
+                .w(px(120.))
+                .h(px(120.))
+                .overflow_y_scroll()
+                .on_scroll_wheel(move |_, _, _| {
+                    outer_events.borrow_mut().push("outer-bubble");
+                    ScrollWheelIntent::allow_default()
+                })
+                .child(
+                    div()
+                        .id("inner-scroll-intent-probe")
+                        .w(px(100.))
+                        .h(px(100.))
+                        .overflow_y_scroll()
+                        .capture_scroll_wheel(move |_, _, _| {
+                            inner_events.borrow_mut().push("inner-capture");
+                            ScrollWheelIntent::handled().stop_propagation()
+                        })
+                        .child(div().w(px(100.)).h(px(300.))),
+                )
+                .child(div().w(px(100.)).h(px(300.)))
+        }
+    }
+
+    #[test]
+    fn scroll_wheel_intent_stop_propagation_blocks_nested_handlers() {
+        let mut test_app = TestAppContext::single();
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let window = test_app.add_window({
+            let events = events.clone();
+            move |_, _| NestedScrollWheelIntentProbe {
+                events: events.clone(),
+            }
+        });
+        let any_window = window.into();
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear();
+            })
+            .unwrap();
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(10.), px(10.)),
+                        modifiers: Default::default(),
+                        pressed_button: None,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.dispatch_event(
+                    ScrollWheelEvent {
+                        position: point(px(10.), px(10.)),
+                        delta: ScrollDelta::Pixels(point(px(0.), px(-24.))),
+                        modifiers: Default::default(),
+                        touch_phase: crate::TouchPhase::Moved,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+
+        assert_eq!(
+            events.borrow().as_slice(),
+            ["inner-capture"],
+            "stop-propagation intent should prevent downstream scroll handlers"
+        );
+    }
+
+    struct ScrollWheelFocusIntentProbe {
+        focus_handle: FocusHandle,
+        scroll_handle: ScrollHandle,
+        focus_on_wheel: bool,
+    }
+
+    impl Render for ScrollWheelFocusIntentProbe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let focus_on_wheel = self.focus_on_wheel;
+
+            div()
+                .id("scroll-focus-intent-probe")
+                .debug_selector(|| "scroll-focus-intent-probe".to_owned())
+                .w(px(100.))
+                .h(px(100.))
+                .overflow_y_scroll()
+                .focusable()
+                .tab_stop(true)
+                .track_focus(&self.focus_handle)
+                .track_scroll(&self.scroll_handle)
+                .capture_scroll_wheel(move |_, _, _| {
+                    let intent = ScrollWheelIntent::allow_default();
+                    if focus_on_wheel {
+                        intent.focus_on_wheel()
+                    } else {
+                        intent
+                    }
+                })
+                .child(div().w(px(100.)).h(px(300.)))
+        }
+    }
+
+    fn dispatch_scroll_wheel_at_probe(
+        test_app: &mut TestAppContext,
+        window: crate::AnyWindowHandle,
+    ) {
+        test_app
+            .update_window(window, |_, window, cx| {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(10.), px(10.)),
+                        modifiers: Default::default(),
+                        pressed_button: None,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.dispatch_event(
+                    ScrollWheelEvent {
+                        position: point(px(10.), px(10.)),
+                        delta: ScrollDelta::Pixels(point(px(0.), px(-24.))),
+                        modifiers: Default::default(),
+                        touch_phase: crate::TouchPhase::Moved,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn plain_scroll_wheel_preserves_focus_without_opt_in() {
+        let mut test_app = TestAppContext::single();
+        let scroll_handle = ScrollHandle::new();
+        let focus_handle = Rc::new(RefCell::new(None));
+        let window = test_app.add_window({
+            let scroll_handle = scroll_handle.clone();
+            let focus_handle = focus_handle.clone();
+            move |_, cx| ScrollWheelFocusIntentProbe {
+                focus_handle: {
+                    let handle = cx.focus_handle();
+                    *focus_handle.borrow_mut() = Some(handle.clone());
+                    handle
+                },
+                scroll_handle: scroll_handle.clone(),
+                focus_on_wheel: false,
+            }
+        });
+        let any_window = window.into();
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear();
+            })
+            .unwrap();
+        dispatch_scroll_wheel_at_probe(&mut test_app, any_window);
+
+        assert_eq!(scroll_handle.offset().y, px(-24.));
+        let focus_handle = focus_handle.borrow().clone().unwrap();
+        let focused = test_app
+            .update_window(any_window, |_, window, _| focus_handle.is_focused(window))
+            .unwrap();
+        assert!(
+            !focused,
+            "plain overflow scrolling should not silently move focus"
+        );
+    }
+
+    #[test]
+    fn scroll_wheel_focus_intent_moves_focus_deterministically() {
+        let mut test_app = TestAppContext::single();
+        let scroll_handle = ScrollHandle::new();
+        let focus_handle = Rc::new(RefCell::new(None));
+        let window = test_app.add_window({
+            let scroll_handle = scroll_handle.clone();
+            let focus_handle = focus_handle.clone();
+            move |_, cx| ScrollWheelFocusIntentProbe {
+                focus_handle: {
+                    let handle = cx.focus_handle();
+                    *focus_handle.borrow_mut() = Some(handle.clone());
+                    handle
+                },
+                scroll_handle: scroll_handle.clone(),
+                focus_on_wheel: true,
+            }
+        });
+        let any_window = window.into();
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear();
+            })
+            .unwrap();
+        dispatch_scroll_wheel_at_probe(&mut test_app, any_window);
+
+        assert_eq!(scroll_handle.offset().y, px(-24.));
+        let focus_handle = focus_handle.borrow().clone().unwrap();
+        let focused = test_app
+            .update_window(any_window, |_, window, _| focus_handle.is_focused(window))
+            .unwrap();
+        assert!(
+            focused,
+            "focus-on-wheel intent should focus the hovered scroll target"
         );
     }
 

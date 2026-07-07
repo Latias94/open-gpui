@@ -1743,12 +1743,9 @@ mod test {
                         .h(px(80.))
                         .w_full()
                         .when(ix == 0, |this| {
-                            this.child(div().h(px(60.)).w_full().on_scroll_wheel(
-                                |_, window, cx| {
-                                    window.prevent_default();
-                                    cx.stop_propagation();
-                                },
-                            ))
+                            this.child(div().h(px(60.)).w_full().on_scroll_wheel(|_, _, _| {
+                                crate::ScrollWheelIntent::handled().stop_propagation()
+                            }))
                         })
                         .into_any()
                 })

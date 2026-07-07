@@ -57,6 +57,22 @@ cargo run -p xtask -- verify-release-docs --version <version> --notes-output tar
 
 `verify-release-docs` checks the target changelog section, rejects manually wrapped changelog bullets and paragraphs, validates user-facing README dependency versions, and requires crate-local README metadata for public entry crates. Daily verification checks `docs/release/breaking-changes.md` against `CHANGELOG.md` `[Unreleased]`; release-note generation checks the same inventory against the selected version section because that is the text published to GitHub Releases. `scan-doc-links` checks strict user-facing relative links in root docs, release docs, verification docs, ADR index, and public crate READMEs. Historical plans and engineering logs are intentionally outside the strict link gate until they are archived or indexed.
 
+For the 2026-07 scroll viewport and wheel-input intent slice, the core contract is that tracked
+scroll surfaces emit committed post-layout viewport facts, typed wheel intent controls default
+scrolling and propagation, and focus-on-wheel is opt-in rather than implicit. The focused local
+gates are:
+
+```sh
+cargo test -p open-gpui scroll_handle_committed_viewport_events --locked
+cargo test -p open-gpui scroll_handle_programmatic_reveal_uses_named_source --locked
+cargo test -p open-gpui scroll_lifecycle_capture --locked
+cargo test -p open-gpui scroll_wheel_intent --locked
+cargo test -p open-gpui plain_scroll_wheel_preserves_focus_without_opt_in --locked
+cargo test -p open-gpui scroll_wheel_focus_intent_moves_focus_deterministically --locked
+cargo test -p open-gpui test_child_wheel_handler_prevents_parent_list_scroll --locked
+cargo test -p open-gpui-ui-components table --locked
+```
+
 Dependency health is enforced through:
 
 ```sh

@@ -267,10 +267,7 @@ pub(super) fn command_content_element(
         .when(dialog_state.is_none(), |this| {
             this.ui_role(state.content_role())
         })
-        .on_scroll_wheel(|_, window, cx| {
-            window.prevent_default();
-            cx.stop_propagation();
-        })
+        .on_scroll_wheel(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
         .aria_label(label.clone())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             let key = command_key_down_event_key(event);
@@ -416,9 +413,8 @@ pub(super) fn command_content_element(
                 .flex_1()
                 .min_h(px(0.0))
                 .overflow_hidden()
-                .on_scroll_wheel(|_, window, cx| {
-                    window.prevent_default();
-                    cx.stop_propagation();
+                .on_scroll_wheel(|_, _, _| {
+                    open_gpui::ScrollWheelIntent::handled().stop_propagation()
                 })
                 .child(
                     ScrollArea::new(

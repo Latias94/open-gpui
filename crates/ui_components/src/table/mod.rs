@@ -401,12 +401,14 @@ impl RenderOnce for Table {
             .when(plan.aria_column_count() > 0, |this| {
                 this.aria_column_count(plan.aria_column_count())
             })
-            .on_scroll_wheel({
+            .capture_scroll_wheel({
                 let scroll_handle = scroll_handle.clone();
-                move |event, window, cx| {
-                    handle_vertical_wheel_scroll(&scroll_handle, event, window);
-                    window.prevent_default();
-                    cx.stop_propagation();
+                move |event, window, _| {
+                    if handle_vertical_wheel_scroll(&scroll_handle, event, window) {
+                        open_gpui::ScrollWheelIntent::handled().stop_propagation()
+                    } else {
+                        open_gpui::ScrollWheelIntent::allow_default()
+                    }
                 }
             })
             .when(resize_config.enabled, |this| {
