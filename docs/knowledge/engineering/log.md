@@ -353,7 +353,7 @@ status: active
   `docs/registry` while schema stays in `docs/schemas`, and recipe metadata now precedes artifact
   export so the manifest is complete before it is generated.
 - 2026-07-02: Completed the 28-item native UI framework design research report in
-  `native-ui-framework-design-research/report.md`. The research compared shadcn/ui, Radix,
+  `docs/research/native-ui-framework-design-research.md`. The research compared shadcn/ui, Radix,
   Floating UI, React Aria, Zag, Ark, Base UI, fret, gpui-component, Zed UI / GPUI, native UI
   frameworks, Cargo tooling, design tokens, AccessKit, Storybook-style gallery tooling, TanStack,
   and AI-era component distribution. The durable conclusion is to prefer Cargo/crates.io for core

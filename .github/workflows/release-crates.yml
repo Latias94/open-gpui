@@ -1,0 +1,291 @@
+name: Release Crates
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to publish, for example v0.2.0"
+        required: true
+        type: string
+      source_ref:
+        description: "Git ref to publish from"
+        required: true
+        default: "main"
+        type: string
+      dry_run:
+        description: "Run publish dry-runs without uploading crates"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: release-crates-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish crates.io packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: crates.io
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.ref }}
+
+      - name: Resolve release version
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            release_tag="${{ inputs.release_tag }}"
+          else
+            release_tag="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ "$release_tag" != v* ]]; then
+            echo "::error::Release tag '$release_tag' must start with v."
+            exit 1
+          fi
+
+          version="${release_tag#v}"
+          source_sha="$(git rev-parse HEAD)"
+
+          if git rev-parse -q --verify "refs/tags/$release_tag^{commit}" >/dev/null; then
+            tag_sha="$(git rev-parse "refs/tags/$release_tag^{commit}")"
+            if [ "$tag_sha" != "$source_sha" ]; then
+              echo "::error::Release tag $release_tag points at $tag_sha, but checked out $source_sha."
+              exit 1
+            fi
+          fi
+
+          {
+            echo "tag=$release_tag"
+            echo "version=$version"
+            echo "source_sha=$source_sha"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release tag: $release_tag"
+          echo "Release version: $version"
+          echo "Source commit: $source_sha"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: "false"
+
+      - name: Verify workspace version matches tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          workspace_version="$(python3 - <<'PY'
+          import tomllib
+          with open("Cargo.toml", "rb") as f:
+              manifest = tomllib.load(f)
+          print(manifest["workspace"]["package"]["version"])
+          PY
+          )"
+          if [ "$workspace_version" != "${{ steps.release.outputs.version }}" ]; then
+            echo "::error::Workspace version '$workspace_version' does not match ${{ steps.release.outputs.tag }}."
+            exit 1
+          fi
+
+      - name: Require successful verification gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          require_successful_workflow() {
+            local workflow_file="$1"
+            local count
+            count="$(
+              gh api \
+                --method GET \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow_file}/runs" \
+                -f head_sha="$SOURCE_SHA" \
+                -f status=completed \
+                --jq '[.workflow_runs[] | select(.conclusion == "success")] | length'
+            )"
+            if [ "$count" -lt 1 ]; then
+              echo "::error::No successful ${workflow_file} run found for ${SOURCE_SHA}."
+              exit 1
+            fi
+            echo "${workflow_file} has a successful run for ${SOURCE_SHA}."
+          }
+
+          require_successful_workflow "verify.yml"
+          require_successful_workflow "publish-check.yml"
+
+      - name: Compute publish order
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/release
+          cargo metadata --no-deps --format-version 1 --locked > target/release/metadata.json
+          python3 - target/release/metadata.json <<'PY' > target/release/crate-order.txt
+          import json
+          import sys
+          from collections import defaultdict
+
+          with open(sys.argv[1], "r", encoding="utf-8") as metadata_file:
+              metadata = json.load(metadata_file)
+          workspace_members = set(metadata["workspace_members"])
+
+          packages = {
+              package["name"]: package
+              for package in metadata["packages"]
+              if package["id"] in workspace_members and package.get("publish") != []
+          }
+          package_names = set(packages)
+
+          deps = {name: set() for name in packages}
+          reverse = defaultdict(set)
+          for name, package in packages.items():
+              for dep in package["dependencies"]:
+                  if dep.get("source") is None and dep.get("path") and dep["name"] in package_names:
+                      deps[name].add(dep["name"])
+                      reverse[dep["name"]].add(name)
+
+          ready = sorted(name for name, local_deps in deps.items() if not local_deps)
+          ordered = []
+
+          while ready:
+              name = ready.pop(0)
+              ordered.append(name)
+              for dependent in sorted(reverse[name]):
+                  deps[dependent].remove(name)
+                  if not deps[dependent]:
+                      ready.append(dependent)
+              ready.sort()
+
+          if len(ordered) != len(packages):
+              remaining = sorted(name for name, local_deps in deps.items() if local_deps)
+              raise SystemExit(f"local dependency cycle or unresolved publish order: {remaining}")
+
+          for name in ordered:
+              print(name)
+          PY
+          cat target/release/crate-order.txt
+
+      - name: Publish crates
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN || secrets.CARGO_TOKEN }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$DRY_RUN" != "true" ] && [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "::error::CARGO_REGISTRY_TOKEN or CARGO_TOKEN secret is required to publish crates."
+            exit 1
+          fi
+
+          crate_version_available() {
+            local crate="$1"
+            local version="$2"
+            cargo info "$crate@$version" --registry crates-io >/dev/null 2>&1
+          }
+
+          wait_for_crate_version() {
+            local crate="$1"
+            local version="$2"
+
+            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              if crate_version_available "$crate" "$version"; then
+                echo "$crate $version is visible in crates.io."
+                return 0
+              fi
+
+              if [ "$attempt" = 12 ]; then
+                echo "::error::$crate $version was published but did not become visible in crates.io in time."
+                return 1
+              fi
+
+              sleep 15
+            done
+          }
+
+          workspace_crate_version() {
+            local crate="$1"
+            cargo pkgid -p "$crate" | sed 's/.*@//'
+          }
+
+          dry_run_crate_version() {
+            local crate="$1"
+            local version="$2"
+
+            if crate_version_available "$crate" "$version"; then
+              echo "Skipping dry-run for $crate $version because it is already published."
+              return 0
+            fi
+
+            echo "::group::Dry-run $crate $version"
+            cargo publish -p "$crate" --locked --dry-run --registry crates-io
+            echo "::endgroup::"
+          }
+
+          publish_crate_version() {
+            local crate="$1"
+            local version="$2"
+
+            if [ "$version" != "$RELEASE_VERSION" ]; then
+              echo "::error::$crate version $version does not match release $RELEASE_VERSION."
+              exit 1
+            fi
+
+            if crate_version_available "$crate" "$version"; then
+              echo "Skipping $crate $version because it is already published."
+              return 0
+            fi
+
+            dry_run_crate_version "$crate" "$version"
+
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "Dry-run mode: not publishing $crate $version."
+              return 0
+            fi
+
+            echo "Publishing $crate $version"
+            for attempt in 1 2 3 4 5; do
+              if cargo publish -p "$crate" --locked --registry crates-io --token "$CARGO_REGISTRY_TOKEN"; then
+                wait_for_crate_version "$crate" "$version"
+                return 0
+              fi
+
+              if crate_version_available "$crate" "$version"; then
+                echo "$crate $version became visible after a failed publish attempt; continuing."
+                return 0
+              fi
+
+              if [ "$attempt" = 5 ]; then
+                echo "::error::Failed to publish $crate $version after $attempt attempts."
+                return 1
+              fi
+
+              sleep $((attempt * 30))
+            done
+          }
+
+          while IFS= read -r crate; do
+            publish_crate_version "$crate" "$(workspace_crate_version "$crate")"
+          done < target/release/crate-order.txt

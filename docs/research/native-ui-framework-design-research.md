@@ -1,7 +1,7 @@
 # 原生 UI 通用框架应该如何设计 - 调研汇总
 
 - 生成时间：2026-07-02 15:42:47
-- 结果目录：`F:\SourceCodes\Rust\open-gpui\native-ui-framework-design-research\results`
+- 原始结果：一次性调研 JSON 结果已删除；本文件保留最终汇总报告。
 - 样本数量：28
 
 ## 目录

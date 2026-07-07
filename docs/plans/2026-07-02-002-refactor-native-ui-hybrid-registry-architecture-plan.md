@@ -10,7 +10,7 @@ product_contract_source: ce-plan-bootstrap
 execution: code
 owner: open-gpui-ui
 repo: open-gpui
-origin: native-ui-framework-design-research/report.md
+origin: docs/research/native-ui-framework-design-research.md
 depends_on:
   - docs/plans/2026-07-01-003-refactor-ui-component-contract-registry-plan.md
   - docs/plans/2026-07-02-001-refactor-ui-contract-tooling-plan.md
@@ -311,7 +311,7 @@ If it times out or fails for an unrelated environment reason, record the exact c
 
 ### Local Sources
 
-- `native-ui-framework-design-research/report.md` is the research basis for rejecting a direct shadcn-style source registry and choosing the hybrid model.
+- `docs/research/native-ui-framework-design-research.md` is the research basis for rejecting a direct shadcn-style source registry and choosing the hybrid model.
 - `docs/knowledge/engineering/decisions/open-gpui-native-ui-framework-distribution-strategy.md` records the current decision memory.
 - `crates/ui_components/src/component_contract/` is the typed source of component product facts.
 - `xtask/src/ui_contract.rs` is the current contract drift audit and should shape diagnostics.

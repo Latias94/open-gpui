@@ -2,115 +2,57 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
 ## [0.2.0] - 2026-07-07
 
-### Added
+Open GPUI v0.2.0 is the first broad foundation release for the fork. It publishes the component, docking, canvas, command, motion, web, and platform crates to crates.io under the Open GPUI package names.
 
-- Added `open-gpui-ui-core` and `open-gpui-ui-components` as the first component-library
-  foundation, including theme tokens, component contracts, accessibility helpers, overlay
-  primitives, choice/menu/select/combobox surfaces, table and tree foundations, and gallery
-  conformance coverage.
-- Added the official `VirtualizedList` component with key-based active/selected state, typed row
-  descriptors, section/separator/status rows, multi-select activation payloads, measured-row
-  virtualizer snapshots, printable-key typeahead, replacement-style range selection, sticky
-  section metadata, a constrained `render_row` content hook, and motion-backed active descendant
-  chrome.
-- Added `open-gpui-command` for command-center workflows, including command providers, keymap
-  preflight, shortcut inspection and editing state, conflict diagnostics, palette query history,
-  and provider refresh plumbing.
-- Added `open-gpui-docking` as a GPUI-native docking foundation with tab stacks, split layouts,
-  drag/drop targets, floating panels, multi-viewport routing, viewport lifecycle helpers, debug
-  status reporting, and a native docking example.
-- Added `open-gpui-canvas` as a reusable infinite-canvas foundation with JSON Canvas
-  import/export, document mutation journaling, tool sessions, spatial/runtime caches, kind
-  policies, persistence adapters, and native canvas examples.
-- Added `open-gpui-motion` for renderer-neutral motion foundations, including deterministic
-  timeline/spring sampling, scalar motion controllers, policy validation, frame-demand reporting,
-  neutral geometry, and layout projection primitives.
-- Added `MotionProgressExecution` for policy-resolved normalized 0..1 adapter progress runs.
-- Added `MotionSequence` for renderer-neutral composition of keyed scalar motion tracks with
-  append, with-previous, after-previous, and staggered timing.
-- Added stable wasm surface checks for the web backend and a browser-runnable `hello_web` path.
-- Added platform/system hooks such as system wake callbacks.
+### Highlights
 
-### Changed
+- Component library foundations are now available through `open-gpui-ui-core` and `open-gpui-ui-components`, including theme tokens, accessibility helpers, overlays, choice/menu/select/combobox primitives, table/tree foundations, and conformance coverage.
+- `VirtualizedList` is now a real component-library primitive instead of a text-label list: it supports stable keys, typed rows, custom row rendering, selection modes, sections, sticky metadata, typeahead, measured rows, and motion-backed active-item chrome.
+- `open-gpui-command` adds command-center building blocks for providers, keymap preflight, shortcut inspection, conflict diagnostics, palette history, and provider refresh flows.
+- `open-gpui-docking` adds a GPUI-native docking foundation with tab stacks, split layouts, drag/drop targets, floating panels, multi-viewport routing, lifecycle helpers, debug status, and a native example.
+- `open-gpui-canvas` adds a reusable infinite-canvas foundation with JSON Canvas import/export, journaling, tool sessions, runtime caches, persistence hooks, and native examples.
+- `open-gpui-motion` adds renderer-neutral motion primitives for deterministic timeline/spring sampling, progress runs, keyed sequences, policy validation, frame demand, geometry, and layout projection.
+- Web and wasm support is substantially more usable: default fonts are bundled, canvas sizing is initialized correctly, callbacks avoid borrow panics, and the browser `hello_web` path is runnable.
+- Dependency baselines were refreshed across the workspace, including `windows` 0.62, `wgpu` 29, `reqwest` 0.13, `wasm-bindgen` 0.2.126, and related platform bindings.
 
-- Public-facing framework defaults now use Open GPUI naming instead of Zed naming. Legacy
-  `.ZedSans`, `.ZedMono`, `zed::NoAction`, and `zed::Unbind` names remain as compatibility aliases.
-- Web builds now bundle usable default fonts and resolve the default UI font stack through Open GPUI
-  virtual font names.
-- The web backend now keeps wasm applications alive after startup, initializes canvas size before
-  first render, and dispatches callbacks without holding mutable callback borrows across user code.
-- Overlay, choice, command, table, tree, and gallery internals were tightened around explicit
-  runtime requests and contract objects, reducing shallow compatibility surfaces before 1.0.
-- `VirtualizedList` is now a collection-backed component instead of an index-primary label list.
-  It uses `VirtualizerState` for range math, keeps render plans crate-private, exposes behavior
-  snapshots for probes, resolves typeahead and range selection through renderer-neutral state, and
-  treats active-indicator motion as paint-only chrome.
-- Canvas APIs were tightened so mutation, paint, runtime cache, edge routing, and kind policy stay
-  behind the editor/runtime boundaries.
-- Dependency baselines were refreshed, including `windows`/`windows-core` 0.62, `wgpu` 29,
-  `reqwest` 0.13, `wasm-bindgen` 0.2.126, and related macOS/Windows platform bindings.
+### Fixes
 
-### Fixed
-
-- Fixed web/wasm rendering failures where the canvas stayed at `1x1`, bundled fonts were missing,
-  or callback dispatch could panic with `RefCell already borrowed`.
-- Fixed Windows dispatcher integration and DirectWrite type alignment after the `windows` 0.62
-  upgrade.
-- Fixed Linux Wayland clipboard/headless behavior and X11/headless platform regressions ported from
-  upstream GPUI fixes.
-- Fixed native text rendering in examples.
-- Fixed streamed `reqwest` bodies so pending reads preserve the body state.
-- Fixed SVG renderer regressions, list scrolling behavior, scheduler leak checks, and process-tree
-  cleanup on Darwin.
-- Fixed focus restore behavior for Select, Combobox, and dialog Command overlays on selection,
-  Escape dismissal, and outside-press dismissal.
-- Fixed v0.2.0 package archives so publishable crates carry concrete Apache-2.0 license text and
-  NOTICE attribution files.
+- Fixed Windows dispatcher and DirectWrite integration after the `windows` 0.62 upgrade.
+- Fixed Linux Wayland clipboard/headless behavior and X11/headless regressions.
+- Fixed native text rendering in examples, streamed `reqwest` body reads, SVG renderer regressions, list scrolling behavior, scheduler leak checks, and Darwin process-tree cleanup.
+- Fixed focus restore behavior for Select, Combobox, and dialog Command overlays after selection, Escape dismissal, and outside-press dismissal.
+- Fixed package archives so publishable crates include Apache-2.0 license text and NOTICE attribution files.
 
 ### Security
 
 - Resolved the cargo audit findings tracked during the dependency upgrade sweep.
 
-### Breaking Changes
+### Breaking Changes and Migration Notes
 
-- `ZED_ALLOW_ROOT` is replaced by `OPEN_GPUI_ALLOW_ROOT`.
-- `get_shell_safe_zed_path` is replaced by `get_shell_safe_app_path`.
-- `get_zed_cli_path` is replaced by `get_open_gpui_cli_path`.
-- `open-gpui-http-client` no longer exposes Zed Cloud/API/LLM URL helpers such as
-  `build_zed_api_url`, `build_zed_cloud_url`, and `build_zed_llm_url`.
-- New keymap JSON should use `open_gpui::NoAction` and `open_gpui::Unbind`. The old `zed::...`
-  action names are still accepted as deprecated aliases for migration.
-- Platform-specific identifiers for keyrings, pasteboard metadata, Windows credential targets, and
-  Windows window classes now use Open GPUI names.
-- `VirtualizedList` was rebuilt before v0.2.0: index-only activation and text-label-only rows are
-  replaced by stable keys, typed descriptors, `VirtualizedListSelectionMode`,
-  `VirtualizedListActivation`, `VirtualizedListSelectionChange`,
-  `VirtualizedListBehaviorSnapshot`, `VirtualizedListStickySectionSnapshot`,
-  `VirtualizedListRowMeasureMode`, and the `render_row` content-renderer boundary.
+- Public-facing defaults now use Open GPUI naming. `ZED_ALLOW_ROOT` becomes `OPEN_GPUI_ALLOW_ROOT`, `get_shell_safe_zed_path` becomes `get_shell_safe_app_path`, and `get_zed_cli_path` becomes `get_open_gpui_cli_path`.
+- Platform-specific identifiers for keyrings, pasteboard metadata, Windows credential targets, and Windows window classes now use Open GPUI names.
+- `open-gpui-http-client` no longer exposes Zed Cloud/API/LLM URL helpers such as `build_zed_api_url`, `build_zed_cloud_url`, and `build_zed_llm_url`.
+- New keymap JSON should use `open_gpui::NoAction` and `open_gpui::Unbind`. The old `zed::...` action names remain accepted as migration aliases.
+- `VirtualizedList` was rebuilt before v0.2.0. Index-only activation and text-label-only rows are replaced by stable keys, typed descriptors, explicit selection/activation events, behavior snapshots, sticky section snapshots, row measurement modes, and the `render_row` content boundary.
 
 ## [0.1.0] - 2026-06-09
 
 ### Added
 
-- Root-level fork attribution and licensing notes, plus per-crate `NOTICE` files that preserve
-  upstream copyright notices.
-- A publish-check workflow that validates leaf crate packaging first and package contents for the
-  rest of the workspace.
+- Root-level fork attribution and licensing notes, plus per-crate `NOTICE` files that preserve upstream copyright notices.
+- A publish-check workflow that validates leaf crate packaging first and package contents for the rest of the workspace.
 
 ### Fixed
 
-- Fork dependencies now resolve from crates.io via `open-gpui-scap` and `open-gpui-font-kit`, and
-  publishable Open GPUI crates no longer inherit the workspace root's `publish = false` guard.
+- Fork dependencies now resolve from crates.io via `open-gpui-scap` and `open-gpui-font-kit`, and publishable Open GPUI crates no longer inherit the workspace root's `publish = false` guard.
 
 ### Changed
 
-- Public package names and Rust import paths are standardized around the `open-gpui` /
-  `open_gpui::...` branding.
+- Public package names and Rust import paths are standardized around the `open-gpui` / `open_gpui::...` branding.
 - Workspace metadata is aligned to the fork author and unified version line for the first release.

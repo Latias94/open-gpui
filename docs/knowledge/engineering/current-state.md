@@ -21,7 +21,7 @@ related_plan:
   - docs/plans/2026-07-03-003-feat-command-center-runtime-plan.md
   - docs/plans/2026-07-05-002-refactor-web-docking-viewport-capability-gates-plan.md
 related_research:
-  - native-ui-framework-design-research/report.md
+  - docs/research/native-ui-framework-design-research.md
 related_adr:
   - docs/adr/0006-open-gpui-ui-headless-extraction-checkpoint.md
   - docs/adr/0008-open-gpui-ui-component-productization-roadmap.md
@@ -121,9 +121,7 @@ verified_by:
   - cargo nextest run -p open-gpui-docking host_render_tests host_presentation_scene_tests host_interaction_tests --no-fail-fast
   - cargo nextest run -p open-gpui-docking render_tab_bar_bounds_match_presentation_scene_tab_bar render_floating_bounds_match_presentation_scene_container render_tiny_floating_handle_clamps_to_presentation_title_bar render_measured_tab_label_fact_overrides_scene_equal_slot_estimate runtime_nested_tab_tear_off_uses_leaf_size_not_tab_label --no-fail-fast
   - cargo nextest run -p open-gpui-docking render_measured_tab_label_fact_overrides_scene_equal_slot_estimate rendered_host_scene_frame_seeds_deterministic_facts_from_presentation_scene --no-fail-fast
-  - python native-ui-framework-design-research/generate_report.py
-  - python -m py_compile native-ui-framework-design-research/generate_report.py
-  - python C:\Users\Frankorz\.codex\skills\research\validate_json.py -f native-ui-framework-design-research\fields.yaml -d native-ui-framework-design-research\results
+  - native UI framework research bundle generated and validated before archival
   - python $HOME/.codex/skills/engineering-wiki-memory/scripts/wiki_memory.py validate --root docs/knowledge/engineering
   - cargo nextest run -p open-gpui-command keymap_resolution --no-fail-fast
   - cargo nextest run -p open-gpui-command center_resolves_keymap_input_for_active_context_stack --no-fail-fast
@@ -332,9 +330,9 @@ verified_by:
   reviewable artifact generated from `theme_json_schema()` through
   `open-gpui-ui-components --example export_theme_schema`, with `scan-theme-schema` drift coverage.
 - Done: Native UI framework design research is complete in
-  `native-ui-framework-design-research/report.md`. The registry part of that research was trialed,
-  then removed by ADR 0014 because generated manifest/scaffold artifacts duplicated crate source and
-  typed contract facts.
+  `docs/research/native-ui-framework-design-research.md`. The raw generated research bundle was
+  removed after archival. The registry part of that research was trialed, then removed by ADR 0014
+  because generated manifest/scaffold artifacts duplicated crate source and typed contract facts.
 - Done: ADR 0014 supersedes ADR 0013. The hybrid registry manifest API, scaffold recipe metadata,
   JSON/schema artifacts, export examples, `xtask ui_registry`, and `scan-ui-registry` command have
   been removed. `component_contract` typed rows remain as internal verification tables.
@@ -424,7 +422,7 @@ verified_by:
 - [Docking visual affordance runtime plan](../../plans/2026-07-03-001-refactor-docking-visual-affordance-runtime-plan.md)
 - [Docking visual affordance runtime progress](progress/2026-07-03-docking-visual-affordance-runtime.md)
 - [Docking affordance authority cleanup plan](../../plans/2026-07-03-002-refactor-docking-affordance-authority-cleanup-plan.md)
-- [Native UI framework design research report](../../../native-ui-framework-design-research/report.md)
+- [Native UI framework design research report](../../../docs/research/native-ui-framework-design-research.md)
 - [Native UI framework distribution strategy decision](decisions/open-gpui-native-ui-framework-distribution-strategy.md)
 - [Native UI framework strategy architecture page](../../architecture/native-ui-framework-strategy.md)
 - [ADR 0013: Open GPUI Native UI Hybrid Registry](../../adr/0013-open-gpui-native-ui-hybrid-registry.md)
