@@ -8,6 +8,7 @@ use super::descriptor::{
     count_command_status_items,
 };
 use super::style::{CommandColors, CommandMetrics};
+use crate::action::ResolvedActionIcon;
 use crate::choice::{self, ChoiceCollection, ChoiceInteractionPolicy};
 use crate::focus::FocusRing;
 use crate::listbox::{ListboxGroupDescriptor, ListboxState};
@@ -238,10 +239,13 @@ pub struct CommandItemState {
     group_index: Option<usize>,
     value: String,
     label: String,
+    icon: Option<ResolvedActionIcon>,
     shortcut: Option<String>,
     when: Option<String>,
     disabled: bool,
     disabled_reason: Option<String>,
+    tooltip: Option<String>,
+    accessibility_description: Option<String>,
     selected: bool,
     active: bool,
     match_source: Option<CommandMatchSource>,
@@ -271,6 +275,16 @@ impl CommandItemState {
         &self.label
     }
 
+    /// Returns app-resolved icon metadata.
+    pub const fn icon(&self) -> Option<&ResolvedActionIcon> {
+        self.icon.as_ref()
+    }
+
+    /// Returns a concrete render label for the resolved icon.
+    pub fn icon_label(&self) -> Option<&str> {
+        self.icon.as_ref().and_then(ResolvedActionIcon::label)
+    }
+
     /// Returns optional shortcut label.
     pub fn shortcut(&self) -> Option<&str> {
         self.shortcut.as_deref()
@@ -289,6 +303,16 @@ impl CommandItemState {
     /// Returns the optional disabled reason.
     pub fn disabled_reason_ref(&self) -> Option<&str> {
         self.disabled_reason.as_deref()
+    }
+
+    /// Returns user-displayable tooltip metadata.
+    pub fn tooltip(&self) -> Option<&str> {
+        self.tooltip.as_deref()
+    }
+
+    /// Returns the optional accessibility description.
+    pub fn accessibility_description(&self) -> Option<&str> {
+        self.accessibility_description.as_deref()
     }
 
     /// Returns whether the item can be activated.
@@ -841,10 +865,13 @@ impl CommandState {
                     group_index: item.group_index,
                     value: item.descriptor.value,
                     label: item.descriptor.label,
+                    icon: item.descriptor.icon,
                     shortcut: item.descriptor.shortcut,
                     when: item.descriptor.when,
                     disabled: item.descriptor.disabled,
                     disabled_reason: item.descriptor.disabled_reason,
+                    tooltip: item.descriptor.tooltip,
+                    accessibility_description: item.descriptor.accessibility_description,
                     selected,
                     active: option.active(),
                     match_source: item.rank.source,

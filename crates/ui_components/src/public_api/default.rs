@@ -8,6 +8,10 @@ pub use crate::accordion::{
     Accordion, AccordionColors, AccordionItem, AccordionItemDescriptor, AccordionItemState,
     AccordionMetrics, AccordionMode, AccordionOpenChange, AccordionState,
 };
+pub use crate::action::{
+    ActionDescriptor, ActionIconDescriptor, ActionIconDiagnostic, ActionIconResolver,
+    ResolvedActionIcon, ResolvedActionState,
+};
 pub use crate::alert_dialog::{
     AlertDialog, AlertDialogActionKind, AlertDialogActionState, AlertDialogColors,
     AlertDialogIntent, AlertDialogMetrics, AlertDialogOpenMode, AlertDialogState,

@@ -85,9 +85,12 @@ impl CommandMenuEntry {
 pub struct CommandMenuCommand {
     command_id: String,
     label: String,
+    icon: Option<crate::CommandIconDescriptor>,
     shortcut: Option<String>,
     disabled: bool,
     disabled_reason: Option<String>,
+    tooltip: Option<String>,
+    accessibility_description: Option<String>,
     when: Option<String>,
 }
 
@@ -96,9 +99,14 @@ impl CommandMenuCommand {
         Self {
             command_id: descriptor.id().to_owned(),
             label: descriptor.label().to_owned(),
+            icon: descriptor.icon_ref().cloned(),
             shortcut: descriptor.shortcut_ref().map(str::to_owned),
             disabled: descriptor.disabled_state(),
             disabled_reason: descriptor.disabled_reason_ref().map(str::to_owned),
+            tooltip: descriptor.tooltip_ref().map(str::to_owned),
+            accessibility_description: descriptor
+                .accessibility_description_ref()
+                .map(str::to_owned),
             when: descriptor.when_ref().map(str::to_owned),
         }
     }
@@ -111,6 +119,11 @@ impl CommandMenuCommand {
     /// Returns the visible command label.
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// Returns renderer-neutral icon metadata.
+    pub const fn icon_ref(&self) -> Option<&crate::CommandIconDescriptor> {
+        self.icon.as_ref()
     }
 
     /// Returns the display shortcut label.
@@ -126,6 +139,16 @@ impl CommandMenuCommand {
     /// Returns the disabled reason, if present.
     pub fn disabled_reason_ref(&self) -> Option<&str> {
         self.disabled_reason.as_deref()
+    }
+
+    /// Returns user-displayable tooltip metadata.
+    pub fn tooltip_ref(&self) -> Option<&str> {
+        self.tooltip.as_deref()
+    }
+
+    /// Returns the optional accessibility description.
+    pub fn accessibility_description_ref(&self) -> Option<&str> {
+        self.accessibility_description.as_deref()
     }
 
     /// Returns caller-owned availability metadata.
@@ -199,7 +222,10 @@ impl CommandMenuEntry {
 
 #[cfg(test)]
 mod tests {
-    use crate::{CommandDescriptor, CommandMenuEntry, CommandMenuTree, CommandRegistry};
+    use crate::{
+        CommandDescriptor, CommandIconDescriptor, CommandMenuEntry, CommandMenuTree,
+        CommandRegistry,
+    };
 
     #[test]
     fn command_menu_tree_projects_nested_menu_paths() {
@@ -207,7 +233,10 @@ mod tests {
         registry
             .register(
                 CommandDescriptor::new("workspace.open", "Open Workspace")
+                    .icon(CommandIconDescriptor::new("folder-open").fallback_label("O"))
                     .shortcut("Ctrl+O")
+                    .tooltip("Open recent workspace")
+                    .accessibility_description("Opens the selected recent workspace")
                     .menu_path(["File", "Open Recent"]),
             )
             .unwrap();
@@ -227,7 +256,14 @@ mod tests {
         let recent = file.entries()[0].as_submenu().unwrap();
         let open = recent.entries()[0].as_command().unwrap();
         assert_eq!(open.command_id(), "workspace.open");
+        assert_eq!(open.icon_ref().unwrap().name(), "folder-open");
+        assert_eq!(open.icon_ref().unwrap().fallback_label_ref(), Some("O"));
         assert_eq!(open.shortcut_ref(), Some("Ctrl+O"));
+        assert_eq!(open.tooltip_ref(), Some("Open recent workspace"));
+        assert_eq!(
+            open.accessibility_description_ref(),
+            Some("Opens the selected recent workspace")
+        );
         let close = file.entries()[1].as_command().unwrap();
         assert_eq!(close.disabled_reason_ref(), Some("No workspace"));
     }

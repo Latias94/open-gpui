@@ -4,6 +4,7 @@ use open_gpui_ui_core::{
     ThemeTokens, Toggled, UiPx,
 };
 
+use crate::action::ResolvedActionIcon;
 use crate::choice::{ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
 use crate::focus::FocusRing;
 use crate::overlay::{OverlayDisclosureConfig, OverlayResolvedState};
@@ -22,10 +23,14 @@ pub struct MenuItemState {
     depth: usize,
     value: String,
     label: String,
+    icon: Option<ResolvedActionIcon>,
     kind: MenuItemKind,
     disabled: bool,
+    disabled_reason: Option<String>,
     checked: bool,
     shortcut: Option<String>,
+    tooltip: Option<String>,
+    accessibility_description: Option<String>,
     when: Option<String>,
     focused: bool,
     submenu_open: bool,
@@ -69,6 +74,16 @@ impl MenuItemState {
         &self.label
     }
 
+    /// Returns app-resolved icon metadata.
+    pub const fn icon(&self) -> Option<&ResolvedActionIcon> {
+        self.icon.as_ref()
+    }
+
+    /// Returns a concrete render label for the resolved icon.
+    pub fn icon_label(&self) -> Option<&str> {
+        self.icon.as_ref().and_then(ResolvedActionIcon::label)
+    }
+
     /// Returns the item kind.
     pub const fn kind(&self) -> MenuItemKind {
         self.kind
@@ -79,6 +94,11 @@ impl MenuItemState {
         self.disabled
     }
 
+    /// Returns the optional disabled reason.
+    pub fn disabled_reason_ref(&self) -> Option<&str> {
+        self.disabled_reason.as_deref()
+    }
+
     /// Returns caller-owned checked state for checkbox and radio items.
     pub const fn checked(&self) -> bool {
         self.checked
@@ -87,6 +107,16 @@ impl MenuItemState {
     /// Returns the display shortcut label.
     pub fn shortcut(&self) -> Option<&str> {
         self.shortcut.as_deref()
+    }
+
+    /// Returns user-displayable tooltip metadata.
+    pub fn tooltip(&self) -> Option<&str> {
+        self.tooltip.as_deref()
+    }
+
+    /// Returns the optional accessibility description.
+    pub fn accessibility_description(&self) -> Option<&str> {
+        self.accessibility_description.as_deref()
     }
 
     /// Returns caller-owned availability metadata.
@@ -322,10 +352,16 @@ fn menu_item_state_from_descriptor(
         depth,
         value: descriptor.value().to_owned(),
         label: descriptor.label().to_owned(),
+        icon: descriptor.icon_ref().cloned(),
         kind: descriptor.kind(),
         disabled: descriptor.disabled_state(),
+        disabled_reason: descriptor.disabled_reason_ref().map(str::to_owned),
         checked: descriptor.checked_state(),
         shortcut: descriptor.shortcut_ref().map(str::to_owned),
+        tooltip: descriptor.tooltip_ref().map(str::to_owned),
+        accessibility_description: descriptor
+            .accessibility_description_ref()
+            .map(str::to_owned),
         when: descriptor.when_ref().map(str::to_owned),
         focused,
         submenu_open,

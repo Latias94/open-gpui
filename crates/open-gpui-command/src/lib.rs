@@ -50,8 +50,8 @@ pub use provider::{
 };
 pub use refresh::{CommandProviderRefreshController, CommandProviderRefreshProjection};
 pub use registry::{
-    CommandContribution, CommandDescriptor, CommandRegistry, CommandRegistryError,
-    CommandRegistrySnapshot, CommandSourceId,
+    CommandContribution, CommandDescriptor, CommandIconDescriptor, CommandRegistry,
+    CommandRegistryError, CommandRegistrySnapshot, CommandSourceId,
 };
 pub use scope::{
     CommandProjectionDiagnostic, CommandProjectionDiagnosticKind, CommandScopeId,

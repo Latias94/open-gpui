@@ -21,6 +21,7 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
+use crate::action::{ResolvedActionIcon, ResolvedActionState};
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::overlay::{
     OverlayLayerHost, OverlayOpenRuntimeRequest, resolve_overlay_open_state, set_overlay_open,
@@ -810,6 +811,13 @@ impl CommandItem {
         }
     }
 
+    /// Creates a command item from resolved action metadata.
+    pub fn from_resolved_action(action: &ResolvedActionState) -> Self {
+        Self {
+            descriptor: CommandItemDescriptor::from_resolved_action(action),
+        }
+    }
+
     /// Adds one filtering keyword.
     pub fn keyword(mut self, keyword: impl Into<String>) -> Self {
         self.descriptor = self.descriptor.keyword(keyword);
@@ -822,6 +830,12 @@ impl CommandItem {
         self
     }
 
+    /// Applies app-resolved icon metadata.
+    pub fn icon(mut self, icon: ResolvedActionIcon) -> Self {
+        self.descriptor = self.descriptor.icon(icon);
+        self
+    }
+
     /// Marks the command as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.descriptor = self.descriptor.disabled(disabled);
@@ -831,6 +845,18 @@ impl CommandItem {
     /// Marks the command as disabled with a user-displayable reason.
     pub fn disabled_reason(mut self, reason: impl Into<String>) -> Self {
         self.descriptor = self.descriptor.disabled_reason(reason);
+        self
+    }
+
+    /// Applies user-displayable tooltip metadata.
+    pub fn tooltip_text(mut self, tooltip: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.tooltip(tooltip);
+        self
+    }
+
+    /// Applies an accessibility description in addition to the visible label.
+    pub fn accessibility_description(mut self, description: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.accessibility_description(description);
         self
     }
 

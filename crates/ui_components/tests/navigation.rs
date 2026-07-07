@@ -3,18 +3,123 @@ use open_gpui::{
     Styled, Window, div, point, px,
 };
 use open_gpui_ui_components::{
-    RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor, RadioSelection, Sidebar,
-    SidebarCollapseMode, SidebarItem, SidebarItemDescriptor, SidebarSection,
-    SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Tabs, TabsActivationMode,
-    TabsItem, TabsItemDescriptor, TabsSelection, TabsState, ToggleGroup, ToggleGroupItem, Toolbar,
-    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    sidebar_navigation_target,
+    ActionDescriptor, Button, CommandItemDescriptor, IconButton, Menu, MenuItem,
+    MenuItemDescriptor, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor,
+    RadioSelection, ResolvedActionIcon, Sidebar, SidebarCollapseMode, SidebarItem,
+    SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState,
+    SidebarVariant, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
+    TabsState, ToggleGroup, ToggleGroupItem, Toolbar, ToolbarItem, ToolbarItemDescriptor,
+    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, sidebar_navigation_target,
     tabs::{active_index_from_str_keys, first_enabled, last_enabled, next_enabled},
     toolbar_navigation_target,
 };
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, Toggled, ui_px};
 use std::cell::RefCell;
 use std::rc::Rc;
+
+#[test]
+fn resolved_action_projects_consistent_facts_to_navigation_and_action_surfaces() {
+    let command = open_gpui_command::CommandDescriptor::new("workspace.open", "Open Workspace")
+        .icon(open_gpui_command::CommandIconDescriptor::new("folder-open").fallback_label("O"))
+        .shortcut("Ctrl+O")
+        .disabled_reason("No workspace")
+        .tooltip("Open a workspace")
+        .accessibility_description("Opens the workspace picker");
+    let action = ActionDescriptor::from_command_descriptor(&command).resolve_with(
+        &|icon: &open_gpui_ui_components::ActionIconDescriptor| {
+            ResolvedActionIcon::resolved(icon.clone(), "O")
+        },
+    );
+
+    let toolbar_state = ToolbarState::resolve(
+        Orientation::Horizontal,
+        Size::Medium,
+        false,
+        "Main toolbar",
+        None,
+        [ToolbarItemDescriptor::from_resolved_action(&action)],
+        ThemeTokens::default(),
+    );
+    let toolbar_item = &toolbar_state.items()[0];
+    assert_eq!(toolbar_item.value(), "workspace.open");
+    assert_eq!(toolbar_item.label(), "Open Workspace");
+    assert_eq!(toolbar_item.icon_label(), Some("O"));
+    assert_eq!(toolbar_item.shortcut(), Some("Ctrl+O"));
+    assert_eq!(toolbar_item.disabled_reason_ref(), Some("No workspace"));
+    assert_eq!(toolbar_item.tooltip(), Some("Open a workspace"));
+    assert_eq!(
+        toolbar_item.accessibility_description(),
+        Some("Opens the workspace picker")
+    );
+    assert!(!toolbar_item.activation_enabled());
+
+    let sidebar_state = SidebarState::resolve(
+        SidebarSide::Left,
+        SidebarVariant::Docked,
+        SidebarCollapseMode::Icon,
+        false,
+        false,
+        "Primary navigation",
+        None,
+        None,
+        [SidebarSectionDescriptor::new("workspace", "Workspace")
+            .item(SidebarItemDescriptor::from_resolved_action(&action))],
+        Size::Medium,
+        ThemeTokens::default(),
+    );
+    let sidebar_item = &sidebar_state.items()[0];
+    assert_eq!(sidebar_item.icon_label(), Some("O"));
+    assert_eq!(sidebar_item.shortcut(), Some("Ctrl+O"));
+    assert_eq!(sidebar_item.disabled_reason_ref(), Some("No workspace"));
+    assert_eq!(sidebar_item.tooltip(), Some("Open a workspace"));
+    assert_eq!(
+        sidebar_item.accessibility_description(),
+        Some("Opens the workspace picker")
+    );
+    assert!(!sidebar_item.activation_enabled());
+
+    let menu_state = Menu::new("more", "More")
+        .open(true)
+        .item(MenuItem::from_resolved_action(&action))
+        .state();
+    let menu_item = &menu_state.items()[0];
+    assert_eq!(menu_item.icon_label(), Some("O"));
+    assert_eq!(menu_item.shortcut(), Some("Ctrl+O"));
+    assert_eq!(menu_item.disabled_reason_ref(), Some("No workspace"));
+    assert_eq!(menu_item.tooltip(), Some("Open a workspace"));
+    assert_eq!(
+        menu_item.accessibility_description(),
+        Some("Opens the workspace picker")
+    );
+    assert!(!menu_item.activation_enabled());
+
+    let menu_descriptor = MenuItemDescriptor::from_resolved_action(&action);
+    let command_descriptor = CommandItemDescriptor::from_resolved_action(&action);
+    assert_eq!(menu_descriptor.icon_label(), Some("O"));
+    assert_eq!(command_descriptor.icon_label(), Some("O"));
+    assert_eq!(
+        command_descriptor.disabled_reason_ref(),
+        Some("No workspace")
+    );
+    assert_eq!(
+        command_descriptor.accessibility_description_ref(),
+        Some("Opens the workspace picker")
+    );
+
+    let button = Button::from_resolved_action("open-button", &action);
+    let icon_button = IconButton::from_resolved_action("open-icon", &action);
+    assert_eq!(
+        button.resolved_action().map(|action| action.value()),
+        Some("workspace.open")
+    );
+    assert_eq!(
+        icon_button
+            .resolved_action()
+            .map(|action| action.icon_label()),
+        Some(Some("O"))
+    );
+    assert!(!icon_button.state().activation_enabled());
+}
 
 #[test]
 fn tabs_navigation_helpers_skip_disabled_tabs() {

@@ -26,6 +26,9 @@ Resolved state should contain:
 
 - semantic input state such as disabled, selected, checked, indeterminate, open, invalid, read-only,
   and required;
+- shared action metadata such as label, renderer-neutral icon intent, resolved icon facts,
+  shortcut, disabled reason, tooltip, and accessibility description when the component presents an
+  app command or action;
 - activation or editability rules;
 - navigation state for composite widgets such as selected, focused, and tab-stop position;
 - accessibility intent such as role, label requirements, value presence, and required actions;
@@ -151,15 +154,17 @@ coordination.
 
 `MenuState` and `ContextMenuState` are the first menu overlay contracts. `MenuState` records
 controlled versus uncontrolled open mode, action, checkbox, radio, separator, and submenu items,
-caller-owned checked state, disabled item state, stable item paths, visible submenu rows, roving
+caller-owned checked state, disabled item state and disabled reason, resolved action icon facts,
+shortcut, tooltip, accessibility description, stable item paths, visible submenu rows, roving
 focus, pure typeahead targets, keyboard submenu open/close targets, activation payloads with item
 kind/path/checked-at-activation, local scrollability, Escape policy, outside-press policy,
 placement preference, resolved metrics, token intents, and menu layer state. `ContextMenuState`
-reuses the same item, submenu, typeahead, scrollability, and roving focus model while adding a point
-anchor and renderer-neutral placement input sized from the visible menu surface. Keyboard and
-pointer activation both invoke item-level selection handlers before component-level selection
-handlers. Hover-open submenu affordance is now implemented for menu items, and submenu hover
-timers / close timing now live in the GPUI adapter runtime. `MenuSubmenuSurface` and
+reuses the same item, submenu, typeahead, scrollability, action metadata, and roving focus model
+while adding a point anchor and renderer-neutral placement input sized from the visible menu
+surface. Keyboard and pointer activation both invoke item-level selection handlers before
+component-level selection handlers. Hover-open submenu affordance is now implemented for menu
+items, and submenu hover timers / close timing now live in the GPUI adapter runtime.
+`MenuSubmenuSurface` and
 `MenuSafeHoverCorridor` provide the renderer-neutral placement and pointer-transition contract for
 floating submenu panels, while the GPUI adapter renders those panels as deferred anchored layers
 and keeps the branch content scrollable. Menubars, application menu integration, global command
@@ -216,10 +221,11 @@ wrapper, loading metadata, selected chips, a virtualized result window, and nest
 It records controlled versus uncontrolled open and query modes, default-open/default-query seed
 state, single-select or multi-select behavior, selected and active command values, query text,
 filtered and total command counts, standalone/grouped command anatomy, shortcut labels, disabled
-command state, deterministic match source/score metadata, app-owned index revision/mode metadata,
-empty-state label, provider/shortcut status items, keyboard navigation behavior, Escape policy,
-focus restoration intent, resolved metrics, token intents, non-modal inline overlay state, and
-modal dialog overlay state when dialog presentation is enabled. `CommandNavigationBehavior` makes
+command state and disabled reason, resolved action icon facts, tooltip, accessibility description,
+deterministic match source/score metadata, app-owned index revision/mode metadata, empty-state
+label, provider/shortcut status items, keyboard navigation behavior, Escape policy, focus
+restoration intent, resolved metrics, token intents, non-modal inline overlay state, and modal
+dialog overlay state when dialog presentation is enabled. `CommandNavigationBehavior` makes
 the palette-specific keyboard layer explicit: Home/End target the first/last focusable command,
 Up/Down loop by default but can be bounded with `loop_navigation(false)`, and Alt+Up/Alt+Down move
 between rendered command groups.
@@ -240,14 +246,20 @@ The reusable command ecosystem boundary is documented in
 `open_gpui_command` owns command metadata, deterministic registry snapshots, scoped registration,
 availability projection, neutral menu trees, usage history, and GPUI command-id dispatch adapters.
 `open_gpui_ui_components` owns rendering only. `open_gpui_command::CommandDescriptor` is the shared
-app-command metadata contract for component projection. It carries id, label, group, keywords,
-shortcut, disabled state, optional disabled reason, caller-owned `when` metadata, and app-owned menu
-path without storing callbacks, keybinding resolution, or a global runtime singleton.
+app-command metadata contract for component projection. It carries id, label, renderer-neutral
+icon descriptor, group, keywords, shortcut, disabled state, optional disabled reason, tooltip,
+accessibility description, caller-owned `when` metadata, and app-owned menu path without storing
+callbacks, keybinding resolution, icon asset loading, or a global runtime singleton.
+`open_gpui_ui_components::ActionDescriptor` and `ResolvedActionState` are the UI-side projection
+bridge. Applications resolve icon descriptors into `ResolvedActionIcon` values and diagnostics;
+components render those resolved facts and return selection or activation intent.
 `CommandItem::from_command_descriptor`, `CommandIndexSnapshot::command_descriptor`,
-`MenuItem::from_command_descriptor`, and `ContextMenu`'s shared menu state consume the one-item
-presentation fields so Command, Menu, and ContextMenu can present the same metadata while
-applications remain the execution authority. `CommandMenuTree` is the command-crate hierarchy
-projection for callers that want submenu trees from `menu_path`.
+`MenuItem::from_command_descriptor`, `ToolbarItem::from_resolved_action`,
+`SidebarItem::from_resolved_action`, `Button::from_resolved_action`,
+`IconButton::from_resolved_action`, and `ContextMenu`'s shared menu state consume the one-item
+presentation fields so Command, Menu, ContextMenu, Toolbar, Sidebar, Button, and IconButton can
+present the same metadata while applications remain the execution authority. `CommandMenuTree` is
+the command-crate hierarchy projection for callers that want submenu trees from `menu_path`.
 
 `SeparatorState`, `KbdState`, `ProgressState`, and `SkeletonState` are low-state primitives. They
 still expose resolved state, metrics, token intents, and stable rendered debug selectors rather
@@ -544,7 +556,8 @@ node. The repair layer is a crash barrier, not a substitute for correct IDs.
 ## Toolbar Contract
 
 `ToolbarState` describes renderer-neutral command grouping: stable toolbar label, orientation,
-foundation size, disabled state, action/toggle/separator items, pressed toggle metadata, focused
+foundation size, disabled state, action/toggle/separator items, resolved action icon facts,
+shortcut, disabled reason, tooltip, accessibility description, pressed toggle metadata, focused
 item, tab stop, shared button metrics, and focus-ring/color intents. Separators are visual only and
 must not participate in roving focus or activation.
 
@@ -555,14 +568,14 @@ roving-focus helpers so arrow keys, Home, and End skip disabled items and separa
 with Tabs, RadioGroup, and Menu.
 
 Toolbar v1 is a primitive command surface, not an application command registry. Automatic overflow
-menus, shortcut rendering, command enablement policies, persisted customization, and icon asset
-resolution remain app/adapter responsibilities until the command and sidebar work proves a common
-contract.
+menus, command enablement policies, persisted customization, and icon asset resolution remain
+application responsibilities; toolbar items render resolved action facts supplied by the app.
 
 ## Sidebar Contract
 
 `SidebarState` describes renderer-neutral shell navigation: side, variant, size, collapse mode,
 effective collapsed state, accessible label, sections, flattened navigation items, disabled state,
+resolved action icon facts, shortcut, disabled reason, tooltip, accessibility description,
 selected item, focused item, tab stop, scrollability, metrics, colors, and focus-ring intent. It
 keeps selection app-owned; activating an item produces a `SidebarSelection` payload but does not
 own routing or persistent preferences.
@@ -1034,10 +1047,13 @@ selected/focused/tab-stop state, and maps items through `Role::RadioButton` with
 because the current AccessKit surface exposed by GPUI does not provide a separate checked
 property. `Toggle` is button-like: it exposes `pressed`, maps to `Role::Button` with
 `aria_toggled`, and intentionally stays separate from `Checkbox` tri-state semantics. `Badge` is
-display-only and exposes no role in resolved state. `IconButton` reuses Button visual variants and
-focus-ring color intents, but requires an explicit accessible label because the visible icon glyph
-is not a reliable accessible name. `Tooltip` is descriptive-only and currently maps its surface to
-`Role::Label` until the public GPUI/AccessKit role wrapper exposes a tooltip role; trigger
+display-only and exposes no role in resolved state. `Button` and `IconButton` can be constructed
+from `ResolvedActionState` so primary actions, icon-only controls, toolbar entries, menu rows, and
+navigation items share label, resolved icon, disabled reason, tooltip, and accessibility metadata.
+`IconButton` reuses Button visual variants and focus-ring color intents, but requires an explicit
+accessible label because the visible icon glyph is not a reliable accessible name. `Tooltip` is
+descriptive-only and currently maps its surface to `Role::Label` until the public GPUI/AccessKit
+role wrapper exposes a tooltip role; trigger
 association and timed hover/focus execution stay in the adapter layer. `Popover` currently covers
 basic non-modal dismissible surfaces with default-open and controlled-open state; nested popover
 coordination, modal popover barriers, and a full reusable focus-scope runtime remain deferred.

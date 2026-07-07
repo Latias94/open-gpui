@@ -1,3 +1,4 @@
+use crate::action::{ActionDescriptor, ResolvedActionIcon, ResolvedActionState};
 use crate::overlay::OverlayDisclosureOpenMode;
 use open_gpui_command::CommandDescriptor;
 /// Menu open-state ownership.
@@ -78,10 +79,14 @@ impl MenuItemKind {
 pub struct MenuItemDescriptor {
     value: String,
     label: String,
+    icon: Option<ResolvedActionIcon>,
     kind: MenuItemKind,
     disabled: bool,
+    disabled_reason: Option<String>,
     checked: bool,
     shortcut: Option<String>,
+    tooltip: Option<String>,
+    accessibility_description: Option<String>,
     when: Option<String>,
     children: Vec<MenuItemDescriptor>,
 }
@@ -92,10 +97,14 @@ impl MenuItemDescriptor {
         Self {
             value: value.into(),
             label: label.into(),
+            icon: None,
             kind: MenuItemKind::Action,
             disabled: false,
+            disabled_reason: None,
             checked: false,
             shortcut: None,
+            tooltip: None,
+            accessibility_description: None,
             when: None,
             children: Vec::new(),
         }
@@ -103,13 +112,32 @@ impl MenuItemDescriptor {
 
     /// Creates an action item descriptor from shared app-command metadata.
     pub fn from_command_descriptor(descriptor: &CommandDescriptor) -> Self {
-        let mut item =
-            Self::action(descriptor.id(), descriptor.label()).disabled(descriptor.disabled_state());
-        if let Some(shortcut) = descriptor.shortcut_ref() {
-            item = item.shortcut(shortcut);
-        }
+        let action = ActionDescriptor::from_command_descriptor(descriptor)
+            .resolve_without_icon_diagnostics();
+        let mut item = Self::from_resolved_action(&action).disabled(descriptor.disabled_state());
         if let Some(when) = descriptor.when_ref() {
             item = item.when(when);
+        }
+        item
+    }
+
+    /// Creates an action item descriptor from resolved action metadata.
+    pub fn from_resolved_action(action: &ResolvedActionState) -> Self {
+        let mut item = Self::action(action.value(), action.label()).disabled(action.disabled());
+        if let Some(icon) = action.icon() {
+            item.icon = Some(icon.clone());
+        }
+        if let Some(shortcut) = action.shortcut() {
+            item = item.shortcut(shortcut);
+        }
+        if let Some(reason) = action.disabled_reason() {
+            item = item.disabled_reason(reason);
+        }
+        if let Some(tooltip) = action.tooltip() {
+            item = item.tooltip(tooltip);
+        }
+        if let Some(description) = action.accessibility_description() {
+            item = item.accessibility_description(description);
         }
         item
     }
@@ -119,10 +147,14 @@ impl MenuItemDescriptor {
         Self {
             value: value.into(),
             label: label.into(),
+            icon: None,
             kind: MenuItemKind::Header,
             disabled: false,
+            disabled_reason: None,
             checked: false,
             shortcut: None,
+            tooltip: None,
+            accessibility_description: None,
             when: None,
             children: Vec::new(),
         }
@@ -133,10 +165,14 @@ impl MenuItemDescriptor {
         Self {
             value: value.into(),
             label: label.into(),
+            icon: None,
             kind: MenuItemKind::Checkbox,
             disabled: false,
+            disabled_reason: None,
             checked,
             shortcut: None,
+            tooltip: None,
+            accessibility_description: None,
             when: None,
             children: Vec::new(),
         }
@@ -147,10 +183,14 @@ impl MenuItemDescriptor {
         Self {
             value: value.into(),
             label: label.into(),
+            icon: None,
             kind: MenuItemKind::Radio,
             disabled: false,
+            disabled_reason: None,
             checked,
             shortcut: None,
+            tooltip: None,
+            accessibility_description: None,
             when: None,
             children: Vec::new(),
         }
@@ -161,10 +201,14 @@ impl MenuItemDescriptor {
         Self {
             value: value.into(),
             label: String::new(),
+            icon: None,
             kind: MenuItemKind::Separator,
             disabled: true,
+            disabled_reason: None,
             checked: false,
             shortcut: None,
+            tooltip: None,
+            accessibility_description: None,
             when: None,
             children: Vec::new(),
         }
@@ -179,10 +223,14 @@ impl MenuItemDescriptor {
         Self {
             value: value.into(),
             label: label.into(),
+            icon: None,
             kind: MenuItemKind::Submenu,
             disabled: false,
+            disabled_reason: None,
             checked: false,
             shortcut: None,
+            tooltip: None,
+            accessibility_description: None,
             when: None,
             children: children.into_iter().collect(),
         }
@@ -192,6 +240,21 @@ impl MenuItemDescriptor {
     pub fn disabled(mut self, disabled: bool) -> Self {
         if !matches!(self.kind, MenuItemKind::Header | MenuItemKind::Separator) {
             self.disabled = disabled;
+            if !disabled {
+                self.disabled_reason = None;
+            }
+        }
+        self
+    }
+
+    /// Marks an activatable or submenu item as disabled with a user-displayable reason.
+    pub fn disabled_reason(mut self, reason: impl Into<String>) -> Self {
+        let reason = reason.into();
+        if !reason.is_empty()
+            && !matches!(self.kind, MenuItemKind::Header | MenuItemKind::Separator)
+        {
+            self.disabled = true;
+            self.disabled_reason = Some(reason);
         }
         self
     }
@@ -208,6 +271,36 @@ impl MenuItemDescriptor {
     pub fn shortcut(mut self, shortcut: impl Into<String>) -> Self {
         if !matches!(self.kind, MenuItemKind::Header | MenuItemKind::Separator) {
             self.shortcut = Some(shortcut.into());
+        }
+        self
+    }
+
+    /// Applies app-resolved icon metadata.
+    pub fn icon(mut self, icon: ResolvedActionIcon) -> Self {
+        if !matches!(self.kind, MenuItemKind::Header | MenuItemKind::Separator) {
+            self.icon = Some(icon);
+        }
+        self
+    }
+
+    /// Applies user-displayable tooltip metadata.
+    pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        let tooltip = tooltip.into();
+        if !tooltip.is_empty()
+            && !matches!(self.kind, MenuItemKind::Header | MenuItemKind::Separator)
+        {
+            self.tooltip = Some(tooltip);
+        }
+        self
+    }
+
+    /// Applies an accessibility description in addition to the visible label.
+    pub fn accessibility_description(mut self, description: impl Into<String>) -> Self {
+        let description = description.into();
+        if !description.is_empty()
+            && !matches!(self.kind, MenuItemKind::Header | MenuItemKind::Separator)
+        {
+            self.accessibility_description = Some(description);
         }
         self
     }
@@ -246,6 +339,16 @@ impl MenuItemDescriptor {
         &self.label
     }
 
+    /// Returns app-resolved icon metadata.
+    pub const fn icon_ref(&self) -> Option<&ResolvedActionIcon> {
+        self.icon.as_ref()
+    }
+
+    /// Returns a concrete render label for the resolved icon.
+    pub fn icon_label(&self) -> Option<&str> {
+        self.icon.as_ref().and_then(ResolvedActionIcon::label)
+    }
+
     /// Returns the menu item kind.
     pub const fn kind(&self) -> MenuItemKind {
         self.kind
@@ -256,6 +359,11 @@ impl MenuItemDescriptor {
         self.disabled
     }
 
+    /// Returns the optional disabled reason.
+    pub fn disabled_reason_ref(&self) -> Option<&str> {
+        self.disabled_reason.as_deref()
+    }
+
     /// Returns caller-owned checked state for checkbox and radio items.
     pub const fn checked_state(&self) -> bool {
         self.checked
@@ -264,6 +372,16 @@ impl MenuItemDescriptor {
     /// Returns the display shortcut label.
     pub fn shortcut_ref(&self) -> Option<&str> {
         self.shortcut.as_deref()
+    }
+
+    /// Returns user-displayable tooltip metadata.
+    pub fn tooltip_ref(&self) -> Option<&str> {
+        self.tooltip.as_deref()
+    }
+
+    /// Returns the optional accessibility description.
+    pub fn accessibility_description_ref(&self) -> Option<&str> {
+        self.accessibility_description.as_deref()
     }
 
     /// Returns caller-owned availability metadata.

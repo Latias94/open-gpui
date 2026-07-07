@@ -14,7 +14,7 @@ use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, AnyView, App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent,
     ParentElement, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
-    Window, div,
+    Window, div, px,
 };
 use open_gpui_command::CommandDescriptor;
 use open_gpui_ui_core::{
@@ -24,6 +24,7 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
+use crate::action::{ResolvedActionIcon, ResolvedActionState};
 use crate::focus::focus_ring_shadow_with_theme;
 
 use crate::overlay::{
@@ -32,6 +33,7 @@ use crate::overlay::{
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::{ThemeContext, ThemeResolver};
+use crate::tooltip::Tooltip;
 use runtime::{MenuRuntime, handle_menu_submenu_surface_hover, update_menu_hover_target};
 
 pub(crate) use descriptor::menu_open_mode_from_disclosure;
@@ -107,7 +109,12 @@ fn menu_item_element(
             let global_handler = on_select.clone();
             let overlay_host_for_click = overlay_host.clone();
             let item_label = item_state.label().to_owned();
+            let icon_label = item_state.icon_label().map(str::to_owned);
             let shortcut = item_state.shortcut().map(str::to_owned);
+            let disabled_reason = item_state.disabled_reason_ref().map(str::to_owned);
+            let accessibility_description =
+                item_state.accessibility_description().map(str::to_owned);
+            let item_tooltip = item_state.tooltip().map(str::to_owned);
             let item_path_key = item_state.path_key();
             let left_padding = metrics.item_padding_x();
             let focused = item_state.focused();
@@ -145,6 +152,13 @@ fn menu_item_element(
                 colors.foreground()
             });
             let item_hover_background = theme.resolve(colors.item_hover_background());
+            let item_aria_label = accessibility_description
+                .as_ref()
+                .or(disabled_reason.as_ref())
+                .map_or_else(
+                    || item_label.clone(),
+                    |description| format!("{item_label}, {description}"),
+                );
 
             div()
                 .id(format!("{debug_prefix}-item:{item_path_key}"))
@@ -163,7 +177,7 @@ fn menu_item_element(
                 .bg(item_background)
                 .text_color(item_foreground)
                 .ui_role(Role::MenuItem)
-                .aria_label(item_label.clone())
+                .aria_label(item_aria_label)
                 .aria_disabled(disabled)
                 .when_some(toggled, |this, toggled| this.ui_aria_toggled(toggled))
                 .when(has_submenu, |this| {
@@ -218,7 +232,18 @@ fn menu_item_element(
                             );
                         })
                 })
-                .child(div().flex_1().child(item_label))
+                .child(
+                    div()
+                        .min_w(px(0.0))
+                        .flex()
+                        .flex_1()
+                        .items_center()
+                        .gap_2()
+                        .when_some(icon_label, |this, icon_label| {
+                            this.child(div().flex_none().child(icon_label))
+                        })
+                        .child(item_label),
+                )
                 .when_some(shortcut, |this, shortcut| {
                     this.child(
                         div()
@@ -237,6 +262,9 @@ fn menu_item_element(
                     this.child(div().ml_2().child(marker))
                 })
                 .when(has_submenu, |this| this.child(div().ml_2().child(">")))
+                .when_some(item_tooltip, |this, tooltip| {
+                    this.tooltip(Tooltip::text(tooltip))
+                })
                 .into_any_element()
         }
     }
@@ -269,6 +297,11 @@ impl MenuItem {
     /// Creates an action menu item from shared app-command metadata.
     pub fn from_command_descriptor(descriptor: &CommandDescriptor) -> Self {
         Self::from_descriptor(MenuItemDescriptor::from_command_descriptor(descriptor))
+    }
+
+    /// Creates an action menu item from resolved action metadata.
+    pub fn from_resolved_action(action: &ResolvedActionState) -> Self {
+        Self::from_descriptor(MenuItemDescriptor::from_resolved_action(action))
     }
 
     /// Creates an action menu item.
@@ -349,6 +382,18 @@ impl MenuItem {
         self
     }
 
+    /// Marks the menu item as disabled with a user-displayable reason.
+    pub fn disabled_reason(mut self, reason: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.disabled_reason(reason);
+        self
+    }
+
+    /// Applies app-resolved icon metadata.
+    pub fn icon(mut self, icon: ResolvedActionIcon) -> Self {
+        self.descriptor = self.descriptor.icon(icon);
+        self
+    }
+
     /// Applies caller-owned checked state to checkbox and radio items.
     pub fn checked(mut self, checked: bool) -> Self {
         self.descriptor = self.descriptor.checked(checked);
@@ -358,6 +403,18 @@ impl MenuItem {
     /// Applies a display shortcut label.
     pub fn shortcut(mut self, shortcut: impl Into<String>) -> Self {
         self.descriptor = self.descriptor.shortcut(shortcut);
+        self
+    }
+
+    /// Applies user-displayable tooltip metadata.
+    pub fn tooltip_text(mut self, tooltip: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.tooltip(tooltip);
+        self
+    }
+
+    /// Applies an accessibility description in addition to the visible label.
+    pub fn accessibility_description(mut self, description: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.accessibility_description(description);
         self
     }
 

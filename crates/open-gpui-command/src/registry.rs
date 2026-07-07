@@ -42,6 +42,62 @@ impl From<&str> for CommandSourceId {
     }
 }
 
+/// Renderer-neutral icon metadata carried by command descriptors.
+///
+/// This type records app-owned icon intent only. Applications still own concrete icon libraries,
+/// asset loading, fallback policy, and missing-icon diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandIconDescriptor {
+    name: String,
+    fallback_label: Option<String>,
+}
+
+impl CommandIconDescriptor {
+    /// Creates a renderer-neutral icon descriptor with a stable app-owned icon name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            fallback_label: None,
+        }
+    }
+
+    /// Applies an optional text fallback for hosts that cannot resolve the icon asset.
+    pub fn fallback_label(mut self, fallback_label: impl Into<String>) -> Self {
+        let fallback_label = fallback_label.into();
+        if !fallback_label.is_empty() {
+            self.fallback_label = Some(fallback_label);
+        }
+        self
+    }
+
+    /// Returns the app-owned icon name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the optional text fallback label.
+    pub fn fallback_label_ref(&self) -> Option<&str> {
+        self.fallback_label.as_deref()
+    }
+
+    /// Returns whether the icon name is empty.
+    pub fn is_empty(&self) -> bool {
+        self.name.is_empty()
+    }
+}
+
+impl From<&str> for CommandIconDescriptor {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for CommandIconDescriptor {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
 /// Pure app-command metadata shared by command palettes, menu projections, and dispatch adapters.
 ///
 /// This type intentionally does not own callbacks, command execution, keybinding resolution, or a
@@ -51,11 +107,14 @@ impl From<&str> for CommandSourceId {
 pub struct CommandDescriptor {
     id: String,
     label: String,
+    icon: Option<CommandIconDescriptor>,
     group: Option<String>,
     keywords: Vec<String>,
     shortcut: Option<String>,
     disabled: bool,
     disabled_reason: Option<String>,
+    tooltip: Option<String>,
+    accessibility_description: Option<String>,
     when: Option<String>,
     menu_path: Vec<String>,
 }
@@ -66,14 +125,26 @@ impl CommandDescriptor {
         Self {
             id: id.into(),
             label: label.into(),
+            icon: None,
             group: None,
             keywords: Vec::new(),
             shortcut: None,
             disabled: false,
             disabled_reason: None,
+            tooltip: None,
+            accessibility_description: None,
             when: None,
             menu_path: Vec::new(),
         }
+    }
+
+    /// Applies renderer-neutral icon metadata.
+    pub fn icon(mut self, icon: impl Into<CommandIconDescriptor>) -> Self {
+        let icon = icon.into();
+        if !icon.is_empty() {
+            self.icon = Some(icon);
+        }
+        self
     }
 
     /// Applies an optional grouping label used by command palettes.
@@ -116,6 +187,24 @@ impl CommandDescriptor {
         self
     }
 
+    /// Applies user-displayable tooltip metadata.
+    pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        let tooltip = tooltip.into();
+        if !tooltip.is_empty() {
+            self.tooltip = Some(tooltip);
+        }
+        self
+    }
+
+    /// Applies an accessibility description in addition to the visible label.
+    pub fn accessibility_description(mut self, description: impl Into<String>) -> Self {
+        let description = description.into();
+        if !description.is_empty() {
+            self.accessibility_description = Some(description);
+        }
+        self
+    }
+
     /// Applies caller-owned availability metadata without evaluating it.
     pub fn when(mut self, when: impl Into<String>) -> Self {
         self.when = Some(when.into());
@@ -142,6 +231,11 @@ impl CommandDescriptor {
         &self.label
     }
 
+    /// Returns renderer-neutral icon metadata.
+    pub const fn icon_ref(&self) -> Option<&CommandIconDescriptor> {
+        self.icon.as_ref()
+    }
+
     /// Returns the optional grouping label.
     pub fn group_ref(&self) -> Option<&str> {
         self.group.as_deref()
@@ -165,6 +259,16 @@ impl CommandDescriptor {
     /// Returns the optional disabled reason.
     pub fn disabled_reason_ref(&self) -> Option<&str> {
         self.disabled_reason.as_deref()
+    }
+
+    /// Returns user-displayable tooltip metadata.
+    pub fn tooltip_ref(&self) -> Option<&str> {
+        self.tooltip.as_deref()
+    }
+
+    /// Returns the optional accessibility description.
+    pub fn accessibility_description_ref(&self) -> Option<&str> {
+        self.accessibility_description.as_deref()
     }
 
     /// Returns caller-owned availability metadata.
@@ -397,27 +501,40 @@ impl CommandRegistry {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommandContribution, CommandDescriptor, CommandRegistry, CommandRegistryError,
-        CommandRegistrySnapshot,
+        CommandContribution, CommandDescriptor, CommandIconDescriptor, CommandRegistry,
+        CommandRegistryError, CommandRegistrySnapshot,
     };
 
     #[test]
     fn command_descriptor_records_projection_metadata_without_runtime() {
         let descriptor = CommandDescriptor::new("workspace.open", "Open Workspace")
+            .icon(CommandIconDescriptor::new("workspace-open").fallback_label("O"))
             .group("Workspace")
             .keywords(["project", "folder"])
             .shortcut("Ctrl+Shift+O")
             .disabled_reason("No workspace")
+            .tooltip("Open a workspace from disk")
+            .accessibility_description("Opens the workspace picker")
             .when("workspace")
             .menu_path(["File", "", "Open"]);
 
         assert_eq!(descriptor.id(), "workspace.open");
         assert_eq!(descriptor.label(), "Open Workspace");
+        assert_eq!(descriptor.icon_ref().unwrap().name(), "workspace-open");
+        assert_eq!(
+            descriptor.icon_ref().unwrap().fallback_label_ref(),
+            Some("O")
+        );
         assert_eq!(descriptor.group_ref(), Some("Workspace"));
         assert_eq!(descriptor.keywords_ref(), ["project", "folder"]);
         assert_eq!(descriptor.shortcut_ref(), Some("Ctrl+Shift+O"));
         assert!(descriptor.disabled_state());
         assert_eq!(descriptor.disabled_reason_ref(), Some("No workspace"));
+        assert_eq!(descriptor.tooltip_ref(), Some("Open a workspace from disk"));
+        assert_eq!(
+            descriptor.accessibility_description_ref(),
+            Some("Opens the workspace picker")
+        );
         assert_eq!(descriptor.when_ref(), Some("workspace"));
         assert_eq!(descriptor.menu_path_ref(), ["File", "Open"]);
     }

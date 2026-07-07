@@ -1,5 +1,6 @@
 //! Command descriptor, index snapshot, and search-ranking contracts.
 
+use crate::action::{ActionDescriptor, ResolvedActionIcon, ResolvedActionState};
 use crate::choice::{self, ChoiceItemProjection, ChoiceSelectionMode};
 use crate::listbox::ListboxOptionDescriptor;
 use crate::overlay::OverlayDisclosureOpenMode;
@@ -1597,10 +1598,13 @@ impl CommandMatchRank {
 pub struct CommandItemDescriptor {
     pub(super) value: String,
     pub(super) label: String,
+    pub(super) icon: Option<ResolvedActionIcon>,
     pub(super) keywords: Vec<String>,
     pub(super) shortcut: Option<String>,
     pub(super) disabled: bool,
     pub(super) disabled_reason: Option<String>,
+    pub(super) tooltip: Option<String>,
+    pub(super) accessibility_description: Option<String>,
     pub(super) when: Option<String>,
 }
 
@@ -1610,27 +1614,47 @@ impl CommandItemDescriptor {
         Self {
             value: value.into(),
             label: label.into(),
+            icon: None,
             keywords: Vec::new(),
             shortcut: None,
             disabled: false,
             disabled_reason: None,
+            tooltip: None,
+            accessibility_description: None,
             when: None,
         }
     }
 
     /// Creates a selectable command item descriptor from shared app-command metadata.
     pub fn from_command_descriptor(descriptor: &CommandDescriptor) -> Self {
-        let mut item = Self::new(descriptor.id(), descriptor.label())
+        let action = ActionDescriptor::from_command_descriptor(descriptor)
+            .resolve_without_icon_diagnostics();
+        let mut item = Self::from_resolved_action(&action)
             .keywords(descriptor.keywords_ref().iter().cloned())
             .disabled(descriptor.disabled_state());
-        if let Some(reason) = descriptor.disabled_reason_ref() {
-            item = item.disabled_reason(reason);
-        }
-        if let Some(shortcut) = descriptor.shortcut_ref() {
-            item = item.shortcut(shortcut);
-        }
         if let Some(when) = descriptor.when_ref() {
             item = item.when(when);
+        }
+        item
+    }
+
+    /// Creates a selectable command item descriptor from resolved action metadata.
+    pub fn from_resolved_action(action: &ResolvedActionState) -> Self {
+        let mut item = Self::new(action.value(), action.label()).disabled(action.disabled());
+        if let Some(icon) = action.icon() {
+            item.icon = Some(icon.clone());
+        }
+        if let Some(shortcut) = action.shortcut() {
+            item = item.shortcut(shortcut);
+        }
+        if let Some(reason) = action.disabled_reason() {
+            item = item.disabled_reason(reason);
+        }
+        if let Some(tooltip) = action.tooltip() {
+            item = item.tooltip(tooltip);
+        }
+        if let Some(description) = action.accessibility_description() {
+            item = item.accessibility_description(description);
         }
         item
     }
@@ -1644,6 +1668,12 @@ impl CommandItemDescriptor {
     /// Adds many filtering keywords.
     pub fn keywords(mut self, keywords: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.keywords.extend(keywords.into_iter().map(Into::into));
+        self
+    }
+
+    /// Applies app-resolved icon metadata.
+    pub fn icon(mut self, icon: ResolvedActionIcon) -> Self {
+        self.icon = Some(icon);
         self
     }
 
@@ -1669,6 +1699,24 @@ impl CommandItemDescriptor {
         self
     }
 
+    /// Applies user-displayable tooltip metadata.
+    pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        let tooltip = tooltip.into();
+        if !tooltip.is_empty() {
+            self.tooltip = Some(tooltip);
+        }
+        self
+    }
+
+    /// Applies an accessibility description in addition to the visible label.
+    pub fn accessibility_description(mut self, description: impl Into<String>) -> Self {
+        let description = description.into();
+        if !description.is_empty() {
+            self.accessibility_description = Some(description);
+        }
+        self
+    }
+
     /// Applies caller-owned availability metadata without evaluating it.
     pub fn when(mut self, when: impl Into<String>) -> Self {
         self.when = Some(when.into());
@@ -1690,6 +1738,16 @@ impl CommandItemDescriptor {
         &self.keywords
     }
 
+    /// Returns app-resolved icon metadata.
+    pub const fn icon_ref(&self) -> Option<&ResolvedActionIcon> {
+        self.icon.as_ref()
+    }
+
+    /// Returns a concrete render label for the resolved icon.
+    pub fn icon_label(&self) -> Option<&str> {
+        self.icon.as_ref().and_then(ResolvedActionIcon::label)
+    }
+
     /// Returns the display shortcut label.
     pub fn shortcut_ref(&self) -> Option<&str> {
         self.shortcut.as_deref()
@@ -1703,6 +1761,16 @@ impl CommandItemDescriptor {
     /// Returns the optional disabled reason.
     pub fn disabled_reason_ref(&self) -> Option<&str> {
         self.disabled_reason.as_deref()
+    }
+
+    /// Returns user-displayable tooltip metadata.
+    pub fn tooltip_ref(&self) -> Option<&str> {
+        self.tooltip.as_deref()
+    }
+
+    /// Returns the optional accessibility description.
+    pub fn accessibility_description_ref(&self) -> Option<&str> {
+        self.accessibility_description.as_deref()
     }
 
     /// Returns caller-owned availability metadata.

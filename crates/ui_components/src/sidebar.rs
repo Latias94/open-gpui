@@ -13,11 +13,13 @@ use open_gpui::{
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
+use crate::action::{ActionIconDescriptor, ResolvedActionIcon, ResolvedActionState};
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::roving_focus::roving_navigation_target;
 use crate::scroll_area::ScrollArea;
 use crate::theme::ThemeResolver;
+use crate::tooltip::Tooltip;
 
 const DEFAULT_SURFACE: u32 = 0xffffff;
 const DEFAULT_FLOATING_SURFACE: u32 = 0xf8faf6;
@@ -101,10 +103,14 @@ impl SidebarCollapseMode {
 pub struct SidebarItemDescriptor {
     value: String,
     label: String,
-    icon: Option<String>,
+    icon: Option<ResolvedActionIcon>,
     badge: Option<String>,
     action_label: Option<String>,
     disabled: bool,
+    disabled_reason: Option<String>,
+    shortcut: Option<String>,
+    tooltip: Option<String>,
+    accessibility_description: Option<String>,
 }
 
 impl SidebarItemDescriptor {
@@ -117,12 +123,47 @@ impl SidebarItemDescriptor {
             badge: None,
             action_label: None,
             disabled: false,
+            disabled_reason: None,
+            shortcut: None,
+            tooltip: None,
+            accessibility_description: None,
         }
+    }
+
+    /// Creates a sidebar item descriptor from resolved action metadata.
+    pub fn from_resolved_action(action: &ResolvedActionState) -> Self {
+        let mut item = Self::new(action.value(), action.label()).disabled(action.disabled());
+        if let Some(icon) = action.icon() {
+            item.icon = Some(icon.clone());
+        }
+        if let Some(shortcut) = action.shortcut() {
+            item = item.shortcut(shortcut);
+        }
+        if let Some(reason) = action.disabled_reason() {
+            item = item.disabled_reason(reason);
+        }
+        if let Some(tooltip) = action.tooltip() {
+            item = item.tooltip(tooltip);
+        }
+        if let Some(description) = action.accessibility_description() {
+            item = item.accessibility_description(description);
+        }
+        item
     }
 
     /// Applies an icon glyph or symbolic icon label.
     pub fn icon(mut self, icon: impl Into<String>) -> Self {
-        self.icon = Some(icon.into());
+        let icon = icon.into();
+        self.icon = Some(ResolvedActionIcon::resolved(
+            ActionIconDescriptor::new(icon.clone()).fallback_label(icon.clone()),
+            icon,
+        ));
+        self
+    }
+
+    /// Applies app-resolved icon metadata.
+    pub fn resolved_icon(mut self, icon: ResolvedActionIcon) -> Self {
+        self.icon = Some(icon);
         self
     }
 
@@ -141,6 +182,43 @@ impl SidebarItemDescriptor {
     /// Marks the item as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        if !disabled {
+            self.disabled_reason = None;
+        }
+        self
+    }
+
+    /// Marks the item as disabled with a user-displayable reason.
+    pub fn disabled_reason(mut self, reason: impl Into<String>) -> Self {
+        let reason = reason.into();
+        if !reason.is_empty() {
+            self.disabled = true;
+            self.disabled_reason = Some(reason);
+        }
+        self
+    }
+
+    /// Applies a display shortcut label.
+    pub fn shortcut(mut self, shortcut: impl Into<String>) -> Self {
+        self.shortcut = Some(shortcut.into());
+        self
+    }
+
+    /// Applies user-displayable tooltip metadata.
+    pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        let tooltip = tooltip.into();
+        if !tooltip.is_empty() {
+            self.tooltip = Some(tooltip);
+        }
+        self
+    }
+
+    /// Applies an accessibility description in addition to the visible label.
+    pub fn accessibility_description(mut self, description: impl Into<String>) -> Self {
+        let description = description.into();
+        if !description.is_empty() {
+            self.accessibility_description = Some(description);
+        }
         self
     }
 
@@ -154,9 +232,14 @@ impl SidebarItemDescriptor {
         &self.label
     }
 
+    /// Returns app-resolved icon metadata.
+    pub const fn icon_ref(&self) -> Option<&ResolvedActionIcon> {
+        self.icon.as_ref()
+    }
+
     /// Returns the optional icon glyph or symbolic icon label.
     pub fn icon_label(&self) -> Option<&str> {
-        self.icon.as_deref()
+        self.icon.as_ref().and_then(ResolvedActionIcon::label)
     }
 
     /// Returns display-only badge text.
@@ -172,6 +255,26 @@ impl SidebarItemDescriptor {
     /// Returns whether the item is disabled.
     pub const fn disabled_state(&self) -> bool {
         self.disabled
+    }
+
+    /// Returns the optional disabled reason.
+    pub fn disabled_reason_ref(&self) -> Option<&str> {
+        self.disabled_reason.as_deref()
+    }
+
+    /// Returns the display shortcut label.
+    pub fn shortcut_ref(&self) -> Option<&str> {
+        self.shortcut.as_deref()
+    }
+
+    /// Returns user-displayable tooltip metadata.
+    pub fn tooltip_ref(&self) -> Option<&str> {
+        self.tooltip.as_deref()
+    }
+
+    /// Returns the optional accessibility description.
+    pub fn accessibility_description_ref(&self) -> Option<&str> {
+        self.accessibility_description.as_deref()
     }
 }
 
@@ -521,10 +624,14 @@ pub struct SidebarItemState {
     item_index: usize,
     value: String,
     label: String,
-    icon: Option<String>,
+    icon: Option<ResolvedActionIcon>,
     badge: Option<String>,
     action_label: Option<String>,
     disabled: bool,
+    disabled_reason: Option<String>,
+    shortcut: Option<String>,
+    tooltip: Option<String>,
+    accessibility_description: Option<String>,
     selected: bool,
     focused: bool,
     position_in_set: Option<usize>,
@@ -557,9 +664,14 @@ impl SidebarItemState {
         &self.label
     }
 
+    /// Returns app-resolved icon metadata.
+    pub const fn icon(&self) -> Option<&ResolvedActionIcon> {
+        self.icon.as_ref()
+    }
+
     /// Returns the optional icon glyph or symbolic icon label.
     pub fn icon_label(&self) -> Option<&str> {
-        self.icon.as_deref()
+        self.icon.as_ref().and_then(ResolvedActionIcon::label)
     }
 
     /// Returns display-only badge text.
@@ -575,6 +687,26 @@ impl SidebarItemState {
     /// Returns whether the item is disabled.
     pub const fn disabled(&self) -> bool {
         self.disabled
+    }
+
+    /// Returns the optional disabled reason.
+    pub fn disabled_reason_ref(&self) -> Option<&str> {
+        self.disabled_reason.as_deref()
+    }
+
+    /// Returns the display shortcut label.
+    pub fn shortcut(&self) -> Option<&str> {
+        self.shortcut.as_deref()
+    }
+
+    /// Returns user-displayable tooltip metadata.
+    pub fn tooltip(&self) -> Option<&str> {
+        self.tooltip.as_deref()
+    }
+
+    /// Returns the optional accessibility description.
+    pub fn accessibility_description(&self) -> Option<&str> {
+        self.accessibility_description.as_deref()
     }
 
     /// Returns whether the item is selected.
@@ -731,6 +863,10 @@ impl SidebarState {
                     badge: item.badge,
                     action_label: item.action_label,
                     disabled: disabled || item.disabled,
+                    disabled_reason: item.disabled_reason,
+                    shortcut: item.shortcut,
+                    tooltip: item.tooltip,
+                    accessibility_description: item.accessibility_description,
                     selected: false,
                     focused: false,
                     position_in_set: None,
@@ -962,9 +1098,23 @@ impl SidebarItem {
         }
     }
 
+    /// Creates a sidebar navigation item from resolved action metadata.
+    pub fn from_resolved_action(action: &ResolvedActionState) -> Self {
+        Self {
+            descriptor: SidebarItemDescriptor::from_resolved_action(action),
+            on_select: None,
+        }
+    }
+
     /// Applies an icon glyph or symbolic icon label.
     pub fn icon(mut self, icon: impl Into<SharedString>) -> Self {
         self.descriptor = self.descriptor.icon(icon.into().to_string());
+        self
+    }
+
+    /// Applies app-resolved icon metadata.
+    pub fn resolved_icon(mut self, icon: ResolvedActionIcon) -> Self {
+        self.descriptor = self.descriptor.resolved_icon(icon);
         self
     }
 
@@ -985,6 +1135,30 @@ impl SidebarItem {
     /// Marks the item as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.descriptor = self.descriptor.disabled(disabled);
+        self
+    }
+
+    /// Marks the item as disabled with a user-displayable reason.
+    pub fn disabled_reason(mut self, reason: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.disabled_reason(reason);
+        self
+    }
+
+    /// Applies a display shortcut label.
+    pub fn shortcut(mut self, shortcut: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.shortcut(shortcut);
+        self
+    }
+
+    /// Applies user-displayable tooltip metadata.
+    pub fn tooltip_text(mut self, tooltip: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.tooltip(tooltip);
+        self
+    }
+
+    /// Applies an accessibility description in addition to the visible label.
+    pub fn accessibility_description(mut self, description: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.accessibility_description(description);
         self
     }
 
@@ -1333,7 +1507,22 @@ impl RenderOnce for Sidebar {
                                 .unwrap_or_else(|| fallback_icon_label(item.label()));
                             let item_label = item.label().to_owned();
                             let item_badge = item.badge_label().map(str::to_owned);
-                            let item_action = item.action_label_text().map(str::to_owned);
+                            let item_action = item
+                                .action_label_text()
+                                .map(str::to_owned)
+                                .or_else(|| item.shortcut().map(str::to_owned));
+                            let item_tooltip = item.tooltip().map(str::to_owned);
+                            let item_accessibility_description =
+                                item.accessibility_description().map(str::to_owned);
+                            let item_disabled_reason =
+                                item.disabled_reason_ref().map(str::to_owned);
+                            let item_aria_label = item_accessibility_description
+                                .as_ref()
+                                .or(item_disabled_reason.as_ref())
+                                .map_or_else(
+                                    || item.label().to_owned(),
+                                    |description| format!("{}, {description}", item.label()),
+                                );
                             let item_position = item.position_in_set();
                             let item_size_of_set = item.size_of_set();
                             let item_background = item_theme.resolve(if item_selected {
@@ -1364,7 +1553,7 @@ impl RenderOnce for Sidebar {
                                 .focusable()
                                 .tab_stop(item_tab_stop)
                                 .ui_role(item.role())
-                                .aria_label(item.label().to_owned())
+                                .aria_label(item_aria_label)
                                 .aria_selected(item_selected)
                                 .aria_disabled(item_disabled)
                                 .when_some(item_position, |this, position| {
@@ -1516,6 +1705,9 @@ impl RenderOnce for Sidebar {
                                             )
                                         },
                                     )
+                                })
+                                .when_some(item_tooltip, |this, tooltip| {
+                                    this.tooltip(Tooltip::text(tooltip))
                                 })
                         }))
                 }));

@@ -30,8 +30,9 @@ and plugin-like command metadata contribution.
   install so GPUI remains the runtime precedence authority.
 - `CommandProvider*` types model dynamic command providers and async-friendly provider responses
   without owning a task runtime.
-- `CommandDescriptor` stores id, label, group, keywords, shortcut display text, disabled state,
-  optional disabled reason, caller-owned `when` metadata, and optional menu path.
+- `CommandDescriptor` stores id, label, renderer-neutral `CommandIconDescriptor`, group,
+  keywords, shortcut display text, disabled state, optional disabled reason, tooltip,
+  accessibility description, caller-owned `when` metadata, and optional menu path.
 - `CommandRegistry` stores deterministic command contributions and duplicate-id diagnostics.
 - `CommandRegistrySnapshot` is the stable projection handed to UI components and adapters.
 - `ScopedCommandRegistry` projects active scopes and supports source/scope unregistration.
@@ -67,14 +68,40 @@ and plugin-like command metadata contribution.
 The split is intentional: `open_gpui_command` owns reusable command domain contracts, GPUI remains
 the runtime authority, and UI components only render projections.
 
+## Typed Action And Icon Projection
+
+Command metadata carries icon intent, not concrete icon assets. `CommandIconDescriptor` names an
+app-owned icon and may provide a fallback text label. Applications remain responsible for resolving
+that icon name into a product-specific glyph, asset, or missing-icon diagnostic.
+
+`open_gpui_ui_components::ActionDescriptor` projects a `CommandDescriptor` into renderer-neutral
+action facts. The app resolves icons through an `ActionIconResolver`, producing
+`ResolvedActionState`. Concrete surfaces consume that one resolved state:
+
+- `Button::from_resolved_action` and `IconButton::from_resolved_action`;
+- `ToolbarItemDescriptor::from_resolved_action` and `ToolbarItem::from_resolved_action`;
+- `MenuItemDescriptor::from_resolved_action`, `MenuItem::from_resolved_action`, and
+  `ContextMenu` through shared menu state;
+- `CommandItemDescriptor::from_resolved_action` and `CommandItem::from_resolved_action`;
+- `SidebarItemDescriptor::from_resolved_action` and `SidebarItem::from_resolved_action`.
+
+The resolved action state carries label, resolved icon facts, shortcut, disabled reason, tooltip,
+and accessibility description. Missing icons are diagnostic metadata on the resolved icon; they do
+not hide the action and do not change command dispatch. GPUI actions, keybinding precedence,
+availability policy, and execution remain app/runtime-owned.
+
 ## Command Center Registration
 
 ```rust
 use open_gpui::{actions, KeyBinding, KeyContext, Keymap};
 use open_gpui_command::{
     CommandCenter, CommandContextStack, CommandContribution, CommandDescriptor,
+    CommandIconDescriptor,
 };
-use open_gpui_ui_components::CommandIndexSnapshot;
+use open_gpui_ui_components::{
+    ActionDescriptor, ActionIconDescriptor, CommandIndexSnapshot, ResolvedActionIcon,
+    ToolbarItem,
+};
 
 actions!(workspace_actions, [OpenWorkspace, SaveWorkspace]);
 
@@ -85,8 +112,11 @@ center.register_source(
     [
         CommandContribution::new(
             CommandDescriptor::new("workspace.open", "Open Workspace")
+                .icon(CommandIconDescriptor::new("folder-open").fallback_label("O"))
                 .group("Workspace")
                 .keyword("project")
+                .tooltip("Open a workspace")
+                .accessibility_description("Opens the workspace picker")
                 .menu_path(["File", "Open"]),
         ),
         CommandContribution::new(
@@ -116,6 +146,14 @@ keymap.add_bindings([
 
 let command_index =
     CommandIndexSnapshot::from_registry_snapshot(&center.snapshot_for_keymap(&keymap));
+
+let open_action =
+    ActionDescriptor::from_command_descriptor(center.snapshot().descriptor("workspace.open").unwrap())
+        .resolve_with(&|icon: &ActionIconDescriptor| {
+            // The app chooses the concrete icon source and fallback policy.
+            ResolvedActionIcon::resolved(icon.clone(), "O")
+        });
+let open_toolbar_item = ToolbarItem::from_resolved_action(&open_action);
 ```
 
 Applications can keep one center per app, workspace, plugin host, window, or surface. A center is
