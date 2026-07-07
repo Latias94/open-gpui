@@ -10,7 +10,7 @@ fn source_contains_public_use_token(file_name: &str, token: &str) -> bool {
         if trimmed.starts_with("pub use ") {
             in_public_use = true;
         }
-        if in_public_use && trimmed.contains(token) {
+        if in_public_use && source_line_contains_identifier(trimmed, token) {
             return true;
         }
         if in_public_use && trimmed.ends_with(';') {
@@ -18,6 +18,11 @@ fn source_contains_public_use_token(file_name: &str, token: &str) -> bool {
         }
     }
     false
+}
+
+fn source_line_contains_identifier(line: &str, token: &str) -> bool {
+    line.split(|character: char| character != '_' && !character.is_ascii_alphanumeric())
+        .any(|part| part == token)
 }
 
 #[test]
@@ -28,6 +33,13 @@ fn root_and_prelude_do_not_reexport_diagnostics() {
         "DockViewportRuntimeStatus",
         "DockViewportPlatformCapabilityRecord",
         "DockViewportRouteStatus",
+        "DockViewportRuntime",
+        "DockViewportAdapter",
+        "DockViewportDropRoute",
+        "DockViewportDropRouteRequest",
+        "DockViewportResolvedDropRoute",
+        "DockDropDelivery",
+        "DockResolvedDropTarget",
         "DockVisualAffordanceDebugLayer",
         "DockVisualAffordanceDebugSummary",
         "DockViewportTearOffCancelReason",
