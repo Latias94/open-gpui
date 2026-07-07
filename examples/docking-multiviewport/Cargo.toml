@@ -1,0 +1,26 @@
+[package]
+name = "open-gpui-docking-multiviewport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+publish = false
+description = "Facade-first multi-viewport docking example for Open GPUI."
+
+[[bin]]
+name = "open-gpui-docking-multiviewport"
+path = "src/main.rs"
+
+[dependencies]
+log.workspace = true
+open_gpui.workspace = true
+open_gpui_docking.workspace = true
+open_gpui_platform = { workspace = true, features = ["font-kit"] }
+
+[lints]
+workspace = true

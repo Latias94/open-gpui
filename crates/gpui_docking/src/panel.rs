@@ -58,8 +58,7 @@ impl DockPanelCloseOutcome {
         }
     }
 
-    /// Returns the underlying graph action outcome.
-    pub fn action(&self) -> DockActionOutcome {
+    pub(crate) fn action(&self) -> DockActionOutcome {
         self.action
     }
 
@@ -111,8 +110,7 @@ impl DockPanelOpenOutcome {
         }
     }
 
-    /// Returns the underlying graph action outcome.
-    pub fn action(&self) -> DockActionOutcome {
+    pub(crate) fn action(&self) -> DockActionOutcome {
         self.action
     }
 

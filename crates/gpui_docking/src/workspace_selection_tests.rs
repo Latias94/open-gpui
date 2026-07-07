@@ -1,6 +1,6 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockGraphMutationError,
-    DockLayoutNode, DockNode, DockNodeId, DockWorkspace, host_test_support::*,
+    DockNode, DockNodeId, DockWorkspace, host_test_support::*, model::DockLayoutNode,
 };
 use open_gpui::TestAppContext;
 use slotmap::Key;

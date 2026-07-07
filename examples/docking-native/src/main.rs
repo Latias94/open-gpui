@@ -4,10 +4,9 @@ use open_gpui::{
     size,
 };
 use open_gpui_docking::{
-    DockController, DockItemId, DockLayout, DockLayoutCentralRegion, DockLayoutSpace, DockPanel,
-    DockPanelDescriptor, DockPanelOpenOutcome, DockPanelPlacement, DockSpaceId,
-    DockViewportClosePolicy, DockViewportPlacement, DockViewportPlacementLayout,
-    DockViewportRuntimeHandle, DockViewportWindowBounds,
+    DockController, DockItemId, DockLayout, DockPanel, DockPanelDescriptor, DockPanelOpenOutcome,
+    DockPanelPlacement, DockSpaceId, DockViewportPlacement, DockViewportPlacementLayout,
+    DockViewportWindowBounds,
     advanced::{
         DockViewportCoordinateSpaceRecord, DockViewportLifecycleRecord,
         DockViewportPlatformCapabilityRecord, DockViewportPlatformFlagCapabilityRecord,
@@ -15,6 +14,8 @@ use open_gpui_docking::{
         DockViewportRestoreReadinessRecord, DockViewportTearOffPlacementRecord,
         DockVisualAffordanceDebugSummary,
     },
+    model::{DockActionApplyError, DockLayoutCentralRegion, DockLayoutSpace},
+    runtime::{DockViewportClosePolicy, DockViewportRuntimeHandle},
 };
 use open_gpui_platform::application;
 
@@ -498,12 +499,16 @@ fn restore_central_note_panel(controller: &mut DockController) -> String {
 
 fn open_item_result(
     label: &str,
-    result: std::result::Result<DockPanelOpenOutcome, open_gpui_docking::DockActionApplyError>,
+    result: std::result::Result<DockPanelOpenOutcome, DockActionApplyError>,
 ) -> String {
     match result {
         Ok(outcome) => format!(
-            "opened {label}: {:?} via {:?}",
-            outcome.action(),
+            "opened {label}: {} via {:?}",
+            if outcome.changed() {
+                "Changed"
+            } else {
+                "Unchanged"
+            },
             outcome.placement_source()
         ),
         Err(error) => format!("open {label} failed: {error}"),
@@ -1207,12 +1212,16 @@ mod tests {
     use super::*;
     use open_gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext};
     use open_gpui_docking::{
-        DockActionApplyError, DockActionOutcome, DockClassId, DockGraph, DockHost, DockNode,
-        DockNodeId, DockPolicyError, DropZone, SplitAxis,
+        DockClassId, DockPolicyError,
         advanced::{
             DockViewportCoordinateStatusRecord, DockViewportInputStatus,
             DockViewportPlatformRequestStatus, DockViewportRouteStatus,
         },
+        model::{
+            DockActionApplyError, DockActionOutcome, DockGraph, DockNode, DockNodeId, DropZone,
+            SplitAxis,
+        },
+        runtime::DockHost,
     };
 
     fn item(id: &str) -> DockItemId {

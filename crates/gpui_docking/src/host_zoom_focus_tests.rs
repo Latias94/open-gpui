@@ -1,8 +1,9 @@
 use crate::{
-    DockGraph, DockNode, DockSpatialDirection, DockViewportFocusRequest, SplitAxis,
+    DockGraph, DockNode, DockViewportFocusRequest, SplitAxis,
     debug::DockDebugRegion,
     host_test_support::{item, open_host, selector_for, space, split_graph},
     presentation_scene::DockPresentationOverlayAnchorKind,
+    spatial_navigation::DockSpatialDirection,
     transition_geometry::{
         DockMotionPreference, DockTransitionEdge, DockVisualAffordanceTransitionKind,
     },

@@ -2,9 +2,7 @@ use open_gpui::{
     AnyView, App, Bounds, Context, IntoElement, ParentElement, Render, Styled, TitlebarOptions,
     Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
 };
-use open_gpui_docking::prelude::{
-    DockController, DockHost, DockPanelPlacement, DockViewportRuntimeHandle,
-};
+use open_gpui_docking::prelude::{DockPanelPlacement, DockSurface};
 use open_gpui_platform::application;
 
 const SPACE: &str = "main";
@@ -83,7 +81,7 @@ fn explorer_panel(cx: &mut App) -> AnyView {
     cx.new(|_| {
         DemoPanel::new(
             "Explorer",
-            "Registered through DockController::builder",
+            "Registered through DockSurface::builder",
             0x2563eb,
             &[
                 "crates/gpui_docking",
@@ -102,8 +100,8 @@ fn editor_panel(cx: &mut App) -> AnyView {
             "The active tab stack is durable graph state",
             0x7c3aed,
             &[
-                "DockGraph stores tabs and splits",
-                "DockHost renders one logical dock space",
+                "DockSurface owns controller wiring",
+                "Dock hosts render logical dock spaces",
                 "Panel views stay outside serialized layouts",
             ],
         )
@@ -127,8 +125,8 @@ fn terminal_panel(cx: &mut App) -> AnyView {
     .into()
 }
 
-fn build_controller() -> DockController {
-    DockController::builder(SPACE)
+fn build_surface(cx: &mut App) -> DockSurface {
+    DockSurface::builder(SPACE)
         .panel_placements([
             DockPanelPlacement::left_rail("explorer").fraction(0.24),
             DockPanelPlacement::center("editor").selected(),
@@ -138,17 +136,16 @@ fn build_controller() -> DockController {
         .panel_factory("editor", "Editor", editor_panel)
         .panel_factory("terminal", "Terminal", terminal_panel)
         .allow_floating(true)
-        .try_build()
-        .expect("minimal docking layout should validate")
+        .build(cx)
+        .expect("minimal docking surface should validate")
 }
 
 fn main() {
     application().run(|cx: &mut App| {
-        let controller = cx.new(|_| build_controller());
-        let viewport_runtime = DockViewportRuntimeHandle::new(controller.clone());
+        let surface = build_surface(cx);
         let bounds = Bounds::centered(None, size(px(960.0), px(640.0)), cx);
-        let window = cx
-            .open_window(
+        let window = surface
+            .open_primary_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     titlebar: Some(TitlebarOptions {
@@ -158,16 +155,7 @@ fn main() {
                     }),
                     ..Default::default()
                 },
-                |_, cx| {
-                    cx.new(|cx| {
-                        DockHost::from_controller(
-                            controller.clone(),
-                            SPACE,
-                            viewport_runtime.clone(),
-                            cx,
-                        )
-                    })
-                },
+                cx,
             )
             .expect("failed to open minimal docking window");
 

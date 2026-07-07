@@ -1,4 +1,5 @@
 use crate::graph_test_support::{item, space};
+use crate::model::DockLayoutBuilder;
 use crate::*;
 
 fn duplicate_item_graph() -> (DockGraph, DockNodeId, DockNodeId) {

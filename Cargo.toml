@@ -30,6 +30,7 @@ members = [
     "crates/util_macros",
     "examples/canvas-notes",
     "examples/docking-minimal",
+    "examples/docking-multiviewport",
     "examples/docking-native",
     "examples/smoke-native",
     "examples/ui-foundation-gallery",

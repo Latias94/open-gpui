@@ -4169,6 +4169,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-docking-multiviewport"
+version = "0.2.0"
+dependencies = [
+ "log",
+ "open-gpui",
+ "open-gpui-docking",
+ "open-gpui-platform",
+]
+
+[[package]]
 name = "open-gpui-docking-native"
 version = "0.2.0"
 dependencies = [

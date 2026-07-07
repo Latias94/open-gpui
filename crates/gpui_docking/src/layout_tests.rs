@@ -1,4 +1,8 @@
 use crate::graph_test_support::{edge_target, item, main_space as space, root_tabs_graph};
+use crate::model::{
+    DockLayoutBuilder, DockLayoutCentralRegion, DockLayoutFloatingContainer, DockLayoutNode,
+    DockLayoutSpace,
+};
 use crate::*;
 
 #[test]
