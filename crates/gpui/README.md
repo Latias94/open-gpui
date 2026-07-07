@@ -5,17 +5,25 @@ for Rust, forked from Zed's GPUI framework code.
 
 ## Getting Started
 
-Open GPUI is still in active development and is pre-1.0. There will often be breaking changes between versions. You'll also need to use the latest version of stable Rust and be on macOS or Linux. Add the following to your `Cargo.toml`:
+Open GPUI is still in active development and is pre-1.0. There will often be breaking changes between versions. The current workspace MSRV is Rust 1.92. Add the following to your `Cargo.toml`:
 
 ```toml
-open_gpui = { package = "open-gpui", version = "0.1.0" }
-open_gpui_platform = { package = "open-gpui-platform", version = "0.1.0" }
+open_gpui = { package = "open-gpui", version = "0.2.0" }
+open_gpui_platform = { package = "open-gpui-platform", version = "0.2.0" }
 ```
 
-- [Ownership and data flow](_ownership_and_data_flow)
-- [Accessibility](_accessibility)
+- [Ownership and data flow](src/_ownership_and_data_flow.rs)
+- [Accessibility](src/_accessibility.rs)
 
 Everything in Open GPUI starts with an `Application`. You can create one with `open_gpui_platform::application()`, and kick off your application by passing a callback to `Application::run()`. Inside this callback, you can create a new window with `App::open_window()`, and register your first root view.
+
+## What This Crate Owns
+
+`open-gpui` owns the application, window, element, entity, input, text, accessibility, and rendering-facing API that applications use directly. It does not choose a backend by itself; use `open-gpui-platform` for target-specific application construction.
+
+Native backends cover macOS, Windows, Linux, and FreeBSD through platform crates. WebAssembly uses `open-gpui-web` through `open-gpui-platform` on `wasm32-unknown-unknown`. Backend capabilities such as WebGPU, screen capture, platform viewport windows, and compositor features remain runtime facts.
+
+For higher-level controls, use `open-gpui-ui-components`. For deterministic UI motion primitives, use `open-gpui-motion`. For retained dock spaces, use `open-gpui-docking`.
 
 ### Dependencies
 
@@ -66,6 +74,17 @@ In addition to the systems above, Open GPUI provides a range of smaller services
 - The `[open_gpui::test]` macro provides a convenient way to write tests for your Open GPUI applications. Tests also have their own kind of context, a `TestAppContext` which provides ways of simulating common platform input. See `app::test_context` and `test` modules for more details.
 
 Currently, the best way to learn about these APIs is to read the Open GPUI examples and the framework source. This repository is a fork of Zed GPUI, but it is maintained as an independent Open GPUI workspace.
+
+## Verification
+
+For focused changes in this crate, run:
+
+```sh
+cargo check -p open-gpui --tests --locked
+cargo run -p xtask -- verify-release-docs
+```
+
+For end-to-end workspace confidence, use the root `cargo run -p xtask -- verify` gate.
 
 ## License and Attribution
 

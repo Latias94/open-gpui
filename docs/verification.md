@@ -9,13 +9,16 @@ cargo run -p xtask -- verify
 The gate runs:
 
 - `cargo fmt --all --check`
-- `cargo check --workspace`
+- `cargo check --workspace` (including workspace examples such as `open-gpui-docking-minimal`)
 - `cargo check -p open-gpui-smoke-native`
 - `cargo nextest run -p open-gpui-motion`
 - `cargo test -p open-gpui-motion --doc`
 - `cargo nextest run -p open-gpui-ui-core`
 - `cargo nextest run -p open-gpui-ui-components`
 - `cargo nextest run -p open-gpui-ui-foundation-gallery`
+- `cargo run -p xtask -- verify-release-docs`
+- `cargo run -p xtask -- scan-doc-links`
+- `cargo run -p xtask -- dependency-health`
 - `cargo run -p xtask -- scan-theme-drift`
 - `cargo run -p xtask -- scan-import-boundary`
 - `cargo run -p xtask -- scan-ui-contract`
@@ -29,8 +32,38 @@ cargo check -p open-gpui-platform --target wasm32-unknown-unknown --locked -j 1
 cargo check -p open-gpui-wgpu --target wasm32-unknown-unknown --locked -j 1
 ```
 
-These are stable, single-threaded wasm gates. Nightly shared-memory/atomics checks for
-`hello_web` remain optional verification, not CI requirements.
+These are stable, single-threaded wasm gates. The Linux matrix also runs the stable browser smoke:
+
+```sh
+cargo run -p xtask -- web-smoke
+```
+
+`xtask web-smoke` builds `crates/gpui_web/examples/smoke_web` with Trunk, serves the generated files with cross-origin isolation headers, opens a headless Chrome/Chromium/Edge browser, and verifies app readiness, DOM/canvas initialization, focus/input delivery, a single-window shell interaction, and the explicit unsupported platform-viewport capability on web. The smoke intentionally avoids the nightly shared-memory example so CI proves the default stable browser path.
+
+Nightly shared-memory/atomics checks for `hello_web` remain optional verification, not CI requirements.
+
+Release and public-documentation gates are split into two focused commands:
+
+```sh
+cargo run -p xtask -- verify-release-docs
+cargo run -p xtask -- scan-doc-links
+```
+
+Before publishing a prepared release tag, generate the GitHub Release notes from the target version section:
+
+```sh
+cargo run -p xtask -- verify-release-docs --version <version> --notes-output target/release/release-notes.md
+```
+
+`verify-release-docs` checks the target changelog section, rejects manually wrapped changelog bullets and paragraphs, validates user-facing README dependency versions, and requires crate-local README metadata for public entry crates. Daily verification checks `docs/release/breaking-changes.md` against `CHANGELOG.md` `[Unreleased]`; release-note generation checks the same inventory against the selected version section because that is the text published to GitHub Releases. `scan-doc-links` checks strict user-facing relative links in root docs, release docs, verification docs, ADR index, and public crate READMEs. Historical plans and engineering logs are intentionally outside the strict link gate until they are archived or indexed.
+
+Dependency health is enforced through:
+
+```sh
+cargo run -p xtask -- dependency-health
+```
+
+The command checks that every workspace package declares the workspace MSRV, that the declared MSRV is at least the maximum `rust-version` in the resolved dependency graph, that duplicate registry crate versions are explicitly allowlisted, and that `cargo audit --json` reports no unignored vulnerabilities. The current MSRV is Rust 1.92 because the Linux platform dependency chain reaches `oo7 0.6.0`; `wgpu 30`, `naga 30`, `resvg 0.46`, and `usvg 0.46` currently require Rust 1.87. The dependency health workflow runs this command on Linux, and the release workflow requires a successful `dependency-health.yml` run for the release commit before publishing.
 
 For the 2026-07 runtime UI hardening slice, the Web dispatcher exposes a typed
 `WebDispatcherMode` through `WebDispatcher::mode()` and `WebPlatform::dispatcher_mode()`. Stable
@@ -91,7 +124,7 @@ git diff --check
 
 The follow-up dependency remediation updated the actionable advisories: `quinn-proto` now resolves
 to `0.11.16`, `anyhow` to `1.0.103`, `memmap2` to `0.9.11`, `async-tar` to `0.6.1` with the Tokio
-runtime, `futures-lite` to `2.6.1`, `stacksafe` to `1.0.2`, and `reqwest` to `0.13.4`. `cargo audit`
+runtime, `futures-lite` to `2.6.1`, `stacksafe` to `1.0.2`, `reqwest` to `0.13.4`, and `crossbeam-epoch` to `0.9.20`. `cargo audit`
 now exits successfully. `.cargo/audit.toml` temporarily ignores the two `quick-xml 0.39.4`
 advisories because the currently published `wayland-scanner 0.31.10` and `zbus_xml 5.1.1` releases
 still pin `quick-xml = "0.39"`, and both reach this workspace through proc-macro/code-generation
@@ -135,7 +168,7 @@ cargo nextest run -p open-gpui-ui-components
 cargo nextest run -p open-gpui-ui-foundation-gallery
 ```
 
-For the v0.2.0 `VirtualizedList` and `open-gpui-motion` foundation, run the focused gates below
+For the current `VirtualizedList` and `open-gpui-motion` foundation, run the focused gates below
 before relying on the full workspace gate:
 
 ```sh
@@ -157,18 +190,20 @@ snapshots, typeahead, replacement-style range selection, sticky-section snapshot
 active-indicator motion demand/reduced-motion/offscreen behavior, public API inventory, and gallery
 scroll/keyboard containment.
 
-For v0.2.0 crate discovery, the normal-checkout user entry points are:
+For current crate discovery, the normal-checkout user entry points are:
 
 ```sh
 cargo run -p open-gpui-ui-foundation-gallery
+cargo run -p open-gpui-docking-minimal
 cargo run -p open-gpui-docking-native
 cargo run -p open-gpui-canvas-notes
 ```
 
-The component, motion, and docking crate guides live at `crates/ui_components/README.md`,
-`crates/motion/README.md`, and `crates/gpui_docking/README.md`. `open-gpui-ui-components`,
-`open-gpui-motion`, and `open-gpui-docking` package metadata should point at those crate-local
-README files.
+The minimal docking example is the common API entry point. The native docking example is the
+dogfood surface for viewport runtime diagnostics and multi-window capability gates. The component,
+motion, docking, web, and platform crate guides live at `crates/ui_components/README.md`,
+`crates/motion/README.md`, `crates/gpui_docking/README.md`, `crates/gpui_web/README.md`, and
+`crates/gpui_platform/README.md`. Public package metadata should point at crate-local README files.
 
 The gallery package includes Components-page runtime smoke coverage for regressions that state-only
 tests can miss: short-viewport page scrolling and navigation reset, navigation rail scrolling,
@@ -1256,9 +1291,11 @@ Run the docking smoke surface explicitly after changing `open-gpui-docking`:
 ```sh
 cargo fmt --all -- --check
 cargo check --tests -p open-gpui-docking
+cargo check -p open-gpui-docking-minimal --locked
 cargo nextest run -p open-gpui-docking
 cargo nextest run -p open-gpui-docking-native --no-fail-fast
 cargo check -p open-gpui-docking-native
+cargo run -p open-gpui-docking-minimal
 cargo run -p open-gpui-docking-native
 ```
 

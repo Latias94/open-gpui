@@ -1,12 +1,15 @@
 use crate::{
-    DockTransitionExecutionState, DockViewportDropRoute, DockViewportRouteSelectionSource,
-    DockViewportTargetHit, DropZone, SplitAxis,
+    DockViewportDropRoute, DockViewportRouteSelectionSource, DockViewportTargetHit, DropZone,
+    SplitAxis,
     drop_preview::DockDropRoutePreview,
-    host_test_support::{floating_bounds, open_host, space, split_graph},
+    host_test_support::{
+        floating_bounds, open_host, open_workspace, space, split_graph, workspace_with_panels,
+    },
     presentation_scene::{
         DockPresentationOverlayAnchor, DockPresentationOverlayAnchorKind, DockPresentationPane,
         DockPresentationPaneKind, DockPresentationScene,
     },
+    transition_executor::DockTransitionExecutionState,
     transition_geometry::{
         DockDividerTransitionKind, DockMotionPreference, DockPaneTransitionKind,
         DockTransitionEdge, DockTransitionPlan, DockVisualAffordanceTransitionKind,
@@ -316,7 +319,7 @@ fn transition_executor_samples_timeline_and_reveal_geometry(cx: &mut TestAppCont
             .expect("animated execution should expose a start sample");
         assert_eq!(start.progress, 0.0);
         assert!(!start.complete);
-        assert!(start.needs_frame);
+        assert!(start.frame_demand.needs_frame());
         assert_eq!(
             start.frame_demand,
             MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender)
@@ -379,7 +382,7 @@ fn transition_executor_samples_timeline_and_reveal_geometry(cx: &mut TestAppCont
             midpoint.progress
         );
         assert!(!midpoint.complete);
-        assert!(midpoint.needs_frame);
+        assert!(midpoint.frame_demand.needs_frame());
         assert_eq!(
             midpoint.frame_demand,
             MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender)
@@ -423,7 +426,7 @@ fn transition_executor_samples_timeline_and_reveal_geometry(cx: &mut TestAppCont
             .expect("completion sample should be returned before clearing");
         assert_eq!(end.progress, 1.0);
         assert!(end.complete);
-        assert!(!end.needs_frame);
+        assert!(!end.frame_demand.needs_frame());
         assert_eq!(end.frame_demand, MotionFrameDemand::Idle);
         assert_eq!(end.final_scene, next);
         assert!(
@@ -520,13 +523,71 @@ fn transition_executor_replaces_active_execution_and_completes_reduced_motion_im
             .expect("reduced transition should expose a final sample once");
         assert_eq!(reduced_sample.progress, 1.0);
         assert!(reduced_sample.complete);
-        assert!(!reduced_sample.needs_frame);
+        assert!(!reduced_sample.frame_demand.needs_frame());
         assert!(
             host.sample_transition_for_test(Duration::from_millis(1000))
                 .is_none(),
             "reduced transition should clear after final sample"
         );
     });
+}
+
+#[open_gpui::test]
+fn zoom_pane_uses_host_reduced_motion_preference(cx: &mut TestAppContext) {
+    let (graph, _split, _left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.options_mut().motion_preference = MotionPreference::Reduced;
+    let (_window, host, _visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+    let bounds = host_bounds(400.0, 240.0);
+
+    let sample = host.update(cx, |host, cx| {
+        let previous = host.presentation_scene_for_test(bounds, cx);
+        host.set_last_presentation_scene(previous);
+        assert!(host.zoom_pane(right_tabs, cx));
+        host.sample_transition_for_test(Duration::ZERO)
+            .expect("reduced zoom should expose one final sample")
+    });
+
+    assert!(sample.complete);
+    assert_eq!(sample.progress, 1.0);
+    assert_eq!(sample.frame_demand, MotionFrameDemand::Idle);
+}
+
+#[open_gpui::test]
+fn visual_affordance_render_uses_host_reduced_motion_preference(cx: &mut TestAppContext) {
+    let (graph, root) = crate::host_test_support::tabs_graph_with_selected(&["a"], "a");
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "Panel A", "A")]);
+    workspace.options_mut().motion_preference = MotionPreference::Reduced;
+    let (window, _host, _visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+    let bounds = host_bounds(400.0, 240.0);
+    let affordance_scene =
+        DockVisualAffordanceScene::from_test_layers(vec![test_affordance_layer(
+            root,
+            DockVisualAffordanceKind::GuideBox,
+            floating_bounds(40.0, 20.0, 90.0, 48.0),
+            Some(DropZone::Left),
+            None,
+        )]);
+
+    let sample = window
+        .update(cx, |host, window, cx| {
+            let session = host.render_session(cx);
+            let scene = host.presentation_scene_for_test(bounds, cx);
+            host.set_last_presentation_scene(scene);
+            host.sync_visual_affordance_transition_for_test(
+                &session,
+                &affordance_scene,
+                bounds,
+                window,
+            )
+        })
+        .expect("host should sync visual affordance transition")
+        .expect("reduced visual affordance should expose one final sample");
+
+    assert!(sample.complete);
+    assert_eq!(sample.progress, 1.0);
+    assert_eq!(sample.frame_demand, MotionFrameDemand::Idle);
 }
 
 #[test]

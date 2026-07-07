@@ -2,6 +2,7 @@
 name = "open-gpui-docking"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 description = "Retained docking graph and layout primitives for Open GPUI."
 repository.workspace = true

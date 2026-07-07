@@ -28,6 +28,7 @@ const THEME_RECIPE_CATALOG: &[&str] = &[
     "text_input_colors",
     "textarea_colors",
     "tooltip_colors",
+    "virtualized_list_colors",
 ];
 
 #[path = "recipes/action.rs"]

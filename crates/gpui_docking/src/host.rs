@@ -12,6 +12,7 @@ use crate::{
 use open_gpui::{
     AppContext as _, Context, Entity, FocusHandle, Pixels, Subscription, Window, WindowId, px,
 };
+use open_gpui_motion::MotionPreference;
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -33,6 +34,8 @@ pub struct DockHostOptions {
     pub splitter_handle_size: Pixels,
     /// Style inputs used to size and hit-test dock drop guides.
     pub drop_guide_style: DockDropGuideStyle,
+    /// Host-owned motion preference applied before constructing docking transition specs.
+    pub motion_preference: MotionPreference,
 }
 
 impl Default for DockHostOptions {
@@ -43,6 +46,7 @@ impl Default for DockHostOptions {
             split_min_size: px(96.0),
             splitter_handle_size: px(6.0),
             drop_guide_style: DockDropGuideStyle::default(),
+            motion_preference: MotionPreference::Animated,
         }
     }
 }
@@ -206,6 +210,10 @@ impl DockHost {
 
     pub(crate) fn viewport_runtime(&self) -> &DockViewportRuntimeHandle {
         &self.viewport_runtime
+    }
+
+    pub(crate) fn motion_preference(&self, cx: &Context<Self>) -> MotionPreference {
+        self.with_workspace(cx, |workspace| workspace.options().motion_preference)
     }
 
     pub(crate) fn ensure_viewport_activation_subscription(

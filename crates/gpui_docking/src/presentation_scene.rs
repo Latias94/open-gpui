@@ -330,12 +330,10 @@ impl DockHost {
         bounds: Bounds<Pixels>,
         cx: &Context<Self>,
     ) -> DockPresentationScene {
-        let base = DockPresentationScene::from_render_session(&self.render_session(cx), bounds);
+        let session = self.render_session(cx);
+        let base = DockPresentationScene::from_render_session(&session, bounds);
         self.zoom_state()
-            .resolve(
-                &base,
-                crate::transition_geometry::DockMotionPreference::Animated,
-            )
+            .resolve(&base, session.motion_preference())
             .map(|zoom| zoom.scene)
             .unwrap_or(base)
     }

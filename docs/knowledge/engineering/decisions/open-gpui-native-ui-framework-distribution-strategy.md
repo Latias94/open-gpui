@@ -8,7 +8,7 @@ status: "active"
 git_branch: "main"
 git_commit: "22e86ce722486bbecb9edd111a8cc1cf23c0196e"
 verified_by:
-  - "python C:\\Users\\Frankorz\\.codex\\skills\\research\\validate_json.py -f native-ui-framework-design-research\\fields.yaml -d native-ui-framework-design-research\\results"
+  - "native UI framework research bundle generated and validated before archival"
   - "cargo run -p xtask -- scan-ui-contract"
 related_adr: "docs/adr/0014-remove-native-ui-hybrid-registry.md"
 ---
@@ -77,8 +77,8 @@ Cargo crates plus direct source inspection are the current preferred direction.
 
 # Citations
 
-- [Native UI framework design research report](../../../../native-ui-framework-design-research/report.md)
-- [Research outline](../../../../native-ui-framework-design-research/outline.yaml)
-- [Research fields](../../../../native-ui-framework-design-research/fields.yaml)
+- [Native UI framework design research report](../../../../docs/research/native-ui-framework-design-research.md)
+- Research outline and field schema were one-time generated artifacts and have been removed after
+  report archival.
 - [Research report verification](../verification/native-ui-framework-research-report-20260702.md)
 - [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](../../../adr/0014-remove-native-ui-hybrid-registry.md)

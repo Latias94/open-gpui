@@ -36,6 +36,11 @@ jobs:
         with:
           cache-bin: "false"
 
+      - name: Verify release docs
+        run: |
+          cargo run -p xtask -- verify-release-docs
+          cargo run -p xtask -- scan-doc-links
+
       - name: Check crate packageability
         shell: bash
         run: |

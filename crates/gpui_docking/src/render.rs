@@ -18,7 +18,7 @@ use crate::{
     transition_executor::{
         DockDividerSample, DockPaneClipSample, DockTransitionSample, DockVisualAffordanceSample,
     },
-    transition_geometry::{DockMotionPreference, DockTransitionPlan},
+    transition_geometry::DockTransitionPlan,
     viewport_drop_scene::DockViewportHostSceneFrame,
     visual_affordance_scene::{
         DockPayloadTabPreviewLayout, DockPayloadTabPreviewPlacement, DockVisualAffordanceLayer,
@@ -568,7 +568,7 @@ impl DockHost {
         let space = session.space().clone();
         self.zoom_state_mut().clear_missing_target(&space, &base);
         self.zoom_state()
-            .resolve(&base, DockMotionPreference::Animated)
+            .resolve(&base, session.motion_preference())
             .map(|zoom| zoom.scene)
             .unwrap_or(base)
     }
@@ -1221,18 +1221,34 @@ impl DockHost {
             let plan = DockTransitionPlan::from_visual_affordance_scene(
                 &final_scene,
                 affordance_scene,
-                DockMotionPreference::Animated,
+                session.motion_preference(),
             );
             self.set_last_visual_affordance_scene(affordance_scene.clone());
             self.execute_visual_affordance_transition_plan(
                 plan,
-                MotionSpec::affordance(DockMotionPreference::Animated),
+                MotionSpec::affordance(session.motion_preference()),
             );
         }
 
         let sample = self.sample_visual_affordance_transition_for_render(Some(window));
         self.publish_visual_affordance_debug_summary(window.window_handle().window_id());
         sample
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sync_visual_affordance_transition_for_test(
+        &mut self,
+        session: &DockHostRenderSession,
+        affordance_scene: &DockVisualAffordanceScene,
+        fallback_bounds: Bounds<Pixels>,
+        window: &Window,
+    ) -> Option<DockTransitionSample> {
+        self.sync_visual_affordance_transition_for_render(
+            session,
+            affordance_scene,
+            fallback_bounds,
+            window,
+        )
     }
 
     fn render_scene_drop_guide(

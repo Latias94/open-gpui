@@ -29,6 +29,7 @@ members = [
     "crates/util",
     "crates/util_macros",
     "examples/canvas-notes",
+    "examples/docking-minimal",
     "examples/docking-native",
     "examples/smoke-native",
     "examples/ui-foundation-gallery",
@@ -41,6 +42,7 @@ exclude = [
 [workspace.package]
 version = "0.2.0"
 edition = "2024"
+rust-version = "1.92"
 authors = ["Mingzhen Zhuang <superfrankie621@gmail.com>"]
 license = "Apache-2.0"
 repository = "https://github.com/Latias94/open-gpui"
@@ -173,7 +175,7 @@ uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 walkdir = "2.5"
 wasm-bindgen = "0.2.126"
 web-time = "1.1.0"
-wgpu = "=29.0.3"
+wgpu = "=30.0.0"
 which = "6.0.0"
 windows-core = "0.62"
 

@@ -125,4 +125,4 @@ Negative:
 - `docs/ui/component-contract.md`
 - `docs/verification.md`
 - `docs/knowledge/engineering/decisions/open-gpui-native-ui-framework-distribution-strategy.md`
-- `native-ui-framework-design-research/report.md`
+- `docs/research/native-ui-framework-design-research.md`

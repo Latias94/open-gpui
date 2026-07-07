@@ -48,6 +48,8 @@ pub struct VirtualizedListSample {
     pub row_height: UiPx,
     /// Overscan row budget.
     pub overscan: usize,
+    /// Theme tokens applied to the rendered list.
+    pub tokens: ThemeTokens,
     /// Row height ownership mode.
     pub row_measure_mode: VirtualizedListRowMeasureMode,
     /// Optional measured virtualizer restore payload.
@@ -133,6 +135,7 @@ impl VirtualizedListSample {
         .row_measure_mode(self.row_measure_mode)
         .overscan(self.overscan)
         .viewport_item_count(self.state.viewport_item_count())
+        .tokens(self.tokens)
         .disabled(self.state.disabled());
 
         if let Some(snapshot) = self.snapshot.clone() {
@@ -188,8 +191,12 @@ static VIRTUALIZED_LIST_SAMPLES: LazyLock<Vec<VirtualizedListSample>> =
     LazyLock::new(build_virtualized_list_samples);
 
 /// Returns virtualized-list samples backed by the concrete renderer and virtualizer contract.
-pub fn virtualized_list_samples(_tokens: ThemeTokens) -> &'static [VirtualizedListSample] {
-    VIRTUALIZED_LIST_SAMPLES.as_slice()
+pub fn virtualized_list_samples(tokens: ThemeTokens) -> Vec<VirtualizedListSample> {
+    VIRTUALIZED_LIST_SAMPLES
+        .iter()
+        .cloned()
+        .map(|sample| sample.with_tokens(tokens))
+        .collect()
 }
 
 fn build_virtualized_list_samples() -> Vec<VirtualizedListSample> {
@@ -212,6 +219,10 @@ impl VirtualizedListSample {
             state_summary: VirtualizedListSampleStateSummary::from_snapshot(&snapshot),
             ..self
         }
+    }
+
+    fn with_tokens(self, tokens: ThemeTokens) -> Self {
+        Self { tokens, ..self }
     }
 }
 
@@ -252,6 +263,7 @@ fn release_navigation_sample() -> VirtualizedListSample {
         viewport_extent: ui_px(224.0),
         row_height,
         overscan,
+        tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Fixed,
         snapshot: None,
         renderer: VirtualizedListSampleRenderer::Default,
@@ -299,6 +311,7 @@ fn primary_options_sample() -> VirtualizedListSample {
         viewport_extent: ui_px(180.0),
         row_height,
         overscan,
+        tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Fixed,
         snapshot: None,
         renderer: VirtualizedListSampleRenderer::Default,
@@ -311,6 +324,10 @@ fn section_status_sample() -> VirtualizedListSample {
     let row_height = ui_px(32.0);
     let overscan = 2;
     let items = shared_virtualized_items(vec![
+        VirtualizedListItemDescriptor::prepend_loading(
+            "deploy-prepend",
+            "Loading previous deploys",
+        ),
         VirtualizedListItemDescriptor::section("deploy-section", "Deployment queue"),
         VirtualizedListItemDescriptor::new("deploy-ready", "Ready to ship")
             .secondary_text("Production release has a green verification run")
@@ -322,9 +339,11 @@ fn section_status_sample() -> VirtualizedListSample {
             .status("blocked")
             .disabled_reason("Waiting for owner"),
         VirtualizedListItemDescriptor::separator("deploy-divider"),
-        VirtualizedListItemDescriptor::loading("deploy-loading", "Loading archived deploys"),
+        VirtualizedListItemDescriptor::append_loading("deploy-loading", "Loading archived deploys"),
+        VirtualizedListItemDescriptor::exhausted("deploy-done", "All deploys loaded"),
         VirtualizedListItemDescriptor::empty("deploy-empty", "No archived deploys"),
         VirtualizedListItemDescriptor::error("deploy-error", "Archive provider unavailable"),
+        VirtualizedListItemDescriptor::retry("deploy-retry", "Refresh failed", "Retry refresh"),
     ]);
     let state = VirtualizedListState::resolve(
         size,
@@ -333,7 +352,7 @@ fn section_status_sample() -> VirtualizedListSample {
         Some("deploy-ready"),
         ["deploy-ready"],
         VirtualizedListSelectionMode::Single,
-        Some(7),
+        Some(9),
     )
     .with_metrics(
         VirtualizedListMetrics::from_size(size)
@@ -344,7 +363,7 @@ fn section_status_sample() -> VirtualizedListSample {
     VirtualizedListSample {
         id: "section-status",
         title: "Section and status rows",
-        summary: "Non-selectable section, separator, loading, empty, and error rows in one list.",
+        summary: "Non-selectable section, separator, async, terminal, error, and retry rows.",
         badge: "mixed",
         items,
         state,
@@ -352,6 +371,7 @@ fn section_status_sample() -> VirtualizedListSample {
         viewport_extent: ui_px(224.0),
         row_height,
         overscan,
+        tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Fixed,
         snapshot: None,
         renderer: VirtualizedListSampleRenderer::Default,
@@ -409,6 +429,7 @@ fn custom_renderer_sample() -> VirtualizedListSample {
         viewport_extent: ui_px(204.0),
         row_height,
         overscan,
+        tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Fixed,
         snapshot: None,
         renderer: VirtualizedListSampleRenderer::CompactMetadata,
@@ -478,6 +499,7 @@ fn measured_notes_sample() -> VirtualizedListSample {
         viewport_extent: ui_px(210.0),
         row_height,
         overscan,
+        tokens: ThemeTokens::default(),
         row_measure_mode: VirtualizedListRowMeasureMode::Measured,
         snapshot: Some(snapshot),
         renderer: VirtualizedListSampleRenderer::Default,
@@ -508,12 +530,15 @@ fn render_compact_virtualized_list_row(
             .disabled_reason()
             .map(|reason| format!("Disabled: {reason}"))
     });
+    let status_kind = context.status_kind().map(|status| status.as_str());
     let meta = context
         .trailing_metadata()
         .or_else(|| context.status())
+        .or(status_kind)
         .unwrap_or(context.kind().as_str())
         .to_owned();
     let badge = context.badge().map(str::to_owned);
+    let retry_action = context.retry_action_label().map(str::to_owned);
     let state_label = if context.active() {
         "active"
     } else if context.selected() {
@@ -578,6 +603,18 @@ fn render_compact_virtualized_list_row(
                     .text_xs()
                     .text_color(rgb(0x344054))
                     .child(badge),
+            )
+        })
+        .when_some(retry_action, |this, retry_action| {
+            this.child(
+                div()
+                    .rounded(open_gpui::px(4.0))
+                    .border_1()
+                    .border_color(rgb(0xd0d5dd))
+                    .px_1()
+                    .text_xs()
+                    .text_color(rgb(0x344054))
+                    .child(retry_action),
             )
         })
         .child(

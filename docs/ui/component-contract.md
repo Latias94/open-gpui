@@ -1120,8 +1120,11 @@ buffer, anchor-key lifecycle, and reveal side effects: typeahead moves the activ
 selecting it, while Shift-range interaction replaces selected keys with the current selectable
 anchor-to-target range. `VirtualizedListBehaviorSnapshot::sticky_section` returns an optional
 `VirtualizedListStickySectionSnapshot` for the section row that owns the first visible selectable
-row. This is diagnostic metadata; it does not add a second interactive section row or change
-layout, focus order, hit testing, selection, or accessibility roles. `VirtualizedListRowMeasureMode`
+row. `VirtualizedListBehaviorSnapshot::sticky_overlay` returns an optional
+`VirtualizedListStickyOverlaySnapshot` for the presentation-only sticky header layer: the overlay is
+positioned against the viewport, while the underlying section row remains the semantic owner. It
+does not add a second interactive section row or change focus order, hit testing, selection, or
+accessibility roles. `VirtualizedListRowMeasureMode`
 keeps fixed rows as the default hot path and exposes measured rows as an explicit opt-in;
 `VirtualizedList::virtualizer_snapshot` seeds measured heights by stable render key, removed keys
 are dropped from emitted snapshots, and missing measurements fall back to the estimated row height

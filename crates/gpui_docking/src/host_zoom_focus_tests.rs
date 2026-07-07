@@ -551,7 +551,7 @@ fn public_focus_command_uses_immediate_overlay_only_feedback(cx: &mut TestAppCon
     assert!(execution.model.is_immediate());
     assert_eq!(
         execution.state,
-        crate::DockTransitionExecutionState::Immediate
+        crate::transition_executor::DockTransitionExecutionState::Immediate
     );
     assert!(
         execution.plan.pane_transitions.is_empty(),

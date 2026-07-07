@@ -37,5 +37,5 @@ The first implementation slice should start at U1 and U2 so the manifest and rec
 # Citations
 
 - [Native UI hybrid registry architecture plan](../../../plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md)
-- [Native UI framework research report](../../../../native-ui-framework-design-research/report.md)
+- [Native UI framework research report](../../../../docs/research/native-ui-framework-design-research.md)
 - [Hybrid registry strategy decision](../decisions/open-gpui-native-ui-framework-distribution-strategy.md)

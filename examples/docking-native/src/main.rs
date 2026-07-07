@@ -5,13 +5,16 @@ use open_gpui::{
 };
 use open_gpui_docking::{
     DockController, DockItemId, DockLayout, DockLayoutCentralRegion, DockLayoutSpace, DockPanel,
-    DockPanelDescriptor, DockSpaceId, DockViewportClosePolicy, DockViewportCoordinateSpaceRecord,
-    DockViewportLifecycleRecord, DockViewportPlacement, DockViewportPlacementLayout,
-    DockViewportPlatformCapabilityRecord, DockViewportPlatformFlagCapabilityRecord,
-    DockViewportPlatformSyncRecord, DockViewportReleaseUnavailableRecord,
-    DockViewportRestoreReadinessRecord, DockViewportRuntimeHandle,
-    DockViewportTearOffPlacementRecord, DockViewportWindowBounds, DockVisualAffordanceDebugSummary,
+    DockPanelDescriptor, DockSpaceId, DockViewportClosePolicy, DockViewportPlacement,
+    DockViewportPlacementLayout, DockViewportRuntimeHandle, DockViewportWindowBounds,
     EditorDockLayoutSpec,
+    advanced::{
+        DockViewportCoordinateSpaceRecord, DockViewportLifecycleRecord,
+        DockViewportPlatformCapabilityRecord, DockViewportPlatformFlagCapabilityRecord,
+        DockViewportPlatformSyncRecord, DockViewportReleaseUnavailableRecord,
+        DockViewportRestoreReadinessRecord, DockViewportTearOffPlacementRecord,
+        DockVisualAffordanceDebugSummary,
+    },
 };
 use open_gpui_platform::application;
 

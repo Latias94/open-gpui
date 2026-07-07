@@ -3,6 +3,7 @@ use crate::{
     geometry::DockDropGuideStyle, panel_registry::DockPanelRenderRegistration,
 };
 use open_gpui::{AnyView, Context, Pixels};
+use open_gpui_motion::MotionPreference;
 use std::collections::HashMap;
 
 pub(crate) enum DockHostPanelRenderResolution {
@@ -38,6 +39,7 @@ pub(crate) struct DockHostRenderSession {
     missing_panel_prefix: String,
     splitter_handle_size: Pixels,
     drop_guide_style: DockDropGuideStyle,
+    motion_preference: MotionPreference,
 }
 
 impl DockHostRenderSession {
@@ -61,6 +63,7 @@ impl DockHostRenderSession {
             missing_panel_prefix: workspace.options().missing_panel_prefix.clone(),
             splitter_handle_size: workspace.options().splitter_handle_size,
             drop_guide_style: workspace.options().drop_guide_style,
+            motion_preference: workspace.options().motion_preference,
             space,
         };
 
@@ -222,6 +225,10 @@ impl DockHostRenderSession {
 
     pub(crate) fn drop_guide_style(&self) -> DockDropGuideStyle {
         self.drop_guide_style
+    }
+
+    pub(crate) fn motion_preference(&self) -> MotionPreference {
+        self.motion_preference
     }
 
     pub(crate) fn is_central_tabs(&self, node_id: DockNodeId) -> bool {

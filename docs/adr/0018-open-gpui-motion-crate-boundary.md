@@ -29,6 +29,8 @@ The crate owns:
   `MotionFrameDemand::combine` / `combine_all`;
 - scalar tracks, scalar controllers, cancellation, explicit finish, terminal pruning, completion,
   and retargeting;
+- `MotionFrameHost` reset reasons for adapter-owned motion epochs such as retarget, cancel,
+  finish, terminal pruning, and stable motion identity changes;
 - renderer-neutral motion geometry and projection/reveal/clip helpers.
 
 `open-gpui-ui-core` no longer declares or re-exports motion modules. Splitter, UI components, and
@@ -54,6 +56,8 @@ scroll offsets, focus, hit testing, selection, and accessibility state under the
   semantic ownership, and GPUI frame requests.
 - `open-gpui-motion` exposes frame demand, but it does not own a global scheduler or call
   `request_frame`; adapters aggregate demand and decide when to ask GPUI for another frame.
+- Adapters must reset their local `MotionFrameHost` with an explicit reason when a retarget,
+  cancellation, completion, terminal prune, or stable identity change starts a new motion epoch.
 - ADR 0017's decision to defer a public value graph remains current; this ADR supersedes only the
   location and import path of the proven shared motion contracts.
 

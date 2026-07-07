@@ -11,7 +11,27 @@ use std::time::{Duration, Instant};
 pub struct MotionFrameHost {
     last_elapsed: Duration,
     last_frame_demand: MotionFrameDemand,
+    last_reset_reason: Option<MotionFrameHostResetReason>,
     requested_frames: u64,
+}
+
+/// Reason an adapter starts a new local motion frame epoch.
+///
+/// Resetting an epoch clears stale elapsed time, frame demand, and requested-frame diagnostics.
+/// Adapters should reset when they replace the motion identity or target, cancel an active run,
+/// force a run to its final state, or prune terminal state after observing idle demand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionFrameHostResetReason {
+    /// The adapter replaced the target of an existing motion from the current sampled value.
+    Retarget,
+    /// The adapter cancelled an active motion without publishing the semantic final state.
+    Cancel,
+    /// The adapter forced a motion to its semantic final state.
+    Finish,
+    /// The adapter removed terminal tracks or presentation state after idle demand was observed.
+    PruneTerminal,
+    /// The adapter replaced the stable motion identity, such as a row key, pane id, or panel set.
+    MotionIdentityChanged,
 }
 
 impl MotionFrameHost {
@@ -20,6 +40,7 @@ impl MotionFrameHost {
         Self {
             last_elapsed: Duration::ZERO,
             last_frame_demand: MotionFrameDemand::Idle,
+            last_reset_reason: None,
             requested_frames: 0,
         }
     }
@@ -34,15 +55,21 @@ impl MotionFrameHost {
         self.last_frame_demand
     }
 
+    /// Returns the reason the current adapter epoch was last reset.
+    pub const fn last_reset_reason(&self) -> Option<MotionFrameHostResetReason> {
+        self.last_reset_reason
+    }
+
     /// Returns how many frame requests this host has asked the adapter to issue.
     pub const fn requested_frames(&self) -> u64 {
         self.requested_frames
     }
 
-    /// Resets elapsed time and demand state.
-    pub const fn reset(&mut self) {
+    /// Resets elapsed time and demand state for a new adapter-owned motion epoch.
+    pub const fn reset(&mut self, reason: MotionFrameHostResetReason) {
         self.last_elapsed = Duration::ZERO;
         self.last_frame_demand = MotionFrameDemand::Idle;
+        self.last_reset_reason = Some(reason);
         self.requested_frames = 0;
     }
 

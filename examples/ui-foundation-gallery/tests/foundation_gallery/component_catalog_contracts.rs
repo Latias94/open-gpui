@@ -2089,7 +2089,9 @@ fn state_contract_catalog_entries_have_signals_and_readout_selectors() {
         "open_gpui_ui_components::VirtualizedListActivation",
         "open_gpui_ui_components::VirtualizedListMetrics",
         "open_gpui_ui_components::VirtualizedListScrollStrategy",
-        "open_gpui_ui_components::virtualized_list_navigation_target",
+        "open_gpui_ui_components::VirtualizedListState::navigation_target",
+        "open_gpui_ui_components::VirtualizedListState::scroll_target_for_key",
+        "open_gpui_ui_components::VirtualizedListState::scroll_target_for_key_with_snapshot",
     ];
     for signal in required_signals {
         assert!(

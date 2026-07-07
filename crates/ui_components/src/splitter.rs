@@ -8,10 +8,10 @@ use open_gpui::{
     div, px, relative, rgb,
 };
 use open_gpui_motion::{
-    MotionExecutionPlan, MotionFrameDemand, MotionFrameHost, MotionFrameHostUpdate,
-    MotionFrameReason, MotionModel, MotionPolicyContext, MotionPolicyInput, MotionPreference,
-    MotionPreset, MotionProgressExecution, MotionProjectionClip, MotionScalarController,
-    MotionSpec,
+    MotionExecutionPlan, MotionFrameDemand, MotionFrameHost, MotionFrameHostResetReason,
+    MotionFrameHostUpdate, MotionFrameReason, MotionModel, MotionPolicyContext, MotionPolicyInput,
+    MotionPreference, MotionPreset, MotionProgressExecution, MotionProjectionClip,
+    MotionScalarController, MotionSpec,
 };
 use open_gpui_ui_core::split::{
     SplitterLayoutTransition, SplitterLayoutTransitionSample, SplitterPanelTransitionSample,
@@ -116,7 +116,7 @@ impl SplitterRuntime {
 
         if fractions_equal(&self.state_fractions, &target_fractions) {
             self.transition = None;
-            self.frame_host.reset();
+            self.frame_host.reset(MotionFrameHostResetReason::Finish);
             self.last_state = Some(state.clone());
             return MotionFrameDemand::Idle;
         }
@@ -130,7 +130,7 @@ impl SplitterRuntime {
             self.state_fractions = target_fractions;
             self.panel_fractions = from_fractions;
             self.transition = None;
-            self.frame_host.reset();
+            self.frame_host.reset(MotionFrameHostResetReason::Finish);
             self.last_state = Some(state.clone());
             return MotionFrameDemand::Idle;
         }
@@ -140,11 +140,11 @@ impl SplitterRuntime {
             self.panel_fractions = target_fractions;
             self.transition = None;
             self.layout_transition = None;
-            self.frame_host.reset();
+            self.frame_host.reset(MotionFrameHostResetReason::Finish);
             self.last_state = Some(state.clone());
             return MotionFrameDemand::Idle;
         }
-        self.frame_host.reset();
+        self.frame_host.reset(MotionFrameHostResetReason::Retarget);
         self.panel_fractions = from_fractions.clone();
         self.state_fractions = target_fractions.clone();
         self.transition = Some(SplitterRuntimeTransition {
@@ -169,7 +169,8 @@ impl SplitterRuntime {
         self.drag_start = None;
         self.transition = None;
         self.layout_transition = None;
-        self.frame_host.reset();
+        self.frame_host
+            .reset(MotionFrameHostResetReason::MotionIdentityChanged);
     }
 
     fn sync_drag_state(&mut self, state: &SplitterState) {
@@ -192,7 +193,7 @@ impl SplitterRuntime {
 
         self.transition = None;
         self.layout_transition = None;
-        self.frame_host.reset();
+        self.frame_host.reset(MotionFrameHostResetReason::Cancel);
         self.last_state = Some(state.clone());
     }
 
@@ -251,7 +252,8 @@ impl SplitterRuntime {
             SplitterLayoutScene::from_state(state, transition_scene_bounds()),
             MotionSpec::committed_layout(motion.model().preference()),
         );
-        self.frame_host.reset();
+        self.frame_host
+            .reset(MotionFrameHostResetReason::MotionIdentityChanged);
         self.panel_ids = panel_ids;
         self.state_fractions = target_fractions.clone();
         self.panel_fractions = target_fractions;
@@ -278,7 +280,7 @@ impl SplitterRuntime {
         if complete {
             self.panel_fractions = transition.to_fractions.clone();
             self.transition = None;
-            self.frame_host.reset();
+            self.frame_host.reset(MotionFrameHostResetReason::Finish);
         }
         complete
     }
@@ -291,7 +293,7 @@ impl SplitterRuntime {
         let complete = sample.complete();
         if complete {
             self.layout_transition = None;
-            self.frame_host.reset();
+            self.frame_host.reset(MotionFrameHostResetReason::Finish);
         }
         complete
     }
@@ -1024,6 +1026,10 @@ mod tests {
         let retarget_update = runtime.sync_at(&second_target, start + Duration::from_millis(45));
         assert!(retarget_update.should_request_frame());
         assert_eq!(retarget_update.requested_frames(), 1);
+        assert_eq!(
+            runtime.frame_host.last_reset_reason(),
+            Some(MotionFrameHostResetReason::Retarget)
+        );
         assert!(
             (runtime.panel_fractions[0] - sampled_left).abs() <= EPSILON,
             "retargeting should start from the sampled fraction instead of the original fraction"
@@ -1031,6 +1037,11 @@ mod tests {
 
         runtime.sync_drag_state(&from);
         assert!(runtime.transition.is_none());
+        assert_eq!(
+            runtime.frame_host.last_reset_reason(),
+            Some(MotionFrameHostResetReason::Cancel)
+        );
+        assert_eq!(runtime.frame_host.requested_frames(), 0);
         assert!(
             (runtime.panel_fractions[0] - sampled_left).abs() <= EPSILON,
             "drag sync should cancel animation without discarding the current runtime override"

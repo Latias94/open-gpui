@@ -46,6 +46,14 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@nextest
 
+      - name: Install cargo-audit
+        if: matrix.name == 'windows'
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: Install trunk
+        if: matrix.name == 'linux'
+        uses: taiki-e/install-action@trunk
+
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
@@ -60,6 +68,10 @@ jobs:
           cargo check -p open-gpui-web --target wasm32-unknown-unknown --locked -j 1
           cargo check -p open-gpui-platform --target wasm32-unknown-unknown --locked -j 1
           cargo check -p open-gpui-wgpu --target wasm32-unknown-unknown --locked -j 1
+
+      - name: Run stable browser web smoke
+        if: matrix.name == 'linux'
+        run: cargo run -p xtask -- web-smoke
 
       - name: Install Linux system dependencies
         if: matrix.name == 'linux'

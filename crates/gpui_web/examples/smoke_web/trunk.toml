@@ -1,0 +1,12 @@
+[build]
+target = "index.html"
+public_url = "/"
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 0
+open = false
+
+# Keep headers aligned with the optional shared-memory/webgpu examples. The
+# required smoke itself remains single-threaded.
+headers = { "Cross-Origin-Embedder-Policy" = "require-corp", "Cross-Origin-Opener-Policy" = "same-origin" }

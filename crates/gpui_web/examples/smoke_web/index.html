@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=0" />
+        <title>Open GPUI Web Smoke</title>
+        <link data-trunk rel="rust" data-bin="smoke_web" data-bindgen-target="web" data-keep-debug data-wasm-opt="0" />
+        <style>
+            * {
+                box-sizing: border-box;
+            }
+
+            html,
+            body {
+                width: 100%;
+                height: 100%;
+                margin: 0;
+            }
+
+            body {
+                overflow: hidden;
+                background: #101318;
+            }
+
+            canvas {
+                display: block;
+                width: 100%;
+                height: 100%;
+                outline: none;
+                touch-action: none;
+                user-select: none;
+            }
+        </style>
+    </head>
+    <body></body>
+</html>
