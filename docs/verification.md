@@ -16,6 +16,8 @@ The gate runs:
 - `cargo nextest run -p open-gpui-ui-core`
 - `cargo nextest run -p open-gpui-ui-components`
 - `cargo nextest run -p open-gpui-ui-foundation-gallery`
+- `cargo run -p xtask -- verify-release-docs`
+- `cargo run -p xtask -- scan-doc-links`
 - `cargo run -p xtask -- scan-theme-drift`
 - `cargo run -p xtask -- scan-import-boundary`
 - `cargo run -p xtask -- scan-ui-contract`
@@ -38,6 +40,16 @@ cargo run -p xtask -- web-smoke
 `xtask web-smoke` builds `crates/gpui_web/examples/smoke_web` with Trunk, serves the generated files with cross-origin isolation headers, opens a headless Chrome/Chromium/Edge browser, and verifies app readiness, DOM/canvas initialization, focus/input delivery, a single-window shell interaction, and the explicit unsupported platform-viewport capability on web. The smoke intentionally avoids the nightly shared-memory example so CI proves the default stable browser path.
 
 Nightly shared-memory/atomics checks for `hello_web` remain optional verification, not CI requirements.
+
+Release and public-documentation gates are split into two focused commands:
+
+```sh
+cargo run -p xtask -- verify-release-docs
+cargo run -p xtask -- verify-release-docs --version 0.2.0 --notes-output target/release/release-notes.md
+cargo run -p xtask -- scan-doc-links
+```
+
+`verify-release-docs` checks the target changelog section, rejects manually wrapped changelog bullets and paragraphs, validates user-facing README dependency versions, requires crate-local README metadata for public entry crates, and checks `docs/release/breaking-changes.md` against `CHANGELOG.md` release-facing breaking notes. `scan-doc-links` checks strict user-facing relative links in root docs, release docs, verification docs, ADR index, and public crate READMEs. Historical plans and engineering logs are intentionally outside the strict link gate until they are archived or indexed.
 
 For the 2026-07 runtime UI hardening slice, the Web dispatcher exposes a typed
 `WebDispatcherMode` through `WebDispatcher::mode()` and `WebPlatform::dispatcher_mode()`. Stable

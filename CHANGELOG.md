@@ -12,13 +12,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `open-gpui-motion` now requires `MotionFrameHost::reset(MotionFrameHostResetReason::...)` so adapters document why they start a new local motion epoch; replace bare `reset()` calls with the matching retarget, cancel, finish, prune-terminal, or motion-identity reason.
 - `open-gpui-docking` adds the required `DockHostOptions::motion_preference` field for host-owned reduced-motion policy; struct literals must set it explicitly or use `DockHostOptions::default()`.
 - `open-gpui-ui-components` no longer exports `virtualized_list_navigation_target` or `virtualized_list_scroll_target` from the default component API. Use the key-first `VirtualizedListState::navigation_target`, `scroll_target_for_key`, or `scroll_target_for_key_with_snapshot` methods instead.
-- `VirtualizedList` behavior snapshots now count only unique, enabled item rows in listbox option positions and set sizes. Disabled, duplicate-key, structural, and status rows are still rendered, but no longer participate in roving focus or option-set metadata.
+- `VirtualizedListBehaviorSnapshot` now counts only unique, enabled item rows in listbox option positions and set sizes. Disabled, duplicate-key, structural, and status rows are still rendered, but no longer participate in roving focus or option-set metadata.
 
 ### Changed
 
 - `VirtualizedList` internals are split into descriptor, model, render-plan, runtime, render, style, and motion modules while keeping the public facade key-first.
 - `VirtualizedList` now has explicit async/infinite status rows for initial loading, prepend loading, append loading, exhausted, empty, error, and retry states; keyed measured reveal after prepends; presentation-only sticky section overlay metadata and rendering; and theme-backed `VirtualizedListColors`.
 - Web verification now includes a stable browser smoke for app readiness, canvas initialization, focus/input delivery, single-window shell interaction, and explicit unsupported platform-viewport capability on web.
+- Release verification now checks changelog release notes, user-facing README versions, public crate README coverage, breaking-change inventory coverage, and public documentation links before publishing crates or GitHub Release notes.
 
 ## [0.2.0] - 2026-07-07
 

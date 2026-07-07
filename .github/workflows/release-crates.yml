@@ -23,7 +23,7 @@ on:
 
 permissions:
   actions: read
-  contents: read
+  contents: write
 
 concurrency:
   group: release-crates-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
@@ -105,6 +105,13 @@ jobs:
             echo "::error::Workspace version '$workspace_version' does not match ${{ steps.release.outputs.tag }}."
             exit 1
           fi
+
+      - name: Verify release docs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run -p xtask -- verify-release-docs --version "${{ steps.release.outputs.version }}" --notes-output target/release/release-notes.md
+          cargo run -p xtask -- scan-doc-links
 
       - name: Require successful verification gates
         env:
@@ -289,3 +296,26 @@ jobs:
           while IFS= read -r crate; do
             publish_crate_version "$crate" "$(workspace_crate_version "$crate")"
           done < target/release/crate-order.txt
+
+      - name: Create or update GitHub Release
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "Open GPUI $RELEASE_TAG" \
+              --notes-file target/release/release-notes.md \
+              --target "$SOURCE_SHA"
+          else
+            gh release create "$RELEASE_TAG" \
+              --verify-tag \
+              --target "$SOURCE_SHA" \
+              --title "Open GPUI $RELEASE_TAG" \
+              --notes-file target/release/release-notes.md
+          fi

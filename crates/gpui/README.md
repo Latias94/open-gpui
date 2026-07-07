@@ -8,12 +8,12 @@ for Rust, forked from Zed's GPUI framework code.
 Open GPUI is still in active development and is pre-1.0. There will often be breaking changes between versions. You'll also need to use the latest version of stable Rust and be on macOS or Linux. Add the following to your `Cargo.toml`:
 
 ```toml
-open_gpui = { package = "open-gpui", version = "0.1.0" }
-open_gpui_platform = { package = "open-gpui-platform", version = "0.1.0" }
+open_gpui = { package = "open-gpui", version = "0.2.0" }
+open_gpui_platform = { package = "open-gpui-platform", version = "0.2.0" }
 ```
 
-- [Ownership and data flow](_ownership_and_data_flow)
-- [Accessibility](_accessibility)
+- [Ownership and data flow](src/_ownership_and_data_flow.rs)
+- [Accessibility](src/_accessibility.rs)
 
 Everything in Open GPUI starts with an `Application`. You can create one with `open_gpui_platform::application()`, and kick off your application by passing a callback to `Application::run()`. Inside this callback, you can create a new window with `App::open_window()`, and register your first root view.
 

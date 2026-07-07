@@ -5,7 +5,8 @@ use std::{
 };
 
 use crate::{
-    import_boundary::scan_import_boundary, theme_drift::scan_theme_drift,
+    doc_links::scan_doc_links, import_boundary::scan_import_boundary,
+    release_docs::verify_release_docs, theme_drift::scan_theme_drift,
     theme_schema::scan_theme_schema, ui_contract::scan_ui_contract, web_smoke::web_smoke,
 };
 
@@ -17,9 +18,12 @@ pub fn run_from_env() -> ExitCode {
     };
 
     let root = workspace_root();
+    let rest = args.collect::<Vec<_>>();
     let result = match command.as_str() {
         "verify" => verify(&root),
         "renderer-smoke" => renderer_smoke(&root),
+        "verify-release-docs" => verify_release_docs(&root, &rest),
+        "scan-doc-links" => scan_doc_links(&root),
         "scan-theme-drift" => scan_theme_drift(&root),
         "scan-theme-schema" => scan_theme_schema(&root),
         "scan-import-boundary" => scan_import_boundary(&root),
@@ -44,6 +48,10 @@ fn print_usage() {
     eprintln!("commands:");
     eprintln!("  verify                run the local Open GPUI gate");
     eprintln!("  renderer-smoke        run the native wgpu renderer smoke test");
+    eprintln!(
+        "  verify-release-docs   verify changelog, release notes, README versions, and breaking inventory"
+    );
+    eprintln!("  scan-doc-links        scan public documentation relative links");
     eprintln!("  scan-theme-drift      scan theme token and recipe drift");
     eprintln!("  scan-theme-schema     scan theme JSON schema artifact drift");
     eprintln!("  scan-import-boundary  scan for disallowed import residue");
@@ -57,6 +65,8 @@ fn verify(root: &Path) -> Result<(), ()> {
     run(root, "cargo", &["check", "-p", "open-gpui-smoke-native"])?;
     run_motion_tests(root)?;
     run_ui_component_tests(root)?;
+    verify_release_docs(root, &[])?;
+    scan_doc_links(root)?;
     scan_theme_drift(root)?;
     scan_import_boundary(root)?;
     scan_ui_contract(root)?;
