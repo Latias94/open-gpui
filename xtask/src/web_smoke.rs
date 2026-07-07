@@ -15,9 +15,76 @@ use std::{
 
 const EXAMPLE_DIR: &str = "crates/gpui_web/examples/smoke_web";
 const DIST_DIR: &str = "target/open-gpui-web-smoke/smoke_web";
+const WEBGPU_PREFLIGHT_PATH: &str = "/__open-gpui-web-smoke-preflight";
+const WEBGPU_PREFLIGHT_HTML: &[u8] = br#"<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>open-gpui web smoke preflight</title></head>
+<body>open-gpui web smoke preflight</body>
+</html>
+"#;
 const BROWSER_TIMEOUT: Duration = Duration::from_secs(30);
 const CDP_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+const WEBGPU_PREFLIGHT_EXPRESSION: &str = r#"
+(async () => {
+    const expectedPath = "/__open-gpui-web-smoke-preflight";
+    const path = globalThis.location?.pathname ?? null;
+    const readyState = document.readyState;
+    if (path !== expectedPath || readyState === "loading") {
+        return {
+            status: "pending",
+            path,
+            readyState,
+        };
+    }
+
+    if (!globalThis.isSecureContext) {
+        return {
+            status: "unavailable",
+            reason: "WebGPU preflight page is not a secure context",
+            path,
+            readyState,
+        };
+    }
+
+    const gpu = navigator.gpu ?? null;
+    if (!gpu) {
+        return {
+            status: "unavailable",
+            reason: "navigator.gpu is unavailable",
+            path,
+            readyState,
+        };
+    }
+
+    try {
+        const adapter = await gpu.requestAdapter({ forceFallbackAdapter: true });
+        if (!adapter) {
+            return {
+                status: "unavailable",
+                reason: "fallback WebGPU adapter is unavailable",
+                path,
+                readyState,
+            };
+        }
+
+        return {
+            status: "available",
+            featureCount: adapter.features ? Array.from(adapter.features).length : null,
+            path,
+            readyState,
+        };
+    } catch (error) {
+        return {
+            status: "unavailable",
+            reason: String(error && (error.stack || error.message || error)),
+            path,
+            readyState,
+        };
+    }
+})()
+"#;
 
 const SMOKE_STATE_EXPRESSION: &str = r#"
 (() => {
@@ -78,16 +145,42 @@ pub(crate) fn web_smoke(root: &Path) -> Result<(), ()> {
         eprintln!("failed to start web smoke static server: {error}");
     })?;
     let url = format!("http://{}/?smoke=1", server.addr());
+    let preflight_url = format!("http://{}{}", server.addr(), WEBGPU_PREFLIGHT_PATH);
 
-    let mut browser = BrowserProcess::launch(&url).map_err(|error| {
+    let mut browser = BrowserProcess::launch(&preflight_url).map_err(|error| {
         eprintln!("{error}");
     })?;
-    let websocket_url = browser.wait_for_page_websocket(&url).map_err(|error| {
-        eprintln!("{error}");
-    })?;
+    let websocket_url = browser
+        .wait_for_page_websocket(&preflight_url)
+        .map_err(|error| {
+            eprintln!("{error}");
+        })?;
     let mut cdp = CdpClient::connect(&websocket_url).map_err(|error| {
         eprintln!("{error}");
     })?;
+
+    enable_browser_domains(&mut cdp).map_err(|error| {
+        eprintln!("{error}");
+    })?;
+
+    match wait_for_webgpu_preflight(&mut cdp).map_err(|error| {
+        eprintln!("{error}");
+    })? {
+        WebGpuPreflight::Available => {}
+        WebGpuPreflight::Unavailable(reason) => {
+            println!("web smoke skipped: {reason}");
+            return Ok(());
+        }
+        WebGpuPreflight::Pending => {
+            eprintln!("WebGPU preflight remained pending after wait");
+            return Err(());
+        }
+    }
+
+    cdp.call("Page.navigate", json!({ "url": url }))
+        .map_err(|error| {
+            eprintln!("{error}");
+        })?;
 
     run_browser_smoke(&mut cdp).map_err(|error| {
         eprintln!("{error}");
@@ -96,9 +189,62 @@ pub(crate) fn web_smoke(root: &Path) -> Result<(), ()> {
     Ok(())
 }
 
-fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
+#[derive(Debug, PartialEq, Eq)]
+enum WebGpuPreflight {
+    Pending,
+    Available,
+    Unavailable(String),
+}
+
+fn enable_browser_domains(cdp: &mut CdpClient) -> Result<(), String> {
     cdp.call("Page.enable", json!({}))?;
     cdp.call("Runtime.enable", json!({}))?;
+    Ok(())
+}
+
+fn wait_for_webgpu_preflight(cdp: &mut CdpClient) -> Result<WebGpuPreflight, String> {
+    let started = Instant::now();
+    let mut last_state = Value::Null;
+    while started.elapsed() < BROWSER_TIMEOUT {
+        match cdp.evaluate(WEBGPU_PREFLIGHT_EXPRESSION) {
+            Ok(state) => match webgpu_preflight_result(&state)? {
+                WebGpuPreflight::Pending => {
+                    last_state = state;
+                }
+                result => return Ok(result),
+            },
+            Err(error) => {
+                last_state = json!({ "evaluation_error": error });
+            }
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+
+    Err(format!(
+        "timed out waiting for WebGPU preflight page; last state: {last_state}"
+    ))
+}
+
+fn webgpu_preflight_result(state: &Value) -> Result<WebGpuPreflight, String> {
+    match state.pointer("/status").and_then(Value::as_str) {
+        Some("pending") => Ok(WebGpuPreflight::Pending),
+        Some("available") => Ok(WebGpuPreflight::Available),
+        Some("unavailable") => {
+            let reason = state
+                .pointer("/reason")
+                .and_then(Value::as_str)
+                .unwrap_or("browser WebGPU fallback adapter is unavailable")
+                .to_string();
+            Ok(WebGpuPreflight::Unavailable(reason))
+        }
+        _ => Err(format!(
+            "WebGPU preflight returned malformed state: {state}"
+        )),
+    }
+}
+
+fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
+    enable_browser_domains(cdp)?;
 
     let ready = wait_for_state(cdp, "app ready, canvas, and hidden input", |state| {
         canvas_ready(state)
@@ -321,6 +467,14 @@ fn serve_static_request(mut stream: TcpStream, root: &Path) -> std::io::Result<(
     if parts.len() < 2 || parts[0] != "GET" {
         return write_response(&mut stream, 405, "text/plain", b"method not allowed");
     }
+    if is_webgpu_preflight_request(parts[1]) {
+        return write_response(
+            &mut stream,
+            200,
+            "text/html; charset=utf-8",
+            WEBGPU_PREFLIGHT_HTML,
+        );
+    }
 
     let Some(relative_path) = request_path_to_file(parts[1]) else {
         return write_response(&mut stream, 400, "text/plain", b"bad path");
@@ -331,6 +485,10 @@ fn serve_static_request(mut stream: TcpStream, root: &Path) -> std::io::Result<(
     };
 
     write_response(&mut stream, 200, content_type(&relative_path), &bytes)
+}
+
+fn is_webgpu_preflight_request(path: &str) -> bool {
+    path.split_once('?').map_or(path, |(path, _)| path) == WEBGPU_PREFLIGHT_PATH
 }
 
 fn request_path_to_file(path: &str) -> Option<PathBuf> {
@@ -923,6 +1081,15 @@ mod tests {
     }
 
     #[test]
+    fn preflight_path_is_not_static_file_mapped() {
+        assert!(is_webgpu_preflight_request(WEBGPU_PREFLIGHT_PATH));
+        assert!(is_webgpu_preflight_request(&format!(
+            "{WEBGPU_PREFLIGHT_PATH}?cache-bust=1"
+        )));
+        assert!(!is_webgpu_preflight_request("/"));
+    }
+
+    #[test]
     fn websocket_url_parser_accepts_cdp_urls() {
         assert_eq!(
             parse_ws_url("ws://127.0.0.1:9222/devtools/page/ABC").unwrap(),
@@ -932,5 +1099,43 @@ mod tests {
                 "/devtools/page/ABC".to_string()
             )
         );
+    }
+
+    #[test]
+    fn webgpu_preflight_result_accepts_available_adapter() {
+        assert_eq!(
+            webgpu_preflight_result(&json!({ "status": "available", "featureCount": 0 })).unwrap(),
+            WebGpuPreflight::Available
+        );
+    }
+
+    #[test]
+    fn webgpu_preflight_result_reports_unavailable_reason() {
+        assert_eq!(
+            webgpu_preflight_result(&json!({
+                "status": "unavailable",
+                "reason": "fallback WebGPU adapter is unavailable"
+            }))
+            .unwrap(),
+            WebGpuPreflight::Unavailable("fallback WebGPU adapter is unavailable".to_string())
+        );
+    }
+
+    #[test]
+    fn webgpu_preflight_result_keeps_loading_state_pending() {
+        assert_eq!(
+            webgpu_preflight_result(&json!({
+                "status": "pending",
+                "path": WEBGPU_PREFLIGHT_PATH,
+                "readyState": "loading"
+            }))
+            .unwrap(),
+            WebGpuPreflight::Pending
+        );
+    }
+
+    #[test]
+    fn webgpu_preflight_result_rejects_malformed_state() {
+        assert!(webgpu_preflight_result(&json!({ "available": false })).is_err());
     }
 }
