@@ -421,10 +421,12 @@ impl BrowserProcess {
             format!("--user-data-dir={}", user_data_dir.display()),
         ];
         if cfg!(target_os = "linux") {
+            args.push("--ignore-gpu-blocklist".to_string());
             args.push("--enable-unsafe-swiftshader".to_string());
-            args.push("--use-angle=vulkan".to_string());
+            args.push("--use-gl=angle".to_string());
+            args.push("--use-angle=swiftshader".to_string());
+            args.push("--use-vulkan=swiftshader".to_string());
             args.push("--enable-features=Vulkan,VulkanFromANGLE".to_string());
-            args.push("--disable-vulkan-surface".to_string());
         }
         if let Ok(extra_args) = env::var("OPEN_GPUI_WEB_SMOKE_BROWSER_ARGS") {
             args.extend(extra_args.split_whitespace().map(ToOwned::to_owned));
