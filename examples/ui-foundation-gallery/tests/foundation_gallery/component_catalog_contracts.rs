@@ -1454,7 +1454,7 @@ fn components_page_samples_expose_component_metadata() {
         ["server-workspace", "server-cache", "server-failed"]
     );
 
-    assert_eq!(virtualized_lists.len(), 5);
+    assert_eq!(virtualized_lists.len(), 6);
     assert_eq!(
         virtualized_lists
             .iter()
@@ -1465,6 +1465,7 @@ fn components_page_samples_expose_component_metadata() {
             "primary-options",
             "section-status",
             "custom-renderer",
+            "host-controlled-actions",
             "measured-notes"
         ]
     );
@@ -1526,6 +1527,23 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(
         custom_renderer.behavior_snapshot().row_role(),
         Role::ListBoxOption
+    );
+
+    let host_controlled_actions = virtualized_lists
+        .iter()
+        .find(|sample| sample.id == "host-controlled-actions")
+        .expect("host-controlled actions virtualized list sample");
+    assert_eq!(
+        host_controlled_actions.renderer,
+        pages::components::VirtualizedListSampleRenderer::NestedAction
+    );
+    assert_eq!(
+        host_controlled_actions.host_reveal_key,
+        Some("host-action-0010")
+    );
+    assert_eq!(
+        host_controlled_actions.host_reveal_strategy,
+        VirtualizedListScrollStrategy::Top
     );
 
     let measured_notes = virtualized_lists

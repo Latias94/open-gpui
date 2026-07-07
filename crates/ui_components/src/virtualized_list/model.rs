@@ -308,7 +308,15 @@ pub enum VirtualizedListRevealResult {
     Estimated(VirtualizedListRevealTarget),
     /// The key is not present in the current collection.
     NotFound(String),
+    /// The key is present more than once and is not a stable reveal target.
+    DuplicateKey(String),
+    /// The key is present but belongs to a disabled item row.
+    Disabled(String),
+    /// The key is present but belongs to a non-selectable status row.
+    StatusRow(String),
     /// The key is present but belongs to a non-selectable structural row.
+    StructuralRow(String),
+    /// The key is present but cannot participate in reveal.
     NotSelectable(String),
 }
 
@@ -588,21 +596,10 @@ impl VirtualizedListState {
         viewport_extent: UiPx,
         current_scroll_offset: UiPx,
     ) -> VirtualizedListRevealResult {
-        let matches = self
-            .items
-            .iter()
-            .enumerate()
-            .filter_map(|(index, item)| (item.key() == key).then_some(index))
-            .collect::<Vec<_>>();
-
-        let index = match matches.as_slice() {
-            [] => return VirtualizedListRevealResult::NotFound(key.to_owned()),
-            [index] => *index,
-            _ => return VirtualizedListRevealResult::NotSelectable(key.to_owned()),
+        let index = match self.reveal_index_for_key(key) {
+            Ok(index) => index,
+            Err(result) => return result,
         };
-        if !self.items[index].kind().selectable() {
-            return VirtualizedListRevealResult::NotSelectable(key.to_owned());
-        }
         let scroll_offset = virtualized_list_scroll_target(
             strategy,
             index,
@@ -629,21 +626,10 @@ impl VirtualizedListState {
         current_scroll_offset: UiPx,
         snapshot: &VirtualizerSnapshot,
     ) -> VirtualizedListRevealResult {
-        let matches = self
-            .items
-            .iter()
-            .enumerate()
-            .filter_map(|(index, item)| (item.key() == key).then_some(index))
-            .collect::<Vec<_>>();
-
-        let index = match matches.as_slice() {
-            [] => return VirtualizedListRevealResult::NotFound(key.to_owned()),
-            [index] => *index,
-            _ => return VirtualizedListRevealResult::NotSelectable(key.to_owned()),
+        let index = match self.reveal_index_for_key(key) {
+            Ok(index) => index,
+            Err(result) => return result,
         };
-        if !self.items[index].kind().selectable() {
-            return VirtualizedListRevealResult::NotSelectable(key.to_owned());
-        }
 
         let (scroll_offset, estimated) = virtualized_list_measured_scroll_target(
             strategy,
@@ -719,6 +705,40 @@ impl VirtualizedListState {
 
     pub(super) fn selectable_index_for_key(&self, key: &str) -> Option<usize> {
         state_item_index_by_unique_key(self.items.as_ref(), &self.duplicate_keys, key)
+    }
+
+    fn reveal_index_for_key(&self, key: &str) -> Result<usize, VirtualizedListRevealResult> {
+        let matches = self
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| (item.key() == key).then_some(index))
+            .collect::<Vec<_>>();
+
+        let index = match matches.as_slice() {
+            [] => return Err(VirtualizedListRevealResult::NotFound(key.to_owned())),
+            [index] => *index,
+            _ => return Err(VirtualizedListRevealResult::DuplicateKey(key.to_owned())),
+        };
+
+        let item = &self.items[index];
+        match item.kind() {
+            VirtualizedListRowKind::Item => {
+                if item.disabled_state() {
+                    Err(VirtualizedListRevealResult::Disabled(key.to_owned()))
+                } else {
+                    Ok(index)
+                }
+            }
+            VirtualizedListRowKind::Loading
+            | VirtualizedListRowKind::Empty
+            | VirtualizedListRowKind::Error => {
+                Err(VirtualizedListRevealResult::StatusRow(key.to_owned()))
+            }
+            VirtualizedListRowKind::Section | VirtualizedListRowKind::Separator => {
+                Err(VirtualizedListRevealResult::StructuralRow(key.to_owned()))
+            }
+        }
     }
 
     pub(super) fn range_anchor_key(

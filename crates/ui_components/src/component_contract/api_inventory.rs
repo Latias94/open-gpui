@@ -473,7 +473,10 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         controlled_inputs: &[],
         default_seeds: &[],
         policy_hints: &["axis", "reset_on_key", "preserve_scroll", "scroll_handle"],
-        callbacks: &[],
+        callbacks: &[CallbackApi {
+            name: "on_scroll_viewport_changed",
+            payload: "ScrollViewportChangedEvent",
+        }],
         renderer_neutral_state: true,
         no_interaction_note: None,
     },
@@ -717,7 +720,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "VirtualizedList",
-        controlled_inputs: &[],
+        controlled_inputs: &["scroll_handle", "reveal_key"],
         default_seeds: &[
             DefaultSeedApi {
                 builder: "default_active_key",
@@ -1633,6 +1636,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "horizontal",
             "both",
             "scroll_handle",
+            "on_scroll_viewport_changed",
             "reset_on_key",
             "preserve_scroll",
             "state",
@@ -1788,6 +1792,8 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "row_measure_mode",
             "motion_preference",
             "virtualizer_snapshot",
+            "scroll_handle",
+            "reveal_key",
             "render_row",
             "overscan",
             "on_activate",

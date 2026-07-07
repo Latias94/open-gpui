@@ -340,6 +340,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_selected_values_change",
         "on_selection_change",
         "on_sort_requested",
+        "on_scroll_viewport_changed",
         "on_toggle",
     ];
     for entry in COMPONENT_API_INVENTORY {
@@ -400,6 +401,11 @@ fn component_api_inventory_keeps_regression_sentinels_for_stateful_components() 
         "CommandSelectionChange",
     );
     assert_inventory_contains_default_seed("Tabs", "default_selected", "selected");
+    assert_inventory_contains_callback(
+        "ScrollArea",
+        "on_scroll_viewport_changed",
+        "ScrollViewportChangedEvent",
+    );
     assert_inventory_contains_default_seed("RadioGroup", "default_selected", "selected");
     assert_inventory_contains_default_seed("Toolbar", "default_focused", "focused");
     assert_inventory_contains_default_seed("Sidebar", "default_focused", "focused");
@@ -418,6 +424,8 @@ fn component_api_inventory_keeps_regression_sentinels_for_stateful_components() 
         "default_selected_keys",
         "selected_keys",
     );
+    assert_inventory_contains_controlled_input("VirtualizedList", "scroll_handle");
+    assert_inventory_contains_controlled_input("VirtualizedList", "reveal_key");
     assert_inventory_contains_callback(
         "VirtualizedList",
         "on_activate",

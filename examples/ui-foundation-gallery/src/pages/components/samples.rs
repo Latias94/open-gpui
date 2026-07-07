@@ -1,6 +1,9 @@
 //! Component sample descriptors and resolved-state builders for the foundation gallery.
 
-use open_gpui::{AppContext, ParentElement, Styled, div, prelude::FluentBuilder, rgb};
+use open_gpui::{
+    AppContext, InteractiveElement, ParentElement, StatefulInteractiveElement, Styled, div,
+    prelude::FluentBuilder, rgb,
+};
 use open_gpui_command::CommandContextStack;
 use open_gpui_ui_components::{
     Accordion, AccordionItem, AccordionMode, AccordionState, Avatar, AvatarState, Badge,
@@ -40,7 +43,7 @@ use open_gpui_ui_core::{
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use super::runtime::current_tree_sample_items;
+use super::runtime::{current_tree_sample_items, record_virtualized_list_nested_action};
 
 #[path = "samples/choice.rs"]
 mod choice;

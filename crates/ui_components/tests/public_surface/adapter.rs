@@ -86,6 +86,7 @@ fn adapter_only_public_surfaces_match_allowlist() {
         ("focus.rs", "BoxShadow"),
         ("focus.rs", "focus_ring_shadow_with_theme"),
         ("overlay.rs", "GpuiOverlayState"),
+        ("runtime.rs", "ScrollHandle"),
         ("scroll_area.rs", "ScrollHandle"),
         ("text_input.rs", "Entity<TextInputController>"),
         ("text_input.rs", "EntityInputHandler"),

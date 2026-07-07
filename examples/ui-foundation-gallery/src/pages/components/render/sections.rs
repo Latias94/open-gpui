@@ -1283,7 +1283,26 @@ pub(super) fn render_components_section(
                                                     let state = sample.state.clone();
                                                     let state_summary = sample.state_summary();
                                                     let sample_id_for_activation = sample_id.to_owned();
-                                                    let list = sample.build_list().on_activate(
+                                                    let mut list = sample.build_list();
+                                                    if let Some(reveal_key) = sample.host_reveal_key {
+                                                        let host_scroll_handle = window
+                                                            .use_keyed_state(
+                                                                format!(
+                                                                    "component-virtualized-list-host-scroll:{sample_id}"
+                                                                ),
+                                                                cx,
+                                                                |_, _| open_gpui::ScrollHandle::new(),
+                                                            )
+                                                            .read(cx)
+                                                            .clone();
+                                                        list = list
+                                                            .scroll_handle(&host_scroll_handle)
+                                                            .reveal_key(
+                                                                reveal_key,
+                                                                sample.host_reveal_strategy,
+                                                            );
+                                                    }
+                                                    let list = list.on_activate(
                                                     move |activation, _, cx| {
                                                         pages::components::record_virtualized_list_activation(
                                                             sample_id_for_activation.clone(),
