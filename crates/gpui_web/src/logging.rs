@@ -23,8 +23,7 @@ impl Log for ConsoleLogger {
         match record.level() {
             Level::Error => web_sys::console::error_1(&js_string),
             Level::Warn => web_sys::console::warn_1(&js_string),
-            Level::Info => web_sys::console::info_1(&js_string),
-            Level::Debug | Level::Trace => web_sys::console::log_1(&js_string),
+            Level::Info | Level::Debug | Level::Trace => web_sys::console::log_1(&js_string),
         }
     }
 
