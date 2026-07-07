@@ -1,17 +1,19 @@
 use crate::a11y::UiA11yElementExt;
+use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::gpui_px_from_ui;
 use crate::scroll_area::ScrollArea;
 use crate::scroll_surface::{
     ScrollSurfaceRuntime, scroll_surface_handle, set_vertical_scroll_offset,
     vertical_scroll_offset, vertical_viewport_extent,
 };
+use crate::theme::ThemeResolver;
 use open_gpui::{
     AnyElement, App, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
-    Window, div, px, rgb,
+    Window, div, px,
 };
 use open_gpui_motion::{MotionFrameHost, MotionPreference, MotionPreset};
-use open_gpui_ui_core::{Sizable, Size, UiPx, VirtualizerSnapshot};
+use open_gpui_ui_core::{Sizable, Size, ThemeTokens, UiPx, VirtualizerSnapshot};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -96,6 +98,7 @@ pub struct VirtualizedList {
     active_key: Option<String>,
     selected_keys: BTreeSet<String>,
     selection_mode: VirtualizedListSelectionMode,
+    tokens: ThemeTokens,
     viewport_item_count: usize,
     metrics: VirtualizedListMetrics,
     row_measure_mode: VirtualizedListRowMeasureMode,
@@ -137,6 +140,7 @@ impl VirtualizedList {
             active_key: None,
             selected_keys: BTreeSet::new(),
             selection_mode: VirtualizedListSelectionMode::Single,
+            tokens: ThemeTokens::default(),
             viewport_item_count: DEFAULT_VIRTUALIZED_LIST_VIEWPORT_ITEM_COUNT,
             metrics: VirtualizedListMetrics::from_size(size),
             row_measure_mode: VirtualizedListRowMeasureMode::default(),
@@ -180,6 +184,12 @@ impl VirtualizedList {
     /// Applies the list selection behavior.
     pub fn selection_mode(mut self, selection_mode: VirtualizedListSelectionMode) -> Self {
         self.selection_mode = selection_mode;
+        self
+    }
+
+    /// Applies the theme token bundle used by virtualized-list color recipes.
+    pub fn tokens(mut self, tokens: ThemeTokens) -> Self {
+        self.tokens = tokens;
         self
     }
 
@@ -333,6 +343,9 @@ impl Sizable for VirtualizedList {
 
 impl RenderOnce for VirtualizedList {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
+        let colors = ThemeResolver::virtualized_list_colors(self.tokens);
+        let focus_shadow = focus_ring_shadow_with_theme(colors.focus_ring_shape(), &theme);
         let runtime_id = format!("virtualized-list:{}:runtime", self.id);
         let debug_id = self.id.to_string();
         let now = Instant::now();
@@ -393,6 +406,7 @@ impl RenderOnce for VirtualizedList {
         let on_selection_change = self.on_selection_change.clone();
         let list_state = plan.state().clone();
         let rows = plan.rows().to_vec();
+        let sticky_overlay = plan.sticky_overlay().cloned();
         let row_measure_mode = plan.row_measure_mode();
         let estimated_row_height = plan.metrics().row_height();
         let virtualizer_snapshot = plan.virtualizer().snapshot().clone();
@@ -446,15 +460,15 @@ impl RenderOnce for VirtualizedList {
             .overflow_hidden()
             .rounded(px(6.0))
             .border_1()
-            .border_color(rgb(0xd6d8ce))
-            .bg(rgb(0xffffff))
+            .border_color(theme.resolve(colors.border()))
+            .bg(theme.resolve(colors.surface()))
             .text_size(gpui_px_from_ui(self.size.control_text_px()))
-            .text_color(rgb(0x2f3845))
+            .text_color(theme.resolve(colors.foreground()))
             .focusable()
             .tab_group()
             .tab_stop(!list_state.disabled() && !list_state.visible_empty())
             .track_focus(&focus_handle)
-            .focus_visible(|style| style.border_color(rgb(0x2f80ed)))
+            .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .ui_role(plan.role())
             .aria_label(plan.label().to_owned())
             .aria_disabled(list_state.disabled())
@@ -502,6 +516,8 @@ impl RenderOnce for VirtualizedList {
                             &rows,
                             plan.virtualizer().total_size(),
                             active_indicator,
+                            sticky_overlay,
+                            colors,
                             row_measure_mode,
                             estimated_row_height,
                             row_renderer,

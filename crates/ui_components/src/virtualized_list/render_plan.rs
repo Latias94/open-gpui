@@ -4,7 +4,9 @@ use open_gpui_ui_core::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::descriptor::{VirtualizedListItemDescriptor, VirtualizedListRowKind};
+use super::descriptor::{
+    VirtualizedListItemDescriptor, VirtualizedListRowKind, VirtualizedListStatusKind,
+};
 use super::model::{VirtualizedListItemTarget, VirtualizedListState, virtualized_list_state_items};
 use super::style::{VirtualizedListMetrics, nonnegative_px};
 
@@ -121,6 +123,16 @@ impl VirtualizedListRowBehaviorSnapshot {
     /// Returns status text.
     pub fn status(&self) -> Option<&str> {
         self.item.status_ref()
+    }
+
+    /// Returns async/infinite status semantics for status rows.
+    pub fn status_kind(&self) -> Option<VirtualizedListStatusKind> {
+        self.item.status_kind()
+    }
+
+    /// Returns the retry command label for retry status rows.
+    pub fn retry_action_label(&self) -> Option<&str> {
+        self.item.retry_action_label_ref()
     }
 
     /// Returns the stable render key.
@@ -279,6 +291,16 @@ impl VirtualizedListRowRenderContext {
         self.item.status_ref()
     }
 
+    /// Returns async/infinite status semantics for status rows.
+    pub fn status_kind(&self) -> Option<VirtualizedListStatusKind> {
+        self.item.status_kind()
+    }
+
+    /// Returns the retry command label for retry status rows.
+    pub fn retry_action_label(&self) -> Option<&str> {
+        self.item.retry_action_label_ref()
+    }
+
     /// Returns the stable render key used for element identity.
     pub fn render_key(&self) -> &str {
         &self.render_key
@@ -373,6 +395,55 @@ impl VirtualizedListStickySectionSnapshot {
     }
 }
 
+/// Presentation-only sticky section overlay contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VirtualizedListStickyOverlaySnapshot {
+    section: VirtualizedListStickySectionSnapshot,
+    source_row_visible: bool,
+}
+
+impl VirtualizedListStickyOverlaySnapshot {
+    pub(super) const fn new(
+        section: VirtualizedListStickySectionSnapshot,
+        source_row_visible: bool,
+    ) -> Self {
+        Self {
+            section,
+            source_row_visible,
+        }
+    }
+
+    /// Returns the section represented by the overlay.
+    pub const fn section(&self) -> &VirtualizedListStickySectionSnapshot {
+        &self.section
+    }
+
+    /// Returns whether the semantic source row is currently rendered.
+    pub const fn source_row_visible(&self) -> bool {
+        self.source_row_visible
+    }
+
+    /// Returns whether the overlay owns an accessibility role.
+    pub const fn role(&self) -> Option<Role> {
+        None
+    }
+
+    /// Returns whether the overlay can receive focus.
+    pub const fn focusable(&self) -> bool {
+        false
+    }
+
+    /// Returns whether the overlay owns pointer or click behavior.
+    pub const fn pointer_interactive(&self) -> bool {
+        false
+    }
+
+    /// Returns whether custom renderers may inject interactive content into the overlay.
+    pub const fn allows_interactive_content(&self) -> bool {
+        false
+    }
+}
+
 /// Public behavior snapshot for a concrete virtualized list.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VirtualizedListBehaviorSnapshot {
@@ -388,6 +459,7 @@ pub struct VirtualizedListBehaviorSnapshot {
     visible_range: open_gpui_ui_core::VirtualizerRange,
     overscan_range: open_gpui_ui_core::VirtualizerRange,
     sticky_section: Option<VirtualizedListStickySectionSnapshot>,
+    sticky_overlay: Option<VirtualizedListStickyOverlaySnapshot>,
     rows: Vec<VirtualizedListRowBehaviorSnapshot>,
     visible_row_count: usize,
     overscan_count: usize,
@@ -410,6 +482,7 @@ impl VirtualizedListBehaviorSnapshot {
             visible_range: plan.virtualizer().visible_range().clone(),
             overscan_range: plan.virtualizer().overscan_range().clone(),
             sticky_section: plan.sticky_section().cloned(),
+            sticky_overlay: plan.sticky_overlay().cloned(),
             rows: plan
                 .rows()
                 .iter()
@@ -480,6 +553,11 @@ impl VirtualizedListBehaviorSnapshot {
     /// Returns the section that owns the first visible selectable row.
     pub fn sticky_section(&self) -> Option<&VirtualizedListStickySectionSnapshot> {
         self.sticky_section.as_ref()
+    }
+
+    /// Returns presentation-only sticky overlay metadata.
+    pub fn sticky_overlay(&self) -> Option<&VirtualizedListStickyOverlaySnapshot> {
+        self.sticky_overlay.as_ref()
     }
 
     /// Returns rows in render order.
@@ -664,6 +742,7 @@ pub(crate) struct VirtualizedListRenderPlan {
     row_measure_mode: VirtualizedListRowMeasureMode,
     virtualizer: VirtualizerResolvedState,
     sticky_section: Option<VirtualizedListStickySectionSnapshot>,
+    sticky_overlay: Option<VirtualizedListStickyOverlaySnapshot>,
     rows: Vec<VirtualizedListRowRenderPlan>,
     visible_row_count: usize,
     overscan_count: usize,
@@ -704,7 +783,7 @@ impl VirtualizedListRenderPlan {
         let metrics = state.metrics();
         let viewport_extent = resolve_viewport_extent(&state, viewport_extent);
         let duplicate_keys = duplicate_item_keys(items);
-        let row_positions = virtualized_list_row_positions(items);
+        let row_positions = virtualized_list_row_positions(items, &duplicate_keys);
         let option_count = row_positions
             .iter()
             .filter(|position| position.is_some())
@@ -742,7 +821,11 @@ impl VirtualizedListRenderPlan {
                     &state,
                 )
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let sticky_overlay = sticky_section.as_ref().map(|section| {
+            let source_row_visible = rows.iter().any(|row| row.index() == section.index());
+            VirtualizedListStickyOverlaySnapshot::new(section.clone(), source_row_visible)
+        });
 
         Self {
             list_id: list_id.into(),
@@ -752,6 +835,7 @@ impl VirtualizedListRenderPlan {
             row_measure_mode,
             virtualizer,
             sticky_section,
+            sticky_overlay,
             rows,
             visible_row_count,
             overscan_count,
@@ -793,6 +877,11 @@ impl VirtualizedListRenderPlan {
     /// Returns the section that owns the first visible selectable row.
     pub fn sticky_section(&self) -> Option<&VirtualizedListStickySectionSnapshot> {
         self.sticky_section.as_ref()
+    }
+
+    /// Returns presentation-only sticky overlay metadata.
+    pub fn sticky_overlay(&self) -> Option<&VirtualizedListStickyOverlaySnapshot> {
+        self.sticky_overlay.as_ref()
     }
 
     /// Returns rows in render order.
@@ -851,12 +940,15 @@ fn duplicate_item_keys(items: &[VirtualizedListItemDescriptor]) -> BTreeSet<Stri
         .collect()
 }
 
-fn virtualized_list_row_positions(items: &[VirtualizedListItemDescriptor]) -> Vec<Option<usize>> {
+fn virtualized_list_row_positions(
+    items: &[VirtualizedListItemDescriptor],
+    duplicate_keys: &BTreeSet<String>,
+) -> Vec<Option<usize>> {
     let mut option_position = 0usize;
     items
         .iter()
         .map(|item| {
-            item.kind().selectable().then(|| {
+            (item.selectable() && !duplicate_keys.contains(item.key())).then(|| {
                 option_position += 1;
                 option_position
             })

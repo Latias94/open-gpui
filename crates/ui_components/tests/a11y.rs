@@ -4,7 +4,7 @@ use open_gpui_ui_components::{
     COMPONENT_A11Y_EVIDENCE, Checkbox, ComponentA11yContract, Dialog, IconButton, Listbox,
     ListboxOption, Menu, MenuItem, NumberInput, Progress, Slider, Splitter, SplitterPanel,
     SplitterPanelDescriptor, Table, Tree, TreeItemDescriptor, VirtualizedList,
-    VirtualizedListItemDescriptor,
+    VirtualizedListItemDescriptor, VirtualizedListStatusKind,
 };
 use open_gpui_ui_core::{
     AccessibleAction, Orientation, Role, TableColumn, TableRow, TableState, Toggled, ui_px,
@@ -275,6 +275,56 @@ fn representative_component_a11y_contracts_are_valid() {
         .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus])
         .validate()
         .unwrap();
+
+    let status_list = VirtualizedList::new(
+        "virtual-status-list",
+        "Virtual status list",
+        [
+            VirtualizedListItemDescriptor::prepend_loading("prepend", "Loading previous rows"),
+            VirtualizedListItemDescriptor::item("alpha", "Alpha"),
+            VirtualizedListItemDescriptor::retry("retry", "Refresh failed", "Retry"),
+            VirtualizedListItemDescriptor::exhausted("done", "End of list"),
+        ],
+    )
+    .default_active_key("prepend")
+    .default_selected_keys(["prepend", "retry", "done"])
+    .behavior_snapshot_with_viewport(ui_px(0.0), ui_px(112.0));
+    assert_eq!(status_list.state().active_key(), Some("alpha"));
+    assert_eq!(status_list.state().selected_keys(), Vec::<&str>::new());
+    assert_eq!(
+        status_list.rows()[0].status_kind(),
+        Some(VirtualizedListStatusKind::PrependLoading)
+    );
+    assert_eq!(status_list.rows()[0].position_in_set(), None);
+    assert_eq!(status_list.rows()[1].position_in_set(), Some(1));
+    assert_eq!(status_list.rows()[1].size_of_set(), 1);
+    assert_eq!(
+        status_list.rows()[2].status_kind(),
+        Some(VirtualizedListStatusKind::Retry)
+    );
+    assert_eq!(status_list.rows()[2].retry_action_label(), Some("Retry"));
+    assert_eq!(status_list.rows()[2].position_in_set(), None);
+
+    let sticky_list = VirtualizedList::new(
+        "virtual-sticky-list",
+        "Virtual sticky list",
+        [
+            VirtualizedListItemDescriptor::section("recent", "Recent"),
+            VirtualizedListItemDescriptor::item("alpha", "Alpha"),
+            VirtualizedListItemDescriptor::section("archived", "Archived"),
+            VirtualizedListItemDescriptor::item("gamma", "Gamma"),
+        ],
+    )
+    .row_height(ui_px(20.0))
+    .overscan(0)
+    .behavior_snapshot_with_viewport(ui_px(60.0), ui_px(40.0));
+    let sticky_overlay = sticky_list
+        .sticky_overlay()
+        .expect("grouped visible rows should expose overlay metadata");
+    assert_eq!(sticky_overlay.section().key(), "archived");
+    assert_eq!(sticky_overlay.role(), None);
+    assert!(!sticky_overlay.focusable());
+    assert!(!sticky_overlay.pointer_interactive());
 
     let splitter = Splitter::new("main-split")
         .vertical()

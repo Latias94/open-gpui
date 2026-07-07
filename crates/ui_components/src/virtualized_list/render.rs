@@ -3,24 +3,30 @@ use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
     AnyElement, App, ClickEvent, Entity, FocusHandle, InteractiveElement, IntoElement,
-    ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, div, px, rgb,
+    ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use open_gpui_ui_core::{Size, UiPx};
 
 use super::descriptor::VirtualizedListRowKind;
 use super::model::{VirtualizedListActivation, VirtualizedListSelectionMode, VirtualizedListState};
 use super::motion::VirtualizedListActiveIndicatorSnapshot;
-use super::render_plan::{VirtualizedListRowMeasureMode, VirtualizedListRowRenderPlan};
+use super::render_plan::{
+    VirtualizedListRowMeasureMode, VirtualizedListRowRenderPlan,
+    VirtualizedListStickyOverlaySnapshot,
+};
 use super::runtime::{
     VirtualizedListActivationHandler, VirtualizedListRowRenderer, VirtualizedListRuntime,
     VirtualizedListSelectionChangeHandler,
 };
+use super::style::VirtualizedListColors;
 
 pub(super) fn render_virtualized_list_body(
     list_id: &str,
     rows: &[VirtualizedListRowRenderPlan],
     total_size: UiPx,
     active_indicator: Option<VirtualizedListActiveIndicatorSnapshot>,
+    sticky_overlay: Option<VirtualizedListStickyOverlaySnapshot>,
+    colors: VirtualizedListColors,
     row_measure_mode: VirtualizedListRowMeasureMode,
     estimated_row_height: UiPx,
     row_renderer: Option<VirtualizedListRowRenderer>,
@@ -41,6 +47,7 @@ pub(super) fn render_virtualized_list_body(
             render_virtualized_list_row(
                 list_id.clone(),
                 row,
+                colors,
                 row_measure_mode,
                 estimated_row_height,
                 row_renderer.clone(),
@@ -67,18 +74,32 @@ pub(super) fn render_virtualized_list_body(
         .h(gpui_px_from_ui(total_size))
         .children(row_elements)
         .when_some(active_indicator, |this, indicator| {
-            this.child(render_virtualized_list_active_indicator(indicator))
+            this.child(render_virtualized_list_active_indicator(
+                indicator, colors, cx,
+            ))
+        })
+        .when_some(sticky_overlay, |this, overlay| {
+            this.child(render_virtualized_list_sticky_overlay(
+                list_id,
+                overlay,
+                colors,
+                estimated_row_height,
+                cx,
+            ))
         })
         .into_any_element()
 }
 
 fn render_virtualized_list_active_indicator(
     indicator: VirtualizedListActiveIndicatorSnapshot,
+    colors: VirtualizedListColors,
+    cx: &App,
 ) -> AnyElement {
+    let theme = crate::theme::ThemeResolver::current(cx);
     let indicator_color = if indicator.frame_demand().needs_frame() {
-        rgb(0x2563eb)
+        theme.resolve(colors.active_indicator_moving())
     } else {
-        rgb(0x2f80ed)
+        theme.resolve(colors.active_indicator())
     };
 
     div()
@@ -92,9 +113,45 @@ fn render_virtualized_list_active_indicator(
         .into_any_element()
 }
 
+fn render_virtualized_list_sticky_overlay(
+    list_id: String,
+    overlay: VirtualizedListStickyOverlaySnapshot,
+    colors: VirtualizedListColors,
+    estimated_row_height: UiPx,
+    cx: &App,
+) -> AnyElement {
+    let theme = crate::theme::ThemeResolver::current(cx);
+    let section = overlay.section().clone();
+    let key = section.key().to_owned();
+    let label = section.label().to_owned();
+
+    div()
+        .id(format!("virtualized-list:{list_id}:sticky-overlay:{key}"))
+        .debug_selector({
+            let list_id = list_id.clone();
+            let key = key.clone();
+            move || format!("virtualized-list:{list_id}:sticky-overlay:{key}")
+        })
+        .absolute()
+        .top(px(0.0))
+        .left(px(0.0))
+        .right(px(0.0))
+        .h(gpui_px_from_ui(estimated_row_height))
+        .flex()
+        .items_center()
+        .px(px(10.0))
+        .border_b_1()
+        .border_color(theme.resolve(colors.border()))
+        .bg(theme.resolve(colors.sticky_overlay_background()))
+        .text_color(theme.resolve(colors.sticky_overlay_foreground()))
+        .child(label)
+        .into_any_element()
+}
+
 fn render_virtualized_list_row(
     list_id: String,
     row: VirtualizedListRowRenderPlan,
+    colors: VirtualizedListColors,
     row_measure_mode: VirtualizedListRowMeasureMode,
     estimated_row_height: UiPx,
     row_renderer: Option<VirtualizedListRowRenderer>,
@@ -116,19 +173,21 @@ fn render_virtualized_list_row(
     let trailing_metadata = row.item().trailing_metadata_ref().map(str::to_owned);
     let badge = row.item().badge_ref().map(str::to_owned);
     let status = row.item().status_ref().map(str::to_owned);
+    let retry_action_label = row.item().retry_action_label_ref().map(str::to_owned);
+    let theme = crate::theme::ThemeResolver::current(cx);
     let row_background = if row.selected() {
-        rgb(0xe7f0ff)
+        theme.resolve(colors.row_selected_background())
     } else if row.active() {
-        rgb(0xeef2f7)
+        theme.resolve(colors.row_active_background())
     } else if row.index().is_multiple_of(2) {
-        rgb(0xffffff)
+        theme.resolve(colors.row_background())
     } else {
-        rgb(0xf8f9f3)
+        theme.resolve(colors.row_alternate_background())
     };
     let text_color = if row.disabled() {
-        rgb(0x8b93a1)
+        theme.resolve(colors.row_disabled_foreground())
     } else {
-        rgb(0x2f3845)
+        theme.resolve(colors.foreground())
     };
     let row_content = if let Some(row_renderer) = row_renderer.as_ref() {
         row_renderer(row.render_context(row_measure_mode), window, cx)
@@ -141,6 +200,9 @@ fn render_virtualized_list_row(
             trailing_metadata,
             badge,
             status,
+            retry_action_label,
+            colors,
+            cx,
         )
     };
 
@@ -186,7 +248,7 @@ fn render_virtualized_list_row(
         .items_center()
         .overflow_hidden()
         .border_b_1()
-        .border_color(rgb(0xe2e4dc))
+        .border_color(theme.resolve(colors.border()))
         .bg(row_background)
         .text_color(text_color)
         .ui_role(row.role())
@@ -196,7 +258,8 @@ fn render_virtualized_list_row(
             this.aria_position_in_set(position)
         })
         .when(!row.disabled(), |this| {
-            this.cursor_pointer().hover(|style| style.bg(rgb(0xeef2f7)))
+            this.cursor_pointer()
+                .hover(move |style| style.bg(theme.resolve(colors.row_hover_background())))
         })
         .when(!row.disabled(), |this| {
             let runtime = runtime.clone();
@@ -260,13 +323,17 @@ fn render_default_virtualized_list_row_content(
     trailing_metadata: Option<String>,
     badge: Option<String>,
     status: Option<String>,
+    retry_action_label: Option<String>,
+    colors: VirtualizedListColors,
+    cx: &App,
 ) -> AnyElement {
+    let theme = crate::theme::ThemeResolver::current(cx);
     if row_kind == VirtualizedListRowKind::Separator {
         return div()
             .mx(px(8.0))
             .h(px(1.0))
             .w_full()
-            .bg(rgb(0xe2e4dc))
+            .bg(theme.resolve(colors.separator()))
             .into_any_element();
     }
 
@@ -280,7 +347,7 @@ fn render_default_virtualized_list_row_content(
         .when_some(leading_metadata, |this, metadata| {
             this.child(
                 div()
-                    .text_color(rgb(0x667085))
+                    .text_color(theme.resolve(colors.muted_foreground()))
                     .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
                     .child(metadata),
             )
@@ -295,7 +362,7 @@ fn render_default_virtualized_list_row_content(
                 .when_some(secondary_text, |this, secondary_text| {
                     this.child(
                         div()
-                            .text_color(rgb(0x667085))
+                            .text_color(theme.resolve(colors.muted_foreground()))
                             .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
                             .child(secondary_text),
                     )
@@ -305,9 +372,9 @@ fn render_default_virtualized_list_row_content(
             this.child(
                 div()
                     .rounded(px(4.0))
-                    .bg(rgb(0xeef2f7))
+                    .bg(theme.resolve(colors.badge_background()))
                     .px_1()
-                    .text_color(rgb(0x475467))
+                    .text_color(theme.resolve(colors.badge_foreground()))
                     .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
                     .child(badge),
             )
@@ -315,15 +382,27 @@ fn render_default_virtualized_list_row_content(
         .when_some(status, |this, status| {
             this.child(
                 div()
-                    .text_color(rgb(0x475467))
+                    .text_color(theme.resolve(colors.status_foreground()))
                     .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
                     .child(status),
+            )
+        })
+        .when_some(retry_action_label, |this, action_label| {
+            this.child(
+                div()
+                    .rounded(px(4.0))
+                    .border_1()
+                    .border_color(theme.resolve(colors.border()))
+                    .px_1()
+                    .text_color(theme.resolve(colors.status_foreground()))
+                    .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
+                    .child(action_label),
             )
         })
         .when_some(trailing_metadata, |this, metadata| {
             this.child(
                 div()
-                    .text_color(rgb(0x667085))
+                    .text_color(theme.resolve(colors.muted_foreground()))
                     .text_size(gpui_px_from_ui(Size::XSmall.control_text_px()))
                     .child(metadata),
             )

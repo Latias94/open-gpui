@@ -21,7 +21,9 @@ use std::collections::BTreeMap;
 #[cfg(test)]
 use std::time::{Duration, Instant};
 
-pub use self::descriptor::{VirtualizedListItemDescriptor, VirtualizedListRowKind};
+pub use self::descriptor::{
+    VirtualizedListItemDescriptor, VirtualizedListRowKind, VirtualizedListStatusKind,
+};
 pub use self::model::{
     VirtualizedListActivation, VirtualizedListRevealResult, VirtualizedListRevealTarget,
     VirtualizedListScrollStrategy, VirtualizedListSelectionChange, VirtualizedListSelectionMode,
@@ -30,10 +32,10 @@ pub use self::model::{
 pub use self::render_plan::{
     VirtualizedListBehaviorSnapshot, VirtualizedListRowBehaviorSnapshot,
     VirtualizedListRowMeasureMode, VirtualizedListRowRenderContext,
-    VirtualizedListStickySectionSnapshot,
+    VirtualizedListStickyOverlaySnapshot, VirtualizedListStickySectionSnapshot,
 };
 pub use self::runtime::VirtualizedList;
-pub use self::style::VirtualizedListMetrics;
+pub use self::style::{VirtualizedListColors, VirtualizedListMetrics};
 
 #[cfg(test)]
 use self::motion::VirtualizedListActiveIndicatorRuntime;
@@ -440,6 +442,92 @@ mod tests {
     }
 
     #[test]
+    fn virtualized_list_status_kinds_are_explicit_and_never_selectable() {
+        let rows = [
+            VirtualizedListItemDescriptor::loading("initial", "Loading releases"),
+            VirtualizedListItemDescriptor::empty("empty", "No releases"),
+            VirtualizedListItemDescriptor::append_loading("append", "Loading more"),
+            VirtualizedListItemDescriptor::prepend_loading("prepend", "Loading previous"),
+            VirtualizedListItemDescriptor::exhausted("done", "End of releases"),
+            VirtualizedListItemDescriptor::error("error", "Failed to load"),
+            VirtualizedListItemDescriptor::retry("retry", "Failed to refresh", "Retry"),
+        ];
+        let snapshot = VirtualizedList::new("status-list", "Status list", rows)
+            .default_active_key("append")
+            .default_selected_keys(["append", "retry"])
+            .behavior_snapshot();
+        let statuses = snapshot
+            .rows()
+            .iter()
+            .map(|row| {
+                (
+                    row.key(),
+                    row.kind(),
+                    row.status_kind(),
+                    row.retry_action_label(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(snapshot.state().active_key(), None);
+        assert!(snapshot.state().selected_keys().is_empty());
+        assert_eq!(snapshot.rows().len(), 7);
+        assert_eq!(
+            statuses[0].2,
+            Some(VirtualizedListStatusKind::InitialLoading)
+        );
+        assert_eq!(statuses[1].2, Some(VirtualizedListStatusKind::Empty));
+        assert_eq!(
+            statuses[2].2,
+            Some(VirtualizedListStatusKind::AppendLoading)
+        );
+        assert_eq!(
+            statuses[3].2,
+            Some(VirtualizedListStatusKind::PrependLoading)
+        );
+        assert_eq!(statuses[4].2, Some(VirtualizedListStatusKind::Exhausted));
+        assert_eq!(statuses[5].2, Some(VirtualizedListStatusKind::Error));
+        assert_eq!(statuses[6].2, Some(VirtualizedListStatusKind::Retry));
+        assert_eq!(statuses[6].3, Some("Retry"));
+        assert!(snapshot.rows().iter().all(|row| {
+            row.position_in_set().is_none() && row.size_of_set() == 0 && !row.item().selectable()
+        }));
+        assert_eq!(snapshot.rows()[0].role(), Role::ProgressIndicator);
+        assert_eq!(snapshot.rows()[2].role(), Role::ProgressIndicator);
+        assert_eq!(snapshot.rows()[4].role(), Role::Section);
+        assert_eq!(snapshot.rows()[6].role(), Role::AlertDialog);
+        assert_eq!(
+            snapshot.state().scroll_target_for_key(
+                "retry",
+                VirtualizedListScrollStrategy::Nearest,
+                ui_px(84.0),
+                UiPx::ZERO,
+            ),
+            VirtualizedListRevealResult::NotSelectable("retry".to_owned())
+        );
+    }
+
+    #[test]
+    fn virtualized_list_status_kind_labels_are_stable() {
+        assert_eq!(
+            VirtualizedListStatusKind::InitialLoading.as_str(),
+            "initial-loading"
+        );
+        assert_eq!(VirtualizedListStatusKind::Empty.as_str(), "empty");
+        assert_eq!(
+            VirtualizedListStatusKind::AppendLoading.as_str(),
+            "append-loading"
+        );
+        assert_eq!(
+            VirtualizedListStatusKind::PrependLoading.as_str(),
+            "prepend-loading"
+        );
+        assert_eq!(VirtualizedListStatusKind::Exhausted.as_str(), "exhausted");
+        assert_eq!(VirtualizedListStatusKind::Error.as_str(), "error");
+        assert_eq!(VirtualizedListStatusKind::Retry.as_str(), "retry");
+    }
+
+    #[test]
     fn virtualized_list_scroll_strategy_labels_are_stable() {
         assert_eq!(VirtualizedListScrollStrategy::Nearest.as_str(), "nearest");
         assert_eq!(VirtualizedListScrollStrategy::Top.as_str(), "top");
@@ -475,8 +563,8 @@ mod tests {
         assert!(snapshot.rows()[0].selected());
         assert!(snapshot.rows()[2].disabled());
         assert!(snapshot.rows()[3].active());
-        assert_eq!(snapshot.rows()[2].position_in_set(), Some(3));
-        assert_eq!(snapshot.rows()[2].size_of_set(), 4);
+        assert_eq!(snapshot.rows()[2].position_in_set(), None);
+        assert_eq!(snapshot.rows()[2].size_of_set(), 2);
         assert_eq!(snapshot.rows()[2].virtual_start(), ui_px(56.0));
         assert_eq!(snapshot.rows()[2].virtual_size(), ui_px(28.0));
         assert!(snapshot.active_row().is_some());
@@ -551,13 +639,14 @@ mod tests {
         assert_eq!(snapshot.rows()[0].kind(), VirtualizedListRowKind::Section);
         assert_eq!(snapshot.rows()[0].role(), Role::Group);
         assert_eq!(snapshot.rows()[0].position_in_set(), None);
-        assert_eq!(snapshot.rows()[0].size_of_set(), 2);
+        assert_eq!(snapshot.rows()[0].size_of_set(), 1);
         assert_eq!(snapshot.rows()[1].position_in_set(), Some(1));
         assert_eq!(snapshot.rows()[2].kind(), VirtualizedListRowKind::Separator);
         assert_eq!(snapshot.rows()[2].role(), Role::Separator);
         assert_eq!(snapshot.rows()[2].position_in_set(), None);
         assert_eq!(snapshot.rows()[3].disabled_reason(), Some("Offline"));
-        assert_eq!(snapshot.rows()[3].position_in_set(), Some(2));
+        assert_eq!(snapshot.rows()[3].position_in_set(), None);
+        assert_eq!(snapshot.rows()[3].size_of_set(), 1);
         assert_eq!(
             snapshot.state().scroll_target_for_key(
                 "recent",
@@ -589,9 +678,18 @@ mod tests {
         let sticky = snapshot
             .sticky_section()
             .expect("visible rows should resolve their owning section");
+        let overlay = snapshot
+            .sticky_overlay()
+            .expect("grouped list should resolve a presentation overlay");
         assert_eq!(sticky.key(), "archived");
         assert_eq!(sticky.label(), "Archived");
         assert_eq!(sticky.index(), 2);
+        assert_eq!(overlay.section().key(), "archived");
+        assert!(!overlay.source_row_visible());
+        assert_eq!(overlay.role(), None);
+        assert!(!overlay.focusable());
+        assert!(!overlay.pointer_interactive());
+        assert!(!overlay.allows_interactive_content());
         assert_eq!(snapshot.state().active_key(), Some("alpha"));
         assert_eq!(snapshot.rows()[0].key(), "gamma");
         assert_eq!(snapshot.rows()[0].position_in_set(), Some(2));
@@ -616,7 +714,9 @@ mod tests {
         .behavior_snapshot();
 
         assert!(ungrouped.sticky_section().is_none());
+        assert!(ungrouped.sticky_overlay().is_none());
         assert!(status_only.sticky_section().is_none());
+        assert!(status_only.sticky_overlay().is_none());
     }
 
     #[test]
@@ -857,6 +957,88 @@ mod tests {
     }
 
     #[test]
+    fn virtualized_list_prepend_reveal_preserves_key_identity_with_measured_rows() {
+        let prepended_state = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            [
+                VirtualizedListStateItem::new("prepend-loading", "Loading previous")
+                    .row_kind(VirtualizedListRowKind::Loading)
+                    .disabled(true),
+                VirtualizedListStateItem::new("new-alpha", "New alpha"),
+                VirtualizedListStateItem::new("alpha", "Alpha"),
+                VirtualizedListStateItem::new("beta", "Beta"),
+                VirtualizedListStateItem::new("gamma", "Gamma"),
+            ],
+            Some("gamma"),
+            ["gamma"],
+            VirtualizedListSelectionMode::Single,
+            Some(3),
+        )
+        .with_metrics(VirtualizedListMetrics::from_size(Size::Medium).with_row_height(ui_px(20.0)));
+        let snapshot = VirtualizerSnapshot::new(
+            ui_px(0.0),
+            [
+                open_gpui_ui_core::VirtualizerSnapshotItem::new(
+                    VirtualizerItemKey::new("prepend-loading"),
+                    ui_px(16.0),
+                ),
+                open_gpui_ui_core::VirtualizerSnapshotItem::new(
+                    VirtualizerItemKey::new("new-alpha"),
+                    ui_px(24.0),
+                ),
+                open_gpui_ui_core::VirtualizerSnapshotItem::new(
+                    VirtualizerItemKey::new("alpha"),
+                    ui_px(10.0),
+                ),
+                open_gpui_ui_core::VirtualizerSnapshotItem::new(
+                    VirtualizerItemKey::new("beta"),
+                    ui_px(50.0),
+                ),
+                open_gpui_ui_core::VirtualizerSnapshotItem::new(
+                    VirtualizerItemKey::new("gamma"),
+                    ui_px(30.0),
+                ),
+            ],
+        );
+
+        assert_eq!(prepended_state.active_key(), Some("gamma"));
+        assert_eq!(prepended_state.selected_keys(), ["gamma"]);
+        assert_eq!(
+            prepended_state.scroll_target_for_key_with_snapshot(
+                "gamma",
+                VirtualizedListScrollStrategy::Top,
+                ui_px(30.0),
+                UiPx::ZERO,
+                &snapshot,
+            ),
+            VirtualizedListRevealResult::Revealed(VirtualizedListRevealTarget::new(
+                "gamma",
+                4,
+                ui_px(100.0),
+                false,
+            ))
+        );
+    }
+
+    #[test]
+    fn virtualized_list_colors_resolve_from_theme_tokens() {
+        use open_gpui_ui_core::semantic;
+
+        let colors = VirtualizedListColors::from_tokens(open_gpui_ui_core::ThemeTokens::default());
+
+        assert_eq!(colors.surface().token(), semantic::SURFACE);
+        assert_eq!(colors.foreground().token(), semantic::TEXT);
+        assert_eq!(
+            colors.row_selected_background().token(),
+            semantic::SURFACE_MUTED
+        );
+        assert_eq!(colors.active_indicator_moving().token(), semantic::ACCENT);
+        assert_eq!(colors.focus_ring().token(), semantic::FOCUS_RING);
+        assert!(!colors.focus_ring_shape().changes_layout());
+    }
+
+    #[test]
     fn virtualized_list_row_measure_mode_labels_are_stable() {
         assert_eq!(VirtualizedListRowMeasureMode::Fixed.as_str(), "fixed");
         assert_eq!(VirtualizedListRowMeasureMode::Measured.as_str(), "measured");
@@ -908,7 +1090,7 @@ mod tests {
         assert!(contexts[1].active());
         assert!(contexts[1].selected());
         assert_eq!(contexts[1].position_in_set(), Some(1));
-        assert_eq!(contexts[1].size_of_set(), 2);
+        assert_eq!(contexts[1].size_of_set(), 1);
         assert_eq!(contexts[1].virtual_start(), ui_px(28.0));
         assert_eq!(contexts[1].virtual_size(), ui_px(28.0));
         assert_eq!(contexts[2].disabled_reason(), Some("Offline"));

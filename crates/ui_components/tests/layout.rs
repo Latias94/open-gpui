@@ -627,10 +627,22 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     let _prelude_virtualized_state_item: prelude::VirtualizedListStateItem =
         prelude::VirtualizedListStateItem::new("prelude-item", "Prelude item");
     let _direct_virtualized_context_type: Option<VirtualizedListRowRenderContext> = None;
+    let _root_virtualized_colors: root::VirtualizedListColors =
+        root::VirtualizedListColors::from_tokens(open_gpui_ui_core::ThemeTokens::default());
+    let _prelude_virtualized_colors: prelude::VirtualizedListColors =
+        prelude::VirtualizedListColors::from_tokens(open_gpui_ui_core::ThemeTokens::default());
+    let _root_virtualized_overlay: Option<&root::VirtualizedListStickyOverlaySnapshot> =
+        root_virtualized_snapshot.sticky_overlay();
+    let _prelude_virtualized_overlay: Option<&prelude::VirtualizedListStickyOverlaySnapshot> =
+        prelude_virtualized_snapshot.sticky_overlay();
     let root_virtualized_row_kind: root::VirtualizedListRowKind =
         root::VirtualizedListRowKind::Item;
     let prelude_virtualized_row_kind: prelude::VirtualizedListRowKind =
         prelude::VirtualizedListRowKind::Section;
+    let root_virtualized_status_kind: root::VirtualizedListStatusKind =
+        root::VirtualizedListStatusKind::AppendLoading;
+    let prelude_virtualized_status_kind: prelude::VirtualizedListStatusKind =
+        prelude::VirtualizedListStatusKind::Retry;
     let root_virtualized_measure_mode: root::VirtualizedListRowMeasureMode =
         root::VirtualizedListRowMeasureMode::Measured;
     let prelude_virtualized_measure_mode: prelude::VirtualizedListRowMeasureMode =
@@ -710,6 +722,11 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     assert_eq!(prelude_virtualized_selection_mode.as_str(), "single");
     assert_eq!(root_virtualized_row_kind.as_str(), "item");
     assert_eq!(prelude_virtualized_row_kind.role(), Role::Group);
+    assert_eq!(root_virtualized_status_kind.as_str(), "append-loading");
+    assert_eq!(
+        prelude_virtualized_status_kind.row_kind().role(),
+        Role::AlertDialog
+    );
     assert_eq!(root_virtualized_snapshot.role(), Role::ListBox);
     assert_eq!(prelude_virtualized_snapshot.row_role(), Role::ListBoxOption);
     assert_eq!(
@@ -826,6 +843,82 @@ fn virtualized_list_runtime_reveals_active_row_and_emits_activation(
     });
 
     assert_eq!(activations.borrow().as_slice(), &[4]);
+}
+
+#[open_gpui::test]
+fn virtualized_list_runtime_renders_sticky_overlay_as_inert_presentation(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        activations: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let activations = self.activations.clone();
+            let items = [
+                VirtualizedListItemDescriptor::section("recent", "Recent"),
+                VirtualizedListItemDescriptor::item("alpha", "Alpha"),
+                VirtualizedListItemDescriptor::section("archived", "Archived"),
+                VirtualizedListItemDescriptor::item("spacer", "Loading gap").disabled(true),
+                VirtualizedListItemDescriptor::item("gamma", "Gamma"),
+            ];
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(56.0)).child(
+                    VirtualizedList::new("runtime-sticky-list", "Runtime sticky list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(2)
+                        .overscan(0)
+                        .default_active_key("alpha")
+                        .on_activate(move |activation, _, _| {
+                            activations.borrow_mut().push(activation.key().to_owned());
+                        }),
+                ),
+            )
+        }
+    }
+
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        activations: activations.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let root = cx
+        .debug_bounds("virtualized-list:runtime-sticky-list:root")
+        .expect("sticky list root should render");
+    cx.simulate_click(root.center(), Modifiers::none());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    cx.simulate_keystrokes("pagedown");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let overlay = cx
+        .debug_bounds("virtualized-list:runtime-sticky-list:sticky-overlay:archived")
+        .expect("sticky overlay should render as a presentation layer");
+    assert!(overlay.size.height > px(0.0));
+
+    cx.simulate_click(overlay.center(), Modifiers::none());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_selector_is_focused("virtualized-list:runtime-sticky-list:root"),
+        "clicking presentation overlay space should leave focus on the list root"
+    );
+    assert!(
+        activations.borrow().is_empty(),
+        "sticky overlay must not become an accidental activation target"
+    );
 }
 
 #[open_gpui::test]

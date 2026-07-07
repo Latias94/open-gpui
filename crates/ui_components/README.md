@@ -29,17 +29,22 @@ stays in `VirtualizedListState` and behavior snapshots.
 Supported v0.2.0 behavior includes:
 
 - Key-based active and selected state.
-- Item, section, separator, loading, empty, and error row descriptors.
-- Printable-key typeahead over `text_value`, skipping disabled, structural, and duplicate-key rows.
+- Item, section, separator, initial loading, append loading, prepend loading, exhausted, empty,
+  error, and retry row descriptors.
+- Printable-key typeahead over `text_value`, skipping disabled, structural, status, and
+  duplicate-key rows.
 - Replacement-style multi-select range selection with a stable key anchor.
 - Measured-row virtualizer snapshots and estimated reveal targets.
-- `VirtualizedListBehaviorSnapshot::sticky_section` metadata for grouped lists.
+- Keyed measured-row reveal after prepends.
+- `VirtualizedListBehaviorSnapshot::sticky_section` and presentation-only `sticky_overlay`
+  metadata for grouped lists.
+- Theme-backed color recipes through `VirtualizedListColors`.
 - A constrained `render_row` hook that replaces row content while the outer row keeps layout,
   accessibility, focus, hit testing, and selection behavior.
 
-`VirtualizedList` does not currently render a sticky overlay, animate row enter/exit, or expose a
-public presence API. The active indicator is paint-only motion chrome and must not mutate selection,
-focus order, roles, or row geometry.
+`VirtualizedList` does not currently animate row enter/exit or expose a public presence API. The
+sticky overlay and active indicator are paint-only chrome and must not mutate selection, focus
+order, roles, or row geometry.
 
 The public API is intentionally key-first. Applications should use `VirtualizedListState` methods
 such as `navigation_target`, `scroll_target_for_key`, and `scroll_target_for_key_with_snapshot`

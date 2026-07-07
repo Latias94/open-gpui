@@ -2,6 +2,51 @@ use open_gpui_ui_core::Role;
 
 use super::model::VirtualizedListStateItem;
 
+/// Async and infinite-scroll status represented by a virtualized-list row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VirtualizedListStatusKind {
+    /// The collection is loading before any selectable rows are available.
+    InitialLoading,
+    /// The collection loaded successfully but has no selectable rows.
+    Empty,
+    /// More rows are loading after the current collection tail.
+    AppendLoading,
+    /// More rows are loading before the current collection head.
+    PrependLoading,
+    /// The collection reached a terminal end-of-list state.
+    Exhausted,
+    /// The collection failed and requires caller-owned recovery.
+    Error,
+    /// The collection failed and exposes a caller-owned retry command.
+    Retry,
+}
+
+impl VirtualizedListStatusKind {
+    /// Returns the stable status label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InitialLoading => "initial-loading",
+            Self::Empty => "empty",
+            Self::AppendLoading => "append-loading",
+            Self::PrependLoading => "prepend-loading",
+            Self::Exhausted => "exhausted",
+            Self::Error => "error",
+            Self::Retry => "retry",
+        }
+    }
+
+    /// Returns the row anatomy used by this status.
+    pub const fn row_kind(self) -> VirtualizedListRowKind {
+        match self {
+            Self::InitialLoading | Self::AppendLoading | Self::PrependLoading => {
+                VirtualizedListRowKind::Loading
+            }
+            Self::Empty | Self::Exhausted => VirtualizedListRowKind::Empty,
+            Self::Error | Self::Retry => VirtualizedListRowKind::Error,
+        }
+    }
+}
+
 /// Anatomy of one virtualized-list row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VirtualizedListRowKind {
@@ -65,6 +110,8 @@ pub struct VirtualizedListItemDescriptor {
     trailing_metadata: Option<String>,
     badge: Option<String>,
     status: Option<String>,
+    status_kind: Option<VirtualizedListStatusKind>,
+    retry_action_label: Option<String>,
 }
 
 impl VirtualizedListItemDescriptor {
@@ -82,6 +129,8 @@ impl VirtualizedListItemDescriptor {
             trailing_metadata: None,
             badge: None,
             status: None,
+            status_kind: None,
+            retry_action_label: None,
         }
     }
 
@@ -102,17 +151,57 @@ impl VirtualizedListItemDescriptor {
 
     /// Creates a non-selectable loading status row.
     pub fn loading(key: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::new(key, message).with_kind(VirtualizedListRowKind::Loading)
+        Self::status_row(key, message, VirtualizedListStatusKind::InitialLoading)
     }
 
     /// Creates a non-selectable empty status row.
     pub fn empty(key: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::new(key, message).with_kind(VirtualizedListRowKind::Empty)
+        Self::status_row(key, message, VirtualizedListStatusKind::Empty)
     }
 
     /// Creates a non-selectable error status row.
     pub fn error(key: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::new(key, message).with_kind(VirtualizedListRowKind::Error)
+        Self::status_row(key, message, VirtualizedListStatusKind::Error)
+    }
+
+    /// Creates a non-selectable append-loading status row.
+    pub fn append_loading(key: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::status_row(key, message, VirtualizedListStatusKind::AppendLoading)
+    }
+
+    /// Creates a non-selectable prepend-loading status row.
+    pub fn prepend_loading(key: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::status_row(key, message, VirtualizedListStatusKind::PrependLoading)
+    }
+
+    /// Creates a non-selectable end-of-list status row.
+    pub fn exhausted(key: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::status_row(key, message, VirtualizedListStatusKind::Exhausted)
+    }
+
+    /// Creates a non-selectable retry status row with an explicit action label.
+    pub fn retry(
+        key: impl Into<String>,
+        message: impl Into<String>,
+        action_label: impl Into<String>,
+    ) -> Self {
+        let mut item = Self::status_row(key, message, VirtualizedListStatusKind::Retry);
+        item.retry_action_label = Some(action_label.into());
+        item
+    }
+
+    /// Applies explicit async/infinite status semantics to a non-selectable row.
+    pub fn with_status_kind(mut self, status_kind: VirtualizedListStatusKind) -> Self {
+        self.kind = status_kind.row_kind();
+        self.disabled = true;
+        self.status_kind = Some(status_kind);
+        self
+    }
+
+    /// Applies an explicit retry action label to a retry status row.
+    pub fn retry_action_label(mut self, action_label: impl Into<String>) -> Self {
+        self.retry_action_label = Some(action_label.into());
+        self
     }
 
     /// Marks the item as disabled.
@@ -224,6 +313,16 @@ impl VirtualizedListItemDescriptor {
         self.status.as_deref()
     }
 
+    /// Returns the async/infinite status kind represented by this row.
+    pub const fn status_kind(&self) -> Option<VirtualizedListStatusKind> {
+        self.status_kind
+    }
+
+    /// Returns the explicit retry command label for retry rows.
+    pub fn retry_action_label_ref(&self) -> Option<&str> {
+        self.retry_action_label.as_deref()
+    }
+
     /// Returns whether the row participates in active selection and activation.
     pub const fn selectable(&self) -> bool {
         self.kind.selectable() && !self.disabled
@@ -239,6 +338,18 @@ impl VirtualizedListItemDescriptor {
     fn with_kind(mut self, kind: VirtualizedListRowKind) -> Self {
         self.kind = kind;
         self.disabled = !kind.selectable();
+        if kind.selectable() {
+            self.status_kind = None;
+            self.retry_action_label = None;
+        }
         self
+    }
+
+    fn status_row(
+        key: impl Into<String>,
+        message: impl Into<String>,
+        status_kind: VirtualizedListStatusKind,
+    ) -> Self {
+        Self::new(key, message).with_status_kind(status_kind)
     }
 }

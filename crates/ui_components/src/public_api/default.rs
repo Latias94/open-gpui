@@ -170,9 +170,10 @@ pub use crate::tree::{
 };
 pub use crate::virtualized_list::{
     VirtualizedList, VirtualizedListActivation, VirtualizedListBehaviorSnapshot,
-    VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRevealResult,
-    VirtualizedListRevealTarget, VirtualizedListRowBehaviorSnapshot, VirtualizedListRowKind,
-    VirtualizedListRowMeasureMode, VirtualizedListRowRenderContext, VirtualizedListScrollStrategy,
-    VirtualizedListSelectionChange, VirtualizedListSelectionMode, VirtualizedListState,
-    VirtualizedListStateItem, VirtualizedListStickySectionSnapshot,
+    VirtualizedListColors, VirtualizedListItemDescriptor, VirtualizedListMetrics,
+    VirtualizedListRevealResult, VirtualizedListRevealTarget, VirtualizedListRowBehaviorSnapshot,
+    VirtualizedListRowKind, VirtualizedListRowMeasureMode, VirtualizedListRowRenderContext,
+    VirtualizedListScrollStrategy, VirtualizedListSelectionChange, VirtualizedListSelectionMode,
+    VirtualizedListState, VirtualizedListStateItem, VirtualizedListStatusKind,
+    VirtualizedListStickyOverlaySnapshot, VirtualizedListStickySectionSnapshot,
 };
