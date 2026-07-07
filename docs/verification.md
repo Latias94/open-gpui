@@ -9,7 +9,7 @@ cargo run -p xtask -- verify
 The gate runs:
 
 - `cargo fmt --all --check`
-- `cargo check --workspace`
+- `cargo check --workspace` (including workspace examples such as `open-gpui-docking-minimal`)
 - `cargo check -p open-gpui-smoke-native`
 - `cargo nextest run -p open-gpui-motion`
 - `cargo test -p open-gpui-motion --doc`
@@ -163,7 +163,7 @@ cargo nextest run -p open-gpui-ui-components
 cargo nextest run -p open-gpui-ui-foundation-gallery
 ```
 
-For the v0.2.0 `VirtualizedList` and `open-gpui-motion` foundation, run the focused gates below
+For the current `VirtualizedList` and `open-gpui-motion` foundation, run the focused gates below
 before relying on the full workspace gate:
 
 ```sh
@@ -185,18 +185,20 @@ snapshots, typeahead, replacement-style range selection, sticky-section snapshot
 active-indicator motion demand/reduced-motion/offscreen behavior, public API inventory, and gallery
 scroll/keyboard containment.
 
-For v0.2.0 crate discovery, the normal-checkout user entry points are:
+For current crate discovery, the normal-checkout user entry points are:
 
 ```sh
 cargo run -p open-gpui-ui-foundation-gallery
+cargo run -p open-gpui-docking-minimal
 cargo run -p open-gpui-docking-native
 cargo run -p open-gpui-canvas-notes
 ```
 
-The component, motion, and docking crate guides live at `crates/ui_components/README.md`,
-`crates/motion/README.md`, and `crates/gpui_docking/README.md`. `open-gpui-ui-components`,
-`open-gpui-motion`, and `open-gpui-docking` package metadata should point at those crate-local
-README files.
+The minimal docking example is the common API entry point. The native docking example is the
+dogfood surface for viewport runtime diagnostics and multi-window capability gates. The component,
+motion, docking, web, and platform crate guides live at `crates/ui_components/README.md`,
+`crates/motion/README.md`, `crates/gpui_docking/README.md`, `crates/gpui_web/README.md`, and
+`crates/gpui_platform/README.md`. Public package metadata should point at crate-local README files.
 
 The gallery package includes Components-page runtime smoke coverage for regressions that state-only
 tests can miss: short-viewport page scrolling and navigation reset, navigation rail scrolling,
@@ -1284,9 +1286,11 @@ Run the docking smoke surface explicitly after changing `open-gpui-docking`:
 ```sh
 cargo fmt --all -- --check
 cargo check --tests -p open-gpui-docking
+cargo check -p open-gpui-docking-minimal --locked
 cargo nextest run -p open-gpui-docking
 cargo nextest run -p open-gpui-docking-native --no-fail-fast
 cargo check -p open-gpui-docking-native
+cargo run -p open-gpui-docking-minimal
 cargo run -p open-gpui-docking-native
 ```
 

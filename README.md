@@ -53,6 +53,14 @@ fn main() {
 
 During local development, use workspace path dependencies instead of registry versions.
 
+## First-Party Add-Ons
+
+- Use `open-gpui-platform` for application startup across native and web targets.
+- Use `open-gpui-ui-components` for the official GPUI component library, including `VirtualizedList`.
+- Use `open-gpui-motion` when a component or domain crate needs deterministic, renderer-neutral motion samples and frame-demand facts. It is not a global animation engine.
+- Use `open-gpui-docking` for retained tab stacks, splits, in-window floating panels, and capability-gated platform viewport windows. Start with the minimal example before the diagnostic dogfood example.
+- Use `open-gpui-web` only for web backend work; most applications should continue to enter through `open-gpui-platform`.
+
 ## Repository Layout
 
 - `crates/gpui`: main `open-gpui` framework crate; see [crates/gpui/README.md](crates/gpui/README.md)
@@ -70,7 +78,8 @@ During local development, use workspace path dependencies instead of registry ve
   [crates/gpui_docking/README.md](crates/gpui_docking/README.md)
 - `crates/canvas`: reusable `open-gpui-canvas` model and interaction primitives for infinite canvas applications
 - `examples/canvas-notes`: native JSON Canvas note-map example
-- `examples/docking-native`: native docking workspace example
+- `examples/docking-minimal`: minimal single-window docking example using common public APIs
+- `examples/docking-native`: native docking dogfood example with viewport runtime diagnostics
 - `examples/smoke-native`: native smoke example
 - `examples/ui-foundation-gallery`: native UI component gallery and conformance surface
 - `xtask`: workspace verification and import-boundary checks
@@ -79,6 +88,7 @@ Run normal-checkout examples with:
 
 ```sh
 cargo run -p open-gpui-canvas-notes
+cargo run -p open-gpui-docking-minimal
 cargo run -p open-gpui-docking-native
 cargo run -p open-gpui-ui-foundation-gallery
 ```

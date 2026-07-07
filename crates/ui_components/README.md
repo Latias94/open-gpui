@@ -26,7 +26,7 @@ keys and typed row descriptors instead of index-only labels. The renderer owns t
 focus target, row measurement cache, active-descendant indicator, and input adapter; public state
 stays in `VirtualizedListState` and behavior snapshots.
 
-Supported v0.2.0 behavior includes:
+Supported behavior includes:
 
 - Key-based active and selected state.
 - Item, section, separator, initial loading, append loading, prepend loading, exhausted, empty,
@@ -49,6 +49,11 @@ order, roles, or row geometry.
 The public API is intentionally key-first. Applications should use `VirtualizedListState` methods
 such as `navigation_target`, `scroll_target_for_key`, and `scroll_target_for_key_with_snapshot`
 rather than index-first helper functions.
+
+Internally, VirtualizedList is split by responsibility: descriptors describe rows, model/state owns
+semantic identity, runtime plans resolve input and viewport facts, render modules assemble GPUI
+rows, style modules resolve theme-backed colors, and motion modules keep paint-only active chrome
+on the shared frame-demand protocol.
 
 ## Demos
 
@@ -82,8 +87,8 @@ For focused changes in this crate, run:
 ```sh
 cargo fmt -p open-gpui-ui-components
 cargo check -p open-gpui-ui-components --tests --locked
-cargo nextest run -p open-gpui-ui-components --no-fail-fast
-cargo test -p open-gpui-ui-components --test public_surface --locked
+cargo nextest run -p open-gpui-ui-components --no-fail-fast --locked
+cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast --locked
 ```
 
 For VirtualizedList-specific work, the fast local gates are:
@@ -91,6 +96,7 @@ For VirtualizedList-specific work, the fast local gates are:
 ```sh
 cargo test -p open-gpui-ui-components --locked --lib virtualized_list_
 cargo test -p open-gpui-ui-components --locked --test layout virtualized_list_runtime
+cargo nextest run -p open-gpui-ui-foundation-gallery virtualized_list --no-fail-fast --locked
 ```
 
 See `docs/ui/component-contract.md` and `docs/verification.md` for the full component contract and

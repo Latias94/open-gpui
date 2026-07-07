@@ -4160,6 +4160,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-docking-minimal"
+version = "0.2.0"
+dependencies = [
+ "open-gpui",
+ "open-gpui-docking",
+ "open-gpui-platform",
+]
+
+[[package]]
 name = "open-gpui-docking-native"
 version = "0.2.0"
 dependencies = [

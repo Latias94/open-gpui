@@ -4,6 +4,17 @@
 
 * [Current State](current-state.md) - Short durable summary of the active engineering state.
 * [Update Log](log.md) - Chronological history of meaningful memory updates.
+
+## Active Stabilization
+
+* [Post-v0.2.0 stabilization plan](../../plans/2026-07-07-002-refactor-post-v020-stabilization-plan.md) - Current implementation-ready plan for docking API tiers, motion frame ownership, VirtualizedList productization, web smoke, release/docs gates, dependency health, and entry-point cleanup.
+* [Breaking change inventory](../../release/breaking-changes.md) - Public API moves and migration notes that must stay aligned with `CHANGELOG.md`.
+* [Verification guide](../../verification.md) - Current local and CI gate matrix, including release docs, doc links, dependency health, web smoke, and focused component/docking/motion checks.
+* [Minimal docking example](../../../examples/docking-minimal/src/main.rs) - Common single-window docking setup using default public APIs.
+* [Docking dogfood example](../../../examples/docking-native/src/main.rs) - Viewport runtime and diagnostics surface for capability-gated docking work.
+
+## Historical Navigation
+
 * [Open GPUI native UI framework distribution strategy](decisions/open-gpui-native-ui-framework-distribution-strategy.md) - Decision memory for Cargo-first crate distribution, source inspection, typed contract checks, gallery, theme, a11y, and verification.
 * [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](../../adr/0014-remove-native-ui-hybrid-registry.md) - Current decision removing the generated registry manifest, scaffold recipes, artifacts, and scan command.
 * [ADR 0013: Open GPUI Native UI Hybrid Registry](../../adr/0013-open-gpui-native-ui-hybrid-registry.md) - Superseded decision for the removed hybrid registry experiment.

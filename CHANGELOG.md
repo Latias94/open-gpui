@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Web verification now includes a stable browser smoke for app readiness, canvas initialization, focus/input delivery, single-window shell interaction, and explicit unsupported platform-viewport capability on web.
 - Release verification now checks changelog release notes, user-facing README versions, public crate README coverage, breaking-change inventory coverage, and public documentation links before publishing crates or GitHub Release notes.
 - Open GPUI now declares Rust 1.92 as the workspace MSRV and verifies MSRV drift, duplicate dependency versions, and cargo-audit results through a dedicated dependency-health gate.
+- User entry points now include a minimal single-window docking example and refreshed crate READMEs for component, motion, docking, web, platform, and verification workflows.
 
 ### Security
 

@@ -47,16 +47,28 @@ window support stay on the single-window route.
 Persist `DockLayout` separately from viewport placement data. The layout restores logical dock
 spaces; `DockViewportPlacementLayout` restores platform-window hints for the runtime adapter.
 
-## Demo
+## Examples
 
-Run the normal-checkout native docking example:
+Run the minimal single-window docking example first:
+
+```sh
+cargo run -p open-gpui-docking-minimal
+```
+
+This example uses `DockController::builder`, lazy panel factories, `DockHost::from_controller`, and
+`DockViewportRuntimeHandle` without importing `open_gpui_docking::advanced`. It enables in-window
+floating, but it does not enable platform viewport windows.
+
+Run the normal-checkout native dogfood example when working on viewport runtime behavior or
+diagnostics:
 
 ```sh
 cargo run -p open-gpui-docking-native
 ```
 
-The example demonstrates a controller-backed host with registered panels, tab stacks, split layout,
-floating behavior, and the runtime paths used by the docking tests.
+The dogfood example demonstrates a controller-backed host with registered panels, tab stacks, split
+layout, floating behavior, capability-gated platform viewport windows, and the runtime diagnostic
+paths used by the docking tests.
 
 ## Minimal Shape
 
@@ -78,12 +90,15 @@ let controller = DockController::builder("main")
     .panel_factory("editor", "Editor", panel_factory)
     .panel_factory("terminal", "Terminal", panel_factory)
     .allow_floating(true)
-    .allow_platform_viewports(true)
     .try_build()
     .expect("dock controller setup should validate");
 
 let _ = controller;
 ```
+
+Only call `allow_platform_viewports(true)` when the application intends to use platform-window
+docking routes and is prepared for unsupported runtime capability results on web or compositor
+backends without viewport-window support.
 
 ## Verification
 
@@ -92,6 +107,7 @@ For focused docking changes, run:
 ```sh
 cargo fmt -p open-gpui-docking
 cargo check -p open-gpui-docking --tests --locked
+cargo check -p open-gpui-docking-minimal --locked
 cargo check -p open-gpui-docking-native --locked
 cargo nextest run -p open-gpui-docking host_viewport_platform_capability_tests --no-fail-fast
 ```

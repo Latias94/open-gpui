@@ -24,13 +24,14 @@ runtime.
   adapter starts a new local motion epoch.
 - Neutral logical-pixel geometry plus projection, reveal, and clip helpers for final-size content.
 
-Adapters keep authority over rendering, input, focus, accessibility, and frame scheduling. A
-Splitter, docking host, canvas, or application decides when to request a GPUI frame and how to map a
-motion sample into painted elements.
+Adapters keep authority over rendering, input, focus, accessibility, frame scheduling, and clock
+sampling. A Splitter, docking host, canvas, or application passes explicit elapsed time into motion
+executions, decides when to request a GPUI frame from returned `MotionFrameDemand`, and maps samples
+into painted elements. This keeps motion time from owning or competing with the UI runtime clock.
 
 ## First-Party Proof Scope
 
-The v0.2.0 stable proof is intentionally small:
+The current first-party proof is intentionally small:
 
 - `Splitter` consumes scalar controller samples for programmatic panel layout transitions.
 - `VirtualizedList` consumes scalar controller samples for an active-descendant indicator that
@@ -51,9 +52,11 @@ Run the component gallery to inspect Splitter and VirtualizedList motion in a no
 cargo run -p open-gpui-ui-foundation-gallery
 ```
 
-Run the docking example to inspect layout and affordance motion through the docking host:
+Run the minimal docking example for the common single-window path, or the native dogfood example to
+inspect layout, affordance, and viewport-runtime motion through the docking host:
 
 ```sh
+cargo run -p open-gpui-docking-minimal
 cargo run -p open-gpui-docking-native
 ```
 

@@ -43,6 +43,10 @@ This crate does not own rendering primitives, window layout policy, component AP
 
 Backend capabilities remain runtime facts. Enabling a cargo feature does not guarantee that the active operating system, browser, compositor, or GPU supports a capability such as platform viewport windows, screen capture, or WebGPU.
 
+For a native application entry point, see `examples/smoke-native`. For a common docking setup built
+through the selector, see `examples/docking-minimal`. Web backend work should use
+`open-gpui-web`-specific examples and the `xtask web-smoke` gate.
+
 ## Verification
 
 For focused platform-selector work, run:

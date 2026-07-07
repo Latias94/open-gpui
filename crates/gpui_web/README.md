@@ -28,6 +28,10 @@ The older `hello_web` example remains useful for local shared-memory and atomics
 
 This crate does not provide browser platform windows, docking tear-off windows, DOM component rendering, CSS animation integration, or a public web-specific component library. WebGPU availability is a required runtime fact for rendering; shared-memory worker mode is optional and must fail back to the stable single-threaded path when unavailable.
 
+Single-window Open GPUI shells can run on web through the platform selector when the renderer and
+browser capabilities are available. Docking platform viewport routes must still report unsupported
+capability results instead of pretending that browser popout windows are available.
+
 ## Verification
 
 For focused web backend work, run:
