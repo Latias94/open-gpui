@@ -16,7 +16,9 @@ use open_gpui_motion::{
     MotionProjection, MotionProjectionClip, MotionSnapshot, MotionSpec, motion_source_rect,
     preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
 };
-use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::time::Duration;
+use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockTransitionExecution {
