@@ -9,18 +9,17 @@ use crate::{
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, profiler, px, rems, size,
-    transparent_black,
+    KeystrokeEvent, LayoutId, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton,
+    MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority,
+    PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
+    SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController,
+    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    point, prelude::*, profiler, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use derive_more::{Deref, DerefMut};
@@ -28,9 +27,7 @@ use futures::FutureExt;
 use futures::channel::oneshot;
 #[cfg(feature = "input-latency-histogram")]
 use hdrhistogram::Histogram;
-use itertools::FoldWhile::{Continue, Done};
-use itertools::Itertools;
-use open_gpui_collections::{FxHashMap, FxHashSet};
+use open_gpui_collections::FxHashSet;
 use open_gpui_core_util::post_inc;
 use open_gpui_core_util::{ResultExt, measure};
 use open_gpui_refineable::Refineable;
@@ -59,11 +56,17 @@ use std::{
 use uuid::Uuid;
 
 pub(crate) mod a11y;
+mod frame_journal;
+mod frame_pump;
 mod prompts;
 
 use self::a11y::A11y;
 #[cfg(not(target_family = "wasm"))]
 use self::a11y::ROOT_NODE_ID;
+pub(crate) use self::frame_journal::{
+    DeferredDraw, Frame, PaintIndex, PrepaintStateIndex, TooltipRequest,
+};
+use self::frame_pump::{FrameThrottleFacts, PresentFacts, frame_should_wait};
 use crate::util::{
     atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
     round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
@@ -772,193 +775,6 @@ pub(crate) struct TooltipBounds {
     bounds: Bounds<Pixels>,
 }
 
-#[derive(Clone)]
-pub(crate) struct TooltipRequest {
-    id: TooltipId,
-    tooltip: AnyTooltip,
-}
-
-pub(crate) struct DeferredDraw {
-    current_view: EntityId,
-    priority: usize,
-    parent_node: DispatchNodeId,
-    element_id_stack: SmallVec<[ElementId; 32]>,
-    text_style_stack: Vec<TextStyleRefinement>,
-    content_mask: Option<ContentMask<Pixels>>,
-    rem_size: Pixels,
-    element: Option<AnyElement>,
-    absolute_offset: Point<Pixels>,
-    prepaint_range: Range<PrepaintStateIndex>,
-    paint_range: Range<PaintIndex>,
-}
-
-pub(crate) struct Frame {
-    pub(crate) focus: Option<FocusId>,
-    pub(crate) window_active: bool,
-    pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
-    accessed_element_states: Vec<(GlobalElementId, TypeId)>,
-    pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
-    pub(crate) dispatch_tree: DispatchTree,
-    pub(crate) scene: Scene,
-    pub(crate) hitboxes: Vec<Hitbox>,
-    pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
-    pub(crate) deferred_draws: Vec<DeferredDraw>,
-    pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
-    pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
-    pub(crate) cursor_styles: Vec<CursorStyleRequest>,
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_focus_handles: FxHashMap<String, FocusId>,
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
-    pub(crate) tab_stops: TabStopMap,
-}
-
-#[derive(Clone, Default)]
-pub(crate) struct PrepaintStateIndex {
-    hitboxes_index: usize,
-    tooltips_index: usize,
-    deferred_draws_index: usize,
-    dispatch_tree_index: usize,
-    accessed_element_states_index: usize,
-    line_layout_index: LineLayoutIndex,
-}
-
-#[derive(Clone, Default)]
-pub(crate) struct PaintIndex {
-    scene_index: usize,
-    mouse_listeners_index: usize,
-    input_handlers_index: usize,
-    cursor_styles_index: usize,
-    accessed_element_states_index: usize,
-    tab_handle_index: usize,
-    line_layout_index: LineLayoutIndex,
-}
-
-impl Frame {
-    pub(crate) fn new(dispatch_tree: DispatchTree) -> Self {
-        Frame {
-            focus: None,
-            window_active: false,
-            element_states: FxHashMap::default(),
-            accessed_element_states: Vec::new(),
-            mouse_listeners: Vec::new(),
-            dispatch_tree,
-            scene: Scene::default(),
-            hitboxes: Vec::new(),
-            window_control_hitboxes: Vec::new(),
-            deferred_draws: Vec::new(),
-            input_handlers: Vec::new(),
-            tooltip_requests: Vec::new(),
-            cursor_styles: Vec::new(),
-
-            #[cfg(any(test, feature = "test-support"))]
-            debug_bounds: FxHashMap::default(),
-            #[cfg(any(test, feature = "test-support"))]
-            debug_focus_handles: FxHashMap::default(),
-
-            #[cfg(any(feature = "inspector", debug_assertions))]
-            next_inspector_instance_ids: FxHashMap::default(),
-
-            #[cfg(any(feature = "inspector", debug_assertions))]
-            inspector_hitboxes: FxHashMap::default(),
-            tab_stops: TabStopMap::default(),
-        }
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.element_states.clear();
-        self.accessed_element_states.clear();
-        self.mouse_listeners.clear();
-        self.dispatch_tree.clear();
-        self.scene.clear();
-        self.input_handlers.clear();
-        self.tooltip_requests.clear();
-        self.cursor_styles.clear();
-        self.hitboxes.clear();
-        self.window_control_hitboxes.clear();
-        self.deferred_draws.clear();
-        self.tab_stops.clear();
-        self.focus = None;
-
-        #[cfg(any(test, feature = "test-support"))]
-        {
-            self.debug_bounds.clear();
-            self.debug_focus_handles.clear();
-        }
-
-        #[cfg(any(feature = "inspector", debug_assertions))]
-        {
-            self.next_inspector_instance_ids.clear();
-            self.inspector_hitboxes.clear();
-        }
-    }
-
-    pub(crate) fn cursor_style(&self, window: &Window) -> Option<CursorStyle> {
-        if !window.mouse_in_window {
-            return None;
-        }
-
-        self.cursor_styles
-            .iter()
-            .rev()
-            .fold_while(None, |style, request| match request.hitbox_id {
-                None => Done(Some(request.style)),
-                Some(hitbox_id) => Continue(style.or_else(|| {
-                    hitbox_id
-                        .is_hovered_ignoring_last_input(window)
-                        .then_some(request.style)
-                })),
-            })
-            .into_inner()
-    }
-
-    pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
-        let mut set_hover_hitbox_count = false;
-        let mut hit_test = HitTest::default();
-        for hitbox in self.hitboxes.iter().rev() {
-            let bounds = hitbox.bounds.intersect(&hitbox.content_mask.bounds);
-            if bounds.contains(&position) {
-                hit_test.ids.push(hitbox.id);
-                if !set_hover_hitbox_count
-                    && hitbox.behavior == HitboxBehavior::BlockMouseExceptScroll
-                {
-                    hit_test.hover_hitbox_count = hit_test.ids.len();
-                    set_hover_hitbox_count = true;
-                }
-                if hitbox.behavior == HitboxBehavior::BlockMouse {
-                    break;
-                }
-            }
-        }
-        if !set_hover_hitbox_count {
-            hit_test.hover_hitbox_count = hit_test.ids.len();
-        }
-        hit_test
-    }
-
-    pub(crate) fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
-        self.focus
-            .map(|focus_id| self.dispatch_tree.focus_path(focus_id))
-            .unwrap_or_default()
-    }
-
-    pub(crate) fn finish(&mut self, prev_frame: &mut Self) {
-        for element_state_key in &self.accessed_element_states {
-            if let Some((element_state_key, element_state)) =
-                prev_frame.element_states.remove_entry(element_state_key)
-            {
-                self.element_states.insert(element_state_key, element_state);
-            }
-        }
-
-        self.scene.finish();
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 enum InputModality {
     Mouse,
@@ -1444,36 +1260,24 @@ impl Window {
                     .update(&mut cx, |_, _, cx| cx.thermal_state())
                     .log_err();
 
-                // Throttle frame rate based on conditions:
-                // - Thermal pressure (Serious/Critical): cap to ~60fps
-                // - Inactive window (not focused): cap to ~30fps to save energy
-                let min_frame_interval = if !request_frame_options.force_render
-                    && !request_frame_options.require_presentation
-                    && next_frame_callbacks.borrow().is_empty()
-                {
-                    None
-                } else if !active.get() {
-                    Some(Duration::from_micros(33333))
-                } else if let Some(ThermalState::Critical | ThermalState::Serious) = thermal_state {
-                    Some(Duration::from_micros(16667))
-                } else {
-                    None
-                };
-
+                let min_frame_interval = FrameThrottleFacts {
+                    force_render: request_frame_options.force_render,
+                    require_presentation: request_frame_options.require_presentation,
+                    has_next_frame_callbacks: !next_frame_callbacks.borrow().is_empty(),
+                    active: active.get(),
+                    thermal_state,
+                }
+                .min_frame_interval();
                 let now = Instant::now();
-                if let Some(min_interval) = min_frame_interval {
-                    if let Some(last_frame) = last_frame_time.get()
-                        && now.duration_since(last_frame) < min_interval
-                    {
-                        // Must still complete the frame on platforms that require it.
-                        // On Wayland, `surface.frame()` was already called to request the
-                        // next frame callback, so we must call `surface.commit()` (via
-                        // `complete_frame`) or the compositor won't send another callback.
-                        handle
-                            .update(&mut cx, |_, window, _| window.complete_frame())
-                            .log_err();
-                        return;
-                    }
+                if frame_should_wait(now, last_frame_time.get(), min_frame_interval) {
+                    // Must still complete the frame on platforms that require it.
+                    // On Wayland, `surface.frame()` was already called to request the
+                    // next frame callback, so we must call `surface.commit()` (via
+                    // `complete_frame`) or the compositor won't send another callback.
+                    handle
+                        .update(&mut cx, |_, window, _| window.complete_frame())
+                        .log_err();
+                    return;
                 }
                 last_frame_time.set(Some(now));
 
@@ -1491,9 +1295,13 @@ impl Window {
                 // Keep presenting if input was recently arriving at a high rate (>= 60fps).
                 // Once high-rate input is detected, we sustain presentation for 1 second
                 // to prevent display underclocking during active input.
-                let needs_present = request_frame_options.require_presentation
-                    || needs_present.get()
-                    || (active.get() && input_rate_tracker.borrow_mut().is_high_rate());
+                let needs_present = PresentFacts {
+                    require_presentation: request_frame_options.require_presentation,
+                    needs_present: needs_present.get(),
+                    active: active.get(),
+                    high_rate_input: input_rate_tracker.borrow_mut().is_high_rate(),
+                }
+                .needs_present();
 
                 if invalidator.is_dirty() || request_frame_options.force_render {
                     measure("frame duration", || {
