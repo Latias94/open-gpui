@@ -22,6 +22,23 @@ pub struct CompositorGpuHint {
     pub device_id: u32,
 }
 
+fn adapter_info(adapter: &wgpu::Adapter) -> wgpu::AdapterInfo {
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = adapter;
+        let mut info =
+            wgpu::AdapterInfo::new(wgpu::DeviceType::Other, wgpu::Backend::BrowserWebGpu);
+        info.name = "browser adapter".to_string();
+        info.driver = "browser".to_string();
+        info
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    {
+        adapter.get_info()
+    }
+}
+
 impl WgpuContext {
     #[cfg(not(target_family = "wasm"))]
     pub fn new(
@@ -82,7 +99,8 @@ impl WgpuContext {
             }
         });
 
-        log::info!("Selected browser GPU adapter");
+        let info = adapter_info(&adapter);
+        log::info!("Selected GPU adapter: {} ({:?})", info.name, info.backend);
 
         Ok(Self {
             instance,
@@ -115,11 +133,8 @@ impl WgpuContext {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to request GPU adapter: {e}"))?;
 
-        log::info!(
-            "Selected GPU adapter: {:?} ({:?})",
-            adapter.get_info().name,
-            adapter.get_info().backend
-        );
+        let info = adapter_info(&adapter);
+        log::info!("Selected GPU adapter: {} ({:?})", info.name, info.backend);
 
         let device_lost = Arc::new(AtomicBool::new(false));
         let (device, queue, dual_source_blending, color_texture_format) =
@@ -191,7 +206,7 @@ impl WgpuContext {
     pub fn check_compatible_with_surface(&self, surface: &wgpu::Surface<'_>) -> anyhow::Result<()> {
         let caps = surface.get_capabilities(&self.adapter);
         if caps.formats.is_empty() {
-            let info = self.adapter.get_info();
+            let info = adapter_info(&self.adapter);
             anyhow::bail!(
                 "Adapter {:?} (backend={:?}, device={:#06x}) is not compatible with the \
                  display surface for this window.",
@@ -240,7 +255,7 @@ impl WgpuContext {
         //    "Other" ranks above "Virtual" because OpenGL seems to count as "Other".
         // 4. Backend — prefer Vulkan/Metal/Dx12 over GL/etc.
         adapters.sort_by_key(|adapter| {
-            let info = adapter.get_info();
+            let info = adapter_info(adapter);
 
             // Backends like OpenGL report device=0 for all adapters, so
             // device-based matching is only meaningful when non-zero.
@@ -290,7 +305,7 @@ impl WgpuContext {
         // Log all available adapters (in sorted order)
         log::info!("Found {} GPU adapter(s):", adapters.len());
         for adapter in &adapters {
-            let info = adapter.get_info();
+            let info = adapter_info(adapter);
             log::info!(
                 "  - {} (vendor={:#06x}, device={:#06x}, backend={:?}, type={:?})",
                 info.name,
@@ -303,7 +318,7 @@ impl WgpuContext {
 
         // Test each adapter by creating a device and configuring the surface
         for adapter in adapters {
-            let info = adapter.get_info();
+            let info = adapter_info(adapter);
 
             if reject_software && info.device_type == wgpu::DeviceType::Cpu {
                 log::info!(
@@ -400,7 +415,7 @@ impl WgpuContext {
 
         let rgba_features = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba8Unorm);
         if rgba_features.allowed_usages.contains(required_usages) {
-            let info = adapter.get_info();
+            let info = adapter_info(adapter);
             log::warn!(
                 "Adapter {} ({:?}) does not support Bgra8Unorm atlas textures with usages {:?}; \
                  falling back to Rgba8Unorm atlas textures.",
@@ -411,7 +426,7 @@ impl WgpuContext {
             return Ok(wgpu::TextureFormat::Rgba8Unorm);
         }
 
-        let info = adapter.get_info();
+        let info = adapter_info(adapter);
         Err(anyhow::anyhow!(
             "Adapter {} ({:?}, device={:#06x}) does not support a usable color atlas texture \
              format with usages {:?}. Bgra8Unorm allowed usages: {:?}; \
