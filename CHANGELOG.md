@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-07-06
+## [0.2.0] - 2026-07-07
 
 ### Added
 
@@ -68,6 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cleanup on Darwin.
 - Fixed focus restore behavior for Select, Combobox, and dialog Command overlays on selection,
   Escape dismissal, and outside-press dismissal.
+- Fixed v0.2.0 package archives so publishable crates carry concrete Apache-2.0 license text and
+  NOTICE attribution files.
 
 ### Security
 
