@@ -20,6 +20,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `VirtualizedList` now has explicit async/infinite status rows for initial loading, prepend loading, append loading, exhausted, empty, error, and retry states; keyed measured reveal after prepends; presentation-only sticky section overlay metadata and rendering; and theme-backed `VirtualizedListColors`.
 - Web verification now includes a stable browser smoke for app readiness, canvas initialization, focus/input delivery, single-window shell interaction, and explicit unsupported platform-viewport capability on web.
 - Release verification now checks changelog release notes, user-facing README versions, public crate README coverage, breaking-change inventory coverage, and public documentation links before publishing crates or GitHub Release notes.
+- Open GPUI now declares Rust 1.92 as the workspace MSRV and verifies MSRV drift, duplicate dependency versions, and cargo-audit results through a dedicated dependency-health gate.
+
+### Security
+
+- Updated `crossbeam-epoch` to `0.9.20` to resolve `RUSTSEC-2026-0204`.
 
 ## [0.2.0] - 2026-07-07
 

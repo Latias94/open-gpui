@@ -8,6 +8,8 @@ The project keeps the GPUI framework lineage while separating it from the Zed ed
 
 Open GPUI is pre-1.0 and in active fork cleanup. The workspace package names are prepared for crates.io as `open-gpui-*`, and Rust crate names use the corresponding underscore form such as `open_gpui`, `open_gpui_platform`, and `open_gpui_wgpu`.
 
+Open GPUI currently requires Rust 1.92 or newer. The floor follows the resolved dependency graph and is checked by `cargo run -p xtask -- dependency-health`.
+
 Open GPUI depends on Open GPUI-maintained forks for screen capture and font handling:
 
 - `open-gpui-scap`, published as `open-gpui-scap`, from `https://github.com/Latias94/scap`, licensed under MIT.

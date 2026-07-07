@@ -18,6 +18,7 @@ The gate runs:
 - `cargo nextest run -p open-gpui-ui-foundation-gallery`
 - `cargo run -p xtask -- verify-release-docs`
 - `cargo run -p xtask -- scan-doc-links`
+- `cargo run -p xtask -- dependency-health`
 - `cargo run -p xtask -- scan-theme-drift`
 - `cargo run -p xtask -- scan-import-boundary`
 - `cargo run -p xtask -- scan-ui-contract`
@@ -50,6 +51,14 @@ cargo run -p xtask -- scan-doc-links
 ```
 
 `verify-release-docs` checks the target changelog section, rejects manually wrapped changelog bullets and paragraphs, validates user-facing README dependency versions, requires crate-local README metadata for public entry crates, and checks `docs/release/breaking-changes.md` against `CHANGELOG.md` release-facing breaking notes. `scan-doc-links` checks strict user-facing relative links in root docs, release docs, verification docs, ADR index, and public crate READMEs. Historical plans and engineering logs are intentionally outside the strict link gate until they are archived or indexed.
+
+Dependency health is enforced through:
+
+```sh
+cargo run -p xtask -- dependency-health
+```
+
+The command checks that every workspace package declares the workspace MSRV, that the declared MSRV is at least the maximum `rust-version` in the resolved dependency graph, that duplicate registry crate versions are explicitly allowlisted, and that `cargo audit --json` reports no unignored vulnerabilities. The current MSRV is Rust 1.92 because the Linux platform dependency chain reaches `oo7 0.6.0`; `wgpu 30`, `naga 30`, `resvg 0.46`, and `usvg 0.46` currently require Rust 1.87. The dependency health workflow runs this command on Linux, and the release workflow requires a successful `dependency-health.yml` run for the release commit before publishing.
 
 For the 2026-07 runtime UI hardening slice, the Web dispatcher exposes a typed
 `WebDispatcherMode` through `WebDispatcher::mode()` and `WebPlatform::dispatcher_mode()`. Stable
@@ -110,7 +119,7 @@ git diff --check
 
 The follow-up dependency remediation updated the actionable advisories: `quinn-proto` now resolves
 to `0.11.16`, `anyhow` to `1.0.103`, `memmap2` to `0.9.11`, `async-tar` to `0.6.1` with the Tokio
-runtime, `futures-lite` to `2.6.1`, `stacksafe` to `1.0.2`, and `reqwest` to `0.13.4`. `cargo audit`
+runtime, `futures-lite` to `2.6.1`, `stacksafe` to `1.0.2`, `reqwest` to `0.13.4`, and `crossbeam-epoch` to `0.9.20`. `cargo audit`
 now exits successfully. `.cargo/audit.toml` temporarily ignores the two `quick-xml 0.39.4`
 advisories because the currently published `wayland-scanner 0.31.10` and `zbus_xml 5.1.1` releases
 still pin `quick-xml = "0.39"`, and both reach this workspace through proc-macro/code-generation

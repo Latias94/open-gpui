@@ -1,5 +1,6 @@
 pub mod commands;
 
+pub(crate) mod dependency_health;
 pub(crate) mod doc_links;
 pub(crate) mod fs_scan;
 pub(crate) mod import_boundary;

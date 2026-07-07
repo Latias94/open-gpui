@@ -141,6 +141,7 @@ jobs:
 
           require_successful_workflow "verify.yml"
           require_successful_workflow "publish-check.yml"
+          require_successful_workflow "dependency-health.yml"
 
       - name: Compute publish order
         shell: bash
