@@ -41,6 +41,9 @@ Supported behavior includes:
 - Theme-backed color recipes through `VirtualizedListColors`.
 - A constrained `render_row` hook that replaces row content while the outer row keeps layout,
   accessibility, focus, hit testing, and selection behavior.
+- Optional host-owned viewport control through `VirtualizedList::scroll_handle`, so application
+  shells can share a GPUI `ScrollHandle` with surrounding chrome while the list keeps semantic row
+  ownership.
 
 `VirtualizedList` does not currently animate row enter/exit or expose a public presence API. The
 sticky overlay and active indicator are paint-only chrome and must not mutate selection, focus
@@ -50,10 +53,30 @@ The public API is intentionally key-first. Applications should use `VirtualizedL
 such as `navigation_target`, `scroll_target_for_key`, and `scroll_target_for_key_with_snapshot`
 rather than index-first helper functions.
 
+Host code should compute reveal targets from stable keys and then drive the host-owned scroll
+handle. Nested row actions should use the component event containment APIs so click, key, and wheel
+behavior stay explicit without replacing the list's outer row focus, hit-testing, and selection
+contract.
+
 Internally, VirtualizedList is split by responsibility: descriptors describe rows, model/state owns
 semantic identity, runtime plans resolve input and viewport facts, render modules assemble GPUI
 rows, style modules resolve theme-backed colors, and motion modules keep paint-only active chrome
 on the shared frame-demand protocol.
+
+## Action Projection
+
+Command and component actions share a typed projection layer:
+
+- `ActionDescriptor` carries id, label, shortcut, disabled reason, tooltip, accessibility
+  description, and an optional renderer-neutral `ActionIconDescriptor`.
+- `ActionDescriptor::from_command_descriptor` preserves `open_gpui_command::CommandDescriptor`
+  metadata, including `CommandIconDescriptor`.
+- `ResolvedActionState` resolves icon metadata once and feeds Button, IconButton, Toolbar, Menu,
+  ContextMenu, Command, and Sidebar surfaces.
+- `ActionIconDiagnostic` records missing icon resolution in a stable form for tests and tooling.
+
+Prefer passing `ResolvedActionState` into component builders over reconstructing label, icon,
+shortcut, and disabled metadata separately for each surface.
 
 ## Demos
 
@@ -73,7 +96,8 @@ Most applications should use the default public surface:
 
 ```rust
 use open_gpui_ui_components::{
-    Button, VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListSelectionMode,
+    ActionDescriptor, Button, ResolvedActionState, VirtualizedList,
+    VirtualizedListItemDescriptor, VirtualizedListSelectionMode,
 };
 ```
 

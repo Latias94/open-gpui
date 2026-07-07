@@ -56,10 +56,21 @@ During local development, use workspace path dependencies instead of registry ve
 ## First-Party Add-Ons
 
 - Use `open-gpui-platform` for application startup across native and web targets.
-- Use `open-gpui-ui-components` for the official GPUI component library, including `VirtualizedList`.
+- Use `open-gpui-ui-components` for the official GPUI component library, including typed action projection, host-controlled `VirtualizedList`, and component contract evidence.
 - Use `open-gpui-motion` when a component or domain crate needs deterministic, renderer-neutral motion samples and frame-demand facts. It is not a global animation engine.
-- Use `open-gpui-docking` for retained tab stacks, splits, in-window floating panels, and capability-gated platform viewport windows. Start with the minimal example before the diagnostic dogfood example.
+- Use `open-gpui-docking` for retained tab stacks, splits, product panel placement, in-window floating panels, and capability-gated platform viewport windows. Start with the minimal example before the diagnostic dogfood example.
 - Use `open-gpui-web` only for web backend work; most applications should continue to enter through `open-gpui-platform`.
+
+## Product Correctness Primitives
+
+Open GPUI is pre-1.0, so the framework favors explicit product contracts over compatibility shims:
+
+- Scroll surfaces return typed `ScrollWheelIntent` values, publish committed `ScrollViewportSnapshot` facts, and expose test probes such as `TestInputDispatchSnapshot` for final input outcomes.
+- Docking apps declare product intent with `DockPanelPlacement`, descriptor default placement, and last-known reopen placement instead of holding graph node ids in normal product code.
+- Component apps project command/action metadata through `CommandIconDescriptor`, `ActionDescriptor`, and `ResolvedActionState`, then reuse that resolved state across buttons, toolbars, menus, command palettes, and sidebars.
+- `VirtualizedList` keeps stable-key state in `VirtualizedListState` while application shells may provide their own GPUI `ScrollHandle` and request keyed reveals through `scroll_target_for_key` or `scroll_target_for_key_with_snapshot`.
+
+See [docs/ui/command-ecosystem.md](docs/ui/command-ecosystem.md), [docs/ui/component-contract.md](docs/ui/component-contract.md), [crates/ui_components/README.md](crates/ui_components/README.md), and [crates/gpui_docking/README.md](crates/gpui_docking/README.md) for the current public surfaces.
 
 ## Repository Layout
 
