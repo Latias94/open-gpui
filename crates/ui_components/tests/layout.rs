@@ -7,7 +7,7 @@ use open_gpui_ui_components::{
     SplitterPanelDescriptor, SplitterState, Tree, TreeChildrenLoadState, TreeDropPosition,
     TreeItemDescriptor, TreeMove, TreeMoveTarget, VirtualizedList, VirtualizedListActivation,
     VirtualizedListItemDescriptor, VirtualizedListRowRenderContext, VirtualizedListScrollStrategy,
-    VirtualizedListSelectionMode, apply_tree_move, virtualized_list_scroll_target,
+    VirtualizedListSelectionMode, apply_tree_move,
 };
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, VirtualizerRange, ui_px};
 use std::cell::RefCell;
@@ -117,16 +117,22 @@ fn virtualized_list_behavior_snapshot_uses_item_descriptors_and_virtualizer_cont
         VirtualizedListActivation::new(active_row.index(), active_row.key(), active_row.label());
     assert_eq!(activation.index(), 104);
     assert_eq!(activation.key(), "item-0104");
+    let reveal = snapshot.state().scroll_target_for_key(
+        activation.key(),
+        VirtualizedListScrollStrategy::Top,
+        snapshot.viewport_extent(),
+        snapshot.scroll_offset(),
+    );
     assert_eq!(
-        virtualized_list_scroll_target(
-            VirtualizedListScrollStrategy::Top,
-            activation.index(),
-            snapshot.state().item_count(),
-            snapshot.metrics().row_height(),
-            snapshot.viewport_extent(),
-            snapshot.scroll_offset(),
-        ),
-        ui_px(2_912.0)
+        reveal,
+        open_gpui_ui_components::VirtualizedListRevealResult::Revealed(
+            open_gpui_ui_components::VirtualizedListRevealTarget::new(
+                activation.key(),
+                activation.index(),
+                ui_px(2_912.0),
+                false,
+            ),
+        )
     );
 }
 
@@ -707,34 +713,32 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     assert_eq!(root_virtualized_snapshot.role(), Role::ListBox);
     assert_eq!(prelude_virtualized_snapshot.row_role(), Role::ListBoxOption);
     assert_eq!(
-        root::virtualized_list_scroll_target(
+        root_virtualized_snapshot.state().scroll_target_for_key(
+            "root-item-4",
             root::VirtualizedListScrollStrategy::Top,
-            4,
-            root_virtualized_snapshot.state().item_count(),
-            root_virtualized_snapshot.metrics().row_height(),
             root_virtualized_snapshot.viewport_extent(),
             root_virtualized_snapshot.scroll_offset(),
         ),
-        ui_px(112.0)
+        root::VirtualizedListRevealResult::Revealed(root::VirtualizedListRevealTarget::new(
+            "root-item-4",
+            4,
+            ui_px(112.0),
+            false,
+        ))
     );
     assert_eq!(
-        prelude::virtualized_list_scroll_target(
+        prelude_virtualized_snapshot.state().scroll_target_for_key(
+            "prelude-item-4",
             prelude::VirtualizedListScrollStrategy::Top,
-            4,
-            prelude_virtualized_snapshot.state().item_count(),
-            prelude_virtualized_snapshot.metrics().row_height(),
             prelude_virtualized_snapshot.viewport_extent(),
             prelude_virtualized_snapshot.scroll_offset(),
         ),
-        ui_px(112.0)
-    );
-    assert_eq!(
-        root::virtualized_list_navigation_target("end", 4, 12, 3),
-        Some(11)
-    );
-    assert_eq!(
-        prelude::virtualized_list_navigation_target("end", 4, 12, 3),
-        Some(11)
+        prelude::VirtualizedListRevealResult::Revealed(prelude::VirtualizedListRevealTarget::new(
+            "prelude-item-4",
+            4,
+            ui_px(112.0),
+            false,
+        ),)
     );
 }
 

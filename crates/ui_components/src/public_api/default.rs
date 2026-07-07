@@ -175,5 +175,4 @@ pub use crate::virtualized_list::{
     VirtualizedListRowMeasureMode, VirtualizedListRowRenderContext, VirtualizedListScrollStrategy,
     VirtualizedListSelectionChange, VirtualizedListSelectionMode, VirtualizedListState,
     VirtualizedListStateItem, VirtualizedListStickySectionSnapshot,
-    virtualized_list_navigation_target, virtualized_list_scroll_target,
 };

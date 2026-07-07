@@ -41,6 +41,10 @@ Supported v0.2.0 behavior includes:
 public presence API. The active indicator is paint-only motion chrome and must not mutate selection,
 focus order, roles, or row geometry.
 
+The public API is intentionally key-first. Applications should use `VirtualizedListState` methods
+such as `navigation_target`, `scroll_target_for_key`, and `scroll_target_for_key_with_snapshot`
+rather than index-first helper functions.
+
 ## Demos
 
 Run the normal-checkout component gallery:

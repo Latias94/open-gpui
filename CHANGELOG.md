@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `open-gpui-docking` now keeps diagnostics and transition internals out of the crate root and `prelude`; import `open_gpui_docking::advanced::...` for `DockTransitionPlan`, `DockTransitionExecutionState`, `DockViewportRuntimeStatus`, runtime status record types, `DockVisualAffordanceDebugSummary`, `DockVisualAffordanceDebugLayer`, and `DockViewportTearOffCancelReason`.
 - `open-gpui-motion` now requires `MotionFrameHost::reset(MotionFrameHostResetReason::...)` so adapters document why they start a new local motion epoch; replace bare `reset()` calls with the matching retarget, cancel, finish, prune-terminal, or motion-identity reason.
 - `open-gpui-docking` adds the required `DockHostOptions::motion_preference` field for host-owned reduced-motion policy; struct literals must set it explicitly or use `DockHostOptions::default()`.
+- `open-gpui-ui-components` no longer exports `virtualized_list_navigation_target` or `virtualized_list_scroll_target` from the default component API. Use the key-first `VirtualizedListState::navigation_target`, `scroll_target_for_key`, or `scroll_target_for_key_with_snapshot` methods instead.
+
+### Changed
+
+- `VirtualizedList` internals are split into descriptor, model, render-plan, runtime, render, style, and motion modules while keeping the public facade key-first.
 
 ## [0.2.0] - 2026-07-07
 
