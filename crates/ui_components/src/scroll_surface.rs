@@ -1,4 +1,7 @@
-use open_gpui::{ScrollHandle, ScrollViewportChangeSource, ScrollWheelEvent, Window, point, px};
+use open_gpui::{
+    ScrollHandle, ScrollViewportChangeSource, ScrollViewportProgrammaticSource, ScrollWheelEvent,
+    Window, point, px,
+};
 use open_gpui_ui_core::UiPx;
 
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
@@ -71,11 +74,23 @@ pub(crate) fn vertical_scroll_offset(scroll_handle: &ScrollHandle) -> UiPx {
 }
 
 pub(crate) fn set_vertical_scroll_offset(scroll_handle: &ScrollHandle, scroll_offset: UiPx) {
+    set_vertical_scroll_offset_with_source(
+        scroll_handle,
+        scroll_offset,
+        ScrollViewportChangeSource::Programmatic(ScrollViewportProgrammaticSource::Offset),
+    );
+}
+
+pub(crate) fn set_vertical_scroll_offset_with_source(
+    scroll_handle: &ScrollHandle,
+    scroll_offset: UiPx,
+    source: ScrollViewportChangeSource,
+) {
     let current = scroll_handle.offset();
-    scroll_handle.set_offset(point(
-        current.x,
-        -gpui_px_from_ui(nonnegative_px(scroll_offset)),
-    ));
+    scroll_handle.set_offset_with_source(
+        point(current.x, -gpui_px_from_ui(nonnegative_px(scroll_offset))),
+        source,
+    );
 }
 
 pub(crate) fn fixed_row_scroll_target(
@@ -148,7 +163,11 @@ pub(crate) fn reveal_fixed_row(
         return false;
     }
 
-    set_vertical_scroll_offset(scroll_handle, target);
+    set_vertical_scroll_offset_with_source(
+        scroll_handle,
+        target,
+        ScrollViewportChangeSource::Programmatic(ScrollViewportProgrammaticSource::Reveal),
+    );
     true
 }
 

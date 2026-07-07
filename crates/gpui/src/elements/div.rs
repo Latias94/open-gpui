@@ -1604,15 +1604,57 @@ pub struct Div {
     prepaint_order_fn: Option<Box<dyn Fn(&mut Window, &mut App) -> SmallVec<[usize; 8]>>>,
 }
 
+/// Programmatic source for a committed scroll viewport change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollViewportProgrammaticSource {
+    /// Code set the scroll offset directly.
+    Offset,
+    /// Code revealed an item using scroll-to-item behavior.
+    Reveal,
+    /// Code requested scrolling to the bottom edge.
+    ScrollToBottom,
+}
+
 /// The source that most directly caused a committed scroll viewport change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScrollViewportChangeSource {
-    /// Bounds, content size, clamping, or initial mount committed the viewport.
+    /// The tracked scroll viewport committed for the first time.
+    InitialLayout,
+    /// Layout, clamping, or element movement committed the viewport.
     Layout,
+    /// The viewport bounds changed size.
+    Resize,
+    /// The scrollable content size changed.
+    ContentSize,
     /// A scroll wheel event changed the scroll offset.
     Wheel,
-    /// Programmatic code changed the scroll offset through [`ScrollHandle::set_offset`].
-    Programmatic,
+    /// A scrollbar interaction changed the scroll offset.
+    Scrollbar,
+    /// Keyboard input changed the scroll offset.
+    Keyboard,
+    /// Touch or touch-inertia input changed the scroll offset.
+    Touch,
+    /// Programmatic code changed the scroll viewport.
+    Programmatic(ScrollViewportProgrammaticSource),
+}
+
+impl ScrollViewportChangeSource {
+    fn infer_from_layout_change(
+        previous: Option<ScrollViewportStateSnapshot>,
+        viewport: ScrollViewportStateSnapshot,
+    ) -> Self {
+        let Some(previous) = previous else {
+            return Self::InitialLayout;
+        };
+
+        if previous.bounds.size != viewport.bounds.size {
+            Self::Resize
+        } else if previous.content_size != viewport.content_size {
+            Self::ContentSize
+        } else {
+            Self::Layout
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -3986,7 +4028,9 @@ impl ScrollHandle {
             index: ix,
             strategy: ScrollStrategy::default(),
         });
-        state.pending_viewport_change_source = Some(ScrollViewportChangeSource::Programmatic);
+        state.pending_viewport_change_source = Some(ScrollViewportChangeSource::Programmatic(
+            ScrollViewportProgrammaticSource::Reveal,
+        ));
     }
 
     /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
@@ -3997,7 +4041,9 @@ impl ScrollHandle {
             index: ix,
             strategy: ScrollStrategy::Top,
         });
-        state.pending_viewport_change_source = Some(ScrollViewportChangeSource::Programmatic);
+        state.pending_viewport_change_source = Some(ScrollViewportChangeSource::Programmatic(
+            ScrollViewportProgrammaticSource::Reveal,
+        ));
     }
 
     /// Scrolls the minimal amount to either ensure that the child is
@@ -4055,14 +4101,30 @@ impl ScrollHandle {
     pub fn scroll_to_bottom(&self) {
         let mut state = self.0.borrow_mut();
         state.scroll_to_bottom = true;
-        state.pending_viewport_change_source = Some(ScrollViewportChangeSource::Programmatic);
+        state.pending_viewport_change_source = Some(ScrollViewportChangeSource::Programmatic(
+            ScrollViewportProgrammaticSource::ScrollToBottom,
+        ));
     }
 
     /// Set the offset explicitly. The offset is the distance from the top left of the
     /// parent container to the top left of the first child.
     /// As you scroll further down the offset becomes more negative.
     pub fn set_offset(&self, position: Point<Pixels>) {
-        self.set_offset_with_source(position, ScrollViewportChangeSource::Programmatic);
+        self.set_offset_with_programmatic_source(
+            position,
+            ScrollViewportProgrammaticSource::Offset,
+        );
+    }
+
+    /// Set the offset explicitly and attribute the next committed viewport change to a
+    /// programmatic source.
+    /// As you scroll further down the offset becomes more negative.
+    pub fn set_offset_with_programmatic_source(
+        &self,
+        position: Point<Pixels>,
+        source: ScrollViewportProgrammaticSource,
+    ) {
+        self.set_offset_with_source(position, ScrollViewportChangeSource::Programmatic(source));
     }
 
     /// Set the offset explicitly and attribute the next committed viewport change to `source`.
@@ -4109,11 +4171,14 @@ impl ScrollHandle {
         }
 
         state.viewport_generation = state.viewport_generation.saturating_add(1);
+        let previous = state.last_committed_viewport;
         state.last_committed_viewport = Some(viewport);
         let source = state
             .pending_viewport_change_source
             .take()
-            .unwrap_or(ScrollViewportChangeSource::Layout);
+            .unwrap_or_else(|| {
+                ScrollViewportChangeSource::infer_from_layout_change(previous, viewport)
+            });
 
         Some(ScrollViewportChangedEvent {
             generation: state.viewport_generation,
@@ -4365,7 +4430,7 @@ mod tests {
             .take_scroll_viewport_changed_event(size(px(80.), px(160.)))
             .expect("initial viewport should commit");
         assert_eq!(initial.generation(), 1);
-        assert_eq!(initial.source(), ScrollViewportChangeSource::Layout);
+        assert_eq!(initial.source(), ScrollViewportChangeSource::InitialLayout);
         assert_eq!(initial.offset(), point(px(0.), px(0.)));
 
         assert!(
@@ -4380,8 +4445,74 @@ mod tests {
             .take_scroll_viewport_changed_event(size(px(80.), px(160.)))
             .expect("programmatic offset should commit");
         assert_eq!(changed.generation(), 2);
-        assert_eq!(changed.source(), ScrollViewportChangeSource::Programmatic);
+        assert_eq!(
+            changed.source(),
+            ScrollViewportChangeSource::Programmatic(ScrollViewportProgrammaticSource::Offset)
+        );
         assert_eq!(changed.offset(), point(px(0.), px(-24.)));
+    }
+
+    #[test]
+    fn scroll_handle_committed_viewport_events_infer_layout_sources() {
+        let handle = ScrollHandle::new();
+        {
+            let mut state = handle.0.borrow_mut();
+            state.bounds = Bounds::new(point(px(0.), px(0.)), size(px(80.), px(40.)));
+            state.max_offset = point(px(0.), px(120.));
+        }
+
+        let initial = handle
+            .take_scroll_viewport_changed_event(size(px(80.), px(160.)))
+            .expect("initial viewport should commit");
+        assert_eq!(initial.source(), ScrollViewportChangeSource::InitialLayout);
+
+        {
+            let mut state = handle.0.borrow_mut();
+            state.bounds = Bounds::new(point(px(0.), px(0.)), size(px(80.), px(60.)));
+            state.max_offset = point(px(0.), px(100.));
+        }
+        let resized = handle
+            .take_scroll_viewport_changed_event(size(px(80.), px(160.)))
+            .expect("viewport resize should commit");
+        assert_eq!(resized.source(), ScrollViewportChangeSource::Resize);
+
+        {
+            let mut state = handle.0.borrow_mut();
+            state.max_offset = point(px(0.), px(180.));
+        }
+        let content_changed = handle
+            .take_scroll_viewport_changed_event(size(px(80.), px(240.)))
+            .expect("content-size change should commit");
+        assert_eq!(
+            content_changed.source(),
+            ScrollViewportChangeSource::ContentSize
+        );
+    }
+
+    #[test]
+    fn scroll_handle_programmatic_reveal_uses_named_source() {
+        let handle = ScrollHandle::new();
+        {
+            let mut state = handle.0.borrow_mut();
+            state.bounds = Bounds::new(point(px(0.), px(0.)), size(px(80.), px(40.)));
+            state.child_bounds = vec![Bounds::new(point(px(0.), px(80.)), size(px(80.), px(20.)))];
+            state.max_offset = point(px(0.), px(120.));
+            state.overflow.y = Overflow::Scroll;
+        }
+        handle
+            .take_scroll_viewport_changed_event(size(px(80.), px(160.)))
+            .expect("initial viewport should commit");
+
+        handle.scroll_to_item(0);
+        handle.scroll_to_active_item();
+        let revealed = handle
+            .take_scroll_viewport_changed_event(size(px(80.), px(160.)))
+            .expect("programmatic reveal should commit");
+
+        assert_eq!(
+            revealed.source(),
+            ScrollViewportChangeSource::Programmatic(ScrollViewportProgrammaticSource::Reveal)
+        );
     }
 
     #[test]
