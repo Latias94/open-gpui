@@ -1,6 +1,6 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockOp, DockSpaceId,
-    DockWorkspace,
+    DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockOp, DockPanelPlacement,
+    DockSpaceId, DockWorkspace,
 };
 
 impl DockWorkspace {
@@ -33,5 +33,17 @@ impl DockWorkspace {
             item: item.clone(),
             insert_index,
         })
+    }
+
+    pub(crate) fn commit_open_item_at_placement(
+        &mut self,
+        space: &DockSpaceId,
+        placement: &DockPanelPlacement,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        let target_tabs = self
+            .graph()
+            .target_tabs_for_panel_placement(space, placement);
+        let insert_index = placement.open_insert_index(self.graph(), space, target_tabs);
+        self.commit_open_item(space, target_tabs, placement.item(), insert_index)
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockGraphMutationError, DockItemId,
-    DockNode, DockNodeId, DockOp, DockSpaceId, DockSplitResize, DockWorkspace,
+    DockNode, DockNodeId, DockOp, DockPanelPlacement, DockSpaceId, DockSplitResize, DockWorkspace,
 };
 use open_gpui::{Bounds, Pixels};
 
@@ -55,6 +55,16 @@ impl DockWorkspace {
         let space = space.into();
         let item = item.into();
         self.commit_open_item(&space, target_tabs, &item, insert_index)
+    }
+
+    /// Opens one registered dock item by product-level placement intent.
+    pub fn open_item_at_placement(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        placement: DockPanelPlacement,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        let space = space.into();
+        self.commit_open_item_at_placement(&space, &placement)
     }
 
     /// Floats one item inside a dock space without creating a platform window.

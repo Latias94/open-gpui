@@ -100,6 +100,8 @@ fn common_import_paths_compile() {
     let prelude_layout = prelude::DockLayout::new(Vec::new(), Vec::new());
     let root_placement = root::DockViewportPlacementLayout::new(Vec::new());
     let prelude_placement = prelude::DockViewportPlacementLayout::new(Vec::new());
+    let root_panel_placement = root::DockPanelPlacement::center("editor");
+    let prelude_panel_target = prelude::DockPanelPlacementTarget::right_rail();
 
     let _ = (
         root_policy.allows_floating(),
@@ -108,6 +110,8 @@ fn common_import_paths_compile() {
         prelude_layout.layout_version,
         root_placement.placement_version,
         prelude_placement.placement_version,
+        root_panel_placement.item(),
+        prelude_panel_target,
     );
 }
 

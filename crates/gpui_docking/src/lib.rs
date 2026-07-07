@@ -55,7 +55,7 @@
 //! ```rust,no_run
 //! use open_gpui::{AnyView, App};
 //! use open_gpui_docking::{
-//!     DockController, EditorDockLayoutSpec,
+//!     DockController, DockPanelPlacement,
 //! };
 //!
 //! fn panel_factory(_cx: &mut App) -> AnyView {
@@ -63,11 +63,11 @@
 //! }
 //!
 //! let controller = DockController::builder("main")
-//!     .default_editor_layout(EditorDockLayoutSpec::new(
-//!         ["explorer"],
-//!         ["editor"],
-//!         ["terminal"],
-//!     ))
+//!     .panel_placements([
+//!         DockPanelPlacement::left_rail("explorer").fraction(0.24),
+//!         DockPanelPlacement::center("editor").selected(),
+//!         DockPanelPlacement::bottom_rail("terminal").fraction(0.30),
+//!     ])
 //!     .panel_factory("explorer", "Explorer", panel_factory)
 //!     .panel_factory("editor", "Editor", panel_factory)
 //!     .panel_factory("terminal", "Terminal", panel_factory)
@@ -246,7 +246,9 @@ mod workspace_resize_policy_tests;
 #[cfg(test)]
 mod workspace_selection_tests;
 pub use action::{DockAction, DockActionApplyError, DockActionOutcome, DockSplitResize};
-pub use builder::{DockLayoutBuilder, EditorDockLayoutSpec};
+pub use builder::{
+    DockLayoutBuilder, DockPanelPlacement, DockPanelPlacementTarget, EditorDockLayoutSpec,
+};
 pub use controller::{DockController, DockControllerBuilder};
 pub(crate) use debug::DockVisualAffordanceDebugSummary;
 pub use geometry::DockDropGuideStyle;

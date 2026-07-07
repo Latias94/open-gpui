@@ -1,6 +1,7 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockNode, DockPanel, DockPanelAttachError,
-    DockPanelDescriptor, DockPanelRegistry, DockWorkspace, host_test_support::*,
+    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockNode, DockPanel,
+    DockPanelAttachError, DockPanelDescriptor, DockPanelPlacement, DockPanelRegistry,
+    DockWorkspace, host_test_support::*,
 };
 use open_gpui::{AppContext as _, TestAppContext};
 use std::{cell::Cell, rc::Rc};
@@ -184,6 +185,37 @@ fn workspace_open_item_transaction_reopens_registered_lazy_panel_without_instant
     };
     assert_eq!(items, &vec![item("a"), item("b")]);
     assert_eq!(selected.as_ref(), items.get(1));
+}
+
+#[test]
+fn workspace_open_item_at_placement_uses_product_target_resolution() {
+    let graph = DockGraph::from_panel_placements(
+        space(),
+        [
+            DockPanelPlacement::center("editor"),
+            DockPanelPlacement::right_rail("inspector"),
+        ],
+    );
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_descriptor(item("terminal"), DockPanelDescriptor::new("Terminal"));
+
+    let outcome = workspace
+        .open_item_at_placement(
+            space(),
+            DockPanelPlacement::stacked_with("terminal", "inspector"),
+        )
+        .expect("registered panel should open beside its placement anchor");
+
+    assert_eq!(outcome, DockActionOutcome::Changed);
+    let graph = workspace.graph();
+    let (terminal_tabs, terminal_index) = graph
+        .find_item_in_space(&space(), &item("terminal"))
+        .expect("terminal should open");
+    let (inspector_tabs, inspector_index) = graph
+        .find_item_in_space(&space(), &item("inspector"))
+        .expect("inspector should remain in the right rail");
+    assert_eq!(terminal_tabs, inspector_tabs);
+    assert_eq!((inspector_index, terminal_index), (0, 1));
 }
 
 #[test]
