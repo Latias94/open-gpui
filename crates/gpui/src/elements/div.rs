@@ -1848,9 +1848,12 @@ struct ScrollViewportStateSnapshot {
     content_size: Size<Pixels>,
 }
 
-/// A committed scroll viewport snapshot for a tracked scroll element.
+/// A stable committed scroll viewport snapshot for a tracked scroll element.
+///
+/// This is a diagnostic and test-harness fact: it reports the final post-layout viewport that GPUI
+/// committed, but it does not drive layout, scrolling, focus, or selection.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ScrollViewportChangedEvent {
+pub struct ScrollViewportSnapshot {
     generation: u64,
     source: ScrollViewportChangeSource,
     bounds: Bounds<Pixels>,
@@ -1859,7 +1862,7 @@ pub struct ScrollViewportChangedEvent {
     content_size: Size<Pixels>,
 }
 
-impl ScrollViewportChangedEvent {
+impl ScrollViewportSnapshot {
     /// Monotonic generation for this tracked scroll handle.
     pub fn generation(&self) -> u64 {
         self.generation
@@ -1888,6 +1891,49 @@ impl ScrollViewportChangedEvent {
     /// Final content size used to compute scroll bounds.
     pub fn content_size(&self) -> Size<Pixels> {
         self.content_size
+    }
+}
+
+/// A committed scroll viewport event for a tracked scroll element.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScrollViewportChangedEvent {
+    snapshot: ScrollViewportSnapshot,
+}
+
+impl ScrollViewportChangedEvent {
+    /// Return the stable viewport snapshot carried by this event.
+    pub fn snapshot(&self) -> ScrollViewportSnapshot {
+        self.snapshot
+    }
+
+    /// Monotonic generation for this tracked scroll handle.
+    pub fn generation(&self) -> u64 {
+        self.snapshot.generation()
+    }
+
+    /// The source that most directly caused this committed viewport change.
+    pub fn source(&self) -> ScrollViewportChangeSource {
+        self.snapshot.source()
+    }
+
+    /// Final viewport bounds after layout and clamping.
+    pub fn bounds(&self) -> Bounds<Pixels> {
+        self.snapshot.bounds()
+    }
+
+    /// Final scroll offset after layout and clamping.
+    pub fn offset(&self) -> Point<Pixels> {
+        self.snapshot.offset()
+    }
+
+    /// Final maximum scroll offset after layout and clamping.
+    pub fn max_offset(&self) -> Point<Pixels> {
+        self.snapshot.max_offset()
+    }
+
+    /// Final content size used to compute scroll bounds.
+    pub fn content_size(&self) -> Size<Pixels> {
+        self.snapshot.content_size()
     }
 }
 
@@ -4108,6 +4154,7 @@ struct ScrollHandleState {
     child_bounds: Vec<Bounds<Pixels>>,
     viewport_generation: u64,
     last_committed_viewport: Option<ScrollViewportStateSnapshot>,
+    last_committed_viewport_snapshot: Option<ScrollViewportSnapshot>,
     pending_viewport_change_source: Option<ScrollViewportChangeSource>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
@@ -4201,6 +4248,15 @@ impl ScrollHandle {
     /// Get the bounds for a specific child.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
         self.0.borrow().child_bounds.get(ix).cloned()
+    }
+
+    /// Return the latest committed viewport snapshot for this tracked scroll handle.
+    ///
+    /// The snapshot is updated only when GPUI commits a changed viewport during layout/prepaint.
+    /// It is intended for tests and diagnostics that need final scroll facts after simulated input
+    /// or programmatic reveal calls.
+    pub fn committed_viewport_snapshot(&self) -> Option<ScrollViewportSnapshot> {
+        self.0.borrow().last_committed_viewport_snapshot
     }
 
     /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
@@ -4362,14 +4418,17 @@ impl ScrollHandle {
                 ScrollViewportChangeSource::infer_from_layout_change(previous, viewport)
             });
 
-        Some(ScrollViewportChangedEvent {
+        let snapshot = ScrollViewportSnapshot {
             generation: state.viewport_generation,
             source,
             bounds: viewport.bounds,
             offset: viewport.offset,
             max_offset: viewport.max_offset,
             content_size: viewport.content_size,
-        })
+        };
+        state.last_committed_viewport_snapshot = Some(snapshot);
+
+        Some(ScrollViewportChangedEvent { snapshot })
     }
 
     /// Get the logical scroll top, based on a child index and a pixel offset.
@@ -4620,6 +4679,10 @@ mod tests {
         assert_eq!(initial.generation(), 1);
         assert_eq!(initial.source(), ScrollViewportChangeSource::InitialLayout);
         assert_eq!(initial.offset(), point(px(0.), px(0.)));
+        assert_eq!(
+            handle.committed_viewport_snapshot(),
+            Some(initial.snapshot())
+        );
 
         assert!(
             handle
@@ -4638,6 +4701,10 @@ mod tests {
             ScrollViewportChangeSource::Programmatic(ScrollViewportProgrammaticSource::Offset)
         );
         assert_eq!(changed.offset(), point(px(0.), px(-24.)));
+        assert_eq!(
+            handle.committed_viewport_snapshot(),
+            Some(changed.snapshot())
+        );
     }
 
     #[test]
@@ -4708,7 +4775,7 @@ mod tests {
         let mut test_app = TestAppContext::single();
         let handle = ScrollHandle::new();
         let events = Rc::new(RefCell::new(Vec::new()));
-        let window = test_app.add_window({
+        let (_view, cx) = test_app.add_window_view({
             let handle = handle.clone();
             let events = events.clone();
             move |_, _| ScrollLifecycleProbe {
@@ -4717,38 +4784,31 @@ mod tests {
                 capture_intent: ScrollWheelIntent::allow_default(),
             }
         });
-        let any_window = window.into();
 
-        test_app
-            .update_window(any_window, |_, window, cx| {
-                window.draw(cx).clear();
-            })
-            .unwrap();
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
         events.borrow_mut().clear();
 
-        test_app
-            .update_window(any_window, |_, window, cx| {
-                window.dispatch_event(
-                    MouseMoveEvent {
-                        position: point(px(10.), px(10.)),
-                        modifiers: Default::default(),
-                        pressed_button: None,
-                    }
-                    .to_platform_input(),
-                    cx,
-                );
-                window.dispatch_event(
-                    ScrollWheelEvent {
-                        position: point(px(10.), px(10.)),
-                        delta: ScrollDelta::Pixels(point(px(0.), px(-24.))),
-                        modifiers: Default::default(),
-                        touch_phase: crate::TouchPhase::Moved,
-                    }
-                    .to_platform_input(),
-                    cx,
-                );
-            })
-            .unwrap();
+        cx.simulate_event(MouseMoveEvent {
+            position: point(px(10.), px(10.)),
+            modifiers: Default::default(),
+            pressed_button: None,
+        });
+        let dispatch = cx.simulate_event_with_dispatch_snapshot(ScrollWheelEvent {
+            position: point(px(10.), px(10.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-24.))),
+            modifiers: Default::default(),
+            touch_phase: crate::TouchPhase::Moved,
+        });
+        assert_eq!(cx.last_input_dispatch(), Some(dispatch));
+        assert_eq!(
+            cx.last_dispatch_event_result()
+                .map(crate::TestInputDispatchSnapshot::from),
+            Some(dispatch)
+        );
+        assert!(dispatch.default_consumed());
+        assert!(!dispatch.propagation_stopped());
 
         assert_eq!(
             events.borrow().first().map(String::as_str),
@@ -4757,11 +4817,9 @@ mod tests {
         );
         assert_eq!(handle.offset().y, px(-24.));
 
-        test_app
-            .update_window(any_window, |_, window, cx| {
-                window.draw(cx).clear();
-            })
-            .unwrap();
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
         let events = events.borrow();
         assert_eq!(events.first().map(String::as_str), Some("capture"));
         let committed_wheel_events = events
@@ -4799,7 +4857,7 @@ mod tests {
         let mut test_app = TestAppContext::single();
         let handle = ScrollHandle::new();
         let events = Rc::new(RefCell::new(Vec::new()));
-        let window = test_app.add_window({
+        let (_view, cx) = test_app.add_window_view({
             let handle = handle.clone();
             let events = events.clone();
             move |_, _| ScrollLifecycleProbe {
@@ -4808,47 +4866,33 @@ mod tests {
                 capture_intent: ScrollWheelIntent::handled(),
             }
         });
-        let any_window = window.into();
 
-        test_app
-            .update_window(any_window, |_, window, cx| {
-                window.draw(cx).clear();
-            })
-            .unwrap();
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
         events.borrow_mut().clear();
 
-        test_app
-            .update_window(any_window, |_, window, cx| {
-                window.dispatch_event(
-                    MouseMoveEvent {
-                        position: point(px(10.), px(10.)),
-                        modifiers: Default::default(),
-                        pressed_button: None,
-                    }
-                    .to_platform_input(),
-                    cx,
-                );
-                window.dispatch_event(
-                    ScrollWheelEvent {
-                        position: point(px(10.), px(10.)),
-                        delta: ScrollDelta::Pixels(point(px(0.), px(-24.))),
-                        modifiers: Default::default(),
-                        touch_phase: crate::TouchPhase::Moved,
-                    }
-                    .to_platform_input(),
-                    cx,
-                );
-            })
-            .unwrap();
+        cx.simulate_event(MouseMoveEvent {
+            position: point(px(10.), px(10.)),
+            modifiers: Default::default(),
+            pressed_button: None,
+        });
+        let dispatch = cx.simulate_event_with_dispatch_snapshot(ScrollWheelEvent {
+            position: point(px(10.), px(10.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-24.))),
+            modifiers: Default::default(),
+            touch_phase: crate::TouchPhase::Moved,
+        });
+        assert_eq!(cx.last_input_dispatch(), Some(dispatch));
+        assert!(dispatch.default_prevented());
+        assert!(!dispatch.propagation_stopped());
 
         assert_eq!(events.borrow().as_slice(), ["capture", "bubble:0"]);
         assert_eq!(handle.offset().y, px(0.));
 
-        test_app
-            .update_window(any_window, |_, window, cx| {
-                window.draw(cx).clear();
-            })
-            .unwrap();
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
         assert_eq!(
             events.borrow().as_slice(),
             ["capture", "bubble:0"],
@@ -4894,43 +4938,30 @@ mod tests {
     fn scroll_wheel_intent_stop_propagation_blocks_nested_handlers() {
         let mut test_app = TestAppContext::single();
         let events = Rc::new(RefCell::new(Vec::new()));
-        let window = test_app.add_window({
+        let (_view, cx) = test_app.add_window_view({
             let events = events.clone();
             move |_, _| NestedScrollWheelIntentProbe {
                 events: events.clone(),
             }
         });
-        let any_window = window.into();
 
-        test_app
-            .update_window(any_window, |_, window, cx| {
-                window.draw(cx).clear();
-            })
-            .unwrap();
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
 
-        test_app
-            .update_window(any_window, |_, window, cx| {
-                window.dispatch_event(
-                    MouseMoveEvent {
-                        position: point(px(10.), px(10.)),
-                        modifiers: Default::default(),
-                        pressed_button: None,
-                    }
-                    .to_platform_input(),
-                    cx,
-                );
-                window.dispatch_event(
-                    ScrollWheelEvent {
-                        position: point(px(10.), px(10.)),
-                        delta: ScrollDelta::Pixels(point(px(0.), px(-24.))),
-                        modifiers: Default::default(),
-                        touch_phase: crate::TouchPhase::Moved,
-                    }
-                    .to_platform_input(),
-                    cx,
-                );
-            })
-            .unwrap();
+        cx.simulate_event(MouseMoveEvent {
+            position: point(px(10.), px(10.)),
+            modifiers: Default::default(),
+            pressed_button: None,
+        });
+        let dispatch = cx.simulate_event_with_dispatch_snapshot(ScrollWheelEvent {
+            position: point(px(10.), px(10.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-24.))),
+            modifiers: Default::default(),
+            touch_phase: crate::TouchPhase::Moved,
+        });
+        assert!(dispatch.default_consumed());
+        assert!(dispatch.propagation_stopped());
 
         assert_eq!(
             events.borrow().as_slice(),
@@ -4972,107 +5003,77 @@ mod tests {
     }
 
     fn dispatch_scroll_wheel_at_probe(
-        test_app: &mut TestAppContext,
-        window: crate::AnyWindowHandle,
-    ) {
-        test_app
-            .update_window(window, |_, window, cx| {
-                window.dispatch_event(
-                    MouseMoveEvent {
-                        position: point(px(10.), px(10.)),
-                        modifiers: Default::default(),
-                        pressed_button: None,
-                    }
-                    .to_platform_input(),
-                    cx,
-                );
-                window.dispatch_event(
-                    ScrollWheelEvent {
-                        position: point(px(10.), px(10.)),
-                        delta: ScrollDelta::Pixels(point(px(0.), px(-24.))),
-                        modifiers: Default::default(),
-                        touch_phase: crate::TouchPhase::Moved,
-                    }
-                    .to_platform_input(),
-                    cx,
-                );
-            })
-            .unwrap();
+        cx: &mut crate::VisualTestContext,
+    ) -> crate::TestInputDispatchSnapshot {
+        cx.simulate_event(MouseMoveEvent {
+            position: point(px(10.), px(10.)),
+            modifiers: Default::default(),
+            pressed_button: None,
+        });
+        cx.simulate_event_with_dispatch_snapshot(ScrollWheelEvent {
+            position: point(px(10.), px(10.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-24.))),
+            modifiers: Default::default(),
+            touch_phase: crate::TouchPhase::Moved,
+        })
     }
 
     #[test]
     fn plain_scroll_wheel_preserves_focus_without_opt_in() {
         let mut test_app = TestAppContext::single();
         let scroll_handle = ScrollHandle::new();
-        let focus_handle = Rc::new(RefCell::new(None));
-        let window = test_app.add_window({
+        let (_view, cx) = test_app.add_window_view({
             let scroll_handle = scroll_handle.clone();
-            let focus_handle = focus_handle.clone();
             move |_, cx| ScrollWheelFocusIntentProbe {
-                focus_handle: {
-                    let handle = cx.focus_handle();
-                    *focus_handle.borrow_mut() = Some(handle.clone());
-                    handle
-                },
+                focus_handle: cx.focus_handle(),
                 scroll_handle: scroll_handle.clone(),
                 focus_on_wheel: false,
             }
         });
-        let any_window = window.into();
 
-        test_app
-            .update_window(any_window, |_, window, cx| {
-                window.draw(cx).clear();
-            })
-            .unwrap();
-        dispatch_scroll_wheel_at_probe(&mut test_app, any_window);
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+        let dispatch = dispatch_scroll_wheel_at_probe(cx);
 
         assert_eq!(scroll_handle.offset().y, px(-24.));
-        let focus_handle = focus_handle.borrow().clone().unwrap();
-        let focused = test_app
-            .update_window(any_window, |_, window, _| focus_handle.is_focused(window))
-            .unwrap();
+        assert!(dispatch.default_consumed());
+        assert!(!dispatch.propagation_stopped());
         assert!(
-            !focused,
+            !cx.debug_selector_is_focused("scroll-focus-intent-probe"),
             "plain overflow scrolling should not silently move focus"
         );
+        assert_eq!(cx.focused_debug_selector(), None);
     }
 
     #[test]
     fn scroll_wheel_focus_intent_moves_focus_deterministically() {
         let mut test_app = TestAppContext::single();
         let scroll_handle = ScrollHandle::new();
-        let focus_handle = Rc::new(RefCell::new(None));
-        let window = test_app.add_window({
+        let (_view, cx) = test_app.add_window_view({
             let scroll_handle = scroll_handle.clone();
-            let focus_handle = focus_handle.clone();
             move |_, cx| ScrollWheelFocusIntentProbe {
-                focus_handle: {
-                    let handle = cx.focus_handle();
-                    *focus_handle.borrow_mut() = Some(handle.clone());
-                    handle
-                },
+                focus_handle: cx.focus_handle(),
                 scroll_handle: scroll_handle.clone(),
                 focus_on_wheel: true,
             }
         });
-        let any_window = window.into();
 
-        test_app
-            .update_window(any_window, |_, window, cx| {
-                window.draw(cx).clear();
-            })
-            .unwrap();
-        dispatch_scroll_wheel_at_probe(&mut test_app, any_window);
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+        let dispatch = dispatch_scroll_wheel_at_probe(cx);
 
         assert_eq!(scroll_handle.offset().y, px(-24.));
-        let focus_handle = focus_handle.borrow().clone().unwrap();
-        let focused = test_app
-            .update_window(any_window, |_, window, _| focus_handle.is_focused(window))
-            .unwrap();
+        assert!(dispatch.default_consumed());
+        assert!(!dispatch.propagation_stopped());
         assert!(
-            focused,
+            cx.debug_selector_is_focused("scroll-focus-intent-probe"),
             "focus-on-wheel intent should focus the hovered scroll target"
+        );
+        assert_eq!(
+            cx.focused_debug_selector().as_deref(),
+            Some("scroll-focus-intent-probe")
         );
     }
 

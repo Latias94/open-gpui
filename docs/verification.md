@@ -62,11 +62,19 @@ scroll surfaces emit committed post-layout viewport facts, typed wheel intent co
 scrolling and propagation, and focus-on-wheel is opt-in rather than implicit. The focused local
 gates are:
 
+Runtime tests should collect final viewport facts through `ScrollViewportChangedEvent` or
+`ScrollHandle::committed_viewport_snapshot`, assert simulated-input side effects through
+`TestInputDispatchSnapshot` and `VisualTestContext::last_dispatch_event_result`, and assert focus
+ownership through `VisualTestContext::debug_selector_is_focused` or
+`VisualTestContext::focused_debug_selector`. These probes expose committed correctness facts only;
+component render plans, transient dispatch flags, and broader P2 performance telemetry stay private.
+
 ```sh
 cargo test -p open-gpui scroll_handle_committed_viewport_events --locked
 cargo test -p open-gpui scroll_handle_programmatic_reveal_uses_named_source --locked
 cargo test -p open-gpui scroll_lifecycle_capture --locked
 cargo test -p open-gpui scroll_wheel_intent --locked
+cargo test -p open-gpui test_input_dispatch_snapshot --locked
 cargo test -p open-gpui plain_scroll_wheel_preserves_focus_without_opt_in --locked
 cargo test -p open-gpui scroll_wheel_focus_intent_moves_focus_deterministically --locked
 cargo test -p open-gpui test_child_wheel_handler_prevents_parent_list_scroll --locked

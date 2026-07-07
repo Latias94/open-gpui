@@ -1002,6 +1002,7 @@ pub struct Window {
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
+    last_dispatch_event_result: Option<DispatchEventResult>,
     mouse_position: Point<Pixels>,
     mouse_in_window: bool,
     mouse_hit_test: HitTest,
@@ -1705,6 +1706,7 @@ impl Window {
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
+            last_dispatch_event_result: None,
             mouse_position,
             mouse_in_window: hovered.get(),
             mouse_hit_test: HitTest::default(),
@@ -1747,11 +1749,20 @@ impl Window {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[expect(missing_docs)]
 pub struct DispatchEventResult {
     pub propagate: bool,
     pub default_prevented: bool,
+}
+
+impl Default for DispatchEventResult {
+    fn default() -> Self {
+        Self {
+            propagate: true,
+            default_prevented: false,
+        }
+    }
 }
 
 /// Indicates which region of the window is visible. Content falling outside of this mask will not be
@@ -2541,6 +2552,14 @@ impl Window {
     /// Obtain whether default has been prevented for the event currently being dispatched.
     pub fn default_prevented(&self) -> bool {
         self.default_prevented
+    }
+
+    /// Return the most recent input dispatch result recorded by this window.
+    ///
+    /// This is a stable diagnostic snapshot for tests and tooling that need to assert default input
+    /// consumption or propagation after simulated input.
+    pub fn last_dispatch_event_result(&self) -> Option<DispatchEventResult> {
+        self.last_dispatch_event_result
     }
 
     /// Determine whether the given action is available along the dispatch path to the currently focused element.
@@ -4612,10 +4631,12 @@ impl Window {
             }
         }
 
-        DispatchEventResult {
+        let result = DispatchEventResult {
             propagate: cx.propagate_event,
             default_prevented: self.default_prevented,
-        }
+        };
+        self.last_dispatch_event_result = Some(result);
+        result
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {

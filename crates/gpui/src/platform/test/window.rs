@@ -130,15 +130,19 @@ impl TestWindow {
         self.0.lock().hover_status_change_callback = Some(callback);
     }
 
-    pub fn simulate_input(&mut self, event: PlatformInput) -> bool {
+    pub fn simulate_input_result(&mut self, event: PlatformInput) -> DispatchEventResult {
         let mut lock = self.0.lock();
         let Some(mut callback) = lock.input_callback.take() else {
-            return false;
+            return DispatchEventResult::default();
         };
         drop(lock);
         let result = callback(event);
         self.0.lock().input_callback = Some(callback);
-        !result.propagate
+        result
+    }
+
+    pub fn simulate_input(&mut self, event: PlatformInput) -> bool {
+        !self.simulate_input_result(event).propagate
     }
 
     /// Simulates the platform delivering a frame request.
