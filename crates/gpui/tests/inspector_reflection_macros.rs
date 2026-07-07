@@ -1,4 +1,5 @@
-// gate on rust-analyzer so rust-analyzer never needs to expand this macro, it takes up to 10 seconds to expand due to inefficiencies in rust-analyzers proc-macro srv
+// Gate on rust-analyzer so rust-analyzer never needs to expand this macro; it
+// can take several seconds to expand due to rust-analyzer proc-macro overhead.
 #[cfg_attr(not(rust_analyzer), open_gpui_macros::derive_inspector_reflection)]
 trait Transform: Clone {
     /// Doubles the value
@@ -11,13 +12,11 @@ trait Transform: Clone {
     ///
     /// This method has a default implementation
     fn increment(self) -> Self {
-        // Default implementation
         self.add_one()
     }
 
     /// Quadruples the value by doubling twice
     fn quadruple(self) -> Self {
-        // Default implementation with mut self
         self.double().double()
     }
 
@@ -63,10 +62,9 @@ impl Transform for Number {
 }
 
 #[test]
-fn test_derive_inspector_reflection() {
+fn derive_inspector_reflection_macro_generates_lookup_helpers() {
     use transform_reflection::*;
 
-    // Get all methods that match the pattern fn(self) -> Self or fn(mut self) -> Self
     let methods = methods::<Number>();
 
     assert_eq!(methods.len(), 5);
@@ -77,7 +75,6 @@ fn test_derive_inspector_reflection() {
     assert!(method_names.contains(&"quadruple"));
     assert!(method_names.contains(&"add_one"));
 
-    // Invoke methods by name
     let num = Number(5);
 
     let doubled = find_method::<Number>("double").unwrap().invoke(num.clone());
@@ -94,20 +91,17 @@ fn test_derive_inspector_reflection() {
     let quadrupled = find_method::<Number>("quadruple").unwrap().invoke(num);
     assert_eq!(quadrupled, Number(20));
 
-    // Try to invoke a non-existent method
     let result = find_method::<Number>("nonexistent");
     assert!(result.is_none());
 
-    // Chain operations
     let num = Number(10);
     let result = find_method::<Number>("double")
         .map(|m| m.invoke(num))
         .and_then(|n| find_method::<Number>("increment").map(|m| m.invoke(n)))
         .and_then(|n| find_method::<Number>("triple").map(|m| m.invoke(n)));
 
-    assert_eq!(result, Some(Number(63))); // (10 * 2 + 1) * 3 = 63
+    assert_eq!(result, Some(Number(63)));
 
-    // Test documentationumentation capture
     let double_method = find_method::<Number>("double").unwrap();
     assert_eq!(double_method.documentation, Some("Doubles the value"));
 

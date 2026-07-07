@@ -1,0 +1,21 @@
+Open GPUI
+
+Open GPUI is an independent fork of the Apache-2.0 GPUI framework code
+originally developed in the Zed repository by Zed Industries.
+
+Portions derived from Zed GPUI:
+  Copyright 2022 - 2025 Zed Industries, Inc.
+  Licensed under the Apache License, Version 2.0.
+
+Open GPUI modifications:
+  Copyright 2026 Mingzhen Zhuang and Open GPUI contributors.
+  Licensed under the Apache License, Version 2.0, unless a file explicitly
+  states otherwise.
+
+Open GPUI currently consumes maintained forks of third-party projects including:
+  open-gpui-scap, from the scap screen capture library lineage
+  font-kit, from the Servo font-kit library lineage
+
+Those forked dependencies and all other third-party dependencies retain their
+own copyright notices and license terms. A release distribution should include
+the applicable third-party notices generated from the resolved dependency graph.

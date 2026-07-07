@@ -4356,7 +4356,6 @@ name = "open-gpui-macros"
 version = "0.2.0"
 dependencies = [
  "heck",
- "open-gpui",
  "proc-macro2",
  "quote",
  "syn",

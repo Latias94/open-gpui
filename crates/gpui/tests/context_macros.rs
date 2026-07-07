@@ -1,5 +1,5 @@
 #[test]
-fn test_derive_context() {
+fn derive_context_macros_compile_against_open_gpui_facade() {
     use open_gpui::{App, Window};
     use open_gpui_macros::{AppContext, VisualContext};
 
