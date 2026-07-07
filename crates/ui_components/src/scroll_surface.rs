@@ -1,4 +1,4 @@
-use open_gpui::{ScrollHandle, ScrollWheelEvent, Window, point, px};
+use open_gpui::{ScrollHandle, ScrollViewportChangeSource, ScrollWheelEvent, Window, point, px};
 use open_gpui_ui_core::UiPx;
 
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
@@ -170,7 +170,8 @@ pub(crate) fn handle_vertical_wheel_scroll(
         return false;
     }
 
-    scroll_handle.set_offset(point(current.x, next_y));
+    scroll_handle
+        .set_offset_with_source(point(current.x, next_y), ScrollViewportChangeSource::Wheel);
     window.refresh();
     true
 }

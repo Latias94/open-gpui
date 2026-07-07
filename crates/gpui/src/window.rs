@@ -2531,8 +2531,9 @@ impl Window {
         }
     }
 
-    /// Call to prevent the default action of an event. Currently only used to prevent
-    /// parent elements from becoming focused on mouse down.
+    /// Call to prevent default handling for the event currently being dispatched.
+    /// Built-in handlers consult this flag before applying behaviors such as
+    /// automatic focus transfer or default scrolling.
     pub fn prevent_default(&mut self) {
         self.default_prevented = true;
     }

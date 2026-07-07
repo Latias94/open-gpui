@@ -354,6 +354,33 @@ impl Interactivity {
             }));
     }
 
+    /// Bind the given callback to scroll wheel events during the capture phase.
+    /// This runs before GPUI's default scroll handling for scrollable elements.
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn capture_scroll_wheel(
+        &mut self,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.scroll_wheel_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Capture && hitbox.should_handle_scroll(window) {
+                    (listener)(event, window, cx);
+                }
+            }));
+    }
+
+    /// Bind the given callback to committed tracked-scroll viewport changes.
+    /// The callback runs after GPUI has clamped the scroll offset against the
+    /// element's final bounds and content size for the frame.
+    pub fn on_scroll_viewport_changed(
+        &mut self,
+        listener: impl Fn(&ScrollViewportChangedEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.scroll_viewport_changed_listeners
+            .push(Box::new(listener));
+    }
+
     /// Bind the given callback to pinch gesture events during the bubble phase.
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
@@ -947,6 +974,28 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Bind the given callback to scroll wheel events during the capture phase.
+    /// The fluent API equivalent to [`Interactivity::capture_scroll_wheel`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    fn capture_scroll_wheel(
+        mut self,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().capture_scroll_wheel(listener);
+        self
+    }
+
+    /// Bind the given callback to committed tracked-scroll viewport changes.
+    /// The fluent API equivalent to [`Interactivity::on_scroll_viewport_changed`].
+    fn on_scroll_viewport_changed(
+        mut self,
+        listener: impl Fn(&ScrollViewportChangedEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().on_scroll_viewport_changed(listener);
+        self
+    }
+
     /// Bind the given callback to pinch gesture events during the bubble phase.
     /// The fluent API equivalent to [`Interactivity::on_pinch`].
     ///
@@ -1501,6 +1550,9 @@ pub(crate) type MouseMoveListener =
 pub(crate) type ScrollWheelListener =
     Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
+pub(crate) type ScrollViewportChangedListener =
+    Box<dyn Fn(&ScrollViewportChangedEvent, &mut Window, &mut App) + 'static>;
+
 pub(crate) type PinchListener =
     Box<dyn Fn(&PinchEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
@@ -1550,6 +1602,68 @@ pub struct Div {
     prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static>>,
     image_cache: Option<Box<dyn ImageCacheProvider>>,
     prepaint_order_fn: Option<Box<dyn Fn(&mut Window, &mut App) -> SmallVec<[usize; 8]>>>,
+}
+
+/// The source that most directly caused a committed scroll viewport change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollViewportChangeSource {
+    /// Bounds, content size, clamping, or initial mount committed the viewport.
+    Layout,
+    /// A scroll wheel event changed the scroll offset.
+    Wheel,
+    /// Programmatic code changed the scroll offset through [`ScrollHandle::set_offset`].
+    Programmatic,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ScrollViewportStateSnapshot {
+    bounds: Bounds<Pixels>,
+    offset: Point<Pixels>,
+    max_offset: Point<Pixels>,
+    content_size: Size<Pixels>,
+}
+
+/// A committed scroll viewport snapshot for a tracked scroll element.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScrollViewportChangedEvent {
+    generation: u64,
+    source: ScrollViewportChangeSource,
+    bounds: Bounds<Pixels>,
+    offset: Point<Pixels>,
+    max_offset: Point<Pixels>,
+    content_size: Size<Pixels>,
+}
+
+impl ScrollViewportChangedEvent {
+    /// Monotonic generation for this tracked scroll handle.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// The source that most directly caused this committed viewport change.
+    pub fn source(&self) -> ScrollViewportChangeSource {
+        self.source
+    }
+
+    /// Final viewport bounds after layout and clamping.
+    pub fn bounds(&self) -> Bounds<Pixels> {
+        self.bounds
+    }
+
+    /// Final scroll offset after layout and clamping.
+    pub fn offset(&self) -> Point<Pixels> {
+        self.offset
+    }
+
+    /// Final maximum scroll offset after layout and clamping.
+    pub fn max_offset(&self) -> Point<Pixels> {
+        self.max_offset
+    }
+
+    /// Final content size used to compute scroll bounds.
+    pub fn content_size(&self) -> Size<Pixels> {
+        self.content_size
+    }
 }
 
 impl Div {
@@ -1871,6 +1985,7 @@ pub struct Interactivity {
     pub(crate) mouse_pressure_listeners: Vec<MousePressureListener>,
     pub(crate) mouse_move_listeners: Vec<MouseMoveListener>,
     pub(crate) scroll_wheel_listeners: Vec<ScrollWheelListener>,
+    pub(crate) scroll_viewport_changed_listeners: Vec<ScrollViewportChangedListener>,
     pub(crate) pinch_listeners: Vec<PinchListener>,
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
     pub(crate) key_up_listeners: Vec<KeyUpListener>,
@@ -2083,6 +2198,7 @@ impl Interactivity {
 
                             let scroll_offset =
                                 self.clamp_scroll_position(bounds, &style, window, cx);
+                            self.dispatch_scroll_viewport_changed(content_size, window, cx);
                             let result = f(&style, scroll_offset, hitbox, window, cx);
                             (result, element_state)
                         },
@@ -2109,11 +2225,33 @@ impl Interactivity {
             || !self.click_listeners.is_empty()
             || !self.aux_click_listeners.is_empty()
             || !self.scroll_wheel_listeners.is_empty()
+            || !self.scroll_viewport_changed_listeners.is_empty()
             || self.has_pinch_listeners()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
             || self.tooltip_builder.is_some()
             || window.is_inspector_picking(cx)
+    }
+
+    fn dispatch_scroll_viewport_changed(
+        &self,
+        content_size: Size<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if self.scroll_viewport_changed_listeners.is_empty() {
+            return;
+        }
+        let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() else {
+            return;
+        };
+        let Some(event) = scroll_handle.take_scroll_viewport_changed_event(content_size) else {
+            return;
+        };
+
+        for listener in &self.scroll_viewport_changed_listeners {
+            listener(&event, window, cx);
+        }
     }
 
     fn clamp_scroll_position(
@@ -2450,7 +2588,7 @@ impl Interactivity {
 
         // If this element can be focused, register a mouse down listener
         // that will automatically transfer focus when hitting the element.
-        // This behavior can be suppressed by using `cx.prevent_default()`.
+        // This behavior can be suppressed by using `window.prevent_default()`.
         if let Some(focus_handle) = self.tracked_focus_handle.clone() {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {
@@ -2921,11 +3059,15 @@ impl Interactivity {
             let overflow = style.overflow;
             let allow_concurrent_scroll = style.allow_concurrent_scroll;
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
+            let tracked_scroll_handle = self.tracked_scroll_handle.clone();
             let line_height = window.line_height();
             let hitbox = hitbox.clone();
             let current_view = window.current_view();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
+                if phase == DispatchPhase::Bubble
+                    && hitbox.should_handle_scroll(window)
+                    && !window.default_prevented()
+                {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
                     let delta = event.delta.pixel_delta(line_height);
@@ -2962,6 +3104,10 @@ impl Interactivity {
                         window.prevent_default();
                         cx.stop_propagation();
                         if *scroll_offset != old_scroll_offset {
+                            if let Some(scroll_handle) = tracked_scroll_handle.as_ref() {
+                                scroll_handle
+                                    .mark_scroll_viewport_change(ScrollViewportChangeSource::Wheel);
+                            }
                             cx.notify(current_view);
                         }
                     }
@@ -3736,6 +3882,9 @@ struct ScrollHandleState {
     bounds: Bounds<Pixels>,
     max_offset: Point<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
+    viewport_generation: u64,
+    last_committed_viewport: Option<ScrollViewportStateSnapshot>,
+    pending_viewport_change_source: Option<ScrollViewportChangeSource>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
     active_item: Option<ScrollActiveItem>,
@@ -3837,6 +3986,7 @@ impl ScrollHandle {
             index: ix,
             strategy: ScrollStrategy::default(),
         });
+        state.pending_viewport_change_source = Some(ScrollViewportChangeSource::Programmatic);
     }
 
     /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
@@ -3847,6 +3997,7 @@ impl ScrollHandle {
             index: ix,
             strategy: ScrollStrategy::Top,
         });
+        state.pending_viewport_change_source = Some(ScrollViewportChangeSource::Programmatic);
     }
 
     /// Scrolls the minimal amount to either ensure that the child is
@@ -3904,14 +4055,74 @@ impl ScrollHandle {
     pub fn scroll_to_bottom(&self) {
         let mut state = self.0.borrow_mut();
         state.scroll_to_bottom = true;
+        state.pending_viewport_change_source = Some(ScrollViewportChangeSource::Programmatic);
     }
 
     /// Set the offset explicitly. The offset is the distance from the top left of the
     /// parent container to the top left of the first child.
     /// As you scroll further down the offset becomes more negative.
-    pub fn set_offset(&self, mut position: Point<Pixels>) {
-        let state = self.0.borrow();
-        *state.offset.borrow_mut() = position;
+    pub fn set_offset(&self, position: Point<Pixels>) {
+        self.set_offset_with_source(position, ScrollViewportChangeSource::Programmatic);
+    }
+
+    /// Set the offset explicitly and attribute the next committed viewport change to `source`.
+    /// As you scroll further down the offset becomes more negative.
+    pub fn set_offset_with_source(
+        &self,
+        position: Point<Pixels>,
+        source: ScrollViewportChangeSource,
+    ) {
+        let mut state = self.0.borrow_mut();
+        let changed = {
+            let mut offset = state.offset.borrow_mut();
+            if *offset == position {
+                false
+            } else {
+                *offset = position;
+                true
+            }
+        };
+        if changed {
+            state.pending_viewport_change_source = Some(source);
+        }
+    }
+
+    fn mark_scroll_viewport_change(&self, source: ScrollViewportChangeSource) {
+        self.0.borrow_mut().pending_viewport_change_source = Some(source);
+    }
+
+    fn take_scroll_viewport_changed_event(
+        &self,
+        content_size: Size<Pixels>,
+    ) -> Option<ScrollViewportChangedEvent> {
+        let mut state = self.0.borrow_mut();
+        let offset = *state.offset.borrow();
+        let viewport = ScrollViewportStateSnapshot {
+            bounds: state.bounds,
+            offset,
+            max_offset: state.max_offset,
+            content_size,
+        };
+        if state.last_committed_viewport == Some(viewport) {
+            state.pending_viewport_change_source = None;
+            return None;
+        }
+
+        state.viewport_generation = state.viewport_generation.saturating_add(1);
+        state.last_committed_viewport = Some(viewport);
+        let source = state
+            .pending_viewport_change_source
+            .take()
+            .unwrap_or(ScrollViewportChangeSource::Layout);
+
+        Some(ScrollViewportChangedEvent {
+            generation: state.viewport_generation,
+            source,
+            bounds: viewport.bounds,
+            offset: viewport.offset,
+            max_offset: viewport.max_offset,
+            content_size: viewport.content_size,
+        })
     }
 
     /// Get the logical scroll top, based on a child index and a pixel offset.
@@ -3954,7 +4165,7 @@ impl ScrollHandle {
 mod tests {
     use super::*;
     use crate::{
-        AppContext as _, Context, InputEvent, MouseMoveEvent, TestAppContext,
+        AppContext as _, Context, InputEvent, MouseMoveEvent, ScrollDelta, TestAppContext,
         util::FluentBuilder as _,
     };
     use std::rc::Weak;
@@ -3968,6 +4179,42 @@ mod tests {
     }
 
     type CapturedActiveTooltip = Rc<RefCell<Option<Weak<RefCell<Option<ActiveTooltip>>>>>>;
+
+    struct ScrollLifecycleProbe {
+        handle: ScrollHandle,
+        events: Rc<RefCell<Vec<String>>>,
+        prevent_default_in_capture: bool,
+    }
+
+    impl Render for ScrollLifecycleProbe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let capture_events = self.events.clone();
+            let committed_events = self.events.clone();
+            let prevent_default_in_capture = self.prevent_default_in_capture;
+
+            div()
+                .id("scroll-lifecycle-probe")
+                .w(px(100.))
+                .h(px(100.))
+                .overflow_y_scroll()
+                .track_scroll(&self.handle)
+                .capture_scroll_wheel(move |_, window, _| {
+                    capture_events.borrow_mut().push("capture".to_owned());
+                    if prevent_default_in_capture {
+                        window.prevent_default();
+                    }
+                })
+                .on_scroll_viewport_changed(move |event, _, _| {
+                    committed_events.borrow_mut().push(format!(
+                        "committed:{:?}:{}:{}",
+                        event.source(),
+                        event.generation(),
+                        event.offset().y.as_f32()
+                    ));
+                })
+                .child(div().w(px(100.)).h(px(300.)))
+        }
+    }
 
     struct TooltipCaptureElement {
         child: AnyElement,
@@ -4103,6 +4350,187 @@ mod tests {
         handle.scroll_to_active_item();
 
         assert_eq!(handle.offset().y, px(-25.));
+    }
+
+    #[test]
+    fn scroll_handle_committed_viewport_events_track_generation_and_source() {
+        let handle = ScrollHandle::new();
+        {
+            let mut state = handle.0.borrow_mut();
+            state.bounds = Bounds::new(point(px(0.), px(0.)), size(px(80.), px(40.)));
+            state.max_offset = point(px(0.), px(120.));
+        }
+
+        let initial = handle
+            .take_scroll_viewport_changed_event(size(px(80.), px(160.)))
+            .expect("initial viewport should commit");
+        assert_eq!(initial.generation(), 1);
+        assert_eq!(initial.source(), ScrollViewportChangeSource::Layout);
+        assert_eq!(initial.offset(), point(px(0.), px(0.)));
+
+        assert!(
+            handle
+                .take_scroll_viewport_changed_event(size(px(80.), px(160.)))
+                .is_none(),
+            "unchanged viewport should not emit duplicate committed events"
+        );
+
+        handle.set_offset(point(px(0.), px(-24.)));
+        let changed = handle
+            .take_scroll_viewport_changed_event(size(px(80.), px(160.)))
+            .expect("programmatic offset should commit");
+        assert_eq!(changed.generation(), 2);
+        assert_eq!(changed.source(), ScrollViewportChangeSource::Programmatic);
+        assert_eq!(changed.offset(), point(px(0.), px(-24.)));
+    }
+
+    #[test]
+    fn scroll_lifecycle_capture_runs_before_default_and_committed_viewport() {
+        let mut test_app = TestAppContext::single();
+        let handle = ScrollHandle::new();
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let window = test_app.add_window({
+            let handle = handle.clone();
+            let events = events.clone();
+            move |_, _| ScrollLifecycleProbe {
+                handle: handle.clone(),
+                events: events.clone(),
+                prevent_default_in_capture: false,
+            }
+        });
+        let any_window = window.into();
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear();
+            })
+            .unwrap();
+        events.borrow_mut().clear();
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(10.), px(10.)),
+                        modifiers: Default::default(),
+                        pressed_button: None,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.dispatch_event(
+                    ScrollWheelEvent {
+                        position: point(px(10.), px(10.)),
+                        delta: ScrollDelta::Pixels(point(px(0.), px(-24.))),
+                        modifiers: Default::default(),
+                        touch_phase: crate::TouchPhase::Moved,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+
+        assert_eq!(
+            events.borrow().first().map(String::as_str),
+            Some("capture"),
+            "capture scroll wheel should run before the default scroll commit"
+        );
+        assert_eq!(handle.offset().y, px(-24.));
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear();
+            })
+            .unwrap();
+        let events = events.borrow();
+        assert_eq!(events.first().map(String::as_str), Some("capture"));
+        let committed_wheel_events = events
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| event.starts_with("committed:Wheel:"))
+            .collect::<Vec<_>>();
+        assert!(
+            committed_wheel_events
+                .iter()
+                .any(|(_, event)| event.ends_with(":-24")),
+            "committed viewport callback should observe final default wheel scroll"
+        );
+        assert_eq!(
+            committed_wheel_events.len(),
+            1,
+            "a single wheel scroll should commit one viewport change"
+        );
+        assert!(
+            events
+                .iter()
+                .position(|event| event == "capture")
+                .expect("capture event should be recorded")
+                < committed_wheel_events[0].0,
+            "capture should be observed before the committed wheel viewport"
+        );
+    }
+
+    #[test]
+    fn scroll_lifecycle_capture_prevent_default_blocks_default_scroll() {
+        let mut test_app = TestAppContext::single();
+        let handle = ScrollHandle::new();
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let window = test_app.add_window({
+            let handle = handle.clone();
+            let events = events.clone();
+            move |_, _| ScrollLifecycleProbe {
+                handle: handle.clone(),
+                events: events.clone(),
+                prevent_default_in_capture: true,
+            }
+        });
+        let any_window = window.into();
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear();
+            })
+            .unwrap();
+        events.borrow_mut().clear();
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(10.), px(10.)),
+                        modifiers: Default::default(),
+                        pressed_button: None,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.dispatch_event(
+                    ScrollWheelEvent {
+                        position: point(px(10.), px(10.)),
+                        delta: ScrollDelta::Pixels(point(px(0.), px(-24.))),
+                        modifiers: Default::default(),
+                        touch_phase: crate::TouchPhase::Moved,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+
+        assert_eq!(events.borrow().as_slice(), ["capture"]);
+        assert_eq!(handle.offset().y, px(0.));
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear();
+            })
+            .unwrap();
+        assert_eq!(
+            events.borrow().as_slice(),
+            ["capture"],
+            "prevent_default in capture should suppress div default scrolling and avoid a committed wheel viewport"
+        );
     }
 
     fn setup_tooltip_owner_test(

@@ -6,10 +6,13 @@ use crate::scroll_surface::{
 };
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ElementId, IntoElement, ParentElement, RenderOnce, ScrollHandle, Styled,
-    Window, div, point, px,
+    AnyElement, App, ElementId, IntoElement, ParentElement, RenderOnce, ScrollHandle,
+    ScrollViewportChangedEvent, Styled, Window, div, point, px,
 };
 use open_gpui_ui_core::{Sizable, Size, UiPx, ui_px};
+
+type ScrollAreaViewportChangedListener =
+    Box<dyn Fn(&ScrollViewportChangedEvent, &mut Window, &mut App) + 'static>;
 
 /// Scroll direction enabled by a [`ScrollArea`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -180,6 +183,7 @@ pub struct ScrollArea {
     reset_policy: ScrollResetPolicy,
     reset_key: Option<String>,
     scroll_handle: Option<ScrollHandle>,
+    viewport_changed_listener: Option<ScrollAreaViewportChangedListener>,
 }
 
 impl ScrollArea {
@@ -196,6 +200,7 @@ impl ScrollArea {
             reset_policy: ScrollResetPolicy::Preserve,
             reset_key: None,
             scroll_handle: None,
+            viewport_changed_listener: None,
         }
     }
 
@@ -226,6 +231,15 @@ impl ScrollArea {
     /// The handle is not stored in [`ScrollAreaState`].
     pub fn scroll_handle(mut self, scroll_handle: &ScrollHandle) -> Self {
         self.scroll_handle = Some(scroll_handle.clone());
+        self
+    }
+
+    /// Calls `listener` after GPUI commits the final tracked-scroll viewport for a frame.
+    pub fn on_scroll_viewport_changed(
+        mut self,
+        listener: impl Fn(&ScrollViewportChangedEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.viewport_changed_listener = Some(Box::new(listener));
         self
     }
 
@@ -300,6 +314,9 @@ impl RenderOnce for ScrollArea {
             .track_scroll(&scroll_handle)
             .when(state.scrolls_x(), |this| this.overflow_x_scroll())
             .when(state.scrolls_y(), |this| this.overflow_y_scroll())
+            .when_some(self.viewport_changed_listener, |this, listener| {
+                this.on_scroll_viewport_changed(listener)
+            })
             .child(self.content)
     }
 }
