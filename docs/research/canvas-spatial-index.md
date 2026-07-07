@@ -1,13 +1,13 @@
 # Canvas Spatial Index Research
 
 **Date**: 2026-06-08
-**Status**: Research complete, implementation deferred
+**Status**: Research complete, runtime cache landed
 
 ## Context
 
-`open-gpui-canvas` currently ships a simple `SpatialIndex` built from sorted canvas records. That
-choice is intentional for the first release: it is deterministic, easy to test, and already hidden
-behind `CanvasRuntime` and its runtime query module.
+`open-gpui-canvas` now routes production queries through `CanvasRuntime` and its runtime query
+module. `SpatialIndex` remains a deterministic dev/test oracle and simple fallback model, but app
+and paint code should not bypass the runtime-owned cache.
 
 The next performance step should be selected from real canvas workloads, not from a generic spatial
 index preference. The hot paths are:
@@ -69,7 +69,7 @@ Cons:
 
 Best use: large whiteboards, mind maps, and document canvases where most frames are query-only.
 
-### Hybrid Static Index Plus Dynamic Overlay
+### Runtime Hybrid Static Base Plus Dynamic Overlay
 
 Keep a packed immutable base index for the last committed stable document, plus a small dynamic
 overlay for currently edited or recently changed records. Queries merge base and overlay results
@@ -87,7 +87,9 @@ Cons:
 - Requires careful result deduplication and stale-record suppression.
 - Needs benchmark coverage for overlay size thresholds.
 
-Best use: Open GPUI canvas default direction after the first benchmark spike.
+Best use: Open GPUI canvas default direction. The current runtime implementation keeps the hybrid
+contract internal: stable base records, overlay records for changed items, stale suppression by
+`CanvasRecordId`, and final filtering/order in `CanvasRuntimeQuery`.
 
 ### Uniform Grid / Tile Index
 
@@ -127,32 +129,38 @@ Best use: reference concept only unless a benchmark proves it beats the packed/R
 
 ## Recommendation
 
-Do not replace `SpatialIndex` before the 0.1 release. The runtime query boundary is the important
-architecture seam. The next implementation should be a focused
-benchmark spike with this order:
+Do not expose concrete index strategy knobs. The runtime query boundary is the important architecture
+seam and it has landed: `CanvasRuntimeQuery` owns final filtering, z-ordering, precise hit tests,
+and stale suppression over an internal spatial cache.
 
-1. Add an internal benchmark harness that runs the same documents through multiple index builders.
-2. Implement an `rstar` prototype behind a non-default feature or test-only module.
-3. Implement a static AABB prototype with `static_aabb2d_index`.
+Future work should be a focused internal benchmark pass with this order:
+
+1. Run the same documents through the current runtime cache and candidate base/overlay builders.
+2. Compare `rstar` as a possible overlay implementation without making it public API.
+3. Compare `static_aabb2d_index` or another packed AABB structure as a possible base implementation.
 4. If the workspace Rust version can move high enough, compare `packed_spatial_index`.
-5. Measure rebuild time, incremental update time, visible query time, hit-test time, and memory.
-6. Pick the default from data. If results are close, prefer the simpler index.
+5. Measure rebuild time, incremental update time, visible query time, hit-test time, memory, and
+   overlay compaction thresholds.
+6. Keep the current internal strategy if results are close; prefer the simpler cache internals.
 
 The likely long-term architecture is a hybrid:
 
-- static packed AABB index for committed document snapshots;
-- dynamic overlay for active gesture edits;
+- static packed AABB index for committed document snapshots, if benchmarks justify replacing the
+  current internal base;
+- dynamic overlay for active gesture edits and committed diffs, if benchmarks justify replacing the
+  current internal overlay;
 - tile/LOD layer above that for renderer invalidation and very large scenes;
 - optional nearest-point structure only for handle snapping or alignment tools.
 
-## Acceptance Criteria For The Next Spike
+## Current Runtime Cache Contract
 
 - Keep `CanvasRuntime` as the cache owner.
 - Keep the runtime query module as the final query boundary.
 - Do not expose concrete index choices in `CanvasEditor` or `CanvasPaintModel`.
 - Preserve z-order hit-test behavior and locked/hidden filtering.
-- Benchmark 20k, 100k, and clustered long-edge documents.
-- Include a dragging benchmark where 1, 10, and 100 selected nodes move across 120 frames.
+- Suppress stale base records by semantic `CanvasRecordId` when overlay records replace them.
+- Refresh incident edge records when node diffs can change routed edge geometry.
+- Use focused parity tests before changing base, overlay, compaction, or ordering internals.
 
 ## Sources Checked
 

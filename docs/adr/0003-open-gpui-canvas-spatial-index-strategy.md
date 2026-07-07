@@ -41,7 +41,7 @@ flowchart LR
     Order --> Runtime[CanvasRuntime Query API]
 ```
 
-The runtime-owned prototype uses this hybrid shape:
+The runtime-owned cache uses this hybrid shape:
 
 - stable base records for committed document state;
 - overlay records for active gesture records and recent diffs;
@@ -50,9 +50,9 @@ The runtime-owned prototype uses this hybrid shape:
   runtime query module;
 - no public API that names `rstar`, `static_aabb2d_index`, or another concrete dependency.
 
-The first landed prototype keeps the base and overlay as internal sorted record sets. Concrete index
-crates remain dev-only until benchmark data justifies replacing the internal base with a packed
-static AABB index or replacing the overlay with a dynamic tree.
+The landed runtime cache keeps the base and overlay as internal record sets. Concrete index crates
+remain dev-only until benchmark data justifies replacing the internal base with a packed static AABB
+index or replacing the overlay with a dynamic tree.
 The public object-safe index trait was removed before 0.1 because it asked external adapters to
 own final query semantics. Future third-party indexes should be coarse candidate providers behind
 the runtime query module instead.
@@ -119,7 +119,7 @@ Cons:
 - Needs precise stale-record suppression and overlay merge semantics.
 - Current benchmark spike proves correctness but not final runtime performance.
 
-Decision: chosen as the next internal prototype direction.
+Decision: chosen as the internal runtime cache direction.
 
 ## Success Metrics
 
@@ -135,7 +135,7 @@ Decision: chosen as the next internal prototype direction.
 
 | Risk | Severity | Likelihood | Mitigation |
 | --- | --- | --- | --- |
-| Hybrid cache overcomplicates runtime internals | Medium | Medium | Keep current vector default until a diff-fed prototype passes parity and benchmarks. |
+| Hybrid cache overcomplicates runtime internals | Medium | Medium | Keep the hybrid contract internal, parity-covered, and benchmarked before swapping base or overlay implementations. |
 | Public strategy knobs freeze the wrong model | High | Medium | Do not expose concrete dependencies or presets until runtime data shows real need. |
 | Third-party index semantics differ from GPUI bounds | High | Medium | Treat third-party queries as coarse filters and reapply canvas `Bounds::intersects` / hit semantics. |
 | Overlay misses incident edge refreshes | High | Medium | Derive stale sets from committed diffs and graph incidence; keep parity tests for moved/deleted nodes. |
@@ -148,8 +148,8 @@ Decision: chosen as the next internal prototype direction.
 - Public editor and paint paths no longer expose a raw runtime `SpatialIndex` accessor.
 - The root crate API no longer re-exports `SpatialIndex`; benchmarks and parity tests reach it
   through the hidden `index` module.
-- The next architecture work should benchmark the internal runtime path before adding public index
-  selection APIs.
+- The next architecture work should benchmark the landed internal runtime path before adding public
+  index selection APIs.
 - A future user-facing choice, if needed, should be semantic (`Auto`, `Simple`, `Dynamic`,
   `StaticSnapshot`, `Hybrid`) rather than dependency-specific.
 

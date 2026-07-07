@@ -147,6 +147,12 @@ cargo nextest run -p open-gpui-canvas
 cargo check -p open-gpui-smoke-native
 ```
 
+When changing Canvas runtime query or cache ownership, also run:
+
+```sh
+cargo nextest run -p open-gpui-canvas spatial_cache runtime_query runtime --no-fail-fast
+```
+
 The canvas crate also has a large-canvas Criterion baseline:
 
 ```sh

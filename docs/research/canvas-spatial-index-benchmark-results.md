@@ -1,7 +1,7 @@
 # Canvas Spatial Index Benchmark Results
 
 **Date**: 2026-06-08
-**Status**: Initial spike complete
+**Status**: Benchmark spike complete, runtime cache landed
 
 ## Summary
 
@@ -10,7 +10,7 @@ This spike compared the current sorted-vector `SpatialIndex` with dev-only `rsta
 were built only in tests and benches, not in the production runtime.
 
 The current index remains the correct 0.1 public oracle because it is simple and deterministic.
-The follow-up runtime prototype has now landed behind `CanvasRuntime`: production queries use an
+The follow-up runtime cache has now landed behind `CanvasRuntime`: production queries use an
 internal stable-base plus overlay cache, while third-party index crates remain confined to tests and
 benches.
 
@@ -102,10 +102,12 @@ build time and visible-query time on the grid fixture, which is close to paint-f
 vector in the grid fixture, but point hit tests and sparse spatial queries are excellent. It should
 be judged on incremental overlay mutation, not on replacing the entire base snapshot.
 
-The hybrid drag simulation proved the result-merging and stale suppression semantics, but it did
-not yet prove final performance. The current spike constructs overlay records by rebuilding the
-oracle each frame; the production design must instead receive the actual `CanvasDocumentDiff` /
-gesture dirty set and refresh only affected node, handle, shape, and incident-edge records.
+The hybrid drag simulation proved the result-merging and stale suppression semantics. The production
+runtime now consumes actual `CanvasDocumentDiff` values: `CanvasSpatialCache` marks dirty semantic
+records stale, materializes changed node, handle, shape, and incident-edge records through
+`CanvasGeometryFacts`, and lets `CanvasRuntimeQuery` own final filtering, precise hit testing, and
+ordering. The remaining performance question is whether the internal base or overlay
+implementation should be swapped after measuring real runtime-cache workloads.
 
 ## Decision Recommendation
 
@@ -128,7 +130,7 @@ The implementation phase following this spike landed these pieces:
 | --- | --- | --- | --- |
 | The grid fixture overstates static AABB wins | Medium | Medium | Keep dense-overlap, clustered, long-edge, and mixed workloads in the bench harness; run full results before swapping defaults. |
 | Hybrid overlay adds complexity before data is complete | Medium | Medium | Keep it internal and covered by parity tests; do not expose public strategy knobs yet. |
-| Drag benchmark is misread as final performance | Medium | High | Treat current drag numbers as upper bounds; implement diff-fed overlay before making a performance claim. |
+| Drag benchmark is misread as final performance | Medium | High | Treat current drag numbers as upper bounds; measure the landed diff-fed runtime cache before making a performance claim. |
 | Third-party dependency becomes public API by accident | High | Low | Keep candidates dev-only until the runtime strategy is selected and hidden behind semantic runtime internals. |
 
 ## Follow-Up Work
@@ -138,4 +140,4 @@ The implementation phase following this spike landed these pieces:
 - Replace the internal stable-base record vector with a packed static AABB base only after runtime
   benchmark data justifies the dependency and complexity.
 - Decide whether semantic presets such as `Auto`, `Simple`, `Dynamic`, `StaticSnapshot`, and
-  `Hybrid` are needed after the internal runtime prototype has real data.
+  `Hybrid` are needed after the landed runtime cache has benchmark data.
