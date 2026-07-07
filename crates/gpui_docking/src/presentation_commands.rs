@@ -229,7 +229,7 @@ impl DockHost {
         &mut self,
         plan: DockTransitionPlan,
         model: MotionModel,
-        window: Option<&Window>,
+        _window: Option<&Window>,
         cx: &mut Context<Self>,
     ) -> DockTransitionExecutionState {
         let state = self
@@ -237,11 +237,6 @@ impl DockHost {
             .execute_model(plan, model)
             .state;
         cx.notify();
-        if state == DockTransitionExecutionState::Scheduled
-            && let Some(window) = window
-        {
-            window.request_animation_frame();
-        }
         state
     }
 
