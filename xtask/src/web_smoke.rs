@@ -25,7 +25,9 @@ const SMOKE_STATE_EXPRESSION: &str = r#"
     const input = document.querySelector("input");
     const rect = canvas ? canvas.getBoundingClientRect() : null;
     const probe = globalThis.__OPEN_GPUI_WEB_SMOKE__ ?? null;
+    const diagnostics = globalThis.__OPEN_GPUI_WEB_SMOKE_DIAGNOSTICS__ ?? null;
     return {
+        readyState: document.readyState,
         bodyReady: document.body?.dataset?.openGpuiWebSmokeReady === "true",
         canvas: canvas ? {
             count: document.querySelectorAll("canvas").length,
@@ -43,6 +45,7 @@ const SMOKE_STATE_EXPRESSION: &str = r#"
             focused: document.activeElement === input,
         } : null,
         probe,
+        diagnostics,
     };
 })()
 "#;
@@ -264,7 +267,9 @@ impl StaticServer {
                         if let Err(error) = serve_static_request(stream, &root) {
                             if !matches!(
                                 error.kind(),
-                                ErrorKind::BrokenPipe | ErrorKind::ConnectionReset
+                                ErrorKind::BrokenPipe
+                                    | ErrorKind::ConnectionAborted
+                                    | ErrorKind::ConnectionReset
                             ) {
                                 eprintln!("web smoke server request failed: {error}");
                             }
@@ -411,12 +416,15 @@ impl BrowserProcess {
             "--no-first-run".to_string(),
             "--no-sandbox".to_string(),
             "--enable-unsafe-webgpu".to_string(),
-            "--enable-features=Vulkan,VulkanFromANGLE".to_string(),
-            "--use-angle=vulkan".to_string(),
             "--remote-allow-origins=*".to_string(),
             format!("--remote-debugging-port={remote_port}"),
             format!("--user-data-dir={}", user_data_dir.display()),
         ];
+        if cfg!(target_os = "linux") {
+            args.push("--use-angle=vulkan".to_string());
+            args.push("--enable-features=Vulkan".to_string());
+            args.push("--disable-vulkan-surface".to_string());
+        }
         if let Ok(extra_args) = env::var("OPEN_GPUI_WEB_SMOKE_BROWSER_ARGS") {
             args.extend(extra_args.split_whitespace().map(ToOwned::to_owned));
         }

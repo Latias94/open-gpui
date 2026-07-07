@@ -4,6 +4,48 @@
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=0" />
         <title>Open GPUI Web Smoke</title>
+        <script>
+            (() => {
+                const entries = [];
+                const limit = 40;
+                const stringify = value => {
+                    if (value instanceof Error) {
+                        return value.stack || value.message;
+                    }
+                    if (typeof value === "string") {
+                        return value;
+                    }
+                    try {
+                        return JSON.stringify(value);
+                    } catch {
+                        return String(value);
+                    }
+                };
+                const push = (level, args) => {
+                    entries.push({
+                        level,
+                        message: Array.from(args, stringify).join(" "),
+                    });
+                    if (entries.length > limit) {
+                        entries.shift();
+                    }
+                };
+                globalThis.__OPEN_GPUI_WEB_SMOKE_DIAGNOSTICS__ = entries;
+                for (const level of ["error", "warn"]) {
+                    const original = console[level].bind(console);
+                    console[level] = (...args) => {
+                        push(`console.${level}`, args);
+                        original(...args);
+                    };
+                }
+                window.addEventListener("error", event => {
+                    push("error", [event.message || event.error || "window error"]);
+                });
+                window.addEventListener("unhandledrejection", event => {
+                    push("unhandledrejection", [event.reason || "unhandled rejection"]);
+                });
+            })();
+        </script>
         <link data-trunk rel="rust" data-bin="smoke_web" data-bindgen-target="web" data-keep-debug data-wasm-opt="0" />
         <style>
             * {
