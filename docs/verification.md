@@ -29,8 +29,15 @@ cargo check -p open-gpui-platform --target wasm32-unknown-unknown --locked -j 1
 cargo check -p open-gpui-wgpu --target wasm32-unknown-unknown --locked -j 1
 ```
 
-These are stable, single-threaded wasm gates. Nightly shared-memory/atomics checks for
-`hello_web` remain optional verification, not CI requirements.
+These are stable, single-threaded wasm gates. The Linux matrix also runs the stable browser smoke:
+
+```sh
+cargo run -p xtask -- web-smoke
+```
+
+`xtask web-smoke` builds `crates/gpui_web/examples/smoke_web` with Trunk, serves the generated files with cross-origin isolation headers, opens a headless Chrome/Chromium/Edge browser, and verifies app readiness, DOM/canvas initialization, focus/input delivery, a single-window shell interaction, and the explicit unsupported platform-viewport capability on web. The smoke intentionally avoids the nightly shared-memory example so CI proves the default stable browser path.
+
+Nightly shared-memory/atomics checks for `hello_web` remain optional verification, not CI requirements.
 
 For the 2026-07 runtime UI hardening slice, the Web dispatcher exposes a typed
 `WebDispatcherMode` through `WebDispatcher::mode()` and `WebPlatform::dispatcher_mode()`. Stable
