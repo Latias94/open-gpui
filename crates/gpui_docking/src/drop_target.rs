@@ -1,5 +1,4 @@
-use crate::{DockEdgeDockPlan, DockNodeId, DockPolicy, DockPolicyError};
-use open_gpui::{Bounds, Pixels, Point, point, px, size};
+use open_gpui::{Bounds, Pixels, point, px, size};
 
 mod availability;
 mod candidate;
@@ -235,10 +234,11 @@ fn resolve_layout_drop_guide_target(
 mod tests {
     use super::*;
     use crate::{
-        DockGraph, DockItemId, DockNode, DockSpaceId, DropZone, SplitAxis,
+        DockEdgeDockPlan, DockGraph, DockItemId, DockNode, DockNodeId, DockPolicy, DockPolicyError,
+        DockSpaceId, DropZone, SplitAxis,
         geometry::{self, DockDropBoxKind, DockDropBoxSet},
     };
-    use open_gpui::{point, px, size};
+    use open_gpui::{Point, point, px, size};
     use slotmap::Key;
 
     fn tabs() -> DockNodeId {

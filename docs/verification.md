@@ -153,6 +153,12 @@ When changing Canvas runtime query or cache ownership, also run:
 cargo nextest run -p open-gpui-canvas spatial_cache runtime_query runtime --no-fail-fast
 ```
 
+When changing Canvas document, tool, GPUI adapter, or root facade internals, also run:
+
+```sh
+cargo nextest run -p open-gpui-canvas document tool gpui public_surface_tests --no-fail-fast
+```
+
 The canvas crate also has a large-canvas Criterion baseline:
 
 ```sh
@@ -1303,6 +1309,12 @@ cargo nextest run -p open-gpui-docking-native --no-fail-fast
 cargo check -p open-gpui-docking-native
 cargo run -p open-gpui-docking-minimal
 cargo run -p open-gpui-docking-native
+```
+
+When changing docking drop routing, delivery, or public surface boundaries, also run:
+
+```sh
+cargo nextest run -p open-gpui-docking drop_target viewport_drop_route viewport_drop_delivery public_surface_tests --no-fail-fast
 ```
 
 For docking presentation/preview/motion work, the focused semantic gates are:

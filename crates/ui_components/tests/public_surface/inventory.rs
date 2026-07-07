@@ -339,6 +339,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_select",
         "on_selected_values_change",
         "on_selection_change",
+        "on_scroll_viewport_changed",
         "on_sort_requested",
         "on_toggle",
     ];

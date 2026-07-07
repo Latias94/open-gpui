@@ -3,14 +3,17 @@ mod model;
 
 #[cfg(test)]
 pub(crate) use current_facts::validate_delivery_workspace_target;
+#[cfg(test)]
 use current_facts::validate_delivery_workspace_target_inner;
 pub(crate) use current_facts::{
     resolve_delivery_workspace_target, resolve_workspace_target_for_route,
 };
 pub(crate) use model::{
-    DockDropDelivery, DockDropDeliveryKind, DockDropWorkspaceCommit, DockViewportResolvedDropRoute,
-    DockViewportResolvedDropTargetSnapshot, DockViewportWorkspaceRouteTarget,
+    DockDropDelivery, DockDropWorkspaceCommit, DockViewportResolvedDropRoute,
+    DockViewportResolvedDropTargetSnapshot,
 };
+#[cfg(test)]
+pub(crate) use model::{DockDropDeliveryKind, DockViewportWorkspaceRouteTarget};
 
 #[cfg(test)]
 mod tests {

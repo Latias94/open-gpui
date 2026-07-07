@@ -6,7 +6,9 @@ use crate::{
     viewport_drop_scene::DockViewportHostSceneFrame,
     viewport_registry::DockViewportWindowBoundsFrame,
 };
-use open_gpui::{Bounds, Pixels, Point, WindowBounds, WindowId};
+#[cfg(test)]
+use open_gpui::Bounds;
+use open_gpui::{Pixels, Point, WindowBounds, WindowId};
 
 /// Coordinate space used by `DockViewportDropRouteRequest::release_position`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

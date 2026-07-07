@@ -1,12 +1,14 @@
 use crate::DockViewportTargetContext;
+#[cfg(test)]
+use crate::{DockNodeId, DockSpaceId, DockViewportDropPayload, DockViewportPlatformSignals};
 use crate::{
-    DockNodeId, DockPolicy, DockSpaceId, DockViewportAdapter, DockViewportDropPayload,
-    DockViewportPlatformSignals, DockViewportRouteSelectionSource, DockViewportTargetHit,
+    DockPolicy, DockViewportAdapter, DockViewportRouteSelectionSource, DockViewportTargetHit,
     DockViewportWindowHit,
     interaction::DockPayloadDropReleaseOrigin,
     viewport_registry::DockViewportInputMask,
     viewport_target_resolver::{DockViewportRouteSelection, resolve_viewport_route_selection},
 };
+#[cfg(test)]
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowBounds};
 
 mod event_receiver;

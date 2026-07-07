@@ -19,6 +19,8 @@ mod json_canvas;
 mod layer;
 mod mutation;
 mod persistence;
+#[cfg(test)]
+mod public_surface_tests;
 mod record_scope;
 mod relations;
 mod routing;

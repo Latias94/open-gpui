@@ -330,9 +330,10 @@ pub(crate) use viewport_tear_off::{
     DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
 };
 pub(crate) use viewport_tear_off_move::*;
+#[cfg(test)]
+pub(crate) use viewport_tear_off_placement::DockViewportTearOffPlacementSource;
 pub(crate) use viewport_tear_off_placement::{
     DockViewportTearOffPlacement, DockViewportTearOffPlacementPolicy,
-    DockViewportTearOffPlacementSource,
 };
 #[allow(unused_imports)]
 pub(crate) use viewport_window_lifecycle::{
