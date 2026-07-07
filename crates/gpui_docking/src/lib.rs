@@ -81,6 +81,7 @@
 
 mod accessibility_scene;
 mod action;
+pub mod advanced;
 mod builder;
 mod chrome_geometry;
 mod controller;
@@ -125,6 +126,7 @@ mod panel_catalog;
 mod panel_registry;
 mod panel_view;
 mod policy;
+pub mod prelude;
 mod presentation_commands;
 mod presentation_scene;
 mod render;
@@ -232,6 +234,8 @@ mod host_zoom_focus_tests;
 #[cfg(test)]
 mod layout_tests;
 #[cfg(test)]
+mod public_surface_tests;
+#[cfg(test)]
 mod viewport_test_support;
 #[cfg(test)]
 mod workspace_move_tests;
@@ -241,24 +245,30 @@ mod workspace_panel_lifecycle_tests;
 mod workspace_resize_policy_tests;
 #[cfg(test)]
 mod workspace_selection_tests;
-pub use action::*;
-pub use builder::*;
-pub use controller::*;
-pub use debug::{DockVisualAffordanceDebugLayer, DockVisualAffordanceDebugSummary};
+pub use action::{DockAction, DockActionApplyError, DockActionOutcome, DockSplitResize};
+pub use builder::{DockLayoutBuilder, EditorDockLayoutSpec};
+pub use controller::{DockController, DockControllerBuilder};
+pub(crate) use debug::DockVisualAffordanceDebugSummary;
 pub use geometry::DockDropGuideStyle;
-pub use graph::*;
-pub use host::*;
-pub use ids::*;
-pub use layout::*;
+pub use graph::{
+    DockCentralRegion, DockEdgeDockPlan, DockEdgeDockSizing, DockEdgeDockSizingScope,
+    DockFloatingContainer, DockGraph, DockGraphValidationError, DockNode, DropZone, SplitAxis,
+    dock_bounds,
+};
+pub use host::{DockHost, DockHostOptions};
+pub use ids::{DockClassId, DockItemId, DockNodeId, DockSpaceId};
+pub use layout::{
+    DOCK_LAYOUT_VERSION, DockLayout, DockLayoutCentralRegion, DockLayoutFloatingContainer,
+    DockLayoutNode, DockLayoutRect, DockLayoutSpace, DockLayoutValidationError,
+};
 pub use op::DockGraphMutationError;
 pub(crate) use op::{DockGraphDropTarget, DockOp};
-pub use panel::*;
-pub use panel_catalog::*;
-pub use panel_registry::*;
-pub use policy::*;
+pub use panel::DockPanel;
+pub use panel_catalog::{DockPanelCatalog, DockPanelDescriptor};
+pub use panel_registry::{DockPanelAttachError, DockPanelRegistration, DockPanelRegistry};
+pub use policy::{DockPolicy, DockPolicyError};
 pub use spatial_navigation::DockSpatialDirection;
-pub use transition_executor::DockTransitionExecutionState;
-pub use transition_geometry::DockTransitionPlan;
+pub(crate) use transition_executor::DockTransitionExecutionState;
 pub(crate) use viewport::*;
 #[cfg(test)]
 pub(crate) use viewport_activation::DockViewportWindowActivation;
@@ -268,23 +278,33 @@ pub(crate) use viewport_activation::{
     DockViewportActivationPendingBackendFocusEffect, DockViewportActivationTransaction,
 };
 pub(crate) use viewport_backend_focus::*;
-pub use viewport_close::*;
 #[allow(unused_imports)]
 pub(crate) use viewport_close::{
     DockMergeBackTarget, DockViewportCloseCoordinator, DockViewportClosePlanEffect,
     DockViewportClosePlanState, DockViewportMergeBackClosePlan,
     commit_prevalidated_merge_back_plan,
 };
+pub use viewport_close::{
+    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportCloseStatus,
+    DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus, DockViewportUnregisterOutcome,
+    DockViewportUnregisterReason,
+};
 pub(crate) use viewport_drop_delivery::*;
 pub(crate) use viewport_drop_route::*;
-pub use viewport_focus::*;
+pub use viewport_focus::DockViewportFocusRequest;
+pub(crate) use viewport_focus::{
+    DockViewportFocusCommand, DockViewportFocusCommandSource, DockViewportFocusCoordinator,
+};
 pub(crate) use viewport_frame_coordinator::*;
 pub(crate) use viewport_identity::*;
-pub use viewport_open::*;
+pub use viewport_open::{DockViewportOpenOutcome, DockViewportOpenStatus};
 pub(crate) use viewport_payload_drag::*;
-pub use viewport_placement::*;
-pub use viewport_placement_adapter::*;
-pub use viewport_placement_validation::*;
+pub use viewport_placement::{
+    DOCK_VIEWPORT_PLACEMENT_VERSION, DockViewportPlacement, DockViewportPlacementLayout,
+    DockViewportWindowBounds, DockViewportWindowState,
+};
+pub use viewport_placement_adapter::DockViewportRestoreReadiness;
+pub use viewport_placement_validation::DockViewportPlacementValidationError;
 pub(crate) use viewport_platform_signals::*;
 #[cfg(test)]
 pub(crate) use viewport_platform_sync::{
@@ -296,11 +316,11 @@ pub(crate) use viewport_registry::{DockViewportSnapshot, DockViewportWindowFacts
 pub(crate) use viewport_routed_preview::*;
 pub(crate) use viewport_runtime::*;
 pub(crate) use viewport_runtime_effects::*;
-pub use viewport_runtime_handle::*;
-pub use viewport_runtime_status::*;
+pub use viewport_runtime_handle::DockViewportRuntimeHandle;
+pub(crate) use viewport_runtime_status::*;
 pub(crate) use viewport_target_context::*;
 pub(crate) use viewport_target_resolver::*;
-pub use viewport_tear_off::DockViewportTearOffCancelReason;
+pub(crate) use viewport_tear_off::DockViewportTearOffCancelReason;
 pub(crate) use viewport_tear_off::{
     DockViewportCommittedTearOffMove, DockViewportDropActionOutcome, DockViewportDropPayload,
     DockViewportDropRouteOutcome, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelled,
@@ -313,4 +333,4 @@ pub(crate) use viewport_window_lifecycle::{
     DockViewportReusableWindow, DockViewportReusableWindowOutcome,
 };
 pub(crate) use viewport_window_ownership::*;
-pub use workspace::*;
+pub use workspace::DockWorkspace;

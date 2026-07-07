@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Breaking Changes and Migration Notes
+
+- `open-gpui-docking` now keeps diagnostics and transition internals out of the crate root and `prelude`; import `open_gpui_docking::advanced::...` for `DockTransitionPlan`, `DockTransitionExecutionState`, `DockViewportRuntimeStatus`, runtime status record types, `DockVisualAffordanceDebugSummary`, `DockVisualAffordanceDebugLayer`, and `DockViewportTearOffCancelReason`.
+
 ## [0.2.0] - 2026-07-07
 
 Open GPUI v0.2.0 is the first broad foundation release for the fork. It publishes the component, docking, canvas, command, motion, web, and platform crates to crates.io under the Open GPUI package names.

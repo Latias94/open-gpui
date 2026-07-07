@@ -8,6 +8,12 @@ affordances behind runtime adapters.
 Use this crate when an application needs IDE-style tab stacks, split panes, floating panels, and
 optional platform viewport windows.
 
+## Public API Tiers
+
+The crate root and `open_gpui_docking::prelude` contain the common application API: graph/layout types, `DockController`, `DockWorkspace`, `DockHost`, panel registry/catalog types, policy types, viewport placement layout, viewport open/close outcomes, and `DockViewportRuntimeHandle`.
+
+Diagnostics and transition internals live behind `open_gpui_docking::advanced`. Import that module explicitly for runtime status records, visual-affordance debug summaries, transition plans, and transition execution states. These types are useful for tests and tooling, but they are not part of the default application surface.
+
 ## What This Crate Owns
 
 - `DockGraph` and `DockLayout` for logical dock spaces, tab stacks, splits, in-window floating
@@ -20,8 +26,8 @@ optional platform viewport windows.
 - `DockPanelRegistry` and `DockPanelCatalog` for lazy panel factories, descriptor-only restore
   metadata, GPUI view attachment, close/reopen policy, and tab labels.
 - `DockViewportRuntimeHandle` and internal viewport runtime modules for controller-backed platform
-  window routing, placement snapshots, lifecycle cleanup, cross-window drop routing, and status
-  diagnostics.
+  window routing, placement snapshots, lifecycle cleanup, and cross-window drop routing. Runtime
+  status diagnostics are available through the explicit `advanced` API tier.
 
 ## Capability Gates
 
@@ -54,7 +60,7 @@ floating behavior, and the runtime paths used by the docking tests.
 
 ```rust
 use open_gpui::{AnyView, App};
-use open_gpui_docking::{DockController, EditorDockLayoutSpec};
+use open_gpui_docking::prelude::{DockController, EditorDockLayoutSpec};
 
 fn panel_factory(_cx: &mut App) -> AnyView {
     unreachable!("create and return a GPUI view for the panel")

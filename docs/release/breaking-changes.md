@@ -1,0 +1,13 @@
+# Breaking Change Inventory
+
+This inventory tracks public API moves and deletions that must appear in changelog and GitHub Release notes before publishing the next pre-1.0 breaking stabilization release.
+
+## Next Release
+
+| Crate | Old path | New path or replacement | Reason | Release-note text | Verification |
+|---|---|---|---|---|---|
+| `open-gpui-docking` | `open_gpui_docking::DockTransitionPlan` | `open_gpui_docking::advanced::DockTransitionPlan` | Transition plans are diagnostics/test tooling, not the default application API. | `open-gpui-docking` now keeps transition internals out of the crate root; import transition diagnostics from `open_gpui_docking::advanced`. | `cargo test -p open-gpui-docking public_surface --locked` |
+| `open-gpui-docking` | `open_gpui_docking::DockTransitionExecutionState` | `open_gpui_docking::advanced::DockTransitionExecutionState` | Transition execution state is a diagnostic signal for tests and tooling. | `open-gpui-docking` now keeps transition execution diagnostics out of the crate root; import them from `open_gpui_docking::advanced`. | `cargo test -p open-gpui-docking public_surface --locked` |
+| `open-gpui-docking` | `open_gpui_docking::DockViewportRuntimeStatus` and related runtime status record types | `open_gpui_docking::advanced::DockViewportRuntimeStatus` and related `advanced` re-exports | Runtime status records expose diagnostic internals and should require explicit opt-in. | `open-gpui-docking` runtime status diagnostics moved to `open_gpui_docking::advanced`; common viewport open/close/placement outcomes remain in the root and prelude. | `cargo test -p open-gpui-docking public_surface --locked` |
+| `open-gpui-docking` | `open_gpui_docking::DockVisualAffordanceDebugSummary` and `open_gpui_docking::DockVisualAffordanceDebugLayer` | `open_gpui_docking::advanced::DockVisualAffordanceDebugSummary` and `open_gpui_docking::advanced::DockVisualAffordanceDebugLayer` | Visual-affordance debug output is tooling surface rather than normal app API. | `open-gpui-docking` visual-affordance debug types moved to `open_gpui_docking::advanced`. | `cargo test -p open-gpui-docking public_surface --locked` |
+| `open-gpui-docking` | `open_gpui_docking::DockViewportTearOffCancelReason` | `open_gpui_docking::advanced::DockViewportTearOffCancelReason` | Tear-off cancellation reason is part of runtime diagnostics; public tear-off remains capability-gated through `DockViewportRuntimeHandle`. | `open-gpui-docking` tear-off diagnostic reasons moved to `open_gpui_docking::advanced`; common runtime handle APIs remain unchanged. | `cargo test -p open-gpui-docking public_surface --locked` |
