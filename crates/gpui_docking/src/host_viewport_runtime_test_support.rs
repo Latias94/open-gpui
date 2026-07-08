@@ -1,10 +1,11 @@
 use crate::{
-    DockController, DockDropDelivery, DockFloatingContainer, DockGraph, DockItemId, DockNode,
-    DockNodeId, DockSpaceId, DockViewportClosePolicy, DockViewportDropPayload,
+    DockController, DockDropDelivery, DockFloatingContainer, DockGraph, DockHost, DockItemId,
+    DockNode, DockNodeId, DockSpaceId, DockViewportClosePolicy, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteRequest, DockViewportInputStatus,
     DockViewportOpenOutcome, DockViewportRuntime, DockViewportRuntimeHandle,
     DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTearOffRequest,
-    DockViewportWindowFacts, DockWorkspace, SplitAxis,
+    DockViewportWindowFacts, DockWorkspace, DropZone, SplitAxis,
+    debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -12,8 +13,8 @@ use crate::{
     interaction::{DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
 };
 use open_gpui::{
-    AnyWindowHandle, AppContext as _, Entity, TestAppContext, WindowBounds, WindowId,
-    WindowOptions, point, px,
+    AnyWindowHandle, AppContext as _, Bounds, Entity, Modifiers, MouseButton, Pixels, Point,
+    TestAppContext, VisualTestContext, WindowBounds, WindowId, WindowOptions, point, px,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -40,6 +41,22 @@ struct DockViewportTabsSpec {
     space: DockSpaceId,
     items: Vec<&'static str>,
     selected: Option<&'static str>,
+}
+
+pub(crate) struct DockCrossWindowVisualDragFixture {
+    pub(crate) source: DockViewportVisualHostFixture,
+    pub(crate) target: DockViewportVisualHostFixture,
+}
+
+pub(crate) struct DockViewportVisualHostFixture {
+    pub(crate) opened: DockViewportOpenOutcome,
+    pub(crate) host: Entity<DockHost>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockCrossWindowDragRelease {
+    Hold,
+    Release,
 }
 
 impl DockViewportRuntimeFixture {
@@ -78,6 +95,191 @@ impl DockViewportRuntimeFixture {
                 .open_viewport_unchecked_policy(space.clone(), options, app)
         })
         .unwrap_or_else(|error| panic!("test viewport {space} should open: {error}"))
+    }
+}
+
+impl DockCrossWindowVisualDragFixture {
+    pub(crate) fn open(
+        cx: &mut TestAppContext,
+        runtime: &DockViewportRuntimeHandle,
+        source_space: DockSpaceId,
+        source_options: WindowOptions,
+        target_space: DockSpaceId,
+        target_options: WindowOptions,
+        context: &str,
+    ) -> Self {
+        let source = DockViewportVisualHostFixture::open(
+            cx,
+            runtime,
+            source_space,
+            source_options,
+            "source",
+            context,
+        );
+        let target = DockViewportVisualHostFixture::open(
+            cx,
+            runtime,
+            target_space,
+            target_options,
+            "target",
+            context,
+        );
+        cx.run_until_parked();
+
+        Self { source, target }
+    }
+
+    pub(crate) fn drag_source_tab_to_target_inner_edge(
+        &self,
+        cx: &mut TestAppContext,
+        source_tabs: DockNodeId,
+        item: DockItemId,
+        target_tabs: DockNodeId,
+        zone: DropZone,
+        release: DockCrossWindowDragRelease,
+        context: &str,
+    ) {
+        self.drag_source_tab_to_target_region(
+            cx,
+            source_tabs,
+            item,
+            DockDebugRegion::Tabs { node: target_tabs },
+            |bounds| inner_edge_drop_position(bounds, zone),
+            release,
+            context,
+            |_, _| {},
+        );
+    }
+
+    pub(crate) fn drag_source_tab_to_target_inner_edge_with_hover(
+        &self,
+        cx: &mut TestAppContext,
+        source_tabs: DockNodeId,
+        item: DockItemId,
+        target_tabs: DockNodeId,
+        zone: DropZone,
+        context: &str,
+        before_release: impl FnOnce(&Entity<DockHost>, &mut TestAppContext),
+    ) {
+        self.drag_source_tab_to_target_region(
+            cx,
+            source_tabs,
+            item,
+            DockDebugRegion::Tabs { node: target_tabs },
+            |bounds| inner_edge_drop_position(bounds, zone),
+            DockCrossWindowDragRelease::Release,
+            context,
+            before_release,
+        );
+    }
+
+    pub(crate) fn drag_source_tab_to_target_center(
+        &self,
+        cx: &mut TestAppContext,
+        source_tabs: DockNodeId,
+        item: DockItemId,
+        target_tabs: DockNodeId,
+        release: DockCrossWindowDragRelease,
+        context: &str,
+    ) {
+        self.drag_source_tab_to_target_region(
+            cx,
+            source_tabs,
+            item,
+            DockDebugRegion::Tabs { node: target_tabs },
+            center_drop_position,
+            release,
+            context,
+            |_, _| {},
+        );
+    }
+
+    pub(crate) fn assert_drop_previews_cleared(&self, cx: &mut TestAppContext, context: &str) {
+        assert!(
+            !self.target.has_drop_preview(cx),
+            "{context}: target drop preview should clear"
+        );
+        assert!(
+            !self.source.has_drop_preview(cx),
+            "{context}: source drop preview should clear"
+        );
+    }
+
+    fn drag_source_tab_to_target_region(
+        &self,
+        cx: &mut TestAppContext,
+        source_tabs: DockNodeId,
+        item: DockItemId,
+        target_region: DockDebugRegion,
+        target_position: impl FnOnce(Bounds<Pixels>) -> Point<Pixels>,
+        release: DockCrossWindowDragRelease,
+        context: &str,
+        before_release: impl FnOnce(&Entity<DockHost>, &mut TestAppContext),
+    ) {
+        let mut source_visual = self.source.visual(cx);
+        let mut target_visual = self.target.visual(cx);
+
+        let source_tab = selector_for(
+            &source_visual,
+            &self.source.host,
+            DockDebugRegion::Tab {
+                tabs: source_tabs,
+                item,
+            },
+        )
+        .unwrap_or_else(|| panic!("{context}: source tab selector should be emitted"));
+        let target_selector = selector_for(&target_visual, &self.target.host, target_region)
+            .unwrap_or_else(|| panic!("{context}: target selector should be emitted"));
+
+        let start = debug_bounds(&mut source_visual, &source_tab).center();
+        let threshold = point(start.x + px(24.0), start.y);
+        let end = target_position(debug_bounds(&mut target_visual, &target_selector));
+
+        source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+        target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        before_release(&self.target.host, cx);
+        if release == DockCrossWindowDragRelease::Release {
+            target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        }
+        cx.run_until_parked();
+    }
+}
+
+impl DockViewportVisualHostFixture {
+    fn open(
+        cx: &mut TestAppContext,
+        runtime: &DockViewportRuntimeHandle,
+        space: DockSpaceId,
+        options: WindowOptions,
+        role: &str,
+        context: &str,
+    ) -> Self {
+        let opened = cx
+            .update(|app| runtime.open_viewport_unchecked_policy(space.clone(), options, app))
+            .unwrap_or_else(|error| panic!("{context}: {role} viewport should open: {error}"));
+        let window = opened
+            .window()
+            .downcast::<DockHost>()
+            .unwrap_or_else(|| panic!("{context}: {role} viewport should render DockHost"));
+        let host = window
+            .root(cx)
+            .unwrap_or_else(|_| panic!("{context}: {role} viewport should expose DockHost root"));
+
+        Self { opened, host }
+    }
+
+    pub(crate) fn window(&self) -> AnyWindowHandle {
+        self.opened.window()
+    }
+
+    pub(crate) fn visual(&self, cx: &mut TestAppContext) -> VisualTestContext {
+        VisualTestContext::from_window(self.window(), cx)
+    }
+
+    pub(crate) fn has_drop_preview(&self, cx: &mut TestAppContext) -> bool {
+        let visual = self.visual(cx);
+        selector_for(&visual, &self.host, DockDebugRegion::DropPreview).is_some()
     }
 }
 
