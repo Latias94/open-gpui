@@ -352,12 +352,21 @@ fn reject_public_module(path: &Path, module: &str, reason: &str, failures: &mut 
     let Some(source) = read_to_string(path, failures) else {
         return;
     };
-    let public_module = format!("pub mod {module};");
     for (line_index, line) in source.lines().enumerate() {
-        if line.trim() == public_module {
+        if is_public_module_declaration(line.trim(), module) {
             failures.push(format!("{}:{}: {reason}", path.display(), line_index + 1));
         }
     }
+}
+
+fn is_public_module_declaration(line: &str, module: &str) -> bool {
+    let Some(rest) = line.strip_prefix("pub mod ") else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix(module) else {
+        return false;
+    };
+    matches!(rest.trim_start().chars().next(), Some(';') | Some('{'))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -945,6 +954,35 @@ mod tests {
                 ("TextInputController".to_owned(), false)
             ]
         );
+    }
+
+    #[test]
+    fn public_module_rejection_catches_file_and_inline_modules() {
+        let root = temp_root("public_module_rejection");
+        let lib = root.join("lib.rs");
+        fs::write(
+            &lib,
+            r#"
+                mod layout;
+                pub(crate) mod layout;
+                pub mod layout_extra;
+                pub mod layout;
+                pub mod policy {
+                    pub struct Policy;
+                }
+            "#,
+        )
+        .unwrap();
+
+        let mut failures = Vec::new();
+        reject_public_module(&lib, "layout", "layout must stay private", &mut failures);
+        reject_public_module(&lib, "policy", "policy must stay private", &mut failures);
+
+        assert_eq!(failures.len(), 2, "{failures:?}");
+        assert!(failures[0].contains("layout must stay private"));
+        assert!(failures[1].contains("policy must stay private"));
+
+        let _ = fs::remove_dir_all(root);
     }
 
     fn temp_root(label: &str) -> std::path::PathBuf {

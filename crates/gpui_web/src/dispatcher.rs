@@ -216,6 +216,19 @@ fn spawn_background_workers(
     handles
 }
 
+#[cfg(feature = "multithreaded")]
+fn mode_after_worker_startup(started_workers: usize) -> WebDispatcherMode {
+    if started_workers == 0 {
+        WebDispatcherMode::SingleThreaded {
+            reason: WebDispatcherSingleThreadedReason::WorkerStartupFailed,
+        }
+    } else {
+        WebDispatcherMode::Multithreaded {
+            background_workers: started_workers,
+        }
+    }
+}
+
 pub struct WebDispatcher {
     main_thread_id: std::thread::ThreadId,
     browser_window: web_sys::Window,
@@ -262,22 +275,30 @@ impl WebDispatcher {
             // Workers intentionally block on the queue only in explicit
             // multithreaded mode. Stable fallback mode never starts workers.
             let threads = spawn_background_workers(background_workers, &background_receiver);
-            if threads.is_empty() {
-                mode = WebDispatcherMode::SingleThreaded {
+            mode = mode_after_worker_startup(threads.len());
+            match mode {
+                WebDispatcherMode::SingleThreaded {
                     reason: WebDispatcherSingleThreadedReason::WorkerStartupFailed,
-                };
-                log::warn!("No background workers started; falling back to single-threaded mode");
-            } else {
-                if threads.len() != background_workers {
+                } => {
                     log::warn!(
-                        "Started {} of {background_workers} requested background workers",
-                        threads.len()
+                        "No background workers started; falling back to single-threaded mode"
                     );
-                    mode = WebDispatcherMode::Multithreaded {
-                        background_workers: threads.len(),
-                    };
                 }
-                main_thread_mailbox.run_waker_loop(browser_window.clone());
+                WebDispatcherMode::Multithreaded {
+                    background_workers: started_workers,
+                } => {
+                    if started_workers != background_workers {
+                        log::warn!(
+                            "Started {started_workers} of {background_workers} requested background workers"
+                        );
+                    }
+                    main_thread_mailbox.run_waker_loop(browser_window.clone());
+                }
+                WebDispatcherMode::SingleThreaded { reason } => {
+                    log::warn!(
+                        "Unexpected web worker startup fallback after multithreaded selection: {reason:?}"
+                    );
+                }
             }
             threads
         } else {
@@ -469,6 +490,28 @@ mod tests {
             select_dispatcher_mode(true, true, 8.0),
             WebDispatcherMode::Multithreaded {
                 background_workers: 8,
+            }
+        );
+    }
+
+    #[cfg(feature = "multithreaded")]
+    #[test]
+    fn worker_startup_failure_reports_single_threaded_fallback() {
+        assert_eq!(
+            mode_after_worker_startup(0),
+            WebDispatcherMode::SingleThreaded {
+                reason: WebDispatcherSingleThreadedReason::WorkerStartupFailed,
+            }
+        );
+    }
+
+    #[cfg(feature = "multithreaded")]
+    #[test]
+    fn partial_worker_startup_reports_started_worker_count() {
+        assert_eq!(
+            mode_after_worker_startup(1),
+            WebDispatcherMode::Multithreaded {
+                background_workers: 1,
             }
         );
     }
