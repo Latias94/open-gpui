@@ -54,6 +54,10 @@ pub use crate::feedback::{
 };
 pub use crate::field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use crate::focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing};
+pub use crate::form_adapter::{
+    FormFieldConfig, FormFieldProjection, form_checkbox_value, form_number_value,
+    form_select_value, form_text_value,
+};
 pub use crate::hover_card::{
     HoverCard, HoverCardColors, HoverCardContentKind, HoverCardDelayPolicy, HoverCardMetrics,
     HoverCardOpenIntent, HoverCardOpenMode, HoverCardState,

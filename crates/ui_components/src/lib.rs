@@ -27,6 +27,7 @@ pub mod dialog;
 pub mod feedback;
 pub mod field;
 mod focus;
+pub mod form_adapter;
 mod geometry;
 pub mod hover_card;
 pub mod icon_button;
