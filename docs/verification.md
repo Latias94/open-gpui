@@ -115,6 +115,27 @@ git diff --check
 The `hello_web` command uses the example's nightly/shared-memory wasm toolchain configuration and
 is expected to emit Rust's `-Ctarget-feature=+atomics` warning.
 
+The follow-up runtime/docking hardening pass keeps the same public capability posture and removes
+several panic-oriented internal paths. Windows device-lost recovery errors are now logged and
+retried instead of panicking, renderer refresh failures re-mark device invalidation, and optional
+custom clipboard metadata/image formats are skipped when Windows format registration is
+unavailable. The focused local gates that completed for this pass were:
+
+```sh
+CARGO_TARGET_DIR=/tmp/open-gpui-u1-check cargo check -p open-gpui-windows --all-features --locked
+cargo test -p xtask public_api_snapshot --locked
+cargo run -p xtask -- scan-public-api --check
+cargo check -p open-gpui-web --target wasm32-unknown-unknown --tests --locked -j 1
+cargo check -p open-gpui-docking --tests --locked
+cargo fmt --all --check
+git diff --check
+```
+
+Local `open-gpui` package checks, docking nextest runs, and repeated `xtask` scans can stall in
+build-script or test-runner startup on the macOS workstation after prior cargo work has completed.
+When that happens, stop the hung local command and use CI as the owner for full-workspace
+confirmation rather than treating the incomplete local run as a pass.
+
 The Windows platform backend no longer uses `unimplemented!()` for `hide_other_apps` or
 `unhide_other_apps`; unsupported hide-other-apps behavior is a debug diagnostic/no-op on Windows.
 The macOS host check proves the crate configuration still compiles locally, while the Windows CI
