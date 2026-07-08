@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ProbeId, SnapshotRedactionSummary};
+use crate::{ProbeId, SnapshotRedactionSummary, adapters::sanitize_sensitive_text};
 
 /// Kind of devtools snapshot.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -135,7 +135,7 @@ impl SnapshotEnvelope {
 
     /// Attaches a redaction summary.
     pub fn with_redaction(mut self, redaction: SnapshotRedactionSummary) -> Self {
-        self.redaction = redaction;
+        self.redaction = redaction.sanitized();
         self
     }
 }
@@ -154,6 +154,32 @@ pub struct SnapshotCollection {
 pub struct SnapshotDiagnostic {
     /// Probe that emitted the diagnostic.
     pub probe_id: ProbeId,
+    /// Stable diagnostic code.
+    pub code: String,
     /// Human-readable diagnostic message.
     pub message: String,
+}
+
+impl SnapshotDiagnostic {
+    /// Stable code used when probe collection fails.
+    pub const COLLECTION_FAILED: &'static str = "probe.collection_failed";
+
+    /// Creates a sanitized diagnostic with a stable code.
+    pub fn new(probe_id: ProbeId, code: impl Into<String>, message: impl Into<String>) -> Self {
+        let code = code.into();
+        Self {
+            probe_id,
+            code: if code.trim().is_empty() {
+                "diagnostic.unknown".to_owned()
+            } else {
+                sanitize_sensitive_text(&code)
+            },
+            message: sanitize_sensitive_text(&message.into()),
+        }
+    }
+
+    /// Creates a sanitized diagnostic for a probe collection failure.
+    pub fn collection_failed(probe_id: ProbeId, message: impl Into<String>) -> Self {
+        Self::new(probe_id, Self::COLLECTION_FAILED, message)
+    }
 }

@@ -33,10 +33,11 @@ pub fn devtools_gallery_collection() -> SnapshotCollection {
             resource_snapshot(),
             docking_snapshot(),
         ],
-        diagnostics: vec![SnapshotDiagnostic {
-            probe_id: ProbeId::new("motion").unwrap(),
-            message: "motion runtime is not mounted in this gallery page".to_owned(),
-        }],
+        diagnostics: vec![SnapshotDiagnostic::new(
+            ProbeId::new("motion").unwrap(),
+            "runtime.unavailable",
+            "motion runtime is not mounted in this gallery page",
+        )],
     }
 }
 

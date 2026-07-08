@@ -62,10 +62,12 @@ impl DevtoolsRegistry {
             match probe.snapshot() {
                 Ok(snapshot) => collection.snapshots.push(snapshot),
                 Err(error) => {
-                    collection.diagnostics.push(SnapshotDiagnostic {
-                        probe_id: id.clone(),
-                        message: error.to_string(),
-                    });
+                    collection
+                        .diagnostics
+                        .push(SnapshotDiagnostic::collection_failed(
+                            id.clone(),
+                            error.to_string(),
+                        ));
                 }
             }
         }

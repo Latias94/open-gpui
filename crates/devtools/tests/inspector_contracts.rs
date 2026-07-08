@@ -50,10 +50,11 @@ fn inspector_surfaces_diagnostics_for_failed_probes() {
 fn collection() -> SnapshotCollection {
     SnapshotCollection {
         snapshots: vec![form_snapshot(), resource_snapshot()],
-        diagnostics: vec![SnapshotDiagnostic {
-            probe_id: ProbeId::new("motion").unwrap(),
-            message: "motion runtime unavailable".to_owned(),
-        }],
+        diagnostics: vec![SnapshotDiagnostic::new(
+            ProbeId::new("motion").unwrap(),
+            "runtime.unavailable",
+            "motion runtime unavailable",
+        )],
     }
 }
 

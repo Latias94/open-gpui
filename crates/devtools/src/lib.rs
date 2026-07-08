@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 
+pub mod adapters;
 #[cfg(feature = "gpui")]
 pub mod gpui;
 mod inspector;
