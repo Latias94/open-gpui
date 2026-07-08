@@ -58,3 +58,10 @@ pub struct FormSnapshot {
     /// Number of submit attempts.
     pub submit_count: u32,
 }
+
+impl FormSnapshot {
+    /// Returns a field snapshot by path.
+    pub fn field(&self, path: &FieldPath) -> Option<&FieldSnapshot> {
+        self.fields.iter().find(|field| &field.path == path)
+    }
+}
