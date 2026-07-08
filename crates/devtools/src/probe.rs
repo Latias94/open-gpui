@@ -29,7 +29,7 @@ impl std::fmt::Display for ProbeId {
 }
 
 /// Read-only provider of devtools snapshots.
-pub trait DevtoolsProbe {
+pub trait DevtoolsProbe: Send + Sync {
     /// Returns the stable probe id.
     fn id(&self) -> &ProbeId;
 
