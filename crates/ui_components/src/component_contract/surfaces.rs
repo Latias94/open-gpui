@@ -15,6 +15,11 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
         home: "virtualized_list/model.rs",
     },
     PublicSurfaceOwnerEntry {
+        name: "FormControlState",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        home: "form.rs",
+    },
+    PublicSurfaceOwnerEntry {
         name: "GpuiOverlayAdapterConfig",
         owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
         home: "overlay/adapter.rs",
@@ -136,8 +141,8 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
     },
     PublicSurfaceOwnerEntry {
         name: "primitives::field_state",
-        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
-        home: "primitives/field_state.rs",
+        owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        home: "removed",
     },
     PublicSurfaceOwnerEntry {
         name: "primitives::focus_ring",

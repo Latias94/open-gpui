@@ -9,6 +9,7 @@ use open_gpui::{
 use open_gpui_ui_core::{Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::color::ColorIntent;
+use crate::form::FormControlState;
 use crate::theme::ThemeResolver;
 
 /// The resolved field message.
@@ -100,10 +101,7 @@ pub struct FieldState {
     control_id: String,
     help_text: Option<String>,
     error_text: Option<String>,
-    size: Size,
-    required: bool,
-    disabled: bool,
-    invalid: bool,
+    control: FormControlState,
     metrics: FieldMetrics,
     colors: FieldColors,
 }
@@ -121,15 +119,13 @@ impl FieldState {
         invalid: bool,
         tokens: ThemeTokens,
     ) -> Self {
+        let control = FormControlState::resolve(size, disabled, false, invalid, required, false);
         Self {
             label: label.into(),
             control_id: control_id.into(),
             help_text: help_text.map(Into::into),
             error_text: error_text.map(Into::into),
-            size,
-            required,
-            disabled,
-            invalid,
+            control,
             metrics: FieldMetrics::from_size(size),
             colors: ThemeResolver::field_colors(tokens, disabled, invalid),
         }
@@ -167,7 +163,7 @@ impl FieldState {
 
     /// Returns the message that should be rendered.
     pub fn message(&self) -> Option<FieldMessage> {
-        if self.invalid {
+        if self.invalid() {
             if let Some(error) = &self.error_text {
                 return Some(FieldMessage::Error(error.clone()));
             }
@@ -178,7 +174,7 @@ impl FieldState {
 
     /// Returns the support text that should be rendered.
     pub fn support_text(&self) -> Option<&str> {
-        if self.invalid {
+        if self.invalid() {
             self.error_text().or(self.help_text())
         } else {
             self.help_text()
@@ -187,27 +183,32 @@ impl FieldState {
 
     /// Returns whether the rendered support text is an error.
     pub fn support_is_error(&self) -> bool {
-        self.invalid && self.error_text.is_some()
+        self.invalid() && self.error_text.is_some()
+    }
+
+    /// Returns the shared form-control state.
+    pub const fn control_state(&self) -> FormControlState {
+        self.control
     }
 
     /// Returns the foundation size.
     pub const fn size(&self) -> Size {
-        self.size
+        self.control.size()
     }
 
     /// Returns whether the field is required.
     pub const fn required(&self) -> bool {
-        self.required
+        self.control.required()
     }
 
     /// Returns whether the field is disabled.
     pub const fn disabled(&self) -> bool {
-        self.disabled
+        self.control.disabled()
     }
 
     /// Returns whether the field is invalid.
     pub const fn invalid(&self) -> bool {
-        self.invalid
+        self.control.invalid()
     }
 
     /// Returns resolved metrics.
@@ -229,10 +230,7 @@ pub struct Field {
     control_id: SharedString,
     help_text: Option<SharedString>,
     error_text: Option<SharedString>,
-    size: Size,
-    required: bool,
-    disabled: bool,
-    invalid: bool,
+    control_state: FormControlState,
     tokens: ThemeTokens,
     control: Option<AnyElement>,
 }
@@ -250,10 +248,7 @@ impl Field {
             control_id: control_id.into(),
             help_text: None,
             error_text: None,
-            size: Size::Medium,
-            required: false,
-            disabled: false,
-            invalid: false,
+            control_state: FormControlState::default(),
             tokens: ThemeTokens::default(),
             control: None,
         }
@@ -283,19 +278,19 @@ impl Field {
 
     /// Marks the field as required.
     pub fn required(mut self, required: bool) -> Self {
-        self.required = required;
+        self.control_state = self.control_state.with_required(required);
         self
     }
 
     /// Marks the field as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
+        self.control_state = self.control_state.with_disabled(disabled);
         self
     }
 
     /// Marks the field as invalid.
     pub fn invalid(mut self, invalid: bool) -> Self {
-        self.invalid = invalid;
+        self.control_state = self.control_state.with_invalid(invalid);
         self
     }
 
@@ -318,10 +313,10 @@ impl Field {
             self.control_id.to_string(),
             self.help_text.as_ref().map(ToString::to_string),
             self.error_text.as_ref().map(ToString::to_string),
-            self.size,
-            self.required,
-            self.disabled,
-            self.invalid,
+            self.control_state.size(),
+            self.control_state.required(),
+            self.control_state.disabled(),
+            self.control_state.invalid(),
             self.tokens,
         )
     }
@@ -329,7 +324,7 @@ impl Field {
 
 impl Sizable for Field {
     fn with_size(mut self, size: Size) -> Self {
-        self.size = size;
+        self.control_state = self.control_state.with_size(size);
         self
     }
 }

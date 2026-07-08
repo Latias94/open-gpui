@@ -10,8 +10,8 @@ elements.
 ## What This Crate Owns
 
 - Action and form controls: buttons, icon buttons, checkboxes, switches, radios, sliders, text
-  input, textarea, number input, fields, labels, tags, badges, progress, skeleton, and feedback
-  surfaces.
+  input, textarea, number input, shared `FormControlState`, fields, labels, tags, badges, progress,
+  skeleton, and feedback surfaces.
 - Choice and overlay surfaces: Listbox, Select, Combobox, Menu, ContextMenu, Command, Popover,
   HoverCard, Tooltip, Dialog, AlertDialog, Sheet, and shared overlay placement/runtime helpers.
 - Layout and navigation components: Toolbar, Sidebar, Tabs, Breadcrumb, Accordion, Collapsible,
@@ -98,8 +98,8 @@ Most applications should use the default public surface:
 
 ```rust
 use open_gpui_ui_components::{
-    ActionDescriptor, Button, ResolvedActionState, VirtualizedList, VirtualizedListDataSource,
-    VirtualizedListItemDescriptor, VirtualizedListSelectionMode,
+    ActionDescriptor, Button, FormControlState, ResolvedActionState, VirtualizedList,
+    VirtualizedListDataSource, VirtualizedListItemDescriptor, VirtualizedListSelectionMode,
 };
 ```
 

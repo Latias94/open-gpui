@@ -1005,6 +1005,11 @@ preserves `\n` values and callback payloads, exposes renderer-neutral `TextareaS
 min-height, placeholder, required, invalid, read-only, disabled, metrics, colors, and role
 metadata, and keeps GPUI focus handles, input handlers, scroll handles, and callbacks inside the
 adapter. Field composition can wrap either `TextInput` or `Textarea` without owning editor values.
+`FormControlState` is the shared renderer-neutral control metadata for `Field`, `TextInput`,
+`Textarea`, and `NumberInput`; it owns size, disabled, read-only, invalid, required,
+controller-driven, editability, activation, and tab-stop facts so form controls do not duplicate
+those rules. The old `open_gpui_ui_components::primitives::FieldState` helper is removed because it
+was both shallower than the real field contract and name-confusable with `FieldState`.
 Password reveal toggles, credential-manager affordances, textarea auto-grow/drag-resize, undo/redo,
 completion, validation engines, rich text, and code-editor behavior remain out of scope. `Field`
 still stays separate from the editing controller and remains composition-only.

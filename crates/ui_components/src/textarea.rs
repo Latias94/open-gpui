@@ -16,6 +16,7 @@ use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
+use crate::form::FormControlState;
 use crate::text_editing::{
     self, EditableTextDocument, TextEditingPolicy, TextEditingProjection, TextSelection,
 };
@@ -143,13 +144,8 @@ impl TextareaMetrics {
 pub struct TextareaState {
     value: String,
     placeholder: Option<String>,
-    size: Size,
+    control: FormControlState,
     rows: usize,
-    disabled: bool,
-    read_only: bool,
-    invalid: bool,
-    required: bool,
-    controller_driven: bool,
     metrics: TextareaMetrics,
     colors: TextareaColors,
     focus_ring: FocusRing,
@@ -172,17 +168,20 @@ impl TextareaState {
         let colors = ThemeResolver::textarea_colors(tokens, disabled, read_only, invalid);
 
         let value = value.into();
-
-        Self {
-            value: TextEditingPolicy::multiline().normalize_text(value.as_str()),
-            placeholder: placeholder.map(Into::into),
+        let control = FormControlState::resolve(
             size,
-            rows: rows.max(1),
             disabled,
             read_only,
             invalid,
             required,
             controller_driven,
+        );
+
+        Self {
+            value: TextEditingPolicy::multiline().normalize_text(value.as_str()),
+            placeholder: placeholder.map(Into::into),
+            control,
+            rows: rows.max(1),
             metrics: TextareaMetrics::from_size_and_rows(size, rows),
             colors,
             focus_ring: FocusRing::from_color(colors.focus_ring()),
@@ -228,9 +227,14 @@ impl TextareaState {
         }
     }
 
+    /// Returns the shared form-control state.
+    pub const fn control_state(&self) -> FormControlState {
+        self.control
+    }
+
     /// Returns the foundation size.
     pub const fn size(&self) -> Size {
-        self.size
+        self.control.size()
     }
 
     /// Returns the preferred row count.
@@ -240,47 +244,47 @@ impl TextareaState {
 
     /// Returns whether the textarea is disabled.
     pub const fn disabled(&self) -> bool {
-        self.disabled
+        self.control.disabled()
     }
 
     /// Returns whether the textarea is read-only.
     pub const fn read_only(&self) -> bool {
-        self.read_only
+        self.control.read_only()
     }
 
     /// Returns whether the textarea is invalid.
     pub const fn invalid(&self) -> bool {
-        self.invalid
+        self.control.invalid()
     }
 
     /// Returns whether the textarea is required.
     pub const fn required(&self) -> bool {
-        self.required
+        self.control.required()
     }
 
     /// Returns whether this state is backed by an editable controller.
     pub const fn controller_driven(&self) -> bool {
-        self.controller_driven
+        self.control.controller_driven()
     }
 
     /// Returns whether text editing should be accepted.
     pub const fn input_enabled(&self) -> bool {
-        !self.disabled && !self.read_only
+        self.control.input_enabled()
     }
 
     /// Returns whether text editing should be accepted.
     pub const fn editable(&self) -> bool {
-        self.input_enabled()
+        self.control.editable()
     }
 
     /// Returns whether activation/edit handlers should run.
     pub const fn activation_enabled(&self) -> bool {
-        self.input_enabled()
+        self.control.activation_enabled()
     }
 
     /// Returns whether the element should be included in tab traversal.
     pub const fn tab_stop_enabled(&self) -> bool {
-        !self.disabled
+        self.control.tab_stop_enabled()
     }
 
     /// Returns the accessibility role.
@@ -692,11 +696,7 @@ pub struct Textarea {
     value: SharedString,
     placeholder: Option<SharedString>,
     rows: usize,
-    size: Size,
-    disabled: bool,
-    read_only: bool,
-    invalid: bool,
-    required: bool,
+    control: FormControlState,
     tokens: ThemeTokens,
     on_change: Option<TextareaChangeHandler>,
 }
@@ -710,11 +710,7 @@ impl Textarea {
             value: SharedString::default(),
             placeholder: None,
             rows: 3,
-            size: Size::Medium,
-            disabled: false,
-            read_only: false,
-            invalid: false,
-            required: false,
+            control: FormControlState::default(),
             tokens: ThemeTokens::default(),
             on_change: None,
         }
@@ -753,25 +749,25 @@ impl Textarea {
 
     /// Marks the textarea as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
+        self.control = self.control.with_disabled(disabled);
         self
     }
 
     /// Marks the textarea as read-only.
     pub fn read_only(mut self, read_only: bool) -> Self {
-        self.read_only = read_only;
+        self.control = self.control.with_read_only(read_only);
         self
     }
 
     /// Marks the textarea as invalid.
     pub fn invalid(mut self, invalid: bool) -> Self {
-        self.invalid = invalid;
+        self.control = self.control.with_invalid(invalid);
         self
     }
 
     /// Marks the textarea as required.
     pub fn required(mut self, required: bool) -> Self {
-        self.required = required;
+        self.control = self.control.with_required(required);
         self
     }
 
@@ -786,12 +782,12 @@ impl Textarea {
         TextareaState::resolve(
             self.value.to_string(),
             self.placeholder.as_ref().map(ToString::to_string),
-            self.size,
+            self.control.size(),
             self.rows,
-            self.disabled,
-            self.read_only,
-            self.invalid,
-            self.required,
+            self.control.disabled(),
+            self.control.read_only(),
+            self.control.invalid(),
+            self.control.required(),
             self.on_change.is_some(),
             self.tokens,
         )
@@ -800,7 +796,7 @@ impl Textarea {
 
 impl Sizable for Textarea {
     fn with_size(mut self, size: Size) -> Self {
-        self.size = size;
+        self.control = self.control.with_size(size);
         self
     }
 }

@@ -2,6 +2,7 @@
 
 use crate::a11y::UiA11yElementExt;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
+use crate::form::FormControlState;
 use crate::geometry::gpui_px_from_ui;
 use crate::slider::{normalize_bounds, normalize_numeric_value, normalize_step};
 use crate::text_input::{TextInputColors, TextInputMetrics};
@@ -92,11 +93,7 @@ pub struct NumberInputState {
     min: f32,
     max: f32,
     step: f32,
-    disabled: bool,
-    read_only: bool,
-    invalid: bool,
-    required: bool,
-    size: Size,
+    control: FormControlState,
     metrics: NumberInputMetrics,
     colors: NumberInputColors,
     focus_ring: FocusRing,
@@ -121,6 +118,8 @@ impl NumberInputState {
         let step = normalize_step(step);
         let value = normalize_numeric_value(value, min, max, step);
         let colors = ThemeResolver::text_input_colors(tokens, disabled, read_only, invalid);
+        let control =
+            FormControlState::resolve(size, disabled, read_only, invalid, required, false);
 
         Self {
             label: label.into(),
@@ -128,11 +127,7 @@ impl NumberInputState {
             min,
             max,
             step,
-            disabled,
-            read_only,
-            invalid,
-            required,
-            size,
+            control,
             metrics: NumberInputMetrics::from_size(size),
             colors,
             focus_ring: FocusRing::from_color(colors.focus_ring()),
@@ -164,44 +159,49 @@ impl NumberInputState {
         self.step
     }
 
+    /// Returns the shared form-control state.
+    pub const fn control_state(&self) -> FormControlState {
+        self.control
+    }
+
     /// Returns whether the input is disabled.
     pub const fn disabled(&self) -> bool {
-        self.disabled
+        self.control.disabled()
     }
 
     /// Returns whether the input is read-only.
     pub const fn read_only(&self) -> bool {
-        self.read_only
+        self.control.read_only()
     }
 
     /// Returns whether the input is invalid.
     pub const fn invalid(&self) -> bool {
-        self.invalid
+        self.control.invalid()
     }
 
     /// Returns whether the input is required.
     pub const fn required(&self) -> bool {
-        self.required
+        self.control.required()
     }
 
     /// Returns whether value-change handlers should run.
     pub const fn input_enabled(&self) -> bool {
-        !self.disabled && !self.read_only
+        self.control.input_enabled()
     }
 
     /// Returns whether activation handlers should run.
     pub const fn activation_enabled(&self) -> bool {
-        self.input_enabled()
+        self.control.activation_enabled()
     }
 
     /// Returns whether the element should be included in tab traversal.
     pub const fn tab_stop_enabled(&self) -> bool {
-        !self.disabled
+        self.control.tab_stop_enabled()
     }
 
     /// Returns the foundation size.
     pub const fn size(&self) -> Size {
-        self.size
+        self.control.size()
     }
 
     /// Returns the text shown inside the input shell.
@@ -277,11 +277,7 @@ pub struct NumberInput {
     min: f32,
     max: f32,
     step: f32,
-    disabled: bool,
-    read_only: bool,
-    invalid: bool,
-    required: bool,
-    size: Size,
+    control: FormControlState,
     tokens: ThemeTokens,
     on_change: Option<Rc<dyn Fn(NumberInputChange, &mut Window, &mut App)>>,
 }
@@ -296,11 +292,7 @@ impl NumberInput {
             min: 0.0,
             max: 100.0,
             step: 1.0,
-            disabled: false,
-            read_only: false,
-            invalid: false,
-            required: false,
-            size: Size::Medium,
+            control: FormControlState::default(),
             tokens: ThemeTokens::default(),
             on_change: None,
         }
@@ -332,25 +324,25 @@ impl NumberInput {
 
     /// Marks the input as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
+        self.control = self.control.with_disabled(disabled);
         self
     }
 
     /// Marks the input as read-only.
     pub fn read_only(mut self, read_only: bool) -> Self {
-        self.read_only = read_only;
+        self.control = self.control.with_read_only(read_only);
         self
     }
 
     /// Marks the input as invalid.
     pub fn invalid(mut self, invalid: bool) -> Self {
-        self.invalid = invalid;
+        self.control = self.control.with_invalid(invalid);
         self
     }
 
     /// Marks the input as required.
     pub fn required(mut self, required: bool) -> Self {
-        self.required = required;
+        self.control = self.control.with_required(required);
         self
     }
 
@@ -377,11 +369,11 @@ impl NumberInput {
             self.min,
             self.max,
             self.step,
-            self.disabled,
-            self.read_only,
-            self.invalid,
-            self.required,
-            self.size,
+            self.control.disabled(),
+            self.control.read_only(),
+            self.control.invalid(),
+            self.control.required(),
+            self.control.size(),
             self.tokens,
         )
     }
@@ -389,7 +381,7 @@ impl NumberInput {
 
 impl Sizable for NumberInput {
     fn with_size(mut self, size: Size) -> Self {
-        self.size = size;
+        self.control = self.control.with_size(size);
         self
     }
 }

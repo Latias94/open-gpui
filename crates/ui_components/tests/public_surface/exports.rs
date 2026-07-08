@@ -129,6 +129,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         .item(root::ToggleGroupItem::new("left", "Left"))
         .item(root::ToggleGroupItem::new("right", "Right"))
         .selected_values(["left"]);
+    let root_form_control = root::FormControlState::new(ui_core::Size::Medium).with_required(true);
     let root_theme_context = root::ThemeContext::light();
 
     let prelude_button = prelude::Button::new("save", "Save");
@@ -223,6 +224,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             prelude::ToggleGroupItem::new("italic", "Italic"),
         ])
         .default_selected_values(["bold"]);
+    let prelude_form_control =
+        prelude::FormControlState::new(ui_core::Size::Small).with_invalid(true);
     let prelude_theme_context = prelude::ThemeContext::dark();
 
     let _ = (
@@ -264,6 +267,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_tag.state(),
         root_toast_stack.state(),
         root_toggle_group.state(),
+        root_form_control.required(),
         root_theme_context.mode(),
         prelude_button.state(),
         prelude_accordion.state(),
@@ -303,6 +307,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_tag.state(),
         prelude_toast_stack.state(),
         prelude_toggle_group.state(),
+        prelude_form_control.invalid(),
         prelude_theme_context.mode(),
         root::toggle_group_navigation_target(Orientation::Horizontal, "right", 0, &[false, false]),
         prelude::toggle_group_navigation_target(

@@ -24,12 +24,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `open-gpui-ui-components` no longer exports `{ToolbarItem, SidebarItem, ListboxOption}` from the crate root/default surface. Import them from `open_gpui_ui_components::toolbar::ToolbarItem`, `open_gpui_ui_components::sidebar::SidebarItem`, and `open_gpui_ui_components::listbox::ListboxOption`.
 - `VirtualizedList::render_row` and `VirtualizedList::scroll_handle` moved to the `open_gpui_ui_components::gpui_adapter::VirtualizedListGpuiExt` extension trait; import the trait before calling GPUI-only hooks.
 - `open-gpui-ui-components` moved GPUI-only accessibility helpers such as `UiA11yElementExt` out of `prelude` and `primitives`; import them from `open_gpui_ui_components::gpui_adapter` when concrete GPUI element adapters need renderer-neutral accessibility vocabulary.
+- `open-gpui-ui-components` removed the shallow `open_gpui_ui_components::primitives::FieldState` helper; use the default-exported `FormControlState` for shared field and input control metadata.
 
 ### Changed
 
 - `VirtualizedList` internals are split into descriptor, model, render-plan, runtime, render, style, and motion modules while keeping the public facade key-first.
 - `VirtualizedList` now has explicit async/infinite status rows for initial loading, prepend loading, append loading, exhausted, empty, error, and retry states; keyed measured reveal after prepends; presentation-only sticky section overlay metadata and rendering; and theme-backed `VirtualizedListColors`.
 - `VirtualizedListDataSource` now lets component-library users project domain records, section rows, and async status rows into renderer-neutral list descriptor storage before rendering.
+- `FormControlState` now centralizes renderer-neutral size, disabled, read-only, invalid, required, controller-driven, editability, activation, and tab-stop metadata across `Field`, `TextInput`, `Textarea`, and `NumberInput`.
 - Core scroll handling now exposes typed `ScrollWheelIntent`, committed `ScrollViewportSnapshot` facts, and `TestInputDispatchSnapshot` probes so product code and tests can assert final viewport/input outcomes instead of scraping render plans.
 - `open-gpui-docking` now supports product panel placement through `DockPanelPlacement`, descriptor default placement, last-known reopen placement, and explicit close/reopen outcome facts.
 - `open-gpui-ui-components` now lets `VirtualizedList` hosts own the scroll handle, reveal stable keys through `VirtualizedListState::scroll_target_for_key*`, and keep nested actions contained without taking row ownership away from the list.

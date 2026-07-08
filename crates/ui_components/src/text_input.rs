@@ -16,6 +16,7 @@ use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
+use crate::form::FormControlState;
 use crate::text_editing::{
     self, EditableTextDocument, TextDisplayPolicy, TextDisplayProjection, TextEditingPolicy,
     TextEditingProjection, TextSelection,
@@ -908,13 +909,8 @@ use adapter::{
 pub struct TextInputState {
     value: String,
     placeholder: Option<String>,
-    size: Size,
+    control: FormControlState,
     display_mode: TextInputDisplayMode,
-    disabled: bool,
-    read_only: bool,
-    invalid: bool,
-    required: bool,
-    controller_driven: bool,
     metrics: TextInputMetrics,
     colors: TextInputColors,
     focus_ring: FocusRing,
@@ -962,17 +958,20 @@ impl TextInputState {
     ) -> Self {
         let colors = ThemeResolver::text_input_colors(tokens, disabled, read_only, invalid);
         let value = value.into();
-
-        Self {
-            value: TextEditingPolicy::single_line().normalize_text(value.as_str()),
-            placeholder: placeholder.map(Into::into),
+        let control = FormControlState::resolve(
             size,
-            display_mode,
             disabled,
             read_only,
             invalid,
             required,
             controller_driven,
+        );
+
+        Self {
+            value: TextEditingPolicy::single_line().normalize_text(value.as_str()),
+            placeholder: placeholder.map(Into::into),
+            control,
+            display_mode,
             metrics: TextInputMetrics::from_size(size),
             colors,
             focus_ring: FocusRing::from_color(colors.focus_ring()),
@@ -1023,54 +1022,59 @@ impl TextInputState {
         self.display_mode
     }
 
+    /// Returns the shared form-control state.
+    pub const fn control_state(&self) -> FormControlState {
+        self.control
+    }
+
     /// Returns the foundation size.
     pub const fn size(&self) -> Size {
-        self.size
+        self.control.size()
     }
 
     /// Returns whether the input is disabled.
     pub const fn disabled(&self) -> bool {
-        self.disabled
+        self.control.disabled()
     }
 
     /// Returns whether the input is read-only.
     pub const fn read_only(&self) -> bool {
-        self.read_only
+        self.control.read_only()
     }
 
     /// Returns whether the input is invalid.
     pub const fn invalid(&self) -> bool {
-        self.invalid
+        self.control.invalid()
     }
 
     /// Returns whether the input is required.
     pub const fn required(&self) -> bool {
-        self.required
+        self.control.required()
     }
 
     /// Returns whether this state is backed by an editable controller.
     pub const fn controller_driven(&self) -> bool {
-        self.controller_driven
+        self.control.controller_driven()
     }
 
     /// Returns whether text editing should be accepted.
     pub const fn input_enabled(&self) -> bool {
-        !self.disabled && !self.read_only
+        self.control.input_enabled()
     }
 
     /// Returns whether text editing should be accepted.
     pub const fn editable(&self) -> bool {
-        self.input_enabled()
+        self.control.editable()
     }
 
     /// Returns whether activation/edit handlers should run.
     pub const fn activation_enabled(&self) -> bool {
-        self.input_enabled()
+        self.control.activation_enabled()
     }
 
     /// Returns whether the element should be included in tab traversal.
     pub const fn tab_stop_enabled(&self) -> bool {
-        !self.disabled
+        self.control.tab_stop_enabled()
     }
 
     /// Returns the accessibility role.
@@ -1102,12 +1106,8 @@ pub struct TextInput {
     value: SharedString,
     placeholder: Option<SharedString>,
     controller: Option<Entity<TextInputController>>,
-    size: Size,
+    control: FormControlState,
     display_mode: TextInputDisplayMode,
-    disabled: bool,
-    read_only: bool,
-    invalid: bool,
-    required: bool,
     tokens: ThemeTokens,
     on_change: Option<TextInputChangeHandler>,
 }
@@ -1121,12 +1121,8 @@ impl TextInput {
             value: SharedString::default(),
             placeholder: None,
             controller: None,
-            size: Size::Medium,
+            control: FormControlState::default(),
             display_mode: TextInputDisplayMode::default(),
-            disabled: false,
-            read_only: false,
-            invalid: false,
-            required: false,
             tokens: ThemeTokens::default(),
             on_change: None,
         }
@@ -1173,25 +1169,25 @@ impl TextInput {
 
     /// Marks the input as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
+        self.control = self.control.with_disabled(disabled);
         self
     }
 
     /// Marks the input as read-only.
     pub fn read_only(mut self, read_only: bool) -> Self {
-        self.read_only = read_only;
+        self.control = self.control.with_read_only(read_only);
         self
     }
 
     /// Marks the input as invalid.
     pub fn invalid(mut self, invalid: bool) -> Self {
-        self.invalid = invalid;
+        self.control = self.control.with_invalid(invalid);
         self
     }
 
     /// Marks the input as required.
     pub fn required(mut self, required: bool) -> Self {
-        self.required = required;
+        self.control = self.control.with_required(required);
         self
     }
 
@@ -1206,11 +1202,11 @@ impl TextInput {
         TextInputState::resolve_with_display_mode(
             self.value.to_string(),
             self.placeholder.as_ref().map(ToString::to_string),
-            self.size,
-            self.disabled,
-            self.read_only,
-            self.invalid,
-            self.required,
+            self.control.size(),
+            self.control.disabled(),
+            self.control.read_only(),
+            self.control.invalid(),
+            self.control.required(),
             self.controller.is_some() || self.on_change.is_some(),
             self.display_mode,
             self.tokens,
@@ -1220,7 +1216,7 @@ impl TextInput {
 
 impl Sizable for TextInput {
     fn with_size(mut self, size: Size) -> Self {
-        self.size = size;
+        self.control = self.control.with_size(size);
         self
     }
 }
