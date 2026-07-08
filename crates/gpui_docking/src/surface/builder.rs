@@ -1,4 +1,4 @@
-use super::DockSurface;
+use super::{DockSurface, DockSurfaceSnapshot};
 use crate::{
     DockClassId, DockController, DockControllerBuilder, DockDropGuideStyle, DockItemId, DockLayout,
     DockLayoutValidationError, DockPanel, DockPanelDescriptor, DockPanelPlacement, DockPolicy,
@@ -42,6 +42,17 @@ impl DockSurfaceBuilder {
     ) -> std::result::Result<Self, DockLayoutValidationError> {
         self.controller = self.controller.try_layout(layout)?;
         Ok(self)
+    }
+
+    /// Restores the durable layout graph from an app-level surface snapshot.
+    ///
+    /// Viewport placement in the snapshot is restored after building through
+    /// [`DockSurface::viewports`].
+    pub fn try_snapshot(
+        self,
+        snapshot: &DockSurfaceSnapshot,
+    ) -> std::result::Result<Self, DockLayoutValidationError> {
+        self.try_layout(snapshot.layout())
     }
 
     /// Replaces the durable layout graph with the common editor-style layout.

@@ -280,6 +280,19 @@ fn common_import_paths_compile() {
     let root_viewport_session_type: Option<root::DockSurfaceViewportSession> = None;
     let prelude_viewport_session_type: Option<prelude::DockSurfaceViewportSession> = None;
     let root_surface_viewports = root::DockSurface::viewports;
+    let root_snapshot_type: Option<root::DockSurfaceSnapshot> = None;
+    let prelude_snapshot_type: Option<prelude::DockSurfaceSnapshot> = None;
+    let root_surface_export_snapshot: fn(
+        &root::DockSurface,
+        &open_gpui::App,
+    ) -> root::DockSurfaceSnapshot = root::DockSurface::export_snapshot;
+    let root_builder_try_snapshot: fn(
+        root::DockSurfaceBuilder,
+        &root::DockSurfaceSnapshot,
+    ) -> Result<
+        root::DockSurfaceBuilder,
+        root::DockLayoutValidationError,
+    > = root::DockSurfaceBuilder::try_snapshot;
 
     let _ = (
         root_policy.allows_floating(),
@@ -318,6 +331,10 @@ fn common_import_paths_compile() {
         root_viewport_session_type,
         prelude_viewport_session_type,
         root_surface_viewports,
+        root_snapshot_type,
+        prelude_snapshot_type,
+        root_surface_export_snapshot,
+        root_builder_try_snapshot,
     );
 }
 

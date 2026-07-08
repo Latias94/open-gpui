@@ -1,4 +1,4 @@
-use super::{DockSurface, DockSurfaceChange};
+use super::{DockSurface, DockSurfaceChange, DockSurfaceSnapshot};
 use crate::{
     DockPolicyError, DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy,
     DockViewportCloseStatus, DockViewportOpenOutcome, DockViewportOpenStatus,
@@ -224,6 +224,16 @@ impl DockSurfaceViewportSession {
     ) -> DockSurfaceViewportRestoreReport {
         self.surface
             .open_viewports_from_saved_placement(placement, fallback_options, cx)
+    }
+
+    /// Opens saved platform viewport windows from an app-level surface snapshot.
+    pub fn restore_snapshot(
+        &self,
+        snapshot: &DockSurfaceSnapshot,
+        fallback_options: impl FnMut(&DockSpaceId) -> WindowOptions,
+        cx: &mut App,
+    ) -> DockSurfaceViewportRestoreReport {
+        self.restore(snapshot.viewport_placement(), fallback_options, cx)
     }
 
     /// Handles a GPUI window should-close callback for a session-opened viewport window.

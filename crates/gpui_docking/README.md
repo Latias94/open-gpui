@@ -14,6 +14,8 @@ Low-level controller, graph, action, workspace, host, raw layout parts, and runt
 ## What This Crate Owns
 
 - `DockSurface` as the app-level owner for controller state, host-window creation, panel commands, and typed viewport capability outcomes.
+- `DockSurfaceSnapshot` as the app-level persistence payload that combines durable layout with
+  facade-opened viewport placement hints.
 - `DockSurfaceViewportSession`, `DockSurfaceViewportSpec`, `DockSurfaceViewportOpenReport`, and
   `DockSurfaceViewportRestoreReport` as facade-level platform window lifecycle, requests, and batch
   outcomes for multi-viewport applications.
@@ -49,38 +51,48 @@ Platform viewport windows fail closed unless both gates are true:
 
 `DockSurface::viewports` returns a `DockSurfaceViewportSession` for the common multi-window path. The session opens detached dock spaces, restores saved placement data, exports placement snapshots, and handles GPUI close hooks while keeping applications away from raw runtime handles. `DockSurface::open_viewport_spec` and `DockSurface::open_viewports` remain available for direct request construction and return facade outcomes so applications can distinguish policy-disabled, backend-unsupported, and backend-open failures without parsing opaque errors. Unsupported backends should no-op for open or tear-off requests instead of constructing partial runtime state. Web and other backends without platform window support stay on the single-window route.
 
-Persist `DockLayout` separately from viewport placement data. The layout restores logical dock spaces; `DockViewportPlacementLayout` restores platform-window hints, and `DockSurfaceViewportSpec::with_saved_placement` applies those hints to fallback GPUI window options before a viewport opens. Applications can call `DockSurface::export_viewport_placement` to snapshot facade-opened platform windows and `DockSurface::check_viewport_placement_restore` to validate saved placement before reopening windows, without importing `DockViewportRuntimeHandle`.
+Use `DockSurface::export_snapshot` for the common persistence path. The snapshot stores `DockLayout` for logical dock spaces plus `DockViewportPlacementLayout` for platform-window hints, without storing GPUI views or platform window handles. Applications that need custom storage can still persist `DockLayout` and viewport placement separately; `DockSurfaceViewportSpec::with_saved_placement` applies placement hints to fallback GPUI window options before a viewport opens. Applications can call `DockSurface::export_viewport_placement` to snapshot only facade-opened platform windows and `DockSurface::check_viewport_placement_restore` to validate saved placement before reopening windows, without importing `DockViewportRuntimeHandle`.
 
 Use `DockSurfaceBuilder::close_policy` or `DockSurface::set_viewport_close_policy` to choose how detached platform windows close. `DockViewportClosePolicy::RetainLayout` removes only the runtime window mapping, `Prevent` vetoes the platform close, and `MergeBack` moves a closing viewport's dock content into a fallback space. Applications with custom GPUI window hooks can call `DockSurface::handle_viewport_window_should_close`, `DockSurface::handle_viewport_window_closed`, and `DockSurface::cancel_viewport_window_close` without importing the low-level runtime handle.
 
 ## Restoring Platform Viewports
 
-Use `DockSurface::viewports` when restoring detached spaces. This keeps placement validation, backend capability checks, and batch outcome reporting on the facade surface:
+Use `DockSurfaceSnapshot` with `DockSurface::builder(...).try_snapshot(...)` and `DockSurface::viewports().restore_snapshot(...)` for the common restore path. This keeps layout validation, placement validation, backend capability checks, and batch outcome reporting on the facade surface:
 
 ```rust
 use open_gpui::{Bounds, WindowBounds, WindowOptions, px, size};
 use open_gpui_docking::prelude::{
-    DockSurfaceViewportOpenOutcome, DockViewportPlacementLayout,
+    DockSurface, DockSurfaceSnapshot, DockSurfaceViewportOpenOutcome,
 };
 
-fn restore_viewports(
-    surface: &open_gpui_docking::prelude::DockSurface,
-    saved_placement: &DockViewportPlacementLayout,
+fn panel_factory(_cx: &mut open_gpui::App) -> open_gpui::AnyView {
+    unreachable!("create and return a GPUI view for the panel")
+}
+
+fn restore_surface(
+    saved: &DockSurfaceSnapshot,
     cx: &mut open_gpui::App,
-) {
+) -> Result<DockSurface, open_gpui_docking::prelude::DockLayoutValidationError> {
+    let surface = DockSurface::builder("main")
+        .try_snapshot(saved)?
+        .panel_factory("editor", "Editor", panel_factory)
+        .panel_factory("preview", "Preview", panel_factory)
+        .allow_platform_viewports(true)
+        .build(cx)
+        .expect("registered panels should satisfy the restored layout");
+
     let viewports = surface.viewports();
-    let report = viewports.restore(
-        saved_placement,
+    let report = viewports.restore_snapshot(
+        saved,
         |_| {
-            let fallback_options = WindowOptions {
+            WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
                     size(px(720.0), px(480.0)),
                     cx,
                 ))),
                 ..Default::default()
-            };
-            fallback_options
+            }
         },
         cx,
     );
@@ -90,6 +102,8 @@ fn restore_viewports(
             eprintln!("dock viewport unavailable: {reason:?}");
         }
     }
+
+    Ok(surface)
 }
 ```
 

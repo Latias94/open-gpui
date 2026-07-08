@@ -9,7 +9,7 @@ pub use crate::{
     DockSpaceId, DockSurface, DockSurfaceBuildError, DockSurfaceBuilder, DockSurfaceChange,
     DockSurfaceFloatingPanelSnapshot, DockSurfacePanelError, DockSurfacePanelLocation,
     DockSurfacePanelLocationKind, DockSurfacePanelOutcome, DockSurfacePanelSnapshot,
-    DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
+    DockSurfaceSnapshot, DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
     DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus,
     DockSurfaceViewportOpened, DockSurfaceViewportRestoreOutcome, DockSurfaceViewportRestoreReport,
     DockSurfaceViewportSession, DockSurfaceViewportShouldCloseOutcome,

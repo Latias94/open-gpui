@@ -1,11 +1,12 @@
 use crate::{
     DockController, DockItemId, DockLayout, DockPanelOpenPlacementSource, DockPanelPlacement,
     DockPanelPlacementTarget, DockSpaceId, DockSurface, DockSurfaceChange, DockSurfacePanelError,
-    DockSurfacePanelLocationKind, DockSurfacePanelOutcome, DockSurfaceViewportCloseStatus,
-    DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenStatus, DockSurfaceViewportSession,
-    DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportUnavailable,
-    DockViewportClosePolicy, DockViewportPlacement, DockViewportPlacementLayout,
-    DockViewportRestoreReadiness, DockViewportWindowBounds, DockViewportWindowState,
+    DockSurfacePanelLocationKind, DockSurfacePanelOutcome, DockSurfaceSnapshot,
+    DockSurfaceViewportCloseStatus, DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenStatus,
+    DockSurfaceViewportSession, DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec,
+    DockSurfaceViewportUnavailable, DockViewportClosePolicy, DockViewportPlacement,
+    DockViewportPlacementLayout, DockViewportRestoreReadiness, DockViewportWindowBounds,
+    DockViewportWindowState,
     model::{DockLayoutNode, DockLayoutSpace},
 };
 use open_gpui::{
@@ -543,6 +544,66 @@ fn surface_viewport_session_opens_detached_panel_space(cx: &mut open_gpui::TestA
                 missing: 0,
             }
         );
+    });
+}
+
+#[open_gpui::test]
+fn surface_snapshot_roundtrips_layout_and_viewport_placement(cx: &mut open_gpui::TestAppContext) {
+    cx.update(|cx| {
+        let child_space = DockSpaceId::from("preview-window");
+        let surface = DockSurface::builder("main")
+            .panel_placements([
+                DockPanelPlacement::center("editor"),
+                DockPanelPlacement::right_rail("inspector"),
+                DockPanelPlacement::center("preview"),
+            ])
+            .panel_factory("editor", "Editor", test_panel)
+            .panel_factory("inspector", "Inspector", test_panel)
+            .panel_factory("preview", "Preview", test_panel)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("surface layout should validate");
+        let viewports = surface.viewports();
+        surface
+            .detach_panel_to_space("main", "preview", child_space.clone(), cx)
+            .expect("preview should detach into a child dock space");
+        let opened = viewports.open(child_space.clone(), viewport_options(), cx);
+        assert!(opened.opened());
+
+        let snapshot = surface.export_snapshot(cx);
+        assert_eq!(snapshot.layout().space_count(), 2);
+        assert_eq!(snapshot.viewport_placement().viewports.len(), 1);
+        assert_eq!(
+            snapshot.viewport_placement().viewports[0].space,
+            child_space
+        );
+
+        let restored = DockSurface::builder("main")
+            .try_snapshot(&snapshot)
+            .expect("snapshot layout should validate")
+            .panel_factory("editor", "Editor", test_panel)
+            .panel_factory("inspector", "Inspector", test_panel)
+            .panel_factory("preview", "Preview", test_panel)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("restored surface should validate");
+        let restored_layout = restored.export_layout(cx);
+        assert_eq!(&restored_layout, snapshot.layout());
+
+        let restore_report =
+            restored
+                .viewports()
+                .restore_snapshot(&snapshot, |_| viewport_options(), cx);
+        assert_eq!(restore_report.len(), 1);
+        assert!(restore_report.all_opened());
+        assert_eq!(
+            restored.registered_viewport_spaces(),
+            vec![DockSpaceId::from("preview-window")]
+        );
+
+        let (layout, viewport_placement) = snapshot.into_parts();
+        let rebuilt_snapshot = DockSurfaceSnapshot::new(layout, viewport_placement);
+        assert_eq!(rebuilt_snapshot.viewport_placement().viewports.len(), 1);
     });
 }
 

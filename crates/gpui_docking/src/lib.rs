@@ -36,6 +36,10 @@
 //! dock, raise, and floating-bounds flows.
 //! In-window floating and platform viewport tear-off are separate [`DockPolicy`] capabilities so
 //! applications can enable platform windows without changing graph-backed floating behavior.
+//! Applications can persist both logical layout and facade-opened viewport placement through
+//! [`DockSurface::export_snapshot`], then restore the durable layout through
+//! [`DockSurfaceBuilder::try_snapshot`] before reopening platform windows through
+//! [`DockSurfaceViewportSession::restore_snapshot`].
 //! Multi-window applications should keep one [`DockSurface`] as the graph, panel, and host-window
 //! owner, use [`DockSurface::viewports`] for controller-backed viewport lifecycle, and use
 //! [`DockSurface::detach_panel_to_space`] before opening a panel in a child dock space. Direct
@@ -295,7 +299,7 @@ pub use surface::{
     DockSurface, DockSurfaceBuildError, DockSurfaceBuilder, DockSurfaceChange,
     DockSurfaceFloatingPanelSnapshot, DockSurfacePanelError, DockSurfacePanelLocation,
     DockSurfacePanelLocationKind, DockSurfacePanelOutcome, DockSurfacePanelSnapshot,
-    DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
+    DockSurfaceSnapshot, DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
     DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus,
     DockSurfaceViewportOpened, DockSurfaceViewportRestoreOutcome, DockSurfaceViewportRestoreReport,
     DockSurfaceViewportSession, DockSurfaceViewportShouldCloseOutcome,

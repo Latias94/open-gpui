@@ -1,5 +1,6 @@
 mod builder;
 mod panel;
+mod state;
 mod viewport;
 
 pub use builder::{DockSurfaceBuildError, DockSurfaceBuilder};
@@ -8,6 +9,7 @@ pub use panel::{
     DockSurfacePanelLocation, DockSurfacePanelLocationKind, DockSurfacePanelOutcome,
     DockSurfacePanelSnapshot,
 };
+pub use state::DockSurfaceSnapshot;
 pub use viewport::{
     DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
     DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus,

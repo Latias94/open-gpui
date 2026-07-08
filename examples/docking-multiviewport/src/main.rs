@@ -197,8 +197,13 @@ fn main() {
             ));
         }
 
-        let placement = viewports.export_placement();
-        match viewports.check_restore(&placement) {
+        let snapshot = surface.export_snapshot(cx);
+        log::info!(
+            "dock snapshot exported: {} spaces, {} viewport placements",
+            snapshot.layout().space_count(),
+            snapshot.viewport_placement().viewports.len()
+        );
+        match viewports.check_restore(snapshot.viewport_placement()) {
             Ok(readiness) => log::info!("viewport placement restore readiness: {readiness:?}"),
             Err(error) => log::warn!("viewport placement restore check failed: {error}"),
         }
