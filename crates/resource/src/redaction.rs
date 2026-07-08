@@ -39,6 +39,21 @@ impl ResourceRedactionPolicy {
     }
 }
 
+impl RedactedResourceValue {
+    /// Returns true when the value was redacted.
+    pub fn is_redacted(&self) -> bool {
+        matches!(self, Self::Redacted)
+    }
+
+    /// Returns the exposed JSON value, when available.
+    pub fn as_json(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Json(value) => Some(value),
+            Self::Redacted | Self::Summary(_) => None,
+        }
+    }
+}
+
 fn value_summary(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::Null => "null".to_owned(),
