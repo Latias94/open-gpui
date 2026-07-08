@@ -1746,6 +1746,25 @@ pub struct ScrollViewportSnapshot {
 }
 
 impl ScrollViewportSnapshot {
+    /// Creates a committed scroll viewport snapshot for diagnostics and tests.
+    pub fn new(
+        generation: u64,
+        source: ScrollViewportChangeSource,
+        bounds: Bounds<Pixels>,
+        offset: Point<Pixels>,
+        max_offset: Point<Pixels>,
+        content_size: Size<Pixels>,
+    ) -> Self {
+        Self {
+            generation,
+            source,
+            bounds,
+            offset,
+            max_offset,
+            content_size,
+        }
+    }
+
     /// Monotonic generation for this tracked scroll handle.
     pub fn generation(&self) -> u64 {
         self.generation

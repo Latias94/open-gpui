@@ -2,17 +2,23 @@
 #![warn(missing_docs)]
 
 pub mod adapters;
+#[cfg(feature = "docking")]
+pub mod docking;
 #[cfg(feature = "form")]
 pub mod form;
 #[cfg(feature = "gpui")]
 pub mod gpui;
 mod inspector;
+#[cfg(feature = "motion")]
+pub mod motion;
 mod probe;
 mod redaction;
 mod registry;
 #[cfg(feature = "resource")]
 pub mod resource;
 mod snapshot;
+#[cfg(feature = "ui-components")]
+pub mod ui_components;
 
 #[cfg(feature = "gpui")]
 pub use gpui::DevtoolsInspector;

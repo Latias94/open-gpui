@@ -7,9 +7,11 @@ do not depend on GPUI. Optional features connect specialized panels and GPUI UI 
 
 - `form` for `open-gpui-form` snapshots.
 - `resource` for `open-gpui-resource` snapshots.
-- `docking` for docking snapshots.
-- `motion` for motion snapshots.
-- `gpui` for native inspector UI elements.
+- `ui-components` for theme and accessibility contract snapshots.
+- `motion` for `open-gpui-motion` frame-demand snapshots.
+- `docking` for `open-gpui-docking` runtime diagnostics.
+- `gpui` for core GPUI scroll snapshots and native inspector UI elements. It also enables
+  `ui-components` because the inspector UI uses component primitives.
 
 The first contract is read-only. Devtools can collect, filter, copy, and export snapshots; runtime
 mutation and live property editing are intentionally out of scope for the initial surface.

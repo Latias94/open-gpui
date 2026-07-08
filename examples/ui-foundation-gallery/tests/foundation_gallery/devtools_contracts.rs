@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn devtools_gallery_collects_form_and_resource_through_registry() {
+fn devtools_gallery_collects_registry_backed_snapshots() {
     let collection = pages::devtools::devtools_gallery_collection();
     let probe_ids = collection
         .snapshots
@@ -9,10 +9,31 @@ fn devtools_gallery_collects_form_and_resource_through_registry() {
         .map(|snapshot| snapshot.probe_id.as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(probe_ids, ["form", "resource"]);
-    assert_eq!(collection.snapshots[0].redaction.redacted_values, 5);
-    assert_eq!(collection.snapshots[1].redaction.redacted_values, 2);
-    assert_eq!(collection.diagnostics.len(), 3);
+    assert_eq!(
+        probe_ids,
+        ["accessibility", "form", "motion", "resource", "theme"]
+    );
+    assert_eq!(
+        collection
+            .snapshots
+            .iter()
+            .find(|snapshot| snapshot.probe_id.as_str() == "form")
+            .unwrap()
+            .redaction
+            .redacted_values,
+        5
+    );
+    assert_eq!(
+        collection
+            .snapshots
+            .iter()
+            .find(|snapshot| snapshot.probe_id.as_str() == "resource")
+            .unwrap()
+            .redaction
+            .redacted_values,
+        2
+    );
+    assert_eq!(collection.diagnostics.len(), 2);
 }
 
 #[test]
@@ -36,6 +57,24 @@ fn devtools_gallery_snapshots_reflect_component_sample_state() {
     assert!(resource_json.contains("Refetching"));
     assert!(resource_json.contains("Success"));
     assert!(resource_json.contains("observer_count"));
+    assert!(
+        collection
+            .snapshots
+            .iter()
+            .any(|snapshot| snapshot.probe_id.as_str() == "theme")
+    );
+    assert!(
+        collection
+            .snapshots
+            .iter()
+            .any(|snapshot| snapshot.probe_id.as_str() == "accessibility")
+    );
+    assert!(
+        collection
+            .snapshots
+            .iter()
+            .any(|snapshot| snapshot.probe_id.as_str() == "motion")
+    );
     assert!(!form_json.contains("gallery-secret"));
     assert!(!resource_json.contains("gallery-secret"));
 }
@@ -45,20 +84,16 @@ fn devtools_gallery_reports_unmounted_framework_diagnostics() {
     let state = pages::devtools::devtools_gallery_state();
     let diagnostics = state.diagnostics();
 
-    assert_eq!(diagnostics.len(), 3);
-    assert!(diagnostics.iter().all(|diagnostic| {
-        diagnostic.code == open_gpui_devtools::SnapshotDiagnostic::COLLECTION_FAILED
-            || diagnostic.code == "runtime.unavailable"
-    }));
+    assert_eq!(diagnostics.len(), 2);
     assert!(
         diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.probe_id.as_str() == "theme")
+            .all(|diagnostic| diagnostic.code == "runtime.unavailable")
     );
     assert!(
         diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.probe_id.as_str() == "motion")
+            .any(|diagnostic| diagnostic.probe_id.as_str() == "scroll")
     );
     assert!(
         diagnostics

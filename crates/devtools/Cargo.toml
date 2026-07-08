@@ -18,9 +18,10 @@ path = "src/lib.rs"
 default = []
 docking = ["dep:open_gpui_docking"]
 form = ["dep:open_gpui_form"]
-gpui = ["dep:open_gpui", "dep:open_gpui_ui_components"]
+gpui = ["dep:open_gpui", "ui-components"]
 motion = ["dep:open_gpui_motion"]
 resource = ["dep:open_gpui_resource"]
+ui-components = ["dep:open_gpui_ui_components"]
 
 [dependencies]
 open_gpui = { workspace = true, optional = true }
