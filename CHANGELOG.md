@@ -19,6 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `open-gpui` `ScrollViewportChangeSource` now distinguishes initial layout, resize, content-size changes, wheel/default scrolling, scrollbar, keyboard, touch, and named programmatic requests; update exhaustive matches and read `ScrollHandle::committed_viewport_snapshot` for final facts.
 - `open-gpui-ui-components` no longer exports `virtualized_list_navigation_target` or `virtualized_list_scroll_target` from the default component API. Use the key-first `VirtualizedListState::navigation_target`, `scroll_target_for_key`, or `scroll_target_for_key_with_snapshot` methods instead.
 - `VirtualizedListBehaviorSnapshot` now counts only unique, enabled item rows in listbox option positions and set sizes. Disabled, duplicate-key, structural, and status rows are still rendered, but no longer participate in roving focus or option-set metadata.
+- `open-gpui-ui-components` no longer exports `{ToolbarItem, SidebarItem, ListboxOption}` from the crate root/default surface. Import them from `open_gpui_ui_components::toolbar::ToolbarItem`, `open_gpui_ui_components::sidebar::SidebarItem`, and `open_gpui_ui_components::listbox::ListboxOption`.
+- `VirtualizedList::render_row` and `VirtualizedList::scroll_handle` moved to the `open_gpui_ui_components::gpui_adapter::VirtualizedListGpuiExt` extension trait; import the trait before calling GPUI-only hooks.
 
 ### Changed
 
