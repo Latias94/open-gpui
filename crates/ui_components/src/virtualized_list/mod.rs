@@ -5,7 +5,7 @@ mod model;
 mod motion;
 mod render;
 mod render_plan;
-mod runtime;
+pub(crate) mod runtime;
 mod style;
 
 #[cfg(test)]
@@ -34,7 +34,7 @@ pub use self::render_plan::{
     VirtualizedListRowMeasureMode, VirtualizedListRowRenderContext,
     VirtualizedListStickyOverlaySnapshot, VirtualizedListStickySectionSnapshot,
 };
-pub use self::runtime::{VirtualizedList, VirtualizedListGpuiExt};
+pub use self::runtime::VirtualizedList;
 pub use self::style::{VirtualizedListColors, VirtualizedListMetrics};
 
 #[cfg(test)]

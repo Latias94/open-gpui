@@ -337,8 +337,9 @@ lives in `crates/ui_components/src/public_api/common.rs` and is re-exported by
 `open_gpui_ui_components::prelude`. Do not use wildcard public re-exports in component crates
 except for those curated public-api hops. GPUI-specific helpers that remain public for concrete
 applications must be reachable through `open_gpui_ui_components::gpui_adapter`; current examples
-include `TextInputController`, `init_text_input`, `focus_ring_shadow_with_theme`, accessibility
-mapping helpers, geometry conversion helpers, `VirtualizedListGpuiExt`, and GPUI overlay scheduling
+include `TextInputController`, `init_text_input`, `focus_ring_shadow_with_theme`,
+`UiA11yElementExt`, accessibility mapping helpers, geometry conversion helpers,
+`VirtualizedListGpuiExt`, and GPUI overlay scheduling
 helpers. The crate root is reserved for official components and component-facing state/readout
 types; the prelude is reserved for common application imports. Advanced command registry/runtime
 types live in

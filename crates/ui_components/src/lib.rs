@@ -86,7 +86,7 @@ pub mod gpui_adapter {
         gpui_anchor, gpui_overlay_state, outside_press_open_change, point_anchor_placement,
     };
     pub use crate::text_input::adapter::{TextInputController, init as init_text_input};
-    pub use crate::virtualized_list::VirtualizedListGpuiExt;
+    pub use crate::virtualized_list::runtime::VirtualizedListGpuiExt;
 }
 
 pub use public_api::default::*;

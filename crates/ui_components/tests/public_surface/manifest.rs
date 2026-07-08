@@ -293,6 +293,7 @@ fn primitive_deletion_target_inventory_blocks_removed_shallow_reexports() {
             "collection".to_string(),
             "controllable_state".to_string(),
             "overlay".to_string(),
+            "trigger_a11y".to_string(),
         ],
         "U2 should delete only the known shallow primitive pass-through modules"
     );

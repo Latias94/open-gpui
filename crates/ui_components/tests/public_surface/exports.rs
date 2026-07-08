@@ -461,6 +461,7 @@ fn root_and_prelude_exports_match_contract_default_surface_intent() {
         "GpuiOverlayAdapterConfig",
         "GpuiOverlayState",
         "TextInputController",
+        "UiA11yElementExt",
         "VirtualizedListGpuiExt",
         "TableGlobalFilter",
         "TablePredicateFilter",
@@ -517,8 +518,50 @@ fn prelude_reexports_stay_a_curated_subset_of_crate_root_plus_core_helpers() {
             "Sizable".to_string(),
             "Size".to_string(),
             "ThemeTokens".to_string(),
-            "UiA11yElementExt".to_string(),
         ],
         "prelude-only exports must stay intentional; update the allowlist when the convenience prelude grows"
     );
+}
+
+#[test]
+fn gpui_adapter_helpers_keep_single_public_import_paths() {
+    let virtualized_list_module = std::fs::read_to_string(format!(
+        "{}/src/virtualized_list/mod.rs",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("read virtualized_list/mod.rs");
+    assert!(
+        !virtualized_list_module.contains("VirtualizedListGpuiExt"),
+        "VirtualizedListGpuiExt must stay out of open_gpui_ui_components::virtualized_list"
+    );
+
+    let primitives_module = std::fs::read_to_string(format!(
+        "{}/src/primitives/mod.rs",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("read primitives/mod.rs");
+    for token in [
+        "trigger_a11y",
+        "UiA11yElementExt",
+        "gpui_role_from_ui",
+        "gpui_orientation_from_ui",
+        "gpui_accessible_action_from_ui",
+        "gpui_toggled_from_ui",
+    ] {
+        assert!(
+            !primitives_module.contains(token),
+            "GPUI adapter helper `{token}` must stay out of open_gpui_ui_components::primitives"
+        );
+    }
+
+    let lib = std::fs::read_to_string(format!("{}/src/lib.rs", env!("CARGO_MANIFEST_DIR")))
+        .expect("read lib.rs");
+    let adapter_source = public_module_source(&lib, "gpui_adapter")
+        .expect("gpui_adapter module should remain public");
+    for token in ["UiA11yElementExt", "VirtualizedListGpuiExt"] {
+        assert!(
+            adapter_source.contains(token),
+            "gpui_adapter should remain the public import path for `{token}`"
+        );
+    }
 }

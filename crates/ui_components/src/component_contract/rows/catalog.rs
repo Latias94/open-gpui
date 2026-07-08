@@ -1290,13 +1290,13 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
     },
     ComponentContractEntry {
         name: "primitives::trigger_a11y",
-        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
         family: None,
         gallery_status: SurfaceGalleryStatus::NotInGallery,
-        docs_status: SurfaceDocsStatus::ComponentContract,
-        docs_token: Some("ui_components::primitives"),
+        docs_status: SurfaceDocsStatus::Verification,
+        docs_token: Some("primitives::trigger_a11y"),
         default_export: false,
-        source_inputs: &["primitives/trigger_a11y.rs"],
-        source_home: "primitives/trigger_a11y.rs",
+        source_inputs: &["removed"],
+        source_home: "removed",
     },
 ];

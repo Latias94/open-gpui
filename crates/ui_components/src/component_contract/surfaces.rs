@@ -40,6 +40,11 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
         home: "gpui_adapter",
     },
     PublicSurfaceOwnerEntry {
+        name: "UiA11yElementExt",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
         name: "focus_ring_shadow_with_theme",
         owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
         home: "gpui_adapter",
@@ -146,7 +151,7 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
     },
     PublicSurfaceOwnerEntry {
         name: "primitives::trigger_a11y",
-        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
-        home: "primitives/trigger_a11y.rs",
+        owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        home: "removed",
     },
 ];

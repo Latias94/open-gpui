@@ -115,6 +115,8 @@ For GPUI-specific adapter helpers that are not renderer-neutral component contra
 `open_gpui_ui_components::gpui_adapter`. For example, import
 `open_gpui_ui_components::gpui_adapter::VirtualizedListGpuiExt` before calling
 `VirtualizedList::render_row` or `VirtualizedList::scroll_handle` as extension methods.
+GPUI accessibility extension methods such as `UiA11yElementExt` also live under `gpui_adapter`
+instead of the common prelude or `primitives`.
 
 ## Verification
 
