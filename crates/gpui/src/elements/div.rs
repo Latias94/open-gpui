@@ -45,6 +45,9 @@ use std::{
 
 use super::ImageCacheProvider;
 
+mod scroll;
+mod tooltip;
+
 const DRAG_THRESHOLD: f64 = 2.;
 const DEFAULT_TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
 const HOVERABLE_TOOLTIP_HIDE_DELAY: Duration = Duration::from_millis(500);
@@ -338,85 +341,6 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to scroll wheel events during the bubble phase.
-    /// The imperative API equivalent to [`InteractiveElement::on_scroll_wheel`].
-    ///
-    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    pub fn on_scroll_wheel(
-        &mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) -> ScrollWheelIntent + 'static,
-    ) {
-        self.scroll_wheel_listeners.push(Box::new(
-            move |event, phase, hitbox, focus_handle, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
-                    (listener)(event, window, cx).apply(focus_handle, window, cx);
-                }
-            },
-        ));
-    }
-
-    /// Bind a raw callback to scroll wheel events during the bubble phase.
-    ///
-    /// Prefer [`Self::on_scroll_wheel`] for product code. Raw callbacks are an
-    /// advanced escape hatch for integrations that must manipulate dispatch
-    /// state directly.
-    pub fn on_raw_scroll_wheel(
-        &mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
-    ) {
-        self.scroll_wheel_listeners
-            .push(Box::new(move |event, phase, hitbox, _, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
-                    (listener)(event, window, cx);
-                }
-            }));
-    }
-
-    /// Bind the given callback to scroll wheel events during the capture phase.
-    /// This runs before GPUI's default scroll handling for scrollable elements.
-    ///
-    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    pub fn capture_scroll_wheel(
-        &mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) -> ScrollWheelIntent + 'static,
-    ) {
-        self.scroll_wheel_listeners.push(Box::new(
-            move |event, phase, hitbox, focus_handle, window, cx| {
-                if phase == DispatchPhase::Capture && hitbox.should_handle_scroll(window) {
-                    (listener)(event, window, cx).apply(focus_handle, window, cx);
-                }
-            },
-        ));
-    }
-
-    /// Bind a raw callback to scroll wheel events during the capture phase.
-    ///
-    /// Prefer [`Self::capture_scroll_wheel`] for product code. Raw callbacks are
-    /// an advanced escape hatch for integrations that must manipulate dispatch
-    /// state directly.
-    pub fn capture_raw_scroll_wheel(
-        &mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
-    ) {
-        self.scroll_wheel_listeners
-            .push(Box::new(move |event, phase, hitbox, _, window, cx| {
-                if phase == DispatchPhase::Capture && hitbox.should_handle_scroll(window) {
-                    (listener)(event, window, cx);
-                }
-            }));
-    }
-
-    /// Bind the given callback to committed tracked-scroll viewport changes.
-    /// The callback runs after GPUI has clamped the scroll offset against the
-    /// element's final bounds and content size for the frame.
-    pub fn on_scroll_viewport_changed(
-        &mut self,
-        listener: impl Fn(&ScrollViewportChangedEvent, &mut Window, &mut App) + 'static,
-    ) {
-        self.scroll_viewport_changed_listeners
-            .push(Box::new(listener));
-    }
-
     /// Bind the given callback to pinch gesture events during the bubble phase.
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
@@ -672,47 +596,6 @@ impl Interactivity {
             "calling on_hover more than once on the same element is not supported"
         );
         self.hover_listener = Some(Box::new(listener));
-    }
-
-    /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
-    /// The imperative API equivalent to [`StatefulInteractiveElement::tooltip`].
-    pub fn tooltip(&mut self, build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static)
-    where
-        Self: Sized,
-    {
-        debug_assert!(
-            self.tooltip_builder.is_none(),
-            "calling tooltip more than once on the same element is not supported"
-        );
-        self.tooltip_builder = Some(TooltipBuilder {
-            build: Rc::new(build_tooltip),
-            hoverable: false,
-        });
-    }
-
-    /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
-    /// The tooltip itself is also hoverable and won't disappear when the user moves the mouse into
-    /// the tooltip. The imperative API equivalent to [`StatefulInteractiveElement::hoverable_tooltip`].
-    pub fn hoverable_tooltip(
-        &mut self,
-        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
-    ) where
-        Self: Sized,
-    {
-        debug_assert!(
-            self.tooltip_builder.is_none(),
-            "calling tooltip more than once on the same element is not supported"
-        );
-        self.tooltip_builder = Some(TooltipBuilder {
-            build: Rc::new(build_tooltip),
-            hoverable: true,
-        });
-    }
-
-    /// Set the delay before this element's tooltip is shown.
-    /// The imperative API equivalent to [`StatefulInteractiveElement::tooltip_show_delay`].
-    pub fn tooltip_show_delay(&mut self, delay: Duration) {
-        self.tooltip_show_delay = Some(delay);
     }
 
     /// Block the mouse from all interactions with elements behind this element's hitbox. Typically
