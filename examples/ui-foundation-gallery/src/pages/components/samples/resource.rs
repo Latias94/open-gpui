@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use super::*;
-use open_gpui_resource::{QueryKey, ResourceClient, ResourceRedactionPolicy};
+use open_gpui_resource::{
+    MutationSnapshot, QueryKey, ResourceClient, ResourceRedactionPolicy, ResourceSnapshot,
+};
 use open_gpui_ui_components::{
     ResourceAdapterLabels, ResourceCollectionProjection, ResourceMutationProjection,
     TreeChildrenLoadState,
@@ -37,6 +39,21 @@ pub struct ResourceAdapterSample {
     pub table_children_state: TableRowChildrenLoadState,
     /// Tree child-loading state projected from query lifecycle.
     pub tree_children_state: TreeChildrenLoadState,
+    /// Query snapshot shared with the DevTools dogfood page.
+    pub snapshot: ResourceSnapshot,
+    /// Mutation snapshot shared with the DevTools dogfood page.
+    pub mutation_snapshot: Option<MutationSnapshot>,
+}
+
+/// Deterministic resource snapshots consumed by the DevTools dogfood page.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResourceDevtoolsDogfoodSnapshots {
+    /// Redacted query snapshot after mutation-driven invalidation.
+    pub resource: ResourceSnapshot,
+    /// Redacted mutation snapshot after success.
+    pub mutation: MutationSnapshot,
+    /// Whether invalidation requested a refetch for the observed query.
+    pub refetch_requested: bool,
 }
 
 /// Returns resource-adapter samples backed by deterministic resource snapshots.
@@ -48,6 +65,34 @@ pub fn resource_adapter_samples(tokens: ThemeTokens) -> Vec<ResourceAdapterSampl
         refreshing_resource_sample(tokens),
         mutation_resource_sample(tokens),
     ]
+}
+
+/// Returns the deterministic resource snapshots consumed by the DevTools dogfood page.
+pub fn resource_devtools_dogfood_snapshots() -> ResourceDevtoolsDogfoodSnapshots {
+    let mut client = ResourceClient::default();
+    let key = projects_key();
+    let ticket = client.begin_fetch(&key).unwrap();
+    assert!(client.complete_fetch_success(ticket, project_rows_json()));
+    let _observer = client.subscribe(key.clone()).unwrap();
+    let mutation_ticket = client
+        .begin_mutation("save-project-token=gallery-secret")
+        .unwrap();
+    assert!(client.complete_mutation_success(
+        mutation_ticket.clone(),
+        Some(serde_json::json!({"saved": true, "token": "gallery-secret"})),
+        [key.clone()],
+    ));
+    let invalidation = client.invalidate(&key).unwrap();
+
+    ResourceDevtoolsDogfoodSnapshots {
+        resource: client
+            .snapshot(&key, ResourceRedactionPolicy::RedactAll)
+            .unwrap(),
+        mutation: client
+            .mutation_snapshot(&mutation_ticket.id, ResourceRedactionPolicy::RedactAll)
+            .unwrap(),
+        refetch_requested: invalidation.refetch_requested,
+    }
 }
 
 fn loading_resource_sample(tokens: ThemeTokens) -> ResourceAdapterSample {
@@ -66,6 +111,7 @@ fn loading_resource_sample(tokens: ThemeTokens) -> ResourceAdapterSample {
         snapshot,
         0,
         Vec::new(),
+        None,
         None,
         tokens,
     )
@@ -89,6 +135,7 @@ fn empty_resource_sample(tokens: ThemeTokens) -> ResourceAdapterSample {
         0,
         Vec::new(),
         None,
+        None,
         tokens,
     )
 }
@@ -110,6 +157,7 @@ fn retry_resource_sample(tokens: ThemeTokens) -> ResourceAdapterSample {
         snapshot,
         0,
         Vec::new(),
+        None,
         None,
         tokens,
     )
@@ -135,6 +183,7 @@ fn refreshing_resource_sample(tokens: ThemeTokens) -> ResourceAdapterSample {
         2,
         project_virtual_rows(),
         None,
+        None,
         tokens,
     )
 }
@@ -151,6 +200,7 @@ fn mutation_resource_sample(tokens: ThemeTokens) -> ResourceAdapterSample {
     let mutation = client
         .mutation_snapshot(&mutation_ticket.id, ResourceRedactionPolicy::RedactAll)
         .unwrap();
+    let mutation_snapshot = mutation.clone();
     let mutation = Some(ResourceMutationProjection::resolve(
         &mutation,
         ResourceAdapterLabels::new("project"),
@@ -165,6 +215,7 @@ fn mutation_resource_sample(tokens: ThemeTokens) -> ResourceAdapterSample {
         2,
         project_virtual_rows(),
         mutation,
+        Some(mutation_snapshot),
         tokens,
     )
 }
@@ -179,6 +230,7 @@ fn build_resource_adapter_sample(
     visible_item_count: usize,
     rows: Vec<VirtualizedListItemDescriptor>,
     mutation: Option<ResourceMutationProjection>,
+    mutation_snapshot: Option<MutationSnapshot>,
     tokens: ThemeTokens,
 ) -> ResourceAdapterSample {
     let collection = ResourceCollectionProjection::resolve(
@@ -223,6 +275,8 @@ fn build_resource_adapter_sample(
         command_status_message,
         table_children_state,
         tree_children_state,
+        snapshot,
+        mutation_snapshot,
     }
 }
 

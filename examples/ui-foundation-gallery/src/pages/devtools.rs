@@ -1,9 +1,14 @@
 //! Devtools inspector gallery page.
 
 use open_gpui_devtools::{
-    DevtoolsInspectorState, ProbeId, SnapshotCollection, SnapshotDiagnostic, SnapshotEnvelope,
-    SnapshotKind, SnapshotNode, SnapshotRedactionSummary, SnapshotTree,
+    DevtoolsInspectorState, DevtoolsRegistry, ProbeId, SnapshotCollection, SnapshotDiagnostic,
+    SnapshotKind, form, gpui, motion, resource, ui_components,
 };
+use open_gpui_motion::{MotionFrameDemand, MotionFrameReason};
+use open_gpui_resource::PaginatedResourceSnapshotView;
+use open_gpui_ui_components::{COMPONENT_A11Y_EVIDENCE, ThemeSnapshot};
+
+use super::components::{form_devtools_dogfood_snapshot, resource_devtools_dogfood_snapshots};
 
 /// Page title.
 pub const TITLE: &str = "DevTools";
@@ -17,6 +22,11 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_devtools::SnapshotEnvelope",
     "open_gpui_devtools::SnapshotKind",
     "open_gpui_devtools::SnapshotRedactionSummary",
+    "open_gpui_devtools::form::form_snapshot_probe",
+    "open_gpui_devtools::resource::resource_snapshot_probe",
+    "open_gpui_devtools::ui_components::theme_probe_snapshot",
+    "open_gpui_devtools::ui_components::a11y_evidence_probe_snapshot",
+    "open_gpui_devtools::motion::motion_frame_demand_probe_snapshot",
 ];
 
 /// Returns the deterministic devtools inspector state used by the gallery.
@@ -26,65 +36,65 @@ pub fn devtools_gallery_state() -> DevtoolsInspectorState {
 
 /// Returns the deterministic snapshot collection used by the gallery.
 pub fn devtools_gallery_collection() -> SnapshotCollection {
-    SnapshotCollection {
-        snapshots: vec![
-            theme_snapshot(),
-            form_snapshot(),
-            resource_snapshot(),
-            docking_snapshot(),
-        ],
-        diagnostics: vec![SnapshotDiagnostic {
-            probe_id: ProbeId::new("motion").unwrap(),
-            message: "motion runtime is not mounted in this gallery page".to_owned(),
-        }],
-    }
+    let mut registry = DevtoolsRegistry::default();
+    let form_snapshot = form_devtools_dogfood_snapshot();
+    let resource_snapshots = resource_devtools_dogfood_snapshots();
+    let resource_snapshot = resource_snapshots.resource;
+    let mutation_snapshot = resource_snapshots.mutation;
+
+    registry
+        .register_snapshot_probe("accessibility", SnapshotKind::Accessibility, || {
+            Ok(ui_components::a11y_evidence_probe_snapshot(
+                COMPONENT_A11Y_EVIDENCE,
+            ))
+        })
+        .expect("unique accessibility probe");
+    registry
+        .register(
+            form::form_snapshot_probe("form", move || form_snapshot.clone())
+                .expect("valid form probe"),
+        )
+        .expect("unique form probe");
+    registry
+        .register_snapshot_probe("motion", SnapshotKind::Motion, || {
+            Ok(motion::motion_frame_demand_probe_snapshot(
+                MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender),
+            ))
+        })
+        .expect("unique motion probe");
+    registry
+        .register(
+            resource::resource_snapshot_probe(
+                "resource",
+                move || vec![resource_snapshot.clone()],
+                move || vec![mutation_snapshot.clone()],
+                Vec::<PaginatedResourceSnapshotView>::new,
+            )
+            .expect("valid resource probe"),
+        )
+        .expect("unique resource probe");
+    registry
+        .register_snapshot_probe("theme", SnapshotKind::Theme, || {
+            Ok(ui_components::theme_probe_snapshot(ThemeSnapshot::light()))
+        })
+        .expect("unique theme probe");
+
+    let mut collection = registry.collect();
+    collection
+        .diagnostics
+        .extend(unmounted_framework_diagnostics());
+    collection
 }
 
-fn theme_snapshot() -> SnapshotEnvelope {
-    SnapshotEnvelope::new(
-        ProbeId::new("theme").unwrap(),
-        SnapshotKind::Theme,
-        SnapshotTree::new([SnapshotNode::new("theme", "Theme tokens")
-            .with_payload(serde_json::json!({"mode": "light", "density": "regular"}))]),
-    )
-}
-
-fn form_snapshot() -> SnapshotEnvelope {
-    let mut redaction = SnapshotRedactionSummary::default();
-    redaction.record_redacted("account.email value");
-    SnapshotEnvelope::new(
-        ProbeId::new("form").unwrap(),
-        SnapshotKind::Form,
-        SnapshotTree::new([SnapshotNode::new("profile", "Profile form")
-            .with_payload(serde_json::json!({"status": "idle"}))
-            .with_child(
-                SnapshotNode::new("field:account.email", "Email")
-                    .with_payload(serde_json::json!({"dirty": true, "invalid": true})),
-            )]),
-    )
-    .with_redaction(redaction)
-}
-
-fn resource_snapshot() -> SnapshotEnvelope {
-    let mut redaction = SnapshotRedactionSummary::default();
-    redaction.record_redacted("projects payload");
-    SnapshotEnvelope::new(
-        ProbeId::new("resource").unwrap(),
-        SnapshotKind::Resource,
-        SnapshotTree::new([SnapshotNode::new("query:projects", "Projects")
-            .with_payload(serde_json::json!({"status": "refetching", "observers": 1}))]),
-    )
-    .with_redaction(redaction)
-}
-
-fn docking_snapshot() -> SnapshotEnvelope {
-    SnapshotEnvelope::new(
-        ProbeId::new("docking").unwrap(),
-        SnapshotKind::Docking,
-        SnapshotTree::new([SnapshotNode::new("workspace", "Workspace panes")
-            .with_child(SnapshotNode::new("pane:left", "Navigator"))
-            .with_child(SnapshotNode::new("pane:center", "Editor"))]),
-    )
+fn unmounted_framework_diagnostics() -> Vec<SnapshotDiagnostic> {
+    vec![
+        gpui::scroll_viewport_unavailable_diagnostic(ProbeId::new("scroll").unwrap()),
+        SnapshotDiagnostic::new(
+            ProbeId::new("docking").unwrap(),
+            "runtime.unavailable",
+            "docking runtime is not mounted in this gallery page",
+        ),
+    ]
 }
 
 #[cfg(test)]
@@ -96,9 +106,18 @@ mod tests {
         let state = devtools_gallery_state();
         let rows = state.snapshot_rows();
 
-        assert_eq!(rows.len(), 4);
-        assert!(rows.iter().any(|row| row.kind_label == "form"));
-        assert!(rows.iter().any(|row| row.redacted_values == 1));
-        assert_eq!(state.diagnostics().len(), 1);
+        assert_eq!(rows.len(), 5);
+        assert!(rows.iter().any(
+            |row| row.probe_id.as_str() == "accessibility" && row.kind_label == "accessibility"
+        ));
+        assert!(rows.iter().any(|row| row.probe_id.as_str() == "form"
+            && row.kind_label == "form"
+            && row.redacted_values == 5));
+        assert!(rows.iter().any(|row| row.probe_id.as_str() == "resource"
+            && row.kind_label == "resource"
+            && row.redacted_values == 2));
+        assert!(rows.iter().any(|row| row.probe_id.as_str() == "motion"));
+        assert!(rows.iter().any(|row| row.probe_id.as_str() == "theme"));
+        assert_eq!(state.diagnostics().len(), 2);
     }
 }

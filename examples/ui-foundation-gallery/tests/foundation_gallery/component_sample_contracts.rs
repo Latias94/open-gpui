@@ -1300,3 +1300,62 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     );
     assert!(table_gate.evidence.contains(&"select-release"));
 }
+
+#[test]
+fn component_form_samples_expose_redacted_devtools_snapshots() {
+    use open_gpui_form::{FormStatus, RedactedValue};
+
+    let samples = pages::components::form_adapter_samples(ThemeTokens::default());
+    let validation = samples
+        .iter()
+        .find(|sample| sample.id == "validation")
+        .expect("validation form sample");
+
+    assert_eq!(
+        validation.redacted_field_count,
+        validation.redacted_snapshot.fields.len()
+    );
+    assert!(
+        validation
+            .redacted_snapshot
+            .fields
+            .iter()
+            .all(|field| matches!(field.value, RedactedValue::Redacted))
+    );
+
+    let dogfood = pages::components::form_devtools_dogfood_snapshot();
+    assert_eq!(dogfood.status, FormStatus::SubmitFailed);
+    assert_eq!(dogfood.submit_count, 1);
+    assert_eq!(
+        dogfood.fields.len(),
+        validation.redacted_snapshot.fields.len()
+    );
+    assert!(dogfood.errors.iter().any(|error| error.contains("token=")));
+}
+
+#[test]
+fn component_resource_samples_expose_devtools_dogfood_snapshots() {
+    use open_gpui_resource::{MutationStatus, RedactedResourceValue, ResourceStatus};
+
+    let samples = pages::components::resource_adapter_samples(ThemeTokens::default());
+    let mutation = samples
+        .iter()
+        .find(|sample| sample.id == "mutation")
+        .expect("mutation resource sample");
+
+    assert_eq!(mutation.snapshot.status, ResourceStatus::Success);
+    assert!(mutation.mutation_snapshot.is_some());
+
+    let dogfood = pages::components::resource_devtools_dogfood_snapshots();
+    assert!(dogfood.refetch_requested);
+    assert_eq!(dogfood.resource.status, ResourceStatus::Refetching);
+    assert_eq!(dogfood.mutation.status, MutationStatus::Success);
+    assert!(matches!(
+        dogfood.resource.data,
+        Some(RedactedResourceValue::Redacted)
+    ));
+    assert!(matches!(
+        dogfood.mutation.data,
+        Some(RedactedResourceValue::Redacted)
+    ));
+}

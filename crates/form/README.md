@@ -50,6 +50,8 @@ assert_eq!(snapshot.fields.len(), 1);
   should integrate outside this crate.
 - Treat snapshots as diagnostic payloads. Use `RedactionPolicy::RedactAll` or
   `RedactionPolicy::Summarize` before exposing form data to devtools, tests, or logs.
+- Use `open_gpui_devtools::form` when the `open-gpui-devtools/form` feature is enabled; the
+  adapter derives DevTools redaction summaries from `RedactedValue::Redacted` fields.
 
 ## Verification
 

@@ -1,10 +1,15 @@
 //! GPUI read-only inspector surface.
 
-use crate::{DevtoolsInspectorState, SnapshotEnvelope, SnapshotNode};
+use crate::{
+    DevtoolsInspectorState, ProbeId, SnapshotDiagnostic, SnapshotEnvelope, SnapshotNode,
+    SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
+    adapters::snapshot_node_with_payload,
+};
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString, Styled,
-    Window, div, px, rgb,
+    AnyElement, App, Bounds, ElementId, IntoElement, ParentElement, Pixels, Point, RenderOnce,
+    ScrollViewportChangeSource, ScrollViewportProgrammaticSource, ScrollViewportSnapshot,
+    SharedString, Size as GpuiSize, Styled, Window, div, px, rgb,
 };
 use open_gpui_ui_components::prelude::{Sizable, Size};
 use open_gpui_ui_components::{FeedbackIntent, ScrollArea, StatusCue};
@@ -37,6 +42,73 @@ impl DevtoolsInspector {
     pub const fn state(&self) -> &DevtoolsInspectorState {
         &self.state
     }
+}
+
+/// Converts a committed GPUI scroll viewport snapshot into a DevTools tree.
+pub fn scroll_viewport_probe_snapshot(snapshot: ScrollViewportSnapshot) -> SnapshotProbeSnapshot {
+    let root = snapshot_node_with_payload(
+        ["scroll", "viewport"],
+        "Scroll viewport",
+        serde_json::json!({
+            "generation": snapshot.generation(),
+            "source": scroll_viewport_source_label(snapshot.source()),
+            "bounds": bounds_payload(snapshot.bounds()),
+            "offset": point_payload(snapshot.offset()),
+            "max_offset": point_payload(snapshot.max_offset()),
+            "content_size": size_payload(snapshot.content_size()),
+        }),
+    );
+
+    SnapshotProbeSnapshot::new(SnapshotTree::new([root]))
+        .with_redaction(SnapshotRedactionSummary::default())
+}
+
+/// Creates a sanitized diagnostic for an unavailable scroll viewport snapshot.
+pub fn scroll_viewport_unavailable_diagnostic(probe_id: ProbeId) -> SnapshotDiagnostic {
+    SnapshotDiagnostic::new(
+        probe_id,
+        "runtime.unavailable",
+        "scroll viewport snapshot is not committed",
+    )
+}
+
+fn scroll_viewport_source_label(source: ScrollViewportChangeSource) -> &'static str {
+    match source {
+        ScrollViewportChangeSource::InitialLayout => "initial-layout",
+        ScrollViewportChangeSource::Layout => "layout",
+        ScrollViewportChangeSource::Resize => "resize",
+        ScrollViewportChangeSource::ContentSize => "content-size",
+        ScrollViewportChangeSource::Wheel => "wheel",
+        ScrollViewportChangeSource::Scrollbar => "scrollbar",
+        ScrollViewportChangeSource::Keyboard => "keyboard",
+        ScrollViewportChangeSource::Touch => "touch",
+        ScrollViewportChangeSource::Programmatic(source) => match source {
+            ScrollViewportProgrammaticSource::Offset => "programmatic-offset",
+            ScrollViewportProgrammaticSource::Reveal => "programmatic-reveal",
+            ScrollViewportProgrammaticSource::ScrollToBottom => "programmatic-scroll-to-bottom",
+        },
+    }
+}
+
+fn bounds_payload(bounds: Bounds<Pixels>) -> serde_json::Value {
+    serde_json::json!({
+        "origin": point_payload(bounds.origin),
+        "size": size_payload(bounds.size),
+    })
+}
+
+fn point_payload(point: Point<Pixels>) -> serde_json::Value {
+    serde_json::json!({
+        "x": point.x.as_f32(),
+        "y": point.y.as_f32(),
+    })
+}
+
+fn size_payload(size: GpuiSize<Pixels>) -> serde_json::Value {
+    serde_json::json!({
+        "width": size.width.as_f32(),
+        "height": size.height.as_f32(),
+    })
 }
 
 impl RenderOnce for DevtoolsInspector {

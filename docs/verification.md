@@ -231,10 +231,19 @@ For focused `open-gpui-form`, `open-gpui-resource`, or `open-gpui-devtools` ecos
 ```sh
 cargo fmt -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
 cargo check -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools --tests --locked
-cargo check -p open-gpui-devtools --features gpui --tests --locked
+cargo check -p open-gpui-devtools --features form,resource --tests --locked
+cargo check -p open-gpui-devtools --features gpui,motion,docking --tests --locked
+cargo check -p open-gpui-devtools --no-default-features --features form --tests --locked
+cargo check -p open-gpui-devtools --no-default-features --features resource --tests --locked
+cargo check -p open-gpui-devtools --no-default-features --features motion --tests --locked
+cargo check -p open-gpui-devtools --no-default-features --features docking --tests --locked
+cargo check -p open-gpui-devtools --no-default-features --features gpui --tests --locked
+cargo check -p open-gpui-devtools --no-default-features --features ui-components --tests --locked
 cargo check -p open-gpui-ui-components --tests --locked
 cargo check -p open-gpui-ui-foundation-gallery --tests --locked
 cargo nextest run -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --features form,resource form_resource_adapters --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --features gpui,motion,docking framework_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-ui-components form_adapter resource_adapter --no-fail-fast --locked
 cargo nextest run -p open-gpui-ui-foundation-gallery form resource devtools --no-fail-fast --locked
 ```
@@ -246,8 +255,10 @@ policy. Devtools is read-only: tests should assert snapshot collection, filterin
 selection, JSON export, and redaction summaries without mutating app state.
 
 The Components gallery has an `ecosystem-adapters` section for `FormFieldProjection`,
-`ResourceCollectionProjection`, and `ResourceMutationProjection`. The DevTools gallery page is a
-separate page:
+`ResourceCollectionProjection`, and `ResourceMutationProjection`. DevTools consumes those same
+redacted form/resource snapshots through feature-gated first-party adapters, and framework facts
+come from the `ui-components`, `gpui`, `motion`, and `docking` adapter modules when public
+read-only snapshots exist. The DevTools gallery page is a separate registry-backed dogfood page:
 
 ```sh
 cargo run -p open-gpui-ui-foundation-gallery -- --page devtools

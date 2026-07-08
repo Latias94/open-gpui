@@ -47,6 +47,9 @@ assert_eq!(snapshot.observer_count, 1);
 - Project query snapshots into UI components through
   `open_gpui_ui_components::ResourceCollectionProjection` and mutation snapshots through
   `open_gpui_ui_components::ResourceMutationProjection`.
+- Use `open_gpui_devtools::resource` when the `open-gpui-devtools/resource` feature is enabled;
+  the adapter derives DevTools redaction summaries from `RedactedResourceValue::Redacted` query,
+  mutation, and paginated page values.
 
 ## Verification
 
