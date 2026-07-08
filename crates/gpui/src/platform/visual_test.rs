@@ -35,6 +35,8 @@ pub struct VisualTestPlatform {
     foreground_executor: ForegroundExecutor,
     platform: Rc<dyn Platform>,
     clipboard: Mutex<Option<ClipboardItem>>,
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    primary_clipboard: Mutex<Option<ClipboardItem>>,
     #[cfg(target_os = "macos")]
     find_pasteboard: Mutex<Option<ClipboardItem>>,
 }
@@ -56,6 +58,8 @@ impl VisualTestPlatform {
             foreground_executor,
             platform,
             clipboard: Mutex::new(None),
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            primary_clipboard: Mutex::new(None),
             #[cfg(target_os = "macos")]
             find_pasteboard: Mutex::new(None),
         }
@@ -237,6 +241,16 @@ impl Platform for VisualTestPlatform {
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
         *self.clipboard.lock() = Some(item);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn read_from_primary(&self) -> Option<ClipboardItem> {
+        self.primary_clipboard.lock().clone()
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn write_to_primary(&self, item: ClipboardItem) {
+        *self.primary_clipboard.lock() = Some(item);
     }
 
     #[cfg(target_os = "macos")]
