@@ -1,7 +1,7 @@
 use open_gpui_scheduler::Instant;
 use std::{
     any::{TypeId, type_name},
-    cell::{BorrowMutError, Cell, Ref, RefCell, RefMut},
+    cell::{Cell, RefCell},
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
@@ -12,7 +12,6 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
-use derive_more::{Deref, DerefMut};
 use futures::{
     Future, FutureExt,
     channel::oneshot,
@@ -64,6 +63,7 @@ mod action_dispatch;
 mod async_context;
 #[cfg(any(test, feature = "test-support"))]
 mod bench_context;
+mod cell;
 mod context;
 mod entity_map;
 #[cfg(any(test, feature = "test-support"))]
@@ -75,74 +75,10 @@ mod test_context;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 mod visual_test_context;
 mod window_registry;
+pub use cell::{AppCell, AppRef, AppRefMut};
 
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(200);
-
-/// Temporary(?) wrapper around [`RefCell<App>`] to help us debug any double borrows.
-/// Strongly consider removing after stabilization.
-#[doc(hidden)]
-pub struct AppCell {
-    app: RefCell<App>,
-}
-
-impl AppCell {
-    #[doc(hidden)]
-    #[track_caller]
-    pub fn borrow(&self) -> AppRef<'_> {
-        if option_env!("TRACK_THREAD_BORROWS").is_some() {
-            let thread_id = std::thread::current().id();
-            eprintln!("borrowed {thread_id:?}");
-        }
-        AppRef(self.app.borrow())
-    }
-
-    #[doc(hidden)]
-    #[track_caller]
-    pub fn borrow_mut(&self) -> AppRefMut<'_> {
-        if option_env!("TRACK_THREAD_BORROWS").is_some() {
-            let thread_id = std::thread::current().id();
-            eprintln!("borrowed {thread_id:?}");
-        }
-        AppRefMut(self.app.borrow_mut())
-    }
-
-    #[doc(hidden)]
-    #[track_caller]
-    pub fn try_borrow_mut(&self) -> Result<AppRefMut<'_>, BorrowMutError> {
-        if option_env!("TRACK_THREAD_BORROWS").is_some() {
-            let thread_id = std::thread::current().id();
-            eprintln!("borrowed {thread_id:?}");
-        }
-        Ok(AppRefMut(self.app.try_borrow_mut()?))
-    }
-}
-
-#[doc(hidden)]
-#[derive(Deref, DerefMut)]
-pub struct AppRef<'a>(Ref<'a, App>);
-
-impl Drop for AppRef<'_> {
-    fn drop(&mut self) {
-        if option_env!("TRACK_THREAD_BORROWS").is_some() {
-            let thread_id = std::thread::current().id();
-            eprintln!("dropped borrow from {thread_id:?}");
-        }
-    }
-}
-
-#[doc(hidden)]
-#[derive(Deref, DerefMut)]
-pub struct AppRefMut<'a>(RefMut<'a, App>);
-
-impl Drop for AppRefMut<'_> {
-    fn drop(&mut self) {
-        if option_env!("TRACK_THREAD_BORROWS").is_some() {
-            let thread_id = std::thread::current().id();
-            eprintln!("dropped {thread_id:?}");
-        }
-    }
-}
 
 #[cfg(target_family = "wasm")]
 thread_local! {
@@ -754,8 +690,8 @@ impl App {
         #[cfg(any(test, feature = "leak-detection"))]
         let _ref_counts = entities.ref_counts_drop_handle();
 
-        let app = Rc::new_cyclic(|this| AppCell {
-            app: RefCell::new(App {
+        let app = Rc::new_cyclic(|this| {
+            AppCell::new(App {
                 this: this.clone(),
                 platform: platform.clone(),
                 text_system,
@@ -819,7 +755,7 @@ impl App {
 
                 #[cfg(any(test, feature = "leak-detection"))]
                 _ref_counts,
-            }),
+            })
         });
 
         init_app_menus(platform.as_ref(), &app.borrow());

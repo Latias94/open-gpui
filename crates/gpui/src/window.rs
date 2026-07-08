@@ -61,6 +61,7 @@ pub(crate) mod a11y;
 mod frame_journal;
 mod frame_pump;
 mod input_dispatch;
+mod invalidator;
 mod prompts;
 
 use self::a11y::A11y;
@@ -70,6 +71,7 @@ pub(crate) use self::frame_journal::{
     DeferredDraw, Frame, PaintIndex, PrepaintStateIndex, TooltipRequest,
 };
 use self::frame_pump::{FrameThrottleFacts, PresentFacts, frame_should_wait};
+pub(crate) use self::invalidator::WindowInvalidator;
 use crate::util::{
     atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
     round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
@@ -114,103 +116,6 @@ impl DispatchPhase {
     #[inline]
     pub fn capture(self) -> bool {
         self == DispatchPhase::Capture
-    }
-}
-
-struct WindowInvalidatorInner {
-    pub dirty: bool,
-    pub draw_phase: DrawPhase,
-    pub dirty_views: FxHashSet<EntityId>,
-    pub update_count: usize,
-}
-
-#[derive(Clone)]
-pub(crate) struct WindowInvalidator {
-    inner: Rc<RefCell<WindowInvalidatorInner>>,
-}
-
-impl WindowInvalidator {
-    pub fn new() -> Self {
-        WindowInvalidator {
-            inner: Rc::new(RefCell::new(WindowInvalidatorInner {
-                dirty: true,
-                draw_phase: DrawPhase::None,
-                dirty_views: FxHashSet::default(),
-                update_count: 0,
-            })),
-        }
-    }
-
-    pub fn invalidate_view(&self, entity: EntityId, cx: &mut App) -> bool {
-        let mut inner = self.inner.borrow_mut();
-        inner.update_count += 1;
-        inner.dirty_views.insert(entity);
-        if inner.draw_phase == DrawPhase::None {
-            inner.dirty = true;
-            cx.push_effect(Effect::Notify { emitter: entity });
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn is_dirty(&self) -> bool {
-        self.inner.borrow().dirty
-    }
-
-    pub fn set_dirty(&self, dirty: bool) {
-        let mut inner = self.inner.borrow_mut();
-        inner.dirty = dirty;
-        if dirty {
-            inner.update_count += 1;
-        }
-    }
-
-    pub fn set_phase(&self, phase: DrawPhase) {
-        self.inner.borrow_mut().draw_phase = phase
-    }
-
-    pub fn update_count(&self) -> usize {
-        self.inner.borrow().update_count
-    }
-
-    pub fn take_views(&self) -> FxHashSet<EntityId> {
-        mem::take(&mut self.inner.borrow_mut().dirty_views)
-    }
-
-    pub fn replace_views(&self, views: FxHashSet<EntityId>) {
-        self.inner.borrow_mut().dirty_views = views;
-    }
-
-    pub fn not_drawing(&self) -> bool {
-        self.inner.borrow().draw_phase == DrawPhase::None
-    }
-
-    #[track_caller]
-    pub fn debug_assert_paint(&self) {
-        debug_assert!(
-            matches!(self.inner.borrow().draw_phase, DrawPhase::Paint),
-            "this method can only be called during paint"
-        );
-    }
-
-    #[track_caller]
-    pub fn debug_assert_prepaint(&self) {
-        debug_assert!(
-            matches!(self.inner.borrow().draw_phase, DrawPhase::Prepaint),
-            "this method can only be called during request_layout, or prepaint"
-        );
-    }
-
-    #[track_caller]
-    pub fn debug_assert_paint_or_prepaint(&self) {
-        debug_assert!(
-            matches!(
-                self.inner.borrow().draw_phase,
-                DrawPhase::Paint | DrawPhase::Prepaint
-            ),
-            "this method can only be called during request_layout, prepaint, or paint"
-        );
     }
 }
 
