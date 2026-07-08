@@ -2,6 +2,7 @@
 
 pub mod adaptive;
 pub mod components;
+pub mod devtools;
 pub mod focus_a11y;
 pub mod overlay;
 pub mod sizing;
@@ -22,6 +23,8 @@ pub enum GalleryPage {
     Overlay,
     /// First concrete component consumers.
     Components,
+    /// Read-only local devtools inspector.
+    Devtools,
 }
 
 impl GalleryPage {
@@ -34,6 +37,7 @@ impl GalleryPage {
             "focus-a11y" => Some(Self::FocusAccessibility),
             "overlay" => Some(Self::Overlay),
             "components" => Some(Self::Components),
+            "devtools" => Some(Self::Devtools),
             _ => None,
         }
     }
@@ -47,6 +51,7 @@ impl GalleryPage {
             Self::FocusAccessibility => "focus-a11y",
             Self::Overlay => "overlay",
             Self::Components => "components",
+            Self::Devtools => "devtools",
         }
     }
 
@@ -59,6 +64,7 @@ impl GalleryPage {
             Self::FocusAccessibility => focus_a11y::TITLE,
             Self::Overlay => overlay::TITLE,
             Self::Components => components::TITLE,
+            Self::Devtools => devtools::TITLE,
         }
     }
 
@@ -71,6 +77,7 @@ impl GalleryPage {
             Self::FocusAccessibility => focus_a11y::SUMMARY,
             Self::Overlay => overlay::SUMMARY,
             Self::Components => components::SUMMARY,
+            Self::Devtools => devtools::SUMMARY,
         }
     }
 
@@ -83,6 +90,7 @@ impl GalleryPage {
             Self::FocusAccessibility => focus_a11y::SIGNALS,
             Self::Overlay => overlay::SIGNALS,
             Self::Components => components::SIGNALS,
+            Self::Devtools => devtools::SIGNALS,
         }
     }
 }
@@ -113,11 +121,12 @@ impl GalleryPageSpec {
 }
 
 /// The canonical foundation section order.
-pub const GALLERY_SECTIONS: [GalleryPageSpec; 6] = [
+pub const GALLERY_SECTIONS: [GalleryPageSpec; 7] = [
     GalleryPageSpec::new(GalleryPage::Tokens),
     GalleryPageSpec::new(GalleryPage::SizingDensity),
     GalleryPageSpec::new(GalleryPage::Adaptive),
     GalleryPageSpec::new(GalleryPage::FocusAccessibility),
     GalleryPageSpec::new(GalleryPage::Overlay),
     GalleryPageSpec::new(GalleryPage::Components),
+    GalleryPageSpec::new(GalleryPage::Devtools),
 ];

@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/canvas",
     "crates/collections",
+    "crates/devtools",
+    "crates/form",
     "crates/open-gpui-command",
     "crates/gpui",
     "crates/gpui_docking",
@@ -19,6 +21,7 @@ members = [
     "crates/http_client_tls",
     "crates/media",
     "crates/motion",
+    "crates/resource",
     "crates/ui_components",
     "crates/ui_core",
     "crates/refineable",
@@ -57,7 +60,9 @@ open_gpui = { package = "open-gpui", version = "0.2.0", path = "crates/gpui", de
 open_gpui_canvas = { package = "open-gpui-canvas", version = "0.2.0", path = "crates/canvas" }
 open_gpui_collections = { package = "open-gpui-collections", version = "0.2.0", path = "crates/collections" }
 open_gpui_command = { package = "open-gpui-command", version = "0.2.0", path = "crates/open-gpui-command" }
+open_gpui_devtools = { package = "open-gpui-devtools", version = "0.2.0", path = "crates/devtools" }
 open_gpui_docking = { package = "open-gpui-docking", version = "0.2.0", path = "crates/gpui_docking" }
+open_gpui_form = { package = "open-gpui-form", version = "0.2.0", path = "crates/form" }
 open_gpui_core_util = { package = "open-gpui-core-util", version = "0.2.0", path = "crates/gpui_util" }
 open_gpui_ui_components = { package = "open-gpui-ui-components", version = "0.2.0", path = "crates/ui_components" }
 open_gpui_ui_core = { package = "open-gpui-ui-core", version = "0.2.0", path = "crates/ui_core" }
@@ -72,6 +77,7 @@ open_gpui_platform = { package = "open-gpui-platform", version = "0.2.0", path =
 open_gpui_refineable = { package = "open-gpui-refineable", version = "0.2.0", path = "crates/refineable" }
 open_gpui_refineable_derive = { package = "open-gpui-refineable-derive", version = "0.2.0", path = "crates/refineable/derive_refineable" }
 open_gpui_reqwest_client = { package = "open-gpui-reqwest-client", version = "0.2.0", path = "crates/reqwest_client" }
+open_gpui_resource = { package = "open-gpui-resource", version = "0.2.0", path = "crates/resource" }
 open_gpui_scheduler = { package = "open-gpui-scheduler", version = "0.2.0", path = "crates/scheduler" }
 open_gpui_shared_string = { package = "open-gpui-shared-string", version = "0.2.0", path = "crates/gpui_shared_string" }
 open_gpui_sum_tree = { package = "open-gpui-sum-tree", version = "0.2.0", path = "crates/sum_tree" }

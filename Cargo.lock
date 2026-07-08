@@ -4146,6 +4146,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-devtools"
+version = "0.2.0"
+dependencies = [
+ "open-gpui",
+ "open-gpui-docking",
+ "open-gpui-form",
+ "open-gpui-motion",
+ "open-gpui-resource",
+ "open-gpui-ui-components",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "open-gpui-docking"
 version = "0.2.0"
 dependencies = [
@@ -4211,6 +4226,15 @@ dependencies = [
  "walkdir",
  "winapi",
  "yeslogic-fontconfig-sys",
+]
+
+[[package]]
+name = "open-gpui-form"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -4417,6 +4441,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-resource"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "open-gpui-scap"
 version = "0.1.0-beta.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4488,7 +4521,9 @@ version = "0.2.0"
 dependencies = [
  "open-gpui",
  "open-gpui-command",
+ "open-gpui-form",
  "open-gpui-motion",
+ "open-gpui-resource",
  "open-gpui-ui-core",
  "schemars",
  "serde",
@@ -4509,10 +4544,14 @@ version = "0.2.0"
 dependencies = [
  "open-gpui",
  "open-gpui-command",
+ "open-gpui-devtools",
+ "open-gpui-form",
  "open-gpui-motion",
  "open-gpui-platform",
+ "open-gpui-resource",
  "open-gpui-ui-components",
  "open-gpui-ui-core",
+ "serde_json",
 ]
 
 [[package]]

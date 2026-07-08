@@ -1,7 +1,9 @@
 //! Component catalog metadata for the foundation gallery.
 
 use crate::story::{StoryContract, StoryContractKind, StoryProbeContract, StoryProbeOperation::*};
-use open_gpui_ui_components::component_contract::{SurfaceGalleryStatus, component_contract_entry};
+use open_gpui_ui_components::component_contract::{
+    SurfaceDocsStatus, SurfaceGalleryStatus, component_contract_entry,
+};
 
 /// Stable jump targets for the Components page navigator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +35,10 @@ pub const COMPONENT_PAGE_JUMPS: &[ComponentPageJump] = &[
     ComponentPageJump {
         id: "state-contracts",
         label: "State contracts",
+    },
+    ComponentPageJump {
+        id: "ecosystem-adapters",
+        label: "Ecosystem adapters",
     },
     ComponentPageJump {
         id: "gates",
@@ -399,6 +405,15 @@ impl ComponentCatalogEntry {
             "Accordion" | "Collapsible" | "Slider" | "NumberInput" | "ToggleGroup" | "Link"
             | "Breadcrumb" | "Tag" | "ToastStack" => "foundation-components",
             "TreeState" | "VirtualizedListState" => "state-contracts",
+            _ if matches!(
+                component_contract_entry(self.name),
+                Some(entry)
+                    if entry.gallery_status == SurfaceGalleryStatus::AdapterOnly
+                        && entry.docs_status == SurfaceDocsStatus::ComponentCatalog
+            ) =>
+            {
+                "ecosystem-adapters"
+            }
             "RadioGroup" => "radio-group",
             "IconButton" => "icon-button",
             "TextInput" => "text-input",
@@ -731,6 +746,21 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "TextInputController",
         "form-adapter",
         "gpui_adapter export / controller tests",
+    ),
+    ComponentCatalogEntry::adapter_only(
+        "FormFieldProjection",
+        "form-adapter",
+        "form adapter projection / gallery samples / state tests",
+    ),
+    ComponentCatalogEntry::adapter_only(
+        "ResourceCollectionProjection",
+        "resource-adapter",
+        "resource adapter projection / gallery samples / state tests",
+    ),
+    ComponentCatalogEntry::adapter_only(
+        "ResourceMutationProjection",
+        "resource-adapter",
+        "mutation adapter projection / gallery samples / state tests",
     ),
     ComponentCatalogEntry::internal_anatomy("ToolbarItem", "shell", "Toolbar anatomy"),
     ComponentCatalogEntry::internal_anatomy("SidebarItem", "shell", "Sidebar anatomy"),

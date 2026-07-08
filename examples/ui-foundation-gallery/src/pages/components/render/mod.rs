@@ -15,6 +15,7 @@ use open_gpui_ui_core::{
 };
 
 mod choice;
+mod ecosystem;
 mod families;
 mod focus;
 mod forms;
@@ -26,6 +27,7 @@ mod splitter_motion;
 mod support;
 
 use choice::*;
+use ecosystem::*;
 use families::*;
 use focus::*;
 use forms::*;
@@ -43,6 +45,7 @@ const COMPONENT_PAGE_RENDER_SECTION_IDS: &[&str] = &[
     "feedback",
     "foundation-components",
     "state-contracts",
+    "ecosystem-adapters",
     "gates",
     "sidebar",
     "tree",

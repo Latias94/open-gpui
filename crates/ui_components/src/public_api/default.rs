@@ -63,6 +63,10 @@ pub use crate::feedback::{
 pub use crate::field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use crate::focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing};
 pub use crate::form::FormControlState;
+pub use crate::form_adapter::{
+    FormFieldConfig, FormFieldProjection, form_checkbox_value, form_number_value,
+    form_select_value, form_text_value,
+};
 pub use crate::hover_card::{
     HoverCard, HoverCardColors, HoverCardContentKind, HoverCardDelayPolicy, HoverCardMetrics,
     HoverCardOpenIntent, HoverCardOpenMode, HoverCardState,
@@ -93,6 +97,10 @@ pub use crate::progress::{
 pub use crate::radio::{
     RadioGroup, RadioGroupColors, RadioGroupMetrics, RadioGroupState, RadioItem,
     RadioItemDescriptor, RadioItemState, RadioSelection,
+};
+pub use crate::resource_adapter::{
+    ResourceAdapterLabels, ResourceCollectionProjection, ResourceMutationProjection,
+    resource_query_key_label,
 };
 pub use crate::scroll_area::{
     ScrollArea, ScrollAreaAxis, ScrollAreaMetrics, ScrollAreaState, ScrollResetPolicy,

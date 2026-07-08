@@ -69,6 +69,7 @@ fn verify(root: &Path) -> Result<(), ()> {
     run(root, "cargo", &["check", "--workspace"])?;
     run(root, "cargo", &["check", "-p", "open-gpui-smoke-native"])?;
     run_motion_tests(root)?;
+    run_ecosystem_tests(root)?;
     run_ui_component_tests(root)?;
     verify_release_docs(root, &[])?;
     scan_doc_links(root)?;
@@ -83,6 +84,24 @@ fn verify(root: &Path) -> Result<(), ()> {
 fn run_motion_tests(root: &Path) -> Result<(), ()> {
     run(root, "cargo", &["nextest", "run", "-p", "open-gpui-motion"])?;
     run(root, "cargo", &["test", "-p", "open-gpui-motion", "--doc"])?;
+    Ok(())
+}
+
+fn run_ecosystem_tests(root: &Path) -> Result<(), ()> {
+    run(
+        root,
+        "cargo",
+        &[
+            "nextest",
+            "run",
+            "-p",
+            "open-gpui-form",
+            "-p",
+            "open-gpui-resource",
+            "-p",
+            "open-gpui-devtools",
+        ],
+    )?;
     Ok(())
 }
 

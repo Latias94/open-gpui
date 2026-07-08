@@ -13,6 +13,7 @@ The gate runs:
 - `cargo check -p open-gpui-smoke-native`
 - `cargo nextest run -p open-gpui-motion`
 - `cargo test -p open-gpui-motion --doc`
+- `cargo nextest run -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools`
 - `cargo nextest run -p open-gpui-ui-core`
 - `cargo nextest run -p open-gpui-ui-components`
 - `cargo nextest run -p open-gpui-ui-foundation-gallery`
@@ -223,6 +224,33 @@ cargo check -p open-gpui-ui-foundation-gallery
 cargo nextest run -p open-gpui-ui-core
 cargo nextest run -p open-gpui-ui-components
 cargo nextest run -p open-gpui-ui-foundation-gallery
+```
+
+For focused `open-gpui-form`, `open-gpui-resource`, or `open-gpui-devtools` ecosystem work, run:
+
+```sh
+cargo fmt -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+cargo check -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools --tests --locked
+cargo check -p open-gpui-devtools --features gpui --tests --locked
+cargo check -p open-gpui-ui-components --tests --locked
+cargo check -p open-gpui-ui-foundation-gallery --tests --locked
+cargo nextest run -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools --no-fail-fast --locked
+cargo nextest run -p open-gpui-ui-components form_adapter resource_adapter --no-fail-fast --locked
+cargo nextest run -p open-gpui-ui-foundation-gallery form resource devtools --no-fail-fast --locked
+```
+
+`open-gpui-form` and `open-gpui-resource` are renderer-neutral crates; their tests must not require
+a live GPUI window. `open-gpui-resource` remains protocol-agnostic, so resource tests should drive
+query and mutation generations around fake app-owned fetch results instead of introducing HTTP
+policy. Devtools is read-only: tests should assert snapshot collection, filtering, diagnostics,
+selection, JSON export, and redaction summaries without mutating app state.
+
+The Components gallery has an `ecosystem-adapters` section for `FormFieldProjection`,
+`ResourceCollectionProjection`, and `ResourceMutationProjection`. The DevTools gallery page is a
+separate page:
+
+```sh
+cargo run -p open-gpui-ui-foundation-gallery -- --page devtools
 ```
 
 For the current `VirtualizedList` and `open-gpui-motion` foundation, run the focused gates below
