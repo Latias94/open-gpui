@@ -19,6 +19,25 @@ elements.
 - Theme and contract surfaces: shared theme recipes, GPUI accessibility adapters, public API
   inventory, component-contract rows, and conformance evidence used by the gallery and tests.
 
+## Ecosystem Adapters
+
+Form and resource adapters connect the new headless ecosystem crates to existing concrete
+components. They are adapter helpers, not standalone widgets:
+
+- `FormFieldConfig` and `FormFieldProjection` translate an `open_gpui_form::FieldSnapshot` plus a
+  `FormStatus` into `FieldState`, `TextInputState`, `TextareaState`, `NumberInputState`, and
+  `CheckboxState` inputs.
+- `form_text_value`, `form_number_value`, `form_checkbox_value`, and `form_select_value` normalize
+  dynamic JSON form values for text, number, checkbox, and select controls.
+- `ResourceAdapterLabels`, `ResourceCollectionProjection`, and `ResourceMutationProjection`
+  translate `open_gpui_resource` query and mutation snapshots into `StatusCue`, `EmptyState`,
+  `VirtualizedList`, `Command`, `Table`, and `Tree` status inputs.
+- `resource_query_key_label` gives resource-backed UI rows a stable slash-separated query label.
+
+The adapters preserve one-way ownership: `open-gpui-form` and `open-gpui-resource` do not depend on
+components or GPUI, while `open-gpui-ui-components` only projects already-owned snapshots into
+renderable state.
+
 ## VirtualizedList
 
 `VirtualizedList` is the general flat-list primitive for large collections. It uses stable item
@@ -125,6 +144,13 @@ cargo fmt -p open-gpui-ui-components
 cargo check -p open-gpui-ui-components --tests --locked
 cargo nextest run -p open-gpui-ui-components --no-fail-fast --locked
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast --locked
+```
+
+For form/resource adapter work, run:
+
+```sh
+cargo nextest run -p open-gpui-ui-components form_adapter resource_adapter --no-fail-fast --locked
+cargo nextest run -p open-gpui-ui-foundation-gallery form resource --no-fail-fast --locked
 ```
 
 For VirtualizedList-specific work, the fast local gates are:

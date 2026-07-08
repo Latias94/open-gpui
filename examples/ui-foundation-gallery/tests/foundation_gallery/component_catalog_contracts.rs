@@ -2418,7 +2418,13 @@ fn gallery_catalog_manifest_tracks_components_and_overlay_catalogs() {
         "ListboxOption",
         "TreeState",
         "VirtualizedListState",
-    ] {
+    ]
+    .into_iter()
+    .chain(gallery_surface_rows().filter_map(|entry| {
+        (entry.gallery_status == SurfaceGalleryStatus::AdapterOnly
+            && entry.docs_status == SurfaceDocsStatus::ComponentCatalog)
+            .then_some(entry.name)
+    })) {
         assert!(
             component_names.contains(required),
             "Components catalog manifest should include `{required}`"

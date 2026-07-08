@@ -54,6 +54,32 @@ The concrete component owns the GPUI adapter. This layer may use:
 The adapter should read from the resolved state rather than duplicating semantic decisions in the
 render body.
 
+## Ecosystem Adapter Helpers
+
+`open_gpui_ui_components` may expose adapter helpers that project headless ecosystem snapshots into
+existing component state. These helpers are public because applications need stable bridge code,
+but they are not standalone official components and should not move cache, form, or async task
+ownership into the component crate.
+
+The form adapter surface is `FormFieldConfig`, `FormFieldProjection`, `form_text_value`,
+`form_number_value`, `form_checkbox_value`, and `form_select_value`. It consumes
+`open_gpui_form::FieldSnapshot` and `open_gpui_form::FormStatus`, then resolves existing
+`FieldState`, `TextInputState`, `TextareaState`, `NumberInputState`, and `CheckboxState` inputs.
+The owning form store, validation lifecycle, submit lifecycle, and redacted `FormSnapshot` stay in
+`open-gpui-form`.
+
+The resource adapter surface is `ResourceAdapterLabels`, `ResourceCollectionProjection`,
+`ResourceMutationProjection`, and `resource_query_key_label`. It consumes
+`open_gpui_resource::ResourceSnapshot` and `open_gpui_resource::MutationSnapshot`, then resolves
+existing feedback, command, table/tree children-load, and virtualized-list status inputs. Fetchers,
+retry timers, cancellation, mutations, cache invalidation, pagination, and redacted
+`ResourceSnapshot` values stay in `open-gpui-resource`.
+
+The Components gallery shows `FormFieldProjection`, `ResourceCollectionProjection`, and
+`ResourceMutationProjection` as adapter-only rows in the `ecosystem-adapters` section. That keeps
+adoption visible while preserving the component catalog distinction between official rendered
+components, renderer-neutral state contracts, adapter helpers, and internal anatomy.
+
 UI-core adaptive helpers accept neutral `UiPx` values. GPUI adapters that start from concrete
 window, viewport, or layout `Pixels` should convert to `UiPx` before calling
 `DeviceShellSwitchPolicy`, `DeviceAdaptivePolicy`, `PanelAdaptivePolicy`, or
