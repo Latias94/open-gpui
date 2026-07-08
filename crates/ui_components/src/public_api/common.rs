@@ -88,6 +88,10 @@ pub use crate::radio::{
     RadioGroup, RadioGroupColors, RadioGroupMetrics, RadioGroupState, RadioItem,
     RadioItemDescriptor, RadioItemState, RadioSelection,
 };
+pub use crate::resource_adapter::{
+    ResourceAdapterLabels, ResourceCollectionProjection, ResourceMutationProjection,
+    resource_query_key_label,
+};
 pub use crate::scroll_area::{
     ScrollArea, ScrollAreaAxis, ScrollAreaMetrics, ScrollAreaState, ScrollResetPolicy,
 };

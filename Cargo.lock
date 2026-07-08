@@ -4523,6 +4523,7 @@ dependencies = [
  "open-gpui-command",
  "open-gpui-form",
  "open-gpui-motion",
+ "open-gpui-resource",
  "open-gpui-ui-core",
  "schemars",
  "serde",

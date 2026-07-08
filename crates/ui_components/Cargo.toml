@@ -19,6 +19,7 @@ open_gpui.workspace = true
 open_gpui_command.workspace = true
 open_gpui_form.workspace = true
 open_gpui_motion.workspace = true
+open_gpui_resource.workspace = true
 open_gpui_ui_core.workspace = true
 schemars.workspace = true
 serde.workspace = true
