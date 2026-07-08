@@ -344,28 +344,48 @@ fn section_status_sample() -> VirtualizedListSample {
     let size = Size::Small;
     let row_height = ui_px(32.0);
     let overscan = 2;
-    let items = shared_virtualized_items(vec![
-        VirtualizedListItemDescriptor::prepend_loading(
-            "deploy-prepend",
-            "Loading previous deploys",
-        ),
-        VirtualizedListItemDescriptor::section("deploy-section", "Deployment queue"),
-        VirtualizedListItemDescriptor::new("deploy-ready", "Ready to ship")
-            .secondary_text("Production release has a green verification run")
-            .badge("ready")
-            .status("queued"),
-        VirtualizedListItemDescriptor::new("deploy-review", "Needs design review")
-            .secondary_text("Motion polish must be signed off before release")
-            .badge("review")
-            .status("blocked")
-            .disabled_reason("Waiting for owner"),
-        VirtualizedListItemDescriptor::separator("deploy-divider"),
-        VirtualizedListItemDescriptor::append_loading("deploy-loading", "Loading archived deploys"),
-        VirtualizedListItemDescriptor::exhausted("deploy-done", "All deploys loaded"),
-        VirtualizedListItemDescriptor::empty("deploy-empty", "No archived deploys"),
-        VirtualizedListItemDescriptor::error("deploy-error", "Archive provider unavailable"),
-        VirtualizedListItemDescriptor::retry("deploy-retry", "Refresh failed", "Retry refresh"),
-    ]);
+    let data_source = VirtualizedListDataSource::builder()
+        .prepend_loading("deploy-prepend", "Loading previous deploys")
+        .section("deploy-section", "Deployment queue")
+        .mapped_items(
+            [
+                (
+                    "deploy-ready",
+                    "Ready to ship",
+                    "Production release has a green verification run",
+                    "ready",
+                    "queued",
+                    None,
+                ),
+                (
+                    "deploy-review",
+                    "Needs design review",
+                    "Motion polish must be signed off before release",
+                    "review",
+                    "blocked",
+                    Some("Waiting for owner"),
+                ),
+            ],
+            |(key, label, secondary, badge, status, disabled_reason)| {
+                let descriptor = VirtualizedListItemDescriptor::new(key, label)
+                    .secondary_text(secondary)
+                    .badge(badge)
+                    .status(status);
+                if let Some(disabled_reason) = disabled_reason {
+                    descriptor.disabled_reason(disabled_reason)
+                } else {
+                    descriptor
+                }
+            },
+        )
+        .separator("deploy-divider")
+        .append_loading("deploy-loading", "Loading archived deploys")
+        .exhausted("deploy-done", "All deploys loaded")
+        .empty("deploy-empty", "No archived deploys")
+        .error("deploy-error", "Archive provider unavailable")
+        .retry("deploy-retry", "Refresh failed", "Retry refresh")
+        .build();
+    let items = data_source.shared_items();
     let state = VirtualizedListState::resolve(
         size,
         false,

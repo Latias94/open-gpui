@@ -736,6 +736,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             },
         ],
         policy_hints: &[
+            "from_data_source",
             "selection_mode",
             "viewport_item_count",
             "row_height",
@@ -1236,6 +1237,7 @@ pub fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "tokens",
         ],
         "VirtualizedList" => &[
+            "from_data_source",
             "disabled",
             "viewport_item_count",
             "row_height",
@@ -1816,6 +1818,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
         "VirtualizedList" => &[
             "new",
             "from_shared_items",
+            "from_data_source",
             "disabled",
             "default_active_key",
             "default_selected_key",

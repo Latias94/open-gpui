@@ -24,6 +24,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use super::data::VirtualizedListDataSource;
 use super::descriptor::VirtualizedListItemDescriptor;
 use super::model::{
     VirtualizedListActivation, VirtualizedListRevealResult, VirtualizedListScrollStrategy,
@@ -161,6 +162,15 @@ impl VirtualizedList {
             on_activate: None,
             on_selection_change: None,
         }
+    }
+
+    /// Creates a new virtualized list renderer from an application-level data source.
+    pub fn from_data_source(
+        id: impl Into<String>,
+        label: impl Into<SharedString>,
+        data_source: impl Into<VirtualizedListDataSource>,
+    ) -> Self {
+        Self::from_shared_items(id, label, data_source.into().into_shared_items())
     }
 
     /// Marks the list as disabled.

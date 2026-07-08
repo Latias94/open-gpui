@@ -39,6 +39,8 @@ Supported behavior includes:
 - `VirtualizedListBehaviorSnapshot::sticky_section` and presentation-only `sticky_overlay`
   metadata for grouped lists.
 - Theme-backed color recipes through `VirtualizedListColors`.
+- `VirtualizedListDataSource` for projecting domain records, section rows, and async status rows
+  into descriptor storage before rendering.
 - A constrained GPUI adapter `render_row` hook that replaces row content while the outer row keeps
   layout, accessibility, focus, hit testing, and selection behavior.
 - Optional host-owned viewport control through the GPUI adapter `scroll_handle` extension method,
@@ -96,7 +98,7 @@ Most applications should use the default public surface:
 
 ```rust
 use open_gpui_ui_components::{
-    ActionDescriptor, Button, ResolvedActionState, VirtualizedList,
+    ActionDescriptor, Button, ResolvedActionState, VirtualizedList, VirtualizedListDataSource,
     VirtualizedListItemDescriptor, VirtualizedListSelectionMode,
 };
 ```

@@ -1,5 +1,6 @@
 //! Renderer-neutral state for virtualized list surfaces.
 
+mod data;
 mod descriptor;
 mod model;
 mod motion;
@@ -21,6 +22,7 @@ use std::collections::BTreeMap;
 #[cfg(test)]
 use std::time::{Duration, Instant};
 
+pub use self::data::{VirtualizedListDataSource, VirtualizedListDataSourceBuilder};
 pub use self::descriptor::{
     VirtualizedListItemDescriptor, VirtualizedListRowKind, VirtualizedListStatusKind,
 };
@@ -214,6 +216,95 @@ mod tests {
             state.typeahead_target("de").map(|item| item.key()),
             Some("delta")
         );
+    }
+
+    #[test]
+    fn virtualized_list_data_source_projects_domain_items_and_status_rows() {
+        #[derive(Clone)]
+        struct ReleaseRow {
+            id: &'static str,
+            title: &'static str,
+            owner: &'static str,
+            blocked: bool,
+        }
+
+        let source = VirtualizedListDataSource::builder()
+            .prepend_loading("releases-before", "Loading previous releases")
+            .section("release-section", "Release queue")
+            .mapped_items(
+                [
+                    ReleaseRow {
+                        id: "release-1",
+                        title: "Ready release",
+                        owner: "Platform",
+                        blocked: false,
+                    },
+                    ReleaseRow {
+                        id: "release-2",
+                        title: "Blocked release",
+                        owner: "Design",
+                        blocked: true,
+                    },
+                ],
+                |row| {
+                    let descriptor = VirtualizedListItemDescriptor::item(row.id, row.title)
+                        .secondary_text(row.owner)
+                        .badge("release");
+                    if row.blocked {
+                        descriptor.disabled_reason("Waiting for review")
+                    } else {
+                        descriptor
+                    }
+                },
+            )
+            .append_loading("releases-after", "Loading archived releases")
+            .exhausted("releases-end", "All releases loaded")
+            .build();
+
+        assert_eq!(source.len(), 6);
+        assert_eq!(source.selectable_count(), 1);
+        assert_eq!(source.items()[0].kind(), VirtualizedListRowKind::Loading);
+        assert_eq!(source.items()[1].kind(), VirtualizedListRowKind::Section);
+        assert_eq!(source.items()[2].key(), "release-1");
+        assert!(source.items()[3].disabled_state());
+        assert_eq!(
+            source.items()[3].disabled_reason_ref(),
+            Some("Waiting for review")
+        );
+        assert_eq!(
+            source.items()[5].status_kind(),
+            Some(VirtualizedListStatusKind::Exhausted)
+        );
+
+        let list = VirtualizedList::from_data_source("release-list", "Releases", source.clone())
+            .default_active_key("release-2")
+            .default_selected_key("release-1");
+        let state = list.state();
+        assert_eq!(state.item_count(), 6);
+        assert_eq!(state.active_key(), Some("release-1"));
+        assert_eq!(state.selected_keys(), ["release-1"]);
+    }
+
+    #[test]
+    fn virtualized_list_data_source_adds_empty_when_no_selectable_items() {
+        let source = VirtualizedListDataSource::builder()
+            .section("recent", "Recent")
+            .empty_when_no_selectable("empty", "No recent items")
+            .build();
+
+        assert_eq!(source.len(), 2);
+        assert_eq!(source.selectable_count(), 0);
+        assert_eq!(source.items()[1].kind(), VirtualizedListRowKind::Empty);
+
+        let source_with_item = VirtualizedListDataSource::builder()
+            .section("recent", "Recent")
+            .item(VirtualizedListItemDescriptor::item("alpha", "Alpha"))
+            .empty_when_no_selectable("empty", "No recent items")
+            .build();
+
+        assert_eq!(source_with_item.len(), 2);
+        assert_eq!(source_with_item.selectable_count(), 1);
+        assert_eq!(source_with_item.items()[1].key(), "alpha");
     }
 
     #[test]

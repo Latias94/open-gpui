@@ -30,9 +30,10 @@ use open_gpui_ui_components::{
     ToggleGroupSelectionMode, ToggleGroupState, ToggleState, ToggleVariant, Toolbar,
     ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeBehaviorSnapshot,
     TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListBehaviorSnapshot,
-    VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRowMeasureMode,
-    VirtualizedListRowRenderContext, VirtualizedListScrollStrategy, VirtualizedListSelectionMode,
-    VirtualizedListState, gpui_adapter::VirtualizedListGpuiExt, toolbar::ToolbarItem,
+    VirtualizedListDataSource, VirtualizedListItemDescriptor, VirtualizedListMetrics,
+    VirtualizedListRowMeasureMode, VirtualizedListRowRenderContext, VirtualizedListScrollStrategy,
+    VirtualizedListSelectionMode, VirtualizedListState, gpui_adapter::VirtualizedListGpuiExt,
+    toolbar::ToolbarItem,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
