@@ -1,3 +1,5 @@
+use super::SampleRuntimeLog;
+
 /// Deterministic form runtime action shown by the gallery integration sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormSampleRuntimeAction {
@@ -10,22 +12,16 @@ pub enum FormSampleRuntimeAction {
 }
 
 /// Read-only runtime log for form adapter samples.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FormSampleRuntimeLog {
-    /// Stable sample id.
-    pub sample_id: &'static str,
-    /// Deterministic actions represented by the sample set.
-    pub actions: Vec<FormSampleRuntimeAction>,
-}
+pub type FormSampleRuntimeLog = SampleRuntimeLog<FormSampleRuntimeAction>;
 
 /// Returns the deterministic form sample runtime log.
 pub fn form_sample_runtime_log() -> FormSampleRuntimeLog {
-    FormSampleRuntimeLog {
-        sample_id: "form-adapters",
-        actions: vec![
+    SampleRuntimeLog::new(
+        "form-adapters",
+        [
             FormSampleRuntimeAction::Validate,
             FormSampleRuntimeAction::Submit,
             FormSampleRuntimeAction::Reset,
         ],
-    }
+    )
 }

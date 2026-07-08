@@ -9,7 +9,7 @@ use open_gpui::{
 use open_gpui_ui_core::{Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::color::ColorIntent;
-use crate::form::FormControlState;
+use crate::form_control::FormControlState;
 use crate::theme::ThemeResolver;
 
 /// The resolved field message.

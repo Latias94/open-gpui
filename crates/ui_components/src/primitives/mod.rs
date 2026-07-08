@@ -3,7 +3,7 @@
 pub mod focus_ring;
 pub mod roving_focus_group;
 
-pub use crate::form::FormControlState;
+pub use crate::form_control::FormControlState;
 pub use focus_ring::{DEFAULT_FOCUS_RING_WIDTH, FocusRing};
 pub use roving_focus_group::{
     active_index_from_str_keys, first_enabled, last_enabled, next_enabled, paged_navigation_target,

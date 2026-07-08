@@ -1,4 +1,4 @@
-//! Shared form and field-control state contracts.
+//! Shared field-control state contracts.
 
 use open_gpui_ui_core::Size;
 

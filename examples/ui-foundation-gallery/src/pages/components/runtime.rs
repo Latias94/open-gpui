@@ -15,6 +15,43 @@ use std::collections::BTreeMap;
 
 use super::samples::{TableSample, server_tree_table_state};
 
+/// Deterministic read-only runtime log for gallery integration samples.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SampleRuntimeLog<T> {
+    sample_id: &'static str,
+    entries: Vec<T>,
+}
+
+impl<T> SampleRuntimeLog<T> {
+    /// Creates a sample runtime log.
+    pub fn new(sample_id: &'static str, entries: impl Into<Vec<T>>) -> Self {
+        Self {
+            sample_id,
+            entries: entries.into(),
+        }
+    }
+
+    /// Returns the stable sample id.
+    pub const fn sample_id(&self) -> &'static str {
+        self.sample_id
+    }
+
+    /// Returns the deterministic log entries.
+    pub fn entries(&self) -> &[T] {
+        &self.entries
+    }
+
+    /// Returns the number of deterministic entries.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns true when this log has no entries.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 #[path = "runtime/form.rs"]
 mod form;
 #[path = "runtime/resource.rs"]

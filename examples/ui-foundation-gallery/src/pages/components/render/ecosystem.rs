@@ -338,11 +338,8 @@ fn render_ecosystem_runtime_readout() -> impl IntoElement {
         .gap_1()
         .text_xs()
         .text_color(rgb(0x5a6472))
-        .child(format!("form runtime {} actions", form_log.actions.len()))
-        .child(format!(
-            "resource runtime {} events",
-            resource_log.events.len()
-        ))
+        .child(format!("form runtime {} actions", form_log.len()))
+        .child(format!("resource runtime {} events", resource_log.len()))
 }
 
 fn form_status_label(status: &open_gpui_form::FormStatus) -> &'static str {
