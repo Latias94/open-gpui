@@ -31,6 +31,26 @@ pub enum SnapshotKind {
     Custom(String),
 }
 
+impl SnapshotKind {
+    /// Returns the stable display label for this snapshot kind.
+    pub fn as_label(&self) -> &str {
+        match self {
+            Self::Element => "element",
+            Self::Accessibility => "accessibility",
+            Self::Focus => "focus",
+            Self::Input => "input",
+            Self::Scroll => "scroll",
+            Self::Theme => "theme",
+            Self::Motion => "motion",
+            Self::Docking => "docking",
+            Self::Form => "form",
+            Self::Resource => "resource",
+            Self::Diagnostic => "diagnostic",
+            Self::Custom(label) => label.as_str(),
+        }
+    }
+}
+
 /// Tree of inspectable snapshot nodes.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SnapshotTree {

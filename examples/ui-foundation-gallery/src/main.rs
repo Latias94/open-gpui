@@ -49,6 +49,10 @@ mod tests {
             GalleryPage::Overlay
         );
         assert_eq!(
+            initial_page(["--page=devtools".to_string()]),
+            GalleryPage::Devtools
+        );
+        assert_eq!(
             initial_page(["--page".to_string(), "missing".to_string()]),
             GalleryPage::Tokens
         );

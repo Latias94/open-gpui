@@ -15,7 +15,8 @@ fn gallery_sections_cover_the_foundation_slices() {
             "adaptive",
             "focus-a11y",
             "overlay",
-            "components"
+            "components",
+            "devtools"
         ]
     );
 }
@@ -48,6 +49,10 @@ fn labels_are_stable_for_manual_dogfood_output() {
         GalleryPage::from_id("components"),
         Some(GalleryPage::Components)
     );
+    assert_eq!(
+        GalleryPage::from_id("devtools"),
+        Some(GalleryPage::Devtools)
+    );
     assert_eq!(GalleryPage::from_id("missing"), None);
     assert_eq!(DeviceShellMode::Desktop.as_str(), "desktop");
     assert_eq!(DeviceShellMode::Mobile.as_str(), "mobile");
@@ -62,6 +67,9 @@ fn package_manifest_stays_foundation_scoped() {
     let manifest = include_str!("../../Cargo.toml");
 
     assert!(manifest.contains("open_gpui.workspace = true"));
+    assert!(manifest.contains("open_gpui_devtools = { workspace = true"));
+    assert!(manifest.contains("open_gpui_form.workspace = true"));
+    assert!(manifest.contains("open_gpui_resource.workspace = true"));
     assert!(manifest.contains("open_gpui_ui_core.workspace = true"));
     assert!(manifest.contains("open_gpui_ui_components.workspace = true"));
     assert!(manifest.contains("open_gpui_platform = { workspace = true"));

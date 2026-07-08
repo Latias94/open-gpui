@@ -22,6 +22,7 @@ path = "src/main.rs"
 [dependencies]
 open_gpui.workspace = true
 open_gpui_command.workspace = true
+open_gpui_devtools = { workspace = true, features = ["gpui"] }
 open_gpui_form.workspace = true
 open_gpui_motion.workspace = true
 open_gpui_platform = { workspace = true, features = ["font-kit"] }
