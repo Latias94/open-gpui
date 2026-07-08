@@ -234,15 +234,6 @@ impl VirtualizedList {
         self
     }
 
-    /// Uses an externally owned GPUI scroll handle for the list viewport.
-    ///
-    /// The handle remains outside renderer-neutral state so application shells can observe and
-    /// control final committed viewport facts without weakening row semantics.
-    pub fn scroll_handle(mut self, scroll_handle: &ScrollHandle) -> Self {
-        self.scroll_handle = Some(scroll_handle.clone());
-        self
-    }
-
     /// Requests a key-based reveal during render using the provided scroll strategy.
     pub fn reveal_key(
         mut self,
@@ -251,23 +242,6 @@ impl VirtualizedList {
     ) -> Self {
         self.reveal_key = Some(key.into());
         self.reveal_strategy = strategy;
-        self
-    }
-
-    /// Registers a custom row-content renderer.
-    ///
-    /// The outer row keeps ownership of virtual layout, accessibility, focus, hit testing, and
-    /// selection behavior. The renderer replaces only the row content.
-    pub fn render_row<E>(
-        mut self,
-        renderer: impl Fn(VirtualizedListRowRenderContext, &mut Window, &mut App) -> E + 'static,
-    ) -> Self
-    where
-        E: IntoElement + 'static,
-    {
-        self.row_renderer = Some(Rc::new(move |context, window, cx| {
-            renderer(context, window, cx).into_any_element()
-        }));
         self
     }
 
@@ -361,6 +335,46 @@ impl VirtualizedList {
             Some(viewport_item_count.max(1)),
         )
         .with_metrics(self.metrics)
+    }
+}
+
+/// GPUI-specific adapter extension methods for `VirtualizedList`.
+///
+/// The core `VirtualizedList` builder keeps renderer-neutral state and semantics. Import this
+/// trait when a concrete GPUI surface needs a host-owned `ScrollHandle` or custom row renderer.
+pub trait VirtualizedListGpuiExt: Sized {
+    /// Uses an externally owned GPUI scroll handle for the list viewport.
+    fn scroll_handle(self, scroll_handle: &ScrollHandle) -> Self;
+
+    /// Registers a custom row-content renderer.
+    ///
+    /// The outer row keeps ownership of virtual layout, accessibility, focus, hit testing, and
+    /// selection behavior. The renderer replaces only the row content.
+    fn render_row<E>(
+        self,
+        renderer: impl Fn(VirtualizedListRowRenderContext, &mut Window, &mut App) -> E + 'static,
+    ) -> Self
+    where
+        E: IntoElement + 'static;
+}
+
+impl VirtualizedListGpuiExt for VirtualizedList {
+    fn scroll_handle(mut self, scroll_handle: &ScrollHandle) -> Self {
+        self.scroll_handle = Some(scroll_handle.clone());
+        self
+    }
+
+    fn render_row<E>(
+        mut self,
+        renderer: impl Fn(VirtualizedListRowRenderContext, &mut Window, &mut App) -> E + 'static,
+    ) -> Self
+    where
+        E: IntoElement + 'static,
+    {
+        self.row_renderer = Some(Rc::new(move |context, window, cx| {
+            renderer(context, window, cx).into_any_element()
+        }));
+        self
     }
 }
 

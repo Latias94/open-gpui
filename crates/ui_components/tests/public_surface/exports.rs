@@ -153,7 +153,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_command = prelude::Command::new("command", "Commands")
         .item(prelude::CommandItem::new("open", "Open"))
         .status_item(prelude::CommandStatusItem::error("Provider failed"));
-    let prelude_command_navigation = prelude::CommandNavigationBehavior::new()
+    let root_command_navigation_for_prelude_case = root::CommandNavigationBehavior::new()
         .with_loop_navigation(false)
         .with_group_navigation(true);
     let prelude_menu_state = prelude::Menu::new("prelude-menu", "Menu")
@@ -168,7 +168,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_menu_submenu_navigation = prelude_menu_state
         .submenu_navigation_target("right")
         .expect("prelude MenuSubmenuNavigation should be exported");
-    let prelude_menu_submenu_surface = prelude::MenuSubmenuSurface::resolve(
+    let prelude_menu_submenu_surface = root::MenuSubmenuSurface::resolve(
         rect(
             ui_point(ui_px(0.0), ui_px(0.0)),
             ui_size(ui_px(120.0), ui_px(32.0)),
@@ -183,15 +183,16 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_scroll = prelude::ScrollArea::new("scroll", div());
     let prelude_splitter = prelude::Splitter::new("split");
     let prelude_tabs = prelude::Tabs::new("tabs");
-    let prelude_global_filter = prelude::TableGlobalFilter::new("global-filter", "Search");
-    let prelude_predicate_filter =
-        prelude::TablePredicateFilter::new("predicate-filter", "Name", "name");
-    let prelude_table_toolbar =
-        prelude::TableToolbar::new("table-toolbar", "Filters").summary("2 rows visible");
-    let prelude_faceted_filter =
-        prelude::TableFacetedFilter::new("status-filter", "Status", "status");
-    let prelude_column_visibility =
-        prelude::TableColumnVisibility::new("column-visibility", "Columns")
+    let root_global_filter_for_prelude_case =
+        root::TableGlobalFilter::new("global-filter", "Search");
+    let root_predicate_filter_for_prelude_case =
+        root::TablePredicateFilter::new("predicate-filter", "Name", "name");
+    let root_table_toolbar_for_prelude_case =
+        root::TableToolbar::new("table-toolbar", "Filters").summary("2 rows visible");
+    let root_faceted_filter_for_prelude_case =
+        root::TableFacetedFilter::new("status-filter", "Status", "status");
+    let root_column_visibility_for_prelude_case =
+        root::TableColumnVisibility::new("column-visibility", "Columns")
             .columns([ui_core::TableColumn::new("status", "Status")]);
     let prelude_avatar = prelude::Avatar::new("avatar", "Ada Lovelace");
     let prelude_separator = prelude::Separator::new("separator");
@@ -276,17 +277,17 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_select_option.value(),
         prelude_combobox.state(),
         prelude_command.state(),
-        prelude_command_navigation.group_navigation(),
+        root_command_navigation_for_prelude_case.group_navigation(),
         prelude_menu_submenu_navigation.focused_value(),
         prelude_menu_safe_hover_corridor.bounds(),
         prelude_scroll.state(),
         prelude_splitter.state(),
         prelude_tabs.state(),
-        prelude_global_filter.state(),
-        prelude_predicate_filter.state(),
-        prelude_table_toolbar.state(),
-        prelude_faceted_filter.state(),
-        prelude_column_visibility.state(),
+        root_global_filter_for_prelude_case.state(),
+        root_predicate_filter_for_prelude_case.state(),
+        root_table_toolbar_for_prelude_case.state(),
+        root_faceted_filter_for_prelude_case.state(),
+        root_column_visibility_for_prelude_case.state(),
         prelude_avatar.state(),
         prelude_separator.state(),
         prelude_kbd.state(),
@@ -411,7 +412,9 @@ fn public_reexports_stay_explicit_without_wildcards() {
                 let trimmed = line.trim();
                 if matches!(
                     trimmed,
-                    "pub use public_api::default::*;" | "pub use crate::public_api::default::*;"
+                    "pub use public_api::default::*;"
+                        | "pub use crate::public_api::default::*;"
+                        | "pub use crate::public_api::common::*;"
                 ) {
                     continue;
                 }
@@ -432,48 +435,79 @@ fn root_and_prelude_exports_match_contract_default_surface_intent() {
     let contract_defaults = contract_default_surface_tokens();
     let contract_non_defaults = contract_non_default_surface_tokens();
 
-    for file_name in ["lib.rs", "prelude.rs"] {
-        let exports = default_reexport_tokens(file_name);
-        let missing_defaults = contract_defaults
-            .difference(&exports)
-            .cloned()
-            .collect::<Vec<_>>();
-        assert_eq!(
-            missing_defaults,
-            Vec::<String>::new(),
-            "{file_name} default exports are missing contract default surfaces"
-        );
+    let root_exports = default_reexport_tokens("lib.rs");
+    let missing_root_defaults = contract_defaults
+        .difference(&root_exports)
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        missing_root_defaults,
+        Vec::<String>::new(),
+        "crate root default exports are missing contract default surfaces"
+    );
 
-        let leaked_non_defaults = contract_non_defaults
-            .intersection(&exports)
-            .cloned()
-            .collect::<Vec<_>>();
-        assert_eq!(
-            leaked_non_defaults,
-            Vec::<String>::new(),
-            "{file_name} default exports leaked contract non-default surfaces"
+    let leaked_root_non_defaults = contract_non_defaults
+        .intersection(&root_exports)
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        leaked_root_non_defaults,
+        Vec::<String>::new(),
+        "crate root default exports leaked contract non-default surfaces"
+    );
+
+    let prelude_exports = default_reexport_tokens("prelude.rs");
+    let forbidden_prelude_exports = [
+        "GpuiOverlayAdapterConfig",
+        "GpuiOverlayState",
+        "TextInputController",
+        "VirtualizedListGpuiExt",
+        "TableGlobalFilter",
+        "TablePredicateFilter",
+        "TableFacetedFilter",
+        "TableColumnVisibility",
+        "TableRangeFilter",
+        "TableToolbar",
+        "ToolbarItem",
+        "SidebarItem",
+        "ListboxOption",
+    ];
+    let leaked_prelude_exports = forbidden_prelude_exports
+        .iter()
+        .filter(|token| prelude_exports.contains(**token))
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        leaked_prelude_exports,
+        Vec::<&str>::new(),
+        "prelude/common exports leaked adapter-only, recipe, or internal anatomy surfaces"
+    );
+
+    for required in [
+        "Button",
+        "Dialog",
+        "Listbox",
+        "Table",
+        "Tree",
+        "VirtualizedList",
+        "ThemeContext",
+    ] {
+        assert!(
+            prelude_exports.contains(required),
+            "prelude/common should keep common component token `{required}`"
         );
     }
 }
 
 #[test]
-fn crate_root_and_prelude_reexports_stay_intentionally_aligned() {
+fn prelude_reexports_stay_a_curated_subset_of_crate_root_plus_core_helpers() {
     let root_exports = default_reexport_tokens("lib.rs");
     let prelude_exports = default_reexport_tokens("prelude.rs");
-    let root_only = root_exports
-        .difference(&prelude_exports)
-        .cloned()
-        .collect::<Vec<_>>();
     let prelude_only = prelude_exports
         .difference(&root_exports)
         .cloned()
         .collect::<Vec<_>>();
 
-    assert_eq!(
-        root_only,
-        Vec::<String>::new(),
-        "crate root exports tokens not exposed through prelude; update prelude.rs or document the intentional root-only token here"
-    );
     assert_eq!(
         prelude_only,
         vec![

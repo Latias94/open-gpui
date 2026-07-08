@@ -10,10 +10,10 @@ use open_gpui_ui_components::theme::{
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogIntent, Avatar, Badge, BadgeVariant, Button, ButtonVariant, Checkbox,
     ColorIntent, ColorState, Combobox, ComboboxOption, Command, CommandItem, EmptyState,
-    FeedbackIntent, Field, HoverCard, IconButton, Kbd, Label, Listbox, ListboxOption, Menu,
-    MenuItem, Progress, RadioGroup, RadioItem, Select, Separator, Sheet, Skeleton, StatusCue,
-    Switch, TableToolbar, TextInput, ThemeColor, ThemeContext, ThemeMode, ThemeResolver,
-    ThemeSnapshot, Toggle, ToggleVariant,
+    FeedbackIntent, Field, HoverCard, IconButton, Kbd, Label, Listbox, Menu, MenuItem, Progress,
+    RadioGroup, RadioItem, Select, Separator, Sheet, Skeleton, StatusCue, Switch, TableToolbar,
+    TextInput, ThemeColor, ThemeContext, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
+    ToggleVariant, listbox::ListboxOption,
 };
 use open_gpui_ui_core::{Sizable, semantic};
 

@@ -15,15 +15,16 @@ use open_gpui_ui_components::{
     ComboboxOption, ComboboxState, Command, CommandGroup, CommandItem, CommandOpenMode,
     CommandSelectionMode, CommandState, ContextMenu, Dialog, Field, FieldState, FocusRing,
     HoverCard, IconButtonState, Kbd, KbdState, Label, LabelState, Listbox, ListboxGroup,
-    ListboxOption, ListboxState, Menu, MenuItem, OverlayResolvedState, Popover, Progress,
-    ProgressState, ScrollArea, Select, SelectOpenMode, SelectState, Separator, SeparatorState,
-    Sheet, Skeleton, SkeletonState, SwitchState, TextInput, TextInputState, Textarea,
-    TextareaState, ThemeResolver, ToggleState, Tooltip,
+    ListboxState, Menu, MenuItem, OverlayResolvedState, Popover, Progress, ProgressState,
+    ScrollArea, Select, SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, Skeleton,
+    SkeletonState, SwitchState, TextInput, TextInputState, Textarea, TextareaState, ThemeResolver,
+    ToggleState, Tooltip,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt,
         focus_ring_shadow_with_theme, gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui,
         init_text_input,
     },
+    listbox::ListboxOption,
 };
 
 use open_gpui_ui_core::{

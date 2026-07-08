@@ -9,6 +9,7 @@ use open_gpui::{
 };
 use open_gpui_motion::MotionPreference;
 use open_gpui_ui_components::*;
+use open_gpui_ui_components::{gpui_adapter::VirtualizedListGpuiExt, sidebar::SidebarItem};
 use open_gpui_ui_core::{
     Orientation, Sizable, Size, TableColumnId, TableTextFilterOperator, ThemeTokens, UiPx,
 };

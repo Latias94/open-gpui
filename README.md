@@ -68,7 +68,7 @@ Open GPUI is pre-1.0, so the framework favors explicit product contracts over co
 - Scroll surfaces return typed `ScrollWheelIntent` values, publish committed `ScrollViewportSnapshot` facts, and expose test probes such as `TestInputDispatchSnapshot` for final input outcomes.
 - Docking apps declare product intent with `DockPanelPlacement`, descriptor default placement, and last-known reopen placement instead of holding graph node ids in normal product code.
 - Component apps project command/action metadata through `CommandIconDescriptor`, `ActionDescriptor`, and `ResolvedActionState`, then reuse that resolved state across buttons, toolbars, menus, command palettes, and sidebars.
-- `VirtualizedList` keeps stable-key state in `VirtualizedListState` while application shells may provide their own GPUI `ScrollHandle` and request keyed reveals through `scroll_target_for_key` or `scroll_target_for_key_with_snapshot`.
+- `VirtualizedList` keeps stable-key state in `VirtualizedListState`; GPUI shells opt into host-owned `ScrollHandle` and custom row rendering through `gpui_adapter::VirtualizedListGpuiExt`, while keyed reveal math stays on `scroll_target_for_key` or `scroll_target_for_key_with_snapshot`.
 
 See [docs/ui/command-ecosystem.md](docs/ui/command-ecosystem.md), [docs/ui/component-contract.md](docs/ui/component-contract.md), [crates/ui_components/README.md](crates/ui_components/README.md), and [crates/gpui_docking/README.md](crates/gpui_docking/README.md) for the current public surfaces.
 

@@ -27,12 +27,12 @@ use open_gpui_ui_components::{
     TableBehaviorSnapshot, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, Tag,
     TagState, TagVariant, TextInput, TextInputDisplayMode, TextInputState, Textarea, TextareaState,
     Toast, ToastStack, ToastStackState, Toggle, ToggleGroup, ToggleGroupItem,
-    ToggleGroupSelectionMode, ToggleGroupState, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
+    ToggleGroupSelectionMode, ToggleGroupState, ToggleState, ToggleVariant, Toolbar,
     ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeBehaviorSnapshot,
     TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListBehaviorSnapshot,
     VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRowMeasureMode,
     VirtualizedListRowRenderContext, VirtualizedListScrollStrategy, VirtualizedListSelectionMode,
-    VirtualizedListState,
+    VirtualizedListState, gpui_adapter::VirtualizedListGpuiExt, toolbar::ToolbarItem,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,

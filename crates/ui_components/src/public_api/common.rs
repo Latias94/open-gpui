@@ -1,4 +1,4 @@
-//! Curated default public API surface exported from the crate root.
+//! Curated common public API surface for application imports.
 
 pub use crate::a11y::{
     A11yContractError, A11yContractViolation, A11yDescriptionSource, A11yLabelSource,
@@ -37,18 +37,10 @@ pub use crate::combobox::{
     ComboboxStateRequest,
 };
 pub use crate::command::{
-    Command, CommandBehaviorSnapshot, CommandColors, CommandDialogState, CommandGroup,
-    CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItem,
-    CommandItemDescriptor, CommandItemState, CommandKeyBindingCaptureState,
-    CommandKeyBindingEditorFilter, CommandKeyBindingEditorFilterMode,
-    CommandKeyBindingEditorPreviewState, CommandKeyBindingEditorRow, CommandKeyBindingEditorState,
-    CommandLoadingState, CommandMatchSource, CommandMetrics, CommandNavigationBehavior,
-    CommandOpenMode, CommandPaletteController, CommandPaletteControllerUpdate,
-    CommandPaletteKeymapPreflight, CommandPalettePendingProviderRequest, CommandPaletteProjection,
-    CommandProviderPaletteProjection, CommandQueryMode, CommandRowBehaviorSnapshot,
-    CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandSelectionMode,
-    CommandShortcutInspectorCommand, CommandShortcutInspectorState, CommandState,
-    CommandStateDataSource, CommandStateRequest, CommandStatusIntent, CommandStatusItem,
+    Command, CommandGroup, CommandGroupDescriptor, CommandItem, CommandItemDescriptor,
+    CommandItemState, CommandLoadingState, CommandMetrics, CommandOpenMode, CommandSelection,
+    CommandSelectionChange, CommandSelectionMode, CommandState, CommandStateRequest,
+    CommandStatusIntent, CommandStatusItem,
 };
 pub use crate::component_contract::{
     COMPONENT_A11Y_EVIDENCE, COMPONENT_CONFORMANCE_GATES, ComponentA11yEvidence,
@@ -77,8 +69,7 @@ pub use crate::listbox::{
 };
 pub use crate::menu::{
     Menu, MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuItemState, MenuMetrics,
-    MenuOpenMode, MenuSafeHoverCorridor, MenuSelection, MenuState, MenuSubmenuNavigation,
-    MenuSubmenuSurface, menu_navigation_target,
+    MenuOpenMode, MenuSelection, MenuState, menu_navigation_target,
 };
 pub use crate::number_input::{
     NumberInput, NumberInputChange, NumberInputColors, NumberInputMetrics, NumberInputState,
@@ -119,19 +110,10 @@ pub use crate::splitter::{
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use crate::table::{
     Table, TableBehaviorSnapshot, TableCellBehaviorSnapshot, TableCellEditApplyOutcome,
-    TableCellEditChange, TableColumnBehaviorSnapshot, TableColumnOrderChange,
-    TableColumnOrderPlacement, TableColumnRegionSnapshot, TableColumnSizingChange,
-    TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
-    TableColumnVisibilityItemState, TableColumnVisibilityState, TableFacetedFilter,
-    TableFacetedFilterChange, TableFacetedFilterOptionState, TableFacetedFilterState,
-    TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction,
-    TableHeaderSummarySnapshot, TableInputModifiers, TableMetrics, TablePredicateFilter,
-    TablePredicateFilterChange, TablePredicateFilterOperator,
-    TablePredicateFilterOperatorOptionState, TablePredicateFilterState, TableRangeFilter,
-    TableRangeFilterChange, TableRangeFilterState, TableRowAction, TableRowActivation,
-    TableRowActivationKind, TableRowBehaviorSnapshot, TableRowCountSnapshot,
-    TableRowExpansionToggle, TableRowMeasureMode, TableRowSelectionChange, TableSelectionScope,
-    TableToolbar, TableToolbarColors, TableToolbarState, TableTreeSummarySnapshot,
+    TableCellEditChange, TableColumnBehaviorSnapshot, TableColumnRegionSnapshot, TableHeaderAction,
+    TableHeaderSummarySnapshot, TableInputModifiers, TableMetrics, TableRowAction,
+    TableRowActivation, TableRowActivationKind, TableRowBehaviorSnapshot, TableRowCountSnapshot,
+    TableRowExpansionToggle, TableRowMeasureMode, TableSelectionScope, TableTreeSummarySnapshot,
     TableVisibleRowsSnapshot,
 };
 pub use crate::tabs::{

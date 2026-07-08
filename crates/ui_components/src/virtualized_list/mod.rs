@@ -34,7 +34,7 @@ pub use self::render_plan::{
     VirtualizedListRowMeasureMode, VirtualizedListRowRenderContext,
     VirtualizedListStickyOverlaySnapshot, VirtualizedListStickySectionSnapshot,
 };
-pub use self::runtime::VirtualizedList;
+pub use self::runtime::{VirtualizedList, VirtualizedListGpuiExt};
 pub use self::style::{VirtualizedListColors, VirtualizedListMetrics};
 
 #[cfg(test)]

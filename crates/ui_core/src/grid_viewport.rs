@@ -5,6 +5,11 @@ use crate::virtualizer::{
     VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState, VirtualizerState,
 };
 
+/// Convenient imports for two-axis grid viewport work.
+pub mod prelude {
+    pub use super::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d};
+}
+
 /// Combined row and column viewport metadata for a grid body.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GridViewport2D {
