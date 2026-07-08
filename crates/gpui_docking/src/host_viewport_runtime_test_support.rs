@@ -1,9 +1,10 @@
 use crate::{
-    DockController, DockDropDelivery, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
-    DockViewportClosePolicy, DockViewportDropPayload, DockViewportDropRoute,
-    DockViewportDropRouteRequest, DockViewportInputStatus, DockViewportOpenOutcome,
-    DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
-    DockViewportTargetContext, DockViewportTearOffRequest, DockViewportWindowFacts, DockWorkspace,
+    DockController, DockDropDelivery, DockFloatingContainer, DockGraph, DockItemId, DockNode,
+    DockNodeId, DockSpaceId, DockViewportClosePolicy, DockViewportDropPayload,
+    DockViewportDropRoute, DockViewportDropRouteRequest, DockViewportInputStatus,
+    DockViewportOpenOutcome, DockViewportRuntime, DockViewportRuntimeHandle,
+    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTearOffRequest,
+    DockViewportWindowFacts, DockWorkspace, SplitAxis,
     drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -29,10 +30,16 @@ pub(crate) struct DockViewportControllerFixture {
 
 pub(crate) struct DockViewportRuntimeFixtureBuilder {
     primary_space: DockSpaceId,
-    spaces: Vec<(DockSpaceId, Vec<&'static str>)>,
+    spaces: Vec<DockViewportTabsSpec>,
     focusable_items: BTreeSet<&'static str>,
     close_policy: Option<DockViewportClosePolicy>,
     allow_platform_viewports: bool,
+}
+
+struct DockViewportTabsSpec {
+    space: DockSpaceId,
+    items: Vec<&'static str>,
+    selected: Option<&'static str>,
 }
 
 impl DockViewportRuntimeFixture {
@@ -86,8 +93,32 @@ impl DockViewportRuntimeFixtureBuilder {
         space: impl Into<DockSpaceId>,
         items: impl IntoIterator<Item = &'static str>,
     ) -> Self {
-        self.spaces
-            .push((space.into(), items.into_iter().collect()));
+        let items = items.into_iter().collect::<Vec<_>>();
+        let selected = items.first().copied();
+        self.spaces.push(DockViewportTabsSpec {
+            space: space.into(),
+            items,
+            selected,
+        });
+        self
+    }
+
+    pub(crate) fn space_selected(
+        mut self,
+        space: impl Into<DockSpaceId>,
+        items: impl IntoIterator<Item = &'static str>,
+        selected: &'static str,
+    ) -> Self {
+        let items = items.into_iter().collect::<Vec<_>>();
+        assert!(
+            items.contains(&selected),
+            "selected tab {selected} must be present in test fixture items"
+        );
+        self.spaces.push(DockViewportTabsSpec {
+            space: space.into(),
+            items,
+            selected: Some(selected),
+        });
         self
     }
 
@@ -111,13 +142,13 @@ impl DockViewportRuntimeFixtureBuilder {
         let mut panels = BTreeSet::new();
         let mut tabs_by_space = BTreeMap::new();
 
-        for (space, panel_ids) in &self.spaces {
-            let items: Vec<DockItemId> = panel_ids.iter().copied().map(item).collect();
-            let selected = items.first().cloned();
+        for spec in &self.spaces {
+            let items: Vec<DockItemId> = spec.items.iter().copied().map(item).collect();
+            let selected = spec.selected.map(item);
             let tabs = graph.insert_node(DockNode::Tabs { items, selected });
-            graph.set_root(space.clone(), tabs);
-            tabs_by_space.insert(space.clone(), tabs);
-            panels.extend(panel_ids.iter().copied());
+            graph.set_root(spec.space.clone(), tabs);
+            tabs_by_space.insert(spec.space.clone(), tabs);
+            panels.extend(spec.items.iter().copied());
         }
 
         let mut workspace = DockWorkspace::new(self.primary_space, graph);
@@ -212,6 +243,44 @@ pub(crate) fn leaf_host_scene_fact(
         bounds: floating_bounds(0.0, 0.0, 360.0, 220.0),
         is_central: false,
     })
+}
+
+pub(crate) fn horizontal_split_floating_graph(
+    primary_space: DockSpaceId,
+    root_items: Option<&[&'static str]>,
+) -> (DockGraph, DockNodeId) {
+    let mut graph = DockGraph::new();
+    if let Some(root_items) = root_items {
+        let items: Vec<DockItemId> = root_items.iter().copied().map(item).collect();
+        let selected = items.first().cloned();
+        let root = graph.insert_node(DockNode::Tabs { items, selected });
+        graph.set_root(primary_space.clone(), root);
+    }
+
+    let left_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let right_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let floating_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left_tabs, right_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_split,
+    });
+    graph
+        .floating_containers_mut(primary_space)
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(10.0, 20.0, 260.0, 150.0),
+        });
+
+    (graph, floating)
 }
 
 pub(crate) fn target_center_host_position() -> open_gpui::Point<open_gpui::Pixels> {
@@ -488,38 +557,15 @@ pub(crate) fn backend_route_resolution_fixture(
 ) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");
-    let mut graph = DockGraph::new();
-    let source_tabs = graph.insert_node(DockNode::Tabs {
-        items: vec![item("a")],
-        selected: Some(item("a")),
-    });
-    let target_tabs = graph.insert_node(DockNode::Tabs {
-        items: vec![item("b")],
-        selected: Some(item("b")),
-    });
-    graph.set_root(source_space.clone(), source_tabs);
-    graph.set_root(target_space.clone(), target_tabs);
-
-    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-    let controller = cx.new(|_| DockController::new(workspace));
-    let runtime = DockViewportRuntimeHandle::new(controller);
+    let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+        .space(source_space.clone(), ["a"])
+        .space(target_space.clone(), ["b"])
+        .build(cx);
+    let source_tabs = fixture.tabs(&source_space);
+    let runtime = fixture.runtime.clone();
     cx.set_platform_focused_window_available(false);
-    let window_options = || WindowOptions {
-        focus: false,
-        ..viewport_window_options(360.0, 220.0)
-    };
-    let _source_opened = cx
-        .update(|app| {
-            runtime.open_viewport_unchecked_policy(source_space.clone(), window_options(), app)
-        })
-        .expect("source viewport should open");
-    let target_opened = cx
-        .update(|app| {
-            runtime.open_viewport_unchecked_policy(target_space.clone(), window_options(), app)
-        })
-        .expect("target viewport should open");
+    let _source_opened = fixture.open_unfocused_viewport(cx, &source_space);
+    let target_opened = fixture.open_unfocused_viewport(cx, &target_space);
     let request = DockViewportDropRouteRequest::from_target_context(
         source_space,
         source_tabs,
