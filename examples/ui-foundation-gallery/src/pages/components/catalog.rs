@@ -35,6 +35,10 @@ pub const COMPONENT_PAGE_JUMPS: &[ComponentPageJump] = &[
         label: "State contracts",
     },
     ComponentPageJump {
+        id: "ecosystem-adapters",
+        label: "Ecosystem adapters",
+    },
+    ComponentPageJump {
         id: "gates",
         label: "Conformance gates",
     },

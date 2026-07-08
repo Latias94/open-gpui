@@ -4544,10 +4544,13 @@ version = "0.2.0"
 dependencies = [
  "open-gpui",
  "open-gpui-command",
+ "open-gpui-form",
  "open-gpui-motion",
  "open-gpui-platform",
+ "open-gpui-resource",
  "open-gpui-ui-components",
  "open-gpui-ui-core",
+ "serde_json",
 ]
 
 [[package]]

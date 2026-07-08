@@ -77,6 +77,13 @@ pub(super) fn render_components_section(
                 pages::components::virtualized_list_state_contract_samples(),
             ))
             .into_any_element(),
+        "ecosystem-adapters" => component_page_section("ecosystem-adapters")
+            .when(
+                !show_component_section(focus_mode, "ecosystem-adapters"),
+                |this| this.hidden(),
+            )
+            .child(render_component_ecosystem_adapters_section(snapshot.tokens))
+            .into_any_element(),
         "gates" => render_component_gates_section(focus_mode),
         "sidebar" => component_page_section("sidebar")
             .when(!show_component_section(focus_mode, "sidebar"), |this| {

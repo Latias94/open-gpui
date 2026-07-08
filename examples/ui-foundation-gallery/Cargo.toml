@@ -22,10 +22,13 @@ path = "src/main.rs"
 [dependencies]
 open_gpui.workspace = true
 open_gpui_command.workspace = true
+open_gpui_form.workspace = true
 open_gpui_motion.workspace = true
 open_gpui_platform = { workspace = true, features = ["font-kit"] }
+open_gpui_resource.workspace = true
 open_gpui_ui_components.workspace = true
 open_gpui_ui_core.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 open_gpui = { workspace = true, features = ["test-support"] }

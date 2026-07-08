@@ -51,12 +51,16 @@ use super::runtime::{current_tree_sample_items, record_virtualized_list_nested_a
 mod choice;
 #[path = "samples/feedback.rs"]
 mod feedback;
+#[path = "samples/form.rs"]
+mod form;
 #[path = "samples/foundation.rs"]
 mod foundation;
 #[path = "samples/layout.rs"]
 mod layout;
 #[path = "samples/navigation.rs"]
 mod navigation;
+#[path = "samples/resource.rs"]
+mod resource;
 #[path = "samples/table.rs"]
 mod table;
 #[path = "samples/text.rs"]
@@ -73,6 +77,7 @@ pub use choice::{
     select_samples, switch_samples, toggle_samples,
 };
 pub use feedback::{EmptyStateSample, StatusCueSample, empty_state_samples, status_cue_samples};
+pub use form::{FormAdapterSample, form_adapter_samples};
 pub use foundation::{
     AccordionSample, AvatarGroupSample, AvatarSample, BadgeSample, BreadcrumbSample, ButtonSample,
     CollapsibleSample, FoundationComponentSamples, IconButtonSample, KbdSample, LinkSample,
@@ -90,6 +95,7 @@ pub use navigation::{
     SidebarItemSample, SidebarSample, SidebarSectionSample, TabsItemSample, TabsSample,
     ToolbarItemSample, ToolbarSample, sidebar_samples, tabs_samples, toolbar_samples,
 };
+pub use resource::{ResourceAdapterSample, resource_adapter_samples};
 pub(crate) use table::server_tree_table_state;
 pub use table::{TableSample, TableSampleStateSummary, table_samples};
 pub use text::{
@@ -142,6 +148,8 @@ impl_component_sample_selectors!(TextInputSample, "component-text-input-sample")
 impl_component_sample_selectors!(TextareaSample, "component-textarea-sample");
 impl_component_sample_selectors!(FieldSample, "component-field-sample");
 impl_component_sample_selectors!(FieldTextareaSample, "component-field-textarea-sample");
+impl_component_sample_selectors!(FormAdapterSample, "component-form-adapter-sample");
+impl_component_sample_selectors!(ResourceAdapterSample, "component-resource-adapter-sample");
 impl_component_sample_selectors!(TabsSample, "component-tabs-sample");
 impl_component_sample_selectors!(TableSample, "component-table-sample");
 impl_component_sample_selectors!(VirtualizedListSample, "component-virtualized-list-sample");
