@@ -1,9 +1,11 @@
 use crate::{
-    DockController, DockDropDelivery, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
-    DockViewportClosePolicy, DockViewportDropPayload, DockViewportDropRoute,
-    DockViewportDropRouteRequest, DockViewportInputStatus, DockViewportOpenOutcome,
-    DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
-    DockViewportTargetContext, DockViewportTearOffRequest, DockViewportWindowFacts, DockWorkspace,
+    DockController, DockDropDelivery, DockFloatingContainer, DockGraph, DockHost, DockItemId,
+    DockNode, DockNodeId, DockSpaceId, DockViewportClosePolicy, DockViewportDropPayload,
+    DockViewportDropRoute, DockViewportDropRouteRequest, DockViewportInputStatus,
+    DockViewportOpenOutcome, DockViewportRuntime, DockViewportRuntimeHandle,
+    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTearOffRequest,
+    DockViewportWindowFacts, DockWorkspace, DropZone, SplitAxis,
+    debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -11,21 +13,50 @@ use crate::{
     interaction::{DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
 };
 use open_gpui::{
-    AnyWindowHandle, AppContext as _, Entity, TestAppContext, WindowBounds, WindowId,
-    WindowOptions, point, px,
+    AnyWindowHandle, AppContext as _, Bounds, Entity, Modifiers, MouseButton, Pixels, Point,
+    TestAppContext, VisualTestContext, WindowBounds, WindowId, WindowOptions, point, px,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) struct DockViewportRuntimeFixture {
     pub(crate) controller: Entity<DockController>,
     pub(crate) runtime: DockViewportRuntimeHandle,
+    tabs_by_space: BTreeMap<DockSpaceId, DockNodeId>,
+}
+
+pub(crate) struct DockViewportControllerFixture {
+    pub(crate) controller: Entity<DockController>,
+    tabs_by_space: BTreeMap<DockSpaceId, DockNodeId>,
 }
 
 pub(crate) struct DockViewportRuntimeFixtureBuilder {
     primary_space: DockSpaceId,
-    spaces: Vec<(DockSpaceId, Vec<&'static str>)>,
+    spaces: Vec<DockViewportTabsSpec>,
     focusable_items: BTreeSet<&'static str>,
     close_policy: Option<DockViewportClosePolicy>,
+    allow_platform_viewports: bool,
+}
+
+struct DockViewportTabsSpec {
+    space: DockSpaceId,
+    items: Vec<&'static str>,
+    selected: Option<&'static str>,
+}
+
+pub(crate) struct DockCrossWindowVisualDragFixture {
+    pub(crate) source: DockViewportVisualHostFixture,
+    pub(crate) target: DockViewportVisualHostFixture,
+}
+
+pub(crate) struct DockViewportVisualHostFixture {
+    pub(crate) opened: DockViewportOpenOutcome,
+    pub(crate) host: Entity<DockHost>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockCrossWindowDragRelease {
+    Hold,
+    Release,
 }
 
 impl DockViewportRuntimeFixture {
@@ -37,6 +68,7 @@ impl DockViewportRuntimeFixture {
             spaces: Vec::new(),
             focusable_items: BTreeSet::new(),
             close_policy: None,
+            allow_platform_viewports: false,
         }
     }
 
@@ -46,6 +78,10 @@ impl DockViewportRuntimeFixture {
         space: &DockSpaceId,
     ) -> DockViewportOpenOutcome {
         self.open_viewport(cx, space, unfocused_viewport_window_options())
+    }
+
+    pub(crate) fn tabs(&self, space: &DockSpaceId) -> DockNodeId {
+        tabs_for_space(&self.tabs_by_space, space)
     }
 
     pub(crate) fn open_viewport(
@@ -62,14 +98,229 @@ impl DockViewportRuntimeFixture {
     }
 }
 
+impl DockCrossWindowVisualDragFixture {
+    pub(crate) fn open(
+        cx: &mut TestAppContext,
+        runtime: &DockViewportRuntimeHandle,
+        source_space: DockSpaceId,
+        source_options: WindowOptions,
+        target_space: DockSpaceId,
+        target_options: WindowOptions,
+        context: &str,
+    ) -> Self {
+        let source = DockViewportVisualHostFixture::open(
+            cx,
+            runtime,
+            source_space,
+            source_options,
+            "source",
+            context,
+        );
+        let target = DockViewportVisualHostFixture::open(
+            cx,
+            runtime,
+            target_space,
+            target_options,
+            "target",
+            context,
+        );
+        cx.run_until_parked();
+
+        Self { source, target }
+    }
+
+    pub(crate) fn drag_source_tab_to_target_inner_edge(
+        &self,
+        cx: &mut TestAppContext,
+        source_tabs: DockNodeId,
+        item: DockItemId,
+        target_tabs: DockNodeId,
+        zone: DropZone,
+        release: DockCrossWindowDragRelease,
+        context: &str,
+    ) {
+        self.drag_source_tab_to_target_region(
+            cx,
+            source_tabs,
+            item,
+            DockDebugRegion::Tabs { node: target_tabs },
+            |bounds| inner_edge_drop_position(bounds, zone),
+            release,
+            context,
+            |_, _| {},
+        );
+    }
+
+    pub(crate) fn drag_source_tab_to_target_inner_edge_with_hover(
+        &self,
+        cx: &mut TestAppContext,
+        source_tabs: DockNodeId,
+        item: DockItemId,
+        target_tabs: DockNodeId,
+        zone: DropZone,
+        context: &str,
+        before_release: impl FnOnce(&Entity<DockHost>, &mut TestAppContext),
+    ) {
+        self.drag_source_tab_to_target_region(
+            cx,
+            source_tabs,
+            item,
+            DockDebugRegion::Tabs { node: target_tabs },
+            |bounds| inner_edge_drop_position(bounds, zone),
+            DockCrossWindowDragRelease::Release,
+            context,
+            before_release,
+        );
+    }
+
+    pub(crate) fn drag_source_tab_to_target_center(
+        &self,
+        cx: &mut TestAppContext,
+        source_tabs: DockNodeId,
+        item: DockItemId,
+        target_tabs: DockNodeId,
+        release: DockCrossWindowDragRelease,
+        context: &str,
+    ) {
+        self.drag_source_tab_to_target_region(
+            cx,
+            source_tabs,
+            item,
+            DockDebugRegion::Tabs { node: target_tabs },
+            center_drop_position,
+            release,
+            context,
+            |_, _| {},
+        );
+    }
+
+    pub(crate) fn assert_drop_previews_cleared(&self, cx: &mut TestAppContext, context: &str) {
+        assert!(
+            !self.target.has_drop_preview(cx),
+            "{context}: target drop preview should clear"
+        );
+        assert!(
+            !self.source.has_drop_preview(cx),
+            "{context}: source drop preview should clear"
+        );
+    }
+
+    fn drag_source_tab_to_target_region(
+        &self,
+        cx: &mut TestAppContext,
+        source_tabs: DockNodeId,
+        item: DockItemId,
+        target_region: DockDebugRegion,
+        target_position: impl FnOnce(Bounds<Pixels>) -> Point<Pixels>,
+        release: DockCrossWindowDragRelease,
+        context: &str,
+        before_release: impl FnOnce(&Entity<DockHost>, &mut TestAppContext),
+    ) {
+        let mut source_visual = self.source.visual(cx);
+        let mut target_visual = self.target.visual(cx);
+
+        let source_tab = selector_for(
+            &source_visual,
+            &self.source.host,
+            DockDebugRegion::Tab {
+                tabs: source_tabs,
+                item,
+            },
+        )
+        .unwrap_or_else(|| panic!("{context}: source tab selector should be emitted"));
+        let target_selector = selector_for(&target_visual, &self.target.host, target_region)
+            .unwrap_or_else(|| panic!("{context}: target selector should be emitted"));
+
+        let start = debug_bounds(&mut source_visual, &source_tab).center();
+        let threshold = point(start.x + px(24.0), start.y);
+        let end = target_position(debug_bounds(&mut target_visual, &target_selector));
+
+        source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+        target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        before_release(&self.target.host, cx);
+        if release == DockCrossWindowDragRelease::Release {
+            target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        }
+        cx.run_until_parked();
+    }
+}
+
+impl DockViewportVisualHostFixture {
+    fn open(
+        cx: &mut TestAppContext,
+        runtime: &DockViewportRuntimeHandle,
+        space: DockSpaceId,
+        options: WindowOptions,
+        role: &str,
+        context: &str,
+    ) -> Self {
+        let opened = cx
+            .update(|app| runtime.open_viewport_unchecked_policy(space.clone(), options, app))
+            .unwrap_or_else(|error| panic!("{context}: {role} viewport should open: {error}"));
+        let window = opened
+            .window()
+            .downcast::<DockHost>()
+            .unwrap_or_else(|| panic!("{context}: {role} viewport should render DockHost"));
+        let host = window
+            .root(cx)
+            .unwrap_or_else(|_| panic!("{context}: {role} viewport should expose DockHost root"));
+
+        Self { opened, host }
+    }
+
+    pub(crate) fn window(&self) -> AnyWindowHandle {
+        self.opened.window()
+    }
+
+    pub(crate) fn visual(&self, cx: &mut TestAppContext) -> VisualTestContext {
+        VisualTestContext::from_window(self.window(), cx)
+    }
+
+    pub(crate) fn has_drop_preview(&self, cx: &mut TestAppContext) -> bool {
+        let visual = self.visual(cx);
+        selector_for(&visual, &self.host, DockDebugRegion::DropPreview).is_some()
+    }
+}
+
+impl DockViewportControllerFixture {
+    pub(crate) fn tabs(&self, space: &DockSpaceId) -> DockNodeId {
+        tabs_for_space(&self.tabs_by_space, space)
+    }
+}
+
 impl DockViewportRuntimeFixtureBuilder {
     pub(crate) fn space(
         mut self,
         space: impl Into<DockSpaceId>,
         items: impl IntoIterator<Item = &'static str>,
     ) -> Self {
-        self.spaces
-            .push((space.into(), items.into_iter().collect()));
+        let items = items.into_iter().collect::<Vec<_>>();
+        let selected = items.first().copied();
+        self.spaces.push(DockViewportTabsSpec {
+            space: space.into(),
+            items,
+            selected,
+        });
+        self
+    }
+
+    pub(crate) fn space_selected(
+        mut self,
+        space: impl Into<DockSpaceId>,
+        items: impl IntoIterator<Item = &'static str>,
+        selected: &'static str,
+    ) -> Self {
+        let items = items.into_iter().collect::<Vec<_>>();
+        assert!(
+            items.contains(&selected),
+            "selected tab {selected} must be present in test fixture items"
+        );
+        self.spaces.push(DockViewportTabsSpec {
+            space: space.into(),
+            items,
+            selected: Some(selected),
+        });
         self
     }
 
@@ -83,19 +334,29 @@ impl DockViewportRuntimeFixtureBuilder {
         self
     }
 
-    pub(crate) fn build(self, cx: &mut TestAppContext) -> DockViewportRuntimeFixture {
+    pub(crate) fn allow_platform_viewports(mut self, allowed: bool) -> Self {
+        self.allow_platform_viewports = allowed;
+        self
+    }
+
+    pub(crate) fn build_controller(self, cx: &mut TestAppContext) -> DockViewportControllerFixture {
         let mut graph = DockGraph::new();
         let mut panels = BTreeSet::new();
+        let mut tabs_by_space = BTreeMap::new();
 
-        for (space, panel_ids) in &self.spaces {
-            let items: Vec<DockItemId> = panel_ids.iter().copied().map(item).collect();
-            let selected = items.first().cloned();
+        for spec in &self.spaces {
+            let items: Vec<DockItemId> = spec.items.iter().copied().map(item).collect();
+            let selected = spec.selected.map(item);
             let tabs = graph.insert_node(DockNode::Tabs { items, selected });
-            graph.set_root(space.clone(), tabs);
-            panels.extend(panel_ids.iter().copied());
+            graph.set_root(spec.space.clone(), tabs);
+            tabs_by_space.insert(spec.space.clone(), tabs);
+            panels.extend(spec.items.iter().copied());
         }
 
         let mut workspace = DockWorkspace::new(self.primary_space, graph);
+        workspace
+            .policy_mut()
+            .set_allow_platform_viewports(self.allow_platform_viewports);
         for panel in panels {
             let title = format!("Panel {panel}");
             if self.focusable_items.contains(panel) {
@@ -106,18 +367,39 @@ impl DockViewportRuntimeFixtureBuilder {
         }
 
         let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = match self.close_policy {
-            Some(close_policy) => {
-                DockViewportRuntimeHandle::with_close_policy(controller.clone(), close_policy)
-            }
-            None => DockViewportRuntimeHandle::new(controller.clone()),
+
+        DockViewportControllerFixture {
+            controller,
+            tabs_by_space,
+        }
+    }
+
+    pub(crate) fn build(self, cx: &mut TestAppContext) -> DockViewportRuntimeFixture {
+        let close_policy = self.close_policy.clone();
+        let controller_fixture = self.build_controller(cx);
+        let runtime = match close_policy {
+            Some(close_policy) => DockViewportRuntimeHandle::with_close_policy(
+                controller_fixture.controller.clone(),
+                close_policy,
+            ),
+            None => DockViewportRuntimeHandle::new(controller_fixture.controller.clone()),
         };
 
         DockViewportRuntimeFixture {
-            controller,
+            controller: controller_fixture.controller,
             runtime,
+            tabs_by_space: controller_fixture.tabs_by_space,
         }
     }
+}
+
+fn tabs_for_space(
+    tabs_by_space: &BTreeMap<DockSpaceId, DockNodeId>,
+    space: &DockSpaceId,
+) -> DockNodeId {
+    *tabs_by_space
+        .get(space)
+        .unwrap_or_else(|| panic!("test fixture has no tabs for dock space {space}"))
 }
 
 pub(crate) fn unfocused_viewport_window_options() -> WindowOptions {
@@ -163,6 +445,44 @@ pub(crate) fn leaf_host_scene_fact(
         bounds: floating_bounds(0.0, 0.0, 360.0, 220.0),
         is_central: false,
     })
+}
+
+pub(crate) fn horizontal_split_floating_graph(
+    primary_space: DockSpaceId,
+    root_items: Option<&[&'static str]>,
+) -> (DockGraph, DockNodeId) {
+    let mut graph = DockGraph::new();
+    if let Some(root_items) = root_items {
+        let items: Vec<DockItemId> = root_items.iter().copied().map(item).collect();
+        let selected = items.first().cloned();
+        let root = graph.insert_node(DockNode::Tabs { items, selected });
+        graph.set_root(primary_space.clone(), root);
+    }
+
+    let left_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let right_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let floating_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left_tabs, right_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_split,
+    });
+    graph
+        .floating_containers_mut(primary_space)
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(10.0, 20.0, 260.0, 150.0),
+        });
+
+    (graph, floating)
 }
 
 pub(crate) fn target_center_host_position() -> open_gpui::Point<open_gpui::Pixels> {
@@ -439,38 +759,15 @@ pub(crate) fn backend_route_resolution_fixture(
 ) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");
-    let mut graph = DockGraph::new();
-    let source_tabs = graph.insert_node(DockNode::Tabs {
-        items: vec![item("a")],
-        selected: Some(item("a")),
-    });
-    let target_tabs = graph.insert_node(DockNode::Tabs {
-        items: vec![item("b")],
-        selected: Some(item("b")),
-    });
-    graph.set_root(source_space.clone(), source_tabs);
-    graph.set_root(target_space.clone(), target_tabs);
-
-    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-    let controller = cx.new(|_| DockController::new(workspace));
-    let runtime = DockViewportRuntimeHandle::new(controller);
+    let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+        .space(source_space.clone(), ["a"])
+        .space(target_space.clone(), ["b"])
+        .build(cx);
+    let source_tabs = fixture.tabs(&source_space);
+    let runtime = fixture.runtime.clone();
     cx.set_platform_focused_window_available(false);
-    let window_options = || WindowOptions {
-        focus: false,
-        ..viewport_window_options(360.0, 220.0)
-    };
-    let _source_opened = cx
-        .update(|app| {
-            runtime.open_viewport_unchecked_policy(source_space.clone(), window_options(), app)
-        })
-        .expect("source viewport should open");
-    let target_opened = cx
-        .update(|app| {
-            runtime.open_viewport_unchecked_policy(target_space.clone(), window_options(), app)
-        })
-        .expect("target viewport should open");
+    let _source_opened = fixture.open_unfocused_viewport(cx, &source_space);
+    let target_opened = fixture.open_unfocused_viewport(cx, &target_space);
     let request = DockViewportDropRouteRequest::from_target_context(
         source_space,
         source_tabs,
