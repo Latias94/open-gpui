@@ -16,7 +16,9 @@ pub use error::ResourceError;
 pub use fetch::FetchTicket;
 pub use key::{QueryKey, QueryKeyError, QueryKeySegment};
 pub use mutation::MutationTicket;
-pub use pagination::{PaginatedResourceSnapshot, ResourcePage, ResourcePageSnapshot};
+pub use pagination::{
+    PaginatedResourceSnapshot, PaginatedResourceSnapshotView, ResourcePage, ResourcePageSnapshot,
+};
 pub use policy::RetryPolicy;
 pub use redaction::{RedactedResourceValue, ResourceRedactionPolicy};
 pub use snapshot::{MutationSnapshot, MutationStatus, ResourceSnapshot, ResourceStatus};

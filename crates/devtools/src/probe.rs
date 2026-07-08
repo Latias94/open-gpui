@@ -55,8 +55,18 @@ impl SnapshotProbeSnapshot {
 
     /// Attaches a redaction summary.
     pub fn with_redaction(mut self, redaction: SnapshotRedactionSummary) -> Self {
-        self.redaction = redaction;
+        self.redaction = redaction.sanitized();
         self
+    }
+
+    /// Returns the snapshot tree.
+    pub fn tree(&self) -> &SnapshotTree {
+        &self.tree
+    }
+
+    /// Returns the redaction summary.
+    pub fn redaction(&self) -> &SnapshotRedactionSummary {
+        &self.redaction
     }
 }
 
