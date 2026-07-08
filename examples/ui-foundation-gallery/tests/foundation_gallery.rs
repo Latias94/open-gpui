@@ -609,6 +609,8 @@ mod component_smoke_table_interactions;
 mod component_smoke_table_models;
 #[path = "foundation_gallery/component_smoke_tree_virtualized.rs"]
 mod component_smoke_tree_virtualized;
+#[path = "foundation_gallery/devtools_contracts.rs"]
+mod devtools_contracts;
 #[path = "foundation_gallery/foundation_contracts.rs"]
 mod foundation_contracts;
 #[path = "foundation_gallery/overlay_contracts.rs"]

@@ -78,7 +78,7 @@ pub use choice::{
     select_samples, switch_samples, toggle_samples,
 };
 pub use feedback::{EmptyStateSample, StatusCueSample, empty_state_samples, status_cue_samples};
-pub use form::{FormAdapterSample, form_adapter_samples};
+pub use form::{FormAdapterSample, form_adapter_samples, form_devtools_dogfood_snapshot};
 pub use foundation::{
     AccordionSample, AvatarGroupSample, AvatarSample, BadgeSample, BreadcrumbSample, ButtonSample,
     CollapsibleSample, FoundationComponentSamples, IconButtonSample, KbdSample, LinkSample,
@@ -96,7 +96,10 @@ pub use navigation::{
     SidebarItemSample, SidebarSample, SidebarSectionSample, TabsItemSample, TabsSample,
     ToolbarItemSample, ToolbarSample, sidebar_samples, tabs_samples, toolbar_samples,
 };
-pub use resource::{ResourceAdapterSample, resource_adapter_samples};
+pub use resource::{
+    ResourceAdapterSample, ResourceDevtoolsDogfoodSnapshots, resource_adapter_samples,
+    resource_devtools_dogfood_snapshots,
+};
 pub(crate) use table::server_tree_table_state;
 pub use table::{TableSample, TableSampleStateSummary, table_samples};
 pub use text::{

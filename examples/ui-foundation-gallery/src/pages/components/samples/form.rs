@@ -40,6 +40,8 @@ pub struct FormAdapterSample {
     pub dirty_field_count: usize,
     /// Number of fields redacted by the default diagnostic snapshot.
     pub redacted_field_count: usize,
+    /// Redacted snapshot shared with the DevTools dogfood page.
+    pub redacted_snapshot: FormSnapshot,
 }
 
 /// Returns form-adapter samples backed by the headless form store.
@@ -49,6 +51,25 @@ pub fn form_adapter_samples(tokens: ThemeTokens) -> Vec<FormAdapterSample> {
         submitting_form_sample(tokens),
         reset_form_sample(tokens),
     ]
+}
+
+/// Returns the deterministic form snapshot consumed by the DevTools dogfood page.
+pub fn form_devtools_dogfood_snapshot() -> FormSnapshot {
+    let mut store = base_form_store();
+    let email = path("account.email");
+    let notes = path("profile.notes");
+    store
+        .set_value(&email, serde_json::json!("not-an-email"))
+        .unwrap();
+    store
+        .set_value(&notes, serde_json::json!("Submit via DevTools dogfood."))
+        .unwrap();
+    store.begin_submit().unwrap();
+    store.finish_submit_error("submit rejected token=gallery-secret");
+    store
+        .validate_field(&email, |_| vec!["Enter a valid work email.".to_owned()])
+        .unwrap();
+    store.snapshot(RedactionPolicy::RedactAll)
 }
 
 fn invalid_form_sample(tokens: ThemeTokens) -> FormAdapterSample {
@@ -186,6 +207,7 @@ fn build_form_adapter_sample(
             .iter()
             .filter(|field| matches!(field.value, RedactedValue::Redacted))
             .count(),
+        redacted_snapshot: redacted,
     }
 }
 
