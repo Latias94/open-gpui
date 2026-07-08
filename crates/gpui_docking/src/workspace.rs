@@ -8,8 +8,9 @@ use crate::{
 /// Owner for one logical docking workspace.
 ///
 /// A workspace coordinates the pure graph, selected dock space, panel registry, host options, and
-/// future interaction state. GPUI render adapters such as [`DockHost`](crate::DockHost) should
-/// render a workspace instead of owning every piece of docking state directly.
+/// future interaction state. GPUI render adapters such as
+/// [`runtime::DockHost`](crate::runtime::DockHost) should render a workspace instead of owning
+/// every piece of docking state directly.
 #[derive(Debug)]
 pub struct DockWorkspace {
     graph: DockGraph,

@@ -2,13 +2,15 @@
 //!
 //! `open-gpui-docking` separates durable layout state from GPUI runtime state:
 //!
-//! - [`DockGraph`] stores logical dock spaces, tab stacks, splits, and in-window floating layout.
+//! - [`model::DockGraph`] stores logical dock spaces, tab stacks, splits, and in-window floating
+//!   layout.
 //! - [`DockLayout`] serializes that graph state without views or platform-window handles.
 //! - [`DockSurface`] is the preferred application facade. It owns controller wiring, host-window
 //!   creation, panel commands, and typed platform-viewport capability outcomes.
-//! - [`DockController`] owns a mutable [`DockWorkspace`] for lower-level integrations and tests.
-//! - [`DockHost`] renders one logical [`DockSpaceId`], with transient splitter, floating, and
-//!   drop-preview sessions kept in the crate's interaction runtime.
+//! - [`model::DockController`] owns a mutable [`model::DockWorkspace`] for lower-level
+//!   integrations and tests.
+//! - [`runtime::DockHost`] renders one logical [`DockSpaceId`], with transient splitter, floating,
+//!   and drop-preview sessions kept in the crate's interaction runtime.
 //! - Tab drag/drop resolves pointer facts into a crate-internal full-layout target first; preview
 //!   and commit both consume that resolved target so render callbacks do not assemble graph-shaped
 //!   move commands.
@@ -20,18 +22,19 @@
 //!   paths that should not touch live GPUI view state.
 //! - An internal viewport adapter stores runtime window mappings and placement snapshots outside
 //!   [`DockLayout`].
-//! - [`DockViewportRuntimeHandle`] is the explicit runtime-tier entry point for callers that need
-//!   lower-level window control; the controller-backed viewport runtime core stays internal so
-//!   applications cannot bypass the handle's window hooks and transaction surface.
+//! - [`runtime::DockViewportRuntimeHandle`] is the explicit runtime-tier entry point for callers
+//!   that need lower-level window control; the controller-backed viewport runtime core stays
+//!   internal so applications cannot bypass the handle's window hooks and transaction surface.
 //!
 //! Common GPUI applications should start with [`DockSurface::builder`], register lazy panel
 //! factories, and open the primary host window through [`DockSurface::open_primary_window`].
 //! Rendered tab movement, splitter resize, floating drag, and viewport tear-off flow through the
 //! crate's interaction, transaction, geometry, and viewport-runtime modules. Advanced callers can
-//! still use [`DockGraph`], [`DockLayoutBuilder`], [`DockWorkspace`], and explicit [`DockAction`]
-//! command objects for programmatic layout operations, but applications should prefer
-//! [`DockSurface`] panel commands or the named [`DockController`] and [`DockWorkspace`] methods for
-//! common panel and floating flows.
+//! still use [`model::DockGraph`], [`model::DockLayoutBuilder`], [`model::DockWorkspace`], and
+//! explicit [`model::DockAction`] command objects for programmatic layout operations, but
+//! applications should prefer [`DockSurface`] panel commands or the named
+//! [`model::DockController`] and [`model::DockWorkspace`] methods for common panel and floating
+//! flows.
 //! In-window floating and platform viewport tear-off are separate [`DockPolicy`] capabilities so
 //! applications can enable platform windows without changing graph-backed floating behavior.
 //! Multi-window applications should keep one [`DockSurface`] as the graph, panel, and host-window
@@ -46,17 +49,18 @@
 //! restores platform-window hints that [`DockSurfaceViewportSpec::with_saved_placement`] applies to
 //! fallback GPUI window options. Cross-window drops derive hovered-window and front-to-back
 //! window-stack arbitration from GPUI runtime signals inside the crate.
-//! Panel close/reopen flows should use [`DockController::close_item`],
-//! [`DockController::open_item`], [`DockWorkspace::close_item`], or [`DockWorkspace::open_item`]:
+//! Panel close/reopen flows should use [`model::DockController::close_item`],
+//! [`model::DockController::open_item`], [`model::DockWorkspace::close_item`], or
+//! [`model::DockWorkspace::open_item`]:
 //! close removes the item from the graph while the panel catalog remains available, and reopen
 //! inserts that registered item back into a target tab stack or empty dock space. Ordinary tab
 //! drag/drop uses resolved drop transactions internally rather than asking render code or app code
 //! to construct graph-shaped move commands.
 //! Descriptor-only restored panels can bind GPUI content later through
-//! [`DockPanelRegistry::attach_view_handle`] or [`DockController::attach_panel_view`] without
-//! rewriting restored titles or close policy.
-//! Lazy panels should be registered up front with [`DockControllerBuilder::panel_factory`] or
-//! [`DockWorkspace::register_panel_factory`].
+//! [`model::DockController::attach_panel_view`] without rewriting restored titles or close policy.
+//! Lazy panels should be registered up front with
+//! [`model::DockControllerBuilder::panel_factory`] or
+//! [`model::DockWorkspace::register_panel_factory`].
 //!
 //! ```rust,no_run
 //! use open_gpui::{AnyView, App};
@@ -261,7 +265,7 @@ mod workspace_selection_tests;
 pub(crate) use action::{DockAction, DockActionApplyError, DockActionOutcome, DockSplitResize};
 pub(crate) use builder::EditorDockLayoutSpec;
 pub use builder::{DockPanelPlacement, DockPanelPlacementTarget};
-pub use controller::{DockController, DockControllerBuilder};
+pub(crate) use controller::{DockController, DockControllerBuilder};
 pub(crate) use debug::DockVisualAffordanceDebugSummary;
 pub use geometry::DockDropGuideStyle;
 pub(crate) use graph::{
@@ -269,7 +273,9 @@ pub(crate) use graph::{
     DockFloatingContainer, DockGraph, DockGraphValidationError, DockNode, DropZone, SplitAxis,
     dock_bounds,
 };
-pub(crate) use host::{DockHost, DockHostOptions};
+pub(crate) use host::DockHost;
+#[cfg(test)]
+pub(crate) use host::DockHostOptions;
 pub(crate) use ids::DockNodeId;
 pub use ids::{DockClassId, DockItemId, DockSpaceId};
 pub use layout::{DOCK_LAYOUT_VERSION, DockLayout, DockLayoutRect, DockLayoutValidationError};

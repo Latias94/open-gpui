@@ -459,8 +459,8 @@ impl DockViewportRuntimeHandle {
     /// Opens or reuses a controller-backed viewport window for a logical dock space.
     ///
     /// This validates the controller policy before touching backend windows. Crate-internal
-    /// runtime tests that need to exercise low-level window mechanics without policy setup use
-    /// [`Self::open_viewport_unchecked_policy`] explicitly.
+    /// runtime tests that need to exercise low-level window mechanics without policy setup use the
+    /// crate-private `open_viewport_unchecked_policy` helper explicitly.
     pub fn open_viewport(
         &self,
         space: impl Into<DockSpaceId>,

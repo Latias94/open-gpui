@@ -3,7 +3,7 @@ use slotmap::Key;
 use std::{borrow::Borrow, fmt};
 
 slotmap::new_key_type! {
-    /// Runtime identifier for a node in a [`DockGraph`](crate::DockGraph).
+    /// Runtime identifier for a node in a [`model::DockGraph`](crate::model::DockGraph).
     pub struct DockNodeId;
 }
 

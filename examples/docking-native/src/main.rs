@@ -4,7 +4,7 @@ use open_gpui::{
     size,
 };
 use open_gpui_docking::{
-    DockController, DockItemId, DockLayout, DockPanel, DockPanelDescriptor, DockPanelOpenOutcome,
+    DockItemId, DockLayout, DockPanel, DockPanelDescriptor, DockPanelOpenOutcome,
     DockPanelPlacement, DockSpaceId, DockViewportPlacement, DockViewportPlacementLayout,
     DockViewportWindowBounds,
     advanced::{
@@ -14,7 +14,7 @@ use open_gpui_docking::{
         DockViewportRestoreReadinessRecord, DockViewportTearOffPlacementRecord,
         DockVisualAffordanceDebugSummary,
     },
-    model::{DockActionApplyError, DockLayoutCentralRegion, DockLayoutSpace},
+    model::{DockActionApplyError, DockController, DockLayoutCentralRegion, DockLayoutSpace},
     runtime::{DockViewportClosePolicy, DockViewportRuntimeHandle},
 };
 use open_gpui_platform::application;

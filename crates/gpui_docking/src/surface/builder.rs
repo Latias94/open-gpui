@@ -1,10 +1,11 @@
 use super::DockSurface;
 use crate::{
-    DockClassId, DockController, DockControllerBuilder, DockHostOptions, DockItemId, DockLayout,
+    DockClassId, DockController, DockControllerBuilder, DockDropGuideStyle, DockItemId, DockLayout,
     DockLayoutValidationError, DockPanel, DockPanelDescriptor, DockPanelPlacement, DockPolicy,
     DockSpaceId, DockViewportClosePolicy, EditorDockLayoutSpec,
 };
-use open_gpui::{AnyView, App, AppContext as _};
+use open_gpui::{AnyView, App, AppContext as _, Pixels};
+use open_gpui_motion::MotionPreference;
 use thiserror::Error;
 
 /// Builder for [`DockSurface`].
@@ -85,9 +86,39 @@ impl DockSurfaceBuilder {
         self
     }
 
-    /// Replaces static host rendering options.
-    pub fn options(mut self, options: DockHostOptions) -> Self {
-        self.controller = self.controller.options(options);
+    /// Replaces the message rendered when the selected dock space has no root node.
+    pub fn empty_message(mut self, message: impl Into<String>) -> Self {
+        self.controller = self.controller.empty_message(message);
+        self
+    }
+
+    /// Replaces the message prefix rendered when a selected panel is missing from the registry.
+    pub fn missing_panel_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.controller = self.controller.missing_panel_prefix(prefix);
+        self
+    }
+
+    /// Replaces the minimum rendered size for split panes during splitter resizing.
+    pub fn split_min_size(mut self, size: Pixels) -> Self {
+        self.controller = self.controller.split_min_size(size);
+        self
+    }
+
+    /// Replaces the hit target and visual thickness for rendered splitter handles.
+    pub fn splitter_handle_size(mut self, size: Pixels) -> Self {
+        self.controller = self.controller.splitter_handle_size(size);
+        self
+    }
+
+    /// Replaces the style inputs used to size and hit-test dock drop guides.
+    pub fn drop_guide_style(mut self, style: DockDropGuideStyle) -> Self {
+        self.controller = self.controller.drop_guide_style(style);
+        self
+    }
+
+    /// Replaces the host-owned motion preference for docking transitions.
+    pub fn motion_preference(mut self, preference: MotionPreference) -> Self {
+        self.controller = self.controller.motion_preference(preference);
         self
     }
 

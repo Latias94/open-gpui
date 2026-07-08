@@ -56,10 +56,10 @@ use open_gpui::{
 
 /// Internal owner for controller-backed platform viewport lifecycle.
 ///
-/// The runtime keeps the shared [`DockController`] together with the low-level
-/// [`DockViewportAdapter`] so the handle does not have to pass the controller into every open call
-/// or duplicate close-callback cleanup logic. The adapter remains the place for window mappings,
-/// live window facts, and placement import/export.
+/// The runtime keeps the shared [`model::DockController`](crate::model::DockController) together
+/// with the low-level [`DockViewportAdapter`] so the handle does not have to pass the controller
+/// into every open call or duplicate close-callback cleanup logic. The adapter remains the place
+/// for window mappings, live window facts, and placement import/export.
 #[derive(Debug)]
 pub(crate) struct DockViewportRuntime {
     controller: Entity<DockController>,

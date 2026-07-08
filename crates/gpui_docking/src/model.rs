@@ -6,10 +6,11 @@
 pub use crate::{
     DockLayoutRect, action::DockAction, action::DockActionApplyError, action::DockActionOutcome,
     action::DockSplitResize, builder::DockLayoutBuilder, builder::EditorDockLayoutSpec,
-    graph::DockCentralRegion, graph::DockEdgeDockPlan, graph::DockEdgeDockSizing,
-    graph::DockEdgeDockSizingScope, graph::DockFloatingContainer, graph::DockGraph,
-    graph::DockGraphValidationError, graph::DockNode, graph::DropZone, graph::SplitAxis,
-    graph::dock_bounds, ids::DockNodeId, layout::DockLayoutCentralRegion,
-    layout::DockLayoutFloatingContainer, layout::DockLayoutNode, layout::DockLayoutSpace,
-    op::DockGraphMutationError, spatial_navigation::DockSpatialDirection, workspace::DockWorkspace,
+    controller::DockController, controller::DockControllerBuilder, graph::DockCentralRegion,
+    graph::DockEdgeDockPlan, graph::DockEdgeDockSizing, graph::DockEdgeDockSizingScope,
+    graph::DockFloatingContainer, graph::DockGraph, graph::DockGraphValidationError,
+    graph::DockNode, graph::DropZone, graph::SplitAxis, graph::dock_bounds, ids::DockNodeId,
+    layout::DockLayoutCentralRegion, layout::DockLayoutFloatingContainer, layout::DockLayoutNode,
+    layout::DockLayoutSpace, op::DockGraphMutationError, spatial_navigation::DockSpatialDirection,
+    workspace::DockWorkspace,
 };

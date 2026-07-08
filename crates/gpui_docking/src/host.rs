@@ -54,8 +54,9 @@ impl Default for DockHostOptions {
 /// Retained GPUI host that renders one logical dock workspace.
 ///
 /// `DockHost` is the GPUI render adapter for a dock space. Durable graph state belongs to
-/// [`DockWorkspace`] or [`DockController`], while transient pointer sessions are kept behind the
-/// crate's interaction runtime.
+/// [`model::DockWorkspace`](crate::model::DockWorkspace) or
+/// [`model::DockController`](crate::model::DockController), while transient pointer sessions are
+/// kept behind the crate's interaction runtime.
 #[derive(Debug)]
 pub struct DockHost {
     controller: Entity<DockController>,

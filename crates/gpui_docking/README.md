@@ -9,7 +9,7 @@ optional platform viewport windows.
 
 The crate root and `open_gpui_docking::prelude` contain the common application API: `DockSurface`, `DockSurfaceBuilder`, durable layout and placement data, panel registry/catalog types, policy types, and typed facade outcomes. The root intentionally does not re-export raw graph, action, host, workspace, or runtime-handle types.
 
-Low-level graph, action, workspace, host, and runtime-handle APIs live behind explicit modules. Use `open_gpui_docking::model` for graph/layout mutation tools, `open_gpui_docking::runtime` for direct viewport runtime integrations, and `open_gpui_docking::advanced` for diagnostics and transition internals. These types are useful for tests and tooling, but they are not part of the default application surface.
+Low-level controller, graph, action, workspace, host, and runtime-handle APIs live behind explicit modules. Use `open_gpui_docking::model` for `DockController`, `DockControllerBuilder`, graph/layout mutation tools, and command objects; use `open_gpui_docking::runtime` for `DockHost`, `DockHostOptions`, and direct viewport runtime integrations; use `open_gpui_docking::advanced` for diagnostics and transition internals. These types are useful for tests and tooling, but they are not part of the default application surface.
 
 ## What This Crate Owns
 
@@ -20,19 +20,19 @@ Low-level graph, action, workspace, host, and runtime-handle APIs live behind ex
   lifecycle results for platform close hooks, including merge-back close policies.
 - `DockGraph` and `DockLayout` for logical dock spaces, tab stacks, splits, in-window floating
   layout, serialization, validation, and graph operations.
-- `DockController` and `DockWorkspace` as the low-level shared owner for rendered hosts and
-  programmatic layout commands.
-- `DockHost` as the GPUI renderer for one logical dock space, including tab chrome, splitter
-  interaction, floating panels, drop previews, accessibility descriptors, and motion-backed visual
-  affordances.
-- `DockHostOptions::motion_preference` as the host-owned reduced-motion policy input for zoom,
-  unzoom, and visual-affordance transitions.
+- `open_gpui_docking::model::DockController` and `open_gpui_docking::model::DockWorkspace` as the
+  low-level shared owner for rendered hosts and programmatic layout commands.
+- `open_gpui_docking::runtime::DockHost` as the GPUI renderer for one logical dock space, including
+  tab chrome, splitter interaction, floating panels, drop previews, accessibility descriptors, and
+  motion-backed visual affordances.
+- `open_gpui_docking::runtime::DockHostOptions::motion_preference` as the host-owned reduced-motion
+  policy input for zoom, unzoom, and visual-affordance transitions.
 - `DockPanelRegistry` and `DockPanelCatalog` for lazy panel factories, descriptor-only restore
   metadata, GPUI view attachment, close/reopen policy, and tab labels.
-- `DockViewportRuntimeHandle` and internal viewport runtime modules for controller-backed platform
-  window routing, placement snapshots, lifecycle cleanup, and cross-window drop routing. Runtime
-  handles are available through the explicit `runtime` API tier, and runtime status diagnostics are
-  available through `advanced`.
+- `open_gpui_docking::runtime::DockViewportRuntimeHandle` and internal viewport runtime modules for
+  controller-backed platform window routing, placement snapshots, lifecycle cleanup, and cross-window
+  drop routing. Runtime handles are available through the explicit `runtime` API tier, and runtime
+  status diagnostics are available through `advanced`.
 
 ## Capability Gates
 
