@@ -84,6 +84,8 @@ fn ui_contract_failures(root: &Path) -> Vec<String> {
     let verification_docs = read_to_string(&verification_docs_path, &mut failures);
     let root_exports = default_reexport_tokens(&source_dir, "lib.rs", &mut failures);
     let prelude_exports = default_reexport_tokens(&source_dir, "prelude.rs", &mut failures);
+    let common_exports =
+        default_reexport_tokens(&source_dir, "public_api/common.rs", &mut failures);
 
     if row_sources.is_empty() {
         return failures;
@@ -120,6 +122,7 @@ fn ui_contract_failures(root: &Path) -> Vec<String> {
         &entries,
         &root_exports,
         &prelude_exports,
+        &common_exports,
         &docs,
         |entry| source_home_exists(&source_dir, entry),
         |name| removed_primitive_module_exists(&source_dir, name),
@@ -192,6 +195,7 @@ fn audit_contract_rows(
     entries: &[ContractRow],
     root_exports: &BTreeSet<String>,
     prelude_exports: &BTreeSet<String>,
+    common_exports: &BTreeSet<String>,
     docs: &Docs<'_>,
     mut source_home_exists: impl FnMut(&ContractRow) -> bool,
     mut removed_primitive_exists: impl FnMut(&str) -> bool,
@@ -217,10 +221,12 @@ fn audit_contract_rows(
                 ));
             }
             if !prelude_exports.contains(&entry.name) {
-                failures.push(format!(
-                    "crates/ui_components/src/prelude.rs: default-export contract row `{}` is missing from prelude exports; add it to crates/ui_components/src/public_api/default.rs or explicitly re-export it",
-                    entry.name
-                ));
+                if common_exports.contains(&entry.name) {
+                    failures.push(format!(
+                        "crates/ui_components/src/prelude.rs: common contract row `{}` is missing from prelude exports; add it to crates/ui_components/src/public_api/common.rs or explicitly re-export it",
+                        entry.name
+                    ));
+                }
             }
         }
 
@@ -1053,6 +1059,7 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
             &entries,
             &root_exports,
             &prelude_exports,
+            &BTreeSet::new(),
             &docs("", ""),
             |entry| entry.source_home == "button.rs",
             |_| false,
@@ -1076,6 +1083,7 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
 
         let failures = audit_contract_rows(
             &entries,
+            &BTreeSet::new(),
             &BTreeSet::new(),
             &BTreeSet::new(),
             &docs("Button contract", ""),
@@ -1103,6 +1111,7 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
             &entries,
             &BTreeSet::new(),
             &BTreeSet::new(),
+            &BTreeSet::new(),
             &docs("", ""),
             |_| false,
             |_| false,
@@ -1126,6 +1135,7 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
 
         let failures = audit_contract_rows(
             &entries,
+            &BTreeSet::new(),
             &BTreeSet::new(),
             &BTreeSet::new(),
             &docs("", "primitive_deletion_target_inventory"),
@@ -1155,6 +1165,7 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
             &entries,
             &BTreeSet::new(),
             &BTreeSet::new(),
+            &BTreeSet::new(),
             &docs("ButtonState", ""),
             |entry| entry.source_home == "button.rs",
             |_| false,
@@ -1179,12 +1190,70 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
             &entries,
             &BTreeSet::new(),
             &BTreeSet::new(),
+            &BTreeSet::new(),
             &docs("", "primitive_deletion_target_inventory"),
             |entry| entry.source_home == "verification.rs",
             |_| false,
         );
 
         assert!(has_failure(&failures, "missing-verification-token"));
+    }
+
+    #[test]
+    fn audit_allows_root_default_export_outside_common_prelude() {
+        let entries = [entry(
+            "TableGlobalFilter",
+            "OfficialComponentRecipe",
+            "NotInGallery",
+            DocsStatus::ComponentCatalog,
+            Some("TableGlobalFilter"),
+            true,
+            "table/global_filter",
+        )];
+        let root_exports = BTreeSet::from(["TableGlobalFilter".to_string()]);
+        let prelude_exports = BTreeSet::new();
+        let common_exports = BTreeSet::new();
+
+        let failures = audit_contract_rows(
+            &entries,
+            &root_exports,
+            &prelude_exports,
+            &common_exports,
+            &docs("", ""),
+            |entry| entry.source_home == "table/global_filter",
+            |_| false,
+        );
+
+        assert_eq!(failures, Vec::<String>::new());
+    }
+
+    #[test]
+    fn audit_reports_common_default_missing_from_prelude() {
+        let entries = [entry(
+            "Button",
+            "OfficialComponent",
+            "OfficialComponent",
+            DocsStatus::ComponentCatalog,
+            Some("Button"),
+            true,
+            "button.rs",
+        )];
+        let root_exports = BTreeSet::from(["Button".to_string()]);
+        let prelude_exports = BTreeSet::new();
+        let common_exports = BTreeSet::from(["Button".to_string()]);
+
+        let failures = audit_contract_rows(
+            &entries,
+            &root_exports,
+            &prelude_exports,
+            &common_exports,
+            &docs("", ""),
+            |entry| entry.source_home == "button.rs",
+            |_| false,
+        );
+
+        assert!(has_failure(&failures, "common contract row `Button`"));
+        assert!(has_failure(&failures, "prelude exports"));
     }
 
     #[test]
