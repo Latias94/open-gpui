@@ -1,7 +1,8 @@
 use super::DockSurface;
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockPanelCloseOutcome,
-    DockPanelOpenOutcome, DockPanelPlacement, DockPolicyError, DockSpaceId,
+    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockLayout,
+    DockPanelCloseOutcome, DockPanelDescriptor, DockPanelOpenOutcome, DockPanelPlacement,
+    DockPolicyError, DockSpaceId,
 };
 use open_gpui::{App, AppContext as _, Bounds, Pixels};
 use thiserror::Error;
@@ -28,6 +29,40 @@ pub enum DockSurfaceChange {
     Unchanged,
 }
 
+/// Common facade location category for a dock panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockSurfacePanelLocationKind {
+    /// The panel is in the docked root layout for a dock space.
+    Docked,
+    /// The panel is in an in-window floating container.
+    Floating,
+}
+
+/// Common facade location facts for one dock panel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockSurfacePanelLocation {
+    space: DockSpaceId,
+    kind: DockSurfacePanelLocationKind,
+    tab_index: usize,
+}
+
+/// Descriptor and live-view facts for one registered dock panel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DockSurfacePanelSnapshot {
+    item: DockItemId,
+    descriptor: DockPanelDescriptor,
+    has_view_lifecycle: bool,
+    location: Option<DockSurfacePanelLocation>,
+}
+
+/// Common facade snapshot for one in-window floating container.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DockSurfaceFloatingPanelSnapshot {
+    space: DockSpaceId,
+    items: Vec<DockItemId>,
+    bounds: Bounds<Pixels>,
+}
+
 impl DockSurfacePanelOutcome {
     /// Returns true when the operation changed docking graph state.
     pub fn changed(&self) -> bool {
@@ -36,6 +71,92 @@ impl DockSurfacePanelOutcome {
             Self::Closed(outcome) => outcome.changed(),
             Self::Floated(change) | Self::Docked(change) => change.changed(),
         }
+    }
+}
+
+impl DockSurfacePanelLocation {
+    fn new(space: DockSpaceId, kind: DockSurfacePanelLocationKind, tab_index: usize) -> Self {
+        Self {
+            space,
+            kind,
+            tab_index,
+        }
+    }
+
+    /// Returns the dock space that contains the panel.
+    pub fn space(&self) -> &DockSpaceId {
+        &self.space
+    }
+
+    /// Returns whether the panel is docked or in-window floating.
+    pub fn kind(&self) -> DockSurfacePanelLocationKind {
+        self.kind
+    }
+
+    /// Returns the panel's index within its current tab stack.
+    pub fn tab_index(&self) -> usize {
+        self.tab_index
+    }
+}
+
+impl DockSurfacePanelSnapshot {
+    fn new(
+        item: DockItemId,
+        descriptor: DockPanelDescriptor,
+        has_view_lifecycle: bool,
+        location: Option<DockSurfacePanelLocation>,
+    ) -> Self {
+        Self {
+            item,
+            descriptor,
+            has_view_lifecycle,
+            location,
+        }
+    }
+
+    /// Returns the panel item id.
+    pub fn item(&self) -> &DockItemId {
+        &self.item
+    }
+
+    /// Returns descriptor metadata without touching live view state.
+    pub fn descriptor(&self) -> &DockPanelDescriptor {
+        &self.descriptor
+    }
+
+    /// Returns true when the panel has GPUI view lifecycle state attached.
+    pub fn has_view_lifecycle(&self) -> bool {
+        self.has_view_lifecycle
+    }
+
+    /// Returns current graph location facts, when the panel is open.
+    pub fn location(&self) -> Option<&DockSurfacePanelLocation> {
+        self.location.as_ref()
+    }
+}
+
+impl DockSurfaceFloatingPanelSnapshot {
+    fn new(space: DockSpaceId, items: Vec<DockItemId>, bounds: Bounds<Pixels>) -> Self {
+        Self {
+            space,
+            items,
+            bounds,
+        }
+    }
+
+    /// Returns the dock space that owns this floating container.
+    pub fn space(&self) -> &DockSpaceId {
+        &self.space
+    }
+
+    /// Returns the item ids contained in this floating container.
+    pub fn items(&self) -> &[DockItemId] {
+        &self.items
+    }
+
+    /// Returns container bounds relative to the dock host.
+    pub fn bounds(&self) -> Bounds<Pixels> {
+        self.bounds
     }
 }
 
@@ -122,6 +243,109 @@ impl From<DockActionApplyError> for DockSurfacePanelError {
 }
 
 impl DockSurface {
+    /// Returns logical dock spaces known to the surface graph.
+    pub fn dock_spaces(&self, cx: &App) -> Vec<DockSpaceId> {
+        cx.read_entity(&self.controller, |controller, _| {
+            controller.graph().spaces()
+        })
+    }
+
+    /// Returns open item ids reachable from one dock space.
+    pub fn items_in_space(&self, space: impl Into<DockSpaceId>, cx: &App) -> Vec<DockItemId> {
+        let space = space.into();
+        cx.read_entity(&self.controller, |controller, _| {
+            controller.graph().collect_items_in_space(&space)
+        })
+    }
+
+    /// Returns selected panels in stable tree order for one dock space.
+    pub fn selected_panels_in_space(
+        &self,
+        space: impl Into<DockSpaceId>,
+        cx: &App,
+    ) -> Vec<DockItemId> {
+        let space = space.into();
+        cx.read_entity(&self.controller, |controller, _| {
+            let graph = controller.graph();
+            graph
+                .tabs_in_space(&space)
+                .into_iter()
+                .filter_map(|tabs| graph.selected_item_in_tabs(tabs))
+                .collect()
+        })
+    }
+
+    /// Returns the first selected panel in stable tree order for one dock space.
+    pub fn selected_panel_in_space(
+        &self,
+        space: impl Into<DockSpaceId>,
+        cx: &App,
+    ) -> Option<DockItemId> {
+        self.selected_panels_in_space(space, cx).into_iter().next()
+    }
+
+    /// Returns in-window floating containers for one dock space.
+    pub fn floating_panels_in_space(
+        &self,
+        space: impl Into<DockSpaceId>,
+        cx: &App,
+    ) -> Vec<DockSurfaceFloatingPanelSnapshot> {
+        let space = space.into();
+        cx.read_entity(&self.controller, |controller, _| {
+            let graph = controller.graph();
+            graph
+                .floating_containers(&space)
+                .iter()
+                .map(|container| {
+                    DockSurfaceFloatingPanelSnapshot::new(
+                        space.clone(),
+                        graph.collect_items_in_subtree(container.node),
+                        container.bounds,
+                    )
+                })
+                .collect()
+        })
+    }
+
+    /// Returns semantic location facts for one open panel.
+    pub fn panel_location(
+        &self,
+        item: impl Into<DockItemId>,
+        cx: &App,
+    ) -> Option<DockSurfacePanelLocation> {
+        let item = item.into();
+        cx.read_entity(&self.controller, |controller, _| {
+            panel_location(controller, &item)
+        })
+    }
+
+    /// Returns descriptor and lifecycle snapshots for registered panels in stable item-id order.
+    pub fn registered_panels(&self, cx: &App) -> Vec<DockSurfacePanelSnapshot> {
+        cx.read_entity(&self.controller, |controller, _| {
+            controller
+                .panels()
+                .descriptors()
+                .into_iter()
+                .map(|(item, descriptor)| {
+                    let location = panel_location(controller, &item);
+                    DockSurfacePanelSnapshot::new(
+                        item.clone(),
+                        descriptor,
+                        controller.panels().has_view_lifecycle(&item),
+                        location,
+                    )
+                })
+                .collect()
+        })
+    }
+
+    /// Exports durable dock layout state without exposing the graph controller.
+    pub fn export_layout(&self, cx: &App) -> DockLayout {
+        cx.read_entity(&self.controller, |controller, _| {
+            controller.graph().export_layout()
+        })
+    }
+
     /// Opens a registered panel using descriptor last-known or default placement.
     pub fn open_panel(
         &self,
@@ -282,4 +506,32 @@ impl DockSurface {
         })
         .map_err(DockSurfacePanelError::from)
     }
+}
+
+fn panel_location(
+    controller: &DockController,
+    item: &DockItemId,
+) -> Option<DockSurfacePanelLocation> {
+    let graph = controller.graph();
+    graph
+        .spaces()
+        .into_iter()
+        .find_map(|space| panel_location_in_space(graph, space, item))
+}
+
+fn panel_location_in_space(
+    graph: &crate::DockGraph,
+    space: DockSpaceId,
+    item: &DockItemId,
+) -> Option<DockSurfacePanelLocation> {
+    let (_, tab_index) = graph.find_item_in_space(&space, item)?;
+    let kind = if graph
+        .root(&space)
+        .is_some_and(|root| graph.subtree_contains_item(root, item))
+    {
+        DockSurfacePanelLocationKind::Docked
+    } else {
+        DockSurfacePanelLocationKind::Floating
+    };
+    Some(DockSurfacePanelLocation::new(space, kind, tab_index))
 }

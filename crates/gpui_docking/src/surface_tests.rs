@@ -1,11 +1,11 @@
 use crate::{
-    DockController, DockLayout, DockPanelOpenPlacementSource, DockPanelPlacement,
+    DockController, DockItemId, DockLayout, DockPanelOpenPlacementSource, DockPanelPlacement,
     DockPanelPlacementTarget, DockSpaceId, DockSurface, DockSurfaceChange, DockSurfacePanelError,
-    DockSurfacePanelOutcome, DockSurfaceViewportCloseStatus, DockSurfaceViewportOpenOutcome,
-    DockSurfaceViewportOpenStatus, DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec,
-    DockSurfaceViewportUnavailable, DockViewportClosePolicy, DockViewportPlacement,
-    DockViewportPlacementLayout, DockViewportRestoreReadiness, DockViewportWindowBounds,
-    DockViewportWindowState,
+    DockSurfacePanelLocationKind, DockSurfacePanelOutcome, DockSurfaceViewportCloseStatus,
+    DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenStatus,
+    DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportUnavailable,
+    DockViewportClosePolicy, DockViewportPlacement, DockViewportPlacementLayout,
+    DockViewportRestoreReadiness, DockViewportWindowBounds, DockViewportWindowState,
     model::{DockLayoutNode, DockLayoutSpace},
 };
 use open_gpui::{
@@ -99,6 +99,88 @@ fn surface_primary_window_options_sets_windowed_bounds(cx: &mut open_gpui::TestA
         let options = DockSurface::primary_window_options(bounds);
 
         assert!(options.window_bounds.is_some());
+    });
+}
+
+#[open_gpui::test]
+fn surface_facade_embeds_host_and_reports_semantic_snapshots(cx: &mut open_gpui::TestAppContext) {
+    cx.update(|cx| {
+        let floating_bounds = Bounds::new(
+            open_gpui::point(px(20.0), px(30.0)),
+            size(px(240.0), px(180.0)),
+        );
+        let surface = DockSurface::builder("main")
+            .panel_placements([
+                DockPanelPlacement::center("editor").selected(),
+                DockPanelPlacement::right_rail("inspector"),
+                DockPanelPlacement::bottom_rail("terminal").fraction(0.30),
+            ])
+            .panel_factory("editor", "Editor", test_panel)
+            .panel_factory("inspector", "Inspector", test_panel)
+            .panel_factory("terminal", "Terminal", test_panel)
+            .allow_floating(true)
+            .build(cx)
+            .expect("surface layout should validate");
+
+        let _embedded_host = surface.host_view(cx);
+        assert_eq!(surface.dock_spaces(cx), vec![DockSpaceId::from("main")]);
+        assert_eq!(
+            surface.selected_panel_in_space("main", cx),
+            Some("editor".into())
+        );
+
+        surface
+            .float_panel_in_window("terminal", floating_bounds, cx)
+            .expect("terminal should float");
+
+        let mut items = surface.items_in_space("main", cx);
+        items.sort();
+        assert_eq!(
+            items,
+            vec!["editor".into(), "inspector".into(), "terminal".into()]
+        );
+
+        let terminal_location = surface
+            .panel_location("terminal", cx)
+            .expect("terminal should have a semantic location");
+        assert_eq!(terminal_location.space(), &DockSpaceId::from("main"));
+        assert_eq!(
+            terminal_location.kind(),
+            DockSurfacePanelLocationKind::Floating
+        );
+        assert_eq!(terminal_location.tab_index(), 0);
+
+        let inspector_location = surface
+            .panel_location("inspector", cx)
+            .expect("inspector should have a semantic location");
+        assert_eq!(
+            inspector_location.kind(),
+            DockSurfacePanelLocationKind::Docked
+        );
+
+        let floating = surface.floating_panels_in_space("main", cx);
+        assert_eq!(floating.len(), 1);
+        assert_eq!(floating[0].space(), &DockSpaceId::from("main"));
+        assert_eq!(floating[0].items(), &[DockItemId::from("terminal")]);
+        assert_eq!(floating[0].bounds(), floating_bounds);
+
+        let registered = surface.registered_panels(cx);
+        assert_eq!(registered.len(), 3);
+        let editor = registered
+            .iter()
+            .find(|panel| panel.item() == &DockItemId::from("editor"))
+            .expect("editor descriptor should be registered");
+        assert_eq!(editor.descriptor().title(), "Editor");
+        assert!(editor.has_view_lifecycle());
+        assert_eq!(
+            editor.location().map(|location| location.kind()),
+            Some(DockSurfacePanelLocationKind::Docked)
+        );
+
+        let exported = surface.export_layout(cx);
+        assert_eq!(exported.spaces.len(), 1);
+        assert_eq!(exported.spaces[0].id, DockSpaceId::from("main"));
+        assert_eq!(exported.spaces[0].floatings.len(), 1);
     });
 }
 

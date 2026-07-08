@@ -3,7 +3,11 @@ mod panel;
 mod viewport;
 
 pub use builder::{DockSurfaceBuildError, DockSurfaceBuilder};
-pub use panel::{DockSurfaceChange, DockSurfacePanelError, DockSurfacePanelOutcome};
+pub use panel::{
+    DockSurfaceChange, DockSurfaceFloatingPanelSnapshot, DockSurfacePanelError,
+    DockSurfacePanelLocation, DockSurfacePanelLocationKind, DockSurfacePanelOutcome,
+    DockSurfacePanelSnapshot,
+};
 pub use viewport::{
     DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
     DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus,
@@ -16,8 +20,8 @@ use crate::{
     DockController, DockHost, DockSpaceId, DockViewportClosePolicy, DockViewportRuntimeHandle,
 };
 use open_gpui::{
-    AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, Pixels, Result as GpuiResult,
-    WindowBounds, WindowOptions,
+    AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, Pixels,
+    Result as GpuiResult, WindowBounds, WindowOptions,
 };
 
 /// Application-level owner for one docked workspace and its viewport runtime.
@@ -84,6 +88,18 @@ impl DockSurface {
             self.viewport_runtime.clone(),
             cx,
         )
+    }
+
+    /// Creates an erased GPUI view that renders the primary dock space inside an existing window.
+    pub fn host_view(&self, cx: &mut App) -> AnyView {
+        self.host_view_for_space(self.primary_space.clone(), cx)
+    }
+
+    /// Creates an erased GPUI view that renders one logical dock space inside an existing window.
+    pub fn host_view_for_space(&self, space: impl Into<DockSpaceId>, cx: &mut App) -> AnyView {
+        let surface = self.clone();
+        let space = space.into();
+        cx.new(move |cx| surface.host(space, cx)).into()
     }
 
     /// Opens a normal GPUI window that renders the primary dock host.

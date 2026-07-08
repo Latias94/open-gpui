@@ -289,11 +289,13 @@ pub use panel_registry::{DockPanelAttachError, DockPanelRegistration, DockPanelR
 pub use policy::{DockPolicy, DockPolicyError};
 pub use surface::{
     DockSurface, DockSurfaceBuildError, DockSurfaceBuilder, DockSurfaceChange,
-    DockSurfacePanelError, DockSurfacePanelOutcome, DockSurfaceViewportCloseOutcome,
-    DockSurfaceViewportCloseStatus, DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenReport,
-    DockSurfaceViewportOpenStatus, DockSurfaceViewportOpened,
-    DockSurfaceViewportShouldCloseOutcome, DockSurfaceViewportShouldCloseStatus,
-    DockSurfaceViewportSpec, DockSurfaceViewportSpecError, DockSurfaceViewportUnavailable,
+    DockSurfaceFloatingPanelSnapshot, DockSurfacePanelError, DockSurfacePanelLocation,
+    DockSurfacePanelLocationKind, DockSurfacePanelOutcome, DockSurfacePanelSnapshot,
+    DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
+    DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus,
+    DockSurfaceViewportOpened, DockSurfaceViewportShouldCloseOutcome,
+    DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportSpecError,
+    DockSurfaceViewportUnavailable,
 };
 pub(crate) use viewport::*;
 #[cfg(test)]

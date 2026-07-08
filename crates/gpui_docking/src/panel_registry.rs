@@ -137,6 +137,11 @@ impl DockPanelRegistry {
         &self.catalog
     }
 
+    /// Returns registered descriptor metadata in stable item-id order.
+    pub fn descriptors(&self) -> Vec<(DockItemId, DockPanelDescriptor)> {
+        self.catalog.descriptors()
+    }
+
     /// Returns panel metadata without instantiating or exposing a live view.
     pub fn descriptor(&self, item: &DockItemId) -> Option<&DockPanelDescriptor> {
         self.catalog().descriptor(item)

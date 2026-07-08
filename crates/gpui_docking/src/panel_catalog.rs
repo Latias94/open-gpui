@@ -180,6 +180,17 @@ impl DockPanelCatalog {
         self.descriptors.get(item)
     }
 
+    /// Returns registered descriptor metadata in stable item-id order.
+    pub fn descriptors(&self) -> Vec<(DockItemId, DockPanelDescriptor)> {
+        let mut descriptors = self
+            .descriptors
+            .iter()
+            .map(|(item, descriptor)| (item.clone(), descriptor.clone()))
+            .collect::<Vec<_>>();
+        descriptors.sort_by(|(left, _), (right, _)| left.cmp(right));
+        descriptors
+    }
+
     pub(crate) fn descriptor_mut(&mut self, item: &DockItemId) -> Option<&mut DockPanelDescriptor> {
         self.descriptors.get_mut(item)
     }
