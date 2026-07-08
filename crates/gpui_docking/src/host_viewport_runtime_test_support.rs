@@ -53,6 +53,16 @@ pub(crate) struct DockViewportVisualHostFixture {
     pub(crate) host: Entity<DockHost>,
 }
 
+pub(crate) struct DockViewportHostSceneSeed {
+    space: DockSpaceId,
+    window: AnyWindowHandle,
+    root: DockNodeId,
+    target_tabs: DockNodeId,
+    window_bounds: WindowBounds,
+    host_bounds: Bounds<Pixels>,
+    host_position: Point<Pixels>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockCrossWindowDragRelease {
     Hold,
@@ -280,6 +290,106 @@ impl DockViewportVisualHostFixture {
     pub(crate) fn has_drop_preview(&self, cx: &mut TestAppContext) -> bool {
         let visual = self.visual(cx);
         selector_for(&visual, &self.host, DockDebugRegion::DropPreview).is_some()
+    }
+}
+
+impl DockViewportHostSceneSeed {
+    pub(crate) fn new(
+        space: impl Into<DockSpaceId>,
+        window: AnyWindowHandle,
+        tabs: DockNodeId,
+    ) -> Self {
+        let host_bounds = Self::default_host_bounds();
+        Self {
+            space: space.into(),
+            window,
+            root: tabs,
+            target_tabs: tabs,
+            window_bounds: Self::default_window_bounds(),
+            host_bounds,
+            host_position: center_drop_position(host_bounds),
+        }
+    }
+
+    pub(crate) fn default_window_bounds() -> WindowBounds {
+        WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0))
+    }
+
+    fn default_host_bounds() -> Bounds<Pixels> {
+        floating_bounds(0.0, 0.0, 360.0, 220.0)
+    }
+
+    pub(crate) fn with_root(mut self, root: DockNodeId) -> Self {
+        self.root = root;
+        self
+    }
+
+    pub(crate) fn with_window_bounds(mut self, window_bounds: WindowBounds) -> Self {
+        self.window_bounds = window_bounds;
+        self
+    }
+
+    pub(crate) fn with_host_position(mut self, host_position: Point<Pixels>) -> Self {
+        self.host_position = host_position;
+        self
+    }
+
+    pub(crate) fn host_position(&self) -> Point<Pixels> {
+        self.host_position
+    }
+
+    pub(crate) fn screen_position(&self) -> Point<Pixels> {
+        screen_position_for_host_position(self.window_bounds, self.host_position)
+    }
+
+    pub(crate) fn publish(self, runtime: &DockViewportRuntimeHandle) {
+        let Self {
+            space,
+            window,
+            root,
+            target_tabs,
+            window_bounds,
+            host_bounds,
+            host_position,
+        } = self;
+        let window_id = window.window_id();
+        assert!(runtime.begin_viewport_host_scene(
+            space.clone(),
+            window_id,
+            DockViewportWindowFacts::from_window_bounds(window_bounds),
+            host_bounds,
+            host_position,
+        ));
+        assert!(runtime.push_viewport_host_scene_fact(
+            &space,
+            window_id,
+            leaf_host_scene_fact(root, target_tabs),
+        ));
+    }
+
+    pub(crate) fn publish_runtime(self, runtime: &mut DockViewportRuntime) {
+        let Self {
+            space,
+            window,
+            root,
+            target_tabs,
+            window_bounds,
+            host_bounds,
+            host_position,
+        } = self;
+        let window_id = window.window_id();
+        assert!(runtime.begin_viewport_host_scene(
+            space.clone(),
+            window_id,
+            DockViewportWindowFacts::from_window_bounds(window_bounds),
+            host_bounds,
+            host_position,
+        ));
+        assert!(runtime.push_viewport_host_scene_fact(
+            &space,
+            window_id,
+            leaf_host_scene_fact(root, target_tabs),
+        ));
     }
 }
 
@@ -547,21 +657,10 @@ pub(crate) fn cache_known_viewport_preview_for_test(
     target_tabs: DockNodeId,
     cx: &mut TestAppContext,
 ) -> crate::interaction::DockRuntimeDragSession {
-    let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-    let host_position = center_drop_position(host_bounds);
-    assert!(runtime.begin_viewport_host_scene(
-        target_space.clone(),
-        target_window.window_id(),
-        DockViewportWindowFacts::from_window_bounds(window_bounds),
-        host_bounds,
-        host_position,
-    ));
-    assert!(runtime.push_viewport_host_scene_fact(
-        target_space,
-        target_window.window_id(),
-        leaf_host_scene_fact(target_tabs, target_tabs),
-    ));
+    let host_scene =
+        DockViewportHostSceneSeed::new(target_space.clone(), target_window, target_tabs);
+    let release_position = host_scene.screen_position();
+    host_scene.publish_runtime(runtime);
 
     let payload = DockDragPayload::new_item(
         source_space.clone(),
@@ -574,7 +673,7 @@ pub(crate) fn cache_known_viewport_preview_for_test(
         source_space,
         source_tabs,
         DockViewportDropPayload::Item(item("a")),
-        point(px(220.0), px(200.0)),
+        release_position,
         None,
         target_window,
         DockPayloadDropReleaseOrigin::HoveredHost,
@@ -603,21 +702,7 @@ pub(crate) fn seed_runtime_host_scene_for_test(
     window: AnyWindowHandle,
     tabs: DockNodeId,
 ) {
-    let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-    let host_position = center_drop_position(host_bounds);
-    assert!(runtime.begin_viewport_host_scene(
-        space.clone(),
-        window.window_id(),
-        DockViewportWindowFacts::from_window_bounds(window_bounds),
-        host_bounds,
-        host_position,
-    ));
-    assert!(runtime.push_viewport_host_scene_fact(
-        space,
-        window.window_id(),
-        leaf_host_scene_fact(tabs, tabs),
-    ));
+    DockViewportHostSceneSeed::new(space.clone(), window, tabs).publish(runtime);
 }
 
 pub(crate) fn cache_known_viewport_preview(

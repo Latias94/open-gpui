@@ -260,9 +260,7 @@ mod runtime_suite {
         workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
         let controller = cx.new(|_| DockController::new(workspace));
         let runtime = DockViewportRuntimeHandle::new(controller);
-        let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-        let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-        let host_position = center_drop_position(host_bounds);
+        let window_bounds = DockViewportHostSceneSeed::default_window_bounds();
         let opened = cx
             .update(|app| {
                 runtime.open_viewport_unchecked_policy(
@@ -278,24 +276,19 @@ mod runtime_suite {
             .expect("source viewport should open through runtime");
         let source_window = opened.window();
 
-        assert!(runtime.begin_viewport_host_scene(
-            source_space.clone(),
-            source_window.window_id(),
-            DockViewportWindowFacts::from_window_bounds(window_bounds),
-            host_bounds,
-            host_position,
-        ));
-        assert!(runtime.push_viewport_host_scene_fact(
-            &source_space,
-            source_window.window_id(),
-            leaf_host_scene_fact(root, target_tabs),
-        ));
+        let host_scene =
+            DockViewportHostSceneSeed::new(source_space.clone(), source_window, target_tabs)
+                .with_root(root)
+                .with_window_bounds(window_bounds);
+        let host_position = host_scene.host_position();
+        let release_position = host_scene.screen_position();
+        host_scene.publish(&runtime);
 
         let request = DockViewportDropRouteRequest::from_target_context(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
-            screen_position_for_host_position(window_bounds, host_position),
+            release_position,
             None,
             DockViewportTargetContext::new(),
         );
@@ -319,7 +312,7 @@ mod runtime_suite {
             source_space,
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
-            screen_position_for_host_position(window_bounds, host_position),
+            release_position,
             None,
             DockViewportTargetContext::new().with_trusted_hovered_window(source_window),
         );
@@ -387,21 +380,11 @@ mod runtime_suite {
             DockViewportClosePolicy::RetainLayout,
         );
 
-        let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-        let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-        let host_position = center_drop_position(host_bounds);
-        assert!(runtime.begin_viewport_host_scene(
-            source_space.clone(),
-            source_window.window_id(),
-            DockViewportWindowFacts::from_window_bounds(window_bounds),
-            host_bounds,
-            host_position,
-        ));
-        assert!(runtime.push_viewport_host_scene_fact(
-            &source_space,
-            source_window.window_id(),
-            leaf_host_scene_fact(root, target_tabs),
-        ));
+        let host_scene =
+            DockViewportHostSceneSeed::new(source_space.clone(), source_window, target_tabs)
+                .with_root(root);
+        let release_position = host_scene.screen_position();
+        host_scene.publish_runtime(&mut runtime);
         let payload = DockDragPayload::new_item(
             source_space.clone(),
             source_tabs,
@@ -414,7 +397,7 @@ mod runtime_suite {
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
-            screen_position_for_host_position(window_bounds, host_position),
+            release_position,
             None,
             crate::DockViewportPlatformSignals::from_target_context(
                 DockViewportTargetContext::new().with_trusted_hovered_window(source_window),
@@ -504,8 +487,7 @@ mod runtime_suite {
         let controller = cx.new(|_| DockController::new(workspace));
         let runtime = DockViewportRuntimeHandle::new(controller);
 
-        let target_window_bounds =
-            WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+        let target_window_bounds = DockViewportHostSceneSeed::default_window_bounds();
         let target_opened = cx
             .update(|app| {
                 runtime.open_viewport_unchecked_policy(
@@ -520,18 +502,15 @@ mod runtime_suite {
             })
             .expect("target viewport should open without taking focus");
 
-        assert!(runtime.begin_viewport_host_scene(
+        let target_scene = DockViewportHostSceneSeed::new(
             target_space.clone(),
-            target_opened.window().window_id(),
-            DockViewportWindowFacts::from_window_bounds(target_window_bounds),
-            floating_bounds(0.0, 0.0, 360.0, 220.0),
-            point(px(120.0), px(100.0)),
-        ));
-        assert!(runtime.push_viewport_host_scene_fact(
-            &target_space,
-            target_opened.window().window_id(),
-            leaf_host_scene_fact(target_tabs, target_tabs),
-        ));
+            target_opened.window(),
+            target_tabs,
+        )
+        .with_window_bounds(target_window_bounds)
+        .with_host_position(point(px(120.0), px(100.0)));
+        let release_position = target_scene.screen_position();
+        target_scene.publish(&runtime);
 
         let platform_signals = cx.update(|app| {
             crate::DockViewportPlatformSignals::from_app_without_hovered_window_signal(app)
@@ -540,7 +519,7 @@ mod runtime_suite {
             source_space,
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
-            point(px(220.0), px(200.0)),
+            release_position,
             None,
             platform_signals,
             DockPayloadDropReleaseOrigin::SourceOnly,
@@ -579,10 +558,8 @@ mod runtime_suite {
         let controller = cx.new(|_| DockController::new(workspace));
         let runtime = DockViewportRuntimeHandle::new(controller.clone());
 
-        let source_window_bounds =
-            WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-        let target_window_bounds =
-            WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+        let source_window_bounds = DockViewportHostSceneSeed::default_window_bounds();
+        let target_window_bounds = DockViewportHostSceneSeed::default_window_bounds();
         let source_opened = cx
             .update(|app| {
                 runtime.open_viewport_unchecked_policy(
@@ -613,18 +590,15 @@ mod runtime_suite {
             .expect("source viewport should be activatable");
         cx.run_until_parked();
 
-        assert!(runtime.begin_viewport_host_scene(
+        let target_scene = DockViewportHostSceneSeed::new(
             target_space.clone(),
-            target_opened.window().window_id(),
-            DockViewportWindowFacts::from_window_bounds(target_window_bounds),
-            floating_bounds(0.0, 0.0, 360.0, 220.0),
-            point(px(120.0), px(100.0)),
-        ));
-        assert!(runtime.push_viewport_host_scene_fact(
-            &target_space,
-            target_opened.window().window_id(),
-            leaf_host_scene_fact(target_tabs, target_tabs),
-        ));
+            target_opened.window(),
+            target_tabs,
+        )
+        .with_window_bounds(target_window_bounds)
+        .with_host_position(point(px(120.0), px(100.0)));
+        let release_position = target_scene.screen_position();
+        target_scene.publish(&runtime);
         let payload = DockDragPayload::new_item(
             source_space.clone(),
             source_tabs,
@@ -635,7 +609,7 @@ mod runtime_suite {
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
-            point(px(220.0), px(200.0)),
+            release_position,
             None,
             DockViewportTargetContext::new().with_trusted_hovered_window(target_opened.window()),
         );
@@ -651,7 +625,6 @@ mod runtime_suite {
             "preview should store routed delivery for the hovered target"
         );
 
-        let release_position = point(px(220.0), px(200.0));
         let request_without_hovered_or_stack = DockViewportDropRouteRequest::from_target_context(
             source_space.clone(),
             source_tabs,
@@ -785,8 +758,7 @@ mod runtime_suite {
 
         let source_window_bounds =
             WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
-        let target_window_bounds =
-            WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+        let target_window_bounds = DockViewportHostSceneSeed::default_window_bounds();
         let source_opened = cx
             .update(|app| {
                 runtime.open_viewport_unchecked_policy(
@@ -812,22 +784,15 @@ mod runtime_suite {
             })
             .expect("target viewport should open");
 
-        let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-        let host_position = point(px(120.0), px(100.0));
-        let release_position =
-            screen_position_for_host_position(target_window_bounds, host_position);
-        assert!(runtime.begin_viewport_host_scene(
+        let target_scene = DockViewportHostSceneSeed::new(
             target_space.clone(),
-            target_opened.window().window_id(),
-            DockViewportWindowFacts::from_window_bounds(target_window_bounds),
-            host_bounds,
-            host_position,
-        ));
-        assert!(runtime.push_viewport_host_scene_fact(
-            &target_space,
-            target_opened.window().window_id(),
-            leaf_host_scene_fact(target_tabs, target_tabs),
-        ));
+            target_opened.window(),
+            target_tabs,
+        )
+        .with_window_bounds(target_window_bounds)
+        .with_host_position(point(px(120.0), px(100.0)));
+        let release_position = target_scene.screen_position();
+        target_scene.publish(&runtime);
 
         let payload = DockDragPayload::new_item(
             source_space.clone(),
@@ -1486,27 +1451,16 @@ mod runtime_suite {
             DockViewportClosePolicy::RetainLayout,
         );
 
-        let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-        let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-        let host_position = center_drop_position(host_bounds);
-        assert!(runtime.begin_viewport_host_scene(
-            target_space.clone(),
-            target_window.window_id(),
-            DockViewportWindowFacts::from_window_bounds(window_bounds),
-            host_bounds,
-            host_position,
-        ));
-        assert!(runtime.push_viewport_host_scene_fact(
-            &target_space,
-            target_window.window_id(),
-            leaf_host_scene_fact(target_tabs, target_tabs),
-        ));
+        let host_scene =
+            DockViewportHostSceneSeed::new(target_space.clone(), target_window, target_tabs);
+        let release_position = host_scene.screen_position();
+        host_scene.publish_runtime(&mut runtime);
 
         let request = hovered_window_route_request_for_test(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
-            screen_position_for_host_position(window_bounds, host_position),
+            release_position,
             None,
             target_window,
             DockPayloadDropReleaseOrigin::HoveredHost,
@@ -1568,21 +1522,10 @@ mod runtime_suite {
             DockViewportClosePolicy::RetainLayout,
         );
 
-        let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-        let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-        let host_position = center_drop_position(host_bounds);
-        assert!(runtime.begin_viewport_host_scene(
-            target_space.clone(),
-            target_window.window_id(),
-            DockViewportWindowFacts::from_window_bounds(window_bounds),
-            host_bounds,
-            host_position,
-        ));
-        assert!(runtime.push_viewport_host_scene_fact(
-            &target_space,
-            target_window.window_id(),
-            leaf_host_scene_fact(target_tabs, target_tabs),
-        ));
+        let host_scene =
+            DockViewportHostSceneSeed::new(target_space.clone(), target_window, target_tabs);
+        let release_position = host_scene.screen_position();
+        host_scene.publish_runtime(&mut runtime);
 
         let payload = DockDragPayload::new_item(
             source_space.clone(),
@@ -1595,7 +1538,7 @@ mod runtime_suite {
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
-            screen_position_for_host_position(window_bounds, host_position),
+            release_position,
             None,
             target_window,
             DockPayloadDropReleaseOrigin::HoveredHost,
