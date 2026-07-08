@@ -13,5 +13,6 @@ pub use crate::{
     DockSurfaceViewportOpened, DockSurfaceViewportShouldCloseOutcome,
     DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportSpecError,
     DockSurfaceViewportUnavailable, DockViewportClosePolicy, DockViewportPlacement,
-    DockViewportPlacementLayout, DockViewportWindowBounds, DockViewportWindowState,
+    DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportRestoreReadiness, DockViewportWindowBounds, DockViewportWindowState,
 };

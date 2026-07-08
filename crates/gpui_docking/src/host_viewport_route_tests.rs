@@ -265,7 +265,7 @@ mod runtime_suite {
         let host_position = center_drop_position(host_bounds);
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     WindowOptions {
                         window_bounds: Some(window_bounds),
@@ -508,7 +508,7 @@ mod runtime_suite {
             WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(target_window_bounds),
@@ -585,7 +585,7 @@ mod runtime_suite {
             WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     WindowOptions {
                         window_bounds: Some(source_window_bounds),
@@ -597,7 +597,7 @@ mod runtime_suite {
             .expect("source viewport should open");
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(target_window_bounds),
@@ -789,7 +789,7 @@ mod runtime_suite {
             WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     WindowOptions {
                         window_bounds: Some(source_window_bounds),
@@ -801,7 +801,7 @@ mod runtime_suite {
             .expect("source viewport should open");
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(target_window_bounds),
@@ -1238,7 +1238,7 @@ mod runtime_suite {
 
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(floating_bounds(
@@ -1252,7 +1252,7 @@ mod runtime_suite {
             .expect("source viewport should open");
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(floating_bounds(
@@ -1762,7 +1762,7 @@ mod handle_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -1986,7 +1986,7 @@ mod handle_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -2082,7 +2082,7 @@ mod handle_suite {
 
         let first_target = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     first_target_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -2091,7 +2091,7 @@ mod handle_suite {
             .expect("first target viewport should open");
         let second_target = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     second_target_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -2227,7 +2227,7 @@ mod handle_suite {
         let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(target_bounds),
@@ -2253,7 +2253,7 @@ mod handle_suite {
         let source_bounds = WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     WindowOptions {
                         window_bounds: Some(source_bounds),
@@ -2376,7 +2376,7 @@ mod handle_suite {
         let source_bounds = WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     WindowOptions {
                         window_bounds: Some(source_bounds),
@@ -2389,7 +2389,7 @@ mod handle_suite {
         let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(target_bounds),
@@ -2526,7 +2526,7 @@ mod handle_suite {
         let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(target_bounds),
@@ -2640,7 +2640,7 @@ mod handle_suite {
         let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(target_bounds),
@@ -2778,7 +2778,7 @@ mod handle_suite {
         let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(target_bounds),
@@ -2895,7 +2895,7 @@ mod handle_suite {
         let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(target_bounds),
@@ -2908,7 +2908,7 @@ mod handle_suite {
         let source_bounds = WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     WindowOptions {
                         window_bounds: Some(source_bounds),
@@ -3087,7 +3087,7 @@ mod handle_suite {
         let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(target_bounds),
@@ -3099,7 +3099,7 @@ mod handle_suite {
             .expect("target viewport should open");
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(floating_bounds(

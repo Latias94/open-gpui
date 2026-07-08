@@ -66,7 +66,7 @@ mod runtime_suite {
         let runtime = DockViewportRuntimeHandle::new(controller);
         let main = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -78,7 +78,7 @@ mod runtime_suite {
             .expect("main viewport should open through runtime");
         let detached = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     detached_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -169,13 +169,19 @@ mod runtime_suite {
         };
 
         let main = cx
-            .update(|app| runtime.open_viewport(main_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(main_space.clone(), open_options(), app)
+            })
             .expect("main viewport should open");
         let inspector = cx
-            .update(|app| runtime.open_viewport(inspector_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(inspector_space.clone(), open_options(), app)
+            })
             .expect("inspector viewport should open");
         let detached = cx
-            .update(|app| runtime.open_viewport(detached_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(detached_space.clone(), open_options(), app)
+            })
             .expect("detached viewport should open");
         runtime.record_panel_focus(detached_space.clone(), item("c"));
 
@@ -281,10 +287,14 @@ mod runtime_suite {
         };
 
         let main = cx
-            .update(|app| runtime.open_viewport(main_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(main_space.clone(), open_options(), app)
+            })
             .expect("main viewport should open");
         let detached = cx
-            .update(|app| runtime.open_viewport(detached_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(detached_space.clone(), open_options(), app)
+            })
             .expect("detached viewport should open");
         let plain_root = test_view(cx, "Plain");
         let non_docking = cx
@@ -386,10 +396,14 @@ mod runtime_suite {
         };
 
         let main = cx
-            .update(|app| runtime.open_viewport(main_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(main_space.clone(), open_options(), app)
+            })
             .expect("main viewport should open");
         let detached = cx
-            .update(|app| runtime.open_viewport(detached_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(detached_space.clone(), open_options(), app)
+            })
             .expect("detached viewport should open");
         runtime.record_panel_focus(main_space.clone(), item("a"));
 
@@ -473,7 +487,9 @@ mod runtime_suite {
             ..Default::default()
         };
         let main = cx
-            .update(|app| runtime.open_viewport(main_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(main_space.clone(), open_options(), app)
+            })
             .expect("main viewport should open");
         let main_host = main
             .window()
@@ -482,10 +498,14 @@ mod runtime_suite {
             .root(cx)
             .expect("main viewport should expose DockHost root");
         let _inspector = cx
-            .update(|app| runtime.open_viewport(inspector_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(inspector_space.clone(), open_options(), app)
+            })
             .expect("inspector viewport should open");
         let detached = cx
-            .update(|app| runtime.open_viewport(detached_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(detached_space.clone(), open_options(), app)
+            })
             .expect("detached viewport should open");
         runtime.record_panel_focus(detached_space.clone(), item("c"));
 
@@ -553,7 +573,7 @@ mod runtime_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -608,7 +628,7 @@ mod runtime_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -653,7 +673,7 @@ mod runtime_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -1072,7 +1092,7 @@ mod runtime_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     detached_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -1156,7 +1176,7 @@ mod runtime_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     detached_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -1308,13 +1328,19 @@ mod runtime_suite {
             ..Default::default()
         };
         let _main = cx
-            .update(|app| runtime.open_viewport(main_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(main_space.clone(), open_options(), app)
+            })
             .expect("main viewport should open");
         let _inspector = cx
-            .update(|app| runtime.open_viewport(inspector_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(inspector_space.clone(), open_options(), app)
+            })
             .expect("inspector viewport should open");
         let detached = cx
-            .update(|app| runtime.open_viewport(detached_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(detached_space.clone(), open_options(), app)
+            })
             .expect("detached viewport should open");
         runtime.record_panel_focus(detached_space.clone(), item("a"));
 
@@ -1402,10 +1428,14 @@ mod runtime_suite {
             ..Default::default()
         };
         let _main = cx
-            .update(|app| runtime.open_viewport(main_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(main_space.clone(), open_options(), app)
+            })
             .expect("main viewport should open");
         let detached = cx
-            .update(|app| runtime.open_viewport(detached_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(detached_space.clone(), open_options(), app)
+            })
             .expect("detached viewport should open");
 
         let should_close = cx.update(|app| {
@@ -1510,10 +1540,14 @@ mod runtime_suite {
             ..Default::default()
         };
         let _main = cx
-            .update(|app| runtime.open_viewport(main_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(main_space.clone(), open_options(), app)
+            })
             .expect("main viewport should open");
         let detached = cx
-            .update(|app| runtime.open_viewport(detached_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(detached_space.clone(), open_options(), app)
+            })
             .expect("detached viewport should open");
 
         let should_close = cx.update(|app| {
@@ -2170,7 +2204,11 @@ mod runtime_suite {
 
         let reused = cx
             .update(|app| {
-                runtime.open_viewport(secondary_space, viewport_window_options(480.0, 260.0), app)
+                runtime.open_viewport_unchecked_policy(
+                    secondary_space,
+                    viewport_window_options(480.0, 260.0),
+                    app,
+                )
             })
             .expect("registered live viewport should be reused through runtime");
 
@@ -2597,7 +2635,7 @@ mod handle_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -2648,7 +2686,7 @@ mod handle_suite {
 
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -2657,7 +2695,7 @@ mod handle_suite {
             .expect("source viewport should open through runtime handle");
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -2757,7 +2795,7 @@ mod handle_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -2814,7 +2852,7 @@ mod handle_suite {
 
         let reopened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -2859,7 +2897,7 @@ mod handle_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -2876,7 +2914,7 @@ mod handle_suite {
         );
         let reopened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -2928,7 +2966,7 @@ mod handle_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     detached_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -3005,7 +3043,7 @@ mod handle_suite {
 
         let main_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -3014,7 +3052,7 @@ mod handle_suite {
             .expect("main viewport should open");
         let detached_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     detached_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -3108,7 +3146,7 @@ mod handle_suite {
 
         let main_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -3117,7 +3155,7 @@ mod handle_suite {
             .expect("main viewport should open");
         let detached_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     detached_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -3182,7 +3220,7 @@ mod handle_suite {
         let runtime = DockViewportRuntimeHandle::new(controller.clone());
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     primary_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -3264,7 +3302,7 @@ mod handle_suite {
         let runtime = DockViewportRuntimeHandle::new(controller.clone());
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     primary_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -3646,7 +3684,7 @@ mod handle_suite {
 
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -3655,7 +3693,7 @@ mod handle_suite {
             .expect("source viewport should open");
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     viewport_window_options(420.0, 240.0),
                     app,
@@ -3820,7 +3858,7 @@ mod handle_suite {
 
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -3829,7 +3867,7 @@ mod handle_suite {
             .expect("source viewport should open");
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     viewport_window_options(420.0, 240.0),
                     app,
@@ -3956,7 +3994,7 @@ mod handle_suite {
 
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -3965,7 +4003,7 @@ mod handle_suite {
             .expect("source viewport should open");
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -4089,7 +4127,7 @@ mod handle_suite {
 
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -4098,7 +4136,7 @@ mod handle_suite {
             .expect("source viewport should open");
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -4218,7 +4256,7 @@ mod handle_suite {
 
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -4227,7 +4265,7 @@ mod handle_suite {
             .expect("source viewport should open");
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -4346,7 +4384,7 @@ mod handle_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -4403,7 +4441,7 @@ mod handle_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -4449,7 +4487,11 @@ mod handle_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(secondary_space, viewport_window_options(360.0, 220.0), app)
+                runtime.open_viewport_unchecked_policy(
+                    secondary_space,
+                    viewport_window_options(360.0, 220.0),
+                    app,
+                )
             })
             .expect("secondary viewport should open through runtime handle");
         let mut visual = VisualTestContext::from_window(opened.window(), cx);

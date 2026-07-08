@@ -38,7 +38,7 @@ fn viewport_runtime_handle_opens_and_reuses_controller_backed_window(cx: &mut Te
 
     let opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 secondary_space.clone(),
                 viewport_window_options(360.0, 220.0),
                 app,
@@ -71,7 +71,7 @@ fn viewport_runtime_handle_opens_and_reuses_controller_backed_window(cx: &mut Te
 
     let reused = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 secondary_space.clone(),
                 viewport_window_options(480.0, 260.0),
                 app,
@@ -176,6 +176,7 @@ fn viewport_runtime_handle_opens_with_saved_placement_options(cx: &mut TestAppCo
     graph.set_root(secondary_space.clone(), secondary_tabs);
 
     let mut workspace = DockWorkspace::new(secondary_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
     let controller = cx.new(|_| DockController::new(workspace));
     let runtime = DockViewportRuntimeHandle::new(controller);
@@ -196,7 +197,7 @@ fn viewport_runtime_handle_opens_with_saved_placement_options(cx: &mut TestAppCo
             let options = placement
                 .window_options_for_space(&secondary_space, fallback_options)
                 .expect("saved placement should produce window options");
-            runtime.open_viewport(secondary_space.clone(), options, app)
+            runtime.open_viewport_unchecked_policy(secondary_space.clone(), options, app)
         })
         .expect("secondary viewport should open with saved placement");
 
@@ -227,7 +228,7 @@ fn viewport_runtime_handle_reuses_window_when_saved_display_changes(cx: &mut Tes
 
     let opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 secondary_space.clone(),
                 viewport_window_options(240.0, 160.0),
                 app,
@@ -237,7 +238,7 @@ fn viewport_runtime_handle_reuses_window_when_saved_display_changes(cx: &mut Tes
 
     let reopened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 secondary_space.clone(),
                 WindowOptions {
                     display_id: Some(open_gpui::DisplayId::from(999)),

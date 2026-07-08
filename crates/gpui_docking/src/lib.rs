@@ -323,8 +323,8 @@ pub use viewport_placement::{
     DOCK_VIEWPORT_PLACEMENT_VERSION, DockViewportPlacement, DockViewportPlacementLayout,
     DockViewportWindowBounds, DockViewportWindowState,
 };
-pub(crate) use viewport_placement_adapter::DockViewportRestoreReadiness;
-pub(crate) use viewport_placement_validation::DockViewportPlacementValidationError;
+pub use viewport_placement_adapter::DockViewportRestoreReadiness;
+pub use viewport_placement_validation::DockViewportPlacementValidationError;
 pub(crate) use viewport_platform_signals::*;
 #[cfg(test)]
 pub(crate) use viewport_platform_sync::{

@@ -448,11 +448,34 @@ impl DockViewportRuntimeHandle {
         .into())
     }
 
+    fn ensure_platform_viewports_allowed(&self, cx: &App) -> Result<()> {
+        let controller = self.runtime.borrow().controller_entity();
+        cx.read_entity(&controller, |controller, _| {
+            controller.policy().validate_platform_viewports()
+        })?;
+        Ok(())
+    }
+
     /// Opens or reuses a controller-backed viewport window for a logical dock space.
+    ///
+    /// This validates the controller policy before touching backend windows. Crate-internal
+    /// runtime tests that need to exercise low-level window mechanics without policy setup use
+    /// [`Self::open_viewport_unchecked_policy`] explicitly.
+    pub fn open_viewport(
+        &self,
+        space: impl Into<DockSpaceId>,
+        options: WindowOptions,
+        cx: &mut App,
+    ) -> Result<DockViewportOpenOutcome> {
+        self.ensure_platform_viewports_allowed(cx)?;
+        self.open_viewport_unchecked_policy(space, options, cx)
+    }
+
+    /// Opens or reuses a controller-backed viewport window after the caller has handled policy.
     ///
     /// The handle installs a should-close hook that consults the shared runtime at close time, so
     /// later close-policy changes are observed by already-open windows.
-    pub fn open_viewport(
+    pub(crate) fn open_viewport_unchecked_policy(
         &self,
         space: impl Into<DockSpaceId>,
         options: WindowOptions,
@@ -540,6 +563,7 @@ impl DockViewportRuntimeHandle {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<AnyWindowHandle> {
+        self.ensure_platform_viewports_allowed(cx)?;
         self.ensure_platform_viewport_windows_supported(cx)?;
         self.ensure_window_closed_observer(cx);
 

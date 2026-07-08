@@ -84,8 +84,6 @@ fn root_and_prelude_do_not_reexport_low_level_model_or_runtime_types() {
         "DockViewportFocusRequest",
         "DockViewportOpenOutcome",
         "DockViewportOpenStatus",
-        "DockViewportPlacementValidationError",
-        "DockViewportRestoreReadiness",
         "DockViewportRuntimeHandle",
         "DockViewportShouldCloseOutcome",
         "DockViewportShouldCloseStatus",
@@ -165,6 +163,23 @@ fn common_import_paths_compile() {
     let prelude_layout = prelude::DockLayout::new(Vec::new(), Vec::new());
     let root_placement = root::DockViewportPlacementLayout::new(Vec::new());
     let prelude_placement = prelude::DockViewportPlacementLayout::new(Vec::new());
+    let root_restore_readiness = root::DockViewportRestoreReadiness {
+        matched: 0,
+        missing: 0,
+    };
+    let prelude_restore_readiness = prelude::DockViewportRestoreReadiness {
+        matched: 0,
+        missing: 0,
+    };
+    let root_placement_validation_error =
+        root::DockViewportPlacementValidationError::UnsupportedVersion {
+            expected: 1,
+            found: 0,
+        };
+    let prelude_placement_validation_error =
+        prelude::DockViewportPlacementValidationError::DuplicateSpace {
+            space: "main".into(),
+        };
     let root_panel_placement = root::DockPanelPlacement::center("editor");
     let root_surface_builder = root::DockSurface::builder("main");
     let root_surface_change = root::DockSurfaceChange::Changed;
@@ -198,6 +213,10 @@ fn common_import_paths_compile() {
         prelude_layout.layout_version,
         root_placement.placement_version,
         prelude_placement.placement_version,
+        root_restore_readiness.matched,
+        prelude_restore_readiness.missing,
+        root_placement_validation_error,
+        prelude_placement_validation_error,
         root_panel_placement.item(),
         root_surface_builder,
         root_surface_change.changed(),

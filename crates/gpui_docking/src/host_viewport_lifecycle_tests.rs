@@ -324,7 +324,7 @@ mod runtime_suite {
         let runtime = DockViewportRuntimeHandle::new(controller);
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -366,7 +366,7 @@ mod runtime_suite {
         let runtime = DockViewportRuntimeHandle::new(controller);
         let first = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -397,7 +397,7 @@ mod runtime_suite {
 
         let second = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -470,7 +470,7 @@ mod runtime_suite {
         let runtime = DockViewportRuntimeHandle::new(controller);
         let alpha = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     alpha_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -482,7 +482,7 @@ mod runtime_suite {
             .expect("alpha viewport should open through runtime");
         let zeta = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     zeta_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -576,7 +576,7 @@ mod runtime_suite {
         let runtime = DockViewportRuntimeHandle::new(controller);
         let main = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -588,7 +588,7 @@ mod runtime_suite {
             .expect("main viewport should open through runtime");
         let detached = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     detached_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -677,7 +677,7 @@ mod runtime_suite {
         let runtime = DockViewportRuntimeHandle::new(controller);
         let main = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -689,7 +689,7 @@ mod runtime_suite {
             .expect("main viewport should open through runtime");
         let detached = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     detached_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -766,7 +766,7 @@ mod runtime_suite {
         let runtime = DockViewportRuntimeHandle::new(controller);
         let main = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -778,7 +778,7 @@ mod runtime_suite {
             .expect("main viewport should open through runtime");
         let detached = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     detached_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -870,7 +870,7 @@ mod runtime_suite {
         let runtime = DockViewportRuntimeHandle::new(controller);
         let main = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -882,7 +882,7 @@ mod runtime_suite {
             .expect("main viewport should open through runtime");
         let detached = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     detached_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -965,7 +965,7 @@ mod runtime_suite {
         let runtime = DockViewportRuntimeHandle::new(controller);
         let main = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -977,7 +977,7 @@ mod runtime_suite {
             .expect("main viewport should open through runtime");
         let detached = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     detached_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -1047,7 +1047,7 @@ mod runtime_suite {
         let runtime = DockViewportRuntimeHandle::new(controller);
         let main = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -1117,10 +1117,14 @@ mod runtime_suite {
             ..Default::default()
         };
         let main = cx
-            .update(|app| runtime.open_viewport(main_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(main_space.clone(), open_options(), app)
+            })
             .expect("main viewport should open through runtime");
         let detached = cx
-            .update(|app| runtime.open_viewport(detached_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(detached_space.clone(), open_options(), app)
+            })
             .expect("detached viewport should open through runtime");
         let plain_root = test_view(cx, "Plain");
         let non_docking = cx
@@ -1184,7 +1188,7 @@ mod runtime_suite {
         let runtime = DockViewportRuntimeHandle::new(controller);
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -1245,7 +1249,7 @@ mod runtime_suite {
         let runtime = DockViewportRuntimeHandle::new(controller);
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -1303,7 +1307,7 @@ mod runtime_suite {
         let runtime = DockViewportRuntimeHandle::new(controller);
         let main = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -1315,7 +1319,7 @@ mod runtime_suite {
             .expect("main viewport should open through runtime");
         let detached = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     detached_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -1375,7 +1379,7 @@ mod runtime_suite {
         let runtime = DockViewportRuntimeHandle::new(controller);
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -1440,7 +1444,7 @@ mod runtime_suite {
         let runtime = DockViewportRuntimeHandle::new(controller);
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     main_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -1516,7 +1520,7 @@ mod runtime_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -2152,7 +2156,7 @@ mod runtime_suite {
         runtime.record_panel_focus(source_space.clone(), item("a"));
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -2642,7 +2646,7 @@ mod runtime_suite {
             WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let _ = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     WindowOptions {
                         window_bounds: Some(source_window_bounds),
@@ -2655,7 +2659,7 @@ mod runtime_suite {
             .expect("source viewport should open");
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(target_window_bounds),
@@ -2668,7 +2672,7 @@ mod runtime_suite {
             .expect("target viewport should open");
         let decoy_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     decoy_space.clone(),
                     WindowOptions {
                         window_bounds: Some(decoy_window_bounds),
@@ -2781,13 +2785,19 @@ mod runtime_suite {
         };
 
         let _source_opened = cx
-            .update(|app| runtime.open_viewport(source_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(source_space.clone(), open_options(), app)
+            })
             .expect("source viewport should open");
         let target_opened = cx
-            .update(|app| runtime.open_viewport(target_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(target_space.clone(), open_options(), app)
+            })
             .expect("target viewport should open");
         let decoy_opened = cx
-            .update(|app| runtime.open_viewport(decoy_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(decoy_space.clone(), open_options(), app)
+            })
             .expect("decoy viewport should open");
         let shared_window_bounds =
             WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
@@ -2902,7 +2912,7 @@ mod runtime_suite {
             WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let _source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     WindowOptions {
                         window_bounds: Some(source_window_bounds),
@@ -2915,7 +2925,7 @@ mod runtime_suite {
             .expect("source viewport should open without taking focus");
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(target_window_bounds),
@@ -3096,13 +3106,19 @@ mod runtime_suite {
         };
 
         let _source_opened = cx
-            .update(|app| runtime.open_viewport(source_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(source_space.clone(), open_options(), app)
+            })
             .expect("source viewport should open");
         let rebound_window = cx
-            .update(|app| runtime.open_viewport(old_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(old_space.clone(), open_options(), app)
+            })
             .expect("old viewport should open");
         let decoy_opened = cx
-            .update(|app| runtime.open_viewport(decoy_space.clone(), open_options(), app))
+            .update(|app| {
+                runtime.open_viewport_unchecked_policy(decoy_space.clone(), open_options(), app)
+            })
             .expect("decoy viewport should open");
 
         assert_eq!(
@@ -3279,7 +3295,7 @@ mod handle_suite {
         );
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source.clone(),
                     WindowOptions {
                         accepts_pointer_input: true,
@@ -3368,7 +3384,7 @@ mod handle_suite {
         );
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source.clone(),
                     WindowOptions {
                         accepts_pointer_input: true,
@@ -3427,7 +3443,7 @@ mod handle_suite {
         let runtime = DockViewportRuntimeHandle::new(controller.clone());
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -3594,7 +3610,7 @@ mod handle_suite {
 
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -3623,7 +3639,7 @@ mod handle_suite {
 
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -3747,7 +3763,7 @@ mod handle_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -3834,7 +3850,7 @@ mod handle_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -3848,7 +3864,7 @@ mod handle_suite {
         let target_window_bounds = WindowBounds::Windowed(target_window_bounds.get_bounds());
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -4022,7 +4038,7 @@ mod handle_suite {
         let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(target_bounds),
@@ -4053,7 +4069,7 @@ mod handle_suite {
         let source_bounds = WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     WindowOptions {
                         window_bounds: Some(source_bounds),
@@ -4213,7 +4229,7 @@ mod handle_suite {
         let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     WindowOptions {
                         window_bounds: Some(source_bounds),
@@ -4225,7 +4241,7 @@ mod handle_suite {
             .expect("source viewport should open");
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     WindowOptions {
                         window_bounds: Some(target_bounds),
@@ -4370,7 +4386,7 @@ mod handle_suite {
 
             let source_opened = cx
                 .update(|app| {
-                    runtime.open_viewport(
+                    runtime.open_viewport_unchecked_policy(
                         source_space.clone(),
                         viewport_window_options(360.0, 220.0),
                         app,
@@ -4379,7 +4395,7 @@ mod handle_suite {
                 .unwrap_or_else(|error| panic!("{zone:?}: source viewport should open: {error}"));
             let target_opened = cx
                 .update(|app| {
-                    runtime.open_viewport(
+                    runtime.open_viewport_unchecked_policy(
                         target_space.clone(),
                         viewport_window_options(420.0, 240.0),
                         app,
@@ -4579,7 +4595,7 @@ mod handle_suite {
 
             let source_opened = cx
                 .update(|app| {
-                    runtime.open_viewport(
+                    runtime.open_viewport_unchecked_policy(
                         source_space.clone(),
                         viewport_window_options(360.0, 220.0),
                         app,
@@ -4588,7 +4604,7 @@ mod handle_suite {
                 .unwrap_or_else(|error| panic!("{zone:?}: source viewport should open: {error}"));
             let target_opened = cx
                 .update(|app| {
-                    runtime.open_viewport(
+                    runtime.open_viewport_unchecked_policy(
                         target_space.clone(),
                         viewport_window_options(420.0, 300.0),
                         app,
@@ -4793,7 +4809,7 @@ mod handle_suite {
 
             let source_opened = cx
                 .update(|app| {
-                    runtime.open_viewport(
+                    runtime.open_viewport_unchecked_policy(
                         source_space.clone(),
                         viewport_window_options(360.0, 220.0),
                         app,
@@ -4804,7 +4820,7 @@ mod handle_suite {
                 });
             let target_opened = cx
                 .update(|app| {
-                    runtime.open_viewport(
+                    runtime.open_viewport_unchecked_policy(
                         target_space.clone(),
                         viewport_window_options(420.0, 240.0),
                         app,
@@ -5121,7 +5137,7 @@ mod handle_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,
@@ -5221,7 +5237,7 @@ mod handle_suite {
 
         let target_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     target_space.clone(),
                     viewport_window_options(420.0, 240.0),
                     app,
@@ -5230,7 +5246,7 @@ mod handle_suite {
             .expect("target viewport should open");
         let source_opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source_space.clone(),
                     viewport_window_options(360.0, 220.0),
                     app,

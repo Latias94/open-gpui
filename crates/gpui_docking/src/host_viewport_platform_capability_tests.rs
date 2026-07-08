@@ -297,7 +297,7 @@ mod runtime_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(floating_bounds(
@@ -316,7 +316,7 @@ mod runtime_suite {
 
         let reused = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(floating_bounds(
@@ -433,7 +433,7 @@ mod runtime_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(floating_bounds(
@@ -488,7 +488,7 @@ mod runtime_suite {
 
         let reused = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(floating_bounds(
@@ -545,7 +545,7 @@ mod runtime_suite {
 
         let resized_after_fresh_scene = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(floating_bounds(
@@ -606,7 +606,7 @@ mod runtime_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(floating_bounds(
@@ -621,7 +621,7 @@ mod runtime_suite {
 
         let reused = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(floating_bounds(
@@ -706,12 +706,16 @@ mod runtime_suite {
 
         let primary = cx
             .update(|app| {
-                runtime.open_viewport(primary_space, viewport_window_options(360.0, 220.0), app)
+                runtime.open_viewport_unchecked_policy(
+                    primary_space,
+                    viewport_window_options(360.0, 220.0),
+                    app,
+                )
             })
             .expect("primary viewport should open");
         let secondary = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -730,7 +734,7 @@ mod runtime_suite {
 
         let reused = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     secondary_space.clone(),
                     WindowOptions {
                         focus: false,
@@ -819,7 +823,7 @@ mod handle_suite {
         );
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source.clone(),
                     WindowOptions {
                         accepts_pointer_input: true,
@@ -882,7 +886,7 @@ mod handle_suite {
 
         let opened = cx
             .update(|app| {
-                runtime.open_viewport(
+                runtime.open_viewport_unchecked_policy(
                     source.clone(),
                     WindowOptions {
                         accepts_pointer_input: false,

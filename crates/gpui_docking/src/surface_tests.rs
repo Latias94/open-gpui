@@ -4,7 +4,8 @@ use crate::{
     DockSurfacePanelOutcome, DockSurfaceViewportCloseStatus, DockSurfaceViewportOpenOutcome,
     DockSurfaceViewportOpenStatus, DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec,
     DockSurfaceViewportUnavailable, DockViewportClosePolicy, DockViewportPlacement,
-    DockViewportPlacementLayout, DockViewportWindowBounds, DockViewportWindowState,
+    DockViewportPlacementLayout, DockViewportRestoreReadiness, DockViewportWindowBounds,
+    DockViewportWindowState,
     model::{DockLayoutNode, DockLayoutSpace},
 };
 use open_gpui::{
@@ -249,6 +250,53 @@ fn surface_open_viewport_opens_and_reuses_supported_backend(cx: &mut open_gpui::
         };
         assert_eq!(reused.status(), DockSurfaceViewportOpenStatus::Reused);
         assert_eq!(reused.window(), opened.window());
+    });
+}
+
+#[open_gpui::test]
+fn surface_exports_and_checks_viewport_placement_restore(cx: &mut open_gpui::TestAppContext) {
+    cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel_factory("editor", "Editor", test_panel)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("surface layout should validate");
+        let opened = match surface.open_viewport("main", viewport_options(), cx) {
+            DockSurfaceViewportOpenOutcome::Opened(opened) => opened,
+            other => panic!("expected viewport to open, got {other:?}"),
+        };
+
+        let placement = surface.export_viewport_placement();
+
+        assert_eq!(placement.viewports.len(), 1);
+        assert_eq!(placement.viewports[0].space, DockSpaceId::from("main"));
+        assert_eq!(
+            surface
+                .check_viewport_placement_restore(&placement)
+                .expect("exported placement should validate against live facade viewport"),
+            DockViewportRestoreReadiness {
+                matched: 1,
+                missing: 0,
+            }
+        );
+
+        let missing = DockViewportPlacementLayout::new(vec![DockViewportPlacement {
+            space: "detached".into(),
+            display_id: None,
+            window_bounds: None,
+            host_bounds: None,
+        }]);
+        assert_eq!(
+            surface
+                .check_viewport_placement_restore(&missing)
+                .expect("missing saved placement should still validate"),
+            DockViewportRestoreReadiness {
+                matched: 0,
+                missing: 1,
+            }
+        );
+        assert_eq!(opened.space(), surface.primary_space());
     });
 }
 

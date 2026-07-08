@@ -4,7 +4,8 @@ use crate::{
     DockPanelCloseOutcome, DockPanelDescriptor, DockPanelOpenOutcome, DockPanelPlacement,
     DockPolicy, DockPolicyError, DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy,
     DockViewportCloseStatus, DockViewportOpenOutcome, DockViewportOpenStatus,
-    DockViewportPlacementLayout, DockViewportRuntimeHandle, DockViewportShouldCloseOutcome,
+    DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportRestoreReadiness, DockViewportRuntimeHandle, DockViewportShouldCloseOutcome,
     DockViewportShouldCloseStatus, EditorDockLayoutSpec,
 };
 use open_gpui::{
@@ -570,6 +571,23 @@ impl DockSurface {
         self.viewport_runtime.is_viewport_open(space)
     }
 
+    /// Exports serializable platform-window placement snapshots for facade-opened viewports.
+    pub fn export_viewport_placement(&self) -> DockViewportPlacementLayout {
+        self.viewport_runtime.export_placement()
+    }
+
+    /// Checks saved placement snapshots against currently registered facade viewport windows.
+    ///
+    /// This does not open, move, or resize platform windows. Use
+    /// [`DockSurfaceViewportSpec::with_saved_placement`] before opening viewports with saved
+    /// placement hints.
+    pub fn check_viewport_placement_restore(
+        &self,
+        placement: &DockViewportPlacementLayout,
+    ) -> Result<DockViewportRestoreReadiness, DockViewportPlacementValidationError> {
+        self.viewport_runtime.check_placement_restore(placement)
+    }
+
     /// Handles a GPUI window should-close callback for a facade-opened viewport window.
     pub fn handle_viewport_window_should_close(
         &self,
@@ -643,7 +661,10 @@ impl DockSurface {
             );
         }
 
-        match self.viewport_runtime.open_viewport(space, options, cx) {
+        match self
+            .viewport_runtime
+            .open_viewport_unchecked_policy(space, options, cx)
+        {
             Ok(outcome) => DockSurfaceViewportOpenOutcome::Opened(outcome.into()),
             Err(error) => DockSurfaceViewportOpenOutcome::Unavailable(
                 DockSurfaceViewportUnavailable::OpenFailed(error.to_string()),
