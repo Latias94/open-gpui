@@ -249,6 +249,8 @@ mod host_viewport_preview_tests;
 #[cfg(test)]
 mod host_viewport_preview_visual_tests;
 #[cfg(test)]
+mod host_viewport_route_adapter_tests;
+#[cfg(test)]
 mod host_viewport_route_tests;
 #[cfg(test)]
 mod host_viewport_runtime_test_support;

@@ -1461,21 +1461,10 @@ mod runtime_suite {
                 target_space: main_space.clone(),
             },
         );
-        let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-        let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-        let host_position = center_drop_position(host_bounds);
-        assert!(runtime.begin_viewport_host_scene(
-            detached_space.clone(),
-            window.window_id(),
-            DockViewportWindowFacts::from_window_bounds(window_bounds),
-            host_bounds,
-            host_position,
-        ));
-        assert!(runtime.push_viewport_host_scene_fact(
-            &detached_space,
-            window.window_id(),
-            leaf_host_scene_fact(detached_tabs, detached_tabs),
-        ));
+        let host_scene =
+            DockViewportHostSceneSeed::new(detached_space.clone(), window, detached_tabs);
+        let release_position = host_scene.screen_position();
+        host_scene.publish_runtime(&mut runtime);
 
         let should_close = cx.update(|app| {
             runtime
@@ -1508,7 +1497,7 @@ mod runtime_suite {
             detached_space.clone(),
             detached_tabs,
             DockViewportDropPayload::Item(item("a")),
-            screen_position_for_host_position(window_bounds, host_position),
+            release_position,
             None,
             window,
             DockPayloadDropReleaseOrigin::HoveredHost,
@@ -1521,21 +1510,7 @@ mod runtime_suite {
         );
         assert!(pending_resolution.delivery().is_none());
 
-        assert!(
-            runtime.begin_viewport_host_scene(
-                detached_space.clone(),
-                window.window_id(),
-                DockViewportWindowFacts::from_window_bounds(window_bounds),
-                host_bounds,
-                host_position,
-            ),
-            "a live render frame means the accepted platform close request was not completed"
-        );
-        assert!(runtime.push_viewport_host_scene_fact(
-            &detached_space,
-            window.window_id(),
-            leaf_host_scene_fact(detached_tabs, detached_tabs),
-        ));
+        host_scene.publish_runtime(&mut runtime);
         let lifecycle = runtime.runtime_status().viewport_lifecycle;
         let detached_lifecycle = lifecycle
             .iter()
@@ -1591,21 +1566,10 @@ mod runtime_suite {
             DockViewportClosePolicy::RetainLayout,
         );
 
-        let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-        let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-        let host_position = center_drop_position(host_bounds);
-        assert!(runtime.begin_viewport_host_scene(
-            detached_space.clone(),
-            window.window_id(),
-            DockViewportWindowFacts::from_window_bounds(window_bounds),
-            host_bounds,
-            host_position,
-        ));
-        assert!(runtime.push_viewport_host_scene_fact(
-            &detached_space,
-            window.window_id(),
-            leaf_host_scene_fact(detached_tabs, detached_tabs),
-        ));
+        let host_scene =
+            DockViewportHostSceneSeed::new(detached_space.clone(), window, detached_tabs);
+        let release_position = host_scene.screen_position();
+        host_scene.publish_runtime(&mut runtime);
 
         let should_close = cx.update(|app| {
             runtime
@@ -1639,7 +1603,7 @@ mod runtime_suite {
             detached_space.clone(),
             detached_tabs,
             DockViewportDropPayload::Item(item("a")),
-            screen_position_for_host_position(window_bounds, host_position),
+            release_position,
             None,
             window,
             DockPayloadDropReleaseOrigin::HoveredHost,
@@ -1652,21 +1616,7 @@ mod runtime_suite {
         );
         assert!(pending_resolution.delivery().is_none());
 
-        assert!(
-            runtime.begin_viewport_host_scene(
-                detached_space.clone(),
-                window.window_id(),
-                DockViewportWindowFacts::from_window_bounds(window_bounds),
-                host_bounds,
-                host_position,
-            ),
-            "a live render frame means the accepted retain close request was not completed"
-        );
-        assert!(runtime.push_viewport_host_scene_fact(
-            &detached_space,
-            window.window_id(),
-            leaf_host_scene_fact(detached_tabs, detached_tabs),
-        ));
+        host_scene.publish_runtime(&mut runtime);
         let lifecycle = runtime.runtime_status().viewport_lifecycle;
         let detached_lifecycle = lifecycle
             .iter()

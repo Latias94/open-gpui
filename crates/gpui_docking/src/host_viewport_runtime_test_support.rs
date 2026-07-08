@@ -342,53 +342,45 @@ impl DockViewportHostSceneSeed {
         screen_position_for_host_position(self.window_bounds, self.host_position)
     }
 
-    pub(crate) fn publish(self, runtime: &DockViewportRuntimeHandle) {
-        let Self {
-            space,
-            window,
-            root,
-            target_tabs,
-            window_bounds,
-            host_bounds,
-            host_position,
-        } = self;
-        let window_id = window.window_id();
+    pub(crate) fn publish(&self, runtime: &DockViewportRuntimeHandle) {
+        let window_id = self.window.window_id();
         assert!(runtime.begin_viewport_host_scene(
-            space.clone(),
+            self.space.clone(),
             window_id,
-            DockViewportWindowFacts::from_window_bounds(window_bounds),
-            host_bounds,
-            host_position,
+            DockViewportWindowFacts::from_window_bounds(self.window_bounds),
+            self.host_bounds,
+            self.host_position,
         ));
         assert!(runtime.push_viewport_host_scene_fact(
-            &space,
+            &self.space,
             window_id,
-            leaf_host_scene_fact(root, target_tabs),
+            leaf_host_scene_fact(self.root, self.target_tabs),
         ));
     }
 
-    pub(crate) fn publish_runtime(self, runtime: &mut DockViewportRuntime) {
-        let Self {
-            space,
-            window,
-            root,
-            target_tabs,
-            window_bounds,
-            host_bounds,
-            host_position,
-        } = self;
-        let window_id = window.window_id();
+    pub(crate) fn publish_runtime(&self, runtime: &mut DockViewportRuntime) {
+        let window_id = self.window.window_id();
         assert!(runtime.begin_viewport_host_scene(
-            space.clone(),
+            self.space.clone(),
             window_id,
-            DockViewportWindowFacts::from_window_bounds(window_bounds),
-            host_bounds,
-            host_position,
+            DockViewportWindowFacts::from_window_bounds(self.window_bounds),
+            self.host_bounds,
+            self.host_position,
         ));
         assert!(runtime.push_viewport_host_scene_fact(
-            &space,
+            &self.space,
             window_id,
-            leaf_host_scene_fact(root, target_tabs),
+            leaf_host_scene_fact(self.root, self.target_tabs),
+        ));
+    }
+
+    pub(crate) fn begin_empty_runtime_frame(&self, runtime: &mut DockViewportRuntime) {
+        assert!(runtime.begin_viewport_host_scene(
+            self.space.clone(),
+            self.window.window_id(),
+            DockViewportWindowFacts::from_window_bounds(self.window_bounds),
+            self.host_bounds,
+            self.host_position,
         ));
     }
 }
