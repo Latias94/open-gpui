@@ -16,21 +16,54 @@ pub const DOCK_LAYOUT_VERSION: u32 = 2;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DockLayout {
     /// Layout schema version.
-    pub layout_version: u32,
+    pub(crate) layout_version: u32,
     /// Serialized logical dock spaces.
-    pub spaces: Vec<DockLayoutSpace>,
+    pub(crate) spaces: Vec<DockLayoutSpace>,
     /// Serialized dock nodes.
-    pub nodes: Vec<DockLayoutNode>,
+    pub(crate) nodes: Vec<DockLayoutNode>,
 }
 
 impl DockLayout {
-    /// Creates a layout with the current schema version.
-    pub fn new(spaces: Vec<DockLayoutSpace>, nodes: Vec<DockLayoutNode>) -> Self {
+    /// Creates an empty layout with the current schema version.
+    pub fn empty() -> Self {
+        Self::from_raw_parts(Vec::new(), Vec::new())
+    }
+
+    pub(crate) fn from_raw_parts(spaces: Vec<DockLayoutSpace>, nodes: Vec<DockLayoutNode>) -> Self {
         Self {
             layout_version: DOCK_LAYOUT_VERSION,
             spaces,
             nodes,
         }
+    }
+
+    pub(crate) fn into_raw_parts(self) -> (Vec<DockLayoutSpace>, Vec<DockLayoutNode>) {
+        (self.spaces, self.nodes)
+    }
+
+    /// Returns the serialized layout schema version.
+    pub fn layout_version(&self) -> u32 {
+        self.layout_version
+    }
+
+    /// Returns the number of logical dock spaces in this layout.
+    pub fn space_count(&self) -> usize {
+        self.spaces.len()
+    }
+
+    /// Returns the number of serialized dock nodes in this layout.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Returns true when the layout contains no spaces or nodes.
+    pub fn is_empty(&self) -> bool {
+        self.spaces.is_empty() && self.nodes.is_empty()
+    }
+
+    /// Returns logical dock space ids in serialized order.
+    pub fn space_ids(&self) -> impl Iterator<Item = &DockSpaceId> {
+        self.spaces.iter().map(|space| &space.id)
     }
 }
 
@@ -183,7 +216,7 @@ impl DockGraph {
             });
         }
 
-        DockLayout::new(spaces, exporter.nodes)
+        DockLayout::from_raw_parts(spaces, exporter.nodes)
     }
 
     /// Imports a validated layout into a new graph.

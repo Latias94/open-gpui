@@ -7,19 +7,22 @@ optional platform viewport windows.
 
 ## Public API Tiers
 
-The crate root and `open_gpui_docking::prelude` contain the common application API: `DockSurface`, `DockSurfaceBuilder`, durable layout and placement data, panel registry/catalog types, policy types, and typed facade outcomes. The root intentionally does not re-export raw graph, action, host, workspace, or runtime-handle types.
+The crate root and `open_gpui_docking::prelude` contain the common application API: `DockSurface`, `DockSurfaceBuilder`, durable layout and placement data, panel registry/catalog types, policy types, and typed facade outcomes. The root intentionally does not re-export raw graph, action, host, workspace, runtime-handle, or raw layout-node types.
 
-Low-level controller, graph, action, workspace, host, and runtime-handle APIs live behind explicit modules. Use `open_gpui_docking::model` for `DockController`, `DockControllerBuilder`, graph/layout mutation tools, and command objects; use `open_gpui_docking::runtime` for `DockHost`, `DockHostOptions`, and direct viewport runtime integrations; use `open_gpui_docking::advanced` for diagnostics and transition internals. These types are useful for tests and tooling, but they are not part of the default application surface.
+Low-level controller, graph, action, workspace, host, raw layout parts, and runtime-handle APIs live behind explicit modules. Use `open_gpui_docking::model` for `DockController`, `DockControllerBuilder`, graph/layout mutation tools, command objects, and `layout_from_raw_parts`/`layout_into_raw_parts`; use `open_gpui_docking::runtime` for `DockHost`, `DockHostOptions`, and direct viewport runtime integrations; use `open_gpui_docking::advanced` for diagnostics and transition internals. These types are useful for tests and tooling, but they are not part of the default application surface.
 
 ## What This Crate Owns
 
 - `DockSurface` as the app-level owner for controller state, host-window creation, panel commands, and typed viewport capability outcomes.
-- `DockSurfaceViewportSpec` and `DockSurfaceViewportOpenReport` as facade-level platform window
-  requests and batch outcomes for multi-viewport applications.
+- `DockSurfaceViewportSpec`, `DockSurfaceViewportOpenReport`, and `DockSurfaceViewportRestoreReport`
+  as facade-level platform window requests and batch outcomes for multi-viewport applications.
 - `DockSurfaceViewportShouldCloseOutcome` and `DockSurfaceViewportCloseOutcome` as facade-level
   lifecycle results for platform close hooks, including merge-back close policies.
-- `DockGraph` and `DockLayout` for logical dock spaces, tab stacks, splits, in-window floating
-  layout, serialization, validation, and graph operations.
+- `DockLayout` as the common durable persistence type for serialization and validation. Raw
+  `DockLayoutSpace`/`DockLayoutNode` construction is available only through the explicit `model`
+  tier.
+- `DockGraph` for model-tier logical dock spaces, tab stacks, splits, in-window floating layout, and
+  graph operations.
 - `open_gpui_docking::model::DockController` and `open_gpui_docking::model::DockWorkspace` as the
   low-level shared owner for rendered hosts and programmatic layout commands.
 - `open_gpui_docking::runtime::DockHost` as the GPUI renderer for one logical dock space, including
@@ -57,7 +60,7 @@ placement validation, backend capability checks, and batch outcome reporting on 
 ```rust
 use open_gpui::{Bounds, WindowBounds, WindowOptions, px, size};
 use open_gpui_docking::prelude::{
-    DockSurfaceViewportOpenOutcome, DockSurfaceViewportSpec, DockViewportPlacementLayout,
+    DockSurfaceViewportOpenOutcome, DockViewportPlacementLayout,
 };
 
 fn restore_viewports(
@@ -65,9 +68,9 @@ fn restore_viewports(
     saved_placement: &DockViewportPlacementLayout,
     cx: &mut open_gpui::App,
 ) {
-    let specs = ["main", "preview"]
-        .into_iter()
-        .map(|space| {
+    let report = surface.open_viewports_from_saved_placement(
+        saved_placement,
+        |_| {
             let fallback_options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
@@ -76,15 +79,13 @@ fn restore_viewports(
                 ))),
                 ..Default::default()
             };
-            DockSurfaceViewportSpec::new(space, fallback_options)
-                .with_saved_placement(saved_placement)
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .expect("saved viewport placement should validate");
+            fallback_options
+        },
+        cx,
+    );
 
-    let report = surface.open_viewports(specs, cx);
     for outcome in report.outcomes() {
-        if let DockSurfaceViewportOpenOutcome::Unavailable(reason) = outcome {
+        if let DockSurfaceViewportOpenOutcome::Unavailable(reason) = outcome.outcome() {
             eprintln!("dock viewport unavailable: {reason:?}");
         }
     }

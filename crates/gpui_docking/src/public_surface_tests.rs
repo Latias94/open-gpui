@@ -98,7 +98,10 @@ fn root_and_prelude_do_not_reexport_low_level_model_or_runtime_types() {
         "DockHost",
         "DockHostOptions",
         "DockLayoutBuilder",
+        "DockLayoutCentralRegion",
+        "DockLayoutFloatingContainer",
         "DockLayoutNode",
+        "DockLayoutSpace",
         "DockNode",
         "DockNodeId",
         "DockSpatialDirection",
@@ -217,8 +220,8 @@ fn common_import_paths_compile() {
 
     let root_policy = root::DockPolicy::new();
     let prelude_policy = prelude::DockPolicy::new();
-    let root_layout = root::DockLayout::new(Vec::new(), Vec::new());
-    let prelude_layout = prelude::DockLayout::new(Vec::new(), Vec::new());
+    let root_layout = root::DockLayout::empty();
+    let prelude_layout = prelude::DockLayout::empty();
     let root_placement = root::DockViewportPlacementLayout::new(Vec::new());
     let prelude_placement = prelude::DockViewportPlacementLayout::new(Vec::new());
     let root_restore_readiness = root::DockViewportRestoreReadiness {
@@ -278,8 +281,8 @@ fn common_import_paths_compile() {
     let _ = (
         root_policy.allows_floating(),
         prelude_policy.allows_platform_viewports(),
-        root_layout.layout_version,
-        prelude_layout.layout_version,
+        root_layout.layout_version(),
+        prelude_layout.layout_version(),
         root_placement.placement_version,
         prelude_placement.placement_version,
         root_restore_readiness.matched,
@@ -328,11 +331,21 @@ fn explicit_low_level_import_paths_compile() {
 
     let graph = model::DockGraph::new();
     let layout = model::DockLayoutBuilder::new().build();
+    let raw_layout = model::layout_from_raw_parts(Vec::new(), Vec::new());
+    let raw_parts = model::layout_into_raw_parts(raw_layout.clone());
     let action = model::DockActionOutcome::Unchanged;
     let controller_builder = model::DockController::builder("main");
     let _controller_type: Option<model::DockController> = None;
     let _controller_builder_type: Option<model::DockControllerBuilder> = None;
     let close_policy = runtime::DockViewportClosePolicy::Prevent;
 
-    let _ = (graph, layout, action, controller_builder, close_policy);
+    let _ = (
+        graph,
+        layout,
+        raw_layout.is_empty(),
+        raw_parts,
+        action,
+        controller_builder,
+        close_policy,
+    );
 }

@@ -14,7 +14,10 @@ use open_gpui_docking::{
         DockViewportRestoreReadinessRecord, DockViewportTearOffPlacementRecord,
         DockVisualAffordanceDebugSummary,
     },
-    model::{DockActionApplyError, DockController, DockLayoutCentralRegion, DockLayoutSpace},
+    model::{
+        DockActionApplyError, DockController, DockLayoutCentralRegion, DockLayoutSpace,
+        layout_from_raw_parts, layout_into_raw_parts,
+    },
     runtime::{DockViewportClosePolicy, DockViewportRuntimeHandle},
 };
 use open_gpui_platform::application;
@@ -847,8 +850,8 @@ fn restored_demo_layout() -> DockLayout {
         .reopen_panel(main_space, outline_item)
         .expect("outline panel should reopen into its original tab stack");
 
-    let mut layout = controller.graph().export_layout();
-    layout.spaces.push(DockLayoutSpace {
+    let (mut spaces, nodes) = layout_into_raw_parts(controller.graph().export_layout());
+    spaces.push(DockLayoutSpace {
         id: CENTRAL_SPACE.into(),
         root: None,
         floatings: Vec::new(),
@@ -858,7 +861,7 @@ fn restored_demo_layout() -> DockLayout {
             passthrough_when_empty: true,
         }),
     });
-    layout
+    layout_from_raw_parts(spaces, nodes)
 }
 
 fn build_controller() -> DockController {

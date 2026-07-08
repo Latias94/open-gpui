@@ -32,9 +32,8 @@
 //! crate's interaction, transaction, geometry, and viewport-runtime modules. Advanced callers can
 //! still use [`model::DockGraph`], [`model::DockLayoutBuilder`], [`model::DockWorkspace`], and
 //! explicit [`model::DockAction`] command objects for programmatic layout operations, but
-//! applications should prefer [`DockSurface`] panel commands or the named
-//! [`model::DockController`] and [`model::DockWorkspace`] methods for common panel and floating
-//! flows.
+//! applications should prefer [`DockSurface`] panel commands for common open, close, select, float,
+//! dock, raise, and floating-bounds flows.
 //! In-window floating and platform viewport tear-off are separate [`DockPolicy`] capabilities so
 //! applications can enable platform windows without changing graph-backed floating behavior.
 //! Multi-window applications should keep one [`DockSurface`] as the graph, panel, and host-window

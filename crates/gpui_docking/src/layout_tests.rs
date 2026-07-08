@@ -268,7 +268,7 @@ fn floating_only_space_exports_and_imports_without_root() {
 
 #[test]
 fn layout_validation_rejects_duplicate_ids_cycles_and_bad_tab_selection() {
-    let duplicate = DockLayout::new(
+    let duplicate = DockLayout::from_raw_parts(
         vec![DockLayoutSpace {
             id: space(),
             root: Some(1),
@@ -293,7 +293,7 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_tab_selection() {
         Err(DockLayoutValidationError::DuplicateNodeId { id: 1 })
     ));
 
-    let cycle = DockLayout::new(
+    let cycle = DockLayout::from_raw_parts(
         vec![DockLayoutSpace {
             id: space(),
             root: Some(1),
@@ -312,7 +312,7 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_tab_selection() {
         Err(DockLayoutValidationError::CycleDetected { id: 1 })
     ));
 
-    let missing_selection = DockLayout::new(
+    let missing_selection = DockLayout::from_raw_parts(
         vec![DockLayoutSpace {
             id: space(),
             root: Some(1),
@@ -333,7 +333,7 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_tab_selection() {
 
 #[test]
 fn layout_validation_rejects_ordinary_empty_tabs() {
-    let empty_tabs = DockLayout::new(
+    let empty_tabs = DockLayout::from_raw_parts(
         vec![DockLayoutSpace {
             id: space(),
             root: Some(1),
@@ -355,7 +355,7 @@ fn layout_validation_rejects_ordinary_empty_tabs() {
 
 #[test]
 fn layout_validation_rejects_central_node_outside_root_subtree() {
-    let layout = DockLayout::new(
+    let layout = DockLayout::from_raw_parts(
         vec![DockLayoutSpace {
             id: space(),
             root: Some(1),
@@ -391,7 +391,7 @@ fn layout_validation_rejects_central_node_outside_root_subtree() {
 
 #[test]
 fn layout_validation_rejects_shared_and_unreachable_nodes() {
-    let shared_child = DockLayout::new(
+    let shared_child = DockLayout::from_raw_parts(
         vec![DockLayoutSpace {
             id: space(),
             root: Some(1),
@@ -417,7 +417,7 @@ fn layout_validation_rejects_shared_and_unreachable_nodes() {
         Err(DockLayoutValidationError::DuplicateNodeReference { id: 2 })
     );
 
-    let unreachable = DockLayout::new(
+    let unreachable = DockLayout::from_raw_parts(
         vec![DockLayoutSpace {
             id: space(),
             root: Some(1),
@@ -445,7 +445,7 @@ fn layout_validation_rejects_shared_and_unreachable_nodes() {
 
 #[test]
 fn layout_validation_rejects_duplicate_spaces() {
-    let duplicate_spaces = DockLayout::new(
+    let duplicate_spaces = DockLayout::from_raw_parts(
         vec![
             DockLayoutSpace {
                 id: space(),
@@ -471,7 +471,7 @@ fn layout_validation_rejects_duplicate_spaces() {
 
 #[test]
 fn layout_validation_rejects_duplicate_items() {
-    let duplicate_items = DockLayout::new(
+    let duplicate_items = DockLayout::from_raw_parts(
         vec![DockLayoutSpace {
             id: space(),
             root: Some(1),
@@ -510,7 +510,7 @@ fn layout_validation_rejects_duplicate_items() {
 
 #[test]
 fn layout_validation_rejects_invalid_floating_bounds() {
-    let invalid_bounds = DockLayout::new(
+    let invalid_bounds = DockLayout::from_raw_parts(
         vec![DockLayoutSpace {
             id: space(),
             root: None,

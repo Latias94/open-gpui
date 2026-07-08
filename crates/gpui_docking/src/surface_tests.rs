@@ -77,7 +77,7 @@ fn surface_can_wrap_existing_controller(cx: &mut open_gpui::TestAppContext) {
 #[open_gpui::test]
 fn surface_builder_returns_layout_validation_errors(cx: &mut open_gpui::TestAppContext) {
     cx.update(|_| {
-        let invalid_layout = DockLayout::new(
+        let invalid_layout = DockLayout::from_raw_parts(
             vec![DockLayoutSpace {
                 id: "main".into(),
                 root: Some(1),
@@ -178,9 +178,12 @@ fn surface_facade_embeds_host_and_reports_semantic_snapshots(cx: &mut open_gpui:
         );
 
         let exported = surface.export_layout(cx);
-        assert_eq!(exported.spaces.len(), 1);
-        assert_eq!(exported.spaces[0].id, DockSpaceId::from("main"));
-        assert_eq!(exported.spaces[0].floatings.len(), 1);
+        assert_eq!(exported.space_count(), 1);
+        assert_eq!(
+            exported.space_ids().cloned().collect::<Vec<_>>(),
+            vec![DockSpaceId::from("main")]
+        );
+        assert!(!exported.is_empty());
     });
 }
 
@@ -276,7 +279,7 @@ fn viewport_options() -> WindowOptions {
 }
 
 fn two_space_layout() -> DockLayout {
-    DockLayout::new(
+    DockLayout::from_raw_parts(
         vec![
             DockLayoutSpace {
                 id: "main".into(),

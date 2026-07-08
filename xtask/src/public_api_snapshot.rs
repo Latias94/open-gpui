@@ -53,7 +53,10 @@ fn scan_docking_public_api(root: &Path, failures: &mut Vec<String>) {
         "DockHost",
         "DockHostOptions",
         "DockLayoutBuilder",
+        "DockLayoutCentralRegion",
+        "DockLayoutFloatingContainer",
         "DockLayoutNode",
+        "DockLayoutSpace",
         "DockNode",
         "DockNodeId",
         "DockSpatialDirection",
@@ -76,6 +79,12 @@ fn scan_docking_public_api(root: &Path, failures: &mut Vec<String>) {
             failures,
         );
     }
+    reject_public_module(
+        &source_dir.join("lib.rs"),
+        "layout",
+        "raw layout anatomy must stay behind the model tier",
+        failures,
+    );
 
     let facade_forbidden = [
         "DockAction",
@@ -283,6 +292,18 @@ fn reject_tokens(
         "{crate_label}/src/{file_name}: {reason}: {}",
         leaked.join(", ")
     ));
+}
+
+fn reject_public_module(path: &Path, module: &str, reason: &str, failures: &mut Vec<String>) {
+    let Some(source) = read_to_string(path, failures) else {
+        return;
+    };
+    let public_module = format!("pub mod {module};");
+    for (line_index, line) in source.lines().enumerate() {
+        if line.trim() == public_module {
+            failures.push(format!("{}:{}: {reason}", path.display(), line_index + 1));
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
