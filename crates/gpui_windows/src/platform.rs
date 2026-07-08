@@ -312,7 +312,10 @@ impl WindowsPlatform {
                             &all_windows,
                             &text_system,
                         ) {
-                            panic!("Device lost: {err}");
+                            log::error!(
+                                "Failed to recover DirectX device after device lost: {err:?}"
+                            );
+                            std::thread::sleep(std::time::Duration::from_millis(500));
                         }
                     }
                     let Some(all_windows) = all_windows.upgrade() else {

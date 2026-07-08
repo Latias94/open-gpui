@@ -24,42 +24,50 @@ use open_gpui::{
 
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
 
-static CLIPBOARD_HASH_FORMAT: LazyLock<u32> =
+static CLIPBOARD_HASH_FORMAT: LazyLock<Option<u32>> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("GPUI internal text hash")));
-static CLIPBOARD_METADATA_FORMAT: LazyLock<u32> =
+static CLIPBOARD_METADATA_FORMAT: LazyLock<Option<u32>> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("GPUI internal metadata")));
-static CLIPBOARD_SVG_FORMAT: LazyLock<u32> =
+static CLIPBOARD_SVG_FORMAT: LazyLock<Option<u32>> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("image/svg+xml")));
-static CLIPBOARD_GIF_FORMAT: LazyLock<u32> =
+static CLIPBOARD_GIF_FORMAT: LazyLock<Option<u32>> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("GIF")));
-static CLIPBOARD_PNG_FORMAT: LazyLock<u32> =
+static CLIPBOARD_PNG_FORMAT: LazyLock<Option<u32>> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("PNG")));
-static CLIPBOARD_JPG_FORMAT: LazyLock<u32> =
+static CLIPBOARD_JPG_FORMAT: LazyLock<Option<u32>> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("JFIF")));
 
 static IMAGE_FORMATS_MAP: LazyLock<FxHashMap<u32, ImageFormat>> = LazyLock::new(|| {
     let mut map = FxHashMap::default();
-    map.insert(*CLIPBOARD_PNG_FORMAT, ImageFormat::Png);
-    map.insert(*CLIPBOARD_GIF_FORMAT, ImageFormat::Gif);
-    map.insert(*CLIPBOARD_JPG_FORMAT, ImageFormat::Jpeg);
-    map.insert(*CLIPBOARD_SVG_FORMAT, ImageFormat::Svg);
+    for (format, image_format) in [
+        (*CLIPBOARD_PNG_FORMAT, ImageFormat::Png),
+        (*CLIPBOARD_GIF_FORMAT, ImageFormat::Gif),
+        (*CLIPBOARD_JPG_FORMAT, ImageFormat::Jpeg),
+        (*CLIPBOARD_SVG_FORMAT, ImageFormat::Svg),
+    ] {
+        if let Some(format) = format {
+            map.insert(format, image_format);
+        }
+    }
     map
 });
 
-fn register_clipboard_format(format: PCWSTR) -> u32 {
+fn register_clipboard_format(format: PCWSTR) -> Option<u32> {
     let ret = unsafe { RegisterClipboardFormatW(format) };
     if ret == 0 {
-        panic!(
-            "Error when registering clipboard format: {}",
-            std::io::Error::last_os_error()
+        log::error!(
+            "Failed to register clipboard format {}: {}",
+            unsafe { format.display() },
+            std::io::Error::last_os_error(),
         );
+        return None;
     }
     log::debug!(
         "Registered clipboard format {} as {}",
         unsafe { format.display() },
         ret
     );
-    ret
+    Some(ret)
 }
 
 fn get_clipboard_data(format: u32) -> Option<LockedGlobal> {
@@ -182,21 +190,27 @@ fn write_string(item: &ClipboardString) -> Result<()> {
     set_clipboard_bytes(&wide, CF_UNICODETEXT.0 as u32)?;
 
     if let Some(metadata) = item.metadata.as_ref() {
-        let hash_bytes = ClipboardString::text_hash(&item.text).to_ne_bytes();
-        set_clipboard_bytes(&hash_bytes, *CLIPBOARD_HASH_FORMAT)?;
+        if let (Some(hash_format), Some(metadata_format)) =
+            (*CLIPBOARD_HASH_FORMAT, *CLIPBOARD_METADATA_FORMAT)
+        {
+            let hash_bytes = ClipboardString::text_hash(&item.text).to_ne_bytes();
+            set_clipboard_bytes(&hash_bytes, hash_format)?;
 
-        let wide: Vec<u16> = metadata.encode_utf16().chain(Some(0)).collect_vec();
-        set_clipboard_bytes(&wide, *CLIPBOARD_METADATA_FORMAT)?;
+            let wide: Vec<u16> = metadata.encode_utf16().chain(Some(0)).collect_vec();
+            set_clipboard_bytes(&wide, metadata_format)?;
+        } else {
+            log::warn!("Skipping GPUI clipboard metadata because custom formats are unavailable");
+        }
     }
     Ok(())
 }
 
 fn write_image(item: &Image) -> Result<()> {
     let native_format = match item.format {
-        ImageFormat::Svg => Some(*CLIPBOARD_SVG_FORMAT),
-        ImageFormat::Gif => Some(*CLIPBOARD_GIF_FORMAT),
-        ImageFormat::Png => Some(*CLIPBOARD_PNG_FORMAT),
-        ImageFormat::Jpeg => Some(*CLIPBOARD_JPG_FORMAT),
+        ImageFormat::Svg => *CLIPBOARD_SVG_FORMAT,
+        ImageFormat::Gif => *CLIPBOARD_GIF_FORMAT,
+        ImageFormat::Png => *CLIPBOARD_PNG_FORMAT,
+        ImageFormat::Jpeg => *CLIPBOARD_JPG_FORMAT,
         _ => None,
     };
     if let Some(format) = native_format {
@@ -205,9 +219,12 @@ fn write_image(item: &Image) -> Result<()> {
 
     // Also provide a PNG copy for broad compatibility.
     // SVG can't be rasterized by the image crate, so skip it.
-    if item.format != ImageFormat::Svg && native_format != Some(*CLIPBOARD_PNG_FORMAT) {
-        if let Some(png_bytes) = convert_to_png(item.bytes(), item.format) {
-            set_clipboard_bytes(&png_bytes, *CLIPBOARD_PNG_FORMAT)?;
+    if item.format != ImageFormat::Svg && native_format != *CLIPBOARD_PNG_FORMAT {
+        if let (Some(png_format), Some(png_bytes)) = (
+            *CLIPBOARD_PNG_FORMAT,
+            convert_to_png(item.bytes(), item.format),
+        ) {
+            set_clipboard_bytes(&png_bytes, png_format)?;
         }
     }
     Ok(())
@@ -233,13 +250,15 @@ fn read_string() -> Option<ClipboardEntry> {
 }
 
 fn read_clipboard_metadata(text: &str) -> Option<String> {
-    let locked = get_clipboard_data(*CLIPBOARD_HASH_FORMAT)?;
+    let hash_format = (*CLIPBOARD_HASH_FORMAT)?;
+    let metadata_format = (*CLIPBOARD_METADATA_FORMAT)?;
+    let locked = get_clipboard_data(hash_format)?;
     let hash_bytes: [u8; 8] = locked.as_bytes().get(..8)?.try_into().ok()?;
     let hash = u64::from_ne_bytes(hash_bytes);
     if hash != ClipboardString::text_hash(text) {
         return None;
     }
-    get_clipboard_string(*CLIPBOARD_METADATA_FORMAT)
+    get_clipboard_string(metadata_format)
 }
 
 fn read_image(format: u32) -> Option<ClipboardEntry> {

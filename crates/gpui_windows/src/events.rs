@@ -1178,7 +1178,9 @@ impl WindowsWindowInner {
             .borrow_mut()
             .handle_device_lost(&devices)
         {
-            panic!("Device lost: {err}");
+            log::error!("Failed to refresh window renderer after device lost: {err:?}");
+            self.state.invalidate_devices.store(true, Ordering::Release);
+            return Some(0);
         }
         // Make sure the first `draw_window` after recovery (whether it comes
         // from the forced WM_GPUI_FORCE_UPDATE_WINDOW or a stray WM_PAINT in
