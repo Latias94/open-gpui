@@ -32,7 +32,7 @@ impl AssetSource for () {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ImageId(pub usize);
 
-#[derive(PartialEq, Eq, Hash, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[expect(missing_docs)]
 pub struct RenderImageParams {
     pub image_id: ImageId,

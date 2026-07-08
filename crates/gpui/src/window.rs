@@ -6,21 +6,22 @@ use crate::MouseButton;
 use crate::PlatformPixelBuffer;
 use crate::{
     Action, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
-    AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
-    Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Entity, EntityId,
-    EventEmitter, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
-    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, Modifiers,
-    ModifiersChangedEvent, MonochromeSprite, MouseEvent, MouseMoveEvent, MouseUpEvent, Path,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
-    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
-    WindowParams, WindowTextSystem, point, prelude::*, profiler, px, rems, size, transparent_black,
+    AsyncWindowContext, AtlasAccessDiagnostic, AtlasRemoveDiagnostic, AvailableSpace, Background,
+    BorderStyle, Bounds, BoxShadow, Capslock, Context, Corners, CursorHideMode, CursorStyle,
+    Decorations, DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId,
+    Edges, Effect, Entity, EntityId, EventEmitter, FontId, Global, GlobalElementId, GlyphId,
+    GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
+    Keystroke, KeystrokeEvent, LayoutId, Modifiers, ModifiersChangedEvent, MonochromeSprite,
+    MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority,
+    PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
+    SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController,
+    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    point, prelude::*, profiler, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use derive_more::{Deref, DerefMut};
@@ -688,6 +689,53 @@ enum InputModality {
     Keyboard,
 }
 
+/// Diagnostic facts recorded when a [`RenderImage`] is painted into a frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[expect(missing_docs)]
+pub struct ImagePaintDiagnostic {
+    pub frame_generation: u64,
+    pub image: RenderImageParams,
+    pub bounds: Bounds<ScaledPixels>,
+    pub tile: crate::AtlasTile,
+    pub atlas_access: AtlasAccessDiagnostic,
+}
+
+/// Metadata describing a framework-rendered frame capture.
+#[derive(Clone, Debug, PartialEq)]
+#[expect(missing_docs)]
+pub struct WindowFrameCaptureMetadata {
+    pub window_id: WindowId,
+    pub framework_frame_generation: u64,
+    pub capture_generation: u64,
+    pub scale_factor: f32,
+    pub logical_viewport_size: Size<Pixels>,
+    pub physical_viewport_size: Size<DevicePixels>,
+}
+
+/// Result of an offscreen frame capture.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug)]
+#[expect(missing_docs)]
+pub struct WindowFrameCapture {
+    pub image: Option<image::RgbaImage>,
+    pub metadata: WindowFrameCaptureMetadata,
+    pub unsupported_reason: Option<String>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl WindowFrameCapture {
+    /// Returns the captured image, or the platform-specific unsupported reason.
+    pub fn into_image(self) -> anyhow::Result<image::RgbaImage> {
+        self.image.ok_or_else(|| {
+            anyhow!(
+                "{}",
+                self.unsupported_reason
+                    .unwrap_or_else(|| "render_to_image not available".to_string())
+            )
+        })
+    }
+}
+
 /// Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
@@ -717,6 +765,9 @@ pub struct Window {
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
+    #[cfg(any(test, feature = "test-support"))]
+    capture_generation: Cell<u64>,
+    atlas_remove_diagnostics: Vec<AtlasRemoveDiagnostic>,
     next_hitbox_id: HitboxId,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
@@ -1413,6 +1464,9 @@ impl Window {
             requested_autoscroll: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            #[cfg(any(test, feature = "test-support"))]
+            capture_generation: Cell::new(0),
+            atlas_remove_diagnostics: Vec::new(),
             next_frame_callbacks,
             next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
@@ -1877,6 +1931,17 @@ impl Window {
         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
     }
 
+    /// Drains callbacks queued with [`Self::on_next_frame`] for deterministic tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn drain_next_frame_callbacks_for_test(&mut self, cx: &mut App) -> usize {
+        let callbacks = self.next_frame_callbacks.take();
+        let count = callbacks.len();
+        for callback in callbacks {
+            callback(self, cx);
+        }
+        count
+    }
+
     /// Schedule a frame to be drawn on the next animation frame.
     ///
     /// This is useful for elements that need to animate continuously, such as a video player or an animated GIF.
@@ -1952,8 +2017,60 @@ impl Window {
     /// to capture what would be rendered without displaying it or requiring the window to be visible.
     #[cfg(any(test, feature = "test-support"))]
     pub fn render_to_image(&self) -> anyhow::Result<image::RgbaImage> {
-        self.platform_window
+        self.capture_frame().into_image()
+    }
+
+    /// Renders the current frame's scene and returns pixels plus capture metadata.
+    ///
+    /// This is an offscreen framework capture. It does not prove that the OS
+    /// compositor presented the frame.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn capture_frame(&self) -> WindowFrameCapture {
+        let metadata = self.next_capture_metadata();
+        match self
+            .platform_window
             .render_to_image(&self.rendered_frame.scene)
+        {
+            Ok(image) => WindowFrameCapture {
+                image: Some(image),
+                metadata,
+                unsupported_reason: None,
+            },
+            Err(error) => WindowFrameCapture {
+                image: None,
+                metadata,
+                unsupported_reason: Some(error.to_string()),
+            },
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn next_capture_metadata(&self) -> WindowFrameCaptureMetadata {
+        let capture_generation = self.capture_generation.get().saturating_add(1);
+        self.capture_generation.set(capture_generation);
+        WindowFrameCaptureMetadata {
+            window_id: self.handle.window_id(),
+            framework_frame_generation: self.rendered_frame.generation,
+            capture_generation,
+            scale_factor: self.scale_factor(),
+            logical_viewport_size: self.viewport_size,
+            physical_viewport_size: self.viewport_size.to_device_pixels(self.scale_factor()),
+        }
+    }
+
+    /// Returns image paint facts for the current rendered framework frame.
+    pub fn rendered_frame_image_paint_diagnostics(&self) -> &[ImagePaintDiagnostic] {
+        &self.rendered_frame.image_paint_diagnostics
+    }
+
+    /// Returns atlas access facts for the current rendered framework frame.
+    pub fn rendered_frame_atlas_access_diagnostics(&self) -> &[AtlasAccessDiagnostic] {
+        &self.rendered_frame.atlas_access_diagnostics
+    }
+
+    /// Returns atlas removal facts observed by this window.
+    pub fn atlas_remove_diagnostics(&self) -> &[AtlasRemoveDiagnostic] {
+        &self.atlas_remove_diagnostics
     }
 
     /// Set the content size of the window.
@@ -2357,6 +2474,7 @@ impl Window {
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
+        self.next_frame.generation = self.rendered_frame.generation.saturating_add(1);
 
         // Restore the previously-used input handler.
         // Place it back into a None slot (left by a previous .take()) so that
@@ -2819,6 +2937,8 @@ impl Window {
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
             scene_index: self.next_frame.scene.len(),
+            atlas_access_diagnostics_index: self.next_frame.atlas_access_diagnostics.len(),
+            image_paint_diagnostics_index: self.next_frame.image_paint_diagnostics.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
@@ -2856,6 +2976,22 @@ impl Window {
         self.next_frame.tab_stops.replay(
             &self.rendered_frame.tab_stops.insertion_history
                 [range.start.tab_handle_index..range.end.tab_handle_index],
+        );
+        self.next_frame.atlas_access_diagnostics.extend(
+            self.rendered_frame.atlas_access_diagnostics[range.start.atlas_access_diagnostics_index
+                ..range.end.atlas_access_diagnostics_index]
+                .iter()
+                .copied(),
+        );
+        self.next_frame.image_paint_diagnostics.extend(
+            self.rendered_frame.image_paint_diagnostics[range.start.image_paint_diagnostics_index
+                ..range.end.image_paint_diagnostics_index]
+                .iter()
+                .copied()
+                .map(|mut diagnostic| {
+                    diagnostic.frame_generation = self.next_frame.generation;
+                    diagnostic
+                }),
         );
 
         self.text_system
@@ -3783,21 +3919,22 @@ impl Window {
             frame_index,
         };
 
-        let tile = self
-            .sprite_atlas
-            .get_or_insert_with(&params.into(), &mut || {
-                Ok(Some((
-                    data.size(frame_index),
-                    Cow::Borrowed(
-                        data.as_bytes(frame_index)
-                            .expect("It's the caller's job to pass a valid frame index"),
-                    ),
-                )))
-            })?
-            .expect("Callback above only returns Some");
+        let atlas_access =
+            self.sprite_atlas
+                .get_or_insert_with_diagnostics(&params.into(), &mut || {
+                    Ok(Some((
+                        data.size(frame_index),
+                        Cow::Borrowed(
+                            data.as_bytes(frame_index)
+                                .expect("It's the caller's job to pass a valid frame index"),
+                        ),
+                    )))
+                })?;
+        let tile = atlas_access.tile.expect("Callback above only returns Some");
         let content_mask = self.snapped_content_mask();
         let corner_radii = corner_radii.scale(self.scale_factor());
         let opacity = self.element_opacity();
+        let atlas_diagnostic = atlas_access.diagnostic;
 
         self.next_frame.scene.insert_primitive(PolychromeSprite {
             order: 0,
@@ -3809,6 +3946,18 @@ impl Window {
             tile,
             opacity,
         });
+        self.next_frame
+            .atlas_access_diagnostics
+            .push(atlas_diagnostic);
+        self.next_frame
+            .image_paint_diagnostics
+            .push(ImagePaintDiagnostic {
+                frame_generation: self.next_frame.generation,
+                image: params,
+                bounds,
+                tile,
+                atlas_access: atlas_diagnostic,
+            });
         Ok(())
     }
 
@@ -3839,7 +3988,8 @@ impl Window {
                 frame_index,
             };
 
-            self.sprite_atlas.remove(&params.clone().into());
+            let diagnostic = self.sprite_atlas.remove_with_diagnostics(&params.into());
+            self.atlas_remove_diagnostics.push(diagnostic);
         }
 
         Ok(())

@@ -9,7 +9,7 @@ pub mod layer_shell;
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
-#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+#[cfg(any(test, feature = "test-support"))]
 mod visual_test;
 
 #[cfg(all(
@@ -80,7 +80,7 @@ pub(crate) use test::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
 
-#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+#[cfg(any(test, feature = "test-support"))]
 pub use visual_test::VisualTestPlatform;
 
 /// Platform support relevant to ImGui-style multi-viewport docking.
@@ -1147,6 +1147,14 @@ impl AtlasKey {
             AtlasKey::Image(_) => AtlasTextureKind::Polychrome,
         }
     }
+
+    /// Returns image rendering parameters when this atlas key is image-backed.
+    pub fn image_params(&self) -> Option<RenderImageParams> {
+        match self {
+            AtlasKey::Image(params) => Some(*params),
+            AtlasKey::Glyph(_) | AtlasKey::Svg(_) => None,
+        }
+    }
 }
 
 impl From<RenderGlyphParams> for AtlasKey {
@@ -1167,6 +1175,91 @@ impl From<RenderImageParams> for AtlasKey {
     }
 }
 
+/// Describes how an atlas key was resolved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(missing_docs)]
+pub enum AtlasAccessOutcome {
+    Hit,
+    Inserted,
+    Unavailable,
+    Failed,
+    Unknown,
+}
+
+/// Diagnostic facts for a single atlas lookup or insertion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(missing_docs)]
+pub struct AtlasAccessDiagnostic {
+    pub image: Option<RenderImageParams>,
+    pub outcome: AtlasAccessOutcome,
+    pub tile: Option<AtlasTile>,
+    pub texture_id: Option<AtlasTextureId>,
+    pub tile_id: Option<TileId>,
+    pub size: Option<Size<DevicePixels>>,
+}
+
+impl AtlasAccessDiagnostic {
+    /// Builds diagnostic facts for an atlas access involving the given key.
+    pub fn new(
+        key: &AtlasKey,
+        outcome: AtlasAccessOutcome,
+        tile: Option<AtlasTile>,
+        size: Option<Size<DevicePixels>>,
+    ) -> Self {
+        Self {
+            image: key.image_params(),
+            outcome,
+            tile,
+            texture_id: tile.map(|tile| tile.texture_id),
+            tile_id: tile.map(|tile| tile.tile_id),
+            size,
+        }
+    }
+}
+
+/// Atlas access result paired with diagnostic facts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(missing_docs)]
+pub struct AtlasAccess {
+    pub tile: Option<AtlasTile>,
+    pub diagnostic: AtlasAccessDiagnostic,
+}
+
+/// Describes the observable result of removing an atlas key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(missing_docs)]
+pub enum AtlasRemoveOutcome {
+    RemoveHit,
+    RemoveNoop,
+    TextureRetained,
+    TextureFreed,
+    Unknown,
+}
+
+/// Diagnostic facts for a single atlas removal request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(missing_docs)]
+pub struct AtlasRemoveDiagnostic {
+    pub image: Option<RenderImageParams>,
+    pub outcome: AtlasRemoveOutcome,
+    pub texture_id: Option<AtlasTextureId>,
+}
+
+impl AtlasRemoveDiagnostic {
+    /// Builds diagnostic facts for an atlas removal involving the given key.
+    pub fn new(
+        key: &AtlasKey,
+        outcome: AtlasRemoveOutcome,
+        texture_id: Option<AtlasTextureId>,
+    ) -> Self {
+        Self {
+            image: key.image_params(),
+            outcome,
+            texture_id,
+        }
+    }
+}
+
 #[expect(missing_docs)]
 pub trait PlatformAtlas {
     fn get_or_insert_with<'a>(
@@ -1174,7 +1267,35 @@ pub trait PlatformAtlas {
         key: &AtlasKey,
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>>;
+
+    fn get_or_insert_with_diagnostics<'a>(
+        &self,
+        key: &AtlasKey,
+        build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+    ) -> Result<AtlasAccess> {
+        let tile = self.get_or_insert_with(key, build)?;
+        let outcome = if tile.is_some() {
+            AtlasAccessOutcome::Unknown
+        } else {
+            AtlasAccessOutcome::Unavailable
+        };
+        Ok(AtlasAccess {
+            tile,
+            diagnostic: AtlasAccessDiagnostic::new(
+                key,
+                outcome,
+                tile,
+                tile.map(|tile| tile.bounds.size),
+            ),
+        })
+    }
+
     fn remove(&self, key: &AtlasKey);
+
+    fn remove_with_diagnostics(&self, key: &AtlasKey) -> AtlasRemoveDiagnostic {
+        self.remove(key);
+        AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::Unknown, None)
+    }
 }
 
 #[doc(hidden)]

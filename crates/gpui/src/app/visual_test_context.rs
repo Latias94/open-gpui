@@ -3,8 +3,8 @@ use crate::{
     Bounds, ClipboardItem, Context, Entity, EntityId, ForegroundExecutor, Global, InputEvent,
     Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Platform, Point, Render, Result, Size, Task, TestDispatcher, TestInputDispatchSnapshot,
-    TextSystem, VisualTestPlatform, Window, WindowBounds, WindowHandle, WindowOptions,
-    app::GpuiMode,
+    TextSystem, VisualTestPlatform, Window, WindowBounds, WindowFrameCapture, WindowHandle,
+    WindowOptions, app::GpuiMode,
 };
 use anyhow::anyhow;
 use image::RgbaImage;
@@ -180,6 +180,72 @@ impl VisualTestAppContext {
     {
         let mut lock = self.app.borrow_mut();
         lock.update_window(window, f)
+    }
+
+    /// Returns the bounds for a rendered debug selector in the given window.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn debug_bounds(
+        &mut self,
+        window: AnyWindowHandle,
+        selector: &str,
+    ) -> Option<Bounds<Pixels>> {
+        self.update_window(window, |_, window, _| {
+            window.rendered_frame.debug_bounds.get(selector).copied()
+        })
+        .ok()
+        .flatten()
+    }
+
+    /// Returns whether the rendered debug selector owns focus in the given window.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn debug_selector_is_focused(&mut self, window: AnyWindowHandle, selector: &str) -> bool {
+        self.update_window(window, |_, window, _| {
+            let Some(focus_id) = window.rendered_frame.debug_focus_handles.get(selector) else {
+                return false;
+            };
+            window.focus == Some(*focus_id)
+        })
+        .unwrap_or(false)
+    }
+
+    /// Force a redraw of the specified window.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn draw_window(&mut self, window: AnyWindowHandle) -> Result<()> {
+        self.update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+        })
+    }
+
+    /// Closes the specified visual test window and flushes removal effects.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn close_window(&mut self, window: AnyWindowHandle) -> Result<()> {
+        self.update_window(window, |_, window, _| {
+            window.remove_window();
+        })?;
+        {
+            let mut app = self.app.borrow_mut();
+            app.windows.remove(window.id);
+            app.window_handles.remove(&window.id);
+        }
+        self.run_until_parked();
+        Ok(())
+    }
+
+    /// Drains next-frame callbacks for a visual test window.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn drain_next_frame_callbacks(&mut self, window: AnyWindowHandle) -> Result<usize> {
+        let mut total = 0usize;
+        for _ in 0..16 {
+            let drained = self.update_window(window, |_, window, cx| {
+                window.drain_next_frame_callbacks_for_test(cx)
+            })?;
+            if drained == 0 {
+                break;
+            }
+            total = total.saturating_add(drained);
+            self.run_until_parked();
+        }
+        Ok(total)
     }
 
     /// Spawns a task on the foreground executor.
@@ -397,6 +463,12 @@ impl VisualTestAppContext {
     #[cfg(any(test, feature = "test-support"))]
     pub fn capture_screenshot(&mut self, window: AnyWindowHandle) -> Result<RgbaImage> {
         self.update_window(window, |_, window, _cx| window.render_to_image())?
+    }
+
+    /// Captures a screenshot together with framework frame metadata.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn capture_frame(&mut self, window: AnyWindowHandle) -> Result<WindowFrameCapture> {
+        self.update_window(window, |_, window, _cx| window.capture_frame())
     }
 
     /// Waits for animations to complete by waiting a couple of frames.

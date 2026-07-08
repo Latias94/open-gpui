@@ -38,7 +38,7 @@ use smallvec::SmallVec;
 pub use test_app::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
-#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+#[cfg(any(test, feature = "test-support"))]
 pub use visual_test_context::*;
 
 #[cfg(any(feature = "inspector", debug_assertions))]
@@ -72,7 +72,7 @@ mod headless_app_context;
 mod test_app;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
-#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+#[cfg(any(test, feature = "test-support"))]
 mod visual_test_context;
 mod window_registry;
 pub use cell::{AppCell, AppRef, AppRefMut};

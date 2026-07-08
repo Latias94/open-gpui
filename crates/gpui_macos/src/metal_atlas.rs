@@ -4,8 +4,9 @@ use anyhow::{Context as _, Result};
 use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
 use open_gpui::{
-    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, Bounds, DevicePixels,
-    PlatformAtlas, Point, Size,
+    AtlasAccess, AtlasAccessDiagnostic, AtlasAccessOutcome, AtlasKey, AtlasRemoveDiagnostic,
+    AtlasRemoveOutcome, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, Bounds,
+    DevicePixels, PlatformAtlas, Point, Size,
 };
 use open_gpui_collections::FxHashMap;
 use parking_lot::Mutex;
@@ -60,6 +61,52 @@ impl PlatformAtlas for MetalAtlas {
         }
     }
 
+    fn get_or_insert_with_diagnostics<'a>(
+        &self,
+        key: &AtlasKey,
+        build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+    ) -> Result<AtlasAccess> {
+        let mut lock = self.0.lock();
+        if let Some(tile) = lock.tiles_by_key.get(key) {
+            Ok(AtlasAccess {
+                tile: Some(*tile),
+                diagnostic: AtlasAccessDiagnostic::new(
+                    key,
+                    AtlasAccessOutcome::Hit,
+                    Some(*tile),
+                    Some(tile.bounds.size),
+                ),
+            })
+        } else {
+            let Some((size, bytes)) = build()? else {
+                return Ok(AtlasAccess {
+                    tile: None,
+                    diagnostic: AtlasAccessDiagnostic::new(
+                        key,
+                        AtlasAccessOutcome::Unavailable,
+                        None,
+                        None,
+                    ),
+                });
+            };
+            let tile = lock
+                .allocate(size, key.texture_kind())
+                .context("failed to allocate")?;
+            let texture = lock.texture(tile.texture_id);
+            texture.upload(tile.bounds, &bytes);
+            lock.tiles_by_key.insert(key.clone(), tile);
+            Ok(AtlasAccess {
+                tile: Some(tile),
+                diagnostic: AtlasAccessDiagnostic::new(
+                    key,
+                    AtlasAccessOutcome::Inserted,
+                    Some(tile),
+                    Some(size),
+                ),
+            })
+        }
+    }
+
     fn remove(&self, key: &AtlasKey) {
         let mut lock = self.0.lock();
         let Some(id) = lock.tiles_by_key.remove(key).map(|v| v.texture_id) else {
@@ -87,6 +134,40 @@ impl PlatformAtlas for MetalAtlas {
             } else {
                 *texture_slot = Some(texture);
             }
+        }
+    }
+
+    fn remove_with_diagnostics(&self, key: &AtlasKey) -> AtlasRemoveDiagnostic {
+        let mut lock = self.0.lock();
+        let Some(id) = lock.tiles_by_key.remove(key).map(|v| v.texture_id) else {
+            return AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::RemoveNoop, None);
+        };
+
+        let textures = match id.kind {
+            AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
+            AtlasTextureKind::Polychrome => &mut lock.polychrome_textures,
+            AtlasTextureKind::Subpixel => unreachable!(),
+        };
+
+        let Some(texture_slot) = textures
+            .textures
+            .iter_mut()
+            .find(|texture| texture.as_ref().is_some_and(|v| v.id == id))
+        else {
+            return AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::RemoveHit, Some(id));
+        };
+
+        if let Some(mut texture) = texture_slot.take() {
+            texture.decrement_ref_count();
+            if texture.is_unreferenced() {
+                textures.free_list.push(id.index as usize);
+                AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::TextureFreed, Some(id))
+            } else {
+                *texture_slot = Some(texture);
+                AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::TextureRetained, Some(id))
+            }
+        } else {
+            AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::RemoveHit, Some(id))
         }
     }
 }

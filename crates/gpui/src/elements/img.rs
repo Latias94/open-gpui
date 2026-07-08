@@ -805,7 +805,10 @@ impl From<image::ImageError> for ImageCacheError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ParentElement as _, TestAppContext, canvas, div, point, px, size};
+    use crate::{
+        AtlasAccessOutcome, AtlasRemoveOutcome, Context, IntoElement, ParentElement as _, Render,
+        TestAppContext, Window, canvas, div, point, px, size,
+    };
     use image::{Frame, ImageBuffer, Rgba};
 
     const TEST_IMG_ID: &str = "test-img";
@@ -831,6 +834,16 @@ mod tests {
                 });
             },
         )
+    }
+
+    struct ImageFrameView {
+        image: Arc<RenderImage>,
+    }
+
+    impl Render for ImageFrameView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            img(ImageSource::Render(self.image.clone()))
+        }
     }
 
     #[open_gpui::test]
@@ -859,5 +872,113 @@ mod tests {
                 .id(TEST_IMG_ID)
                 .into_any_element()
         });
+    }
+
+    #[open_gpui::test]
+    fn capture_frame_returns_metadata_when_pixels_are_unsupported(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let first = cx.update(|window, cx| {
+            window.draw(cx).clear();
+            window.capture_frame()
+        });
+        let second = cx.update(|window, cx| {
+            window.draw(cx).clear();
+            window.capture_frame()
+        });
+
+        assert!(first.image.is_none());
+        assert!(
+            first
+                .unsupported_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("render_to_image not available"))
+        );
+        assert_eq!(first.metadata.capture_generation, 1);
+        assert_eq!(second.metadata.capture_generation, 2);
+        assert!(
+            second.metadata.framework_frame_generation > first.metadata.framework_frame_generation
+        );
+        assert_eq!(first.metadata.window_id, second.metadata.window_id);
+        assert!(first.metadata.logical_viewport_size.width > px(0.));
+        assert!(first.metadata.physical_viewport_size.width.0 > 0);
+    }
+
+    #[open_gpui::test]
+    fn render_image_paint_records_frame_and_atlas_diagnostics(cx: &mut TestAppContext) {
+        let image = test_image(1);
+        let image_id = image.id;
+        let cx = cx.add_empty_window();
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+            img(ImageSource::Render(image.clone())).into_any_element()
+        });
+        let (first_paints, first_accesses) = cx.update(|window, _| {
+            (
+                window.rendered_frame_image_paint_diagnostics().to_vec(),
+                window.rendered_frame_atlas_access_diagnostics().to_vec(),
+            )
+        });
+
+        assert_eq!(first_paints.len(), 1);
+        assert_eq!(first_accesses.len(), 1);
+        assert_eq!(first_paints[0].image.image_id, image_id);
+        assert_eq!(
+            first_paints[0].atlas_access.outcome,
+            AtlasAccessOutcome::Inserted
+        );
+        assert_eq!(first_accesses[0].outcome, AtlasAccessOutcome::Inserted);
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+            img(ImageSource::Render(image.clone())).into_any_element()
+        });
+        let (second_paints, second_accesses) = cx.update(|window, _| {
+            (
+                window.rendered_frame_image_paint_diagnostics().to_vec(),
+                window.rendered_frame_atlas_access_diagnostics().to_vec(),
+            )
+        });
+
+        assert_eq!(second_paints.len(), 1);
+        assert_eq!(second_accesses.len(), 1);
+        assert_eq!(second_paints[0].image.image_id, image_id);
+        assert_eq!(
+            second_paints[0].atlas_access.outcome,
+            AtlasAccessOutcome::Hit
+        );
+        assert_eq!(second_accesses[0].outcome, AtlasAccessOutcome::Hit);
+
+        let remove = cx.update(|window, _| {
+            window.drop_image(image.clone()).unwrap();
+            *window
+                .atlas_remove_diagnostics()
+                .last()
+                .expect("drop_image should record removal diagnostics")
+        });
+        assert_eq!(
+            remove.image.expect("image-backed remove").image_id,
+            image_id
+        );
+        assert_eq!(remove.outcome, AtlasRemoveOutcome::RemoveHit);
+    }
+
+    #[open_gpui::test]
+    fn window_draw_advances_frame_generation_for_image_paint_diagnostics(cx: &mut TestAppContext) {
+        let image = test_image(1);
+        let (_view, cx) = cx.add_window_view({
+            let image = image.clone();
+            move |_, _| ImageFrameView { image }
+        });
+
+        let first_frame_generation = cx.update(|window, cx| {
+            window.draw(cx).clear();
+            window.rendered_frame_image_paint_diagnostics()[0].frame_generation
+        });
+        let second_frame_generation = cx.update(|window, cx| {
+            window.draw(cx).clear();
+            window.rendered_frame_image_paint_diagnostics()[0].frame_generation
+        });
+
+        assert!(second_frame_generation > first_frame_generation);
     }
 }

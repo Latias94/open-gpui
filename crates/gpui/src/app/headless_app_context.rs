@@ -12,7 +12,7 @@ use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, AssetSource, BackgroundExecutor, Bounds,
     Context, Entity, EntityId, ForegroundExecutor, Global, Pixels, PlatformHeadlessRenderer,
     PlatformTextSystem, Render, Reservation, Size, Task, TestDispatcher, TestPlatform, TextSystem,
-    Window, WindowBounds, WindowHandle, WindowOptions,
+    Window, WindowBounds, WindowFrameCapture, WindowHandle, WindowOptions,
     app::{GpuiBorrow, GpuiMode},
 };
 use anyhow::Result;
@@ -168,6 +168,12 @@ impl HeadlessAppContext {
     pub fn capture_screenshot(&mut self, window: AnyWindowHandle) -> Result<RgbaImage> {
         let mut app = self.app.borrow_mut();
         app.update_window(window, |_, window, _| window.render_to_image())?
+    }
+
+    /// Captures a screenshot together with framework frame metadata.
+    pub fn capture_frame(&mut self, window: AnyWindowHandle) -> Result<WindowFrameCapture> {
+        let mut app = self.app.borrow_mut();
+        app.update_window(window, |_, window, _| window.capture_frame())
     }
 
     /// Returns the text system.

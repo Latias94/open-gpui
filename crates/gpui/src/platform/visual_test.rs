@@ -35,6 +35,7 @@ pub struct VisualTestPlatform {
     foreground_executor: ForegroundExecutor,
     platform: Rc<dyn Platform>,
     clipboard: Mutex<Option<ClipboardItem>>,
+    #[cfg(target_os = "macos")]
     find_pasteboard: Mutex<Option<ClipboardItem>>,
 }
 
@@ -55,6 +56,7 @@ impl VisualTestPlatform {
             foreground_executor,
             platform,
             clipboard: Mutex::new(None),
+            #[cfg(target_os = "macos")]
             find_pasteboard: Mutex::new(None),
         }
     }

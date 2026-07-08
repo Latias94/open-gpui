@@ -1,9 +1,10 @@
 #[cfg(any(test, feature = "test-support"))]
 use crate::Bounds;
 use crate::{
-    AnyElement, AnyTooltip, CursorStyle, DispatchNodeId, DispatchTree, ElementId, EntityId,
-    GlobalElementId, Hitbox, HitboxBehavior, HitboxId, LineLayoutIndex, Pixels,
-    PlatformInputHandler, Point, Scene, TabStopMap, TextStyleRefinement, Window, WindowControlArea,
+    AnyElement, AnyTooltip, AtlasAccessDiagnostic, CursorStyle, DispatchNodeId, DispatchTree,
+    ElementId, EntityId, GlobalElementId, Hitbox, HitboxBehavior, HitboxId, LineLayoutIndex,
+    Pixels, PlatformInputHandler, Point, Scene, TabStopMap, TextStyleRefinement, Window,
+    WindowControlArea,
 };
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
@@ -12,7 +13,8 @@ use smallvec::SmallVec;
 use std::{any::TypeId, ops::Range, rc::Rc};
 
 use super::{
-    AnyMouseListener, ContentMask, CursorStyleRequest, ElementStateBox, FocusId, HitTest, TooltipId,
+    AnyMouseListener, ContentMask, CursorStyleRequest, ElementStateBox, FocusId, HitTest,
+    ImagePaintDiagnostic, TooltipId,
 };
 
 #[derive(Clone)]
@@ -36,6 +38,7 @@ pub(crate) struct DeferredDraw {
 }
 
 pub(crate) struct Frame {
+    pub(crate) generation: u64,
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
@@ -43,6 +46,8 @@ pub(crate) struct Frame {
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
+    pub(crate) atlas_access_diagnostics: Vec<AtlasAccessDiagnostic>,
+    pub(crate) image_paint_diagnostics: Vec<ImagePaintDiagnostic>,
     pub(crate) hitboxes: Vec<Hitbox>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
@@ -73,6 +78,8 @@ pub(crate) struct PrepaintStateIndex {
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
     pub(super) scene_index: usize,
+    pub(super) atlas_access_diagnostics_index: usize,
+    pub(super) image_paint_diagnostics_index: usize,
     pub(super) mouse_listeners_index: usize,
     pub(super) input_handlers_index: usize,
     pub(super) cursor_styles_index: usize,
@@ -84,6 +91,7 @@ pub(crate) struct PaintIndex {
 impl Frame {
     pub(crate) fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
+            generation: 0,
             focus: None,
             window_active: false,
             element_states: FxHashMap::default(),
@@ -91,6 +99,8 @@ impl Frame {
             mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
+            atlas_access_diagnostics: Vec::new(),
+            image_paint_diagnostics: Vec::new(),
             hitboxes: Vec::new(),
             window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
@@ -118,6 +128,9 @@ impl Frame {
         self.mouse_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
+        self.generation = 0;
+        self.atlas_access_diagnostics.clear();
+        self.image_paint_diagnostics.clear();
         self.input_handlers.clear();
         self.tooltip_requests.clear();
         self.cursor_styles.clear();

@@ -13,7 +13,8 @@ use parking_lot::Mutex;
 use uuid::Uuid;
 
 use open_gpui::{
-    AtlasKey, AtlasTextureId, AtlasTile, Bounds, Capslock, CursorStyle, DevicePixels,
+    AtlasAccess, AtlasAccessDiagnostic, AtlasAccessOutcome, AtlasKey, AtlasRemoveDiagnostic,
+    AtlasRemoveOutcome, AtlasTextureId, AtlasTile, Bounds, Capslock, CursorStyle, DevicePixels,
     DispatchEventResult, DisplayId, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel,
     RequestFrameOptions, Scene, Size, TileId, WindowAppearance, WindowBackgroundAppearance,
@@ -291,7 +292,83 @@ impl PlatformAtlas for HeadlessAtlas {
         Ok(Some(tile))
     }
 
+    fn get_or_insert_with_diagnostics<'a>(
+        &self,
+        key: &AtlasKey,
+        build: &mut dyn FnMut() -> anyhow::Result<
+            Option<(Size<DevicePixels>, std::borrow::Cow<'a, [u8]>)>,
+        >,
+    ) -> anyhow::Result<AtlasAccess> {
+        {
+            let state = self.0.lock();
+            if let Some(&tile) = state.tiles.get(key) {
+                return Ok(AtlasAccess {
+                    tile: Some(tile),
+                    diagnostic: AtlasAccessDiagnostic::new(
+                        key,
+                        AtlasAccessOutcome::Hit,
+                        Some(tile),
+                        Some(tile.bounds.size),
+                    ),
+                });
+            }
+        }
+
+        let Some((size, _)) = build()? else {
+            return Ok(AtlasAccess {
+                tile: None,
+                diagnostic: AtlasAccessDiagnostic::new(
+                    key,
+                    AtlasAccessOutcome::Unavailable,
+                    None,
+                    None,
+                ),
+            });
+        };
+
+        let mut state = self.0.lock();
+        state.next_id += 1;
+        let texture_id = state.next_id;
+        state.next_id += 1;
+        let tile_id = state.next_id;
+        let tile = AtlasTile {
+            texture_id: AtlasTextureId {
+                index: texture_id,
+                kind: key.texture_kind(),
+            },
+            tile_id: TileId(tile_id),
+            padding: 0,
+            bounds: Bounds {
+                origin: Point::default(),
+                size,
+            },
+        };
+        state.tiles.insert(key.clone(), tile);
+        Ok(AtlasAccess {
+            tile: Some(tile),
+            diagnostic: AtlasAccessDiagnostic::new(
+                key,
+                AtlasAccessOutcome::Inserted,
+                Some(tile),
+                Some(size),
+            ),
+        })
+    }
+
     fn remove(&self, key: &AtlasKey) {
         self.0.lock().tiles.remove(key);
+    }
+
+    fn remove_with_diagnostics(&self, key: &AtlasKey) -> AtlasRemoveDiagnostic {
+        let removed = self.0.lock().tiles.remove(key);
+        AtlasRemoveDiagnostic::new(
+            key,
+            if removed.is_some() {
+                AtlasRemoveOutcome::RemoveHit
+            } else {
+                AtlasRemoveOutcome::RemoveNoop
+            },
+            removed.map(|tile| tile.texture_id),
+        )
     }
 }

@@ -10,8 +10,9 @@ use windows::Win32::Graphics::{
 };
 
 use open_gpui::{
-    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, Bounds, DevicePixels,
-    PlatformAtlas, Point, Size,
+    AtlasAccess, AtlasAccessDiagnostic, AtlasAccessOutcome, AtlasKey, AtlasRemoveDiagnostic,
+    AtlasRemoveOutcome, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, Bounds,
+    DevicePixels, PlatformAtlas, Point, Size,
 };
 
 pub(crate) struct DirectXAtlas(Mutex<DirectXAtlasState>);
@@ -95,6 +96,54 @@ impl PlatformAtlas for DirectXAtlas {
         }
     }
 
+    fn get_or_insert_with_diagnostics<'a>(
+        &self,
+        key: &AtlasKey,
+        build: &mut dyn FnMut() -> anyhow::Result<
+            Option<(Size<DevicePixels>, std::borrow::Cow<'a, [u8]>)>,
+        >,
+    ) -> anyhow::Result<AtlasAccess> {
+        let mut lock = self.0.lock();
+        if let Some(tile) = lock.tiles_by_key.get(key) {
+            Ok(AtlasAccess {
+                tile: Some(*tile),
+                diagnostic: AtlasAccessDiagnostic::new(
+                    key,
+                    AtlasAccessOutcome::Hit,
+                    Some(*tile),
+                    Some(tile.bounds.size),
+                ),
+            })
+        } else {
+            let Some((size, bytes)) = build()? else {
+                return Ok(AtlasAccess {
+                    tile: None,
+                    diagnostic: AtlasAccessDiagnostic::new(
+                        key,
+                        AtlasAccessOutcome::Unavailable,
+                        None,
+                        None,
+                    ),
+                });
+            };
+            let tile = lock
+                .allocate(size, key.texture_kind())
+                .ok_or_else(|| anyhow::anyhow!("failed to allocate"))?;
+            let texture = lock.texture(tile.texture_id);
+            texture.upload(&lock.device_context, tile.bounds, &bytes);
+            lock.tiles_by_key.insert(key.clone(), tile);
+            Ok(AtlasAccess {
+                tile: Some(tile),
+                diagnostic: AtlasAccessDiagnostic::new(
+                    key,
+                    AtlasAccessOutcome::Inserted,
+                    Some(tile),
+                    Some(size),
+                ),
+            })
+        }
+    }
+
     fn remove(&self, key: &AtlasKey) {
         let mut lock = self.0.lock();
 
@@ -119,6 +168,37 @@ impl PlatformAtlas for DirectXAtlas {
             } else {
                 *texture_slot = Some(texture);
             }
+        }
+    }
+
+    fn remove_with_diagnostics(&self, key: &AtlasKey) -> AtlasRemoveDiagnostic {
+        let mut lock = self.0.lock();
+
+        let Some(id) = lock.tiles_by_key.remove(key).map(|tile| tile.texture_id) else {
+            return AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::RemoveNoop, None);
+        };
+
+        let textures = match id.kind {
+            AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
+            AtlasTextureKind::Polychrome => &mut lock.polychrome_textures,
+            AtlasTextureKind::Subpixel => &mut lock.subpixel_textures,
+        };
+
+        let Some(texture_slot) = textures.textures.get_mut(id.index as usize) else {
+            return AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::RemoveHit, Some(id));
+        };
+
+        if let Some(mut texture) = texture_slot.take() {
+            texture.decrement_ref_count();
+            if texture.is_unreferenced() {
+                textures.free_list.push(texture.id.index as usize);
+                AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::TextureFreed, Some(id))
+            } else {
+                *texture_slot = Some(texture);
+                AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::TextureRetained, Some(id))
+            }
+        } else {
+            AtlasRemoveDiagnostic::new(key, AtlasRemoveOutcome::RemoveHit, Some(id))
         }
     }
 }
