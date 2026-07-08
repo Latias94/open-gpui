@@ -1,11 +1,7 @@
 //! Renderer-neutral runtime helpers for deterministic UI motion.
 
 use crate::{MotionPx, MotionRect, motion::MotionSpec, motion_point, motion_rect, motion_size};
-use std::{
-    collections::HashMap,
-    hash::Hash,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, hash::Hash, time::Duration};
 
 /// Runtime state for sampled motion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +35,7 @@ impl MotionRunState {
 
 /// A sampled point on a motion timeline.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MotionTimelineSample {
+pub(crate) struct MotionTimelineSample {
     state: MotionRunState,
     elapsed: Duration,
     raw_progress: f32,
@@ -48,7 +44,7 @@ pub struct MotionTimelineSample {
 
 impl MotionTimelineSample {
     /// Creates a sample from explicit values.
-    pub const fn new(
+    pub(crate) const fn new(
         state: MotionRunState,
         elapsed: Duration,
         raw_progress: f32,
@@ -63,87 +59,39 @@ impl MotionTimelineSample {
     }
 
     /// Returns the sampled timeline state.
-    pub const fn state(self) -> MotionRunState {
+    pub(crate) const fn state(self) -> MotionRunState {
         self.state
     }
 
     /// Returns the elapsed time used for this sample.
-    pub const fn elapsed(self) -> Duration {
+    pub(crate) const fn elapsed(self) -> Duration {
         self.elapsed
     }
 
     /// Returns the unclamped easing input after duration normalization.
-    pub const fn raw_progress(self) -> f32 {
+    #[cfg(test)]
+    pub(crate) const fn raw_progress(self) -> f32 {
         self.raw_progress
     }
 
     /// Returns the eased progress.
-    pub const fn progress(self) -> f32 {
+    pub(crate) const fn progress(self) -> f32 {
         self.progress
     }
 
-    /// Returns whether the timeline should continue requesting frames.
-    pub const fn is_active(self) -> bool {
-        self.state.is_active()
-    }
-
     /// Returns whether the semantic final state has been reached.
-    pub const fn reached_final_state(self) -> bool {
+    pub(crate) const fn reached_final_state(self) -> bool {
         self.state.reached_final_state()
     }
 }
 
 /// A deterministic timeline for one UI motion transition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MotionTimeline {
-    spec: MotionSpec,
-    started_at: Instant,
-    cancelled_at: Option<Instant>,
-}
+pub(crate) struct MotionTimeline;
 
 impl MotionTimeline {
-    /// Creates a timeline that starts at the provided instant.
-    pub const fn new(spec: MotionSpec, started_at: Instant) -> Self {
-        Self {
-            spec,
-            started_at,
-            cancelled_at: None,
-        }
-    }
-
-    /// Returns the motion specification used by this timeline.
-    pub const fn spec(self) -> MotionSpec {
-        self.spec
-    }
-
-    /// Returns the instant at which the timeline started.
-    pub const fn started_at(self) -> Instant {
-        self.started_at
-    }
-
-    /// Returns the instant at which the timeline was cancelled.
-    pub const fn cancelled_at(self) -> Option<Instant> {
-        self.cancelled_at
-    }
-
-    /// Marks the timeline as cancelled at the provided instant.
-    pub fn cancel_at(&mut self, cancelled_at: Instant) {
-        self.cancelled_at = Some(cancelled_at);
-    }
-
-    /// Samples the timeline at the provided instant.
-    pub fn sample(self, now: Instant) -> MotionTimelineSample {
-        let effective_now = self.cancelled_at.unwrap_or(now);
-        let elapsed = effective_now.saturating_duration_since(self.started_at);
-        let mut sample = Self::sample_elapsed(self.spec, elapsed);
-        if self.cancelled_at.is_some() && !sample.reached_final_state() {
-            sample.state = MotionRunState::Cancelled;
-        }
-        sample
-    }
-
     /// Samples a motion spec using an explicit elapsed duration.
-    pub fn sample_elapsed(spec: MotionSpec, elapsed: Duration) -> MotionTimelineSample {
+    pub(crate) fn sample_elapsed(spec: MotionSpec, elapsed: Duration) -> MotionTimelineSample {
         if spec.is_immediate() {
             return MotionTimelineSample::new(MotionRunState::Immediate, elapsed, 1.0, 1.0);
         }
@@ -452,26 +400,24 @@ mod tests {
 
     #[test]
     fn timeline_samples_start_midpoint_and_completion() {
-        let started_at = Instant::now();
         let spec = MotionSpec::new(
             MotionPreference::Animated,
             MotionDuration::Custom(Duration::from_millis(200)),
             MotionEasing::Linear,
         );
-        let timeline = MotionTimeline::new(spec, started_at);
 
-        let start = timeline.sample(started_at);
+        let start = MotionTimeline::sample_elapsed(spec, Duration::ZERO);
         assert_eq!(start.state(), MotionRunState::Active);
         assert_eq!(start.elapsed(), Duration::from_millis(0));
         assert_eq!(start.raw_progress(), 0.0);
         assert_eq!(start.progress(), 0.0);
 
-        let midpoint = timeline.sample(started_at + Duration::from_millis(100));
+        let midpoint = MotionTimeline::sample_elapsed(spec, Duration::from_millis(100));
         assert_eq!(midpoint.state(), MotionRunState::Active);
         assert_eq!(midpoint.raw_progress(), 0.5);
         assert_eq!(midpoint.progress(), 0.5);
 
-        let complete = timeline.sample(started_at + Duration::from_millis(250));
+        let complete = MotionTimeline::sample_elapsed(spec, Duration::from_millis(250));
         assert_eq!(complete.state(), MotionRunState::Completed);
         assert_eq!(complete.raw_progress(), 1.0);
         assert_eq!(complete.progress(), 1.0);
@@ -489,25 +435,6 @@ mod tests {
         assert_eq!(sample.raw_progress(), 1.0);
         assert_eq!(sample.progress(), 1.0);
         assert!(sample.reached_final_state());
-    }
-
-    #[test]
-    fn cancelled_timeline_reports_cancelled_sampled_progress() {
-        let started_at = Instant::now();
-        let spec = MotionSpec::new(
-            MotionPreference::Animated,
-            MotionDuration::Custom(Duration::from_millis(200)),
-            MotionEasing::Linear,
-        );
-        let mut timeline = MotionTimeline::new(spec, started_at);
-
-        timeline.cancel_at(started_at + Duration::from_millis(80));
-        let sample = timeline.sample(started_at + Duration::from_millis(160));
-
-        assert_eq!(sample.state(), MotionRunState::Cancelled);
-        assert!((sample.raw_progress() - 0.4).abs() < f32::EPSILON);
-        assert!((sample.progress() - 0.4).abs() < f32::EPSILON);
-        assert!(!sample.reached_final_state());
     }
 
     #[test]

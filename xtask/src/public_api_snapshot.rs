@@ -117,6 +117,7 @@ fn scan_docking_public_api(root: &Path, failures: &mut Vec<String>) {
 fn scan_motion_public_api(root: &Path, failures: &mut Vec<String>) {
     let source_dir = root.join("crates/motion/src");
     let root_exports = default_reexport_tokens(&source_dir, "lib.rs", failures);
+    let advanced_exports = default_reexport_tokens(&source_dir, "advanced.rs", failures);
     let forbidden_root = [
         "MotionExecutionPlan",
         "MotionExecutionState",
@@ -125,6 +126,8 @@ fn scan_motion_public_api(root: &Path, failures: &mut Vec<String>) {
         "MotionFrameHostUpdate",
         "MotionModel",
         "MotionPreset",
+        "MotionPolicyInput",
+        "MotionPreviewTargetPolicy",
         "MotionProgressExecution",
         "MotionScalarController",
         "MotionScalarExecution",
@@ -135,6 +138,7 @@ fn scan_motion_public_api(root: &Path, failures: &mut Vec<String>) {
         "MotionSpringPreset",
         "MotionSpringSpec",
         "MotionTimeline",
+        "validate_motion_policy",
     ];
 
     reject_tokens(
@@ -143,6 +147,56 @@ fn scan_motion_public_api(root: &Path, failures: &mut Vec<String>) {
         &root_exports,
         &forbidden_root,
         "motion root must favor facade types over low-level execution/model internals",
+        failures,
+    );
+    reject_public_module(
+        &source_dir.join("lib.rs"),
+        "policy",
+        "low-level policy input validation must stay behind the advanced tier",
+        failures,
+    );
+
+    let forbidden_advanced_lifecycle = ["MotionSpring", "MotionTimeline", "MotionTimelineSample"];
+    reject_tokens(
+        "crates/motion",
+        "advanced.rs",
+        &advanced_exports,
+        &forbidden_advanced_lifecycle,
+        "advanced surface must not export Instant-owning lifecycle types",
+        failures,
+    );
+
+    for file_name in [
+        "controller.rs",
+        "frame_host.rs",
+        "runtime.rs",
+        "spring.rs",
+        "transition.rs",
+    ] {
+        let tokens = public_signature_tokens(&source_dir.join(file_name), failures);
+        reject_tokens(
+            "crates/motion",
+            file_name,
+            &tokens,
+            &["Instant"],
+            "public motion lifecycle signatures must use elapsed time instead of Instant",
+            failures,
+        );
+    }
+
+    let transition_tokens = public_signature_tokens(&source_dir.join("transition.rs"), failures);
+    reject_tokens(
+        "crates/motion",
+        "transition.rs",
+        &transition_tokens,
+        &[
+            "MotionExecutionPlan",
+            "MotionModel",
+            "MotionPolicyInput",
+            "MotionSpec",
+            "MotionSpringSpec",
+        ],
+        "motion root facade signatures must hide low-level execution/model types",
         failures,
     );
 }

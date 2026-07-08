@@ -10,11 +10,11 @@ runtime.
 - `MotionTransition` as the root facade for duration, spring, immediate, and reduced-motion
   transitions selected by product intent.
 - Timeline and spring scalar sampling from explicit elapsed time, with `Instant` conversion kept in
-  adapter or `advanced` code instead of the root lifecycle.
+  adapter code instead of the motion lifecycle.
 - `MotionScalarRun` and `MotionProgressRun` for policy-resolved scalar and normalized 0..1 adapter
   runs.
-- Scalar controllers, retargeting, cancellation, explicit finish, terminal pruning, and raw
-  execution plans in `open_gpui_motion::advanced`.
+- Scalar controllers, retargeting, cancellation, explicit finish, terminal pruning, raw execution
+  plans, and low-level policy input validation in `open_gpui_motion::advanced`.
 - `MotionProgressSequence` for composing many keyed scalar tracks with absolute starts, append,
   with-previous, after-previous, and staggered insertion while preserving renderer-neutral sampling.
 - `MotionClockSample` for mapping adapter `Instant` values into deterministic controller

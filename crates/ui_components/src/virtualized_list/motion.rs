@@ -128,7 +128,9 @@ impl VirtualizedListActiveIndicatorState {
     }
 
     fn sample_motion(&mut self, now: Instant) -> MotionFrameDemand {
-        let sample = self.controller.sample_since(self.started_at, now);
+        let sample = self
+            .controller
+            .sample_at(now.saturating_duration_since(self.started_at));
         self.sampled = active_indicator_bounds_from_sample(&sample, self.target);
         self.frame_demand = sample.frame_demand();
         if sample.complete() {

@@ -1,14 +1,14 @@
 //! Root-level motion facade for duration-first adapter-owned animation.
 
 use crate::{
-    MotionClockSample, MotionDuration, MotionEasing, MotionFrameDemand, MotionPolicyContext,
-    MotionPolicyInput, MotionPolicyReport, MotionPreference, MotionProgressSample,
-    MotionScalarSample, MotionSpringPhysics,
+    MotionClockSample, MotionDuration, MotionEasing, MotionFrameDemand, MotionPreference,
+    MotionProgressSample, MotionScalarSample, MotionSpringPhysics,
     controller::{MotionExecutionPlan, MotionScalarExecution, MotionScalarExecutionSample},
     frame_host::{
         MotionFrameHost, MotionFrameHostResetReason, MotionFrameHostSample, MotionFrameHostUpdate,
     },
     motion::MotionSpec,
+    policy::{MotionPolicyContext, MotionPolicyInput, MotionPolicyReport},
     spring::{MotionModel, MotionSpringSpec},
 };
 use std::time::Duration;
@@ -122,8 +122,7 @@ impl MotionTransition {
         )
     }
 
-    /// Creates a facade transition from an explicit low-level model.
-    pub fn from_model(intent: MotionIntent, model: MotionModel) -> Self {
+    pub(crate) fn from_model(intent: MotionIntent, model: MotionModel) -> Self {
         Self {
             intent,
             model,
@@ -167,20 +166,13 @@ impl MotionTransition {
         self.model.is_immediate()
     }
 
-    /// Returns the advanced model for adapter code that needs direct scalar controllers.
-    pub const fn advanced_model(self) -> MotionModel {
-        self.model
-    }
-
-    /// Builds the policy input used by this transition.
-    pub const fn policy_input(self) -> MotionPolicyInput {
+    pub(crate) const fn policy_input(self) -> MotionPolicyInput {
         MotionPolicyInput::new(self.intent.policy_context(), self.model)
             .with_spatial_motion(self.spatial_motion)
             .with_reduced_motion_final_state(self.reduced_motion_final_state)
     }
 
-    /// Resolves this transition through motion policy.
-    pub fn resolve_plan(self) -> MotionExecutionPlan {
+    pub(crate) fn resolve_plan(self) -> MotionExecutionPlan {
         MotionExecutionPlan::resolve(self.policy_input())
     }
 

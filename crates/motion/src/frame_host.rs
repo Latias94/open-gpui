@@ -1,7 +1,7 @@
 //! Adapter-owned frame request helpers.
 
 use crate::{MotionClockSample, MotionFrameDemand};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Renderer-neutral host state for one adapter-owned motion frame source.
 ///
@@ -108,18 +108,6 @@ impl MotionFrameHost {
             clock,
             update,
         }
-    }
-
-    /// Samples motion from adapter instants and records the returned frame demand.
-    ///
-    /// If the owner's run epoch changes, call [`Self::reset`] before sampling the new run.
-    pub fn sample_since<T>(
-        &mut self,
-        started_at: Instant,
-        now: Instant,
-        sample: impl FnOnce(MotionClockSample) -> (T, MotionFrameDemand),
-    ) -> MotionFrameHostSample<T> {
-        self.sample_elapsed(now.saturating_duration_since(started_at), sample)
     }
 }
 

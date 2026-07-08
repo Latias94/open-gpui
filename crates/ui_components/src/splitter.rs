@@ -9,10 +9,11 @@ use open_gpui::{
 };
 use open_gpui_motion::{
     MotionFrameDemand, MotionFrameHostResetReason, MotionFrameReason, MotionPolicyContext,
-    MotionPolicyInput, MotionPreference, MotionProjectionClip,
+    MotionPreference, MotionProjectionClip,
     advanced::{
-        MotionExecutionPlan, MotionFrameHost, MotionFrameHostUpdate, MotionModel, MotionPreset,
-        MotionProgressExecution, MotionScalarController, MotionSpec,
+        MotionExecutionPlan, MotionFrameHost, MotionFrameHostUpdate, MotionModel,
+        MotionPolicyInput, MotionPreset, MotionProgressExecution, MotionScalarController,
+        MotionSpec,
     },
 };
 use open_gpui_ui_core::split::{
@@ -264,7 +265,8 @@ impl SplitterRuntime {
         self.layout_transition = Some(SplitterRuntimeLayoutTransition {
             target_state: state.clone(),
             transition,
-            progress: MotionProgressExecution::start(motion, now),
+            started_at: now,
+            progress: MotionProgressExecution::start(motion, Duration::ZERO),
         });
         self.last_state = Some(state.clone());
         splitter_frame_demand(true)
@@ -276,7 +278,7 @@ impl SplitterRuntime {
         };
         let sample = transition
             .controller
-            .sample_since(transition.started_at, now);
+            .sample_at(now.saturating_duration_since(transition.started_at));
         self.panel_fractions = fraction_samples_for_transition(transition, &sample);
         let complete = sample.complete();
         if complete {
@@ -291,7 +293,9 @@ impl SplitterRuntime {
         let Some(transition) = self.layout_transition.as_ref() else {
             return true;
         };
-        let sample = transition.progress.sample_since(now);
+        let sample = transition
+            .progress
+            .sample_at(now.saturating_duration_since(transition.started_at));
         let complete = sample.complete();
         if complete {
             self.layout_transition = None;
@@ -302,7 +306,9 @@ impl SplitterRuntime {
 
     fn layout_transition_sample(&self, now: Instant) -> Option<SplitterLayoutTransitionSample> {
         let transition = self.layout_transition.as_ref()?;
-        let sample = transition.progress.sample_since(now);
+        let sample = transition
+            .progress
+            .sample_at(now.saturating_duration_since(transition.started_at));
         Some(transition.transition.sample(sample.progress()))
     }
 
@@ -312,7 +318,7 @@ impl SplitterRuntime {
         };
         let sample = transition
             .controller
-            .sample_since(transition.started_at, now);
+            .sample_at(now.saturating_duration_since(transition.started_at));
         fraction_samples_for_transition(transition, &sample)
     }
 }
@@ -329,6 +335,7 @@ struct SplitterRuntimeTransition {
 struct SplitterRuntimeLayoutTransition {
     target_state: SplitterState,
     transition: SplitterLayoutTransition,
+    started_at: Instant,
     progress: MotionProgressExecution,
 }
 
@@ -962,8 +969,8 @@ fn render_handle(
 mod tests {
     use super::*;
     use open_gpui_motion::{
-        MotionDuration, MotionEasing, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
-        advanced::MotionSpec, validate_motion_policy,
+        MotionDuration, MotionEasing, MotionPolicyContext, MotionPolicyIssue,
+        advanced::{MotionPolicyInput, MotionSpec, validate_motion_policy},
     };
     use std::time::Duration;
 

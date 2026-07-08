@@ -3,10 +3,11 @@
 use crate::spring::{MotionModel, MotionScalarSample};
 use crate::value::MotionValue;
 use crate::{
-    MotionPolicyInput, MotionPolicyReport, MotionRunState, motion::MotionSpec,
-    validate_motion_policy,
+    MotionPolicyReport, MotionRunState,
+    motion::MotionSpec,
+    policy::{MotionPolicyInput, validate_motion_policy},
 };
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Renderer-neutral frame demand returned by motion controllers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,19 +99,6 @@ impl MotionClockSample {
                 clamped: false,
             }
         }
-    }
-
-    /// Creates a clock sample from a start instant and current adapter instant.
-    pub fn from_instant(started_at: Instant, now: Instant) -> Self {
-        Self::from_elapsed(Duration::ZERO, now.saturating_duration_since(started_at))
-    }
-
-    /// Creates a clock sample from adapter instants and clamps non-monotonic elapsed time.
-    pub fn from_instants(started_at: Instant, previous_now: Instant, now: Instant) -> Self {
-        Self::from_elapsed(
-            previous_now.saturating_duration_since(started_at),
-            now.saturating_duration_since(started_at),
-        )
     }
 
     /// Returns clamped controller elapsed time.
@@ -495,36 +483,29 @@ impl MotionScalarExecution {
     pub fn sample_clock(&self, clock: MotionClockSample) -> MotionScalarExecutionSample {
         self.sample_at(clock.elapsed())
     }
-
-    /// Samples the execution from adapter instants while keeping deterministic elapsed-time
-    /// semantics in the controller layer.
-    pub fn sample_since(&self, started_at: Instant, now: Instant) -> MotionScalarExecutionSample {
-        self.sample_at(now.saturating_duration_since(started_at))
-    }
 }
 
 /// A policy-resolved normalized 0..1 progress run.
 ///
-/// This is the renderer-neutral lifecycle primitive for adapters that need one progress value to
-/// drive their own layout, geometry, or paint projection. It deliberately does not schedule frames
-/// itself; callers translate the returned [`MotionFrameDemand`] through their adapter.
+/// This is the renderer-neutral lifecycle primitive for adapters that already resolved a motion
+/// plan and need one progress value to drive layout, geometry, or paint projection. It deliberately
+/// uses controller elapsed time only; adapters that own platform instants should convert them to
+/// elapsed [`Duration`] before sampling.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MotionProgressExecution {
     execution: MotionScalarExecution,
-    started_at: Instant,
 }
 
 impl MotionProgressExecution {
     /// Starts a normalized progress run from an already resolved motion plan.
-    pub fn start(plan: MotionExecutionPlan, started_at: Instant) -> Self {
+    pub fn start(plan: MotionExecutionPlan, started_at: Duration) -> Self {
         Self {
-            execution: MotionScalarExecution::start(plan, 0.0, 1.0, 0.0, Duration::ZERO),
-            started_at,
+            execution: MotionScalarExecution::start(plan, 0.0, 1.0, 0.0, started_at),
         }
     }
 
     /// Resolves policy input and starts a normalized progress run.
-    pub fn start_resolved(input: MotionPolicyInput, started_at: Instant) -> Self {
+    pub fn start_resolved(input: MotionPolicyInput, started_at: Duration) -> Self {
         Self::start(MotionExecutionPlan::resolve(input), started_at)
     }
 
@@ -553,9 +534,9 @@ impl MotionProgressExecution {
         self.execution.state()
     }
 
-    /// Returns the adapter instant at which this progress run started.
-    pub const fn started_at(&self) -> Instant {
-        self.started_at
+    /// Returns the controller elapsed time at which this progress run started.
+    pub const fn started_at(&self) -> Duration {
+        self.execution.track().started_at()
     }
 
     /// Samples the progress run at deterministic elapsed time.
@@ -566,12 +547,6 @@ impl MotionProgressExecution {
     /// Samples the progress run at a deterministic adapter clock sample.
     pub fn sample_clock(&self, clock: MotionClockSample) -> MotionProgressSample {
         MotionProgressSample::new(self.execution.sample_clock(clock))
-    }
-
-    /// Samples the progress run from adapter instants while keeping deterministic elapsed-time
-    /// semantics in the controller layer.
-    pub fn sample_since(&self, now: Instant) -> MotionProgressSample {
-        MotionProgressSample::new(self.execution.sample_since(self.started_at, now))
     }
 }
 
@@ -773,16 +748,6 @@ impl<K: Clone> MotionScalarController<K> {
     /// Samples all tracks at a deterministic adapter clock sample.
     pub fn sample_clock(&self, clock: MotionClockSample) -> MotionScalarControllerSample<K> {
         self.sample_at(clock.elapsed())
-    }
-
-    /// Samples all tracks from adapter instants while keeping deterministic elapsed-time
-    /// semantics in the controller layer.
-    pub fn sample_since(
-        &self,
-        started_at: Instant,
-        now: Instant,
-    ) -> MotionScalarControllerSample<K> {
-        self.sample_at(now.saturating_duration_since(started_at))
     }
 }
 
@@ -1042,32 +1007,5 @@ mod tests {
         assert_eq!(sample.value(), 1.0);
         assert!(sample.complete());
         assert!(!sample.frame_demand().needs_frame());
-    }
-
-    #[test]
-    fn progress_execution_samples_normalized_lifecycle() {
-        let started_at = Instant::now();
-        let progress = MotionProgressExecution::start_resolved(
-            MotionPolicyInput::new(
-                MotionPolicyContext::CommittedLayout,
-                MotionModel::timeline(MotionSpec::new(
-                    MotionPreference::Animated,
-                    MotionDuration::Custom(Duration::from_millis(100)),
-                    MotionEasing::Linear,
-                )),
-            )
-            .with_spatial_motion(true)
-            .with_reduced_motion_final_state(true),
-            started_at,
-        );
-
-        let midpoint = progress.sample_since(started_at + Duration::from_millis(50));
-        assert_eq!(midpoint.progress(), 0.5);
-        assert!(midpoint.frame_demand().needs_frame());
-
-        let complete = progress.sample_at(Duration::from_millis(120));
-        assert_eq!(complete.progress(), 1.0);
-        assert!(complete.complete());
-        assert!(!complete.frame_demand().needs_frame());
     }
 }

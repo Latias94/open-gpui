@@ -168,6 +168,11 @@ fn main() {
             ) => {
                 log::warn!("secondary docking viewport did not open: {error}");
             }
+            DockSurfaceViewportOpenOutcome::Unavailable(
+                DockSurfaceViewportUnavailable::InvalidPlacement { error },
+            ) => {
+                log::warn!("secondary docking viewport placement is invalid: {error}");
+            }
         }
 
         let placement = surface.export_viewport_placement();

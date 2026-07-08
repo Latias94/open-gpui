@@ -1,7 +1,7 @@
 //! Renderer-neutral spring sampling for layout-like UI motion.
 
 use crate::{MotionPreference, MotionRunState, motion::MotionSpec, runtime::MotionTimeline};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const DEFAULT_MASS: f32 = 1.0;
 const DEFAULT_STIFFNESS: f32 = 260.0;
@@ -336,101 +336,13 @@ impl MotionScalarSample {
     }
 }
 
-/// A deterministic scalar spring transition.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MotionSpring {
-    spec: MotionSpringSpec,
-    from: f32,
-    target: f32,
-    initial_velocity: f32,
-    started_at: Instant,
-    cancelled_at: Option<Instant>,
-}
+/// Deterministic scalar spring sampler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MotionSpring;
 
 impl MotionSpring {
-    /// Creates a scalar spring transition.
-    pub fn new(
-        spec: MotionSpringSpec,
-        from: f32,
-        target: f32,
-        initial_velocity: f32,
-        started_at: Instant,
-    ) -> Self {
-        let from = sanitize_number(from, 0.0);
-        Self {
-            spec,
-            from,
-            target: sanitize_number(target, from),
-            initial_velocity: sanitize_number(initial_velocity, 0.0),
-            started_at,
-            cancelled_at: None,
-        }
-    }
-
-    /// Creates a new spring whose source and velocity come from an interrupted sample.
-    pub fn retarget_from_sample(
-        spec: MotionSpringSpec,
-        sample: MotionScalarSample,
-        target: f32,
-        started_at: Instant,
-    ) -> Self {
-        Self::new(spec, sample.value(), target, sample.velocity(), started_at)
-    }
-
-    /// Returns the spring specification.
-    pub const fn spec(self) -> MotionSpringSpec {
-        self.spec
-    }
-
-    /// Returns the source value.
-    pub const fn from(self) -> f32 {
-        self.from
-    }
-
-    /// Returns the target value.
-    pub const fn target(self) -> f32 {
-        self.target
-    }
-
-    /// Returns the initial velocity.
-    pub const fn initial_velocity(self) -> f32 {
-        self.initial_velocity
-    }
-
-    /// Returns the instant at which the spring started.
-    pub const fn started_at(self) -> Instant {
-        self.started_at
-    }
-
-    /// Returns the instant at which the spring was cancelled.
-    pub const fn cancelled_at(self) -> Option<Instant> {
-        self.cancelled_at
-    }
-
-    /// Marks the spring as cancelled at the provided instant.
-    pub fn cancel_at(&mut self, cancelled_at: Instant) {
-        self.cancelled_at = Some(cancelled_at);
-    }
-
-    /// Samples the spring at the provided instant.
-    pub fn sample(self, now: Instant) -> MotionScalarSample {
-        let effective_now = self.cancelled_at.unwrap_or(now);
-        let elapsed = effective_now.saturating_duration_since(self.started_at);
-        let mut sample = Self::sample_elapsed(
-            self.spec,
-            self.from,
-            self.target,
-            self.initial_velocity,
-            elapsed,
-        );
-        if self.cancelled_at.is_some() && !sample.reached_final_state() {
-            sample.state = MotionRunState::Cancelled;
-        }
-        sample
-    }
-
     /// Samples a spring using an explicit elapsed duration.
-    pub fn sample_elapsed(
+    pub(crate) fn sample_elapsed(
         spec: MotionSpringSpec,
         from: f32,
         target: f32,
@@ -691,36 +603,63 @@ fn sanitize_non_negative(value: f32, default: f32) -> f32 {
 mod tests {
     use super::*;
     use crate::MotionPreference;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     #[test]
     fn layout_spring_samples_active_motion_and_reaches_exact_target_at_rest() {
-        let started_at = Instant::now();
-        let spring = MotionSpring::new(
-            MotionSpringSpec::layout(MotionPreference::Animated),
-            0.0,
-            1.0,
-            0.0,
-            started_at,
-        );
-
-        let start = spring.sample(started_at);
+        let spec = MotionSpringSpec::layout(MotionPreference::Animated);
+        let start = MotionSpring::sample_elapsed(spec, 0.0, 1.0, 0.0, Duration::ZERO);
         assert_eq!(start.state(), MotionRunState::Active);
         assert_eq!(start.elapsed(), Duration::ZERO);
         assert_eq!(start.value(), 0.0);
         assert_eq!(start.target(), 1.0);
 
-        let midpoint = spring.sample(started_at + Duration::from_millis(90));
+        let midpoint = MotionSpring::sample_elapsed(spec, 0.0, 1.0, 0.0, Duration::from_millis(90));
         assert_eq!(midpoint.state(), MotionRunState::Active);
         assert!(midpoint.value() > 0.0);
         assert!(midpoint.value() < 1.08);
         assert!(midpoint.velocity().is_finite());
 
-        let complete = spring.sample(started_at + Duration::from_secs(2));
+        let complete = MotionSpring::sample_elapsed(spec, 0.0, 1.0, 0.0, Duration::from_secs(2));
         assert_eq!(complete.state(), MotionRunState::Completed);
         assert_eq!(complete.value(), 1.0);
         assert_eq!(complete.velocity(), 0.0);
         assert!(complete.reached_final_state());
+    }
+
+    #[test]
+    fn spring_samples_can_seed_retargeted_elapsed_runs() {
+        let spec = MotionSpringSpec::layout(MotionPreference::Animated);
+        let sampled = MotionSpring::sample_elapsed(spec, 0.0, 1.0, 0.0, Duration::from_millis(80));
+
+        let retarget_start = MotionSpring::sample_elapsed(
+            spec,
+            sampled.value(),
+            2.0,
+            sampled.velocity(),
+            Duration::ZERO,
+        );
+
+        assert_eq!(retarget_start.value(), sampled.value());
+        assert_eq!(retarget_start.velocity(), sampled.velocity());
+        assert_eq!(retarget_start.target(), 2.0);
+    }
+
+    #[test]
+    fn cancelled_motion_is_a_controller_state_not_a_spring_lifecycle() {
+        let mut sample = MotionSpring::sample_elapsed(
+            MotionSpringSpec::layout(MotionPreference::Animated),
+            0.0,
+            1.0,
+            0.0,
+            Duration::from_millis(80),
+        );
+
+        sample.state = MotionRunState::Cancelled;
+
+        assert_eq!(sample.state(), MotionRunState::Cancelled);
+        assert!(!sample.reached_final_state());
+        assert!(sample.value() > 0.0);
     }
 
     #[test]
@@ -744,22 +683,6 @@ mod tests {
 
         let clamped = layout.with_bounce(2.0);
         assert!(clamped.physics().bounce() <= MotionSpringPhysics::MAX_REVIEWABLE_BOUNCE);
-    }
-
-    #[test]
-    fn retargeted_spring_preserves_current_position_and_velocity() {
-        let started_at = Instant::now();
-        let spec = MotionSpringSpec::layout(MotionPreference::Animated);
-        let spring = MotionSpring::new(spec, 0.0, 1.0, 0.0, started_at);
-        let sampled_at = started_at + Duration::from_millis(80);
-        let sampled = spring.sample(sampled_at);
-
-        let retargeted = MotionSpring::retarget_from_sample(spec, sampled, 2.0, sampled_at);
-        let retarget_start = retargeted.sample(sampled_at);
-
-        assert_eq!(retarget_start.value(), sampled.value());
-        assert_eq!(retarget_start.velocity(), sampled.velocity());
-        assert_eq!(retarget_start.target(), 2.0);
     }
 
     #[test]

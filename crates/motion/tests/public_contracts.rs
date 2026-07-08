@@ -1,9 +1,12 @@
 use open_gpui_motion::{
     MotionClockSample, MotionDuration, MotionEasing, MotionFrameDemand, MotionFrameDriver,
-    MotionFrameHostResetReason, MotionFrameReason, MotionIntent, MotionPreference,
-    MotionProgressSequence, MotionProgressSequenceStepState, MotionProjection,
+    MotionFrameHostResetReason, MotionFrameReason, MotionIntent, MotionPolicyContext,
+    MotionPreference, MotionProgressSequence, MotionProgressSequenceStepState, MotionProjection,
     MotionProjectionClip, MotionRunState, MotionTransition,
-    advanced::{MotionModel, MotionScalarController, MotionSpec},
+    advanced::{
+        MotionExecutionPlan, MotionModel, MotionPolicyInput, MotionProgressExecution,
+        MotionScalarController, MotionSpec,
+    },
     motion_point, motion_px, motion_rect, motion_size,
 };
 use std::time::Duration;
@@ -80,6 +83,27 @@ fn progress_execution_is_public_adapter_lifecycle_contract() {
     assert_eq!(complete.progress(), 1.0);
     assert!(complete.complete());
     assert!(!complete.frame_demand().needs_frame());
+}
+
+#[test]
+fn advanced_progress_execution_is_elapsed_time_only() {
+    let model = MotionModel::timeline(MotionSpec::new(
+        MotionPreference::Animated,
+        MotionDuration::Custom(Duration::from_millis(100)),
+        MotionEasing::Linear,
+    ));
+    let plan = MotionExecutionPlan::resolve(
+        MotionPolicyInput::new(MotionPolicyContext::Continuity, model)
+            .with_reduced_motion_final_state(true),
+    );
+    let execution = MotionProgressExecution::start(plan, Duration::ZERO);
+
+    assert_eq!(execution.started_at(), Duration::ZERO);
+    assert_eq!(
+        execution.sample_at(Duration::from_millis(50)).progress(),
+        0.5
+    );
+    assert!(execution.sample_at(Duration::from_millis(120)).complete());
 }
 
 #[test]
@@ -225,6 +249,9 @@ fn low_level_motion_internals_are_explicit_advanced_imports() {
         "MotionSpec",
         "MotionModel",
         "MotionPreset",
+        "MotionPolicyInput",
+        "MotionPreviewTargetPolicy",
+        "validate_motion_policy",
     ] {
         assert!(
             !manifest
@@ -232,6 +259,21 @@ fn low_level_motion_internals_are_explicit_advanced_imports() {
                 .filter(|line| line.trim_start().starts_with("pub use "))
                 .any(|line| source_line_contains_identifier(line, forbidden)),
             "root public surface should not re-export low-level {forbidden}; use open_gpui_motion::advanced"
+        );
+    }
+}
+
+#[test]
+fn advanced_manifest_does_not_export_instant_lifecycle_types() {
+    let manifest = include_str!("../src/advanced.rs");
+
+    for forbidden in ["MotionSpring", "MotionTimeline", "MotionTimelineSample"] {
+        assert!(
+            !manifest
+                .lines()
+                .filter(|line| line.trim_start().starts_with("pub use "))
+                .any(|line| source_line_contains_identifier(line, forbidden)),
+            "advanced public surface should not re-export Instant-owning lifecycle type {forbidden}"
         );
     }
 }

@@ -11,16 +11,15 @@ use crate::{
 };
 use open_gpui::{Bounds, Pixels, point, size};
 use open_gpui_motion::{
-    MotionFrameDemand, MotionPolicyContext, MotionPolicyInput, MotionPolicyReport,
-    MotionProgressSample, MotionProjection, MotionProjectionClip, MotionSnapshot,
+    MotionFrameDemand, MotionPolicyContext, MotionPolicyReport, MotionProgressSample,
+    MotionProjection, MotionProjectionClip, MotionSnapshot,
     advanced::{
-        MotionExecutionPlan, MotionExecutionState, MotionModel, MotionProgressExecution, MotionSpec,
+        MotionExecutionPlan, MotionExecutionState, MotionModel, MotionPolicyInput,
+        MotionProgressExecution, MotionSpec,
     },
     motion_source_rect, preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
 };
-#[cfg(test)]
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockTransitionExecution {
@@ -29,6 +28,7 @@ pub(crate) struct DockTransitionExecution {
     pub(crate) policy_report: MotionPolicyReport,
     pub(crate) state: DockTransitionExecutionState,
     progress: MotionProgressExecution,
+    started_at: Instant,
     last_sample: Option<DockTransitionSample>,
     #[cfg(test)]
     test_started_at: Option<Duration>,
@@ -159,12 +159,14 @@ impl DockTransitionExecutor {
             plan
         };
 
+        let started_at = Instant::now();
         self.current = Some(DockTransitionExecution {
             plan,
             model,
             policy_report,
             state,
-            progress: MotionProgressExecution::start(motion, Instant::now()),
+            progress: MotionProgressExecution::start(motion, Duration::ZERO),
+            started_at,
             last_sample: None,
             #[cfg(test)]
             test_started_at: None,
@@ -185,13 +187,13 @@ impl DockTransitionExecutor {
             return Some(sample.clone());
         }
 
-        let sample = sample_execution(execution, execution.progress.sample_since(Instant::now()));
+        let sample = sample_execution(execution, sample_progress_at_adapter_now(execution));
         execution.last_sample = Some(sample.clone());
         (!sample.complete).then_some(sample)
     }
 
     pub(crate) fn sample(&mut self) -> Option<DockTransitionSample> {
-        self.sample_motion(|execution| execution.progress.sample_since(Instant::now()))
+        self.sample_motion(|execution| sample_progress_at_adapter_now(execution))
     }
 
     pub(crate) fn clear(&mut self) -> Option<DockTransitionExecution> {
@@ -219,6 +221,12 @@ impl DockTransitionExecutor {
         }
         Some(sample)
     }
+}
+
+fn sample_progress_at_adapter_now(execution: &DockTransitionExecution) -> MotionProgressSample {
+    execution
+        .progress
+        .sample_at(Instant::now().saturating_duration_since(execution.started_at))
 }
 
 fn sample_execution(

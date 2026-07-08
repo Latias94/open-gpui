@@ -68,7 +68,7 @@ fn ui_core_no_longer_exports_motion_contracts() {
 
     let model = open_gpui_motion::advanced::MotionPreset::Immediate.resolve_model();
     let plan = open_gpui_motion::advanced::MotionExecutionPlan::resolve(
-        open_gpui_motion::MotionPolicyInput::new(
+        open_gpui_motion::advanced::MotionPolicyInput::new(
             open_gpui_motion::MotionPolicyContext::CommittedLayout,
             model,
         )

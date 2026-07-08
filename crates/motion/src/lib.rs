@@ -14,7 +14,7 @@ mod controller;
 mod frame_host;
 pub mod geometry;
 mod motion;
-pub mod policy;
+mod policy;
 pub mod projection;
 mod runtime;
 mod sequence;
@@ -31,8 +31,7 @@ pub use geometry::{
 };
 pub use motion::{MotionDuration, MotionEasing, MotionPreference};
 pub use policy::{
-    MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
-    MotionPolicyReport, MotionPreviewTargetPolicy, validate_motion_policy,
+    MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyIssue, MotionPolicyReport,
 };
 pub use projection::{MotionProjection, MotionProjectionClip};
 pub use runtime::{
