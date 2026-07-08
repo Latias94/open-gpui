@@ -1,6 +1,6 @@
 use super::DockSurface;
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockLayout,
+    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockLayout, DockNodeId,
     DockPanelCloseOutcome, DockPanelDescriptor, DockPanelOpenOutcome, DockPanelPlacement,
     DockPolicyError, DockSpaceId,
 };
@@ -18,6 +18,12 @@ pub enum DockSurfacePanelOutcome {
     Floated(DockSurfaceChange),
     /// A floating panel was moved back into the dock layout.
     Docked(DockSurfaceChange),
+    /// A panel became the selected tab in its current tab stack.
+    Selected(DockSurfaceChange),
+    /// An in-window floating panel container received new bounds.
+    FloatingBoundsSet(DockSurfaceChange),
+    /// An in-window floating panel container was raised above sibling floating containers.
+    FloatingRaised(DockSurfaceChange),
 }
 
 /// App-level change flag for facade panel operations.
@@ -69,7 +75,11 @@ impl DockSurfacePanelOutcome {
         match self {
             Self::Opened(outcome) => outcome.changed(),
             Self::Closed(outcome) => outcome.changed(),
-            Self::Floated(change) | Self::Docked(change) => change.changed(),
+            Self::Floated(change)
+            | Self::Docked(change)
+            | Self::Selected(change)
+            | Self::FloatingBoundsSet(change)
+            | Self::FloatingRaised(change) => change.changed(),
         }
     }
 }
@@ -195,6 +205,12 @@ pub enum DockSurfacePanelError {
     /// The requested panel could not be found at the target location.
     #[error("dock item {item} is not available in the requested dock location")]
     PanelUnavailable {
+        /// The item that was requested.
+        item: DockItemId,
+    },
+    /// The requested panel is open but is not currently in an in-window floating container.
+    #[error("dock item {item} is not currently floating")]
+    PanelNotFloating {
         /// The item that was requested.
         item: DockItemId,
     },
@@ -457,6 +473,43 @@ impl DockSurface {
         })
     }
 
+    /// Selects a registered panel in the primary dock space without exposing tabs node ids.
+    pub fn select_panel(
+        &self,
+        item: impl Into<DockItemId>,
+        cx: &mut App,
+    ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
+        let space = self.primary_space.clone();
+        self.select_panel_in_space(space, item, cx)
+    }
+
+    /// Selects a registered panel in one dock space without exposing tabs node ids.
+    pub fn select_panel_in_space(
+        &self,
+        space: impl Into<DockSpaceId>,
+        item: impl Into<DockItemId>,
+        cx: &mut App,
+    ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
+        let space = space.into();
+        let item = item.into();
+        self.update_controller_with_panel_error(cx, |controller| {
+            if controller
+                .graph()
+                .find_item_in_space(&space, &item)
+                .is_none()
+            {
+                return Err(DockSurfacePanelError::PanelUnavailable { item });
+            }
+
+            controller
+                .workspace_mut()
+                .select_item_in_space(space, item)
+                .map(DockSurfaceChange::from)
+                .map(DockSurfacePanelOutcome::Selected)
+                .map_err(DockSurfacePanelError::from)
+        })
+    }
+
     /// Moves a panel from the primary dock space into an in-window floating container.
     pub fn float_panel_in_window(
         &self,
@@ -485,12 +538,84 @@ impl DockSurface {
         })
     }
 
+    /// Updates the bounds of an in-window floating panel container in the primary dock space.
+    pub fn set_floating_panel_bounds(
+        &self,
+        item: impl Into<DockItemId>,
+        bounds: Bounds<Pixels>,
+        cx: &mut App,
+    ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
+        let space = self.primary_space.clone();
+        self.set_floating_panel_bounds_in_space(space, item, bounds, cx)
+    }
+
+    /// Updates the bounds of an in-window floating panel container without exposing node ids.
+    pub fn set_floating_panel_bounds_in_space(
+        &self,
+        space: impl Into<DockSpaceId>,
+        item: impl Into<DockItemId>,
+        bounds: Bounds<Pixels>,
+        cx: &mut App,
+    ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
+        let space = space.into();
+        let item = item.into();
+        self.update_controller_with_panel_error(cx, |controller| {
+            let floating = floating_container_for_item(controller, &space, &item)?;
+            controller
+                .set_floating_bounds(space, floating, bounds)
+                .map(DockSurfaceChange::from)
+                .map(DockSurfacePanelOutcome::FloatingBoundsSet)
+                .map_err(DockSurfacePanelError::from)
+        })
+    }
+
+    /// Raises an in-window floating panel container in the primary dock space.
+    pub fn raise_floating_panel(
+        &self,
+        item: impl Into<DockItemId>,
+        cx: &mut App,
+    ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
+        let space = self.primary_space.clone();
+        self.raise_floating_panel_in_space(space, item, cx)
+    }
+
+    /// Raises an in-window floating panel container without exposing node ids.
+    pub fn raise_floating_panel_in_space(
+        &self,
+        space: impl Into<DockSpaceId>,
+        item: impl Into<DockItemId>,
+        cx: &mut App,
+    ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
+        let space = space.into();
+        let item = item.into();
+        self.update_controller_with_panel_error(cx, |controller| {
+            let floating = floating_container_for_item(controller, &space, &item)?;
+            controller
+                .raise_floating(space, floating)
+                .map(DockSurfaceChange::from)
+                .map(DockSurfacePanelOutcome::FloatingRaised)
+                .map_err(DockSurfacePanelError::from)
+        })
+    }
+
     fn update_controller(
         &self,
         cx: &mut App,
         update: impl FnOnce(
             &mut DockController,
         ) -> Result<DockSurfacePanelOutcome, DockActionApplyError>,
+    ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
+        self.update_controller_with_panel_error(cx, |controller| {
+            update(controller).map_err(DockSurfacePanelError::from)
+        })
+    }
+
+    fn update_controller_with_panel_error(
+        &self,
+        cx: &mut App,
+        update: impl FnOnce(
+            &mut DockController,
+        ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError>,
     ) -> Result<DockSurfacePanelOutcome, DockSurfacePanelError> {
         let controller = self.controller.clone();
         cx.update_entity(&controller, |controller, cx| {
@@ -504,7 +629,6 @@ impl DockSurface {
             }
             outcome
         })
-        .map_err(DockSurfacePanelError::from)
     }
 }
 
@@ -534,4 +658,22 @@ fn panel_location_in_space(
         DockSurfacePanelLocationKind::Floating
     };
     Some(DockSurfacePanelLocation::new(space, kind, tab_index))
+}
+
+fn floating_container_for_item(
+    controller: &DockController,
+    space: &DockSpaceId,
+    item: &DockItemId,
+) -> Result<DockNodeId, DockSurfacePanelError> {
+    let graph = controller.graph();
+    if graph.find_item_in_space(space, item).is_none() {
+        return Err(DockSurfacePanelError::PanelUnavailable { item: item.clone() });
+    }
+
+    graph
+        .floating_containers(space)
+        .iter()
+        .find(|container| graph.subtree_contains_item(container.node, item))
+        .map(|container| container.node)
+        .ok_or_else(|| DockSurfacePanelError::PanelNotFloating { item: item.clone() })
 }

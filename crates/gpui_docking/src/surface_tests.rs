@@ -184,6 +184,87 @@ fn surface_facade_embeds_host_and_reports_semantic_snapshots(cx: &mut open_gpui:
     });
 }
 
+#[open_gpui::test]
+fn surface_panel_semantic_commands_select_and_update_floating_by_item(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([
+                DockPanelPlacement::center("editor"),
+                DockPanelPlacement::right_rail("inspector").selected(),
+                DockPanelPlacement::stacked_with("terminal", "inspector"),
+            ])
+            .panel_factory("editor", "Editor", test_panel)
+            .panel_factory("inspector", "Inspector", test_panel)
+            .panel_factory("terminal", "Terminal", test_panel)
+            .allow_floating(true)
+            .build(cx)
+            .expect("surface layout should validate");
+
+        let selected = surface
+            .select_panel("terminal", cx)
+            .expect("registered panel should be selectable by item");
+        assert!(matches!(
+            selected,
+            DockSurfacePanelOutcome::Selected(DockSurfaceChange::Changed)
+        ));
+        assert!(
+            surface
+                .selected_panels_in_space("main", cx)
+                .contains(&DockItemId::from("terminal"))
+        );
+
+        let terminal_bounds = Bounds::new(
+            open_gpui::point(px(24.0), px(32.0)),
+            size(px(280.0), px(160.0)),
+        );
+        let editor_bounds = Bounds::new(
+            open_gpui::point(px(40.0), px(48.0)),
+            size(px(320.0), px(220.0)),
+        );
+        surface
+            .float_panel_in_window("terminal", terminal_bounds, cx)
+            .expect("terminal should float");
+        surface
+            .float_panel_in_window("editor", editor_bounds, cx)
+            .expect("editor should float");
+
+        let updated_terminal_bounds = Bounds::new(
+            open_gpui::point(px(64.0), px(72.0)),
+            size(px(360.0), px(200.0)),
+        );
+        let bounds_set = surface
+            .set_floating_panel_bounds("terminal", updated_terminal_bounds, cx)
+            .expect("floating panel bounds should update by item");
+        assert!(matches!(
+            bounds_set,
+            DockSurfacePanelOutcome::FloatingBoundsSet(DockSurfaceChange::Changed)
+        ));
+
+        let raised = surface
+            .raise_floating_panel("terminal", cx)
+            .expect("floating panel should raise by item");
+        assert!(matches!(
+            raised,
+            DockSurfacePanelOutcome::FloatingRaised(DockSurfaceChange::Changed)
+        ));
+
+        let floating = surface.floating_panels_in_space("main", cx);
+        assert_eq!(floating.len(), 2);
+        assert_eq!(floating[0].items(), &[DockItemId::from("editor")]);
+        assert_eq!(floating[1].items(), &[DockItemId::from("terminal")]);
+        assert_eq!(floating[1].bounds(), updated_terminal_bounds);
+
+        assert_eq!(
+            surface.set_floating_panel_bounds("inspector", updated_terminal_bounds, cx),
+            Err(DockSurfacePanelError::PanelNotFloating {
+                item: "inspector".into()
+            })
+        );
+    });
+}
+
 fn viewport_options() -> WindowOptions {
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::new(
@@ -452,6 +533,116 @@ fn surface_exports_and_checks_viewport_placement_restore(cx: &mut open_gpui::Tes
             }
         );
         assert_eq!(opened.space(), surface.primary_space());
+    });
+}
+
+#[open_gpui::test]
+fn surface_opens_viewports_from_saved_placement_with_keyed_report(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    cx.update(|cx| {
+        let main = DockSpaceId::from("main");
+        let detached = DockSpaceId::from("detached");
+        let surface = DockSurface::builder(main.clone())
+            .try_layout(&two_space_layout())
+            .expect("test layout should validate")
+            .panel_factory("main-panel", "Main", test_panel)
+            .panel_factory("detached-a", "Detached A", test_panel)
+            .panel_factory("detached-b", "Detached B", test_panel)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("surface layout should validate");
+        let placement = DockViewportPlacementLayout::new(vec![
+            DockViewportPlacement {
+                space: main.clone(),
+                display_id: None,
+                window_bounds: None,
+                host_bounds: None,
+            },
+            DockViewportPlacement {
+                space: detached.clone(),
+                display_id: Some(7),
+                window_bounds: None,
+                host_bounds: None,
+            },
+        ]);
+
+        let report =
+            surface.open_viewports_from_saved_placement(&placement, |_| viewport_options(), cx);
+
+        assert_eq!(report.len(), 2);
+        assert!(!report.is_empty());
+        assert!(report.all_opened());
+        assert_eq!(report.opened_count(), 2);
+        assert_eq!(report.unavailable_count(), 0);
+        assert!(matches!(
+            report.outcome_for_space(&detached),
+            Some(DockSurfaceViewportOpenOutcome::Opened(opened))
+                if opened.space() == &detached
+        ));
+        assert_eq!(
+            surface.registered_viewport_spaces(),
+            vec![detached, main.clone()]
+        );
+    });
+}
+
+#[open_gpui::test]
+fn surface_saved_placement_restore_reports_invalid_placement_without_opening(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel_factory("editor", "Editor", test_panel)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("surface layout should validate");
+        let mut placement = DockViewportPlacementLayout::new(vec![DockViewportPlacement {
+            space: "main".into(),
+            display_id: None,
+            window_bounds: None,
+            host_bounds: None,
+        }]);
+        placement.placement_version = 0;
+        let before_windows = cx.windows().len();
+        let mut fallback_calls = 0;
+
+        let report = surface.open_viewports_from_saved_placement(
+            &placement,
+            |_| {
+                fallback_calls += 1;
+                viewport_options()
+            },
+            cx,
+        );
+
+        assert_eq!(report.len(), 1);
+        assert_eq!(report.opened_count(), 0);
+        assert_eq!(report.unavailable_count(), 1);
+        assert!(matches!(
+            report.outcome_for_space(&DockSpaceId::from("main")),
+            Some(DockSurfaceViewportOpenOutcome::Unavailable(
+                DockSurfaceViewportUnavailable::InvalidPlacement { .. }
+            ))
+        ));
+        let unavailable = report
+            .outcome_for_space(&DockSpaceId::from("main"))
+            .and_then(DockSurfaceViewportOpenOutcome::unavailable)
+            .expect("invalid placement should be reported as unavailable");
+        assert!(unavailable.is_invalid_placement());
+        assert!(matches!(
+            unavailable.placement_validation_error(),
+            Some(
+                crate::DockViewportPlacementValidationError::UnsupportedVersion {
+                    expected: 1,
+                    found: 0,
+                }
+            )
+        ));
+        assert_eq!(fallback_calls, 0);
+        assert_eq!(cx.windows().len(), before_windows);
+        assert!(surface.registered_viewport_spaces().is_empty());
     });
 }
 

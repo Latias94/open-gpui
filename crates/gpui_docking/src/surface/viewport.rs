@@ -73,10 +73,10 @@ pub struct DockSurfaceViewportSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DockSurfaceViewportSpecError {
     /// Serialized viewport placement data failed validation.
-    #[error("saved dock viewport placement is invalid: {message}")]
+    #[error("saved dock viewport placement is invalid: {error}")]
     InvalidPlacement {
-        /// Validation message from the placement validator.
-        message: String,
+        /// Structured validation error from the placement validator.
+        error: DockViewportPlacementValidationError,
     },
 }
 
@@ -84,6 +84,19 @@ pub enum DockSurfaceViewportSpecError {
 #[derive(Debug)]
 pub struct DockSurfaceViewportOpenReport {
     outcomes: Vec<DockSurfaceViewportOpenOutcome>,
+}
+
+/// Facade-level report for restoring platform viewport windows from saved placement data.
+#[derive(Debug)]
+pub struct DockSurfaceViewportRestoreReport {
+    outcomes: Vec<DockSurfaceViewportRestoreOutcome>,
+}
+
+/// Facade-level outcome keyed by the logical dock space requested by saved placement data.
+#[derive(Debug)]
+pub struct DockSurfaceViewportRestoreOutcome {
+    space: DockSpaceId,
+    outcome: DockSurfaceViewportOpenOutcome,
 }
 
 /// Facade-level result for a successfully opened or reused platform viewport.
@@ -112,6 +125,11 @@ pub enum DockSurfaceViewportUnavailable {
     PolicyDisabled(DockPolicyError),
     /// The active backend does not support independent platform viewport windows.
     BackendUnsupported,
+    /// Serialized viewport placement data failed validation before a window was opened.
+    InvalidPlacement {
+        /// Structured validation error from the placement validator.
+        error: DockViewportPlacementValidationError,
+    },
     /// The request reached GPUI window opening but the backend returned an error.
     OpenFailed(String),
 }
@@ -270,9 +288,7 @@ impl DockSurfaceViewportSpec {
     ) -> Result<Self, DockSurfaceViewportSpecError> {
         self.options = placement
             .window_options_for_space(&self.space, self.options)
-            .map_err(|error| DockSurfaceViewportSpecError::InvalidPlacement {
-                message: error.to_string(),
-            })?;
+            .map_err(|error| DockSurfaceViewportSpecError::InvalidPlacement { error })?;
         Ok(self)
     }
 
@@ -328,6 +344,84 @@ impl DockSurfaceViewportOpenReport {
     }
 }
 
+impl DockSurfaceViewportRestoreReport {
+    fn new(outcomes: Vec<DockSurfaceViewportRestoreOutcome>) -> Self {
+        Self { outcomes }
+    }
+
+    /// Outcomes keyed by saved logical dock space in placement order.
+    pub fn outcomes(&self) -> &[DockSurfaceViewportRestoreOutcome] {
+        &self.outcomes
+    }
+
+    /// Returns the first outcome for a logical dock space, when present.
+    pub fn outcome_for_space(
+        &self,
+        space: &DockSpaceId,
+    ) -> Option<&DockSurfaceViewportOpenOutcome> {
+        self.outcomes
+            .iter()
+            .find(|outcome| outcome.space() == space)
+            .map(DockSurfaceViewportRestoreOutcome::outcome)
+    }
+
+    /// Consumes the report into keyed outcomes.
+    pub fn into_outcomes(self) -> Vec<DockSurfaceViewportRestoreOutcome> {
+        self.outcomes
+    }
+
+    /// Number of saved viewport requests in the report.
+    pub fn len(&self) -> usize {
+        self.outcomes.len()
+    }
+
+    /// Returns true when the placement did not request any viewport restores.
+    pub fn is_empty(&self) -> bool {
+        self.outcomes.is_empty()
+    }
+
+    /// Number of saved viewport requests that opened, reused, or replaced a platform viewport.
+    pub fn opened_count(&self) -> usize {
+        self.outcomes
+            .iter()
+            .filter(|outcome| outcome.outcome().opened())
+            .count()
+    }
+
+    /// Number of saved viewport requests that could not open a platform viewport.
+    pub fn unavailable_count(&self) -> usize {
+        self.len() - self.opened_count()
+    }
+
+    /// Returns true when every saved viewport opened, reused, or replaced a window.
+    pub fn all_opened(&self) -> bool {
+        self.outcomes
+            .iter()
+            .all(|outcome| outcome.outcome().opened())
+    }
+}
+
+impl DockSurfaceViewportRestoreOutcome {
+    fn new(space: DockSpaceId, outcome: DockSurfaceViewportOpenOutcome) -> Self {
+        Self { space, outcome }
+    }
+
+    /// Logical dock space requested by saved placement data.
+    pub fn space(&self) -> &DockSpaceId {
+        &self.space
+    }
+
+    /// Outcome for this logical dock space.
+    pub fn outcome(&self) -> &DockSurfaceViewportOpenOutcome {
+        &self.outcome
+    }
+
+    /// Consumes this keyed outcome into its space and open outcome.
+    pub fn into_parts(self) -> (DockSpaceId, DockSurfaceViewportOpenOutcome) {
+        (self.space, self.outcome)
+    }
+}
+
 impl DockSurfaceViewportOpenOutcome {
     /// Returns true when this request opened or reused a viewport window.
     pub fn opened(&self) -> bool {
@@ -360,6 +454,19 @@ impl DockSurfaceViewportUnavailable {
     /// Returns true when application policy rejected the viewport request.
     pub fn is_policy_disabled(&self) -> bool {
         matches!(self, Self::PolicyDisabled(_))
+    }
+
+    /// Returns true when serialized placement data failed validation.
+    pub fn is_invalid_placement(&self) -> bool {
+        matches!(self, Self::InvalidPlacement { .. })
+    }
+
+    /// Returns structured placement validation details when serialized placement data was invalid.
+    pub fn placement_validation_error(&self) -> Option<&DockViewportPlacementValidationError> {
+        match self {
+            Self::InvalidPlacement { error } => Some(error),
+            _ => None,
+        }
     }
 }
 
@@ -532,5 +639,65 @@ impl DockSurface {
                 .map(|spec| self.open_viewport_spec_without_preflight(spec, cx))
                 .collect(),
         )
+    }
+
+    /// Opens saved platform viewport windows from placement data and keys outcomes by dock space.
+    ///
+    /// `fallback_options` is called once per saved dock space. Saved placement hints are layered on
+    /// top of those fallback options before the viewport is opened.
+    pub fn open_viewports_from_saved_placement(
+        &self,
+        placement: &DockViewportPlacementLayout,
+        mut fallback_options: impl FnMut(&DockSpaceId) -> WindowOptions,
+        cx: &mut App,
+    ) -> DockSurfaceViewportRestoreReport {
+        if let Err(error) = placement.validate() {
+            return DockSurfaceViewportRestoreReport::new(
+                placement
+                    .viewports
+                    .iter()
+                    .map(|viewport| {
+                        DockSurfaceViewportRestoreOutcome::new(
+                            viewport.space.clone(),
+                            DockSurfaceViewportOpenOutcome::Unavailable(
+                                DockSurfaceViewportUnavailable::InvalidPlacement {
+                                    error: error.clone(),
+                                },
+                            ),
+                        )
+                    })
+                    .collect(),
+            );
+        }
+
+        DockSurfaceViewportRestoreReport::new(
+            placement
+                .viewports
+                .iter()
+                .map(|viewport| {
+                    let space = viewport.space.clone();
+                    let spec =
+                        DockSurfaceViewportSpec::new(space.clone(), fallback_options(&space))
+                            .with_saved_placement(placement);
+                    let outcome = match spec {
+                        Ok(spec) => self.open_viewport_spec(spec, cx),
+                        Err(error) => DockSurfaceViewportOpenOutcome::Unavailable(
+                            DockSurfaceViewportUnavailable::from(error),
+                        ),
+                    };
+                    DockSurfaceViewportRestoreOutcome::new(space, outcome)
+                })
+                .collect(),
+        )
+    }
+}
+
+impl From<DockSurfaceViewportSpecError> for DockSurfaceViewportUnavailable {
+    fn from(error: DockSurfaceViewportSpecError) -> Self {
+        match error {
+            DockSurfaceViewportSpecError::InvalidPlacement { error } => {
+                Self::InvalidPlacement { error }
+            }
+        }
     }
 }

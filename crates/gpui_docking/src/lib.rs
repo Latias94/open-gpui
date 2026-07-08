@@ -293,9 +293,9 @@ pub use surface::{
     DockSurfacePanelLocationKind, DockSurfacePanelOutcome, DockSurfacePanelSnapshot,
     DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
     DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus,
-    DockSurfaceViewportOpened, DockSurfaceViewportShouldCloseOutcome,
-    DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportSpecError,
-    DockSurfaceViewportUnavailable,
+    DockSurfaceViewportOpened, DockSurfaceViewportRestoreOutcome, DockSurfaceViewportRestoreReport,
+    DockSurfaceViewportShouldCloseOutcome, DockSurfaceViewportShouldCloseStatus,
+    DockSurfaceViewportSpec, DockSurfaceViewportSpecError, DockSurfaceViewportUnavailable,
 };
 pub(crate) use viewport::*;
 #[cfg(test)]
