@@ -5,6 +5,8 @@ use std::{
 
 use ::open_gpui_util::ResultExt;
 use anyhow::{Context, Result};
+#[cfg(any(test, feature = "test-support"))]
+use image::RgbaImage;
 use windows::{
     Win32::{
         Foundation::HWND,
@@ -306,6 +308,15 @@ impl DirectXRenderer {
         scene: &Scene,
         background_appearance: WindowBackgroundAppearance,
     ) -> Result<()> {
+        self.draw_scene_to_target(scene, background_appearance)?;
+        self.present()
+    }
+
+    fn draw_scene_to_target(
+        &mut self,
+        scene: &Scene,
+        background_appearance: WindowBackgroundAppearance,
+    ) -> Result<()> {
         if self.skip_draws {
             // skip drawing this frame, we just recovered from a device lost event
             // and so likely do not have the textures anymore that are required for drawing
@@ -352,7 +363,90 @@ impl DirectXRenderer {
                 scene.surfaces.len(),
             ))?;
         }
-        self.present()
+        Ok(())
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn render_to_image(
+        &mut self,
+        scene: &Scene,
+        background_appearance: WindowBackgroundAppearance,
+    ) -> Result<RgbaImage> {
+        self.draw_scene_to_target(scene, background_appearance)?;
+        self.read_render_target_to_image()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn read_render_target_to_image(&self) -> Result<RgbaImage> {
+        let devices = self.devices.as_ref().context("devices missing")?;
+        let resources = self.resources.as_ref().context("resources missing")?;
+        let render_target = resources
+            .render_target
+            .as_ref()
+            .context("missing render target")?;
+
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        unsafe {
+            render_target.GetDesc(&mut desc);
+        }
+        anyhow::ensure!(
+            desc.Width > 0 && desc.Height > 0,
+            "cannot capture empty DirectX render target"
+        );
+        anyhow::ensure!(
+            desc.Format == RENDER_TARGET_FORMAT,
+            "unsupported DirectX render target format for capture: {:?}",
+            desc.Format
+        );
+
+        desc.Usage = D3D11_USAGE_STAGING;
+        desc.BindFlags = 0;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0 as u32;
+        desc.MiscFlags = 0;
+
+        let mut staging = None;
+        unsafe {
+            devices
+                .device
+                .CreateTexture2D(&desc, None, Some(&mut staging))
+                .context("creating DirectX screenshot staging texture")?;
+        }
+        let staging = staging.context("DirectX screenshot staging texture missing")?;
+
+        unsafe {
+            devices.device_context.CopyResource(&staging, render_target);
+        }
+
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        unsafe {
+            devices
+                .device_context
+                .Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
+                .context("mapping DirectX screenshot staging texture")?;
+        }
+
+        let width = desc.Width as usize;
+        let height = desc.Height as usize;
+        let row_pitch = mapped.RowPitch as usize;
+        let src = mapped.pData as *const u8;
+        let mut rgba = Vec::with_capacity(width * height * 4);
+        for row in 0..height {
+            let row_start = unsafe { src.add(row * row_pitch) };
+            let row_bytes = unsafe { std::slice::from_raw_parts(row_start, width * 4) };
+            for bgra in row_bytes.chunks_exact(4) {
+                rgba.push(bgra[2]);
+                rgba.push(bgra[1]);
+                rgba.push(bgra[0]);
+                rgba.push(bgra[3]);
+            }
+        }
+
+        unsafe {
+            devices.device_context.Unmap(&staging, 0);
+        }
+
+        RgbaImage::from_raw(desc.Width, desc.Height, rgba)
+            .context("creating RGBA image from DirectX screenshot bytes")
     }
 
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
