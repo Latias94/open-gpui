@@ -14,8 +14,9 @@ Low-level controller, graph, action, workspace, host, raw layout parts, and runt
 ## What This Crate Owns
 
 - `DockSurface` as the app-level owner for controller state, host-window creation, panel commands, and typed viewport capability outcomes.
-- `DockSurfaceViewportSpec`, `DockSurfaceViewportOpenReport`, and `DockSurfaceViewportRestoreReport`
-  as facade-level platform window requests and batch outcomes for multi-viewport applications.
+- `DockSurfaceViewportSession`, `DockSurfaceViewportSpec`, `DockSurfaceViewportOpenReport`, and
+  `DockSurfaceViewportRestoreReport` as facade-level platform window lifecycle, requests, and batch
+  outcomes for multi-viewport applications.
 - `DockSurfaceViewportShouldCloseOutcome` and `DockSurfaceViewportCloseOutcome` as facade-level
   lifecycle results for platform close hooks, including merge-back close policies.
 - `DockLayout` as the common durable persistence type for serialization and validation. Raw
@@ -46,7 +47,7 @@ Platform viewport windows fail closed unless both gates are true:
 - Application policy allows them through `DockSurfaceBuilder::allow_platform_viewports(true)` or `DockPolicy`.
 - The active backend reports `PlatformViewportCapabilities::platform_viewport_windows`.
 
-`DockSurface::open_viewport_spec` and `DockSurface::open_viewports` return facade outcomes so applications can distinguish policy-disabled, backend-unsupported, and backend-open failures without parsing opaque errors. Unsupported backends should no-op for open or tear-off requests instead of constructing partial runtime state. Web and other backends without platform window support stay on the single-window route.
+`DockSurface::viewports` returns a `DockSurfaceViewportSession` for the common multi-window path. The session opens detached dock spaces, restores saved placement data, exports placement snapshots, and handles GPUI close hooks while keeping applications away from raw runtime handles. `DockSurface::open_viewport_spec` and `DockSurface::open_viewports` remain available for direct request construction and return facade outcomes so applications can distinguish policy-disabled, backend-unsupported, and backend-open failures without parsing opaque errors. Unsupported backends should no-op for open or tear-off requests instead of constructing partial runtime state. Web and other backends without platform window support stay on the single-window route.
 
 Persist `DockLayout` separately from viewport placement data. The layout restores logical dock spaces; `DockViewportPlacementLayout` restores platform-window hints, and `DockSurfaceViewportSpec::with_saved_placement` applies those hints to fallback GPUI window options before a viewport opens. Applications can call `DockSurface::export_viewport_placement` to snapshot facade-opened platform windows and `DockSurface::check_viewport_placement_restore` to validate saved placement before reopening windows, without importing `DockViewportRuntimeHandle`.
 
@@ -54,8 +55,7 @@ Use `DockSurfaceBuilder::close_policy` or `DockSurface::set_viewport_close_polic
 
 ## Restoring Platform Viewports
 
-Build viewport requests through `DockSurfaceViewportSpec` when restoring detached spaces. This keeps
-placement validation, backend capability checks, and batch outcome reporting on the facade surface:
+Use `DockSurface::viewports` when restoring detached spaces. This keeps placement validation, backend capability checks, and batch outcome reporting on the facade surface:
 
 ```rust
 use open_gpui::{Bounds, WindowBounds, WindowOptions, px, size};
@@ -68,7 +68,8 @@ fn restore_viewports(
     saved_placement: &DockViewportPlacementLayout,
     cx: &mut open_gpui::App,
 ) {
-    let report = surface.open_viewports_from_saved_placement(
+    let viewports = surface.viewports();
+    let report = viewports.restore(
         saved_placement,
         |_| {
             let fallback_options = WindowOptions {
@@ -108,7 +109,7 @@ Run the facade-level multi-viewport example when checking native platform-window
 cargo run -p open-gpui-docking-multiviewport
 ```
 
-This example opts into platform viewport windows through `DockSurfaceBuilder::allow_platform_viewports(true)`, builds `DockSurfaceViewportSpec` requests, and handles unsupported backends through typed facade outcomes.
+This example opts into platform viewport windows through `DockSurfaceBuilder::allow_platform_viewports(true)`, detaches a preview panel into a child dock space through `DockSurface::detach_panel_to_space`, opens that space through `DockSurface::viewports`, and handles unsupported backends through typed facade outcomes.
 
 Run the normal-checkout native dogfood example when working on viewport runtime behavior or
 diagnostics:
@@ -164,6 +165,8 @@ whether a reopen used an explicit placement, last-known placement, descriptor de
 center fallback. This keeps lazy panel restore descriptor-driven without mounting views early.
 
 Product commands should call `DockSurface::open_panel_at` for explicit destinations, `DockSurface::open_panel` for descriptor-backed restore, and `DockSurface::dock_panel_at` when moving an in-window floating panel back into the layout. Graph-targeted operations remain available through `open_gpui_docking::model`, but normal application restore flows should not persist tab or split node ids.
+
+Use `DockSurface::detach_panel_to_space` for product flows that move an already-open panel into a child dock space before opening that space in a platform viewport. This keeps common panel-to-subwindow workflows on ids and facade outcomes instead of graph node ids or low-level drop targets.
 
 Only call `allow_platform_viewports(true)` when the application intends to use platform-window docking routes and is prepared for `DockSurfaceViewportUnavailable::BackendUnsupported` on web or compositor backends without viewport-window support.
 

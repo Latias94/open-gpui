@@ -277,6 +277,9 @@ fn common_import_paths_compile() {
     let root_viewport_restore_outcome_space = root::DockSurfaceViewportRestoreOutcome::space;
     let root_close_merge_target = root::DockSurfaceViewportCloseOutcome::merge_target_space;
     let prelude_should_close_allows = prelude::DockSurfaceViewportShouldCloseOutcome::allows_close;
+    let root_viewport_session_type: Option<root::DockSurfaceViewportSession> = None;
+    let prelude_viewport_session_type: Option<prelude::DockSurfaceViewportSession> = None;
+    let root_surface_viewports = root::DockSurface::viewports;
 
     let _ = (
         root_policy.allows_floating(),
@@ -312,6 +315,9 @@ fn common_import_paths_compile() {
         root_viewport_restore_outcome_space,
         root_close_merge_target,
         prelude_should_close_allows,
+        root_viewport_session_type,
+        prelude_viewport_session_type,
+        root_surface_viewports,
     );
 }
 

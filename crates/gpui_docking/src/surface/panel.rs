@@ -1,8 +1,8 @@
 use super::DockSurface;
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockLayout, DockNodeId,
-    DockPanelCloseOutcome, DockPanelDescriptor, DockPanelOpenOutcome, DockPanelPlacement,
-    DockPolicyError, DockSpaceId,
+    DockActionApplyError, DockActionOutcome, DockController, DockGraphDropTarget, DockItemId,
+    DockLayout, DockNodeId, DockPanelCloseOutcome, DockPanelDescriptor, DockPanelOpenOutcome,
+    DockPanelPlacement, DockPolicyError, DockSpaceId,
 };
 use open_gpui::{App, AppContext as _, Bounds, Pixels};
 use thiserror::Error;
@@ -535,6 +535,50 @@ impl DockSurface {
                 .float_item_in_window(source_space, item, target_space, bounds)
                 .map(DockSurfaceChange::from)
                 .map(DockSurfacePanelOutcome::Floated)
+        })
+    }
+
+    /// Moves an open panel into an empty logical dock space without exposing graph node ids.
+    ///
+    /// This is the facade helper for product flows that detach a panel into a child dock space
+    /// before opening that space with [`DockSurface::viewports`].
+    pub fn detach_panel_to_space(
+        &self,
+        source_space: impl Into<DockSpaceId>,
+        item: impl Into<DockItemId>,
+        target_space: impl Into<DockSpaceId>,
+        cx: &mut App,
+    ) -> Result<DockSurfaceChange, DockSurfacePanelError> {
+        let source_space = source_space.into();
+        let item = item.into();
+        let target_space = target_space.into();
+        let controller = self.controller.clone();
+        cx.update_entity(&controller, |controller, cx| {
+            if !controller.panels().contains(&item) {
+                return Err(DockSurfacePanelError::PanelNotRegistered { item });
+            }
+
+            let (source_tabs, _) = controller
+                .graph()
+                .find_item_in_space(&source_space, &item)
+                .ok_or_else(|| DockSurfacePanelError::PanelUnavailable { item: item.clone() })?;
+
+            controller
+                .workspace_mut()
+                .commit_tab_move(
+                    &source_space,
+                    source_tabs,
+                    &item,
+                    &target_space,
+                    DockGraphDropTarget::empty_space(),
+                )
+                .map(DockSurfaceChange::from)
+                .map_err(DockSurfacePanelError::from)
+                .inspect(|change| {
+                    if change.changed() {
+                        cx.notify();
+                    }
+                })
         })
     }
 

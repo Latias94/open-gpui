@@ -8,6 +8,16 @@ use crate::{
 use open_gpui::{AnyWindowHandle, App, AppContext as _, WindowId, WindowOptions};
 use thiserror::Error;
 
+/// Facade object for managing platform viewport windows owned by one [`DockSurface`].
+///
+/// A session keeps ordinary applications on the common docking API: it opens or restores detached
+/// dock spaces, exports placement snapshots, and forwards GPUI close hooks without exposing the
+/// lower-level viewport runtime handle.
+#[derive(Clone, Debug)]
+pub struct DockSurfaceViewportSession {
+    surface: DockSurface,
+}
+
 /// Facade-level outcome of a platform viewport open request.
 #[derive(Debug)]
 pub enum DockSurfaceViewportOpenOutcome {
@@ -132,6 +142,113 @@ pub enum DockSurfaceViewportUnavailable {
     },
     /// The request reached GPUI window opening but the backend returned an error.
     OpenFailed(String),
+}
+
+impl DockSurfaceViewportSession {
+    fn new(surface: DockSurface) -> Self {
+        Self { surface }
+    }
+
+    /// Returns the surface whose platform viewports are managed by this session.
+    pub fn surface(&self) -> &DockSurface {
+        &self.surface
+    }
+
+    /// Returns the close policy used by session-opened platform viewport windows.
+    pub fn close_policy(&self) -> DockViewportClosePolicy {
+        self.surface.viewport_close_policy()
+    }
+
+    /// Replaces the close policy used by session-opened platform viewport windows.
+    pub fn set_close_policy(&self, close_policy: DockViewportClosePolicy) {
+        self.surface.set_viewport_close_policy(close_policy);
+    }
+
+    /// Returns registered platform viewport spaces in stable lexical order.
+    pub fn registered_spaces(&self) -> Vec<DockSpaceId> {
+        self.surface.registered_viewport_spaces()
+    }
+
+    /// Returns true when a platform viewport is registered for the dock space.
+    pub fn is_open(&self, space: &DockSpaceId) -> bool {
+        self.surface.is_viewport_open(space)
+    }
+
+    /// Exports serializable platform-window placement snapshots for session-opened viewports.
+    pub fn export_placement(&self) -> DockViewportPlacementLayout {
+        self.surface.export_viewport_placement()
+    }
+
+    /// Checks saved placement snapshots against currently registered session viewport windows.
+    pub fn check_restore(
+        &self,
+        placement: &DockViewportPlacementLayout,
+    ) -> Result<DockViewportRestoreReadiness, DockViewportPlacementValidationError> {
+        self.surface.check_viewport_placement_restore(placement)
+    }
+
+    /// Opens or reuses a controller-backed platform viewport window for one dock space.
+    pub fn open(
+        &self,
+        space: impl Into<DockSpaceId>,
+        options: WindowOptions,
+        cx: &mut App,
+    ) -> DockSurfaceViewportOpenOutcome {
+        self.surface.open_viewport(space, options, cx)
+    }
+
+    /// Opens or reuses a controller-backed platform viewport from a facade request.
+    pub fn open_spec(
+        &self,
+        spec: DockSurfaceViewportSpec,
+        cx: &mut App,
+    ) -> DockSurfaceViewportOpenOutcome {
+        self.surface.open_viewport_spec(spec, cx)
+    }
+
+    /// Opens a batch of platform viewport requests and returns ordered outcomes.
+    pub fn open_many(
+        &self,
+        specs: impl IntoIterator<Item = DockSurfaceViewportSpec>,
+        cx: &mut App,
+    ) -> DockSurfaceViewportOpenReport {
+        self.surface.open_viewports(specs, cx)
+    }
+
+    /// Opens saved platform viewport windows from placement data and keys outcomes by dock space.
+    pub fn restore(
+        &self,
+        placement: &DockViewportPlacementLayout,
+        fallback_options: impl FnMut(&DockSpaceId) -> WindowOptions,
+        cx: &mut App,
+    ) -> DockSurfaceViewportRestoreReport {
+        self.surface
+            .open_viewports_from_saved_placement(placement, fallback_options, cx)
+    }
+
+    /// Handles a GPUI window should-close callback for a session-opened viewport window.
+    pub fn handle_window_should_close(
+        &self,
+        window_id: WindowId,
+        cx: &mut App,
+    ) -> DockSurfaceViewportShouldCloseOutcome {
+        self.surface
+            .handle_viewport_window_should_close(window_id, cx)
+    }
+
+    /// Handles a GPUI window closed callback for a session-opened viewport window.
+    pub fn handle_window_closed(
+        &self,
+        window_id: WindowId,
+        cx: &mut App,
+    ) -> DockSurfaceViewportCloseOutcome {
+        self.surface.handle_viewport_window_closed(window_id, cx)
+    }
+
+    /// Cancels a previously accepted platform close request when the platform kept the window open.
+    pub fn cancel_window_close(&self, window_id: WindowId, cx: &mut App) -> DockSurfaceChange {
+        self.surface.cancel_viewport_window_close(window_id, cx)
+    }
 }
 
 impl From<DockViewportOpenStatus> for DockSurfaceViewportOpenStatus {
@@ -471,6 +588,11 @@ impl DockSurfaceViewportUnavailable {
 }
 
 impl DockSurface {
+    /// Returns a facade object for managing platform viewport windows owned by this surface.
+    pub fn viewports(&self) -> DockSurfaceViewportSession {
+        DockSurfaceViewportSession::new(self.clone())
+    }
+
     /// Returns the close policy used by facade-opened platform viewport windows.
     pub fn viewport_close_policy(&self) -> DockViewportClosePolicy {
         self.viewport_runtime.close_policy()

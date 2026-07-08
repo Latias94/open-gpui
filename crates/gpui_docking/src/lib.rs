@@ -37,10 +37,11 @@
 //! In-window floating and platform viewport tear-off are separate [`DockPolicy`] capabilities so
 //! applications can enable platform windows without changing graph-backed floating behavior.
 //! Multi-window applications should keep one [`DockSurface`] as the graph, panel, and host-window
-//! owner, open controller-backed viewport windows through [`DockSurfaceViewportSpec`] requests, and
-//! let the surface/runtime install post-close cleanup for those windows. Runtime-opened windows
-//! install a should-close hook so [`DockViewportClosePolicy::Prevent`] can veto platform closes
-//! before cleanup runs, and custom close hooks can stay on the facade through
+//! owner, use [`DockSurface::viewports`] for controller-backed viewport lifecycle, and use
+//! [`DockSurface::detach_panel_to_space`] before opening a panel in a child dock space. Direct
+//! [`DockSurfaceViewportSpec`] requests remain available for batch restore flows. Runtime-opened
+//! windows install a should-close hook so [`DockViewportClosePolicy::Prevent`] can veto platform
+//! closes before cleanup runs, and custom close hooks can stay on the facade through
 //! [`DockSurface::handle_viewport_window_should_close`],
 //! [`DockSurface::handle_viewport_window_closed`], and
 //! [`DockSurface::cancel_viewport_window_close`]. Persist [`DockLayout`] and
@@ -297,8 +298,9 @@ pub use surface::{
     DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
     DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus,
     DockSurfaceViewportOpened, DockSurfaceViewportRestoreOutcome, DockSurfaceViewportRestoreReport,
-    DockSurfaceViewportShouldCloseOutcome, DockSurfaceViewportShouldCloseStatus,
-    DockSurfaceViewportSpec, DockSurfaceViewportSpecError, DockSurfaceViewportUnavailable,
+    DockSurfaceViewportSession, DockSurfaceViewportShouldCloseOutcome,
+    DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportSpecError,
+    DockSurfaceViewportUnavailable,
 };
 pub(crate) use viewport::*;
 #[cfg(test)]

@@ -3,12 +3,13 @@ use open_gpui::{
     Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
 };
 use open_gpui_docking::prelude::{
-    DockPanelPlacement, DockSurface, DockSurfaceViewportOpenOutcome, DockSurfaceViewportSpec,
+    DockPanelPlacement, DockSurface, DockSurfaceChange, DockSurfaceViewportOpenOutcome,
     DockSurfaceViewportUnavailable,
 };
 use open_gpui_platform::application;
 
 const MAIN_SPACE: &str = "main";
+const SECONDARY_SPACE: &str = "preview-window";
 
 struct ExamplePanel {
     title: &'static str,
@@ -110,8 +111,8 @@ fn build_surface(cx: &mut App) -> DockSurface {
                 "Preview",
                 0xb45309,
                 &[
-                    "Secondary viewport opens when backend supports it",
-                    "The main surface remains usable otherwise",
+                    "Detached into its own dock space",
+                    "Opened through the viewport session facade",
                 ],
             ),
         )
@@ -147,6 +148,26 @@ fn secondary_window_options(cx: &App) -> WindowOptions {
     }
 }
 
+fn handle_secondary_open_outcome(outcome: DockSurfaceViewportOpenOutcome) {
+    match outcome {
+        DockSurfaceViewportOpenOutcome::Opened(_) => {}
+        DockSurfaceViewportOpenOutcome::Unavailable(
+            DockSurfaceViewportUnavailable::BackendUnsupported
+            | DockSurfaceViewportUnavailable::PolicyDisabled(_),
+        ) => {}
+        DockSurfaceViewportOpenOutcome::Unavailable(
+            DockSurfaceViewportUnavailable::OpenFailed(error),
+        ) => {
+            log::warn!("secondary docking viewport did not open: {error}");
+        }
+        DockSurfaceViewportOpenOutcome::Unavailable(
+            DockSurfaceViewportUnavailable::InvalidPlacement { error },
+        ) => {
+            log::warn!("secondary docking viewport placement is invalid: {error}");
+        }
+    }
+}
+
 fn main() {
     application().run(|cx: &mut App| {
         let surface = build_surface(cx);
@@ -154,29 +175,30 @@ fn main() {
             .open_primary_window(main_window_options(cx), cx)
             .expect("failed to open primary docking window");
 
-        let secondary_viewport =
-            DockSurfaceViewportSpec::new(MAIN_SPACE, secondary_window_options(cx));
-
-        match surface.open_viewport_spec(secondary_viewport, cx) {
-            DockSurfaceViewportOpenOutcome::Opened(_) => {}
-            DockSurfaceViewportOpenOutcome::Unavailable(
-                DockSurfaceViewportUnavailable::BackendUnsupported
-                | DockSurfaceViewportUnavailable::PolicyDisabled(_),
-            ) => {}
-            DockSurfaceViewportOpenOutcome::Unavailable(
-                DockSurfaceViewportUnavailable::OpenFailed(error),
-            ) => {
-                log::warn!("secondary docking viewport did not open: {error}");
+        let viewports = surface.viewports();
+        if cx.viewport_capabilities().platform_viewport_windows {
+            match surface.detach_panel_to_space(MAIN_SPACE, "preview", SECONDARY_SPACE, cx) {
+                Ok(DockSurfaceChange::Changed | DockSurfaceChange::Unchanged) => {
+                    handle_secondary_open_outcome(viewports.open(
+                        SECONDARY_SPACE,
+                        secondary_window_options(cx),
+                        cx,
+                    ));
+                }
+                Err(error) => {
+                    log::warn!("preview panel did not detach into a secondary space: {error}")
+                }
             }
-            DockSurfaceViewportOpenOutcome::Unavailable(
-                DockSurfaceViewportUnavailable::InvalidPlacement { error },
-            ) => {
-                log::warn!("secondary docking viewport placement is invalid: {error}");
-            }
+        } else {
+            handle_secondary_open_outcome(viewports.open(
+                SECONDARY_SPACE,
+                secondary_window_options(cx),
+                cx,
+            ));
         }
 
-        let placement = surface.export_viewport_placement();
-        match surface.check_viewport_placement_restore(&placement) {
+        let placement = viewports.export_placement();
+        match viewports.check_restore(&placement) {
             Ok(readiness) => log::info!("viewport placement restore readiness: {readiness:?}"),
             Err(error) => log::warn!("viewport placement restore check failed: {error}"),
         }

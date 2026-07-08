@@ -2,7 +2,7 @@ use crate::{
     DockController, DockItemId, DockLayout, DockPanelOpenPlacementSource, DockPanelPlacement,
     DockPanelPlacementTarget, DockSpaceId, DockSurface, DockSurfaceChange, DockSurfacePanelError,
     DockSurfacePanelLocationKind, DockSurfacePanelOutcome, DockSurfaceViewportCloseStatus,
-    DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenStatus,
+    DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenStatus, DockSurfaceViewportSession,
     DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportUnavailable,
     DockViewportClosePolicy, DockViewportPlacement, DockViewportPlacementLayout,
     DockViewportRestoreReadiness, DockViewportWindowBounds, DockViewportWindowState,
@@ -489,6 +489,60 @@ fn surface_open_viewport_opens_and_reuses_supported_backend(cx: &mut open_gpui::
         };
         assert_eq!(reused.status(), DockSurfaceViewportOpenStatus::Reused);
         assert_eq!(reused.window(), opened.window());
+    });
+}
+
+#[open_gpui::test]
+fn surface_viewport_session_opens_detached_panel_space(cx: &mut open_gpui::TestAppContext) {
+    cx.update(|cx| {
+        let child_space = DockSpaceId::from("preview-window");
+        let surface = DockSurface::builder("main")
+            .panel_placements([
+                DockPanelPlacement::center("editor"),
+                DockPanelPlacement::right_rail("inspector"),
+                DockPanelPlacement::center("preview"),
+            ])
+            .panel_factory("editor", "Editor", test_panel)
+            .panel_factory("inspector", "Inspector", test_panel)
+            .panel_factory("preview", "Preview", test_panel)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("surface layout should validate");
+        let viewports: DockSurfaceViewportSession = surface.viewports();
+
+        let detached = surface
+            .detach_panel_to_space("main", "preview", child_space.clone(), cx)
+            .expect("registered preview panel should detach into a child dock space");
+        assert_eq!(detached, DockSurfaceChange::Changed);
+        assert!(
+            !surface
+                .items_in_space("main", cx)
+                .contains(&DockItemId::from("preview"))
+        );
+        assert_eq!(
+            surface.items_in_space(child_space.clone(), cx),
+            vec![DockItemId::from("preview")]
+        );
+
+        let opened = match viewports.open(child_space.clone(), viewport_options(), cx) {
+            DockSurfaceViewportOpenOutcome::Opened(opened) => opened,
+            other => panic!("expected child dock space viewport to open, got {other:?}"),
+        };
+        assert_eq!(opened.status(), DockSurfaceViewportOpenStatus::Opened);
+        assert_eq!(opened.space(), &child_space);
+        assert!(viewports.is_open(&child_space));
+        assert_eq!(viewports.registered_spaces(), vec![child_space.clone()]);
+
+        let placement = viewports.export_placement();
+        assert_eq!(
+            viewports
+                .check_restore(&placement)
+                .expect("session placement should validate"),
+            DockViewportRestoreReadiness {
+                matched: 1,
+                missing: 0,
+            }
+        );
     });
 }
 

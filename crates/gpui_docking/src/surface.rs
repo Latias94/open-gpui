@@ -12,8 +12,9 @@ pub use viewport::{
     DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
     DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus,
     DockSurfaceViewportOpened, DockSurfaceViewportRestoreOutcome, DockSurfaceViewportRestoreReport,
-    DockSurfaceViewportShouldCloseOutcome, DockSurfaceViewportShouldCloseStatus,
-    DockSurfaceViewportSpec, DockSurfaceViewportSpecError, DockSurfaceViewportUnavailable,
+    DockSurfaceViewportSession, DockSurfaceViewportShouldCloseOutcome,
+    DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportSpecError,
+    DockSurfaceViewportUnavailable,
 };
 
 use crate::{
