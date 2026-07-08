@@ -17,7 +17,7 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
     PublicSurfaceOwnerEntry {
         name: "FormControlState",
         owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
-        home: "form.rs",
+        home: "form_control.rs",
     },
     PublicSurfaceOwnerEntry {
         name: "GpuiOverlayAdapterConfig",

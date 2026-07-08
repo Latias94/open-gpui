@@ -339,8 +339,8 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentContract,
         docs_token: Some("FormControlState"),
         default_export: true,
-        source_inputs: &["form.rs"],
-        source_home: "form.rs",
+        source_inputs: &["form_control.rs"],
+        source_home: "form_control.rs",
     },
     ComponentContractEntry {
         name: "Label",

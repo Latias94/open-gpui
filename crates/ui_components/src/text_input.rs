@@ -16,7 +16,7 @@ use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
-use crate::form::FormControlState;
+use crate::form_control::FormControlState;
 use crate::text_editing::{
     self, EditableTextDocument, TextDisplayPolicy, TextDisplayProjection, TextEditingPolicy,
     TextEditingProjection, TextSelection,

@@ -2,7 +2,7 @@
 
 use crate::a11y::UiA11yElementExt;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
-use crate::form::FormControlState;
+use crate::form_control::FormControlState;
 use crate::geometry::gpui_px_from_ui;
 use crate::slider::{normalize_bounds, normalize_numeric_value, normalize_step};
 use crate::text_input::{TextInputColors, TextInputMetrics};

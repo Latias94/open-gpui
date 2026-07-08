@@ -12,7 +12,7 @@ mod snapshot;
 #[cfg(feature = "gpui")]
 pub use gpui::DevtoolsInspector;
 pub use inspector::{DevtoolsInspectorError, DevtoolsInspectorState, DevtoolsSnapshotRow};
-pub use probe::{DevtoolsProbe, ProbeId, ProbeSnapshotError};
+pub use probe::{DevtoolsProbe, ProbeId, ProbeSnapshotError, SnapshotProbe, SnapshotProbeSnapshot};
 pub use redaction::SnapshotRedactionSummary;
 pub use registry::{DevtoolsRegistry, DevtoolsRegistryError};
 pub use snapshot::{

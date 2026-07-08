@@ -1,6 +1,6 @@
 use open_gpui_devtools::{
     DevtoolsProbe, DevtoolsRegistry, ProbeId, ProbeSnapshotError, SnapshotEnvelope, SnapshotKind,
-    SnapshotNode, SnapshotRedactionSummary, SnapshotTree,
+    SnapshotNode, SnapshotProbe, SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
 };
 
 struct StaticProbe {
@@ -87,6 +87,49 @@ fn registry_reports_probe_failures_as_diagnostics() {
             .message
             .contains("probe unavailable")
     );
+}
+
+#[test]
+fn closure_backed_snapshot_probe_builds_consistent_envelopes() {
+    let mut redaction = SnapshotRedactionSummary::default();
+    redaction.record_redacted("theme.secret");
+    let redaction_for_probe = redaction.clone();
+    let probe = SnapshotProbe::new("theme", SnapshotKind::Theme, move || {
+        Ok(
+            SnapshotProbeSnapshot::new(SnapshotTree::new([SnapshotNode::new(
+                "theme",
+                "Theme runtime",
+            )
+            .with_payload(serde_json::json!({"mode": "dark"}))]))
+            .with_redaction(redaction_for_probe.clone()),
+        )
+    })
+    .unwrap();
+
+    let snapshot = probe.snapshot().unwrap();
+
+    assert_eq!(snapshot.probe_id.as_str(), "theme");
+    assert_eq!(snapshot.kind, SnapshotKind::Theme);
+    assert_eq!(snapshot.tree.nodes[0].id, "theme");
+    assert_eq!(snapshot.redaction, redaction);
+}
+
+#[test]
+fn registry_registers_closure_backed_snapshot_probes() {
+    let mut registry = DevtoolsRegistry::default();
+    registry
+        .register_snapshot_probe("resource", SnapshotKind::Resource, || {
+            Ok(SnapshotProbeSnapshot::new(SnapshotTree::new([
+                SnapshotNode::new("projects", "Projects"),
+            ])))
+        })
+        .unwrap();
+
+    let collection = registry.collect();
+
+    assert_eq!(collection.snapshots.len(), 1);
+    assert_eq!(collection.snapshots[0].probe_id.as_str(), "resource");
+    assert_eq!(collection.snapshots[0].kind, SnapshotKind::Resource);
 }
 
 #[test]

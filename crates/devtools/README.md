@@ -31,31 +31,14 @@ mutation and live property editing are intentionally out of scope for the initia
 
 ```rust
 use open_gpui_devtools::{
-    DevtoolsProbe, DevtoolsRegistry, ProbeId, ProbeSnapshotError, SnapshotEnvelope, SnapshotKind,
-    SnapshotNode, SnapshotTree,
+    DevtoolsRegistry, SnapshotKind, SnapshotNode, SnapshotProbeSnapshot, SnapshotTree,
 };
 
-struct ThemeProbe {
-    id: ProbeId,
-}
-
-impl DevtoolsProbe for ThemeProbe {
-    fn id(&self) -> &ProbeId {
-        &self.id
-    }
-
-    fn snapshot(&self) -> Result<SnapshotEnvelope, ProbeSnapshotError> {
-        Ok(SnapshotEnvelope::new(
-            self.id.clone(),
-            SnapshotKind::Theme,
-            SnapshotTree::new([SnapshotNode::new("theme", "Theme tokens")]),
-        ))
-    }
-}
-
 let mut registry = DevtoolsRegistry::default();
-registry.register(ThemeProbe {
-    id: ProbeId::new("theme")?,
+registry.register_snapshot_probe("theme", SnapshotKind::Theme, || {
+    Ok(SnapshotProbeSnapshot::new(SnapshotTree::new([
+        SnapshotNode::new("theme", "Theme tokens"),
+    ])))
 })?;
 let collection = registry.collect();
 assert_eq!(collection.snapshots.len(), 1);
