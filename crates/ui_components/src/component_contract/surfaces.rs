@@ -35,6 +35,56 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
         home: "gpui_adapter",
     },
     PublicSurfaceOwnerEntry {
+        name: "FormFieldConfig",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "form_adapter.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "FormFieldProjection",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "form_adapter.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "form_text_value",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "form_adapter.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "form_number_value",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "form_adapter.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "form_checkbox_value",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "form_adapter.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "form_select_value",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "form_adapter.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "ResourceAdapterLabels",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "resource_adapter.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "ResourceCollectionProjection",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "resource_adapter.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "ResourceMutationProjection",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "resource_adapter.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "resource_query_key_label",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "resource_adapter.rs",
+    },
+    PublicSurfaceOwnerEntry {
         name: "init_text_input",
         owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
         home: "gpui_adapter",

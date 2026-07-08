@@ -8,6 +8,7 @@ use open_gpui::{
     ScrollHandle, StatefulInteractiveElement, Styled, Window, WindowBounds, WindowOptions,
     anchored, deferred, div, px, rgb, size,
 };
+use open_gpui_devtools::DevtoolsInspector;
 
 use open_gpui_ui_components::{
     AlertDialog, Avatar, AvatarGroup, AvatarState, BadgeState, Button, ButtonState, ButtonVariant,
@@ -553,7 +554,26 @@ impl GalleryShell {
             GalleryPage::Components => {
                 pages::components::render_components_page(self, snapshot, cx).into_any_element()
             }
+
+            GalleryPage::Devtools => self.render_devtools_page(snapshot).into_any_element(),
         }
+    }
+
+    fn render_devtools_page(&self, snapshot: GalleryShellSnapshot) -> impl IntoElement {
+        div()
+            .id("gallery-devtools-page")
+            .debug_selector(|| "gallery:devtools-page".into())
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(
+                DevtoolsInspector::new(
+                    "gallery-devtools-inspector",
+                    pages::devtools::devtools_gallery_state(),
+                )
+                .title("Gallery DevTools Inspector"),
+            )
+            .child(self.render_signal_list(snapshot.selected_page))
     }
 
     fn render_tokens_page(&self, snapshot: GalleryShellSnapshot) -> impl IntoElement {

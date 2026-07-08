@@ -15,6 +15,10 @@ use std::collections::BTreeMap;
 
 use super::samples::{TableSample, server_tree_table_state};
 
+#[path = "runtime/form.rs"]
+mod form;
+#[path = "runtime/resource.rs"]
+mod resource;
 #[path = "runtime/table.rs"]
 mod table;
 #[path = "runtime/tree.rs"]
@@ -22,6 +26,10 @@ mod tree;
 #[path = "runtime/virtualized_list.rs"]
 mod virtualized_list;
 
+pub use form::{FormSampleRuntimeAction, FormSampleRuntimeLog, form_sample_runtime_log};
+pub use resource::{
+    ResourceSampleRuntimeEvent, ResourceSampleRuntimeLog, resource_sample_runtime_log,
+};
 pub use table::{
     TableSampleCellEditChange, TableSampleColumnOrderChange, TableSampleColumnVisibilityChange,
     TableSampleExpansionToggle, TableSampleFacetedFilterChange, TableSampleGlobalFilterChange,

@@ -57,6 +57,9 @@ During local development, use workspace path dependencies instead of registry ve
 
 - Use `open-gpui-platform` for application startup across native and web targets.
 - Use `open-gpui-ui-components` for the official GPUI component library, including typed action projection, host-controlled `VirtualizedList`, and component contract evidence.
+- Use `open-gpui-form` for renderer-neutral form ownership: field identity, dirty/touched/visited meta, validation generations, submit/reset lifecycle, typed lenses, dynamic JSON values, and redacted snapshots.
+- Use `open-gpui-resource` for renderer-neutral async query and mutation ownership: deterministic query keys, observers, stale/invalidate state, retry policy, pagination snapshots, mutation lifecycle, and redacted cache diagnostics. Fetching stays protocol-agnostic.
+- Use `open-gpui-devtools` for read-only local inspection: app-owned probes collect serializable snapshot envelopes, diagnostics, redaction summaries, and an optional GPUI inspector surface behind the `gpui` feature.
 - Use `open-gpui-motion` when a component or domain crate needs deterministic, renderer-neutral motion samples and frame-demand facts. It is not a global animation engine.
 - Use `open-gpui-docking` for retained tab stacks, splits, product panel placement, in-window floating panels, and capability-gated platform viewport windows. Start with the minimal example before the diagnostic dogfood example.
 - Use `open-gpui-web` only for web backend work; most applications should continue to enter through `open-gpui-platform`.
@@ -69,8 +72,9 @@ Open GPUI is pre-1.0, so the framework favors explicit product contracts over co
 - Docking apps declare product intent with `DockPanelPlacement`, descriptor default placement, and last-known reopen placement instead of holding graph node ids in normal product code.
 - Component apps project command/action metadata through `CommandIconDescriptor`, `ActionDescriptor`, and `ResolvedActionState`, then reuse that resolved state across buttons, toolbars, menus, command palettes, and sidebars.
 - `VirtualizedList` keeps stable-key state in `VirtualizedListState`; GPUI shells opt into host-owned `ScrollHandle` and custom row rendering through `gpui_adapter::VirtualizedListGpuiExt`, while keyed reveal math stays on `scroll_target_for_key` or `scroll_target_for_key_with_snapshot`.
+- Form and resource apps keep long-lived state in `open-gpui-form` and `open-gpui-resource`, then project snapshots into existing UI components through `FormFieldProjection`, `ResourceCollectionProjection`, and `ResourceMutationProjection`. Devtools consumes redacted snapshots and does not mutate app state.
 
-See [docs/ui/command-ecosystem.md](docs/ui/command-ecosystem.md), [docs/ui/component-contract.md](docs/ui/component-contract.md), [crates/ui_components/README.md](crates/ui_components/README.md), and [crates/gpui_docking/README.md](crates/gpui_docking/README.md) for the current public surfaces.
+See [docs/ui/command-ecosystem.md](docs/ui/command-ecosystem.md), [docs/ui/component-contract.md](docs/ui/component-contract.md), [crates/ui_components/README.md](crates/ui_components/README.md), [crates/form/README.md](crates/form/README.md), [crates/resource/README.md](crates/resource/README.md), [crates/devtools/README.md](crates/devtools/README.md), and [crates/gpui_docking/README.md](crates/gpui_docking/README.md) for the current public surfaces.
 
 ## Repository Layout
 
@@ -83,6 +87,9 @@ See [docs/ui/command-ecosystem.md](docs/ui/command-ecosystem.md), [docs/ui/compo
 - `crates/ui_core`: renderer-neutral UI contracts, geometry, virtualizer math, and component state helpers
 - `crates/ui_components`: official component library surfaces such as Listbox, Command, Table,
   Tree, and VirtualizedList; see [crates/ui_components/README.md](crates/ui_components/README.md)
+- `crates/form`: renderer-neutral form state, validation, submission, lenses, and redacted snapshots; see [crates/form/README.md](crates/form/README.md)
+- `crates/resource`: renderer-neutral async query/mutation state, observers, retry policy, pagination, and redacted snapshots; see [crates/resource/README.md](crates/resource/README.md)
+- `crates/devtools`: read-only probe registry, serializable snapshot envelopes, diagnostics, and optional GPUI inspector UI; see [crates/devtools/README.md](crates/devtools/README.md)
 - `crates/motion`: renderer-neutral `open-gpui-motion` timing, spring, policy, projection, and
   frame-demand primitives; see [crates/motion/README.md](crates/motion/README.md)
 - `crates/gpui_docking`: retained docking graph, workspace, host, and viewport primitives; see
@@ -102,6 +109,7 @@ cargo run -p open-gpui-canvas-notes
 cargo run -p open-gpui-docking-minimal
 cargo run -p open-gpui-docking-native
 cargo run -p open-gpui-ui-foundation-gallery
+cargo run -p open-gpui-ui-foundation-gallery -- --page devtools
 ```
 
 ## Verification
