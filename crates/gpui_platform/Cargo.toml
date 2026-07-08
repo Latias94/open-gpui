@@ -20,7 +20,7 @@ path = "src/gpui_platform.rs"
 [features]
 default = []
 font-kit = ["open_gpui_macos/font-kit"]
-test-support = ["open_gpui/test-support", "open_gpui_macos/test-support"]
+test-support = ["open_gpui/test-support", "open_gpui_macos/test-support", "open_gpui_windows/test-support", "open_gpui_linux/test-support"]
 screen-capture = ["open_gpui/screen-capture", "open_gpui_macos/screen-capture", "open_gpui_windows/screen-capture", "open_gpui_linux/screen-capture"]
 runtime_shaders = ["open_gpui_macos/runtime_shaders"]
 wayland = ["open_gpui_linux/wayland"]
