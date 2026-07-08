@@ -180,12 +180,16 @@ fn common_import_paths_compile() {
     let prelude_reopen_policy = prelude::DockPanelReopenPolicy::RestoreLastKnown;
     let prelude_open_source = prelude::DockPanelOpenPlacementSource::DescriptorDefault;
     let prelude_open_status = prelude::DockSurfaceViewportOpenStatus::Opened;
+    let root_should_close_status = root::DockSurfaceViewportShouldCloseStatus::Allowed;
+    let prelude_close_status = prelude::DockSurfaceViewportCloseStatus::MergedBack;
     let root_viewport_spec =
         root::DockSurfaceViewportSpec::new("main", open_gpui::WindowOptions::default());
     let prelude_viewport_spec_error = prelude::DockSurfaceViewportSpecError::InvalidPlacement {
         message: String::new(),
     };
     let root_viewport_report_into_outcomes = root::DockSurfaceViewportOpenReport::into_outcomes;
+    let root_close_merge_target = root::DockSurfaceViewportCloseOutcome::merge_target_space;
+    let prelude_should_close_allows = prelude::DockSurfaceViewportShouldCloseOutcome::allows_close;
 
     let _ = (
         root_policy.allows_floating(),
@@ -208,9 +212,13 @@ fn common_import_paths_compile() {
         prelude_reopen_policy,
         prelude_open_source,
         prelude_open_status,
+        root_should_close_status,
+        prelude_close_status,
         root_viewport_spec.space(),
         prelude_viewport_spec_error,
         root_viewport_report_into_outcomes,
+        root_close_merge_target,
+        prelude_should_close_allows,
     );
 }
 

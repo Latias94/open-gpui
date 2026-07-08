@@ -8,8 +8,10 @@ pub use crate::{
     DockPanelPlacementTarget, DockPanelRegistration, DockPanelRegistry, DockPanelReopenPolicy,
     DockPolicy, DockPolicyError, DockSpaceId, DockSurface, DockSurfaceBuildError,
     DockSurfaceBuilder, DockSurfaceChange, DockSurfacePanelError, DockSurfacePanelOutcome,
+    DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
     DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus,
-    DockSurfaceViewportOpened, DockSurfaceViewportSpec, DockSurfaceViewportSpecError,
+    DockSurfaceViewportOpened, DockSurfaceViewportShouldCloseOutcome,
+    DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportSpecError,
     DockSurfaceViewportUnavailable, DockViewportClosePolicy, DockViewportPlacement,
     DockViewportPlacementLayout, DockViewportWindowBounds, DockViewportWindowState,
 };

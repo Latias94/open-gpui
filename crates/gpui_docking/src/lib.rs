@@ -38,11 +38,14 @@
 //! owner, open controller-backed viewport windows through [`DockSurfaceViewportSpec`] requests, and
 //! let the surface/runtime install post-close cleanup for those windows. Runtime-opened windows
 //! install a should-close hook so [`DockViewportClosePolicy::Prevent`] can veto platform closes
-//! before cleanup runs. Persist [`DockLayout`] and [`DockViewportPlacementLayout`] separately:
-//! layout restores logical dock spaces, while placement restores platform-window hints that
-//! [`DockSurfaceViewportSpec::with_saved_placement`] applies to fallback GPUI window options.
-//! Cross-window drops derive hovered-window and front-to-back window-stack arbitration from GPUI
-//! runtime signals inside the crate.
+//! before cleanup runs, and custom close hooks can stay on the facade through
+//! [`DockSurface::handle_viewport_window_should_close`],
+//! [`DockSurface::handle_viewport_window_closed`], and
+//! [`DockSurface::cancel_viewport_window_close`]. Persist [`DockLayout`] and
+//! [`DockViewportPlacementLayout`] separately: layout restores logical dock spaces, while placement
+//! restores platform-window hints that [`DockSurfaceViewportSpec::with_saved_placement`] applies to
+//! fallback GPUI window options. Cross-window drops derive hovered-window and front-to-back
+//! window-stack arbitration from GPUI runtime signals inside the crate.
 //! Panel close/reopen flows should use [`DockController::close_item`],
 //! [`DockController::open_item`], [`DockWorkspace::close_item`], or [`DockWorkspace::open_item`]:
 //! close removes the item from the graph while the panel catalog remains available, and reopen
@@ -280,8 +283,10 @@ pub use panel_registry::{DockPanelAttachError, DockPanelRegistration, DockPanelR
 pub use policy::{DockPolicy, DockPolicyError};
 pub use surface::{
     DockSurface, DockSurfaceBuildError, DockSurfaceBuilder, DockSurfaceChange,
-    DockSurfacePanelError, DockSurfacePanelOutcome, DockSurfaceViewportOpenOutcome,
-    DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus, DockSurfaceViewportOpened,
+    DockSurfacePanelError, DockSurfacePanelOutcome, DockSurfaceViewportCloseOutcome,
+    DockSurfaceViewportCloseStatus, DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenReport,
+    DockSurfaceViewportOpenStatus, DockSurfaceViewportOpened,
+    DockSurfaceViewportShouldCloseOutcome, DockSurfaceViewportShouldCloseStatus,
     DockSurfaceViewportSpec, DockSurfaceViewportSpecError, DockSurfaceViewportUnavailable,
 };
 pub(crate) use viewport::*;

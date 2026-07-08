@@ -16,6 +16,8 @@ Low-level graph, action, workspace, host, and runtime-handle APIs live behind ex
 - `DockSurface` as the app-level owner for controller state, host-window creation, panel commands, and typed viewport capability outcomes.
 - `DockSurfaceViewportSpec` and `DockSurfaceViewportOpenReport` as facade-level platform window
   requests and batch outcomes for multi-viewport applications.
+- `DockSurfaceViewportShouldCloseOutcome` and `DockSurfaceViewportCloseOutcome` as facade-level
+  lifecycle results for platform close hooks, including merge-back close policies.
 - `DockGraph` and `DockLayout` for logical dock spaces, tab stacks, splits, in-window floating
   layout, serialization, validation, and graph operations.
 - `DockController` and `DockWorkspace` as the low-level shared owner for rendered hosts and
@@ -44,6 +46,8 @@ Platform viewport windows fail closed unless both gates are true:
 `DockSurface::open_viewport_spec` and `DockSurface::open_viewports` return facade outcomes so applications can distinguish policy-disabled, backend-unsupported, and backend-open failures without parsing opaque errors. Unsupported backends should no-op for open or tear-off requests instead of constructing partial runtime state. Web and other backends without platform window support stay on the single-window route.
 
 Persist `DockLayout` separately from viewport placement data. The layout restores logical dock spaces; `DockViewportPlacementLayout` restores platform-window hints, and `DockSurfaceViewportSpec::with_saved_placement` applies those hints to fallback GPUI window options before a viewport opens.
+
+Use `DockSurfaceBuilder::close_policy` or `DockSurface::set_viewport_close_policy` to choose how detached platform windows close. `DockViewportClosePolicy::RetainLayout` removes only the runtime window mapping, `Prevent` vetoes the platform close, and `MergeBack` moves a closing viewport's dock content into a fallback space. Applications with custom GPUI window hooks can call `DockSurface::handle_viewport_window_should_close`, `DockSurface::handle_viewport_window_closed`, and `DockSurface::cancel_viewport_window_close` without importing the low-level runtime handle.
 
 ## Examples
 
