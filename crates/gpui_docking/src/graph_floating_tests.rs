@@ -19,6 +19,9 @@ fn float_item_in_window_creates_floating_container() {
 
     assert_eq!(graph.collect_items_in_space(&space()).len(), 2);
     assert_eq!(graph.floating_containers(&space()).len(), 1);
+    let floating = graph.floating_containers(&space())[0].node;
+    assert!(graph.subtree_contains_item(floating, &item("b")));
+    assert!(!graph.subtree_contains_item(floating, &item("a")));
     let DockNode::Tabs { items, .. } = graph.node(root).expect("root tabs node should exist")
     else {
         panic!("expected root tabs");

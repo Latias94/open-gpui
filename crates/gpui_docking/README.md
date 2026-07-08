@@ -45,6 +45,48 @@ Platform viewport windows fail closed unless both gates are true:
 
 Persist `DockLayout` separately from viewport placement data. The layout restores logical dock spaces; `DockViewportPlacementLayout` restores platform-window hints, and `DockSurfaceViewportSpec::with_saved_placement` applies those hints to fallback GPUI window options before a viewport opens.
 
+## Restoring Platform Viewports
+
+Build viewport requests through `DockSurfaceViewportSpec` when restoring detached spaces. This keeps
+placement validation, backend capability checks, and batch outcome reporting on the facade surface:
+
+```rust
+use open_gpui::{Bounds, WindowBounds, WindowOptions, px, size};
+use open_gpui_docking::prelude::{
+    DockSurfaceViewportOpenOutcome, DockSurfaceViewportSpec, DockViewportPlacementLayout,
+};
+
+fn restore_viewports(
+    surface: &open_gpui_docking::prelude::DockSurface,
+    saved_placement: &DockViewportPlacementLayout,
+    cx: &mut open_gpui::App,
+) {
+    let specs = ["main", "preview"]
+        .into_iter()
+        .map(|space| {
+            let fallback_options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(px(720.0), px(480.0)),
+                    cx,
+                ))),
+                ..Default::default()
+            };
+            DockSurfaceViewportSpec::new(space, fallback_options)
+                .with_saved_placement(saved_placement)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .expect("saved viewport placement should validate");
+
+    let report = surface.open_viewports(specs, cx);
+    for outcome in report.outcomes() {
+        if let DockSurfaceViewportOpenOutcome::Unavailable(reason) = outcome {
+            eprintln!("dock viewport unavailable: {reason:?}");
+        }
+    }
+}
+```
+
 ## Examples
 
 Run the minimal single-window docking example first:

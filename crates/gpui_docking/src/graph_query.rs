@@ -24,6 +24,11 @@ impl DockGraph {
         out
     }
 
+    /// Returns true when a dock item is reachable from a subtree.
+    pub fn subtree_contains_item(&self, root: DockNodeId, item: &DockItemId) -> bool {
+        self.find_item_in_subtree(root, item).is_some()
+    }
+
     pub(crate) fn nodes_in_subtree(&self, root: DockNodeId) -> Vec<DockNodeId> {
         let mut out = Vec::new();
         self.collect_nodes_in_subtree_into(root, &mut out);

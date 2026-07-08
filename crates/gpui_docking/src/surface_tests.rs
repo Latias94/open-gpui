@@ -164,6 +164,41 @@ fn surface_open_viewport_reports_policy_disabled(cx: &mut open_gpui::TestAppCont
 }
 
 #[open_gpui::test]
+fn surface_open_viewports_reports_policy_disabled_for_each_batch_spec(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel_factory("editor", "Editor", test_panel)
+            .build(cx)
+            .expect("surface layout should validate");
+        let before_windows = cx.windows().len();
+
+        let report = surface.open_viewports(
+            [
+                DockSurfaceViewportSpec::new("main", viewport_options()),
+                DockSurfaceViewportSpec::new("secondary", viewport_options()),
+            ],
+            cx,
+        );
+
+        assert_eq!(report.len(), 2);
+        assert_eq!(report.opened_count(), 0);
+        assert_eq!(report.unavailable_count(), 2);
+        for outcome in report.outcomes() {
+            assert!(matches!(
+                outcome,
+                DockSurfaceViewportOpenOutcome::Unavailable(
+                    DockSurfaceViewportUnavailable::PolicyDisabled(_)
+                )
+            ));
+        }
+        assert_eq!(cx.windows().len(), before_windows);
+    });
+}
+
+#[open_gpui::test]
 fn surface_open_viewport_reports_backend_unsupported_without_registration(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -188,6 +223,44 @@ fn surface_open_viewport_reports_backend_unsupported_without_registration(
         ));
         assert_eq!(cx.windows().len(), before_windows);
         assert!(!surface.is_viewport_open(surface.primary_space()));
+    });
+}
+
+#[open_gpui::test]
+fn surface_open_viewports_reports_backend_unsupported_for_each_batch_spec(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    cx.set_platform_viewport_windows(false);
+
+    cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel_factory("editor", "Editor", test_panel)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("surface layout should validate");
+        let before_windows = cx.windows().len();
+
+        let report = surface.open_viewports(
+            [
+                DockSurfaceViewportSpec::new("main", viewport_options()),
+                DockSurfaceViewportSpec::new("secondary", viewport_options()),
+            ],
+            cx,
+        );
+
+        assert_eq!(report.len(), 2);
+        assert_eq!(report.opened_count(), 0);
+        assert_eq!(report.unavailable_count(), 2);
+        for outcome in report.outcomes() {
+            assert!(matches!(
+                outcome,
+                DockSurfaceViewportOpenOutcome::Unavailable(
+                    DockSurfaceViewportUnavailable::BackendUnsupported
+                )
+            ));
+        }
+        assert_eq!(cx.windows().len(), before_windows);
     });
 }
 
