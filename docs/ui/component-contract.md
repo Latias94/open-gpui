@@ -331,23 +331,25 @@ reserved for caller-owned render-frame inputs. `Switch::on_change`, `Toggle::on_
 activation, modal action outcomes, close affordances, or table sort requests rather than scalar
 value changes.
 
-Keep crate-root exports explicit. The shared default export surface lives in
-`crates/ui_components/src/public_api/default.rs`; both the crate root and prelude re-export that
-curated surface, while prelude-only additions remain local to `prelude.rs`. Do not use wildcard
-public re-exports in component crates except for that curated default-surface hop. GPUI-specific
-helpers that remain public for concrete applications must be reachable through
-`open_gpui_ui_components::gpui_adapter`; current examples include `TextInputController`,
-`init_text_input`, `focus_ring_shadow_with_theme`, accessibility mapping helpers, geometry
-conversion helpers, and GPUI overlay scheduling helpers. The crate root and prelude default
-interface are reserved for official components and component-facing state/readout types. Advanced
-command registry/runtime types live in
+Keep crate-root exports explicit. The crate-root default export surface lives in
+`crates/ui_components/src/public_api/default.rs`; the smaller common application import surface
+lives in `crates/ui_components/src/public_api/common.rs` and is re-exported by
+`open_gpui_ui_components::prelude`. Do not use wildcard public re-exports in component crates
+except for those curated public-api hops. GPUI-specific helpers that remain public for concrete
+applications must be reachable through `open_gpui_ui_components::gpui_adapter`; current examples
+include `TextInputController`, `init_text_input`, `focus_ring_shadow_with_theme`, accessibility
+mapping helpers, geometry conversion helpers, `VirtualizedListGpuiExt`, and GPUI overlay scheduling
+helpers. The crate root is reserved for official components and component-facing state/readout
+types; the prelude is reserved for common application imports. Advanced command registry/runtime
+types live in
 `open_gpui_command`; table-core, virtualizer, and grid-window contracts live in
 `open_gpui_ui_core`; advanced theme registry/runtime and JSON loader APIs live under
 `open_gpui_ui_components::theme`. Component examples may consume those owner-crate APIs
 explicitly, but `open_gpui_ui_components` should not re-export them as broad default-surface
-conveniences. This rule narrows the default surface; it does not ban narrow component-module
-re-exports of component-facing neutral dependencies, and it does not expand the small prelude-only
-convenience allowlist in `prelude.rs` without an explicit public-surface test update.
+conveniences. This rule narrows the default and common surfaces; it does not ban narrow
+component-module re-exports of component-facing neutral dependencies, and it does not expand the
+small prelude-only convenience allowlist in `prelude.rs` without an explicit public-surface test
+update.
 
 The current foundation refactor makes these names shipped high-value component families:
 `Accordion`, `Collapsible`, `Slider`, `NumberInput`, `ToggleGroup`, `Link`, `Breadcrumb`, `Tag`,
@@ -786,9 +788,10 @@ indexes keep the same payload shape across pinned and center rows. Combined two-
 details remain adapter-internal; public tests assert the resulting row/column behavior through
 `TableBehaviorSnapshot` and gallery runtime probes instead of inspecting the render plan.
 
-An official Table entry must satisfy the normal component completion gate: `Table`,
-`TableBehaviorSnapshot`, and component-owned table controls export at the crate root and prelude,
-while `TableState`, `TableRow`, `TableColumn`, row-model, virtualizer, and resize math import from
+An official Table entry must satisfy the normal component completion gate: `Table` and
+`TableBehaviorSnapshot` export at the crate root and common prelude; component-owned table controls
+such as `TableGlobalFilter` and `TableToolbar` export at the crate root and owner modules, while
+`TableState`, `TableRow`, `TableColumn`, row-model, virtualizer, and resize math import from
 `open_gpui_ui_core`. The entry also needs matching `SIGNALS` entries, a `COMPONENT_CATALOG`
 official entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests
 for row identity, grouping, source-tree expansion, row interaction payloads, and virtualizer
@@ -897,7 +900,7 @@ sample scrolling local to the sample viewport. Directory chips remain anchor jum
 current page mode; they must not implicitly change the focused family. The page should also keep
 these gates visible:
 
-- crate-root and prelude exports stay explicit;
+- crate-root, common, and prelude exports stay explicit;
 - contract-row default-export intent stays aligned through
   `root_and_prelude_exports_match_contract_default_surface_intent`;
 - contract-row source ownership stays aligned through
@@ -1147,10 +1150,12 @@ are dropped from emitted snapshots, and missing measurements fall back to the es
 with estimated reveal targets. `VirtualizedListItemDescriptor` is the typed row descriptor: item
 rows can carry primary text, secondary text, text value, disabled reason, leading/trailing metadata,
 badge, and status; section, separator, loading, empty, and error rows are non-selectable and expose
-their row kind through behavior snapshots. `VirtualizedList::render_row` is the custom content
-escape hatch: it receives `VirtualizedListRowRenderContext`, but the outer row keeps virtual
-layout, measured-height feedback, role/ARIA metadata, focus, hit testing, selection, and activation
-ownership. The active-descendant indicator uses `open_gpui_motion` as paint-only chrome keyed by
+their row kind through behavior snapshots. `VirtualizedListGpuiExt::render_row` is the custom
+content escape hatch exposed through `open_gpui_ui_components::gpui_adapter`: it receives
+`VirtualizedListRowRenderContext`, but the outer row keeps virtual layout, measured-height
+feedback, role/ARIA metadata, focus, hit testing, selection, and activation ownership. The same
+adapter trait exposes `scroll_handle` for host-owned GPUI viewport handles. The active-descendant
+indicator uses `open_gpui_motion` as paint-only chrome keyed by
 the active row; `VirtualizedList::motion_preference` controls reduced-motion behavior, and the
 motion sample must not change row layout, scroll offsets, selection state, focus order, hit
 testing, or accessibility roles. Row enter/exit animation, public presence, keyframes,

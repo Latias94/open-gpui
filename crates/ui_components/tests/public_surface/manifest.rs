@@ -150,8 +150,8 @@ fn surface_manifest_tracks_exports_gallery_and_docs_contracts() {
                     entry.name
                 );
                 assert!(
-                    entry.prelude_export,
-                    "{} should be exported from prelude",
+                    !entry.prelude_export,
+                    "{} should stay out of prelude; import component recipes from the crate root or owner module",
                     entry.name
                 );
                 assert_eq!(
@@ -181,8 +181,14 @@ fn surface_manifest_tracks_exports_gallery_and_docs_contracts() {
                 );
             }
             PublicSurfaceOwnerClass::RendererNeutralStateContract
-            | PublicSurfaceOwnerClass::DeprecatedRemovalTarget
-            | PublicSurfaceOwnerClass::InternalImplementationDetail => {}
+            | PublicSurfaceOwnerClass::DeprecatedRemovalTarget => {}
+            PublicSurfaceOwnerClass::InternalImplementationDetail => {
+                assert!(
+                    !entry.root_export && !entry.prelude_export,
+                    "internal anatomy `{}` must stay out of crate root and prelude exports",
+                    entry.name
+                );
+            }
         }
 
         match entry.primitive_status {

@@ -170,20 +170,20 @@ fn table_public_exports_include_component_table_controls_only() {
     let activation_kind: root::TableRowActivationKind = root::TableRowActivationKind::DoubleClick;
     assert_eq!(activation_kind.as_str(), "double-click");
 
-    let _prelude_global_filter: prelude::TableGlobalFilter =
-        prelude::TableGlobalFilter::new("prelude-global-filter", "Search");
-    let _prelude_predicate_filter: prelude::TablePredicateFilter =
-        prelude::TablePredicateFilter::new("prelude-score-predicate", "Score", "score").operator(
-            prelude::TablePredicateFilterOperator::number(
+    let _root_global_filter_for_recipe: root::TableGlobalFilter =
+        root::TableGlobalFilter::new("prelude-global-filter", "Search");
+    let _root_predicate_filter_for_recipe: root::TablePredicateFilter =
+        root::TablePredicateFilter::new("prelude-score-predicate", "Score", "score").operator(
+            root::TablePredicateFilterOperator::number(
                 ui_core::TableNumericFilterOperator::GreaterThan,
             ),
         );
-    let _prelude_faceted_filter: prelude::TableFacetedFilter =
-        prelude::TableFacetedFilter::new("prelude-status-filter", "Status", "status");
-    let _prelude_column_visibility: prelude::TableColumnVisibility =
-        prelude::TableColumnVisibility::new("prelude-columns", "Columns");
-    let _prelude_range_filter: prelude::TableRangeFilter =
-        prelude::TableRangeFilter::new("prelude-score-range", "Score", "score");
-    let _prelude_column_order_change: prelude::TableColumnOrderChange = column_order_change;
-    let _prelude_sizing_change: prelude::TableColumnSizingChange = sizing_change;
+    let _root_faceted_filter_for_recipe: root::TableFacetedFilter =
+        root::TableFacetedFilter::new("prelude-status-filter", "Status", "status");
+    let _root_column_visibility_for_recipe: root::TableColumnVisibility =
+        root::TableColumnVisibility::new("prelude-columns", "Columns");
+    let _root_range_filter_for_recipe: root::TableRangeFilter =
+        root::TableRangeFilter::new("prelude-score-range", "Score", "score");
+    let _root_column_order_change: root::TableColumnOrderChange = column_order_change;
+    let _root_sizing_change: root::TableColumnSizingChange = sizing_change;
 }

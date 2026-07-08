@@ -5,12 +5,15 @@ use open_gpui::{
 use open_gpui_ui_components::{
     ActionDescriptor, Button, CommandItemDescriptor, IconButton, Menu, MenuItem,
     MenuItemDescriptor, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor,
-    RadioSelection, ResolvedActionIcon, Sidebar, SidebarCollapseMode, SidebarItem,
-    SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState,
-    SidebarVariant, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
-    TabsState, ToggleGroup, ToggleGroupItem, Toolbar, ToolbarItem, ToolbarItemDescriptor,
-    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, sidebar_navigation_target,
+    RadioSelection, ResolvedActionIcon, Sidebar, SidebarCollapseMode, SidebarItemDescriptor,
+    SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Tabs,
+    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, ToggleGroup,
+    ToggleGroupItem, Toolbar, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection,
+    ToolbarState, Tooltip,
+    sidebar::SidebarItem,
+    sidebar_navigation_target,
     tabs::{active_index_from_str_keys, first_enabled, last_enabled, next_enabled},
+    toolbar::ToolbarItem,
     toolbar_navigation_target,
 };
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, Toggled, ui_px};

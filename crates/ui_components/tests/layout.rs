@@ -8,6 +8,7 @@ use open_gpui_ui_components::{
     TreeDropPosition, TreeItemDescriptor, TreeMove, TreeMoveTarget, VirtualizedList,
     VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRowRenderContext,
     VirtualizedListScrollStrategy, VirtualizedListSelectionMode, apply_tree_move,
+    gpui_adapter::VirtualizedListGpuiExt,
 };
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, VirtualizerRange, ui_px};
 use std::cell::RefCell;

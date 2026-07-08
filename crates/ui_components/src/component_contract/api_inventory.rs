@@ -720,7 +720,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "VirtualizedList",
-        controlled_inputs: &["scroll_handle", "reveal_key"],
+        controlled_inputs: &["reveal_key"],
         default_seeds: &[
             DefaultSeedApi {
                 builder: "default_active_key",
@@ -744,7 +744,6 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             "virtualizer_snapshot",
             "tokens",
             "overscan",
-            "render_row",
         ],
         callbacks: &[
             CallbackApi {
@@ -1245,7 +1244,6 @@ pub fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "virtualizer_snapshot",
             "tokens",
             "overscan",
-            "render_row",
         ],
         "StatusCue" => &["intent"],
         "EmptyState" => &["description", "intent"],
@@ -1829,9 +1827,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "row_measure_mode",
             "motion_preference",
             "virtualizer_snapshot",
-            "scroll_handle",
             "reveal_key",
-            "render_row",
             "overscan",
             "on_activate",
             "on_selection_change",

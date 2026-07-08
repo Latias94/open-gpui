@@ -39,11 +39,11 @@ Supported behavior includes:
 - `VirtualizedListBehaviorSnapshot::sticky_section` and presentation-only `sticky_overlay`
   metadata for grouped lists.
 - Theme-backed color recipes through `VirtualizedListColors`.
-- A constrained `render_row` hook that replaces row content while the outer row keeps layout,
-  accessibility, focus, hit testing, and selection behavior.
-- Optional host-owned viewport control through `VirtualizedList::scroll_handle`, so application
-  shells can share a GPUI `ScrollHandle` with surrounding chrome while the list keeps semantic row
-  ownership.
+- A constrained GPUI adapter `render_row` hook that replaces row content while the outer row keeps
+  layout, accessibility, focus, hit testing, and selection behavior.
+- Optional host-owned viewport control through the GPUI adapter `scroll_handle` extension method,
+  so application shells can share a GPUI `ScrollHandle` with surrounding chrome while the list
+  keeps semantic row ownership.
 
 `VirtualizedList` does not currently animate row enter/exit or expose a public presence API. The
 sticky overlay and active indicator are paint-only chrome and must not mutate selection, focus
@@ -101,8 +101,20 @@ use open_gpui_ui_components::{
 };
 ```
 
+For broad application imports, use the curated common prelude:
+
+```rust
+use open_gpui_ui_components::prelude::*;
+```
+
+The crate root remains the explicit full component surface. The prelude is intentionally smaller:
+component recipes such as `TableGlobalFilter`, internal anatomy such as `toolbar::ToolbarItem`,
+and GPUI adapter traits stay behind explicit root or module imports.
+
 For GPUI-specific adapter helpers that are not renderer-neutral component contracts, use
-`open_gpui_ui_components::gpui_adapter`.
+`open_gpui_ui_components::gpui_adapter`. For example, import
+`open_gpui_ui_components::gpui_adapter::VirtualizedListGpuiExt` before calling
+`VirtualizedList::render_row` or `VirtualizedList::scroll_handle` as extension methods.
 
 ## Verification
 

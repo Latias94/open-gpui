@@ -52,6 +52,31 @@ pub use sizing::{
     TableResolvedColumnSizingRegions, drag_table_column_resize, end_table_column_resize,
 };
 
+/// Convenient imports for renderer-neutral table model work.
+pub mod prelude {
+    pub use super::{
+        TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
+        TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind,
+        TableAggregation, TableCellEditor, TableCellValue, TableColumn, TableColumnFacets,
+        TableColumnGroup, TableColumnGroupId, TableColumnId, TableColumnNode, TableColumnPinning,
+        TableColumnRegion, TableColumnRegions, TableColumnResizeDirection, TableColumnResizeMode,
+        TableColumnResizeState, TableColumnResizeUpdate, TableColumnSizing,
+        TableColumnVisibilityOverrides, TableColumnWidthPolicy, TableExpansionMode,
+        TableExpansionState, TableFacetRange, TableFacetValueCount, TableFilter, TableFilterKind,
+        TableGlobalFacetSummary, TableGroupRow, TableNumericFilterBound,
+        TableNumericFilterOperator, TablePagination, TableResolvedColumnSizing,
+        TableResolvedColumnSizingRegions, TableResolvedHeaderCell, TableResolvedHeaderGroup,
+        TableResolvedHeaderGroupRegions, TableResolvedHeaderKind, TableResolvedRow,
+        TableResolvedRowKind, TableResolvedState, TableRow, TableRowChildrenLoadState, TableRowId,
+        TableRowModel, TableRowModelStage, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
+        TableRowRegions, TableSelectOption, TableSelectionActivationMode, TableSelectionMode,
+        TableSelectionPolicy, TableSelectionSummary, TableSelectionSummaryState, TableSort,
+        TableSortDirection, TableStageMode, TableState, TableStateCacheKey,
+        TableSubRowSelectionPolicy, TableTextFilterOperator, TableTreeRow,
+        drag_table_column_resize, end_table_column_resize,
+    };
+}
+
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

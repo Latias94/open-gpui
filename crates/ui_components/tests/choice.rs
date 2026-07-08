@@ -14,9 +14,9 @@ use open_gpui_ui_components::{
     CommandPaletteProjection, CommandProviderPaletteProjection, CommandQueryMode, CommandSelection,
     CommandSelectionChange, CommandSelectionMode, CommandShortcutInspectorState,
     CommandStatusIntent, CommandStatusItem, Listbox, ListboxGroup, ListboxGroupDescriptor,
-    ListboxOption, ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState,
-    Menu, MenuItem, ScrollArea, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection,
-    gpui_adapter::init_text_input,
+    ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem,
+    ScrollArea, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection,
+    gpui_adapter::init_text_input, listbox::ListboxOption,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,

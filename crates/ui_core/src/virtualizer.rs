@@ -4,6 +4,14 @@ use crate::geometry::{UiPx, ui_px};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
+/// Convenient imports for renderer-neutral virtualizer work.
+pub mod prelude {
+    pub use super::{
+        VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState,
+        VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
+    };
+}
+
 /// Stable renderer-neutral identity for a virtualized item.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VirtualizerItemKey(String);

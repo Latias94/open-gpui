@@ -1,10 +1,10 @@
 use open_gpui::div;
 use open_gpui_ui_components::{
     A11yContractError, A11yLabelSource, A11yValueKind, A11yValueMetadata, Button,
-    COMPONENT_A11Y_EVIDENCE, Checkbox, ComponentA11yContract, Dialog, IconButton, Listbox,
-    ListboxOption, Menu, MenuItem, NumberInput, Progress, Slider, Splitter, SplitterPanel,
-    SplitterPanelDescriptor, Table, Tree, TreeItemDescriptor, VirtualizedList,
-    VirtualizedListItemDescriptor, VirtualizedListStatusKind,
+    COMPONENT_A11Y_EVIDENCE, Checkbox, ComponentA11yContract, Dialog, IconButton, Listbox, Menu,
+    MenuItem, NumberInput, Progress, Slider, Splitter, SplitterPanel, SplitterPanelDescriptor,
+    Table, Tree, TreeItemDescriptor, VirtualizedList, VirtualizedListItemDescriptor,
+    VirtualizedListStatusKind, listbox::ListboxOption,
 };
 use open_gpui_ui_core::{
     AccessibleAction, Orientation, Role, TableColumn, TableRow, TableState, Toggled, ui_px,

@@ -425,7 +425,6 @@ fn component_api_inventory_keeps_regression_sentinels_for_stateful_components() 
         "default_selected_keys",
         "selected_keys",
     );
-    assert_inventory_contains_controlled_input("VirtualizedList", "scroll_handle");
     assert_inventory_contains_controlled_input("VirtualizedList", "reveal_key");
     assert_inventory_contains_callback(
         "VirtualizedList",

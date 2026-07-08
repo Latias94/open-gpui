@@ -9,6 +9,18 @@ use std::collections::HashMap;
 
 const EPSILON: f32 = 0.000_1;
 
+/// Convenient imports for renderer-neutral split layout work.
+pub mod prelude {
+    pub use super::{
+        SplitTreeChild, SplitTreeNode, SplitterHandleLayout, SplitterHandlePlacement,
+        SplitterHandleState, SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion,
+        SplitterLayoutScene, SplitterMetrics, SplitterPanelDescriptor, SplitterPanelLayout,
+        SplitterPanelState, SplitterResizeOutcome, SplitterResizeResult, SplitterState,
+        normalize_split_fractions, resize_split_fractions_by_pixels, resolve_split_fractions,
+        resolve_split_fractions_with_fill_child,
+    };
+}
+
 /// Panel constraints for a split layout.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SplitterPanelDescriptor {
