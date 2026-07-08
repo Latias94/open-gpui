@@ -48,16 +48,20 @@
 //! restores platform-window hints that [`DockSurfaceViewportSpec::with_saved_placement`] applies to
 //! fallback GPUI window options. Cross-window drops derive hovered-window and front-to-back
 //! window-stack arbitration from GPUI runtime signals inside the crate.
-//! Panel close/reopen flows should use [`model::DockController::close_item`],
+//! Product panel close/reopen flows should prefer [`DockSurface::close_panel`],
+//! [`DockSurface::open_panel`], and [`DockSurface::open_panel_at`]. These facade commands keep
+//! descriptor restore, close policy, and lazy view lifecycle state together. Lower-level
+//! integrations can still use [`model::DockController::close_item`],
 //! [`model::DockController::open_item`], [`model::DockWorkspace::close_item`], or
-//! [`model::DockWorkspace::open_item`]:
-//! close removes the item from the graph while the panel catalog remains available, and reopen
-//! inserts that registered item back into a target tab stack or empty dock space. Ordinary tab
-//! drag/drop uses resolved drop transactions internally rather than asking render code or app code
-//! to construct graph-shaped move commands.
+//! [`model::DockWorkspace::open_item`] when they explicitly own graph mutation. Close removes the
+//! item from the graph while the panel catalog remains available, and reopen inserts that
+//! registered item back into a target tab stack or empty dock space. Ordinary tab drag/drop uses
+//! resolved drop transactions internally rather than asking render code or app code to construct
+//! graph-shaped move commands.
 //! Descriptor-only restored panels can bind GPUI content later through
 //! [`model::DockController::attach_panel_view`] without rewriting restored titles or close policy.
-//! Lazy panels should be registered up front with
+//! Ordinary applications should register lazy panels up front through
+//! [`DockSurfaceBuilder::panel_factory`]. Low-level model-tier builders can use
 //! [`model::DockControllerBuilder::panel_factory`] or
 //! [`model::DockWorkspace::register_panel_factory`].
 //!
