@@ -1046,6 +1046,17 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         source_home: "gpui_adapter",
     },
     ComponentContractEntry {
+        name: "UiA11yElementExt",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        family: Some("accessibility"),
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("open_gpui_ui_components::gpui_adapter"),
+        default_export: false,
+        source_inputs: &["a11y.rs"],
+        source_home: "gpui_adapter",
+    },
+    ComponentContractEntry {
         name: "focus_ring_shadow_with_theme",
         owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
         family: None,
