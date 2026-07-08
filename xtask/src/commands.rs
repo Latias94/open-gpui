@@ -6,9 +6,9 @@ use std::{
 
 use crate::{
     dependency_health::dependency_health, doc_links::scan_doc_links,
-    import_boundary::scan_import_boundary, release_docs::verify_release_docs,
-    theme_drift::scan_theme_drift, theme_schema::scan_theme_schema, ui_contract::scan_ui_contract,
-    web_smoke::web_smoke,
+    import_boundary::scan_import_boundary, public_api_snapshot::scan_public_api,
+    release_docs::verify_release_docs, theme_drift::scan_theme_drift,
+    theme_schema::scan_theme_schema, ui_contract::scan_ui_contract, web_smoke::web_smoke,
 };
 
 pub fn run_from_env() -> ExitCode {
@@ -29,6 +29,7 @@ pub fn run_from_env() -> ExitCode {
         "scan-theme-drift" => scan_theme_drift(&root),
         "scan-theme-schema" => scan_theme_schema(&root),
         "scan-import-boundary" => scan_import_boundary(&root),
+        "scan-public-api" => scan_public_api(&root, &rest),
         "scan-ui-contract" => scan_ui_contract(&root),
         "web-smoke" => web_smoke(&root),
         _ => {
@@ -58,6 +59,7 @@ fn print_usage() {
     eprintln!("  scan-theme-drift      scan theme token and recipe drift");
     eprintln!("  scan-theme-schema     scan theme JSON schema artifact drift");
     eprintln!("  scan-import-boundary  scan for disallowed import residue");
+    eprintln!("  scan-public-api       scan public API tier drift");
     eprintln!("  scan-ui-contract      scan UI component contract drift");
     eprintln!("  web-smoke             build and run the stable browser smoke test");
 }
@@ -73,6 +75,7 @@ fn verify(root: &Path) -> Result<(), ()> {
     dependency_health(root)?;
     scan_theme_drift(root)?;
     scan_import_boundary(root)?;
+    scan_public_api(root, &["--check".to_string()])?;
     scan_ui_contract(root)?;
     Ok(())
 }

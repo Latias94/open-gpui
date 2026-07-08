@@ -687,6 +687,17 @@ GPUI runtime types. The same public-surface tests keep prelude-only conveniences
 documented allowlist and require command/core infrastructure examples to import from
 `open_gpui_command` or `open_gpui_ui_core` directly.
 
+The v0.3 public API freeze also has a workspace-level tier gate:
+
+```sh
+cargo run -p xtask -- scan-public-api --check
+```
+
+This gate checks root, prelude, common, default, advanced, model, runtime, and
+adapter ownership for docking, motion, UI components, and UI core. It is a
+deterministic tier scan today and is the integration point for a future
+rustdoc-json or cargo-public-api snapshot backend.
+
 Accessibility contract coverage now has its own semantic gate. `ComponentA11yContract` validates
 role/name/value/action facts without a live platform backend, while the existing GPUI adapter tests
 continue to prove role, orientation, toggled-state, and action mapping into GPUI. Run:
