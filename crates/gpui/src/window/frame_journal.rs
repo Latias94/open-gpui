@@ -1,16 +1,19 @@
 #[cfg(any(test, feature = "test-support"))]
 use crate::Bounds;
+#[cfg(any(feature = "inspector", debug_assertions))]
+use crate::HitboxId;
 use crate::{
     AnyElement, AnyTooltip, AtlasAccessDiagnostic, CursorStyle, DispatchNodeId, DispatchTree,
-    ElementId, EntityId, GlobalElementId, Hitbox, HitboxBehavior, HitboxId, LineLayoutIndex,
-    Pixels, PlatformInputHandler, Point, Scene, TabStopMap, TextStyleRefinement, Window,
-    WindowControlArea,
+    ElementId, EntityId, GlobalElementId, Hitbox, HitboxBehavior, LineLayoutIndex, Pixels,
+    PlatformInputHandler, Point, Scene, TabStopMap, TextStyleRefinement, Window, WindowControlArea,
 };
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use open_gpui_collections::FxHashMap;
 use smallvec::SmallVec;
-use std::{any::TypeId, ops::Range, rc::Rc};
+#[cfg(any(feature = "inspector", debug_assertions))]
+use std::rc::Rc;
+use std::{any::TypeId, ops::Range};
 
 use super::{
     AnyMouseListener, ContentMask, CursorStyleRequest, ElementStateBox, FocusId, HitTest,
