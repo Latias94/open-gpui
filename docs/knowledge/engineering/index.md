@@ -5,7 +5,17 @@
 * [Current State](current-state.md) - Short durable summary of the active engineering state.
 * [Update Log](log.md) - Chronological history of meaningful memory updates.
 
-## Active Stabilization
+## Active Ecosystem
+
+* [Devtools/form/resource ecosystem plan](../../plans/2026-07-08-002-feat-devtools-form-resource-ecosystem-plan.md) - Current implementation plan for first-party DevTools snapshots, renderer-neutral form/resource cores, UI adapters, gallery proof, docs, and verification gates.
+* [Devtools/form/resource ecosystem final progress](progress/2026-07-08-open-gpui-devtools-form-resource-ecosystem-final.md) - Completed implementation state for U1-U8 on `feat/devtools-form-resource-ecosystem`.
+* [Devtools/form/resource ecosystem verification](verification/open-gpui-devtools-form-resource-ecosystem-20260708.md) - Verification evidence and residual local resource note for the completed ecosystem slice.
+* [Form crate README](../../../crates/form/README.md) - Public entry point for renderer-neutral form state.
+* [Resource crate README](../../../crates/resource/README.md) - Public entry point for renderer-neutral async resource state.
+* [DevTools crate README](../../../crates/devtools/README.md) - Public entry point for read-only snapshot inspection.
+* [Verification guide](../../verification.md) - Current local and CI gate matrix, including the ecosystem crate gate.
+
+## Historical Stabilization
 
 * [Post-v0.2.0 stabilization plan](../../plans/2026-07-07-002-refactor-post-v020-stabilization-plan.md) - Current implementation-ready plan for docking API tiers, motion frame ownership, VirtualizedList productization, web smoke, release/docs gates, dependency health, and entry-point cleanup.
 * [Breaking change inventory](../../release/breaking-changes.md) - Public API moves and migration notes that must stay aligned with `CHANGELOG.md`.
