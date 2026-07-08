@@ -350,10 +350,14 @@ pub(crate) fn backend_route_resolution_fixture(
         ..viewport_window_options(360.0, 220.0)
     };
     let _source_opened = cx
-        .update(|app| runtime.open_viewport(source_space.clone(), window_options(), app))
+        .update(|app| {
+            runtime.open_viewport_unchecked_policy(source_space.clone(), window_options(), app)
+        })
         .expect("source viewport should open");
     let target_opened = cx
-        .update(|app| runtime.open_viewport(target_space.clone(), window_options(), app))
+        .update(|app| {
+            runtime.open_viewport_unchecked_policy(target_space.clone(), window_options(), app)
+        })
         .expect("target viewport should open");
     let request = DockViewportDropRouteRequest::from_target_context(
         source_space,

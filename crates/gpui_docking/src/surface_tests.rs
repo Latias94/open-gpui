@@ -1,10 +1,12 @@
 use crate::{
     DockController, DockLayout, DockPanelOpenPlacementSource, DockPanelPlacement,
-    DockPanelPlacementTarget, DockSpaceId, DockSurface, DockSurfacePanelError,
-    DockSurfacePanelOutcome, DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenStatus,
-    DockSurfaceViewportSpec, DockSurfaceViewportUnavailable, DockViewportClosePolicy,
-    DockViewportPlacement, DockViewportPlacementLayout, DockViewportWindowBounds,
-    DockViewportWindowState, model::DockLayoutSpace,
+    DockPanelPlacementTarget, DockSpaceId, DockSurface, DockSurfaceChange, DockSurfacePanelError,
+    DockSurfacePanelOutcome, DockSurfaceViewportCloseStatus, DockSurfaceViewportOpenOutcome,
+    DockSurfaceViewportOpenStatus, DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec,
+    DockSurfaceViewportUnavailable, DockViewportClosePolicy, DockViewportPlacement,
+    DockViewportPlacementLayout, DockViewportRestoreReadiness, DockViewportWindowBounds,
+    DockViewportWindowState,
+    model::{DockLayoutNode, DockLayoutSpace},
 };
 use open_gpui::{
     App, AppContext as _, Bounds, DisplayId, IntoElement, Render, Window, WindowBounds,
@@ -108,6 +110,37 @@ fn viewport_options() -> WindowOptions {
         ))),
         ..Default::default()
     }
+}
+
+fn two_space_layout() -> DockLayout {
+    DockLayout::new(
+        vec![
+            DockLayoutSpace {
+                id: "main".into(),
+                root: Some(1),
+                floatings: Vec::new(),
+                central: None,
+            },
+            DockLayoutSpace {
+                id: "detached".into(),
+                root: Some(2),
+                floatings: Vec::new(),
+                central: None,
+            },
+        ],
+        vec![
+            DockLayoutNode::Tabs {
+                id: 1,
+                items: vec!["main-panel".into()],
+                selected: Some("main-panel".into()),
+            },
+            DockLayoutNode::Tabs {
+                id: 2,
+                items: vec!["detached-a".into(), "detached-b".into()],
+                selected: Some("detached-b".into()),
+            },
+        ],
+    )
 }
 
 #[open_gpui::test]
@@ -294,6 +327,53 @@ fn surface_open_viewport_opens_and_reuses_supported_backend(cx: &mut open_gpui::
 }
 
 #[open_gpui::test]
+fn surface_exports_and_checks_viewport_placement_restore(cx: &mut open_gpui::TestAppContext) {
+    cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel_factory("editor", "Editor", test_panel)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("surface layout should validate");
+        let opened = match surface.open_viewport("main", viewport_options(), cx) {
+            DockSurfaceViewportOpenOutcome::Opened(opened) => opened,
+            other => panic!("expected viewport to open, got {other:?}"),
+        };
+
+        let placement = surface.export_viewport_placement();
+
+        assert_eq!(placement.viewports.len(), 1);
+        assert_eq!(placement.viewports[0].space, DockSpaceId::from("main"));
+        assert_eq!(
+            surface
+                .check_viewport_placement_restore(&placement)
+                .expect("exported placement should validate against live facade viewport"),
+            DockViewportRestoreReadiness {
+                matched: 1,
+                missing: 0,
+            }
+        );
+
+        let missing = DockViewportPlacementLayout::new(vec![DockViewportPlacement {
+            space: "detached".into(),
+            display_id: None,
+            window_bounds: None,
+            host_bounds: None,
+        }]);
+        assert_eq!(
+            surface
+                .check_viewport_placement_restore(&missing)
+                .expect("missing saved placement should still validate"),
+            DockViewportRestoreReadiness {
+                matched: 0,
+                missing: 1,
+            }
+        );
+        assert_eq!(opened.space(), surface.primary_space());
+    });
+}
+
+#[open_gpui::test]
 fn surface_open_viewports_reports_ordered_batch_outcomes(cx: &mut open_gpui::TestAppContext) {
     cx.update(|cx| {
         let surface = DockSurface::builder("main")
@@ -329,6 +409,111 @@ fn surface_open_viewports_reports_ordered_batch_outcomes(cx: &mut open_gpui::Tes
         assert_eq!(first.status(), DockSurfaceViewportOpenStatus::Opened);
         assert_eq!(second.status(), DockSurfaceViewportOpenStatus::Reused);
         assert_eq!(first.window(), second.window());
+    });
+}
+
+#[open_gpui::test]
+fn surface_viewport_close_policy_can_be_changed_without_runtime_import(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel_factory("editor", "Editor", test_panel)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("surface layout should validate");
+        let opened = match surface.open_viewport("main", viewport_options(), cx) {
+            DockSurfaceViewportOpenOutcome::Opened(opened) => opened,
+            other => panic!("expected viewport to open, got {other:?}"),
+        };
+
+        surface.set_viewport_close_policy(DockViewportClosePolicy::Prevent);
+        let should_close =
+            surface.handle_viewport_window_should_close(opened.window().window_id(), cx);
+
+        assert_eq!(
+            should_close.status(),
+            DockSurfaceViewportShouldCloseStatus::Vetoed
+        );
+        assert!(!should_close.allows_close());
+        assert_eq!(should_close.space(), Some(surface.primary_space()));
+        assert_eq!(
+            surface.cancel_viewport_window_close(opened.window().window_id(), cx),
+            DockSurfaceChange::Unchanged
+        );
+    });
+}
+
+#[open_gpui::test]
+fn surface_viewport_merge_back_close_moves_content_to_fallback(cx: &mut open_gpui::TestAppContext) {
+    cx.update(|cx| {
+        let main = DockSpaceId::from("main");
+        let detached = DockSpaceId::from("detached");
+        let surface = DockSurface::builder(main.clone())
+            .try_layout(&two_space_layout())
+            .expect("test layout should validate")
+            .panel_factory("main-panel", "Main", test_panel)
+            .panel_factory("detached-a", "Detached A", test_panel)
+            .panel_factory("detached-b", "Detached B", test_panel)
+            .allow_platform_viewports(true)
+            .close_policy(DockViewportClosePolicy::MergeBack {
+                target_space: main.clone(),
+            })
+            .build(cx)
+            .expect("surface layout should validate");
+        let opened = match surface.open_viewport(detached.clone(), viewport_options(), cx) {
+            DockSurfaceViewportOpenOutcome::Opened(opened) => opened,
+            other => panic!("expected detached viewport to open, got {other:?}"),
+        };
+
+        let should_close =
+            surface.handle_viewport_window_should_close(opened.window().window_id(), cx);
+        assert_eq!(
+            should_close.status(),
+            DockSurfaceViewportShouldCloseStatus::Allowed
+        );
+        assert_eq!(should_close.space(), Some(&detached));
+        assert!(should_close.allows_close());
+        assert_eq!(
+            surface.cancel_viewport_window_close(opened.window().window_id(), cx),
+            DockSurfaceChange::Changed
+        );
+
+        let should_close =
+            surface.handle_viewport_window_should_close(opened.window().window_id(), cx);
+        assert_eq!(
+            should_close.status(),
+            DockSurfaceViewportShouldCloseStatus::Allowed
+        );
+
+        let closed = surface.handle_viewport_window_closed(opened.window().window_id(), cx);
+
+        assert_eq!(closed.status(), DockSurfaceViewportCloseStatus::MergedBack);
+        assert_eq!(closed.space(), Some(&detached));
+        assert_eq!(closed.merge_target_space(), Some(&main));
+        assert!(!surface.is_viewport_open(&detached));
+        assert_eq!(
+            surface.registered_viewport_spaces(),
+            Vec::<DockSpaceId>::new()
+        );
+
+        cx.read_entity(&surface.controller(), |controller, _| {
+            assert_eq!(
+                controller.graph().collect_items_in_space(&main),
+                vec![
+                    "main-panel".into(),
+                    "detached-a".into(),
+                    "detached-b".into()
+                ]
+            );
+            assert!(
+                controller
+                    .graph()
+                    .collect_items_in_space(&detached)
+                    .is_empty()
+            );
+        });
     });
 }
 

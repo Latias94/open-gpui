@@ -1,9 +1,11 @@
-use super::DockSurface;
+use super::{DockSurface, DockSurfaceChange};
 use crate::{
-    DockPolicyError, DockSpaceId, DockViewportOpenOutcome, DockViewportOpenStatus,
-    DockViewportPlacementLayout,
+    DockPolicyError, DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy,
+    DockViewportCloseStatus, DockViewportOpenOutcome, DockViewportOpenStatus,
+    DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportRestoreReadiness, DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus,
 };
-use open_gpui::{AnyWindowHandle, App, AppContext as _, WindowOptions};
+use open_gpui::{AnyWindowHandle, App, AppContext as _, WindowId, WindowOptions};
 use thiserror::Error;
 
 /// Facade-level outcome of a platform viewport open request.
@@ -13,6 +15,47 @@ pub enum DockSurfaceViewportOpenOutcome {
     Opened(DockSurfaceViewportOpened),
     /// The surface rejected the request before opening a window.
     Unavailable(DockSurfaceViewportUnavailable),
+}
+
+/// Facade-level outcome of a platform window should-close query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockSurfaceViewportShouldCloseOutcome {
+    space: Option<DockSpaceId>,
+    window_id: WindowId,
+    status: DockSurfaceViewportShouldCloseStatus,
+}
+
+/// Facade-level status for a platform window should-close query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockSurfaceViewportShouldCloseStatus {
+    /// The surface allows GPUI to continue closing the platform window.
+    Allowed,
+    /// The surface vetoed the platform close before the window closed.
+    Vetoed,
+    /// The window id is not registered with this surface's viewport runtime.
+    UnknownWindow,
+}
+
+/// Facade-level outcome of a platform viewport close notification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockSurfaceViewportCloseOutcome {
+    space: Option<DockSpaceId>,
+    window_id: WindowId,
+    status: DockSurfaceViewportCloseStatus,
+    merge_target_space: Option<DockSpaceId>,
+}
+
+/// Facade-level status for a platform viewport close notification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockSurfaceViewportCloseStatus {
+    /// The runtime window mapping was removed while logical layout remained available.
+    Closed,
+    /// The runtime window mapping was removed and dock contents moved to fallback space.
+    MergedBack,
+    /// The runtime window mapping was removed, but merge-back could not commit.
+    MergeBackFailed,
+    /// The window id is not registered with this surface's viewport runtime.
+    UnknownWindow,
 }
 
 /// Facade-level request for opening one logical dock space in a platform viewport window.
@@ -83,6 +126,48 @@ impl From<DockViewportOpenStatus> for DockSurfaceViewportOpenStatus {
     }
 }
 
+impl From<DockViewportShouldCloseStatus> for DockSurfaceViewportShouldCloseStatus {
+    fn from(status: DockViewportShouldCloseStatus) -> Self {
+        match status {
+            DockViewportShouldCloseStatus::Allowed => Self::Allowed,
+            DockViewportShouldCloseStatus::Vetoed => Self::Vetoed,
+            DockViewportShouldCloseStatus::UnknownWindow => Self::UnknownWindow,
+        }
+    }
+}
+
+impl From<DockViewportShouldCloseOutcome> for DockSurfaceViewportShouldCloseOutcome {
+    fn from(outcome: DockViewportShouldCloseOutcome) -> Self {
+        Self {
+            space: outcome.space,
+            window_id: outcome.window_id,
+            status: outcome.status.into(),
+        }
+    }
+}
+
+impl From<DockViewportCloseStatus> for DockSurfaceViewportCloseStatus {
+    fn from(status: DockViewportCloseStatus) -> Self {
+        match status {
+            DockViewportCloseStatus::Closed => Self::Closed,
+            DockViewportCloseStatus::MergedBack => Self::MergedBack,
+            DockViewportCloseStatus::MergeBackFailed => Self::MergeBackFailed,
+            DockViewportCloseStatus::UnknownWindow => Self::UnknownWindow,
+        }
+    }
+}
+
+impl From<DockViewportCloseOutcome> for DockSurfaceViewportCloseOutcome {
+    fn from(outcome: DockViewportCloseOutcome) -> Self {
+        Self {
+            space: outcome.space().cloned(),
+            window_id: outcome.window_id(),
+            status: outcome.status().into(),
+            merge_target_space: outcome.merge_target_space().cloned(),
+        }
+    }
+}
+
 impl From<DockViewportOpenOutcome> for DockSurfaceViewportOpened {
     fn from(outcome: DockViewportOpenOutcome) -> Self {
         Self {
@@ -107,6 +192,50 @@ impl DockSurfaceViewportOpened {
     /// Whether the surface opened, reused, or replaced a viewport window.
     pub fn status(&self) -> DockSurfaceViewportOpenStatus {
         self.status
+    }
+}
+
+impl DockSurfaceViewportShouldCloseOutcome {
+    /// Logical dock space associated with the queried window, when known.
+    pub fn space(&self) -> Option<&DockSpaceId> {
+        self.space.as_ref()
+    }
+
+    /// GPUI window id received from the should-close callback.
+    pub fn window_id(&self) -> WindowId {
+        self.window_id
+    }
+
+    /// How the should-close query resolved.
+    pub fn status(&self) -> DockSurfaceViewportShouldCloseStatus {
+        self.status
+    }
+
+    /// Returns true when GPUI should continue closing the platform window.
+    pub fn allows_close(&self) -> bool {
+        !matches!(self.status, DockSurfaceViewportShouldCloseStatus::Vetoed)
+    }
+}
+
+impl DockSurfaceViewportCloseOutcome {
+    /// Logical dock space that was associated with the closed window, when known.
+    pub fn space(&self) -> Option<&DockSpaceId> {
+        self.space.as_ref()
+    }
+
+    /// GPUI window id received from the close callback.
+    pub fn window_id(&self) -> WindowId {
+        self.window_id
+    }
+
+    /// How the close notification resolved.
+    pub fn status(&self) -> DockSurfaceViewportCloseStatus {
+        self.status
+    }
+
+    /// Fallback space that received the closed viewport contents, when merge-back committed.
+    pub fn merge_target_space(&self) -> Option<&DockSpaceId> {
+        self.merge_target_space.as_ref()
     }
 }
 
@@ -235,6 +364,81 @@ impl DockSurfaceViewportUnavailable {
 }
 
 impl DockSurface {
+    /// Returns the close policy used by facade-opened platform viewport windows.
+    pub fn viewport_close_policy(&self) -> DockViewportClosePolicy {
+        self.viewport_runtime.close_policy()
+    }
+
+    /// Replaces the close policy used by facade-opened platform viewport windows.
+    pub fn set_viewport_close_policy(&self, close_policy: DockViewportClosePolicy) {
+        self.viewport_runtime.set_close_policy(close_policy);
+    }
+
+    /// Returns registered platform viewport spaces in stable lexical order.
+    pub fn registered_viewport_spaces(&self) -> Vec<DockSpaceId> {
+        self.viewport_runtime.registered_viewport_spaces()
+    }
+
+    /// Returns true when a facade-opened platform viewport is registered for the dock space.
+    pub fn is_viewport_open(&self, space: &DockSpaceId) -> bool {
+        self.viewport_runtime.is_viewport_open(space)
+    }
+
+    /// Exports serializable platform-window placement snapshots for facade-opened viewports.
+    pub fn export_viewport_placement(&self) -> DockViewportPlacementLayout {
+        self.viewport_runtime.export_placement()
+    }
+
+    /// Checks saved placement snapshots against currently registered facade viewport windows.
+    ///
+    /// This does not open, move, or resize platform windows. Use
+    /// [`DockSurfaceViewportSpec::with_saved_placement`] before opening viewports with saved
+    /// placement hints.
+    pub fn check_viewport_placement_restore(
+        &self,
+        placement: &DockViewportPlacementLayout,
+    ) -> Result<DockViewportRestoreReadiness, DockViewportPlacementValidationError> {
+        self.viewport_runtime.check_placement_restore(placement)
+    }
+
+    /// Handles a GPUI window should-close callback for a facade-opened viewport window.
+    pub fn handle_viewport_window_should_close(
+        &self,
+        window_id: WindowId,
+        cx: &mut App,
+    ) -> DockSurfaceViewportShouldCloseOutcome {
+        self.viewport_runtime
+            .handle_window_should_close_with_app(window_id, cx)
+            .into()
+    }
+
+    /// Handles a GPUI window closed callback for a facade-opened viewport window.
+    pub fn handle_viewport_window_closed(
+        &self,
+        window_id: WindowId,
+        cx: &mut App,
+    ) -> DockSurfaceViewportCloseOutcome {
+        self.viewport_runtime
+            .handle_window_closed_with_app(window_id, cx)
+            .into()
+    }
+
+    /// Cancels a previously accepted platform close request when the platform kept the window open.
+    pub fn cancel_viewport_window_close(
+        &self,
+        window_id: WindowId,
+        cx: &mut App,
+    ) -> DockSurfaceChange {
+        if self
+            .viewport_runtime
+            .cancel_window_close_request_with_app(window_id, cx)
+        {
+            DockSurfaceChange::Changed
+        } else {
+            DockSurfaceChange::Unchanged
+        }
+    }
+
     /// Opens or reuses a controller-backed platform viewport window for one dock space.
     ///
     /// The facade reports policy and backend capability failures before delegating to the runtime,
@@ -278,7 +482,10 @@ impl DockSurface {
         cx: &mut App,
     ) -> DockSurfaceViewportOpenOutcome {
         let (space, options) = spec.into_parts();
-        match self.viewport_runtime.open_viewport(space, options, cx) {
+        match self
+            .viewport_runtime
+            .open_viewport_unchecked_policy(space, options, cx)
+        {
             Ok(outcome) => DockSurfaceViewportOpenOutcome::Opened(outcome.into()),
             Err(error) => DockSurfaceViewportOpenOutcome::Unavailable(
                 DockSurfaceViewportUnavailable::OpenFailed(error.to_string()),

@@ -5,8 +5,10 @@ mod viewport;
 pub use builder::{DockSurfaceBuildError, DockSurfaceBuilder};
 pub use panel::{DockSurfaceChange, DockSurfacePanelError, DockSurfacePanelOutcome};
 pub use viewport::{
+    DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
     DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus,
-    DockSurfaceViewportOpened, DockSurfaceViewportSpec, DockSurfaceViewportSpecError,
+    DockSurfaceViewportOpened, DockSurfaceViewportShouldCloseOutcome,
+    DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportSpecError,
     DockSurfaceViewportUnavailable,
 };
 
@@ -65,16 +67,6 @@ impl DockSurface {
     /// Returns the default logical dock space for primary host windows.
     pub fn primary_space(&self) -> &DockSpaceId {
         &self.primary_space
-    }
-
-    /// Returns the close policy used by facade-opened platform viewport windows.
-    pub fn viewport_close_policy(&self) -> DockViewportClosePolicy {
-        self.viewport_runtime.close_policy()
-    }
-
-    /// Returns true when a facade-opened platform viewport is registered for the dock space.
-    pub fn is_viewport_open(&self, space: &DockSpaceId) -> bool {
-        self.viewport_runtime.is_viewport_open(space)
     }
 
     /// Creates a host view for the surface's primary dock space.

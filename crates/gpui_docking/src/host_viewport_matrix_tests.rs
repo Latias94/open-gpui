@@ -305,7 +305,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
 
     let target_opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 target_space.clone(),
                 viewport_window_options(420.0, 240.0),
                 app,
@@ -314,7 +314,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         .unwrap_or_else(|error| panic!("{}: target viewport should open: {error}", case.name));
     let source_opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 source_space.clone(),
                 viewport_window_options(360.0, 220.0),
                 app,
@@ -410,7 +410,7 @@ fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixC
 
     let target_opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 target_space.clone(),
                 viewport_window_options(420.0, 240.0),
                 app,
@@ -419,7 +419,7 @@ fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixC
         .unwrap_or_else(|error| panic!("{}: target viewport should open: {error}", case.name));
     let source_opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 source_space.clone(),
                 viewport_window_options(360.0, 220.0),
                 app,
@@ -515,7 +515,7 @@ fn run_overlapping_source_only_release_without_backend_route_selection_case(
 
     let target_opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 target_space.clone(),
                 viewport_window_options(420.0, 240.0),
                 app,
@@ -524,7 +524,7 @@ fn run_overlapping_source_only_release_without_backend_route_selection_case(
         .unwrap_or_else(|error| panic!("{}: target viewport should open: {error}", case.name));
     let source_opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 source_space.clone(),
                 viewport_window_options(360.0, 220.0),
                 app,
@@ -695,7 +695,7 @@ fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
 
     let target_opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 target_space.clone(),
                 viewport_window_options(420.0, 240.0),
                 app,
@@ -704,7 +704,7 @@ fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         .unwrap_or_else(|error| panic!("{}: target viewport should open: {error}", case.name));
     let source_opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 source_space.clone(),
                 viewport_window_options(360.0, 220.0),
                 app,
@@ -778,7 +778,7 @@ fn run_capture_loss_poll_case(cx: &mut TestAppContext, case: PollMatrixCase) {
 
     let opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 source_space.clone(),
                 viewport_window_options(360.0, 220.0),
                 app,

@@ -170,6 +170,12 @@ fn main() {
             }
         }
 
+        let placement = surface.export_viewport_placement();
+        match surface.check_viewport_placement_restore(&placement) {
+            Ok(readiness) => log::info!("viewport placement restore readiness: {readiness:?}"),
+            Err(error) => log::warn!("viewport placement restore check failed: {error}"),
+        }
+
         cx.activate(true);
     });
 }

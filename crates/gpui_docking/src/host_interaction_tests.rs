@@ -1207,7 +1207,7 @@ fn viewport_same_stack_tab_preview_is_stable_when_pointer_is_stationary(cx: &mut
     let runtime = DockViewportRuntimeHandle::new(controller);
     let opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 secondary_space.clone(),
                 viewport_window_options(420.0, 220.0),
                 app,
@@ -2265,7 +2265,7 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
 
     let opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 source_space.clone(),
                 viewport_window_options(360.0, 220.0),
                 app,
@@ -2388,7 +2388,7 @@ fn runtime_nested_tab_tear_off_uses_leaf_size_not_tab_label(cx: &mut TestAppCont
 
     let opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 source_space.clone(),
                 viewport_window_options(640.0, 420.0),
                 app,
@@ -2519,7 +2519,7 @@ fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext
 
     let opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 source_space.clone(),
                 viewport_window_options(360.0, 220.0),
                 app,
@@ -2660,7 +2660,7 @@ fn runtime_secondary_single_tab_outside_release_creates_detached_viewport(cx: &m
     });
     let opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 secondary_space.clone(),
                 viewport_window_options(360.0, 220.0),
                 app,
@@ -2760,7 +2760,7 @@ fn runtime_rendered_mouse_up_with_unknown_button_state_does_not_tear_off(cx: &mu
 
     let opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 source_space.clone(),
                 viewport_window_options(360.0, 220.0),
                 app,
@@ -2832,7 +2832,7 @@ fn runtime_poll_released_left_button_tears_off_without_mouse_up_event(cx: &mut T
 
     let opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 source_space.clone(),
                 viewport_window_options(360.0, 220.0),
                 app,
@@ -2934,7 +2934,7 @@ fn runtime_rendered_mouse_up_outside_viewports_rejects_when_platform_viewports_d
 
     let opened = cx
         .update(|app| {
-            runtime.open_viewport(
+            runtime.open_viewport_unchecked_policy(
                 source_space.clone(),
                 viewport_window_options(360.0, 220.0),
                 app,
