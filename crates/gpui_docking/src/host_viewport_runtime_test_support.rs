@@ -1,9 +1,9 @@
 use crate::{
     DockController, DockDropDelivery, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
-    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteRequest,
-    DockViewportInputStatus, DockViewportRuntime, DockViewportRuntimeHandle,
-    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTearOffRequest,
-    DockViewportWindowFacts, DockWorkspace,
+    DockViewportClosePolicy, DockViewportDropPayload, DockViewportDropRoute,
+    DockViewportDropRouteRequest, DockViewportInputStatus, DockViewportOpenOutcome,
+    DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
+    DockViewportTargetContext, DockViewportTearOffRequest, DockViewportWindowFacts, DockWorkspace,
     drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -11,9 +11,121 @@ use crate::{
     interaction::{DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
 };
 use open_gpui::{
-    AnyWindowHandle, AppContext as _, TestAppContext, WindowBounds, WindowId, WindowOptions, point,
-    px,
+    AnyWindowHandle, AppContext as _, Entity, TestAppContext, WindowBounds, WindowId,
+    WindowOptions, point, px,
 };
+use std::collections::BTreeSet;
+
+pub(crate) struct DockViewportRuntimeFixture {
+    pub(crate) controller: Entity<DockController>,
+    pub(crate) runtime: DockViewportRuntimeHandle,
+}
+
+pub(crate) struct DockViewportRuntimeFixtureBuilder {
+    primary_space: DockSpaceId,
+    spaces: Vec<(DockSpaceId, Vec<&'static str>)>,
+    focusable_items: BTreeSet<&'static str>,
+    close_policy: Option<DockViewportClosePolicy>,
+}
+
+impl DockViewportRuntimeFixture {
+    pub(crate) fn builder(
+        primary_space: impl Into<DockSpaceId>,
+    ) -> DockViewportRuntimeFixtureBuilder {
+        DockViewportRuntimeFixtureBuilder {
+            primary_space: primary_space.into(),
+            spaces: Vec::new(),
+            focusable_items: BTreeSet::new(),
+            close_policy: None,
+        }
+    }
+
+    pub(crate) fn open_unfocused_viewport(
+        &self,
+        cx: &mut TestAppContext,
+        space: &DockSpaceId,
+    ) -> DockViewportOpenOutcome {
+        self.open_viewport(cx, space, unfocused_viewport_window_options())
+    }
+
+    pub(crate) fn open_viewport(
+        &self,
+        cx: &mut TestAppContext,
+        space: &DockSpaceId,
+        options: WindowOptions,
+    ) -> DockViewportOpenOutcome {
+        cx.update(|app| {
+            self.runtime
+                .open_viewport_unchecked_policy(space.clone(), options, app)
+        })
+        .unwrap_or_else(|error| panic!("test viewport {space} should open: {error}"))
+    }
+}
+
+impl DockViewportRuntimeFixtureBuilder {
+    pub(crate) fn space(
+        mut self,
+        space: impl Into<DockSpaceId>,
+        items: impl IntoIterator<Item = &'static str>,
+    ) -> Self {
+        self.spaces
+            .push((space.into(), items.into_iter().collect()));
+        self
+    }
+
+    pub(crate) fn focusable_panel(mut self, item: &'static str) -> Self {
+        self.focusable_items.insert(item);
+        self
+    }
+
+    pub(crate) fn close_policy(mut self, close_policy: DockViewportClosePolicy) -> Self {
+        self.close_policy = Some(close_policy);
+        self
+    }
+
+    pub(crate) fn build(self, cx: &mut TestAppContext) -> DockViewportRuntimeFixture {
+        let mut graph = DockGraph::new();
+        let mut panels = BTreeSet::new();
+
+        for (space, panel_ids) in &self.spaces {
+            let items: Vec<DockItemId> = panel_ids.iter().copied().map(item).collect();
+            let selected = items.first().cloned();
+            let tabs = graph.insert_node(DockNode::Tabs { items, selected });
+            graph.set_root(space.clone(), tabs);
+            panels.extend(panel_ids.iter().copied());
+        }
+
+        let mut workspace = DockWorkspace::new(self.primary_space, graph);
+        for panel in panels {
+            let title = format!("Panel {panel}");
+            if self.focusable_items.contains(panel) {
+                workspace.register_focusable_panel_view(item(panel), title, test_view(cx, panel));
+            } else {
+                workspace.register_panel_view(item(panel), title, test_view(cx, panel));
+            }
+        }
+
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = match self.close_policy {
+            Some(close_policy) => {
+                DockViewportRuntimeHandle::with_close_policy(controller.clone(), close_policy)
+            }
+            None => DockViewportRuntimeHandle::new(controller.clone()),
+        };
+
+        DockViewportRuntimeFixture {
+            controller,
+            runtime,
+        }
+    }
+}
+
+pub(crate) fn unfocused_viewport_window_options() -> WindowOptions {
+    WindowOptions {
+        focus: false,
+        ..viewport_window_options(360.0, 220.0)
+    }
+}
 
 pub(crate) fn tear_off_request(
     source_space: DockSpaceId,
