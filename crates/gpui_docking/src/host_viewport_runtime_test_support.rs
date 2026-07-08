@@ -14,11 +14,17 @@ use open_gpui::{
     AnyWindowHandle, AppContext as _, Entity, TestAppContext, WindowBounds, WindowId,
     WindowOptions, point, px,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) struct DockViewportRuntimeFixture {
     pub(crate) controller: Entity<DockController>,
     pub(crate) runtime: DockViewportRuntimeHandle,
+    tabs_by_space: BTreeMap<DockSpaceId, DockNodeId>,
+}
+
+pub(crate) struct DockViewportControllerFixture {
+    pub(crate) controller: Entity<DockController>,
+    tabs_by_space: BTreeMap<DockSpaceId, DockNodeId>,
 }
 
 pub(crate) struct DockViewportRuntimeFixtureBuilder {
@@ -26,6 +32,7 @@ pub(crate) struct DockViewportRuntimeFixtureBuilder {
     spaces: Vec<(DockSpaceId, Vec<&'static str>)>,
     focusable_items: BTreeSet<&'static str>,
     close_policy: Option<DockViewportClosePolicy>,
+    allow_platform_viewports: bool,
 }
 
 impl DockViewportRuntimeFixture {
@@ -37,6 +44,7 @@ impl DockViewportRuntimeFixture {
             spaces: Vec::new(),
             focusable_items: BTreeSet::new(),
             close_policy: None,
+            allow_platform_viewports: false,
         }
     }
 
@@ -46,6 +54,10 @@ impl DockViewportRuntimeFixture {
         space: &DockSpaceId,
     ) -> DockViewportOpenOutcome {
         self.open_viewport(cx, space, unfocused_viewport_window_options())
+    }
+
+    pub(crate) fn tabs(&self, space: &DockSpaceId) -> DockNodeId {
+        tabs_for_space(&self.tabs_by_space, space)
     }
 
     pub(crate) fn open_viewport(
@@ -59,6 +71,12 @@ impl DockViewportRuntimeFixture {
                 .open_viewport_unchecked_policy(space.clone(), options, app)
         })
         .unwrap_or_else(|error| panic!("test viewport {space} should open: {error}"))
+    }
+}
+
+impl DockViewportControllerFixture {
+    pub(crate) fn tabs(&self, space: &DockSpaceId) -> DockNodeId {
+        tabs_for_space(&self.tabs_by_space, space)
     }
 }
 
@@ -83,19 +101,29 @@ impl DockViewportRuntimeFixtureBuilder {
         self
     }
 
-    pub(crate) fn build(self, cx: &mut TestAppContext) -> DockViewportRuntimeFixture {
+    pub(crate) fn allow_platform_viewports(mut self, allowed: bool) -> Self {
+        self.allow_platform_viewports = allowed;
+        self
+    }
+
+    pub(crate) fn build_controller(self, cx: &mut TestAppContext) -> DockViewportControllerFixture {
         let mut graph = DockGraph::new();
         let mut panels = BTreeSet::new();
+        let mut tabs_by_space = BTreeMap::new();
 
         for (space, panel_ids) in &self.spaces {
             let items: Vec<DockItemId> = panel_ids.iter().copied().map(item).collect();
             let selected = items.first().cloned();
             let tabs = graph.insert_node(DockNode::Tabs { items, selected });
             graph.set_root(space.clone(), tabs);
+            tabs_by_space.insert(space.clone(), tabs);
             panels.extend(panel_ids.iter().copied());
         }
 
         let mut workspace = DockWorkspace::new(self.primary_space, graph);
+        workspace
+            .policy_mut()
+            .set_allow_platform_viewports(self.allow_platform_viewports);
         for panel in panels {
             let title = format!("Panel {panel}");
             if self.focusable_items.contains(panel) {
@@ -106,18 +134,39 @@ impl DockViewportRuntimeFixtureBuilder {
         }
 
         let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = match self.close_policy {
-            Some(close_policy) => {
-                DockViewportRuntimeHandle::with_close_policy(controller.clone(), close_policy)
-            }
-            None => DockViewportRuntimeHandle::new(controller.clone()),
+
+        DockViewportControllerFixture {
+            controller,
+            tabs_by_space,
+        }
+    }
+
+    pub(crate) fn build(self, cx: &mut TestAppContext) -> DockViewportRuntimeFixture {
+        let close_policy = self.close_policy.clone();
+        let controller_fixture = self.build_controller(cx);
+        let runtime = match close_policy {
+            Some(close_policy) => DockViewportRuntimeHandle::with_close_policy(
+                controller_fixture.controller.clone(),
+                close_policy,
+            ),
+            None => DockViewportRuntimeHandle::new(controller_fixture.controller.clone()),
         };
 
         DockViewportRuntimeFixture {
-            controller,
+            controller: controller_fixture.controller,
             runtime,
+            tabs_by_space: controller_fixture.tabs_by_space,
         }
     }
+}
+
+fn tabs_for_space(
+    tabs_by_space: &BTreeMap<DockSpaceId, DockNodeId>,
+    space: &DockSpaceId,
+) -> DockNodeId {
+    *tabs_by_space
+        .get(space)
+        .unwrap_or_else(|| panic!("test fixture has no tabs for dock space {space}"))
 }
 
 pub(crate) fn unfocused_viewport_window_options() -> WindowOptions {

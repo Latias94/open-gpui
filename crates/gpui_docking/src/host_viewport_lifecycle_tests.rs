@@ -45,35 +45,31 @@ mod runtime_suite {
     fn viewport_runtime_render_registered_viewport_records_window_binding(cx: &mut TestAppContext) {
         let alpha_space = DockSpaceId::from("alpha");
         let zeta_space = DockSpaceId::from("zeta");
-        let mut graph = DockGraph::new();
-        let alpha_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let zeta_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("z")],
-            selected: Some(item("z")),
-        });
-        graph.set_root(alpha_space.clone(), alpha_tabs);
-        graph.set_root(zeta_space.clone(), zeta_tabs);
-
-        let mut workspace = DockWorkspace::new(alpha_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("z"), "Panel Z", test_view(cx, "Z"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let mut runtime = DockViewportRuntime::new(controller);
+        let fixture = DockViewportRuntimeFixture::builder(alpha_space.clone())
+            .space(alpha_space.clone(), ["a"])
+            .space(zeta_space.clone(), ["z"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
         let alpha_window = handle(1);
         let zeta_window = handle(2);
 
-        assert!(runtime.register_rendered_host_viewport(alpha_space.clone(), alpha_window));
-        assert!(runtime.register_rendered_host_viewport(zeta_space.clone(), zeta_window));
+        assert!(
+            runtime
+                .borrow_mut()
+                .register_rendered_host_viewport(alpha_space.clone(), alpha_window)
+        );
+        assert!(
+            runtime
+                .borrow_mut()
+                .register_rendered_host_viewport(zeta_space.clone(), zeta_window)
+        );
 
         assert_eq!(
-            runtime.adapter().window_for_space(&alpha_space),
+            runtime.borrow().adapter().window_for_space(&alpha_space),
             Some(alpha_window)
         );
         assert_eq!(
-            runtime.adapter().window_for_space(&zeta_space),
+            runtime.borrow().adapter().window_for_space(&zeta_space),
             Some(zeta_window)
         );
     }
@@ -84,43 +80,38 @@ mod runtime_suite {
     ) {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
-
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let mut runtime = DockViewportRuntime::new(controller);
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .space(target_space.clone(), ["b"])
+            .build(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let target_tabs = fixture.tabs(&target_space);
+        let runtime = fixture.runtime.clone();
         let target_window = handle(77);
         let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
         let host_position = point(px(120.0), px(100.0));
 
-        assert!(runtime.register_rendered_host_viewport(target_space.clone(), target_window));
-        assert!(runtime.begin_viewport_host_scene(
+        assert!(
+            runtime
+                .borrow_mut()
+                .register_rendered_host_viewport(target_space.clone(), target_window)
+        );
+        assert!(runtime.borrow_mut().begin_viewport_host_scene(
             target_space.clone(),
             target_window.window_id(),
             DockViewportWindowFacts::from_window_bounds(window_bounds),
             host_bounds,
             host_position,
         ));
-        assert!(runtime.push_viewport_host_scene_fact(
+        assert!(runtime.borrow_mut().push_viewport_host_scene_fact(
             &target_space,
             target_window.window_id(),
             leaf_host_scene_fact(target_tabs, target_tabs),
         ));
         assert_eq!(
             runtime
+                .borrow()
                 .adapter()
                 .window_can_route_hover_hit(target_window.window_id()),
             Some(true),
@@ -140,7 +131,11 @@ mod runtime_suite {
             None,
             platform_signals,
         );
-        let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
+        let resolution = cx.update(|app| {
+            runtime
+                .borrow_mut()
+                .resolve_payload_drop_delivery(&request, app)
+        });
 
         assert!(
             matches!(
@@ -165,27 +160,20 @@ mod runtime_suite {
     fn viewport_runtime_render_registration_cleans_replaced_space_state(cx: &mut TestAppContext) {
         let alpha_space = DockSpaceId::from("alpha");
         let zeta_space = DockSpaceId::from("zeta");
-        let mut graph = DockGraph::new();
-        let alpha_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let zeta_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("z")],
-            selected: Some(item("z")),
-        });
-        graph.set_root(alpha_space.clone(), alpha_tabs);
-        graph.set_root(zeta_space.clone(), zeta_tabs);
-
-        let mut workspace = DockWorkspace::new(alpha_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("z"), "Panel Z", test_view(cx, "Z"));
-        let controller = cx.new(|_| DockController::new(workspace));
+        let fixture = DockViewportRuntimeFixture::builder(alpha_space.clone())
+            .space(alpha_space.clone(), ["a"])
+            .space(zeta_space.clone(), ["z"])
+            .build(cx);
+        let alpha_tabs = fixture.tabs(&alpha_space);
+        let runtime = fixture.runtime.clone();
         let window = handle(3);
-        let mut runtime = DockViewportRuntime::new(controller);
 
-        assert!(runtime.register_rendered_host_viewport(alpha_space.clone(), window));
-        assert!(runtime.begin_viewport_host_scene(
+        assert!(
+            runtime
+                .borrow_mut()
+                .register_rendered_host_viewport(alpha_space.clone(), window)
+        );
+        assert!(runtime.borrow_mut().begin_viewport_host_scene(
             alpha_space.clone(),
             window.window_id(),
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
@@ -194,7 +182,7 @@ mod runtime_suite {
             floating_bounds(0.0, 0.0, 360.0, 220.0),
             point(px(120.0), px(100.0)),
         ));
-        assert!(runtime.push_viewport_host_scene_fact(
+        assert!(runtime.borrow_mut().push_viewport_host_scene_fact(
             &alpha_space,
             window.window_id(),
             leaf_host_scene_fact(alpha_tabs, alpha_tabs),
@@ -203,28 +191,45 @@ mod runtime_suite {
 
         assert!(
             runtime
+                .borrow()
                 .last_host_scene_screen_position(&alpha_space)
                 .is_some()
         );
         assert_eq!(
-            runtime.recorded_had_panel_focus_for_test(&alpha_space),
+            runtime
+                .borrow()
+                .recorded_had_panel_focus_for_test(&alpha_space),
             Some(true)
         );
 
-        assert!(runtime.register_rendered_host_viewport(zeta_space.clone(), window));
+        assert!(
+            runtime
+                .borrow_mut()
+                .register_rendered_host_viewport(zeta_space.clone(), window)
+        );
 
-        assert_eq!(runtime.adapter().window_for_space(&alpha_space), None);
         assert_eq!(
-            runtime.adapter().window_for_space(&zeta_space),
+            runtime.borrow().adapter().window_for_space(&alpha_space),
+            None
+        );
+        assert_eq!(
+            runtime.borrow().adapter().window_for_space(&zeta_space),
             Some(window)
         );
-        assert_eq!(runtime.last_host_scene_screen_position(&alpha_space), None);
         assert_eq!(
-            runtime.recorded_had_panel_focus_for_test(&alpha_space),
+            runtime
+                .borrow()
+                .last_host_scene_screen_position(&alpha_space),
+            None
+        );
+        assert_eq!(
+            runtime
+                .borrow()
+                .recorded_had_panel_focus_for_test(&alpha_space),
             None
         );
         assert!(
-            !runtime.push_viewport_host_scene_fact(
+            !runtime.borrow_mut().push_viewport_host_scene_fact(
                 &alpha_space,
                 window.window_id(),
                 leaf_host_scene_fact(alpha_tabs, alpha_tabs),
@@ -311,29 +316,11 @@ mod runtime_suite {
         cx: &mut TestAppContext,
     ) {
         let main_space = DockSpaceId::from("main");
-        let mut graph = DockGraph::new();
-        let tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        graph.set_root(main_space.clone(), tabs);
-
-        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-        let opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    main_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
+            .space(main_space.clone(), ["a"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let opened = fixture.open_unfocused_viewport(cx, &main_space);
         assert!(
             runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
                 main_space.clone(),
@@ -353,29 +340,11 @@ mod runtime_suite {
     #[open_gpui::test]
     fn platform_activation_focus_request_requires_live_runtime_binding(cx: &mut TestAppContext) {
         let main_space = DockSpaceId::from("main");
-        let mut graph = DockGraph::new();
-        let tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        graph.set_root(main_space.clone(), tabs);
-
-        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-        let first = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    main_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("first viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
+            .space(main_space.clone(), ["a"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let first = fixture.open_unfocused_viewport(cx, &main_space);
         runtime.record_panel_focus(main_space.clone(), item("a"));
         runtime
             .borrow_mut()
@@ -395,18 +364,7 @@ mod runtime_suite {
             "stale replaced windows must not restore focus from space history"
         );
 
-        let second = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    main_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("replacement viewport should open through runtime");
+        let second = fixture.open_unfocused_viewport(cx, &main_space);
         focus_backend_window_for_test(second.window(), cx);
         assert_eq!(
             cx.update(|app| {
@@ -451,47 +409,13 @@ mod runtime_suite {
     fn platform_activation_only_mouse_down_suppresses_focus_restore(cx: &mut TestAppContext) {
         let alpha_space = DockSpaceId::from("alpha");
         let zeta_space = DockSpaceId::from("zeta");
-        let mut graph = DockGraph::new();
-        let alpha_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let zeta_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("z")],
-            selected: Some(item("z")),
-        });
-        graph.set_root(alpha_space.clone(), alpha_tabs);
-        graph.set_root(zeta_space.clone(), zeta_tabs);
-
-        let mut workspace = DockWorkspace::new(alpha_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("z"), "Panel Z", test_view(cx, "Z"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-        let alpha = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    alpha_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("alpha viewport should open through runtime");
-        let zeta = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    zeta_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("zeta viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(alpha_space.clone())
+            .space(alpha_space.clone(), ["a"])
+            .space(zeta_space.clone(), ["z"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let alpha = fixture.open_unfocused_viewport(cx, &alpha_space);
+        let zeta = fixture.open_unfocused_viewport(cx, &zeta_space);
         runtime.record_panel_focus(alpha_space.clone(), item("a"));
         runtime.record_panel_focus(zeta_space.clone(), item("z"));
 
@@ -557,47 +481,13 @@ mod runtime_suite {
     ) {
         let main_space = DockSpaceId::from("main");
         let detached_space = DockSpaceId::from("detached");
-        let mut graph = DockGraph::new();
-        let main_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let detached_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("c")],
-            selected: Some(item("c")),
-        });
-        graph.set_root(main_space.clone(), main_tabs);
-        graph.set_root(detached_space.clone(), detached_tabs);
-
-        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-        let main = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    main_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("main viewport should open through runtime");
-        let detached = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    detached_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("detached viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
+            .space(main_space.clone(), ["a"])
+            .space(detached_space.clone(), ["c"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let main = fixture.open_unfocused_viewport(cx, &main_space);
+        let detached = fixture.open_unfocused_viewport(cx, &detached_space);
         runtime.record_panel_focus(main_space.clone(), item("a"));
         runtime.record_panel_focus(detached_space.clone(), item("a"));
         focus_backend_window_for_test(main.window(), cx);
@@ -658,47 +548,13 @@ mod runtime_suite {
     ) {
         let main_space = DockSpaceId::from("main");
         let detached_space = DockSpaceId::from("detached");
-        let mut graph = DockGraph::new();
-        let main_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let detached_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("c")],
-            selected: Some(item("c")),
-        });
-        graph.set_root(main_space.clone(), main_tabs);
-        graph.set_root(detached_space.clone(), detached_tabs);
-
-        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-        let main = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    main_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("main viewport should open through runtime");
-        let detached = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    detached_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("detached viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
+            .space(main_space.clone(), ["a"])
+            .space(detached_space.clone(), ["c"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let main = fixture.open_unfocused_viewport(cx, &main_space);
+        let detached = fixture.open_unfocused_viewport(cx, &detached_space);
         runtime.record_panel_focus(main_space.clone(), item("a"));
         runtime.record_panel_focus(detached_space.clone(), item("c"));
 
@@ -747,47 +603,13 @@ mod runtime_suite {
     ) {
         let main_space = DockSpaceId::from("main");
         let detached_space = DockSpaceId::from("detached");
-        let mut graph = DockGraph::new();
-        let main_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let detached_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("c")],
-            selected: Some(item("c")),
-        });
-        graph.set_root(main_space.clone(), main_tabs);
-        graph.set_root(detached_space.clone(), detached_tabs);
-
-        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-        let main = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    main_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("main viewport should open through runtime");
-        let detached = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    detached_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("detached viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
+            .space(main_space.clone(), ["a"])
+            .space(detached_space.clone(), ["c"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let main = fixture.open_unfocused_viewport(cx, &main_space);
+        let detached = fixture.open_unfocused_viewport(cx, &detached_space);
         runtime.record_panel_focus(main_space.clone(), item("a"));
         runtime.record_panel_focus(detached_space.clone(), item("c"));
 
@@ -851,47 +673,13 @@ mod runtime_suite {
     ) {
         let main_space = DockSpaceId::from("main");
         let detached_space = DockSpaceId::from("detached");
-        let mut graph = DockGraph::new();
-        let main_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let detached_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("c")],
-            selected: Some(item("c")),
-        });
-        graph.set_root(main_space.clone(), main_tabs);
-        graph.set_root(detached_space.clone(), detached_tabs);
-
-        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-        let main = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    main_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("main viewport should open through runtime");
-        let detached = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    detached_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("detached viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
+            .space(main_space.clone(), ["a"])
+            .space(detached_space.clone(), ["c"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let main = fixture.open_unfocused_viewport(cx, &main_space);
+        let detached = fixture.open_unfocused_viewport(cx, &detached_space);
         runtime.record_panel_focus(main_space.clone(), item("a"));
         runtime.record_panel_focus(detached_space.clone(), item("c"));
 
@@ -946,47 +734,13 @@ mod runtime_suite {
     fn pending_activation_overrides_destroyed_previous_focus_suppression(cx: &mut TestAppContext) {
         let main_space = DockSpaceId::from("main");
         let detached_space = DockSpaceId::from("detached");
-        let mut graph = DockGraph::new();
-        let main_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let detached_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("c")],
-            selected: Some(item("c")),
-        });
-        graph.set_root(main_space.clone(), main_tabs);
-        graph.set_root(detached_space.clone(), detached_tabs);
-
-        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-        let main = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    main_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("main viewport should open through runtime");
-        let detached = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    detached_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("detached viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
+            .space(main_space.clone(), ["a"])
+            .space(detached_space.clone(), ["c"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let main = fixture.open_unfocused_viewport(cx, &main_space);
+        let detached = fixture.open_unfocused_viewport(cx, &detached_space);
         runtime.record_panel_focus(main_space.clone(), item("a"));
         runtime.record_panel_focus(detached_space.clone(), item("c"));
 
@@ -1034,29 +788,11 @@ mod runtime_suite {
     #[open_gpui::test]
     fn pending_activation_is_not_suppressed_by_mouse_down(cx: &mut TestAppContext) {
         let main_space = DockSpaceId::from("main");
-        let mut graph = DockGraph::new();
-        let main_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        graph.set_root(main_space.clone(), main_tabs);
-
-        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-        let main = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    main_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("main viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
+            .space(main_space.clone(), ["a"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let main = fixture.open_unfocused_viewport(cx, &main_space);
         assert!(
             runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
                 main_space.clone(),
@@ -1092,45 +828,18 @@ mod runtime_suite {
     ) {
         let main_space = DockSpaceId::from("main");
         let detached_space = DockSpaceId::from("detached");
-        let mut graph = DockGraph::new();
-        let main_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let detached_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("c")],
-            selected: Some(item("c")),
-        });
-        graph.set_root(main_space.clone(), main_tabs);
-        graph.set_root(detached_space.clone(), detached_tabs);
-
-        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-        let open_options = || WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(floating_bounds(
-                0.0, 0.0, 360.0, 220.0,
-            ))),
-            focus: false,
-            ..Default::default()
-        };
-        let main = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(main_space.clone(), open_options(), app)
-            })
-            .expect("main viewport should open through runtime");
-        let detached = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(detached_space.clone(), open_options(), app)
-            })
-            .expect("detached viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
+            .space(main_space.clone(), ["a"])
+            .space(detached_space.clone(), ["c"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let main = fixture.open_unfocused_viewport(cx, &main_space);
+        let detached = fixture.open_unfocused_viewport(cx, &detached_space);
         let plain_root = test_view(cx, "Plain");
         let non_docking = cx
             .update(|app| {
                 let plain_root = plain_root.clone();
-                app.open_window(open_options(), move |_, _| plain_root)
+                app.open_window(unfocused_viewport_window_options(), move |_, _| plain_root)
             })
             .expect("plain GPUI window should open");
         runtime.record_panel_focus(main_space.clone(), item("a"));
@@ -1175,29 +884,11 @@ mod runtime_suite {
     #[open_gpui::test]
     fn backend_focus_command_consumes_pending_viewport_activation(cx: &mut TestAppContext) {
         let main_space = DockSpaceId::from("main");
-        let mut graph = DockGraph::new();
-        let tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        graph.set_root(main_space.clone(), tabs);
-
-        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-        let opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    main_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
+            .space(main_space.clone(), ["a"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let opened = fixture.open_unfocused_viewport(cx, &main_space);
         runtime.record_panel_focus(main_space.clone(), item("a"));
         assert!(
             runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
@@ -1236,29 +927,11 @@ mod runtime_suite {
         cx: &mut TestAppContext,
     ) {
         let main_space = DockSpaceId::from("main");
-        let mut graph = DockGraph::new();
-        let tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        graph.set_root(main_space.clone(), tabs);
-
-        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-        let opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    main_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
+            .space(main_space.clone(), ["a"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let opened = fixture.open_unfocused_viewport(cx, &main_space);
         runtime.record_panel_focus(main_space.clone(), item("a"));
         assert!(
             runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
@@ -1288,47 +961,13 @@ mod runtime_suite {
     ) {
         let main_space = DockSpaceId::from("main");
         let detached_space = DockSpaceId::from("detached");
-        let mut graph = DockGraph::new();
-        let main_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let detached_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("c")],
-            selected: Some(item("c")),
-        });
-        graph.set_root(main_space.clone(), main_tabs);
-        graph.set_root(detached_space.clone(), detached_tabs);
-
-        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-        let main = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    main_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("main viewport should open through runtime");
-        let detached = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    detached_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("detached viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
+            .space(main_space.clone(), ["a"])
+            .space(detached_space.clone(), ["c"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let main = fixture.open_unfocused_viewport(cx, &main_space);
+        let detached = fixture.open_unfocused_viewport(cx, &detached_space);
         assert!(
             runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
                 detached_space.clone(),
@@ -1366,29 +1005,11 @@ mod runtime_suite {
     #[open_gpui::test]
     fn backend_confirmed_activation_consumes_pending_viewport_activation(cx: &mut TestAppContext) {
         let main_space = DockSpaceId::from("main");
-        let mut graph = DockGraph::new();
-        let tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        graph.set_root(main_space.clone(), tabs);
-
-        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-        let opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    main_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
+            .space(main_space.clone(), ["a"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let opened = fixture.open_unfocused_viewport(cx, &main_space);
         let host = opened
             .window()
             .downcast::<DockHost>()
@@ -1431,29 +1052,11 @@ mod runtime_suite {
         cx: &mut TestAppContext,
     ) {
         let main_space = DockSpaceId::from("main");
-        let mut graph = DockGraph::new();
-        let tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        graph.set_root(main_space.clone(), tabs);
-
-        let mut workspace = DockWorkspace::new(main_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-        let opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    main_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
+            .space(main_space.clone(), ["a"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let opened = fixture.open_unfocused_viewport(cx, &main_space);
 
         runtime.record_panel_focus(main_space.clone(), item("a"));
         assert!(
@@ -1500,36 +1103,12 @@ mod runtime_suite {
     ) {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
-
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-
-        let opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    source_space.clone(),
-                    WindowOptions {
-                        focus: false,
-                        ..viewport_window_options(360.0, 220.0)
-                    },
-                    app,
-                )
-            })
-            .expect("source viewport should open through runtime");
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .space(target_space.clone(), ["b"])
+            .build(cx);
+        let runtime = fixture.runtime.clone();
+        let opened = fixture.open_unfocused_viewport(cx, &source_space);
         runtime.record_panel_focus(source_space.clone(), item("a"));
         runtime.record_panel_focus(target_space.clone(), item("b"));
 
@@ -1691,21 +1270,14 @@ mod runtime_suite {
     #[open_gpui::test]
     fn viewport_runtime_unregister_space_clears_had_panel_focus_fact(cx: &mut TestAppContext) {
         let detached_space = DockSpaceId::from("detached");
-        let mut graph = DockGraph::new();
-        let tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        graph.set_root(detached_space.clone(), tabs);
-
-        let mut workspace = DockWorkspace::new(detached_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        let controller = cx.new(|_| DockController::new(workspace));
+        let fixture = DockViewportRuntimeFixture::builder(detached_space.clone())
+            .space(detached_space.clone(), ["a"])
+            .build_controller(cx);
         let window = handle(149);
         let mut adapter = DockViewportAdapter::new();
         register_viewport(&mut adapter, detached_space.clone(), window);
         let mut runtime = DockViewportRuntime::from_adapter(
-            controller,
+            fixture.controller.clone(),
             adapter,
             DockViewportClosePolicy::RetainLayout,
         );
@@ -1729,23 +1301,12 @@ mod runtime_suite {
     ) {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
-
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let mut runtime = DockViewportRuntime::new(controller);
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .space(target_space.clone(), ["b"])
+            .build_controller(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let mut runtime = DockViewportRuntime::new(fixture.controller.clone());
 
         let window = handle(73);
         assert!(runtime.register_rendered_host_viewport(source_space.clone(), window));
@@ -1797,23 +1358,13 @@ mod runtime_suite {
     fn viewport_runtime_host_release_finishes_source_drag_session(cx: &mut TestAppContext) {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
-
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let mut runtime = DockViewportRuntime::new(controller);
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .space(target_space.clone(), ["b"])
+            .build_controller(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let target_tabs = fixture.tabs(&target_space);
+        let mut runtime = DockViewportRuntime::new(fixture.controller.clone());
         let source_window = handle(51);
         let target_window = handle(52);
         runtime.register_opened_viewport(source_space.clone(), source_window);
@@ -1847,28 +1398,18 @@ mod runtime_suite {
     fn viewport_runtime_unregister_host_for_space_clears_runtime_state(cx: &mut TestAppContext) {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
-
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .space(target_space.clone(), ["b"])
+            .build_controller(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let target_tabs = fixture.tabs(&target_space);
 
         let target_window = handle(93);
         let mut adapter = DockViewportAdapter::new();
         register_viewport(&mut adapter, target_space.clone(), target_window);
         let mut runtime = DockViewportRuntime::from_adapter(
-            controller,
+            fixture.controller.clone(),
             adapter,
             DockViewportClosePolicy::RetainLayout,
         );
@@ -2229,22 +1770,13 @@ mod runtime_suite {
     ) {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
-
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .space(target_space.clone(), ["b"])
+            .build_controller(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let target_tabs = fixture.tabs(&target_space);
+        let controller = fixture.controller.clone();
 
         let target_window = handle(29);
         let mut adapter = DockViewportAdapter::new();
@@ -2331,17 +1863,11 @@ mod runtime_suite {
         cx: &mut TestAppContext,
     ) {
         let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(target_space.clone(), target_tabs);
-
-        let mut workspace = DockWorkspace::new(target_space.clone(), graph);
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let mut runtime = DockViewportRuntime::new(controller);
+        let fixture = DockViewportRuntimeFixture::builder(target_space.clone())
+            .space(target_space.clone(), ["b"])
+            .build_controller(cx);
+        let target_tabs = fixture.tabs(&target_space);
+        let mut runtime = DockViewportRuntime::new(fixture.controller.clone());
         let target_window = handle(31);
         let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
@@ -2408,22 +1934,12 @@ mod runtime_suite {
     fn viewport_runtime_known_viewport_without_scene_is_unavailable(cx: &mut TestAppContext) {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
-
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .space(target_space.clone(), ["b"])
+            .build_controller(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let controller = fixture.controller.clone();
 
         let target_window = handle(31);
         let mut adapter = DockViewportAdapter::new();
@@ -2493,22 +2009,13 @@ mod runtime_suite {
     ) {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
-
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .space(target_space.clone(), ["b"])
+            .build_controller(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let target_tabs = fixture.tabs(&target_space);
+        let controller = fixture.controller.clone();
 
         let target_window = handle(23);
         let mut adapter = DockViewportAdapter::new();
@@ -2753,29 +2260,15 @@ mod runtime_suite {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");
         let decoy_space = DockSpaceId::from("decoy");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        let decoy_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("c")],
-            selected: Some(item("c")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
-        graph.set_root(decoy_space.clone(), decoy_tabs);
-
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .space(target_space.clone(), ["b"])
+            .space(decoy_space.clone(), ["c"])
+            .build(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let target_tabs = fixture.tabs(&target_space);
+        let decoy_tabs = fixture.tabs(&decoy_space);
+        let runtime = fixture.runtime.clone();
         let open_options = || WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(floating_bounds(
                 100.0, 100.0, 360.0, 220.0,
@@ -2784,21 +2277,9 @@ mod runtime_suite {
             ..Default::default()
         };
 
-        let _source_opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(source_space.clone(), open_options(), app)
-            })
-            .expect("source viewport should open");
-        let target_opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(target_space.clone(), open_options(), app)
-            })
-            .expect("target viewport should open");
-        let decoy_opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(decoy_space.clone(), open_options(), app)
-            })
-            .expect("decoy viewport should open");
+        let _source_opened = fixture.open_viewport(cx, &source_space, open_options());
+        let target_opened = fixture.open_viewport(cx, &target_space, open_options());
+        let decoy_opened = fixture.open_viewport(cx, &decoy_space, open_options());
         let shared_window_bounds =
             WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let host_position = point(px(120.0), px(100.0));
@@ -2888,54 +2369,36 @@ mod runtime_suite {
     fn viewport_runtime_new_viewport_creation_stamps_focus_fallback_order(cx: &mut TestAppContext) {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
-
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .space(target_space.clone(), ["b"])
+            .build(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let target_tabs = fixture.tabs(&target_space);
+        let runtime = fixture.runtime.clone();
 
         let source_window_bounds =
             WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let target_window_bounds =
             WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-        let _source_opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    source_space.clone(),
-                    WindowOptions {
-                        window_bounds: Some(source_window_bounds),
-                        focus: false,
-                        ..Default::default()
-                    },
-                    app,
-                )
-            })
-            .expect("source viewport should open without taking focus");
-        let target_opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    target_space.clone(),
-                    WindowOptions {
-                        window_bounds: Some(target_window_bounds),
-                        focus: false,
-                        ..Default::default()
-                    },
-                    app,
-                )
-            })
-            .expect("target viewport should open without taking focus");
+        let _source_opened = fixture.open_viewport(
+            cx,
+            &source_space,
+            WindowOptions {
+                window_bounds: Some(source_window_bounds),
+                focus: false,
+                ..Default::default()
+            },
+        );
+        let target_opened = fixture.open_viewport(
+            cx,
+            &target_space,
+            WindowOptions {
+                window_bounds: Some(target_window_bounds),
+                focus: false,
+                ..Default::default()
+            },
+        );
 
         assert!(runtime.begin_viewport_host_scene(
             target_space.clone(),
@@ -3007,23 +2470,13 @@ mod runtime_suite {
     ) {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
-
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let mut runtime = DockViewportRuntime::new(controller);
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .space(target_space.clone(), ["b"])
+            .build_controller(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let target_tabs = fixture.tabs(&target_space);
+        let mut runtime = DockViewportRuntime::new(fixture.controller.clone());
         let target_window = handle(77);
         let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let host_position = point(px(120.0), px(100.0));
@@ -3068,35 +2521,16 @@ mod runtime_suite {
         let old_space = DockSpaceId::from("old");
         let target_space = DockSpaceId::from("target");
         let decoy_space = DockSpaceId::from("decoy");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let old_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("old")],
-            selected: Some(item("old")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        let decoy_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("c")],
-            selected: Some(item("c")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(old_space.clone(), old_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
-        graph.set_root(decoy_space.clone(), decoy_tabs);
-
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("old"), "Panel Old", test_view(cx, "Old"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .space(old_space.clone(), ["old"])
+            .space(target_space.clone(), ["b"])
+            .space(decoy_space.clone(), ["c"])
+            .build(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let target_tabs = fixture.tabs(&target_space);
+        let decoy_tabs = fixture.tabs(&decoy_space);
+        let runtime = fixture.runtime.clone();
 
         let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
         let open_options = || WindowOptions {
@@ -3105,21 +2539,9 @@ mod runtime_suite {
             ..Default::default()
         };
 
-        let _source_opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(source_space.clone(), open_options(), app)
-            })
-            .expect("source viewport should open");
-        let rebound_window = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(old_space.clone(), open_options(), app)
-            })
-            .expect("old viewport should open");
-        let decoy_opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(decoy_space.clone(), open_options(), app)
-            })
-            .expect("decoy viewport should open");
+        let _source_opened = fixture.open_viewport(cx, &source_space, open_options());
+        let rebound_window = fixture.open_viewport(cx, &old_space, open_options());
+        let decoy_opened = fixture.open_viewport(cx, &decoy_space, open_options());
 
         assert_eq!(
             runtime
@@ -3194,15 +2616,11 @@ mod runtime_suite {
     #[open_gpui::test]
     fn viewport_runtime_drag_geometry_is_bound_to_active_drag_session(cx: &mut TestAppContext) {
         let source_space = DockSpaceId::from("source");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        let workspace = DockWorkspace::new(source_space.clone(), graph);
-        let controller = cx.new(|_| DockController::new(workspace));
-        let mut runtime = DockViewportRuntime::new(controller);
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .build_controller(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let mut runtime = DockViewportRuntime::new(fixture.controller.clone());
         let payload = DockDragPayload::new_item(
             source_space.clone(),
             source_tabs,
@@ -3430,26 +2848,13 @@ mod handle_suite {
     #[open_gpui::test]
     fn viewport_runtime_handle_rejects_stale_host_scene_frame_facts(cx: &mut TestAppContext) {
         let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(target_space.clone(), target_tabs);
-
-        let mut workspace = DockWorkspace::new(target_space.clone(), graph);
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller.clone());
-        let opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    target_space.clone(),
-                    viewport_window_options(360.0, 220.0),
-                    app,
-                )
-            })
-            .expect("target viewport should open");
+        let fixture = DockViewportRuntimeFixture::builder(target_space.clone())
+            .space(target_space.clone(), ["b"])
+            .build(cx);
+        let target_tabs = fixture.tabs(&target_space);
+        let runtime = fixture.runtime.clone();
+        let opened =
+            fixture.open_viewport(cx, &target_space, viewport_window_options(360.0, 220.0));
         let window_bounds = opened
             .window()
             .update(cx, |_, window, _| window.window_bounds())
@@ -3589,34 +2994,17 @@ mod handle_suite {
     ) {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .space(target_space.clone(), ["b"])
+            .allow_platform_viewports(true)
+            .build(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let target_tabs = fixture.tabs(&target_space);
+        let runtime = fixture.runtime.clone();
 
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.policy_mut().set_allow_platform_viewports(true);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller);
-
-        let source_opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    source_space.clone(),
-                    viewport_window_options(360.0, 220.0),
-                    app,
-                )
-            })
-            .expect("source viewport should open through runtime handle");
+        let source_opened =
+            fixture.open_viewport(cx, &source_space, viewport_window_options(360.0, 220.0));
         let source_window = source_opened
             .window()
             .downcast::<crate::DockHost>()
@@ -3637,15 +3025,8 @@ mod handle_suite {
             leaf_host_scene_fact(source_tabs, source_tabs),
         ));
 
-        let target_opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    target_space.clone(),
-                    viewport_window_options(360.0, 220.0),
-                    app,
-                )
-            })
-            .expect("target viewport should open through runtime handle");
+        let target_opened =
+            fixture.open_viewport(cx, &target_space, viewport_window_options(360.0, 220.0));
         let target_window = target_opened
             .window()
             .downcast::<crate::DockHost>()
@@ -3743,33 +3124,16 @@ mod handle_suite {
     ) {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .space(target_space.clone(), ["b"])
+            .build(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let controller = fixture.controller.clone();
+        let runtime = fixture.runtime.clone();
 
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller.clone());
-
-        let opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    target_space.clone(),
-                    viewport_window_options(360.0, 220.0),
-                    app,
-                )
-            })
-            .expect("target viewport should open");
+        let opened =
+            fixture.open_viewport(cx, &target_space, viewport_window_options(360.0, 220.0));
         let target_window_bounds = opened
             .window()
             .update(cx, |_, window, _| window.window_bounds())
@@ -3830,47 +3194,24 @@ mod handle_suite {
     ) {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");
-        let mut graph = DockGraph::new();
-        let source_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("a")],
-            selected: Some(item("a")),
-        });
-        let target_tabs = graph.insert_node(DockNode::Tabs {
-            items: vec![item("b")],
-            selected: Some(item("b")),
-        });
-        graph.set_root(source_space.clone(), source_tabs);
-        graph.set_root(target_space.clone(), target_tabs);
+        let fixture = DockViewportRuntimeFixture::builder(source_space.clone())
+            .space(source_space.clone(), ["a"])
+            .space(target_space.clone(), ["b"])
+            .build(cx);
+        let source_tabs = fixture.tabs(&source_space);
+        let target_tabs = fixture.tabs(&target_space);
+        let controller = fixture.controller.clone();
+        let runtime = fixture.runtime.clone();
 
-        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
-        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-        let controller = cx.new(|_| DockController::new(workspace));
-        let runtime = DockViewportRuntimeHandle::new(controller.clone());
-
-        let opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    target_space.clone(),
-                    viewport_window_options(360.0, 220.0),
-                    app,
-                )
-            })
-            .expect("target viewport should open");
+        let opened =
+            fixture.open_viewport(cx, &target_space, viewport_window_options(360.0, 220.0));
         let target_window_bounds = opened
             .window()
             .update(cx, |_, window, _| window.window_bounds())
             .expect("target window should be live");
         let target_window_bounds = WindowBounds::Windowed(target_window_bounds.get_bounds());
-        let source_opened = cx
-            .update(|app| {
-                runtime.open_viewport_unchecked_policy(
-                    source_space.clone(),
-                    viewport_window_options(360.0, 220.0),
-                    app,
-                )
-            })
-            .expect("source viewport should open");
+        let source_opened =
+            fixture.open_viewport(cx, &source_space, viewport_window_options(360.0, 220.0));
         source_opened
             .window()
             .update(cx, |_, window, _| window.activate_window())
