@@ -25,6 +25,28 @@ fn source_line_contains_identifier(line: &str, token: &str) -> bool {
         .any(|part| part == token)
 }
 
+fn source_contains_public_signature_token(file_name: &str, token: &str) -> bool {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join(file_name);
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read {path:?}: {error}"));
+    let mut in_public_signature = false;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("pub fn ") {
+            in_public_signature = true;
+        }
+        if in_public_signature && source_line_contains_identifier(trimmed, token) {
+            return true;
+        }
+        if in_public_signature && (trimmed.ends_with('{') || trimmed.ends_with(';')) {
+            in_public_signature = false;
+        }
+    }
+    false
+}
+
 #[test]
 fn root_and_prelude_do_not_reexport_diagnostics() {
     let forbidden = [
@@ -66,6 +88,8 @@ fn root_and_prelude_do_not_reexport_low_level_model_or_runtime_types() {
         "DockActionApplyError",
         "DockActionOutcome",
         "DockCentralRegion",
+        "DockController",
+        "DockControllerBuilder",
         "DockEdgeDockPlan",
         "DockFloatingContainer",
         "DockGraph",
@@ -106,6 +130,40 @@ fn root_and_prelude_do_not_reexport_low_level_model_or_runtime_types() {
             leaked,
             Vec::<&str>::new(),
             "{file_name} leaked low-level docking model/runtime types"
+        );
+    }
+}
+
+#[test]
+fn surface_facade_methods_do_not_expose_low_level_model_or_runtime_types() {
+    let forbidden = [
+        "DockAction",
+        "DockActionApplyError",
+        "DockActionOutcome",
+        "DockController",
+        "DockControllerBuilder",
+        "DockHost",
+        "DockHostOptions",
+        "DockNodeId",
+        "DockViewportRuntimeHandle",
+        "DockWorkspace",
+    ];
+
+    for file_name in [
+        "surface.rs",
+        "surface/builder.rs",
+        "surface/panel.rs",
+        "surface/viewport.rs",
+    ] {
+        let leaked = forbidden
+            .iter()
+            .filter(|token| source_contains_public_signature_token(file_name, token))
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            leaked,
+            Vec::<&str>::new(),
+            "{file_name} leaked low-level docking types through facade method signatures"
         );
     }
 }
@@ -181,7 +239,13 @@ fn common_import_paths_compile() {
             space: "main".into(),
         };
     let root_panel_placement = root::DockPanelPlacement::center("editor");
-    let root_surface_builder = root::DockSurface::builder("main");
+    let root_surface_builder = root::DockSurface::builder("main")
+        .empty_message("No panels")
+        .missing_panel_prefix("Missing")
+        .split_min_size(open_gpui::px(80.0))
+        .splitter_handle_size(open_gpui::px(8.0))
+        .drop_guide_style(root::DockDropGuideStyle::default())
+        .motion_preference(open_gpui_motion::MotionPreference::Reduced);
     let root_surface_change = root::DockSurfaceChange::Changed;
     let root_close_policy = root::DockViewportClosePolicy::RetainLayout;
     let prelude_panel_target = prelude::DockPanelPlacementTarget::right_rail();
@@ -258,7 +322,10 @@ fn explicit_low_level_import_paths_compile() {
     let graph = model::DockGraph::new();
     let layout = model::DockLayoutBuilder::new().build();
     let action = model::DockActionOutcome::Unchanged;
+    let controller_builder = model::DockController::builder("main");
+    let _controller_type: Option<model::DockController> = None;
+    let _controller_builder_type: Option<model::DockControllerBuilder> = None;
     let close_policy = runtime::DockViewportClosePolicy::Prevent;
 
-    let _ = (graph, layout, action, close_policy);
+    let _ = (graph, layout, action, controller_builder, close_policy);
 }

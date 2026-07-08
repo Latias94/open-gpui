@@ -1,11 +1,12 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockGraph,
-    DockGraphValidationError, DockItemId, DockLayout, DockLayoutValidationError, DockNodeId,
-    DockPanel, DockPanelAttachError, DockPanelCloseOutcome, DockPanelDescriptor,
+    DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockDropGuideStyle,
+    DockGraph, DockGraphValidationError, DockItemId, DockLayout, DockLayoutValidationError,
+    DockNodeId, DockPanel, DockPanelAttachError, DockPanelCloseOutcome, DockPanelDescriptor,
     DockPanelOpenOutcome, DockPanelPlacement, DockPanelRegistration, DockPanelRegistry, DockPolicy,
     DockSpaceId, DockSplitResize, DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
 };
 use open_gpui::{AnyView, Bounds, Pixels};
+use open_gpui_motion::MotionPreference;
 
 /// Shared owner for one logical docking workspace.
 ///
@@ -243,8 +244,8 @@ impl DockController {
 ///
 /// The builder keeps the user-facing path centered on stable application concepts: one logical
 /// dock space, a graph or restored layout, panel registrations, options, and policy. Advanced
-/// callers can still construct [`DockWorkspace`] or [`DockGraph`] directly when they need lower
-/// level control.
+/// callers can still construct [`model::DockWorkspace`](crate::model::DockWorkspace) or
+/// [`model::DockGraph`](crate::model::DockGraph) directly when they need lower-level control.
 #[derive(Debug)]
 pub struct DockControllerBuilder {
     space: DockSpaceId,
@@ -277,7 +278,7 @@ impl DockControllerBuilder {
     /// Restores the builder graph from serialized dock layout data.
     ///
     /// The builder's logical space is unchanged. Applications can restore a layout containing
-    /// multiple logical spaces, then mount whichever space each [`DockHost`](crate::DockHost)
+    /// multiple logical spaces, then mount whichever space each [`runtime::DockHost`](crate::runtime::DockHost)
     /// should render.
     pub fn try_layout(mut self, layout: &DockLayout) -> Result<Self, DockLayoutValidationError> {
         self.graph = DockGraph::import_layout(layout)?;
@@ -328,6 +329,42 @@ impl DockControllerBuilder {
     /// Replaces static host rendering options.
     pub fn options(mut self, options: DockHostOptions) -> Self {
         self.options = options;
+        self
+    }
+
+    /// Replaces the message rendered when the selected dock space has no root node.
+    pub fn empty_message(mut self, message: impl Into<String>) -> Self {
+        self.options.empty_message = message.into();
+        self
+    }
+
+    /// Replaces the message prefix rendered when a selected panel is missing from the registry.
+    pub fn missing_panel_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.options.missing_panel_prefix = prefix.into();
+        self
+    }
+
+    /// Replaces the minimum rendered size for split panes during splitter resizing.
+    pub fn split_min_size(mut self, size: Pixels) -> Self {
+        self.options.split_min_size = size;
+        self
+    }
+
+    /// Replaces the hit target and visual thickness for rendered splitter handles.
+    pub fn splitter_handle_size(mut self, size: Pixels) -> Self {
+        self.options.splitter_handle_size = size;
+        self
+    }
+
+    /// Replaces the style inputs used to size and hit-test dock drop guides.
+    pub fn drop_guide_style(mut self, style: DockDropGuideStyle) -> Self {
+        self.options.drop_guide_style = style;
+        self
+    }
+
+    /// Replaces the host-owned motion preference for docking transitions.
+    pub fn motion_preference(mut self, preference: MotionPreference) -> Self {
+        self.options.motion_preference = preference;
         self
     }
 

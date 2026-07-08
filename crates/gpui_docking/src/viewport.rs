@@ -14,7 +14,7 @@ use open_gpui::{AnyWindowHandle, WindowId};
 ///
 /// This type owns platform-window facts for docking: window handles, display ids, and the latest
 /// bounds snapshots used for coordinate conversion. None of this state belongs in
-/// [`DockGraph`](crate::DockGraph) or [`DockLayout`](crate::DockLayout).
+/// [`model::DockGraph`](crate::model::DockGraph) or [`DockLayout`](crate::DockLayout).
 ///
 /// A typical restore flow imports [`DockLayout`](crate::DockLayout) into a controller, opens or
 /// reuses GPUI windows for each logical dock space, registers those windows here, and lets render

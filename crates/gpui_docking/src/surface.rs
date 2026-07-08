@@ -16,15 +16,16 @@ use crate::{
     DockController, DockHost, DockSpaceId, DockViewportClosePolicy, DockViewportRuntimeHandle,
 };
 use open_gpui::{
-    App, AppContext as _, Bounds, Context, Entity, Pixels, Result as GpuiResult, WindowBounds,
-    WindowHandle, WindowOptions,
+    AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, Pixels, Result as GpuiResult,
+    WindowBounds, WindowOptions,
 };
 
 /// Application-level owner for one docked workspace and its viewport runtime.
 ///
 /// `DockSurface` is the common app seam for docking. It keeps controller state, host creation, and
 /// viewport runtime wiring together so ordinary applications do not need to assemble
-/// [`DockHost`] and [`DockViewportRuntimeHandle`] directly.
+/// [`runtime::DockHost`](crate::runtime::DockHost) and
+/// [`runtime::DockViewportRuntimeHandle`](crate::runtime::DockViewportRuntimeHandle) directly.
 #[derive(Clone, Debug)]
 pub struct DockSurface {
     controller: Entity<DockController>,
@@ -38,13 +39,12 @@ impl DockSurface {
         DockSurfaceBuilder::new(space)
     }
 
-    /// Wraps an existing controller entity with the default viewport close policy.
-    pub fn from_controller(controller: Entity<DockController>, cx: &App) -> Self {
+    #[cfg(test)]
+    pub(crate) fn from_controller(controller: Entity<DockController>, cx: &App) -> Self {
         Self::from_controller_with_close_policy(controller, DockViewportClosePolicy::default(), cx)
     }
 
-    /// Wraps an existing controller entity with an explicit viewport close policy.
-    pub fn from_controller_with_close_policy(
+    pub(crate) fn from_controller_with_close_policy(
         controller: Entity<DockController>,
         close_policy: DockViewportClosePolicy,
         cx: &App,
@@ -59,8 +59,8 @@ impl DockSurface {
         }
     }
 
-    /// Returns the controller entity owned by this surface.
-    pub fn controller(&self) -> Entity<DockController> {
+    #[cfg(test)]
+    pub(crate) fn controller(&self) -> Entity<DockController> {
         self.controller.clone()
     }
 
@@ -69,13 +69,15 @@ impl DockSurface {
         &self.primary_space
     }
 
-    /// Creates a host view for the surface's primary dock space.
-    pub fn primary_host(&self, cx: &mut Context<DockHost>) -> DockHost {
+    pub(crate) fn primary_host(&self, cx: &mut Context<DockHost>) -> DockHost {
         self.host(self.primary_space.clone(), cx)
     }
 
-    /// Creates a host view for one dock space.
-    pub fn host(&self, space: impl Into<DockSpaceId>, cx: &mut Context<DockHost>) -> DockHost {
+    pub(crate) fn host(
+        &self,
+        space: impl Into<DockSpaceId>,
+        cx: &mut Context<DockHost>,
+    ) -> DockHost {
         DockHost::from_controller(
             self.controller.clone(),
             space,
@@ -92,11 +94,12 @@ impl DockSurface {
         &self,
         options: WindowOptions,
         cx: &mut App,
-    ) -> GpuiResult<WindowHandle<DockHost>> {
+    ) -> GpuiResult<AnyWindowHandle> {
         let surface = self.clone();
         cx.open_window(options, move |_, cx| {
             cx.new(move |cx| surface.primary_host(cx))
         })
+        .map(Into::into)
     }
 
     /// Returns default window options for a centered primary dock host.

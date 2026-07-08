@@ -21,13 +21,14 @@ impl DockSplitResize {
     }
 }
 
-/// Programmatic docking command object applied by [`DockWorkspace`](crate::DockWorkspace).
+/// Programmatic docking command object applied by [`DockWorkspace`](crate::model::DockWorkspace).
 ///
 /// Rendered drag/drop interactions resolve a full-layout target first and commit through the
-/// workspace transaction path. Prefer the named [`DockController`](crate::DockController) and
-/// [`DockWorkspace`](crate::DockWorkspace) command methods for ordinary application flows; use
-/// these command objects when an application needs to store, queue, or dispatch explicit docking
-/// commands.
+/// workspace transaction path. Prefer the named
+/// [`DockController`](crate::model::DockController) and
+/// [`DockWorkspace`](crate::model::DockWorkspace) command methods for ordinary application flows;
+/// use these command objects when an application needs to store, queue, or dispatch explicit
+/// docking commands.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DockAction {
     /// Selects a tab within one tabs node.
