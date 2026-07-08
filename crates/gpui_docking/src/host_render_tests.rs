@@ -21,7 +21,7 @@ use open_gpui::{
     AnyWindowHandle, AppContext as _, Entity, Focusable, Modifiers, MouseButton,
     RequestFrameOptions, TestAppContext, VisualTestContext, px, size,
 };
-use open_gpui_motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
+use open_gpui_motion::{MotionDuration, MotionEasing, MotionPreference, advanced::MotionSpec};
 use slotmap::Key;
 use std::time::Duration;
 

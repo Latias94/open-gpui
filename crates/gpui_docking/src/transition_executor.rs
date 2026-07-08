@@ -11,10 +11,12 @@ use crate::{
 };
 use open_gpui::{Bounds, Pixels, point, size};
 use open_gpui_motion::{
-    MotionExecutionPlan, MotionExecutionState, MotionFrameDemand, MotionModel, MotionPolicyContext,
-    MotionPolicyInput, MotionPolicyReport, MotionProgressExecution, MotionProgressSample,
-    MotionProjection, MotionProjectionClip, MotionSnapshot, MotionSpec, motion_source_rect,
-    preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
+    MotionFrameDemand, MotionPolicyContext, MotionPolicyInput, MotionPolicyReport,
+    MotionProgressSample, MotionProjection, MotionProjectionClip, MotionSnapshot,
+    advanced::{
+        MotionExecutionPlan, MotionExecutionState, MotionModel, MotionProgressExecution, MotionSpec,
+    },
+    motion_source_rect, preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
 };
 #[cfg(test)]
 use std::time::Duration;
@@ -543,7 +545,7 @@ mod tests {
     };
     use open_gpui::{point, px, size};
     use open_gpui_motion::{
-        MotionDuration, MotionEasing, MotionFrameReason, MotionPreference, MotionSpec,
+        MotionDuration, MotionEasing, MotionFrameReason, MotionPreference, advanced::MotionSpec,
     };
 
     fn node(id: u64) -> DockNodeId {

@@ -60,14 +60,14 @@ fn ui_core_no_longer_exports_motion_contracts() {
         "the ui_core prelude should not re-export motion contracts"
     );
 
-    let _track: Option<open_gpui_motion::MotionScalarTrack> = None;
-    let _controller: open_gpui_motion::MotionScalarController<&'static str> =
-        open_gpui_motion::MotionScalarController::new();
+    let _track: Option<open_gpui_motion::advanced::MotionScalarTrack> = None;
+    let _controller: open_gpui_motion::advanced::MotionScalarController<&'static str> =
+        open_gpui_motion::advanced::MotionScalarController::new();
     let demand = open_gpui_motion::MotionFrameDemand::Idle;
     assert!(!demand.needs_frame());
 
-    let model = open_gpui_motion::MotionPreset::Immediate.resolve_model();
-    let plan = open_gpui_motion::MotionExecutionPlan::resolve(
+    let model = open_gpui_motion::advanced::MotionPreset::Immediate.resolve_model();
+    let plan = open_gpui_motion::advanced::MotionExecutionPlan::resolve(
         open_gpui_motion::MotionPolicyInput::new(
             open_gpui_motion::MotionPolicyContext::CommittedLayout,
             model,
@@ -76,10 +76,10 @@ fn ui_core_no_longer_exports_motion_contracts() {
     );
     assert_eq!(
         plan.state(),
-        open_gpui_motion::MotionExecutionState::Immediate
+        open_gpui_motion::advanced::MotionExecutionState::Immediate
     );
-    let _execution: Option<open_gpui_motion::MotionScalarExecution> = None;
-    let _execution_sample: Option<open_gpui_motion::MotionScalarExecutionSample> = None;
+    let _execution: Option<open_gpui_motion::advanced::MotionScalarExecution> = None;
+    let _execution_sample: Option<open_gpui_motion::advanced::MotionScalarExecutionSample> = None;
     let _clip: Option<open_gpui_motion::MotionProjectionClip> = None;
 }
 

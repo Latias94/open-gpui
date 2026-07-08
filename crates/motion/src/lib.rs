@@ -9,45 +9,44 @@
 
 mod value;
 
-pub mod controller;
-pub mod frame_host;
+pub mod advanced;
+mod controller;
+mod frame_host;
 pub mod geometry;
-pub mod motion;
+mod motion;
 pub mod policy;
 pub mod projection;
-pub mod runtime;
-pub mod sequence;
-pub mod spring;
+mod runtime;
+mod sequence;
+mod spring;
+pub mod transition;
 
 pub use controller::{
-    MotionClockSample, MotionExecutionPlan, MotionExecutionState, MotionFrameDemand,
-    MotionFrameReason, MotionProgressExecution, MotionProgressSample, MotionScalarController,
-    MotionScalarControllerSample, MotionScalarExecution, MotionScalarExecutionSample,
-    MotionScalarTrack, MotionScalarTrackSample,
+    MotionClockSample, MotionFrameDemand, MotionFrameReason, MotionProgressSample,
 };
-pub use frame_host::{
-    MotionFrameHost, MotionFrameHostResetReason, MotionFrameHostSample, MotionFrameHostUpdate,
-};
+pub use frame_host::MotionFrameHostResetReason;
 pub use geometry::{
     MotionEdges, MotionPoint, MotionPx, MotionRect, MotionSize, motion_edges, motion_point,
     motion_px, motion_rect, motion_size,
 };
-pub use motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
+pub use motion::{MotionDuration, MotionEasing, MotionPreference};
 pub use policy::{
     MOTION_POLICY_MAX_UI_DURATION, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
     MotionPolicyReport, MotionPreviewTargetPolicy, validate_motion_policy,
 };
 pub use projection::{MotionProjection, MotionProjectionClip};
 pub use runtime::{
-    MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionRunState, MotionSnapshot,
-    MotionTimeline, MotionTimelineSample, lerp_rect, motion_source_rect, preferred_motion_edge,
-    retarget_motion_snapshots, reveal_rect_from_edge,
+    MotionEdge, MotionRetargetItem, MotionRetargetSet, MotionRunState, MotionSnapshot, lerp_rect,
+    motion_source_rect, preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
 };
 pub use sequence::{
-    MotionSequence, MotionSequenceSample, MotionSequenceStep, MotionSequenceStepSample,
-    MotionSequenceStepState,
+    MotionSequence as MotionProgressSequence, MotionSequenceSample as MotionProgressSequenceSample,
+    MotionSequenceStep as MotionProgressSequenceStep,
+    MotionSequenceStepSample as MotionProgressSequenceStepSample,
+    MotionSequenceStepState as MotionProgressSequenceStepState,
 };
-pub use spring::{
-    MotionModel, MotionPreset, MotionScalarSample, MotionSpring, MotionSpringPhysics,
-    MotionSpringPreset, MotionSpringSpec,
+pub use spring::{MotionScalarSample, MotionSpringPhysics};
+pub use transition::{
+    MotionFrameDriver, MotionFrameDriverSample, MotionFrameDriverUpdate, MotionIntent,
+    MotionProgressRun, MotionScalarRun, MotionScalarRunSample, MotionTransition,
 };

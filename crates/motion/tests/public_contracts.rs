@@ -1,31 +1,24 @@
 use open_gpui_motion::{
-    MotionClockSample, MotionDuration, MotionEasing, MotionExecutionPlan, MotionFrameDemand,
-    MotionFrameHost, MotionFrameHostResetReason, MotionFrameReason, MotionModel,
-    MotionPolicyContext, MotionPolicyInput, MotionPreference, MotionProgressExecution,
-    MotionProjection, MotionProjectionClip, MotionRunState, MotionScalarController,
-    MotionScalarExecution, MotionSequence, MotionSequenceStepState, MotionSpec, motion_point,
-    motion_px, motion_rect, motion_size,
+    MotionClockSample, MotionDuration, MotionEasing, MotionFrameDemand, MotionFrameDriver,
+    MotionFrameHostResetReason, MotionFrameReason, MotionIntent, MotionPreference,
+    MotionProgressSequence, MotionProgressSequenceStepState, MotionProjection,
+    MotionProjectionClip, MotionRunState, MotionTransition,
+    advanced::{MotionModel, MotionScalarController, MotionSpec},
+    motion_point, motion_px, motion_rect, motion_size,
 };
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[test]
-fn scalar_execution_samples_by_explicit_elapsed_controller_time() {
-    let spec = MotionSpec::new(
+fn scalar_run_samples_by_explicit_elapsed_controller_time() {
+    let transition = MotionTransition::duration(
+        MotionIntent::CommittedLayout,
         MotionPreference::Animated,
         MotionDuration::Custom(Duration::from_millis(100)),
         MotionEasing::Linear,
     );
-    let plan = MotionExecutionPlan::resolve(
-        MotionPolicyInput::new(
-            MotionPolicyContext::CommittedLayout,
-            MotionModel::timeline(spec),
-        )
-        .with_spatial_motion(true)
-        .with_reduced_motion_final_state(true),
-    );
-    let execution = MotionScalarExecution::start(plan, 0.0, 10.0, 0.0, Duration::from_millis(20));
+    let execution = transition.scalar_run(0.0, 10.0, 0.0, Duration::from_millis(20));
 
-    let start = execution.sample_at(Duration::from_millis(20));
+    let start = execution.sample_elapsed(Duration::from_millis(20));
     assert_eq!(start.value(), 0.0);
     assert!(start.frame_demand().needs_frame());
     assert_eq!(
@@ -33,11 +26,11 @@ fn scalar_execution_samples_by_explicit_elapsed_controller_time() {
         Some(MotionFrameReason::UpdateRender)
     );
 
-    let midpoint = execution.sample_at(Duration::from_millis(70));
+    let midpoint = execution.sample_elapsed(Duration::from_millis(70));
     assert_eq!(midpoint.value(), 5.0);
     assert!(!midpoint.complete());
 
-    let complete = execution.sample_at(Duration::from_millis(140));
+    let complete = execution.sample_elapsed(Duration::from_millis(140));
     assert_eq!(complete.value(), 10.0);
     assert!(complete.complete());
     assert!(!complete.frame_demand().needs_frame());
@@ -68,29 +61,22 @@ fn reduced_projection_clip_publishes_final_semantic_bounds_immediately() {
 
 #[test]
 fn progress_execution_is_public_adapter_lifecycle_contract() {
-    let started_at = Instant::now();
-    let progress = MotionProgressExecution::start_resolved(
-        MotionPolicyInput::new(
-            MotionPolicyContext::Continuity,
-            MotionModel::timeline(MotionSpec::new(
-                MotionPreference::Animated,
-                MotionDuration::Custom(Duration::from_millis(100)),
-                MotionEasing::Linear,
-            )),
-        )
-        .with_spatial_motion(true)
-        .with_reduced_motion_final_state(true),
-        started_at,
+    let progress = MotionTransition::duration(
+        MotionIntent::Continuity,
+        MotionPreference::Animated,
+        MotionDuration::Custom(Duration::from_millis(100)),
+        MotionEasing::Linear,
     );
+    let progress = progress.progress_run(Duration::ZERO);
 
-    let midpoint = progress.sample_since(started_at + Duration::from_millis(50));
+    let midpoint = progress.sample_elapsed(Duration::from_millis(50));
     assert_eq!(midpoint.progress(), 0.5);
     assert_eq!(
         midpoint.frame_demand().reason(),
         Some(MotionFrameReason::UpdateRender)
     );
 
-    let complete = progress.sample_at(Duration::from_millis(120));
+    let complete = progress.sample_elapsed(Duration::from_millis(120));
     assert_eq!(complete.progress(), 1.0);
     assert!(complete.complete());
     assert!(!complete.frame_demand().needs_frame());
@@ -111,45 +97,45 @@ fn frame_demand_and_clock_samples_are_public_adapter_contracts() {
 }
 
 #[test]
-fn frame_host_is_a_public_adapter_contract() {
+fn frame_driver_is_a_public_adapter_contract() {
     let active = MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender);
-    let mut frame_host = MotionFrameHost::new();
+    let mut frame_driver = MotionFrameDriver::new();
 
-    let first = frame_host.observe(MotionFrameDemand::Idle);
+    let first = frame_driver.observe(MotionFrameDemand::Idle);
     let second =
-        frame_host.sample_elapsed(Duration::from_millis(16), |clock| (clock.elapsed(), active));
+        frame_driver.sample_elapsed(Duration::from_millis(16), |clock| (clock.elapsed(), active));
 
     assert!(!first.should_request_frame());
     assert!(second.should_request_frame());
     assert_eq!(*second.value(), Duration::from_millis(16));
     assert_eq!(second.frame_demand(), active);
     assert_eq!(second.update().requested_frames(), 1);
-    assert_eq!(frame_host.last_frame_demand(), active);
+    assert_eq!(frame_driver.last_frame_demand(), active);
 }
 
 #[test]
-fn frame_host_reset_starts_a_new_adapter_epoch() {
+fn frame_driver_reset_starts_a_new_adapter_epoch() {
     let active = MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender);
-    let mut frame_host = MotionFrameHost::new();
+    let mut frame_driver = MotionFrameDriver::new();
 
     let active_sample =
-        frame_host.sample_elapsed(Duration::from_millis(90), |clock| (clock.elapsed(), active));
+        frame_driver.sample_elapsed(Duration::from_millis(90), |clock| (clock.elapsed(), active));
     assert!(active_sample.should_request_frame());
-    assert_eq!(frame_host.last_elapsed(), Duration::from_millis(90));
-    assert_eq!(frame_host.requested_frames(), 1);
+    assert_eq!(frame_driver.last_elapsed(), Duration::from_millis(90));
+    assert_eq!(frame_driver.requested_frames(), 1);
 
-    frame_host.reset(MotionFrameHostResetReason::Retarget);
+    frame_driver.reset(MotionFrameHostResetReason::Retarget);
 
-    assert_eq!(frame_host.last_elapsed(), Duration::ZERO);
-    assert_eq!(frame_host.last_frame_demand(), MotionFrameDemand::Idle);
-    assert_eq!(frame_host.requested_frames(), 0);
+    assert_eq!(frame_driver.last_elapsed(), Duration::ZERO);
+    assert_eq!(frame_driver.last_frame_demand(), MotionFrameDemand::Idle);
+    assert_eq!(frame_driver.requested_frames(), 0);
     assert_eq!(
-        frame_host.last_reset_reason(),
+        frame_driver.last_reset_reason(),
         Some(MotionFrameHostResetReason::Retarget)
     );
 
     let new_epoch =
-        frame_host.sample_elapsed(Duration::from_millis(10), |clock| (clock.elapsed(), active));
+        frame_driver.sample_elapsed(Duration::from_millis(10), |clock| (clock.elapsed(), active));
     assert_eq!(*new_epoch.value(), Duration::from_millis(10));
     assert_eq!(new_epoch.clock().delta(), Duration::from_millis(10));
     assert!(!new_epoch.clock().clamped());
@@ -198,7 +184,7 @@ fn sequence_plan_is_public_renderer_neutral_motion_composition() {
         MotionDuration::Custom(Duration::from_millis(100)),
         MotionEasing::Linear,
     ));
-    let mut sequence = MotionSequence::new();
+    let mut sequence = MotionProgressSequence::new();
 
     sequence
         .append("first", model)
@@ -213,17 +199,46 @@ fn sequence_plan_is_public_renderer_neutral_motion_composition() {
     let active = sequence.sample_at(Duration::from_millis(50));
     assert_eq!(
         active.step(&"first").expect("first step").state(),
-        MotionSequenceStepState::Active
+        MotionProgressSequenceStepState::Active
     );
     assert_eq!(
         active.step(&"after").expect("after step").state(),
-        MotionSequenceStepState::Pending
+        MotionProgressSequenceStepState::Pending
     );
     assert!(active.frame_demand().needs_frame());
 
     let complete = sequence.sample_at(Duration::from_millis(240));
     assert!(complete.complete());
     assert!(!complete.frame_demand().needs_frame());
+}
+
+#[test]
+fn low_level_motion_internals_are_explicit_advanced_imports() {
+    let manifest = include_str!("../src/lib.rs");
+
+    for forbidden in [
+        "MotionScalarController",
+        "MotionScalarExecution",
+        "MotionExecutionPlan",
+        "MotionFrameHost",
+        "MotionSequence,",
+        "MotionSpec",
+        "MotionModel",
+        "MotionPreset",
+    ] {
+        assert!(
+            !manifest
+                .lines()
+                .filter(|line| line.trim_start().starts_with("pub use "))
+                .any(|line| source_line_contains_identifier(line, forbidden)),
+            "root public surface should not re-export low-level {forbidden}; use open_gpui_motion::advanced"
+        );
+    }
+}
+
+fn source_line_contains_identifier(line: &str, token: &str) -> bool {
+    line.split(|character: char| character != '_' && !character.is_ascii_alphanumeric())
+        .any(|part| part == token)
 }
 
 #[test]

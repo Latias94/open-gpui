@@ -6,7 +6,7 @@ use crate::{
     transition_geometry::DockTransitionPlan,
 };
 use open_gpui::{Context, Window};
-use open_gpui_motion::{MotionModel, MotionPreset, MotionSpec};
+use open_gpui_motion::advanced::{MotionModel, MotionPreset, MotionSpec};
 
 impl DockHost {
     /// Presents one pane as a zoomed full-host pane without mutating the dock graph.

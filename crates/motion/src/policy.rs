@@ -229,7 +229,9 @@ fn model_bounce(model: MotionModel) -> f32 {
 mod tests {
     use super::*;
     use crate::{
-        MotionDuration, MotionEasing, MotionModel, MotionPreference, MotionSpec, MotionSpringSpec,
+        MotionDuration, MotionEasing, MotionPreference,
+        motion::MotionSpec,
+        spring::{MotionModel, MotionSpringSpec},
     };
     use std::time::Duration;
 

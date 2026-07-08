@@ -14,7 +14,10 @@ use open_gpui::{
     ScrollViewportProgrammaticSource, SharedString, StatefulInteractiveElement, Styled, Window,
     div, px,
 };
-use open_gpui_motion::{MotionFrameHost, MotionPreference, MotionPreset};
+use open_gpui_motion::{
+    MotionPreference,
+    advanced::{MotionFrameHost, MotionPreset},
+};
 use open_gpui_ui_core::{Sizable, Size, ThemeTokens, UiPx, VirtualizerSnapshot};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;

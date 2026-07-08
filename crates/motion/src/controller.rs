@@ -3,7 +3,8 @@
 use crate::spring::{MotionModel, MotionScalarSample};
 use crate::value::MotionValue;
 use crate::{
-    MotionPolicyInput, MotionPolicyReport, MotionRunState, MotionSpec, validate_motion_policy,
+    MotionPolicyInput, MotionPolicyReport, MotionRunState, motion::MotionSpec,
+    validate_motion_policy,
 };
 use std::time::{Duration, Instant};
 
@@ -17,6 +18,7 @@ pub enum MotionFrameDemand {
 }
 
 /// Minimal reason vocabulary for adapter-owned frame requests.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MotionFrameReason {
     /// The adapter should sample motion and render the updated presentation state.
@@ -389,7 +391,7 @@ pub struct MotionProgressSample {
 }
 
 impl MotionProgressSample {
-    const fn new(sample: MotionScalarExecutionSample) -> Self {
+    pub(crate) const fn new(sample: MotionScalarExecutionSample) -> Self {
         Self { sample }
     }
 
@@ -788,8 +790,9 @@ impl<K: Clone> MotionScalarController<K> {
 mod tests {
     use super::*;
     use crate::{
-        MotionDuration, MotionEasing, MotionModel, MotionPolicyContext, MotionPreference,
-        MotionRunState, MotionSpec, MotionSpringSpec,
+        MotionDuration, MotionEasing, MotionPolicyContext, MotionPreference, MotionRunState,
+        motion::MotionSpec,
+        spring::{MotionModel, MotionSpringSpec},
     };
     use std::time::Duration;
 

@@ -1,6 +1,6 @@
 //! Renderer-neutral runtime helpers for deterministic UI motion.
 
-use crate::{MotionPx, MotionRect, MotionSpec, motion_point, motion_rect, motion_size};
+use crate::{MotionPx, MotionRect, motion::MotionSpec, motion_point, motion_rect, motion_size};
 use std::{
     collections::HashMap,
     hash::Hash,

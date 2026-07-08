@@ -8,10 +8,12 @@ use open_gpui::{
     div, px, relative, rgb,
 };
 use open_gpui_motion::{
-    MotionExecutionPlan, MotionFrameDemand, MotionFrameHost, MotionFrameHostResetReason,
-    MotionFrameHostUpdate, MotionFrameReason, MotionModel, MotionPolicyContext, MotionPolicyInput,
-    MotionPreference, MotionPreset, MotionProgressExecution, MotionProjectionClip,
-    MotionScalarController, MotionSpec,
+    MotionFrameDemand, MotionFrameHostResetReason, MotionFrameReason, MotionPolicyContext,
+    MotionPolicyInput, MotionPreference, MotionProjectionClip,
+    advanced::{
+        MotionExecutionPlan, MotionFrameHost, MotionFrameHostUpdate, MotionModel, MotionPreset,
+        MotionProgressExecution, MotionScalarController, MotionSpec,
+    },
 };
 use open_gpui_ui_core::split::{
     SplitterLayoutTransition, SplitterLayoutTransitionSample, SplitterPanelTransitionSample,
@@ -369,7 +371,7 @@ fn splitter_frame_demand(needs_frame: bool) -> MotionFrameDemand {
 
 fn fraction_samples_for_transition(
     transition: &SplitterRuntimeTransition,
-    sample: &open_gpui_motion::MotionScalarControllerSample<String>,
+    sample: &open_gpui_motion::advanced::MotionScalarControllerSample<String>,
 ) -> Vec<f32> {
     transition
         .panel_ids
@@ -961,7 +963,7 @@ mod tests {
     use super::*;
     use open_gpui_motion::{
         MotionDuration, MotionEasing, MotionPolicyContext, MotionPolicyInput, MotionPolicyIssue,
-        MotionSpec, validate_motion_policy,
+        advanced::MotionSpec, validate_motion_policy,
     };
     use std::time::Duration;
 

@@ -10,7 +10,7 @@ mod style;
 
 #[cfg(test)]
 use open_gpui_motion::{
-    MotionFrameDemand, MotionFrameHostResetReason, MotionPreference, MotionPreset,
+    MotionFrameDemand, MotionFrameHostResetReason, MotionPreference, advanced::MotionPreset,
 };
 #[cfg(test)]
 use open_gpui_ui_core::ui_px;

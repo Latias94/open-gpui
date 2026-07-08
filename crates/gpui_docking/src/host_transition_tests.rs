@@ -22,8 +22,8 @@ use crate::{
 };
 use open_gpui::{Bounds, TestAppContext, point, px, size};
 use open_gpui_motion::{
-    MotionDuration, MotionEasing, MotionFrameDemand, MotionFrameReason, MotionModel,
-    MotionPreference, MotionPreset, MotionSpec, MotionSpringPreset,
+    MotionDuration, MotionEasing, MotionFrameDemand, MotionFrameReason, MotionPreference,
+    advanced::{MotionModel, MotionPreset, MotionSpec, MotionSpringPreset},
 };
 use slotmap::Key;
 use std::time::Duration;

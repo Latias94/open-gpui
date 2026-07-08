@@ -7,21 +7,23 @@ runtime.
 ## What This Crate Owns
 
 - Motion preferences, duration tokens, easing tokens, and immediate reduced-motion semantics.
-- Timeline and spring scalar sampling from explicit elapsed time.
-- Policy-resolved execution plans for committed layout, continuity, affordance previews, and
-  input-coupled paths.
-- Scalar controllers, retargeting, cancellation, explicit finish, terminal pruning, and
-  adapter-owned frame demand.
-- `MotionProgressExecution` for policy-resolved normalized 0..1 adapter progress runs.
-- `MotionSequence` for composing many keyed scalar tracks with absolute starts, append,
+- `MotionTransition` as the root facade for duration, spring, immediate, and reduced-motion
+  transitions selected by product intent.
+- Timeline and spring scalar sampling from explicit elapsed time, with `Instant` conversion kept in
+  adapter or `advanced` code instead of the root lifecycle.
+- `MotionScalarRun` and `MotionProgressRun` for policy-resolved scalar and normalized 0..1 adapter
+  runs.
+- Scalar controllers, retargeting, cancellation, explicit finish, terminal pruning, and raw
+  execution plans in `open_gpui_motion::advanced`.
+- `MotionProgressSequence` for composing many keyed scalar tracks with absolute starts, append,
   with-previous, after-previous, and staggered insertion while preserving renderer-neutral sampling.
 - `MotionClockSample` for mapping adapter `Instant` values into deterministic controller
   `Duration` samples with non-monotonic elapsed time clamped.
 - `MotionFrameDemand::combine` and `MotionFrameDemand::combine_all` for aggregating many motion
   sources into one adapter frame request.
-- `MotionFrameHost` for keeping adapter-owned frame request decisions consistent without depending
-  on a GPUI window, browser scheduler, or renderer, including explicit reset reasons when an
-  adapter starts a new local motion epoch.
+- `MotionFrameDriver` for keeping adapter-owned frame request decisions consistent without
+  depending on a GPUI window, browser scheduler, or renderer, including explicit reset reasons when
+  an adapter starts a new local motion epoch.
 - Neutral logical-pixel geometry plus projection, reveal, and clip helpers for final-size content.
 
 Adapters keep authority over rendering, input, focus, accessibility, frame scheduling, and clock
@@ -67,10 +69,11 @@ deterministic samples and frame demand.
 
 This crate deliberately does not provide React hooks, CSS parsing, DOM measurement, WAAPI behavior,
 browser-native acceleration, global animation loops, drag-and-drop policy, asset animation, or full
-shared-layout orchestration. `MotionProgressExecution` only owns a local 0..1 run lifecycle, and
-`MotionSequence` only owns deterministic keyed timing and sampling; neither mutates properties or
-schedules frames. Presence, keyframes, repeat/reverse/speed controls, public value subscriptions,
-and high-level builders are deferred until a first-party Open GPUI adapter proves the shape.
+shared-layout orchestration. `MotionProgressRun` only owns a local 0..1 run lifecycle, and
+`MotionProgressSequence` only owns deterministic keyed timing and sampling; neither mutates
+properties or schedules frames. Presence, keyframes, repeat/reverse/speed controls, public value
+subscriptions, and high-level property builders are deferred until a first-party Open GPUI adapter
+proves the shape.
 
 `open-gpui-motion` must stay below `open-gpui-ui-core`, `open-gpui-ui-components`,
 `open-gpui-docking`, `open-gpui-platform`, `open-gpui-web`, and renderer crates. Use conversion
@@ -80,24 +83,20 @@ helpers in adapter crates to map `MotionRect` to renderer-specific geometry.
 
 ```rust
 use open_gpui_motion::{
-    MotionDuration, MotionEasing, MotionExecutionPlan, MotionFrameHost, MotionModel,
-    MotionPolicyContext, MotionPolicyInput, MotionPreference, MotionScalarExecution, MotionSpec,
+    MotionDuration, MotionEasing, MotionFrameDriver, MotionIntent, MotionPreference,
+    MotionTransition,
 };
 use std::time::Duration;
 
-let spec = MotionSpec::new(
+let transition = MotionTransition::duration(
+    MotionIntent::CommittedLayout,
     MotionPreference::Animated,
     MotionDuration::Custom(Duration::from_millis(180)),
     MotionEasing::EaseOutStrong,
 );
-let plan = MotionExecutionPlan::resolve(
-    MotionPolicyInput::new(MotionPolicyContext::CommittedLayout, MotionModel::timeline(spec))
-        .with_spatial_motion(true)
-        .with_reduced_motion_final_state(true),
-);
-let execution = MotionScalarExecution::start(plan, 0.0, 1.0, 0.0, Duration::ZERO);
-let mut frame_host = MotionFrameHost::new();
-let sample = frame_host.sample_elapsed(Duration::from_millis(90), |clock| {
+let execution = transition.scalar_run(0.0, 1.0, 0.0, Duration::ZERO);
+let mut frame_driver = MotionFrameDriver::new();
+let sample = frame_driver.sample_elapsed(Duration::from_millis(90), |clock| {
     let sample = execution.sample_clock(clock);
     (sample.value(), sample.frame_demand())
 });
@@ -110,13 +109,13 @@ if sample.should_request_frame() {
 Reduced motion uses the same APIs and publishes the final semantic state immediately:
 
 ```rust
-use open_gpui_motion::{MotionPreference, MotionSpec};
+use open_gpui_motion::{MotionPreference, MotionTransition};
 
-let spec = MotionSpec::committed_layout(MotionPreference::Reduced);
-assert!(spec.is_immediate());
+let transition = MotionTransition::committed_layout(MotionPreference::Reduced);
+assert!(transition.is_immediate());
 ```
 
-Lifecycle ordering is intentionally small: start or retarget creates active sampled state, each sample returns a frame demand, `cancel` freezes the sampled value and goes idle without reaching the semantic final state, `finish` publishes the target value as completed, reduced motion publishes the final state immediately, and adapters may prune terminal tracks after observing idle demand. When a host retargets, cancels, finishes, prunes terminal state, or changes motion identity, call `MotionFrameHost::reset(MotionFrameHostResetReason::...)` before observing the next epoch's demand so stale elapsed time and requested-frame diagnostics do not leak into the new run.
+Lifecycle ordering is intentionally small: start or retarget creates active sampled state, each sample returns a frame demand, `cancel` freezes the sampled value and goes idle without reaching the semantic final state, `finish` publishes the target value as completed, reduced motion publishes the final state immediately, and adapters may prune terminal tracks after observing idle demand. When a host retargets, cancels, finishes, prunes terminal state, or changes motion identity, call `MotionFrameDriver::reset(MotionFrameHostResetReason::...)` before observing the next epoch's demand so stale elapsed time and requested-frame diagnostics do not leak into the new run.
 
 ## Testing
 

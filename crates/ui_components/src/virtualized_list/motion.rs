@@ -1,6 +1,6 @@
 use open_gpui_motion::{
-    MotionFrameDemand, MotionFrameHostResetReason, MotionModel, MotionPreset,
-    MotionScalarController,
+    MotionFrameDemand, MotionFrameHostResetReason,
+    advanced::{MotionModel, MotionPreset, MotionScalarController},
 };
 use open_gpui_ui_core::UiPx;
 use std::time::{Duration, Instant};
@@ -289,7 +289,9 @@ fn active_indicator_controller_for_bounds(
 }
 
 fn active_indicator_bounds_from_sample(
-    sample: &open_gpui_motion::MotionScalarControllerSample<VirtualizedListActiveIndicatorAxis>,
+    sample: &open_gpui_motion::advanced::MotionScalarControllerSample<
+        VirtualizedListActiveIndicatorAxis,
+    >,
     target: VirtualizedListActiveIndicatorBounds,
 ) -> VirtualizedListActiveIndicatorBounds {
     let top = sample

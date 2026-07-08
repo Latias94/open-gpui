@@ -1,7 +1,7 @@
 //! Renderer-neutral sequence plans for composing many motion tracks.
 
 use crate::{
-    MotionFrameDemand, MotionFrameReason, MotionModel, MotionRunState, MotionScalarSample,
+    MotionFrameDemand, MotionFrameReason, MotionRunState, MotionScalarSample, spring::MotionModel,
 };
 use std::time::Duration;
 
@@ -344,8 +344,9 @@ fn saturating_duration_add(left: Duration, right: Duration) -> Duration {
 mod tests {
     use super::*;
     use crate::{
-        MotionDuration, MotionEasing, MotionPreference, MotionSpec, MotionSpringPreset,
-        MotionSpringSpec,
+        MotionDuration, MotionEasing, MotionPreference,
+        motion::MotionSpec,
+        spring::{MotionSpringPreset, MotionSpringSpec},
     };
 
     fn linear_model(duration: Duration) -> MotionModel {

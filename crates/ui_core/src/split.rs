@@ -2,8 +2,8 @@
 
 use crate::{Orientation, Size, UiPx, UiRect, ui_point, ui_px, ui_rect, ui_size};
 use open_gpui_motion::{
-    MotionEdge, MotionPreference, MotionProjection, MotionProjectionClip, MotionRect, MotionSpec,
-    motion_point, motion_px, motion_rect, motion_size, reveal_rect_from_edge,
+    MotionEdge, MotionPreference, MotionProjection, MotionProjectionClip, MotionRect,
+    advanced::MotionSpec, motion_point, motion_px, motion_rect, motion_size, reveal_rect_from_edge,
 };
 use std::collections::HashMap;
 

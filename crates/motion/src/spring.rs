@@ -1,6 +1,6 @@
 //! Renderer-neutral spring sampling for layout-like UI motion.
 
-use crate::{MotionPreference, MotionRunState, MotionSpec, MotionTimeline};
+use crate::{MotionPreference, MotionRunState, motion::MotionSpec, runtime::MotionTimeline};
 use std::time::{Duration, Instant};
 
 const DEFAULT_MASS: f32 = 1.0;
@@ -797,7 +797,7 @@ mod tests {
 
     #[test]
     fn motion_model_wraps_timeline_and_spring_specs() {
-        let timeline = MotionModel::timeline(crate::MotionSpec::layout(MotionPreference::Animated));
+        let timeline = MotionModel::timeline(MotionSpec::layout(MotionPreference::Animated));
         let spring = MotionModel::spring(MotionSpringSpec::layout(MotionPreference::Animated));
 
         assert!(!timeline.is_immediate());
@@ -807,7 +807,7 @@ mod tests {
 
     #[test]
     fn motion_preset_resolves_default_springs_explicitly() {
-        let custom_timeline = MotionPreset::timeline(crate::MotionSpec::new(
+        let custom_timeline = MotionPreset::timeline(MotionSpec::new(
             MotionPreference::Animated,
             crate::MotionDuration::Custom(Duration::from_millis(240)),
             crate::MotionEasing::Linear,
@@ -832,7 +832,7 @@ mod tests {
 
     #[test]
     fn motion_model_samples_timeline_and_spring_as_scalar_values() {
-        let timeline = MotionModel::timeline(crate::MotionSpec::new(
+        let timeline = MotionModel::timeline(MotionSpec::new(
             MotionPreference::Animated,
             crate::MotionDuration::Custom(Duration::from_millis(200)),
             crate::MotionEasing::Linear,
