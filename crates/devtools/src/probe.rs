@@ -1,15 +1,18 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{SnapshotEnvelope, SnapshotKind, SnapshotRedactionSummary, SnapshotTree};
+use crate::{
+    SnapshotEnvelope, SnapshotKind, SnapshotRedactionSummary, SnapshotTree,
+    adapters::sanitize_sensitive_text,
+};
 
 /// Stable id for a devtools probe.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ProbeId(String);
 
 impl ProbeId {
     /// Creates a non-empty probe id.
     pub fn new(id: impl Into<String>) -> Result<Self, ProbeSnapshotError> {
-        let id = id.into();
+        let id = sanitize_sensitive_text(&id.into());
         if id.trim().is_empty() {
             return Err(ProbeSnapshotError::EmptyProbeId);
         }
@@ -19,6 +22,25 @@ impl ProbeId {
     /// Returns the id as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl Serialize for ProbeId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for ProbeId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let id = String::deserialize(deserializer)?;
+        Self::new(id).map_err(serde::de::Error::custom)
     }
 }
 

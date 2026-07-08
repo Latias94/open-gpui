@@ -2,6 +2,17 @@
 
 use serde::Serialize;
 
+const SENSITIVE_KEYS: &[&str] = &[
+    "access_token",
+    "api_key",
+    "apikey",
+    "auth",
+    "bearer",
+    "password",
+    "secret",
+    "token",
+];
+
 /// Converts a serializable payload into sanitized JSON for a snapshot node.
 pub fn summary_payload<T>(payload: T) -> serde_json::Value
 where
@@ -23,7 +34,16 @@ pub fn sanitize_json_value(value: serde_json::Value) -> serde_json::Value {
         }
         serde_json::Value::Object(map) => serde_json::Value::Object(
             map.into_iter()
-                .map(|(key, value)| (sanitize_sensitive_text(&key), sanitize_json_value(value)))
+                .map(|(key, value)| {
+                    let sanitized_key = sanitize_sensitive_text(&key);
+                    let sanitized_value =
+                        if is_sensitive_key_name(&key.to_ascii_lowercase(), SENSITIVE_KEYS) {
+                            redacted_json_value(value)
+                        } else {
+                            sanitize_json_value(value)
+                        };
+                    (sanitized_key, sanitized_value)
+                })
                 .collect(),
         ),
         serde_json::Value::String(value) => {
@@ -97,7 +117,13 @@ fn stable_hash(value: &str) -> u64 {
 
 fn redact_email_like(value: &str) -> String {
     let mut output = value.to_owned();
-    while let Some(at) = output.find('@') {
+    let mut cursor = 0;
+
+    while cursor < output.len() {
+        let Some(relative_at) = output[cursor..].find('@') else {
+            break;
+        };
+        let at = cursor + relative_at;
         let bytes = output.as_bytes();
         let mut start = at;
         while start > 0 && is_email_local_byte(bytes[start - 1]) {
@@ -112,8 +138,9 @@ fn redact_email_like(value: &str) -> String {
         let candidate = &output[start..end];
         if candidate.contains('.') && candidate.len() > 3 {
             output.replace_range(start..end, "[redacted-email]");
+            cursor = start + "[redacted-email]".len();
         } else {
-            break;
+            cursor = at + 1;
         }
     }
     output
@@ -149,31 +176,116 @@ fn redact_url_queries(value: &str) -> String {
 }
 
 fn redact_sensitive_assignments(value: &str) -> String {
-    const KEYS: &[&str] = &[
-        "access_token",
-        "api_key",
-        "apikey",
-        "auth",
-        "bearer",
-        "password",
-        "secret",
-        "token",
-    ];
-
     let mut output = Vec::new();
-    let mut tokens = value.split_whitespace().peekable();
+    let tokens = value.split_whitespace().collect::<Vec<_>>();
+    let mut index = 0;
 
-    while let Some(token) = tokens.next() {
-        let lower = token.to_ascii_lowercase();
-        if lower == "bearer" {
-            output.push("bearer [redacted]".to_owned());
-            tokens.next();
+    while index < tokens.len() {
+        if let Some((redacted, consumed)) =
+            redact_sensitive_token_sequence(&tokens, index, SENSITIVE_KEYS)
+        {
+            output.push(redacted);
+            index += consumed;
             continue;
         }
-        output.push(redact_sensitive_token(token, KEYS));
+
+        let token = tokens[index];
+        output.push(redact_sensitive_token(token, SENSITIVE_KEYS));
+        index += 1;
     }
 
     output.join(" ")
+}
+
+fn redacted_json_value(_value: serde_json::Value) -> serde_json::Value {
+    serde_json::Value::String("[redacted]".to_owned())
+}
+
+fn redact_sensitive_token_sequence(
+    tokens: &[&str],
+    index: usize,
+    keys: &[&str],
+) -> Option<(String, usize)> {
+    let token = tokens[index];
+    let lower = token.to_ascii_lowercase();
+
+    let same_token = redact_sensitive_token(token, keys);
+    if same_token != token {
+        return Some((same_token, 1));
+    }
+
+    if lower == "bearer" {
+        let consumed = match tokens.get(index + 1) {
+            Some(&"=" | &":") if tokens.get(index + 2).is_some() => 3,
+            Some(&"=" | &":") => 2,
+            Some(_) => 2,
+            None => 1,
+        };
+        return Some(("bearer [redacted]".to_owned(), consumed));
+    }
+
+    if let Some(separator) = trailing_assignment_separator(token) {
+        let base = &lower[..lower.len() - separator.len_utf8()];
+        if base == "bearer" {
+            let consumed = if tokens.get(index + 1).is_some() {
+                2
+            } else {
+                1
+            };
+            return Some(("bearer [redacted]".to_owned(), consumed));
+        }
+        if is_sensitive_key_name(base, keys) {
+            let consumed = if tokens.get(index + 1).is_some() {
+                2
+            } else {
+                1
+            };
+            return Some((format!("{token}[redacted]"), consumed));
+        }
+    }
+
+    if is_sensitive_key_name(&lower, keys) {
+        match tokens.get(index + 1) {
+            Some(&"=") => {
+                let consumed = if tokens.get(index + 2).is_some() {
+                    3
+                } else {
+                    2
+                };
+                return Some((format!("{token}=[redacted]"), consumed));
+            }
+            Some(&":") => {
+                let consumed = if tokens.get(index + 2).is_some() {
+                    3
+                } else {
+                    2
+                };
+                return Some((format!("{token}:[redacted]"), consumed));
+            }
+            Some(_) => {
+                return Some((format!("{token} [redacted]"), 2));
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn trailing_assignment_separator(token: &str) -> Option<char> {
+    token
+        .chars()
+        .last()
+        .filter(|character| matches!(character, '=' | ':'))
+}
+
+fn is_sensitive_key_name(name: &str, keys: &[&str]) -> bool {
+    keys.iter().copied().any(|key| {
+        name == key
+            || name.ends_with(&format!(".{key}"))
+            || name.ends_with(&format!("_{key}"))
+            || name.ends_with(&format!("-{key}"))
+    })
 }
 
 fn redact_sensitive_token(token: &str, keys: &[&str]) -> String {

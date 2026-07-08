@@ -12,6 +12,7 @@ pub struct DevtoolsInspectorState {
 impl DevtoolsInspectorState {
     /// Creates inspector state for a collected snapshot pass.
     pub fn new(collection: SnapshotCollection) -> Self {
+        let collection = collection.sanitized();
         let selected_probe_id = collection
             .snapshots
             .first()
@@ -78,7 +79,7 @@ impl DevtoolsInspectorState {
             .filter(|snapshot| self.matches_filter(snapshot))
             .map(|snapshot| DevtoolsSnapshotRow {
                 probe_id: snapshot.probe_id.clone(),
-                kind_label: snapshot.kind.as_label().to_owned(),
+                kind_label: snapshot.kind.as_label().into_owned(),
                 root_nodes: snapshot.tree.nodes.len(),
                 total_nodes: snapshot.tree.nodes.iter().map(count_node_tree).sum(),
                 redacted_values: snapshot.redaction.redacted_values,

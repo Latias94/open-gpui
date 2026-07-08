@@ -37,13 +37,18 @@ mutation and live property editing are intentionally out of scope for the initia
 
 ```rust
 use open_gpui_devtools::{
-    DevtoolsRegistry, SnapshotKind, SnapshotNode, SnapshotProbeSnapshot, SnapshotTree,
+    adapters::snapshot_node_with_payload, DevtoolsRegistry, SnapshotKind, SnapshotProbeSnapshot,
+    SnapshotTree,
 };
 
 let mut registry = DevtoolsRegistry::default();
 registry.register_snapshot_probe("theme", SnapshotKind::Theme, || {
     Ok(SnapshotProbeSnapshot::new(SnapshotTree::new([
-        SnapshotNode::new("theme", "Theme tokens"),
+        snapshot_node_with_payload(
+            ["theme"],
+            "Theme tokens",
+            serde_json::json!({ "mode": "dark" }),
+        ),
     ])))
 })?;
 let collection = registry.collect();
@@ -96,11 +101,12 @@ assert_eq!(envelope.redaction.redacted_values, 0);
 
 ## Redaction Policy
 
-Devtools should inspect framework facts, not retain secrets. Adapter helpers sanitize node ids,
-labels, payload strings, redaction notes, and diagnostics by default. Form and resource adapters
-derive `SnapshotRedactionSummary` from `RedactedValue::Redacted` and
-`RedactedResourceValue::Redacted` values instead of trusting callers to count manually. Values
-marked as JSON by the source snapshot are the only values eligible for exposure in payloads.
+Devtools should inspect framework facts, not retain secrets. Adapter helpers sanitize probe ids,
+node ids, labels, payload strings, redaction notes, diagnostics, and custom snapshot-kind labels by
+default. Form and resource adapters derive `SnapshotRedactionSummary` from
+`RedactedValue::Redacted` and `RedactedResourceValue::Redacted` values instead of trusting callers
+to count manually. Values marked as JSON by the source snapshot are the only values eligible for
+exposure in payloads.
 
 ## Verification
 
@@ -110,9 +116,10 @@ For focused devtools changes, run:
 cargo fmt -p open-gpui-devtools
 cargo check -p open-gpui-devtools --tests --locked
 cargo check -p open-gpui-devtools --features form,resource --tests --locked
-cargo check -p open-gpui-devtools --features gpui --tests --locked
+cargo check -p open-gpui-devtools --features gpui,motion,docking --tests --locked
 cargo nextest run -p open-gpui-devtools --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features form,resource form_resource_adapters --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --features gpui,motion,docking framework_adapters --no-fail-fast --locked
 ```
 
 When changing the gallery inspector surface, also run:
