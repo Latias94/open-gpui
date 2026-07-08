@@ -245,6 +245,8 @@ mod host_viewport_placement_tests;
 #[cfg(test)]
 mod host_viewport_platform_capability_tests;
 #[cfg(test)]
+mod host_viewport_preview_cleanup_tests;
+#[cfg(test)]
 mod host_viewport_preview_tests;
 #[cfg(test)]
 mod host_viewport_preview_visual_tests;
