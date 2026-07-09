@@ -21,8 +21,9 @@ passed on Windows PowerShell.
 - `cargo fmt -p open-gpui-devtools -p open-gpui-ui-foundation-gallery -p open-gpui-docking-native -p xtask --check`
 - `cargo check -p open-gpui-devtools --tests --locked`
 - `cargo check -p open-gpui-devtools --all-features --tests --locked`
-- `cargo nextest run -p open-gpui-devtools --all-features --test artifact_contracts --test report_contracts --test docking_runtime_contracts --no-fail-fast --locked` passed 16/16.
-- `cargo nextest run -p open-gpui-devtools --all-features --no-fail-fast --locked` passed 100/100.
+- `cargo nextest run -p open-gpui-devtools --all-features --test report_contracts --no-fail-fast --locked` passed 9/9 after adding the Gallery fixture noise regression.
+- `cargo nextest run -p open-gpui-devtools --all-features --test artifact_contracts --test report_contracts --test docking_runtime_contracts --no-fail-fast --locked` passed 17/17.
+- `cargo nextest run -p open-gpui-devtools --all-features --no-fail-fast --locked` passed 101/101.
 - `cargo check -p xtask --locked`
 - `cargo test -p xtask public_api_snapshot --locked` passed 6/6 targeted public API scanner tests.
 - `cargo nextest run -p xtask --test devtools_cli_contracts --no-fail-fast --locked` passed 8/8.
@@ -43,6 +44,9 @@ passed on Windows PowerShell.
   found one stale expected count: `simple-capture.json` now produces both the original domain
   diagnostic and the new layout invalid-bounds report rule. The contract was updated to expect two
   warning findings, and the rerun passed.
+- The Gallery report fixture was checked and locked to the known single
+  `capture-diagnostic.runtime.unavailable` warning so the first layout/motion/command/form/resource
+  rules do not make the Gallery fixture noisy.
 - `xtask/src/devtools/watch.rs` changed only because `cargo fmt -p xtask` normalized a nested
   `match` expression.
 

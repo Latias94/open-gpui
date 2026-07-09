@@ -451,6 +451,17 @@ fn report_rules_keep_clean_domain_summaries_quiet() {
     assert_eq!(report.summary.finding_count, 0);
 }
 
+#[test]
+fn report_rules_keep_gallery_fixture_to_known_runtime_diagnostic() {
+    let report: DevtoolsReport =
+        serde_json::from_str(include_str!("fixtures/gallery-report.json")).unwrap();
+    let finding_ids = finding_ids(&report);
+
+    assert_eq!(finding_ids, vec!["capture-diagnostic.runtime.unavailable"]);
+    assert_eq!(report.summary.warning_count, 1);
+    assert_eq!(report.summary.error_count, 0);
+}
+
 fn capture_with_domains<const D: usize, const S: usize>(
     target_id: DevtoolsTargetId,
     domains: [DevtoolsDomainSnapshot; D],
