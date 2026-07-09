@@ -187,22 +187,37 @@ An application-owned DevTools workbench should keep runtime authority in the app
 own only sanitized frames and inspector state:
 
 1. Build a `DevtoolsRegistry` from legacy probes, capture providers, or narrow app-owned DTOs.
-2. Wrap it in `DevtoolsSession::new(...).with_history_limit(...)`.
+2. Wrap it in `DevtoolsWorkbench::new(...).with_history_limit(...)`.
 3. Call `refresh()` from an explicit user action or test helper.
-4. Build `DevtoolsInspectorState::from_session_frame(frame)` or update an existing
+4. Read `workbench.inspector_state()` or update an existing
    `DevtoolsInspectorController` with `update_session_frame(frame, cx)`.
-5. Read `frame.diff_from_previous` or `state.diff_rows()` for sanitized change summaries.
+5. Read `workbench.diff_state_label()`, `diff_row_count()`, or `export()` for sanitized change
+   summaries.
 
 With the `gpui` feature, Gallery and docking-native use this same pattern: the shell/example owns
-the `DevtoolsSession`, app code supplies allowlisted runtime facts, and the controller is only the
-local inspector view.
+the `DevtoolsWorkbench`, app code supplies allowlisted runtime facts, and the controller is only the
+local inspector view. `DevtoolsWorkbench` is renderer-neutral; it does not mutate app state or own a
+GPUI controller.
+
+```rust
+use open_gpui_devtools::{DevtoolsRegistry, DevtoolsWorkbench};
+
+let registry = DevtoolsRegistry::default();
+let mut workbench = DevtoolsWorkbench::new("app.devtools", registry).with_history_limit(8);
+let frame = workbench.refresh()?;
+let state = workbench.inspector_state();
+
+assert_eq!(frame.generation, 1);
+assert_eq!(state.session_frame().map(|frame| frame.generation), Some(1));
+assert_eq!(workbench.diff_state_label(), "no-previous-frame");
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+With `gpui`, update the controller from an explicit action or test helper, not during render:
 
 ```rust,ignore
-let mut session = DevtoolsSession::new("app.devtools", registry).with_history_limit(8);
-let frame = session.refresh()?;
-let state = DevtoolsInspectorState::from_session_frame(frame.clone());
+let frame = workbench.refresh()?;
 
-// In a GPUI entity update handler, not during render:
 inspector.update(cx, |inspector, cx| {
     inspector.update_session_frame(frame, cx);
 });

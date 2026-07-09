@@ -7,7 +7,7 @@ use open_gpui::{
 };
 use open_gpui_devtools::{
     DevtoolsInspectorController, DevtoolsInspectorState, DevtoolsRegistry, DevtoolsSession,
-    DevtoolsSessionError, DevtoolsSessionFrame, ProbeSnapshotError,
+    DevtoolsSessionError, DevtoolsSessionFrame, DevtoolsWorkbench, ProbeSnapshotError,
 };
 use open_gpui_docking::{
     DockItemId, DockLayout, DockPanel, DockPanelDescriptor, DockPanelOpenOutcome,
@@ -54,31 +54,10 @@ struct RuntimeStatusPanel {
     last_operation: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DockingDevtoolsRefreshStatus {
-    Idle,
-    Changed,
-    NoChange,
-    CaptureError,
-}
-
-impl DockingDevtoolsRefreshStatus {
-    const fn as_label(self) -> &'static str {
-        match self {
-            Self::Idle => "idle",
-            Self::Changed => "changed",
-            Self::NoChange => "no-change",
-            Self::CaptureError => "capture-error",
-        }
-    }
-}
-
 struct DockingDevtoolsPanel {
-    session: DevtoolsSession,
+    workbench: DevtoolsWorkbench,
     status: Arc<Mutex<DockViewportRuntimeStatus>>,
     inspector: Entity<DevtoolsInspectorController>,
-    refresh_status: DockingDevtoolsRefreshStatus,
-    last_error: Option<String>,
 }
 
 impl DockingDevtoolsPanel {
@@ -91,6 +70,8 @@ impl DockingDevtoolsPanel {
         let frame = session
             .refresh()
             .expect("docking devtools initial capture should succeed");
+        let mut workbench = DevtoolsWorkbench::from_session(session);
+        workbench.mark_idle();
         let inspector = cx.new(|cx| {
             DevtoolsInspectorController::new(
                 "docking-devtools-inspector",
@@ -101,11 +82,9 @@ impl DockingDevtoolsPanel {
         });
 
         Self {
-            session,
+            workbench,
             status,
             inspector,
-            refresh_status: DockingDevtoolsRefreshStatus::Idle,
-            last_error: None,
         }
     }
 
@@ -122,63 +101,43 @@ impl DockingDevtoolsPanel {
             *status_slot = status;
         }
 
-        match self.session.refresh() {
+        match self.workbench.refresh() {
             Ok(frame) => {
-                self.refresh_status = if frame.diff_from_previous.as_ref().is_some_and(|diff| {
-                    diff.summary.added > 0
-                        || diff.summary.changed > 0
-                        || diff.summary.removed > 0
-                        || diff.summary.collisions > 0
-                }) {
-                    DockingDevtoolsRefreshStatus::Changed
-                } else {
-                    DockingDevtoolsRefreshStatus::NoChange
-                };
-                self.last_error = None;
                 self.inspector.update(cx, |inspector, cx| {
                     inspector.update_session_frame(frame.clone(), cx);
                 });
                 Ok(frame)
             }
-            Err(error) => {
-                self.refresh_status = DockingDevtoolsRefreshStatus::CaptureError;
-                self.last_error = Some(error.to_string());
-                Err(error)
-            }
+            Err(error) => Err(error),
         }
     }
 
     fn current_generation(&self) -> Option<u64> {
-        self.session.current_frame().map(|frame| frame.generation)
+        self.workbench.current_generation()
     }
 
     fn previous_generation(&self) -> Option<u64> {
-        self.session.previous_frame().map(|frame| frame.generation)
+        self.workbench.previous_generation()
     }
 
     fn retained_frames(&self) -> usize {
-        self.session.frames().len()
+        self.workbench.retained_frames()
     }
 
     fn history_limit(&self) -> usize {
-        self.session.history_limit()
+        self.workbench.history_limit()
     }
 
     fn diff_label(&self) -> String {
-        self.session
-            .current_frame()
-            .and_then(|frame| frame.diff_from_previous.as_ref())
-            .map(|diff| {
-                format!(
-                    "added={} changed={} removed={} collisions={} rows={}",
-                    diff.summary.added,
-                    diff.summary.changed,
-                    diff.summary.removed,
-                    diff.summary.collisions,
-                    diff.rows.len()
-                )
-            })
-            .unwrap_or_else(|| "no-previous-frame".to_string())
+        self.workbench.diff_summary_label()
+    }
+
+    fn refresh_status_label(&self) -> &'static str {
+        self.workbench.refresh_status().as_label()
+    }
+
+    fn last_error(&self) -> Option<&str> {
+        self.workbench.last_error()
     }
 }
 
@@ -306,8 +265,8 @@ impl RuntimeStatusPanel {
             self.devtools_panel.history_limit()
         );
         let diff = self.devtools_panel.diff_label();
-        let refresh_status = self.devtools_panel.refresh_status.as_label();
-        let last_error = self.devtools_panel.last_error.clone();
+        let refresh_status = self.devtools_panel.refresh_status_label();
+        let last_error = self.devtools_panel.last_error().map(str::to_owned);
 
         div()
             .id("docking-devtools:panel")
@@ -2746,10 +2705,7 @@ mod tests {
         panel.update(cx, |panel, cx| {
             panel.refresh_devtools_inspector(cx);
             assert_eq!(panel.devtools_panel.current_generation(), Some(2));
-            assert_eq!(
-                panel.devtools_panel.refresh_status,
-                DockingDevtoolsRefreshStatus::Changed
-            );
+            assert_eq!(panel.devtools_panel.refresh_status_label(), "changed");
             assert!(panel.devtools_panel.retained_frames() <= panel.devtools_panel.history_limit());
         });
     }

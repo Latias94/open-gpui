@@ -18,9 +18,10 @@ use open_gpui_devtools::{
     DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsEventKind, DevtoolsEventRecord,
     DevtoolsEventRecorder, DevtoolsInspectorState, DevtoolsRegistry, DevtoolsSession,
     DevtoolsSessionError, DevtoolsSessionExport, DevtoolsSessionFrame, DevtoolsTargetId,
-    DevtoolsTargetKind, DevtoolsTargetSnapshot, ProbeId, SnapshotCollection, SnapshotDiagnostic,
-    SnapshotKind, adapters::sanitize_sensitive_text, command as devtools_command, form, gpui,
-    motion, resource, ui_components,
+    DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsWorkbench, DevtoolsWorkbenchRefreshStatus,
+    ProbeId, SnapshotCollection, SnapshotDiagnostic, SnapshotKind,
+    adapters::sanitize_sensitive_text, command as devtools_command, form, gpui, motion, resource,
+    ui_components,
 };
 use open_gpui_motion::{MotionFrameDemand, MotionFrameReason};
 use open_gpui_resource::PaginatedResourceSnapshotView;
@@ -95,29 +96,7 @@ impl GalleryDevtoolsLiveFacts {
 }
 
 /// Latest user-visible Gallery DevTools workbench refresh outcome.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GalleryDevtoolsRefreshStatus {
-    /// The workbench has an initialized frame and no refresh is in progress.
-    Idle,
-    /// A refresh completed with at least one changed diff row.
-    Changed,
-    /// A refresh completed without changed diff rows.
-    NoChange,
-    /// A refresh failed before the inspector controller could be updated.
-    CaptureError,
-}
-
-impl GalleryDevtoolsRefreshStatus {
-    /// Returns the stable status label used by tests and UI selectors.
-    pub const fn as_label(self) -> &'static str {
-        match self {
-            Self::Idle => "idle",
-            Self::Changed => "changed",
-            Self::NoChange => "no-change",
-            Self::CaptureError => "capture-error",
-        }
-    }
-}
+pub type GalleryDevtoolsRefreshStatus = DevtoolsWorkbenchRefreshStatus;
 
 /// Latest user-visible selection retention outcome after a Gallery DevTools refresh.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -143,20 +122,18 @@ impl GalleryDevtoolsSelectionStatus {
 
 /// Shell-owned Gallery DevTools session and bounded history owner.
 pub struct GalleryDevtoolsWorkbench {
-    session: DevtoolsSession,
+    workbench: DevtoolsWorkbench,
     live_facts: Arc<Mutex<GalleryDevtoolsLiveFacts>>,
-    refresh_status: GalleryDevtoolsRefreshStatus,
     selection_status: GalleryDevtoolsSelectionStatus,
-    last_error: Option<String>,
 }
 
 impl std::fmt::Debug for GalleryDevtoolsWorkbench {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GalleryDevtoolsWorkbench")
-            .field("session_id", &self.session.session_id())
+            .field("session_id", &self.workbench.session_id())
             .field("current_generation", &self.current_generation())
             .field("retained_frames", &self.retained_frames())
-            .field("refresh_status", &self.refresh_status)
+            .field("refresh_status", &self.refresh_status())
             .field("selection_status", &self.selection_status)
             .finish()
     }
@@ -167,12 +144,11 @@ impl GalleryDevtoolsWorkbench {
     pub fn new(initial_facts: GalleryDevtoolsLiveFacts) -> Self {
         let live_facts = Arc::new(Mutex::new(initial_facts.clone()));
         let session = devtools_gallery_session_with_facts(Arc::clone(&live_facts));
+        let workbench = DevtoolsWorkbench::from_session(session);
         let mut workbench = Self {
-            session,
+            workbench,
             live_facts,
-            refresh_status: GalleryDevtoolsRefreshStatus::Idle,
             selection_status: GalleryDevtoolsSelectionStatus::None,
-            last_error: None,
         };
         workbench
             .refresh_with_facts(initial_facts.clone())
@@ -180,17 +156,13 @@ impl GalleryDevtoolsWorkbench {
         workbench
             .refresh_with_facts(initial_facts)
             .expect("gallery devtools workbench second refresh succeeds");
-        workbench.refresh_status = GalleryDevtoolsRefreshStatus::Idle;
+        workbench.workbench.mark_idle();
         workbench
     }
 
     /// Returns the inspector state for the current shell-owned frame.
     pub fn inspector_state(&self) -> DevtoolsInspectorState {
-        self.session
-            .current_frame()
-            .cloned()
-            .map(DevtoolsInspectorState::from_session_frame)
-            .unwrap_or_else(|| DevtoolsInspectorState::from_capture(DevtoolsCapture::default()))
+        self.workbench.inspector_state()
     }
 
     /// Refreshes the shell-owned session with new allowlisted Gallery facts.
@@ -199,26 +171,7 @@ impl GalleryDevtoolsWorkbench {
         facts: GalleryDevtoolsLiveFacts,
     ) -> Result<DevtoolsSessionFrame, DevtoolsSessionError> {
         self.set_live_facts(facts);
-        match self.session.refresh() {
-            Ok(frame) => {
-                self.refresh_status = if frame
-                    .diff_from_previous
-                    .as_ref()
-                    .is_some_and(|diff| diff.summary.changed > 0 || diff.summary.added > 0)
-                {
-                    GalleryDevtoolsRefreshStatus::Changed
-                } else {
-                    GalleryDevtoolsRefreshStatus::NoChange
-                };
-                self.last_error = None;
-                Ok(frame)
-            }
-            Err(error) => {
-                self.refresh_status = GalleryDevtoolsRefreshStatus::CaptureError;
-                self.last_error = Some(error.to_string());
-                Err(error)
-            }
-        }
+        self.workbench.refresh()
     }
 
     /// Records the event selection retention outcome after a controller refresh.
@@ -227,8 +180,8 @@ impl GalleryDevtoolsWorkbench {
     }
 
     /// Returns the latest refresh status.
-    pub const fn refresh_status(&self) -> GalleryDevtoolsRefreshStatus {
-        self.refresh_status
+    pub fn refresh_status(&self) -> GalleryDevtoolsRefreshStatus {
+        self.workbench.refresh_status()
     }
 
     /// Returns the latest selection status.
@@ -238,52 +191,37 @@ impl GalleryDevtoolsWorkbench {
 
     /// Returns the retained frame count.
     pub fn retained_frames(&self) -> usize {
-        self.session.frames().len()
+        self.workbench.retained_frames()
     }
 
     /// Returns the configured session history limit.
-    pub const fn history_limit(&self) -> usize {
-        self.session.history_limit()
+    pub fn history_limit(&self) -> usize {
+        self.workbench.history_limit()
     }
 
     /// Returns the current generation, if a frame exists.
     pub fn current_generation(&self) -> Option<u64> {
-        self.session.current_frame().map(|frame| frame.generation)
+        self.workbench.current_generation()
     }
 
     /// Returns the previous generation, if one is attached to the current frame.
     pub fn previous_generation(&self) -> Option<u64> {
-        self.session
-            .current_frame()
-            .and_then(|frame| frame.previous_generation)
+        self.workbench.previous_generation()
     }
 
     /// Returns the current diff row count.
     pub fn diff_row_count(&self) -> usize {
-        self.session
-            .current_frame()
-            .and_then(|frame| frame.diff_from_previous.as_ref())
-            .map_or(0, |diff| diff.rows.len())
+        self.workbench.diff_row_count()
     }
 
     /// Returns the current diff state label.
     pub fn diff_state_label(&self) -> &'static str {
-        let Some(frame) = self.session.current_frame() else {
-            return "no-previous-frame";
-        };
-        let Some(diff) = frame.diff_from_previous.as_ref() else {
-            return "no-previous-frame";
-        };
-        if diff.summary.changed > 0 || diff.summary.added > 0 || diff.summary.removed > 0 {
-            "changed"
-        } else {
-            "no-change"
-        }
+        self.workbench.diff_state_label()
     }
 
     /// Returns the latest sanitized refresh error, if one exists.
     pub fn last_error(&self) -> Option<&str> {
-        self.last_error.as_deref()
+        self.workbench.last_error()
     }
 
     fn set_live_facts(&self, facts: GalleryDevtoolsLiveFacts) {

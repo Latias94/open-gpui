@@ -32,6 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Open GPUI now declares Rust 1.92 as the workspace MSRV and verifies MSRV drift, duplicate dependency versions, and cargo-audit results through a dedicated dependency-health gate.
 - User entry points now include a minimal single-window docking example and refreshed crate READMEs for component, motion, docking, web, platform, and verification workflows.
 - `open-gpui-devtools` split its GPUI feature implementation into runtime DTO/capture, inspector controller, and render modules while preserving the `open_gpui_devtools::gpui` facade and root re-exports.
+- `open-gpui-devtools` now exposes `DevtoolsWorkbench`, a renderer-neutral app-owned wrapper around local sessions, bounded history, refresh status, inspector state, and sanitized diff readouts.
 
 ### Security
 

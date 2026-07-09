@@ -28,6 +28,7 @@ mod target;
 pub mod timeline;
 #[cfg(feature = "ui-components")]
 pub mod ui_components;
+mod workbench;
 
 pub use diff::{
     DevtoolsCaptureDiff, DevtoolsDiffKind, DevtoolsDiffRow, DevtoolsDiffStatus, DevtoolsDiffSummary,
@@ -76,3 +77,6 @@ pub use target::{
     DevtoolsTargetId, DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsTargetTree,
 };
 pub use timeline::{DEFAULT_TIMELINE_EVENT_LIMIT, TimelineEventSnapshot, TimelineSnapshot};
+pub use workbench::{
+    DevtoolsWorkbench, DevtoolsWorkbenchDiffState, DevtoolsWorkbenchRefreshStatus,
+};

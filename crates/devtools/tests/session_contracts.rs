@@ -8,7 +8,8 @@ use open_gpui_devtools::{
     DevtoolsDomainKind, DevtoolsDomainSnapshot, DevtoolsEventKind, DevtoolsEventRecord,
     DevtoolsRegistry, DevtoolsSession, DevtoolsSessionError, DevtoolsSessionExport,
     DevtoolsSessionImportError, DevtoolsSessionImportLimits, DevtoolsTargetId, DevtoolsTargetKind,
-    DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeSnapshotError, SnapshotEnvelope,
+    DevtoolsTargetSnapshot, DevtoolsTargetTree, DevtoolsWorkbench, DevtoolsWorkbenchDiffState,
+    DevtoolsWorkbenchRefreshStatus, ProbeSnapshotError, SnapshotEnvelope,
 };
 
 #[test]
@@ -96,6 +97,92 @@ fn session_refresh_preserves_provider_failure_diagnostic() {
         "provider.failing"
     );
     assert!(!frame.capture.diagnostics[0].message.contains("secret"));
+}
+
+#[test]
+fn workbench_tracks_refresh_status_history_and_inspector_state() {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let provider_counter = Arc::clone(&counter);
+    let mut registry = DevtoolsRegistry::default();
+    registry
+        .register_capture_provider_fn("provider.runtime", move || {
+            let value = provider_counter.fetch_add(1, Ordering::SeqCst) + 1;
+            Ok(runtime_capture(value))
+        })
+        .unwrap();
+    let mut workbench = DevtoolsWorkbench::new("app.devtools", registry).with_history_limit(2);
+
+    assert_eq!(
+        workbench.refresh_status(),
+        DevtoolsWorkbenchRefreshStatus::Idle
+    );
+    assert_eq!(workbench.current_generation(), None);
+    assert_eq!(
+        workbench.diff_state(),
+        DevtoolsWorkbenchDiffState::NoPreviousFrame
+    );
+
+    let first = workbench.refresh().unwrap();
+    assert_eq!(first.generation, 1);
+    assert_eq!(
+        workbench.refresh_status(),
+        DevtoolsWorkbenchRefreshStatus::NoPreviousFrame
+    );
+    assert_eq!(workbench.diff_state_label(), "no-previous-frame");
+    assert_eq!(
+        workbench
+            .inspector_state()
+            .session_frame()
+            .map(|summary| summary.generation),
+        Some(1)
+    );
+
+    let second = workbench.refresh().unwrap();
+    assert_eq!(second.generation, 2);
+    assert_eq!(
+        workbench.refresh_status(),
+        DevtoolsWorkbenchRefreshStatus::Changed
+    );
+    assert_eq!(workbench.diff_state(), DevtoolsWorkbenchDiffState::Changed);
+    assert!(workbench.diff_row_count() > 0);
+
+    workbench.refresh().unwrap();
+    assert_eq!(workbench.retained_frames(), 2);
+    assert_eq!(workbench.history_limit(), 2);
+    assert_eq!(workbench.current_generation(), Some(3));
+    assert_eq!(workbench.previous_generation(), Some(2));
+
+    workbench.mark_idle();
+    assert_eq!(
+        workbench.refresh_status(),
+        DevtoolsWorkbenchRefreshStatus::Idle
+    );
+}
+
+#[test]
+fn workbench_reports_no_change_and_capture_error() {
+    let mut workbench =
+        DevtoolsWorkbench::new("static.devtools", registry_for_value(1)).with_history_limit(4);
+
+    workbench.refresh().unwrap();
+    workbench.refresh().unwrap();
+
+    assert_eq!(
+        workbench.refresh_status(),
+        DevtoolsWorkbenchRefreshStatus::NoChange
+    );
+    assert_eq!(workbench.diff_state(), DevtoolsWorkbenchDiffState::NoChange);
+    assert_eq!(workbench.last_error(), None);
+
+    workbench.session_mut().close();
+    let error = workbench.refresh().unwrap_err();
+
+    assert!(matches!(error, DevtoolsSessionError::Closed { .. }));
+    assert_eq!(
+        workbench.refresh_status(),
+        DevtoolsWorkbenchRefreshStatus::CaptureError
+    );
+    assert!(workbench.last_error().is_some());
 }
 
 #[test]
