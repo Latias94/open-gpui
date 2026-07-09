@@ -11,8 +11,8 @@ use open_gpui_docking::{
         DockViewportCoordinateSpaceRecord, DockViewportLifecycleRecord,
         DockViewportPlatformCapabilityRecord, DockViewportPlatformFlagCapabilityRecord,
         DockViewportPlatformSyncRecord, DockViewportReleaseUnavailableRecord,
-        DockViewportRestoreReadinessRecord, DockViewportTearOffPlacementRecord,
-        DockVisualAffordanceDebugSummary,
+        DockViewportRestoreReadinessRecord, DockViewportRuntimeStatus,
+        DockViewportTearOffPlacementRecord, DockVisualAffordanceDebugSummary,
     },
     model::{
         DockActionApplyError, DockController, DockLayoutCentralRegion, DockLayoutSpace,
@@ -166,6 +166,10 @@ impl Render for RuntimeStatusPanel {
                 format!("registered viewports: {}", spaces.len()),
                 format!("placement snapshots: {}", placement.viewports.len()),
                 format!("spaces: {}", spaces.join(", ")),
+                format!(
+                    "devtools capture: {}",
+                    docking_runtime_devtools_summary(&status)
+                ),
                 format!(
                     "last route: {}",
                     debug_option(status.last_route.as_ref().map(|record| &record.target))
@@ -516,6 +520,24 @@ fn open_item_result(
         ),
         Err(error) => format!("open {label} failed: {error}"),
     }
+}
+
+fn docking_runtime_devtools_summary(status: &DockViewportRuntimeStatus) -> String {
+    let inspection = open_gpui_devtools::docking::docking_runtime_inspection(status);
+    format!(
+        "viewports={}, events={}, affordances={}, diagnostics={}",
+        inspection.summary.viewport_lifecycle_count,
+        inspection.summary.runtime_event_count,
+        inspection.summary.visual_affordance_count,
+        inspection.summary.diagnostic_count
+    )
+}
+
+#[cfg(test)]
+fn docking_runtime_devtools_capture(
+    status: &DockViewportRuntimeStatus,
+) -> open_gpui_devtools::DevtoolsCapture {
+    open_gpui_devtools::docking::docking_runtime_capture(status)
 }
 
 fn debug_option<T: std::fmt::Debug>(value: Option<T>) -> String {
@@ -2445,6 +2467,48 @@ mod tests {
         assert_eq!(tear_off_placement_summary(None), "unavailable");
         assert_eq!(capability_flag(true), "yes");
         assert_eq!(capability_flag(false), "no");
+    }
+
+    #[test]
+    fn runtime_status_panel_exports_devtools_dogfood_capture() {
+        let mut status = DockViewportRuntimeStatus::default();
+        status.platform_capabilities = Some(DockViewportPlatformCapabilityRecord {
+            platform_viewport_windows: false,
+            global_window_bounds: true,
+            window_stack: false,
+            display_work_area: true,
+            dpi_scale: true,
+            live_window_move: false,
+            no_input_windows: true,
+            hovered_window_ignores_no_input: false,
+        });
+        status.viewport_lifecycle.push(DockViewportLifecycleRecord {
+            space: DockSpaceId::from(SPACE),
+            window_id: open_gpui::WindowId::from(1),
+            route_status: DockViewportRouteStatus::RouteReady,
+            input_status: DockViewportInputStatus::ReceivesInput,
+            platform_request_status: DockViewportPlatformRequestStatus::default(),
+            coordinate_status: None,
+            facts_generation: 1,
+        });
+
+        let capture = docking_runtime_devtools_capture(&status);
+        let summary = docking_runtime_devtools_summary(&status);
+        let serialized = serde_json::to_string(&capture).unwrap();
+
+        assert_eq!(
+            summary,
+            "viewports=1, events=0, affordances=0, diagnostics=1"
+        );
+        assert!(serialized.contains("Docking runtime"));
+        assert!(serialized.contains("docking.platform_viewport_windows.unsupported"));
+        assert!(
+            capture
+                .domains
+                .iter()
+                .any(|domain| domain.kind.as_label() == "docking")
+        );
+        assert_eq!(capture.diagnostics.len(), 1);
     }
 
     fn assert_viewport_title(

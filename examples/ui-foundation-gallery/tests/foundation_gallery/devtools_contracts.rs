@@ -1,4 +1,5 @@
 use super::*;
+use open_gpui_devtools::{DevtoolsDiffKind, DevtoolsDiffStatus};
 
 #[test]
 fn devtools_gallery_collects_registry_backed_snapshots() {
@@ -21,7 +22,8 @@ fn devtools_gallery_collects_registry_backed_snapshots() {
             "motion",
             "resource",
             "theme",
-            "timeline.motion-frame"
+            "timeline.motion-frame",
+            "gpui.runtime.gallery"
         ]
     );
     assert_eq!(
@@ -52,7 +54,7 @@ fn devtools_gallery_collects_registry_backed_snapshots() {
             .redacted_values,
         2
     );
-    assert_eq!(collection.diagnostics.len(), 2);
+    assert_eq!(collection.diagnostics.len(), 1);
 }
 
 #[test]
@@ -71,9 +73,11 @@ fn devtools_gallery_capture_projects_targets_domains_and_events() {
         .collect::<Vec<_>>();
 
     assert!(target_ids.contains(&"app"));
+    assert!(target_ids.contains(&"gpui.runtime.gallery"));
     assert!(target_ids.contains(&"probe.command.registry"));
     assert!(target_ids.contains(&"probe.layout.scroll-viewport"));
     assert!(domain_labels.contains(&"command"));
+    assert!(domain_labels.contains(&"gpui-runtime"));
     assert!(domain_labels.contains(&"layout"));
     assert!(domain_labels.contains(&"timeline"));
     assert!(
@@ -81,6 +85,12 @@ fn devtools_gallery_capture_projects_targets_domains_and_events() {
             .events
             .iter()
             .any(|event| event.id() == "gallery.motion-frame-demand")
+    );
+    assert!(
+        capture
+            .events
+            .iter()
+            .any(|event| event.id() == "gpui.frame-metadata")
     );
     assert!(
         capture
@@ -94,7 +104,44 @@ fn devtools_gallery_capture_projects_targets_domains_and_events() {
             .iter()
             .any(|diagnostic| diagnostic.code.starts_with("capture.duplicate_"))
     );
-    assert_eq!(capture.snapshot_collection().snapshots.len(), 10);
+    assert_eq!(capture.snapshot_collection().snapshots.len(), 11);
+}
+
+#[test]
+fn devtools_gallery_session_frame_exposes_history_and_diff() {
+    let frame = pages::devtools::devtools_gallery_session_frame();
+    let export = pages::devtools::devtools_gallery_session_export();
+    let state = pages::devtools::devtools_gallery_state();
+    let session_frame = state.session_frame().expect("session frame summary");
+    let diff = frame
+        .diff_from_previous
+        .as_ref()
+        .expect("second refresh has a previous-frame diff");
+
+    assert_eq!(frame.generation, 2);
+    assert_eq!(frame.previous_generation, Some(1));
+    assert_eq!(session_frame.generation, 2);
+    assert_eq!(session_frame.previous_generation, Some(1));
+    assert_eq!(session_frame.diff_row_count, diff.rows.len());
+    assert_eq!(export.retained_frames, 2);
+    assert_eq!(export.current_generation, Some(2));
+    assert!(diff.summary.changed > 0);
+    assert!(state.diff_rows().iter().any(|row| {
+        row.status == DevtoolsDiffStatus::Changed
+            && (row.identity.contains("gpui.runtime.gallery")
+                || row.identity.contains("gpui.frame-metadata")
+                || row.identity.contains("gallery.motion-frame-demand"))
+    }));
+    assert!(diff.rows.iter().any(|row| {
+        row.kind == DevtoolsDiffKind::Snapshot
+            && row.status == DevtoolsDiffStatus::Changed
+            && row.identity.contains("gpui.runtime.gallery")
+    }));
+
+    let export_json = serde_json::to_string(&export).unwrap();
+    assert!(export_json.contains("open-gpui-devtools-session/v1"));
+    assert!(!export_json.contains("raw_text"));
+    assert!(!export_json.contains("clipboard_contents"));
 }
 
 #[test]
@@ -135,6 +182,12 @@ fn devtools_gallery_snapshots_reflect_component_sample_state() {
             .snapshots
             .iter()
             .any(|snapshot| snapshot.probe_id.as_str() == "command.keymap")
+    );
+    assert!(
+        collection
+            .snapshots
+            .iter()
+            .any(|snapshot| snapshot.probe_id.as_str() == "gpui.runtime.gallery")
     );
     assert!(
         collection
@@ -233,16 +286,11 @@ fn devtools_gallery_reports_unmounted_framework_diagnostics() {
     let state = pages::devtools::devtools_gallery_state();
     let diagnostics = state.diagnostics();
 
-    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics.len(), 1);
     assert!(
         diagnostics
             .iter()
             .all(|diagnostic| diagnostic.code == "runtime.unavailable")
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.probe_id.as_str() == "scroll")
     );
     assert!(
         diagnostics
@@ -260,6 +308,7 @@ fn devtools_gallery_does_not_keep_static_demo_snapshot_builders() {
     assert!(!source.contains("fn resource_snapshot"));
     assert!(!source.contains("fn docking_snapshot"));
     assert!(source.contains("DevtoolsCapture::from_snapshot_collection"));
+    assert!(source.contains("DevtoolsSession::new"));
     assert!(source.contains("DevtoolsRegistry::default()"));
     assert!(source.contains("register_capture_provider_fn"));
 }

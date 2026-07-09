@@ -1,5 +1,10 @@
 //! Devtools inspector gallery page.
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+
 use open_gpui::{
     KeyBinding, KeyContext, Keymap, ScrollViewportChangeSource, ScrollViewportSnapshot, actions,
     bounds, point, px, size,
@@ -11,9 +16,10 @@ use open_gpui_command::{
 };
 use open_gpui_devtools::{
     DevtoolsCapture, DevtoolsDomainId, DevtoolsEventKind, DevtoolsEventRecord,
-    DevtoolsEventRecorder, DevtoolsInspectorState, DevtoolsRegistry, DevtoolsTargetId, ProbeId,
-    SnapshotCollection, SnapshotDiagnostic, SnapshotKind, command as devtools_command, form, gpui,
-    motion, resource, ui_components,
+    DevtoolsEventRecorder, DevtoolsInspectorState, DevtoolsRegistry, DevtoolsSession,
+    DevtoolsSessionExport, DevtoolsSessionFrame, DevtoolsTargetId, ProbeId, SnapshotCollection,
+    SnapshotDiagnostic, SnapshotKind, command as devtools_command, form, gpui, motion, resource,
+    ui_components,
 };
 use open_gpui_motion::{MotionFrameDemand, MotionFrameReason};
 use open_gpui_resource::PaginatedResourceSnapshotView;
@@ -56,24 +62,55 @@ actions!(
 
 /// Returns the deterministic devtools inspector state used by the gallery.
 pub fn devtools_gallery_state() -> DevtoolsInspectorState {
-    DevtoolsInspectorState::from_capture(devtools_gallery_capture())
+    DevtoolsInspectorState::from_session_frame(devtools_gallery_session_frame())
 }
 
 /// Returns the deterministic target/domain/event capture used by the gallery.
 pub fn devtools_gallery_capture() -> DevtoolsCapture {
+    devtools_gallery_session_frame().capture
+}
+
+/// Returns the latest deterministic session frame used by the gallery workbench.
+pub fn devtools_gallery_session_frame() -> DevtoolsSessionFrame {
+    let mut session = devtools_gallery_session();
+    session
+        .refresh()
+        .expect("gallery devtools session first refresh succeeds");
+    session
+        .refresh()
+        .expect("gallery devtools session second refresh succeeds")
+}
+
+/// Returns a sanitized deterministic two-frame session export for offline replay tests.
+pub fn devtools_gallery_session_export() -> DevtoolsSessionExport {
+    let mut session = devtools_gallery_session();
+    session
+        .refresh()
+        .expect("gallery devtools session first refresh succeeds");
+    session
+        .refresh()
+        .expect("gallery devtools session second refresh succeeds");
+    session.export()
+}
+
+fn devtools_gallery_session() -> DevtoolsSession {
     let mut registry = DevtoolsRegistry::default();
+    let refresh_index = Arc::new(AtomicU64::new(0));
+    let provider_refresh_index = Arc::clone(&refresh_index);
     registry
-        .register_capture_provider_fn("gallery.devtools", || {
-            Ok(devtools_gallery_provider_capture())
+        .register_capture_provider_fn("gallery.devtools", move || {
+            let refresh_index = provider_refresh_index.fetch_add(1, Ordering::SeqCst) + 1;
+            Ok(devtools_gallery_provider_capture(refresh_index))
         })
         .expect("unique gallery devtools capture provider");
 
-    registry.collect_capture()
+    DevtoolsSession::new("gallery.devtools", registry).with_history_limit(4)
 }
 
-fn devtools_gallery_provider_capture() -> DevtoolsCapture {
+fn devtools_gallery_provider_capture(refresh_index: u64) -> DevtoolsCapture {
     let collection = devtools_gallery_legacy_collection();
     let base_capture = DevtoolsCapture::from_snapshot_collection(collection);
+    let gpui_capture = gpui::gpui_runtime_capture(&gallery_gpui_runtime_sample(refresh_index));
     let timeline_probe_id = ProbeId::new("timeline.motion-frame").expect("valid timeline probe id");
     let timeline_target_id = DevtoolsTargetId::from_probe_id(&timeline_probe_id);
     let timeline_domain_id =
@@ -87,21 +124,32 @@ fn devtools_gallery_provider_capture() -> DevtoolsCapture {
         )
         .target_id(timeline_target_id)
         .domain_id(timeline_domain_id)
-        .timestamp_ms(42)
+        .timestamp_ms(40 + refresh_index)
         .with_payload(serde_json::json!({
             "page": "devtools",
             "source": "ui-foundation-gallery",
-            "needs_frame": true,
+            "refresh_index": refresh_index,
+            "needs_frame": refresh_index % 2 == 0,
         })),
     );
     let event_batch = recorder.snapshot();
+    let mut targets = base_capture.targets.targets;
+    targets.extend(gpui_capture.targets.targets);
+    let mut domains = base_capture.domains;
+    domains.extend(gpui_capture.domains);
+    let mut events = event_batch.events;
+    events.extend(gpui_capture.events);
+    let mut snapshots = base_capture.snapshots;
+    snapshots.extend(gpui_capture.snapshots);
+    let mut diagnostics = base_capture.diagnostics;
+    diagnostics.extend(gpui_capture.diagnostics);
 
     DevtoolsCapture::new(
-        base_capture.targets,
-        base_capture.domains,
-        event_batch.events,
-        base_capture.snapshots,
-        base_capture.diagnostics,
+        open_gpui_devtools::DevtoolsTargetTree::new(targets),
+        domains,
+        events,
+        snapshots,
+        diagnostics,
     )
 }
 
@@ -289,15 +337,63 @@ fn gallery_scroll_viewport_sample() -> ScrollViewportSnapshot {
     )
 }
 
+fn gallery_gpui_runtime_sample(refresh_index: u64) -> gpui::GpuiRuntimeSnapshot {
+    gpui::GpuiRuntimeSnapshot {
+        runtime_id: "gallery".to_owned(),
+        generation: refresh_index,
+        windows: vec![gpui::GpuiRuntimeWindowSnapshot {
+            window_id: 1,
+            display_id: Some("gallery-display".to_owned()),
+            active: true,
+            focused: true,
+            bounds: Some(gpui::GpuiRuntimeRectSnapshot {
+                origin: gpui::GpuiRuntimePointSnapshot { x: 0.0, y: 0.0 },
+                size: gpui::GpuiRuntimeSizeSnapshot {
+                    width: 1024.0,
+                    height: 768.0,
+                },
+            }),
+            content_size: Some(gpui::GpuiRuntimeSizeSnapshot {
+                width: 1008.0,
+                height: 720.0,
+            }),
+            scale_factor: Some(1.0),
+        }],
+        focus: Some(gpui::GpuiRuntimeFocusSnapshot {
+            active_window_id: Some(1),
+            focused_window_id: Some(1),
+            focus_scope_count: 3,
+            focus_handle_count: 9,
+        }),
+        input: Some(gpui::GpuiRuntimeInputSnapshot {
+            key_down_count: refresh_index,
+            pointer_event_count: refresh_index.saturating_add(1),
+            scroll_event_count: 1,
+            text_input_event_count: 0,
+            ime_event_count: 0,
+            clipboard_event_count: 0,
+            last_event_kind: Some("refresh".to_owned()),
+        }),
+        frame: Some(gpui::GpuiRuntimeFrameSnapshot {
+            requested_frames: refresh_index.saturating_add(2),
+            painted_frames: refresh_index.saturating_add(1),
+            animation_frame_count: 1,
+            last_frame_duration_ms: Some(16.0 + refresh_index as f32),
+            last_presented_generation: Some(refresh_index),
+        }),
+        scroll_viewports: vec![gpui::GpuiRuntimeScrollSnapshot::from_scroll_viewport(
+            gallery_scroll_viewport_sample(),
+        )],
+        diagnostics: Vec::new(),
+    }
+}
+
 fn unmounted_framework_diagnostics() -> Vec<SnapshotDiagnostic> {
-    vec![
-        gpui::scroll_viewport_unavailable_diagnostic(ProbeId::new("scroll").unwrap()),
-        SnapshotDiagnostic::new(
-            ProbeId::new("docking").unwrap(),
-            "runtime.unavailable",
-            "docking runtime is not mounted in this gallery page",
-        ),
-    ]
+    vec![SnapshotDiagnostic::new(
+        ProbeId::new("docking").unwrap(),
+        "runtime.unavailable",
+        "docking runtime is not mounted in this gallery page",
+    )]
 }
 
 #[cfg(test)]
@@ -309,7 +405,7 @@ mod tests {
         let state = devtools_gallery_state();
         let rows = state.snapshot_rows();
 
-        assert_eq!(rows.len(), 10);
+        assert_eq!(rows.len(), 11);
         assert!(rows.iter().any(
             |row| row.probe_id.as_str() == "accessibility" && row.kind_label == "accessibility"
         ));
@@ -336,6 +432,11 @@ mod tests {
                     && row.category_label == "layout"
                     && row.kind_label == "layout")
         );
+        assert!(
+            rows.iter()
+                .any(|row| row.probe_id.as_str() == "gpui.runtime.gallery"
+                    && row.kind_label == "gpui-runtime")
+        );
         assert!(rows.iter().any(|row| row.probe_id.as_str() == "resource"
             && row.kind_label == "resource"
             && row.redacted_values == 2));
@@ -347,8 +448,8 @@ mod tests {
                     && row.kind_label == "timeline")
         );
         assert!(rows.iter().any(|row| row.probe_id.as_str() == "theme"));
-        assert_eq!(state.diagnostics().len(), 2);
-        assert_eq!(state.target_rows().len(), 11);
+        assert_eq!(state.diagnostics().len(), 1);
+        assert_eq!(state.target_rows().len(), 14);
         let event_state = devtools_gallery_state().with_filter("motion-frame-demand");
         assert!(event_state.event_rows().iter().any(|row| {
             row.event_id == "gallery.motion-frame-demand" && row.kind_label == "instant"

@@ -4201,8 +4201,10 @@ dependencies = [
  "env_logger",
  "log",
  "open-gpui",
+ "open-gpui-devtools",
  "open-gpui-docking",
  "open-gpui-platform",
+ "serde_json",
 ]
 
 [[package]]
