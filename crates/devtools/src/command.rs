@@ -61,7 +61,7 @@ pub fn command_keybinding_projection_probe_snapshot(
 }
 
 /// Converts command keybinding projection facts into a DevTools envelope.
-pub fn command_keybinding_projection_envelope(
+pub fn command_keybinding_projection_snapshot_envelope(
     probe_id: ProbeId,
     projection: &CommandKeyBindingProjection,
 ) -> SnapshotEnvelope {
@@ -73,8 +73,8 @@ pub fn command_keybinding_projection_envelope(
     .with_redaction(SnapshotRedactionSummary::default())
 }
 
-/// Builds a closure-backed command keybinding projection probe.
-pub fn command_keybinding_projection_probe<F>(
+/// Builds a closure-backed command keybinding projection snapshot probe.
+pub fn command_keybinding_projection_snapshot_probe<F>(
     id: impl Into<String>,
     projection: F,
 ) -> Result<
@@ -98,7 +98,7 @@ pub fn command_keymap_resolution_probe_snapshot(
 }
 
 /// Converts one command keymap resolution into a DevTools envelope.
-pub fn command_keymap_resolution_envelope(
+pub fn command_keymap_resolution_snapshot_envelope(
     probe_id: ProbeId,
     resolution: &CommandKeymapResolution,
 ) -> SnapshotEnvelope {
@@ -110,8 +110,8 @@ pub fn command_keymap_resolution_envelope(
     .with_redaction(SnapshotRedactionSummary::default())
 }
 
-/// Builds a closure-backed command keymap resolution probe.
-pub fn command_keymap_resolution_probe<F>(
+/// Builds a closure-backed command keymap resolution snapshot probe.
+pub fn command_keymap_resolution_snapshot_probe<F>(
     id: impl Into<String>,
     resolution: F,
 ) -> Result<
