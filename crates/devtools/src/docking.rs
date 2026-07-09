@@ -10,10 +10,10 @@ use open_gpui_docking::advanced::{
 };
 
 use crate::{
-    DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot,
+    CaptureProvider, DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot,
     DevtoolsEventKind, DevtoolsEventRecord, DevtoolsTargetId, DevtoolsTargetKind,
-    DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId, SnapshotEnvelope, SnapshotKind,
-    SnapshotNode, SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
+    DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId, ProbeSnapshotError, SnapshotEnvelope,
+    SnapshotKind, SnapshotNode, SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
     adapters::snapshot_node_with_payload,
 };
 
@@ -170,6 +170,20 @@ pub fn docking_runtime_capture(status: &DockViewportRuntimeStatus) -> DevtoolsCa
         [snapshot],
         Vec::new(),
     )
+}
+
+/// Creates a capture provider for docking viewport runtime status snapshots.
+pub fn docking_runtime_capture_provider<F>(
+    id: impl Into<String>,
+    status: F,
+) -> Result<
+    CaptureProvider<impl Fn() -> Result<DevtoolsCapture, ProbeSnapshotError>>,
+    ProbeSnapshotError,
+>
+where
+    F: Fn() -> DockViewportRuntimeStatus + Send + Sync + 'static,
+{
+    CaptureProvider::new(id, move || Ok(docking_runtime_capture(&status())))
 }
 
 /// Converts a docking viewport runtime status into a DevTools tree.

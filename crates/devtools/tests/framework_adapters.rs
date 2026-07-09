@@ -119,6 +119,7 @@ fn gpui_inspector_surface_exposes_category_debug_selectors() {
 #[cfg(feature = "docking")]
 #[test]
 fn framework_adapters_convert_docking_runtime_status() {
+    use open_gpui_devtools::DevtoolsRegistry;
     use open_gpui_docking::DockSpaceId;
     use open_gpui_docking::advanced::{
         DockViewportInputStatus, DockViewportLifecycleRecord, DockViewportPlatformCapabilityRecord,
@@ -172,6 +173,17 @@ fn framework_adapters_convert_docking_runtime_status() {
 
     let snapshot = docking::docking_runtime_probe_snapshot(&status);
     let capture = docking::docking_runtime_capture(&status);
+    let provider_status = status.clone();
+    let mut registry = DevtoolsRegistry::default();
+    registry
+        .register_capture_provider(
+            docking::docking_runtime_capture_provider("docking.runtime", move || {
+                provider_status.clone()
+            })
+            .expect("valid docking runtime provider"),
+        )
+        .expect("unique docking runtime provider");
+    let provider_capture = registry.collect_capture();
     let serialized = serde_json::to_string(&snapshot.tree()).unwrap();
     let capture_serialized = serde_json::to_string(&capture).unwrap();
 
@@ -188,4 +200,7 @@ fn framework_adapters_convert_docking_runtime_status() {
     assert_eq!(capture.domains.len(), 1);
     assert_eq!(capture.events.len(), 1);
     assert_eq!(capture.snapshots.len(), 1);
+    assert_eq!(provider_capture.domains.len(), 1);
+    assert_eq!(provider_capture.events.len(), 1);
+    assert_eq!(provider_capture.snapshots.len(), 1);
 }
