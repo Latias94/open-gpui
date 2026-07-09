@@ -34,7 +34,7 @@ pub use event::{
     DevtoolsEventRecorder,
 };
 #[cfg(feature = "gpui")]
-pub use gpui::DevtoolsInspector;
+pub use gpui::{DevtoolsInspector, DevtoolsInspectorController};
 pub use inspector::{
     DevtoolsDomainRow, DevtoolsEventRow, DevtoolsInspectorCaptureExport, DevtoolsInspectorDetail,
     DevtoolsInspectorDetailKind, DevtoolsInspectorError, DevtoolsInspectorJsonAction,

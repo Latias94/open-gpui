@@ -8,7 +8,7 @@ use open_gpui::{
     ScrollHandle, StatefulInteractiveElement, Styled, Window, WindowBounds, WindowOptions,
     anchored, deferred, div, px, rgb, size,
 };
-use open_gpui_devtools::DevtoolsInspector;
+use open_gpui_devtools::DevtoolsInspectorController;
 
 use open_gpui_ui_components::{
     AlertDialog, Avatar, AvatarGroup, AvatarState, BadgeState, Button, ButtonState, ButtonVariant,
@@ -135,6 +135,7 @@ pub struct GalleryShell {
     focus_a11y: FocusA11yPageState,
     overlay: OverlayPageState,
     components_focus: pages::components::ComponentFocusMode,
+    devtools_inspector: open_gpui::Entity<DevtoolsInspectorController>,
 }
 
 impl GalleryShell {
@@ -180,6 +181,14 @@ impl GalleryShell {
             focus_a11y: FocusA11yPageState::default(),
             overlay: OverlayPageState::default(),
             components_focus: pages::components::ComponentFocusMode::All,
+            devtools_inspector: cx.new(|cx| {
+                DevtoolsInspectorController::new(
+                    "gallery-devtools-inspector",
+                    pages::devtools::devtools_gallery_state(),
+                    cx,
+                )
+                .title("Gallery DevTools Inspector")
+            }),
         }
     }
 }
@@ -205,6 +214,10 @@ impl GalleryShell {
 
     pub(crate) fn editable_text_input(&self) -> &open_gpui::Entity<TextInputController> {
         &self.editable_text_input
+    }
+
+    pub fn devtools_inspector(&self) -> &open_gpui::Entity<DevtoolsInspectorController> {
+        &self.devtools_inspector
     }
 
     /// Returns the page scroll handle used by gallery smoke tests and anchored jumps.
@@ -566,13 +579,7 @@ impl GalleryShell {
             .flex()
             .flex_col()
             .gap_4()
-            .child(
-                DevtoolsInspector::new(
-                    "gallery-devtools-inspector",
-                    pages::devtools::devtools_gallery_state(),
-                )
-                .title("Gallery DevTools Inspector"),
-            )
+            .child(self.devtools_inspector.clone())
             .child(self.render_signal_list(snapshot.selected_page))
     }
 

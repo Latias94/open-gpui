@@ -777,15 +777,7 @@ impl DevtoolsInspectorState {
     }
 
     fn event_is_visible(&self, event: &DevtoolsEventRecord) -> bool {
-        self.selected_target_id.as_ref().is_none_or(|target_id| {
-            event
-                .target_id_ref()
-                .is_none_or(|event_target| event_target == target_id)
-        }) && self.selected_domain_id.as_ref().is_none_or(|domain_id| {
-            event
-                .domain_id_ref()
-                .is_none_or(|event_domain| event_domain == domain_id)
-        }) && self.event_matches_filter(event)
+        self.event_matches_filter(event)
     }
 
     fn target_matches_filter(&self, target: &DevtoolsTargetSnapshot) -> bool {
