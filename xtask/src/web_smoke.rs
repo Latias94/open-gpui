@@ -22,7 +22,9 @@ const WEBGPU_PREFLIGHT_HTML: &[u8] = br#"<!doctype html>
 <body>open-gpui web smoke preflight</body>
 </html>
 "#;
+const BROWSER_START_TIMEOUT: Duration = Duration::from_secs(90);
 const BROWSER_TIMEOUT: Duration = Duration::from_secs(30);
+const BROWSER_LOG_TAIL_BYTES: usize = 16 * 1024;
 const CDP_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -592,6 +594,8 @@ struct BrowserProcess {
     child: Child,
     remote_port: u16,
     user_data_dir: PathBuf,
+    stdout_path: PathBuf,
+    stderr_path: PathBuf,
 }
 
 impl BrowserProcess {
@@ -606,6 +610,12 @@ impl BrowserProcess {
         ));
         fs::create_dir_all(&user_data_dir)
             .map_err(|error| format!("failed to create browser profile dir: {error}"))?;
+        let stdout_path = user_data_dir.join("browser.stdout.log");
+        let stderr_path = user_data_dir.join("browser.stderr.log");
+        let stdout = fs::File::create(&stdout_path)
+            .map_err(|error| format!("failed to create browser stdout log: {error}"))?;
+        let stderr = fs::File::create(&stderr_path)
+            .map_err(|error| format!("failed to create browser stderr log: {error}"))?;
 
         let mut args = vec![
             "--headless=new".to_string(),
@@ -616,6 +626,7 @@ impl BrowserProcess {
             "--no-sandbox".to_string(),
             "--enable-unsafe-webgpu".to_string(),
             "--remote-allow-origins=*".to_string(),
+            "--remote-debugging-address=127.0.0.1".to_string(),
             format!("--remote-debugging-port={remote_port}"),
             format!("--user-data-dir={}", user_data_dir.display()),
         ];
@@ -635,8 +646,8 @@ impl BrowserProcess {
         println!("==> {} {}", browser.display(), args.join(" "));
         let child = Command::new(&browser)
             .args(&args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr))
             .spawn()
             .map_err(|error| {
                 format!("failed to launch browser `{}`: {error}", browser.display())
@@ -646,20 +657,23 @@ impl BrowserProcess {
             child,
             remote_port,
             user_data_dir,
+            stdout_path,
+            stderr_path,
         })
     }
 
     fn wait_for_page_websocket(&mut self, url: &str) -> Result<String, String> {
         let started = Instant::now();
         let mut last_error = String::new();
-        while started.elapsed() < BROWSER_TIMEOUT {
+        while started.elapsed() < BROWSER_START_TIMEOUT {
             if let Some(status) = self
                 .child
                 .try_wait()
                 .map_err(|error| format!("failed to inspect browser status: {error}"))?
             {
                 return Err(format!(
-                    "browser exited before web smoke connected: {status}"
+                    "browser exited before web smoke connected: {status}\n{}",
+                    self.output_summary()
                 ));
             }
 
@@ -687,9 +701,21 @@ impl BrowserProcess {
             thread::sleep(POLL_INTERVAL);
         }
 
+        let _ = self.child.kill();
+        let _ = self.child.wait();
         Err(format!(
-            "timed out waiting for browser remote debugging page; last error: {last_error}"
+            "timed out waiting for browser remote debugging page after {:?}; last error: {last_error}\n{}",
+            BROWSER_START_TIMEOUT,
+            self.output_summary()
         ))
+    }
+
+    fn output_summary(&self) -> String {
+        format!(
+            "browser stdout tail:\n{}\nbrowser stderr tail:\n{}",
+            read_log_tail(&self.stdout_path),
+            read_log_tail(&self.stderr_path)
+        )
     }
 }
 
@@ -782,6 +808,17 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
     env::split_paths(&paths)
         .map(|path| path.join(name))
         .find(|candidate| candidate.is_file())
+}
+
+fn read_log_tail(path: &Path) -> String {
+    let Ok(bytes) = fs::read(path) else {
+        return "<unavailable>".to_string();
+    };
+    if bytes.is_empty() {
+        return "<empty>".to_string();
+    }
+    let start = bytes.len().saturating_sub(BROWSER_LOG_TAIL_BYTES);
+    String::from_utf8_lossy(&bytes[start..]).into_owned()
 }
 
 fn http_get_json(port: u16, path: &str) -> Result<Value, String> {
