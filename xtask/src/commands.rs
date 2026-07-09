@@ -1,67 +1,94 @@
 use std::{
-    env,
     path::{Path, PathBuf},
     process::{Command, ExitCode},
 };
 
+use clap::{Args, Parser, Subcommand};
+
 use crate::{
-    dependency_health::dependency_health, doc_links::scan_doc_links,
-    import_boundary::scan_import_boundary, public_api_snapshot::scan_public_api,
-    release_docs::verify_release_docs, theme_drift::scan_theme_drift,
-    theme_schema::scan_theme_schema, ui_contract::scan_ui_contract, web_smoke::web_smoke,
+    dependency_health::dependency_health, devtools::DevtoolsArgs, devtools::devtools,
+    doc_links::scan_doc_links, import_boundary::scan_import_boundary,
+    public_api_snapshot::scan_public_api, release_docs::verify_release_docs,
+    theme_drift::scan_theme_drift, theme_schema::scan_theme_schema, ui_contract::scan_ui_contract,
+    web_smoke::web_smoke,
 };
 
+#[derive(Parser, Debug)]
+#[command(name = "xtask", about = "Workspace automation for Open GPUI.")]
+struct XtaskCli {
+    #[command(subcommand)]
+    command: XtaskCommand,
+}
+
+#[derive(Subcommand, Debug)]
+#[command(rename_all = "kebab-case")]
+enum XtaskCommand {
+    /// Run the local Open GPUI gate.
+    Verify,
+    /// Verify MSRV, duplicate dependencies, and cargo audit.
+    DependencyHealth,
+    /// Run the native wgpu renderer smoke test.
+    RendererSmoke,
+    /// Verify changelog, release notes, README versions, and breaking inventory.
+    VerifyReleaseDocs(ForwardArgs),
+    /// Scan public documentation relative links.
+    ScanDocLinks,
+    /// Scan theme token and recipe drift.
+    ScanThemeDrift,
+    /// Scan theme JSON schema artifact drift.
+    ScanThemeSchema,
+    /// Scan for disallowed import residue.
+    ScanImportBoundary,
+    /// Scan public API tier drift.
+    ScanPublicApi(ForwardArgs),
+    /// Scan UI component contract drift.
+    ScanUiContract,
+    /// Build and run the stable browser smoke test.
+    WebSmoke,
+    /// Inspect, diagnose, diff, and stream DevTools artifacts.
+    Devtools(DevtoolsArgs),
+}
+
+#[derive(Args, Debug)]
+struct ForwardArgs {
+    #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
+    args: Vec<String>,
+}
+
 pub fn run_from_env() -> ExitCode {
-    let mut args = env::args().skip(1);
-    let Some(command) = args.next() else {
-        print_usage();
-        return ExitCode::FAILURE;
+    let cli = match XtaskCli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            let exit_code = error.exit_code();
+            let _ = error.print();
+            return if exit_code == 0 {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            };
+        }
     };
 
     let root = workspace_root();
-    let rest = args.collect::<Vec<_>>();
-    let result = match command.as_str() {
-        "verify" => verify(&root),
-        "dependency-health" => dependency_health(&root),
-        "renderer-smoke" => renderer_smoke(&root),
-        "verify-release-docs" => verify_release_docs(&root, &rest),
-        "scan-doc-links" => scan_doc_links(&root),
-        "scan-theme-drift" => scan_theme_drift(&root),
-        "scan-theme-schema" => scan_theme_schema(&root),
-        "scan-import-boundary" => scan_import_boundary(&root),
-        "scan-public-api" => scan_public_api(&root, &rest),
-        "scan-ui-contract" => scan_ui_contract(&root),
-        "web-smoke" => web_smoke(&root),
-        _ => {
-            eprintln!("unknown command: {command}");
-            print_usage();
-            Err(())
-        }
+    let result = match cli.command {
+        XtaskCommand::Verify => verify(&root),
+        XtaskCommand::DependencyHealth => dependency_health(&root),
+        XtaskCommand::RendererSmoke => renderer_smoke(&root),
+        XtaskCommand::VerifyReleaseDocs(args) => verify_release_docs(&root, &args.args),
+        XtaskCommand::ScanDocLinks => scan_doc_links(&root),
+        XtaskCommand::ScanThemeDrift => scan_theme_drift(&root),
+        XtaskCommand::ScanThemeSchema => scan_theme_schema(&root),
+        XtaskCommand::ScanImportBoundary => scan_import_boundary(&root),
+        XtaskCommand::ScanPublicApi(args) => scan_public_api(&root, &args.args),
+        XtaskCommand::ScanUiContract => scan_ui_contract(&root),
+        XtaskCommand::WebSmoke => web_smoke(&root),
+        XtaskCommand::Devtools(args) => devtools(&root, args),
     };
 
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(()) => ExitCode::FAILURE,
     }
-}
-
-fn print_usage() {
-    eprintln!("usage: cargo run -p xtask -- <command>");
-    eprintln!();
-    eprintln!("commands:");
-    eprintln!("  verify                run the local Open GPUI gate");
-    eprintln!("  dependency-health     verify MSRV, duplicate dependencies, and cargo audit");
-    eprintln!("  renderer-smoke        run the native wgpu renderer smoke test");
-    eprintln!(
-        "  verify-release-docs   verify changelog, release notes, README versions, and breaking inventory"
-    );
-    eprintln!("  scan-doc-links        scan public documentation relative links");
-    eprintln!("  scan-theme-drift      scan theme token and recipe drift");
-    eprintln!("  scan-theme-schema     scan theme JSON schema artifact drift");
-    eprintln!("  scan-import-boundary  scan for disallowed import residue");
-    eprintln!("  scan-public-api       scan public API tier drift");
-    eprintln!("  scan-ui-contract      scan UI component contract drift");
-    eprintln!("  web-smoke             build and run the stable browser smoke test");
 }
 
 fn verify(root: &Path) -> Result<(), ()> {

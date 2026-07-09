@@ -20,6 +20,7 @@ pub mod motion;
 mod probe;
 mod redaction;
 mod registry;
+mod report;
 #[cfg(feature = "resource")]
 pub mod resource;
 mod session;
@@ -63,6 +64,10 @@ pub use probe::{
 };
 pub use redaction::SnapshotRedactionSummary;
 pub use registry::{DevtoolsRegistry, DevtoolsRegistryError};
+pub use report::{
+    DEVTOOLS_REPORT_SCHEMA_VERSION, DevtoolsReport, DevtoolsReportFinding, DevtoolsReportSeverity,
+    DevtoolsReportSource, DevtoolsReportSourceKind, DevtoolsReportSummary,
+};
 pub use session::{
     DEFAULT_DEVTOOLS_SESSION_HISTORY_LIMIT, DEVTOOLS_SESSION_PROTOCOL_VERSION,
     DEVTOOLS_SESSION_SCHEMA_VERSION, DevtoolsSession, DevtoolsSessionConnectionState,

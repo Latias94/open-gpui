@@ -26,3 +26,4 @@ platform strategy, or ecosystem compatibility.
 - [ADR 0016: UI Motion Spring Foundation](0016-ui-motion-spring-foundation.md)
 - [ADR 0017: UI Motion Value Foundation](0017-ui-motion-value-foundation.md)
 - [ADR 0018: Open GPUI Motion Crate Boundary](0018-open-gpui-motion-crate-boundary.md)
+- [ADR 0019: Open GPUI DevTools Headless Diagnostics](0019-open-gpui-devtools-headless-diagnostics.md)

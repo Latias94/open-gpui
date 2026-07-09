@@ -33,6 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - User entry points now include a minimal single-window docking example and refreshed crate READMEs for component, motion, docking, web, platform, and verification workflows.
 - `open-gpui-devtools` split its GPUI feature implementation into runtime DTO/capture, inspector controller, and render modules while preserving the `open_gpui_devtools::gpui` facade and root re-exports.
 - `open-gpui-devtools` now exposes `DevtoolsWorkbench`, a renderer-neutral app-owned wrapper around local sessions, bounded history, refresh status, inspector state, and sanitized diff readouts.
+- `open-gpui-devtools` now exposes `DevtoolsReport` and `open-gpui-devtools-report/v1` for headless diagnostics, and `xtask devtools` can render, diagnose, diff, and stream DevTools artifacts as JSON, Markdown, or JSONL.
 
 ### Security
 

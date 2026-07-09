@@ -223,6 +223,51 @@ inspector.update(cx, |inspector, cx| {
 });
 ```
 
+## Headless Reports and CLI Diagnostics
+
+The primary automation surface is the artifact contract, not the GUI viewer. `DevtoolsReport`
+summarizes a `DevtoolsCapture`, `DevtoolsSessionFrame`, or `DevtoolsSessionExport` into
+`open-gpui-devtools-report/v1`: source metadata, target/domain/event/snapshot counts, diff counts,
+redaction counts, and severity-ranked findings with stable ids and recommendations.
+
+```rust
+# use open_gpui_devtools::{
+#     DevtoolsCapture, DevtoolsDomainSnapshot, DevtoolsEventRecord, DevtoolsReport,
+#     DevtoolsTargetId, DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsTargetTree,
+#     SnapshotDiagnostic, SnapshotEnvelope,
+# };
+let capture = DevtoolsCapture::new(
+    DevtoolsTargetTree::new([DevtoolsTargetSnapshot::new(
+        DevtoolsTargetId::new("app"),
+        DevtoolsTargetKind::App,
+        "App",
+    )]),
+    Vec::<DevtoolsDomainSnapshot>::new(),
+    Vec::<DevtoolsEventRecord>::new(),
+    Vec::<SnapshotEnvelope>::new(),
+    Vec::<SnapshotDiagnostic>::new(),
+);
+let report = DevtoolsReport::from_capture(&capture);
+
+assert_eq!(report.schema_version, "open-gpui-devtools-report/v1");
+assert_eq!(report.summary.target_count, 1);
+assert_eq!(report.summary.finding_count, 0);
+```
+
+`xtask devtools` consumes report, session export, or capture JSON artifacts without launching a GUI:
+
+```sh
+cargo run -p xtask -- devtools report --input devtools-session.json --format json
+cargo run -p xtask -- devtools diagnose --input devtools-session.json --format markdown --fail-on warning
+cargo run -p xtask -- devtools diff --before before-capture.json --after after-capture.json --format markdown
+cargo run -p xtask -- devtools stream --input devtools-session.json --format jsonl --interval-ms 50
+```
+
+Artifact reads are non-blocking by default: missing or partial inputs fail fast. Add
+`--timeout-ms <n>` to poll for a producer that is writing the artifact, and tune polling with
+`--poll-ms <n>`. `stream` flushes one report record per retained frame so command-line consumers can
+process JSONL incrementally.
+
 With the `form` feature enabled, convert a public form snapshot directly:
 
 ```rust
@@ -295,13 +340,15 @@ cargo check -p open-gpui-devtools --all-features --tests --locked
 cargo nextest run -p open-gpui-devtools --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --all-features --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --test inspector_contracts --no-fail-fast --locked
-cargo nextest run -p open-gpui-devtools --test session_contracts --test diff_contracts --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --test session_contracts --test diff_contracts --test report_contracts --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features command --test command_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features motion timeline --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features gpui layout --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features form,resource form_resource_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features gpui,motion,docking framework_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features docking --test docking_runtime_contracts --no-fail-fast --locked
+cargo check -p xtask --locked
+cargo run -p xtask -- devtools --help
 ```
 
 When changing the gallery inspector surface, also run:
