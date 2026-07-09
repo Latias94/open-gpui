@@ -34,6 +34,10 @@ pub enum SnapshotKind {
     Diagnostic,
     /// Command registry, keybinding, and keymap resolution state.
     Command,
+    /// Timeline, event, and span state.
+    Timeline,
+    /// Layout, bounds, and committed geometry state.
+    Layout,
     /// Custom app-provided snapshot.
     Custom(String),
 }
@@ -54,6 +58,8 @@ impl SnapshotKind {
             Self::Resource => Cow::Borrowed("resource"),
             Self::Diagnostic => Cow::Borrowed("diagnostic"),
             Self::Command => Cow::Borrowed("command"),
+            Self::Timeline => Cow::Borrowed("timeline"),
+            Self::Layout => Cow::Borrowed("layout"),
             Self::Custom(label) => Cow::Owned(sanitize_sensitive_text(label)),
         }
     }
@@ -86,9 +92,11 @@ impl Serialize for SnapshotKind {
             Self::Resource => serializer.serialize_unit_variant("SnapshotKind", 9, "Resource"),
             Self::Diagnostic => serializer.serialize_unit_variant("SnapshotKind", 10, "Diagnostic"),
             Self::Command => serializer.serialize_unit_variant("SnapshotKind", 11, "Command"),
+            Self::Timeline => serializer.serialize_unit_variant("SnapshotKind", 12, "Timeline"),
+            Self::Layout => serializer.serialize_unit_variant("SnapshotKind", 13, "Layout"),
             Self::Custom(label) => serializer.serialize_newtype_variant(
                 "SnapshotKind",
-                12,
+                14,
                 "Custom",
                 &sanitize_sensitive_text(label),
             ),
@@ -115,6 +123,8 @@ impl<'de> Deserialize<'de> for SnapshotKind {
             Resource,
             Diagnostic,
             Command,
+            Timeline,
+            Layout,
             Custom(String),
         }
 
@@ -131,6 +141,8 @@ impl<'de> Deserialize<'de> for SnapshotKind {
             SnapshotKindValue::Resource => Self::Resource,
             SnapshotKindValue::Diagnostic => Self::Diagnostic,
             SnapshotKindValue::Command => Self::Command,
+            SnapshotKindValue::Timeline => Self::Timeline,
+            SnapshotKindValue::Layout => Self::Layout,
             SnapshotKindValue::Custom(label) => Self::Custom(sanitize_sensitive_text(&label)),
         })
     }

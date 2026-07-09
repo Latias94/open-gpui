@@ -1,6 +1,7 @@
 use open_gpui_devtools::{
-    DevtoolsInspectorState, ProbeId, SnapshotCollection, SnapshotDiagnostic, SnapshotEnvelope,
-    SnapshotKind, SnapshotNode, SnapshotRedactionSummary, SnapshotTree,
+    DevtoolsInspectorState, DevtoolsSnapshotCategory, ProbeId, SnapshotCollection,
+    SnapshotDiagnostic, SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotRedactionSummary,
+    SnapshotTree,
 };
 
 #[test]
@@ -10,11 +11,78 @@ fn inspector_projects_snapshots_into_filterable_rows() {
 
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].probe_id.as_str(), "form");
+    assert_eq!(rows[0].category, DevtoolsSnapshotCategory::Data);
+    assert_eq!(rows[0].category_label, "data");
     assert_eq!(rows[0].kind_label, "form");
     assert_eq!(rows[0].root_nodes, 1);
     assert_eq!(rows[0].total_nodes, 2);
     assert_eq!(rows[0].redacted_values, 1);
     assert!(rows[0].selected);
+}
+
+#[test]
+fn inspector_summarizes_visible_snapshot_categories() {
+    let state = DevtoolsInspectorState::new(collection());
+    let summaries = state.category_summaries();
+
+    let data = summaries
+        .iter()
+        .find(|summary| summary.category == DevtoolsSnapshotCategory::Data)
+        .expect("data category summary");
+    let diagnostic = summaries
+        .iter()
+        .find(|summary| summary.category == DevtoolsSnapshotCategory::Diagnostic)
+        .expect("diagnostic category summary");
+
+    assert_eq!(data.category_label, "data");
+    assert_eq!(data.snapshot_count, 2);
+    assert_eq!(data.root_nodes, 2);
+    assert_eq!(data.total_nodes, 3);
+    assert_eq!(data.redacted_values, 2);
+    assert_eq!(data.diagnostics, 0);
+    assert_eq!(diagnostic.snapshot_count, 0);
+    assert_eq!(diagnostic.diagnostics, 1);
+}
+
+#[test]
+fn inspector_filter_matches_category_labels_and_moves_selection() {
+    let state = DevtoolsInspectorState::new(ecosystem_collection()).with_filter("timeline");
+    let rows = state.snapshot_rows();
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].probe_id.as_str(), "timeline");
+    assert_eq!(rows[0].category, DevtoolsSnapshotCategory::Timeline);
+    assert_eq!(rows[0].kind_label, "timeline");
+    assert!(rows[0].selected);
+    assert_eq!(state.selected_probe_id().unwrap().as_str(), "timeline");
+}
+
+#[test]
+fn inspector_classifies_command_timeline_layout_and_custom_kinds() {
+    let state = DevtoolsInspectorState::new(ecosystem_collection());
+    let rows = state.snapshot_rows();
+
+    assert!(rows.iter().any(|row| {
+        row.probe_id.as_str() == "command"
+            && row.category == DevtoolsSnapshotCategory::Command
+            && row.kind_label == "command"
+    }));
+    assert!(rows.iter().any(|row| {
+        row.probe_id.as_str() == "timeline"
+            && row.category == DevtoolsSnapshotCategory::Timeline
+            && row.kind_label == "timeline"
+    }));
+    assert!(rows.iter().any(|row| {
+        row.probe_id.as_str() == "layout"
+            && row.category == DevtoolsSnapshotCategory::Layout
+            && row.kind_label == "layout"
+    }));
+    assert!(rows.iter().any(|row| {
+        row.probe_id.as_str() == "custom"
+            && row.category == DevtoolsSnapshotCategory::Custom
+            && row.category_label == "custom"
+            && row.kind_label == "plugin"
+    }));
 }
 
 #[test]
@@ -82,4 +150,32 @@ fn resource_snapshot() -> SnapshotEnvelope {
             .with_payload(serde_json::json!({"status": "stale"}))]),
     )
     .with_redaction(redaction)
+}
+
+fn ecosystem_collection() -> SnapshotCollection {
+    SnapshotCollection {
+        snapshots: vec![
+            SnapshotEnvelope::new(
+                ProbeId::new("command").unwrap(),
+                SnapshotKind::Command,
+                SnapshotTree::new([SnapshotNode::new("command.registry", "Command registry")]),
+            ),
+            SnapshotEnvelope::new(
+                ProbeId::new("timeline").unwrap(),
+                SnapshotKind::Timeline,
+                SnapshotTree::new([SnapshotNode::new("timeline.frame", "Frame event")]),
+            ),
+            SnapshotEnvelope::new(
+                ProbeId::new("layout").unwrap(),
+                SnapshotKind::Layout,
+                SnapshotTree::new([SnapshotNode::new("layout.root", "Root layout")]),
+            ),
+            SnapshotEnvelope::new(
+                ProbeId::new("custom").unwrap(),
+                SnapshotKind::Custom("plugin".to_owned()),
+                SnapshotTree::new([SnapshotNode::new("plugin.node", "Plugin node")]),
+            ),
+        ],
+        diagnostics: Vec::new(),
+    }
 }

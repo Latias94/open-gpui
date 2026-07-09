@@ -24,7 +24,10 @@ pub mod ui_components;
 
 #[cfg(feature = "gpui")]
 pub use gpui::DevtoolsInspector;
-pub use inspector::{DevtoolsInspectorError, DevtoolsInspectorState, DevtoolsSnapshotRow};
+pub use inspector::{
+    DevtoolsInspectorError, DevtoolsInspectorState, DevtoolsSnapshotCategory,
+    DevtoolsSnapshotCategorySummary, DevtoolsSnapshotRow,
+};
 pub use probe::{DevtoolsProbe, ProbeId, ProbeSnapshotError, SnapshotProbe, SnapshotProbeSnapshot};
 pub use redaction::SnapshotRedactionSummary;
 pub use registry::{DevtoolsRegistry, DevtoolsRegistryError};
