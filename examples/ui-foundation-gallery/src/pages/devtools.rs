@@ -1,8 +1,14 @@
 //! Devtools inspector gallery page.
 
+use open_gpui::{KeyBinding, KeyContext, Keymap, actions};
+use open_gpui_command::{
+    CommandAvailabilityMap, CommandContribution, CommandDescriptor, CommandIconDescriptor,
+    CommandKeyBinding, CommandKeyBindingProjection, CommandKeyBindingRegistry,
+    CommandKeymapResolution, CommandRegistrySnapshot, GpuiCommandActionMap,
+};
 use open_gpui_devtools::{
     DevtoolsInspectorState, DevtoolsRegistry, ProbeId, SnapshotCollection, SnapshotDiagnostic,
-    SnapshotKind, form, gpui, motion, resource, ui_components,
+    SnapshotKind, command as devtools_command, form, gpui, motion, resource, ui_components,
 };
 use open_gpui_motion::{MotionFrameDemand, MotionFrameReason};
 use open_gpui_resource::PaginatedResourceSnapshotView;
@@ -22,12 +28,20 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_devtools::SnapshotEnvelope",
     "open_gpui_devtools::SnapshotKind",
     "open_gpui_devtools::SnapshotRedactionSummary",
+    "open_gpui_devtools::command::command_registry_snapshot_probe",
+    "open_gpui_devtools::command::command_keybinding_projection_probe",
+    "open_gpui_devtools::command::command_keymap_resolution_probe",
     "open_gpui_devtools::form::form_snapshot_probe",
     "open_gpui_devtools::resource::resource_snapshot_probe",
     "open_gpui_devtools::ui_components::theme_probe_snapshot",
     "open_gpui_devtools::ui_components::a11y_evidence_probe_snapshot",
     "open_gpui_devtools::motion::motion_frame_demand_probe_snapshot",
 ];
+
+actions!(
+    gallery_devtools_command,
+    [OpenCommandPalette, SaveWorkspace, ToggleDevtools]
+);
 
 /// Returns the deterministic devtools inspector state used by the gallery.
 pub fn devtools_gallery_state() -> DevtoolsInspectorState {
@@ -49,6 +63,33 @@ pub fn devtools_gallery_collection() -> SnapshotCollection {
             ))
         })
         .expect("unique accessibility probe");
+    registry
+        .register(
+            devtools_command::command_registry_snapshot_probe(
+                "command.registry",
+                command_registry_sample,
+            )
+            .expect("valid command registry probe"),
+        )
+        .expect("unique command registry probe");
+    registry
+        .register(
+            devtools_command::command_keybinding_projection_probe(
+                "command.keybindings",
+                command_keybinding_projection_sample,
+            )
+            .expect("valid command keybinding probe"),
+        )
+        .expect("unique command keybinding probe");
+    registry
+        .register(
+            devtools_command::command_keymap_resolution_probe(
+                "command.keymap",
+                command_keymap_resolution_sample,
+            )
+            .expect("valid command keymap probe"),
+        )
+        .expect("unique command keymap probe");
     registry
         .register(
             form::form_snapshot_probe("form", move || form_snapshot.clone())
@@ -86,6 +127,82 @@ pub fn devtools_gallery_collection() -> SnapshotCollection {
     collection
 }
 
+fn command_registry_sample() -> CommandRegistrySnapshot {
+    CommandRegistrySnapshot::new(
+        "gallery-devtools-command-registry-v1",
+        [
+            CommandContribution::new(
+                CommandDescriptor::new("gallery.command_palette.open", "Open Command Palette")
+                    .icon(CommandIconDescriptor::new("command").fallback_label("Command"))
+                    .group("Navigation")
+                    .keyword("palette")
+                    .shortcut("Ctrl+K")
+                    .accessibility_description("Opens the gallery command palette")
+                    .menu_path(["View", "Command Palette"]),
+            )
+            .source("gallery.core"),
+            CommandContribution::new(
+                CommandDescriptor::new("gallery.workspace.save", "Save Workspace")
+                    .group("Workspace")
+                    .keyword("persist")
+                    .shortcut("Ctrl+S")
+                    .tooltip("Save the active gallery workspace"),
+            )
+            .source("gallery.core"),
+            CommandContribution::new(
+                CommandDescriptor::new("gallery.devtools.toggle", "Toggle DevTools")
+                    .group("Diagnostics")
+                    .keyword("inspect")
+                    .shortcut("Ctrl+K Ctrl+D"),
+            )
+            .source("gallery.devtools"),
+        ],
+    )
+}
+
+fn command_keybinding_projection_sample() -> CommandKeyBindingProjection {
+    let mut registry = CommandKeyBindingRegistry::new();
+    registry.register(
+        "gallery-defaults",
+        [
+            CommandKeyBinding::new("gallery.command_palette.open", "ctrl-k").context("Gallery"),
+            CommandKeyBinding::new("gallery.devtools.toggle", "ctrl-k").context("Gallery"),
+            CommandKeyBinding::new("gallery.command_palette.missing", "ctrl-m"),
+            CommandKeyBinding::new("gallery.workspace.save", "ctrl-s").context("Gallery &&"),
+        ],
+    );
+
+    registry.project(&command_action_map())
+}
+
+fn command_keymap_resolution_sample() -> CommandKeymapResolution {
+    let registry = command_registry_sample();
+    let actions = command_action_map();
+    let mut keymap = Keymap::default();
+    keymap.add_bindings([
+        KeyBinding::new("ctrl-k ctrl-p", OpenCommandPalette, Some("Gallery")),
+        KeyBinding::new("ctrl-k ctrl-d", ToggleDevtools, Some("Gallery")),
+    ]);
+    let contexts = [KeyContext::parse("Gallery").expect("valid gallery key context")];
+
+    actions
+        .resolve_keymap_sequence(
+            "ctrl-k",
+            &registry,
+            &CommandAvailabilityMap::new(),
+            &keymap,
+            &contexts,
+        )
+        .expect("gallery command keymap sample should resolve")
+}
+
+fn command_action_map() -> GpuiCommandActionMap {
+    GpuiCommandActionMap::new()
+        .action("gallery.command_palette.open", OpenCommandPalette)
+        .action("gallery.workspace.save", SaveWorkspace)
+        .action("gallery.devtools.toggle", ToggleDevtools)
+}
+
 fn unmounted_framework_diagnostics() -> Vec<SnapshotDiagnostic> {
     vec![
         gpui::scroll_viewport_unavailable_diagnostic(ProbeId::new("scroll").unwrap()),
@@ -106,10 +223,24 @@ mod tests {
         let state = devtools_gallery_state();
         let rows = state.snapshot_rows();
 
-        assert_eq!(rows.len(), 5);
+        assert_eq!(rows.len(), 8);
         assert!(rows.iter().any(
             |row| row.probe_id.as_str() == "accessibility" && row.kind_label == "accessibility"
         ));
+        assert!(
+            rows.iter()
+                .any(|row| row.probe_id.as_str() == "command.registry"
+                    && row.category_label == "command"
+                    && row.kind_label == "command")
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.probe_id.as_str() == "command.keybindings")
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.probe_id.as_str() == "command.keymap")
+        );
         assert!(rows.iter().any(|row| row.probe_id.as_str() == "form"
             && row.kind_label == "form"
             && row.redacted_values == 5));

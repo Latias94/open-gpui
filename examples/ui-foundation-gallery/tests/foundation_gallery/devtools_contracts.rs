@@ -11,7 +11,24 @@ fn devtools_gallery_collects_registry_backed_snapshots() {
 
     assert_eq!(
         probe_ids,
-        ["accessibility", "form", "motion", "resource", "theme"]
+        [
+            "accessibility",
+            "command.keybindings",
+            "command.keymap",
+            "command.registry",
+            "form",
+            "motion",
+            "resource",
+            "theme"
+        ]
+    );
+    assert_eq!(
+        collection
+            .snapshots
+            .iter()
+            .filter(|snapshot| snapshot.kind.as_label() == "command")
+            .count(),
+        3
     );
     assert_eq!(
         collection
@@ -61,6 +78,24 @@ fn devtools_gallery_snapshots_reflect_component_sample_state() {
         collection
             .snapshots
             .iter()
+            .any(|snapshot| snapshot.probe_id.as_str() == "command.registry")
+    );
+    assert!(
+        collection
+            .snapshots
+            .iter()
+            .any(|snapshot| snapshot.probe_id.as_str() == "command.keybindings")
+    );
+    assert!(
+        collection
+            .snapshots
+            .iter()
+            .any(|snapshot| snapshot.probe_id.as_str() == "command.keymap")
+    );
+    assert!(
+        collection
+            .snapshots
+            .iter()
             .any(|snapshot| snapshot.probe_id.as_str() == "theme")
     );
     assert!(
@@ -77,6 +112,28 @@ fn devtools_gallery_snapshots_reflect_component_sample_state() {
     );
     assert!(!form_json.contains("gallery-secret"));
     assert!(!resource_json.contains("gallery-secret"));
+}
+
+#[test]
+fn devtools_gallery_command_snapshots_reflect_command_runtime_facts() {
+    let collection = pages::devtools::devtools_gallery_collection();
+    let command_json = collection
+        .snapshots
+        .iter()
+        .filter(|snapshot| snapshot.kind.as_label() == "command")
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .join("\n");
+
+    assert!(command_json.contains("Command registry"));
+    assert!(command_json.contains("gallery.command_palette.open"));
+    assert!(command_json.contains("\"conflict_count\":1"));
+    assert!(command_json.contains("\"diagnostic_count\":2"));
+    assert!(command_json.contains("invalid-context"));
+    assert!(command_json.contains("missing-action"));
+    assert!(command_json.contains("\"pending\":true"));
+    assert!(command_json.contains("Pending commands"));
 }
 
 #[test]

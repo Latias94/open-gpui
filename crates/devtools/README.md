@@ -23,7 +23,8 @@ mutation and live property editing are intentionally out of scope for the initia
 - `DevtoolsRegistry` collects snapshots and converts probe failures into diagnostics instead of
   panicking.
 - `SnapshotEnvelope`, `SnapshotTree`, `SnapshotNode`, and `SnapshotKind` are serializable DTOs for
-  tests, gallery samples, and downstream tools.
+  tests, gallery samples, and downstream tools. `SnapshotKind::Command`,
+  `SnapshotKind::Timeline`, and `SnapshotKind::Layout` are first-class observability families.
 - `SnapshotRedactionSummary` records what was removed before a snapshot reached devtools.
 - `adapters` contains shared helpers for stable node ids, sanitized payloads, and diagnostic-safe
   labels.
@@ -31,8 +32,8 @@ mutation and live property editing are intentionally out of scope for the initia
   snapshots without making source crates depend on devtools.
 - `command` exposes feature-gated adapters for command registries, keybinding projections,
   projection diagnostics, shortcut conflicts, and keymap resolution.
-- `DevtoolsInspectorState` provides filter, selection, row projection, diagnostics, and JSON export
-  without requiring a GPUI window.
+- `DevtoolsInspectorState` provides filter, selection, category summaries, row projection,
+  diagnostics, and JSON export without requiring a GPUI window.
 - `DevtoolsInspector` is available only with the `gpui` feature and renders a read-only local
   inspector with existing UI components.
 
@@ -133,3 +134,7 @@ When changing the gallery inspector surface, also run:
 cargo nextest run -p open-gpui-ui-foundation-gallery devtools --no-fail-fast --locked
 cargo run -p open-gpui-ui-foundation-gallery -- --page devtools
 ```
+
+The gallery DevTools page dogfoods the command adapters by collecting registry, keybinding
+projection, and keymap-resolution snapshots through `DevtoolsRegistry`. Keep future gallery probes
+registry-backed; do not reintroduce static DevTools snapshot builders for the page itself.
