@@ -18,6 +18,14 @@ controller entity state to verify the click handlers updated selection and feedb
 This closes the previous follow-up risk that GPUI inspector click handlers existed but were not
 covered by a harness-level click test.
 
+## Superseded Selector Note
+
+The original event-row selector in this memory was sequence-only. It is superseded by the
+identity-first DevTools workbench hardening in
+[2026-07-09-devtools-workbench-hardening-verification](2026-07-09-devtools-workbench-hardening-verification.md).
+Event rows now use sanitized `DevtoolsEventIdentity::as_key()` values in selectors; do not copy the
+obsolete sequence-only event-row selector pattern into new tests.
+
 ## Verified Behavior
 
 - The gallery renders the stateful DevTools inspector controller at
@@ -29,8 +37,8 @@ covered by a harness-level click test.
 - Clicking `devtools-inspector:target:probe.form` selects the form target and switches the active
   detail kind to domain detail.
 - Clicking the rendered form domain row selects its domain and reports `Selected domain ...`.
-- Clicking `devtools-inspector:event:0` selects event sequence `0` and switches the active detail
-  kind to event detail.
+- At the time of this historical test, clicking a sequence-only event-row selector selected event
+  sequence `0`; that selector shape is now obsolete because event selection is identity-first.
 - Clicking `devtools-inspector:export-capture` reports `DevTools capture JSON exported`.
 
 ## Verification
