@@ -12,6 +12,12 @@ use crate::{
 /// Default maximum number of events retained by a DevTools event recorder.
 pub const DEFAULT_DEVTOOLS_EVENT_LIMIT: usize = 256;
 
+/// Default event scope id used by a recorder created without an explicit scope.
+pub const DEFAULT_DEVTOOLS_EVENT_SCOPE_ID: &str = "app";
+
+/// Default event scope label used by a recorder created without an explicit scope.
+pub const DEFAULT_DEVTOOLS_EVENT_SCOPE_LABEL: &str = "Application";
+
 /// Kind of event recorded by DevTools.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum DevtoolsEventKind {
@@ -49,6 +55,7 @@ impl DevtoolsEventKind {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DevtoolsEventRecord {
     sequence: u64,
+    scope_id: Option<String>,
     id: String,
     label: String,
     kind: DevtoolsEventKind,
@@ -64,6 +71,7 @@ impl DevtoolsEventRecord {
     pub fn new(id: impl Into<String>, label: impl Into<String>, kind: DevtoolsEventKind) -> Self {
         Self {
             sequence: 0,
+            scope_id: None,
             id: sanitize_sensitive_text(&id.into()),
             label: sanitize_sensitive_text(&label.into()),
             kind: kind.sanitized(),
@@ -73,6 +81,12 @@ impl DevtoolsEventRecord {
             duration_ms: None,
             payload: None,
         }
+    }
+
+    /// Attaches an event scope id.
+    pub fn scope_id(mut self, scope_id: impl Into<String>) -> Self {
+        self.scope_id = Some(sanitize_sensitive_text(&scope_id.into()));
+        self
     }
 
     /// Attaches a target id.
@@ -108,6 +122,11 @@ impl DevtoolsEventRecord {
     /// Returns the event sequence assigned by the recorder.
     pub const fn sequence(&self) -> u64 {
         self.sequence
+    }
+
+    /// Returns the event scope id, if present.
+    pub fn scope_id_ref(&self) -> Option<&str> {
+        self.scope_id.as_deref()
     }
 
     /// Returns the sanitized event id.
@@ -152,6 +171,9 @@ impl DevtoolsEventRecord {
 
     /// Returns this event with every exported channel sanitized.
     pub fn sanitized(mut self) -> Self {
+        self.scope_id = self
+            .scope_id
+            .map(|scope_id| sanitize_sensitive_text(&scope_id));
         self.id = sanitize_sensitive_text(&self.id);
         self.label = sanitize_sensitive_text(&self.label);
         self.kind = self.kind.sanitized();
@@ -169,43 +191,123 @@ impl DevtoolsEventRecord {
         self.sequence = sequence;
         self
     }
+
+    fn with_default_scope(mut self, scope_id: &str) -> Self {
+        if self.scope_id.is_none() {
+            self.scope_id = Some(sanitize_sensitive_text(scope_id));
+        }
+        self
+    }
 }
 
 /// Exported event batch from a bounded recorder.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DevtoolsEventBatch {
+    /// Sanitized scope id for this batch.
+    pub scope_id: String,
+    /// Human-readable sanitized scope label.
+    pub scope_label: String,
     /// Events retained by the recorder.
     pub events: Vec<DevtoolsEventRecord>,
     /// Maximum event capacity used by the recorder.
     pub max_events: usize,
+    /// Number of events retained in this batch.
+    pub retained_events: usize,
     /// Number of older events omitted due to capacity.
     pub omitted_events: usize,
+    /// Next append-time sequence that would be assigned by the recorder.
+    pub next_sequence: u64,
 }
 
 impl DevtoolsEventBatch {
-    /// Creates a sanitized event batch.
+    /// Creates a sanitized event batch with the default application scope.
     pub fn new(
         events: impl IntoIterator<Item = DevtoolsEventRecord>,
         max_events: usize,
         omitted_events: usize,
     ) -> Self {
-        Self {
-            events: events
-                .into_iter()
-                .map(DevtoolsEventRecord::sanitized)
-                .collect(),
+        Self::for_scope(
+            DEFAULT_DEVTOOLS_EVENT_SCOPE_ID,
+            DEFAULT_DEVTOOLS_EVENT_SCOPE_LABEL,
+            events,
             max_events,
             omitted_events,
+            0,
+        )
+    }
+
+    /// Creates a sanitized event batch for an explicit scope.
+    pub fn for_scope(
+        scope_id: impl Into<String>,
+        scope_label: impl Into<String>,
+        events: impl IntoIterator<Item = DevtoolsEventRecord>,
+        max_events: usize,
+        omitted_events: usize,
+        next_sequence: u64,
+    ) -> Self {
+        let scope_id = sanitize_sensitive_text(&scope_id.into());
+        let events = events
+            .into_iter()
+            .map(|event| event.sanitized().with_default_scope(&scope_id))
+            .collect::<Vec<_>>();
+        let retained_events = events.len();
+        Self {
+            scope_id,
+            scope_label: sanitize_sensitive_text(&scope_label.into()),
+            events,
+            max_events,
+            retained_events,
+            omitted_events,
+            next_sequence,
         }
+    }
+
+    /// Merges multiple event batches into one deterministic sanitized batch.
+    pub fn merged(
+        scope_id: impl Into<String>,
+        scope_label: impl Into<String>,
+        batches: impl IntoIterator<Item = DevtoolsEventBatch>,
+    ) -> Self {
+        let mut max_events = 0usize;
+        let mut omitted_events = 0usize;
+        let mut next_sequence = 0u64;
+        let mut events = Vec::new();
+
+        for batch in batches {
+            let batch = batch.sanitized();
+            max_events = max_events.saturating_add(batch.max_events);
+            omitted_events = omitted_events.saturating_add(batch.omitted_events);
+            next_sequence = next_sequence.max(batch.next_sequence);
+            events.extend(batch.events);
+        }
+
+        events.sort_by(|left, right| {
+            left.sequence()
+                .cmp(&right.sequence())
+                .then_with(|| left.scope_id_ref().cmp(&right.scope_id_ref()))
+                .then_with(|| left.id().cmp(right.id()))
+        });
+
+        Self::for_scope(
+            scope_id,
+            scope_label,
+            events,
+            max_events.max(1),
+            omitted_events,
+            next_sequence,
+        )
     }
 
     /// Returns this batch with every exported channel sanitized.
     pub fn sanitized(mut self) -> Self {
+        self.scope_id = sanitize_sensitive_text(&self.scope_id);
+        self.scope_label = sanitize_sensitive_text(&self.scope_label);
         self.events = self
             .events
             .into_iter()
-            .map(DevtoolsEventRecord::sanitized)
+            .map(|event| event.sanitized().with_default_scope(&self.scope_id))
             .collect();
+        self.retained_events = self.events.len();
         self
     }
 }
@@ -213,6 +315,8 @@ impl DevtoolsEventBatch {
 /// Bounded in-memory recorder for local DevTools events.
 #[derive(Clone, Debug)]
 pub struct DevtoolsEventRecorder {
+    scope_id: String,
+    scope_label: String,
     max_events: usize,
     next_sequence: u64,
     omitted_events: usize,
@@ -226,9 +330,15 @@ impl Default for DevtoolsEventRecorder {
 }
 
 impl DevtoolsEventRecorder {
-    /// Creates an event recorder with a bounded capacity.
-    pub fn with_capacity(max_events: usize) -> Self {
+    /// Creates an event recorder for an explicit application/session scope.
+    pub fn new(
+        scope_id: impl Into<String>,
+        scope_label: impl Into<String>,
+        max_events: usize,
+    ) -> Self {
         Self {
+            scope_id: sanitize_sensitive_text(&scope_id.into()),
+            scope_label: sanitize_sensitive_text(&scope_label.into()),
             max_events: max_events.max(1),
             next_sequence: 0,
             omitted_events: 0,
@@ -236,14 +346,48 @@ impl DevtoolsEventRecorder {
         }
     }
 
+    /// Creates an event recorder with a bounded capacity.
+    pub fn with_capacity(max_events: usize) -> Self {
+        Self::new(
+            DEFAULT_DEVTOOLS_EVENT_SCOPE_ID,
+            DEFAULT_DEVTOOLS_EVENT_SCOPE_LABEL,
+            max_events,
+        )
+    }
+
+    /// Returns the recorder scope id.
+    pub fn scope_id(&self) -> &str {
+        &self.scope_id
+    }
+
+    /// Returns the recorder scope label.
+    pub fn scope_label(&self) -> &str {
+        &self.scope_label
+    }
+
     /// Returns the recorder capacity.
     pub const fn max_events(&self) -> usize {
         self.max_events
     }
 
+    /// Returns how many events are currently retained.
+    pub fn retained_events(&self) -> usize {
+        self.events.len()
+    }
+
     /// Returns how many older events were omitted.
     pub const fn omitted_events(&self) -> usize {
         self.omitted_events
+    }
+
+    /// Returns the next append-time sequence.
+    pub const fn next_sequence(&self) -> u64 {
+        self.next_sequence
+    }
+
+    /// Returns true when no events are retained.
+    pub fn is_empty(&self) -> bool {
+        self.events.is_empty()
     }
 
     /// Records one event and returns its assigned sequence.
@@ -256,18 +400,38 @@ impl DevtoolsEventRecorder {
             self.omitted_events = self.omitted_events.saturating_add(1);
         }
 
-        self.events
-            .push_back(event.sanitized().with_sequence(sequence));
+        self.events.push_back(
+            event
+                .sanitized()
+                .with_default_scope(&self.scope_id)
+                .with_sequence(sequence),
+        );
         sequence
     }
 
     /// Exports a sanitized batch without clearing the recorder.
     pub fn snapshot(&self) -> DevtoolsEventBatch {
-        DevtoolsEventBatch::new(
+        DevtoolsEventBatch::for_scope(
+            self.scope_id.clone(),
+            self.scope_label.clone(),
             self.events.iter().cloned(),
             self.max_events,
             self.omitted_events,
+            self.next_sequence,
         )
+    }
+
+    /// Exports a sanitized batch without clearing the recorder.
+    pub fn export(&self) -> DevtoolsEventBatch {
+        self.snapshot()
+    }
+
+    /// Exports a sanitized batch and clears retained events and omission counts.
+    pub fn drain(&mut self) -> DevtoolsEventBatch {
+        let batch = self.snapshot();
+        self.events.clear();
+        self.omitted_events = 0;
+        batch
     }
 
     /// Clears retained events and omission counts.

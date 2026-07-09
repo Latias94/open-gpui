@@ -1,8 +1,8 @@
 use open_gpui_devtools::{
     DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot,
-    DevtoolsTargetId, DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId,
-    SnapshotCollection, SnapshotDiagnostic, SnapshotEnvelope, SnapshotKind, SnapshotNode,
-    SnapshotRedactionSummary, SnapshotTree,
+    DevtoolsEventKind, DevtoolsEventRecord, DevtoolsTargetId, DevtoolsTargetKind,
+    DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId, SnapshotCollection, SnapshotDiagnostic,
+    SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotRedactionSummary, SnapshotTree,
 };
 
 #[test]
@@ -154,7 +154,22 @@ fn captures_report_duplicate_and_missing_identities_as_diagnostics() {
                 "Timeline",
             ),
         ],
-        Vec::new(),
+        [
+            DevtoolsEventRecord::new(
+                "event.missing-target",
+                "Missing target",
+                DevtoolsEventKind::Instant,
+            )
+            .target_id(DevtoolsTargetId::new("target.missing"))
+            .domain_id(DevtoolsDomainId::new("domain.duplicate")),
+            DevtoolsEventRecord::new(
+                "event.missing-domain",
+                "Missing domain",
+                DevtoolsEventKind::Instant,
+            )
+            .target_id(DevtoolsTargetId::new("target.duplicate"))
+            .domain_id(DevtoolsDomainId::new("domain.missing")),
+        ],
         [snapshot.clone(), snapshot],
         Vec::new(),
     );
@@ -167,6 +182,8 @@ fn captures_report_duplicate_and_missing_identities_as_diagnostics() {
     assert!(diagnostic_codes.contains(&"capture.duplicate_target"));
     assert!(diagnostic_codes.contains(&"capture.duplicate_domain"));
     assert!(diagnostic_codes.contains(&"capture.missing_domain_target"));
+    assert!(diagnostic_codes.contains(&"capture.missing_event_target"));
+    assert!(diagnostic_codes.contains(&"capture.missing_event_domain"));
     assert!(diagnostic_codes.contains(&"capture.duplicate_probe"));
     assert!(
         capture

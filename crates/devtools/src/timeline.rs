@@ -153,6 +153,12 @@ impl TimelineSnapshot {
                     serde_json::Value::String(domain_id.as_str().to_owned()),
                 );
             }
+            if let Some(scope_id) = event.scope_id_ref() {
+                payload.insert(
+                    "scope_id".to_owned(),
+                    serde_json::Value::String(scope_id.to_owned()),
+                );
+            }
             if let Some(event_payload) = event.payload() {
                 payload.insert("payload".to_owned(), event_payload.clone());
             }

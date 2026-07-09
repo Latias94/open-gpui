@@ -29,7 +29,8 @@ pub mod ui_components;
 
 pub use domain::{DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot};
 pub use event::{
-    DEFAULT_DEVTOOLS_EVENT_LIMIT, DevtoolsEventBatch, DevtoolsEventKind, DevtoolsEventRecord,
+    DEFAULT_DEVTOOLS_EVENT_LIMIT, DEFAULT_DEVTOOLS_EVENT_SCOPE_ID,
+    DEFAULT_DEVTOOLS_EVENT_SCOPE_LABEL, DevtoolsEventBatch, DevtoolsEventKind, DevtoolsEventRecord,
     DevtoolsEventRecorder,
 };
 #[cfg(feature = "gpui")]

@@ -260,7 +260,9 @@ impl DevtoolsCapture {
             .into_iter()
             .map(SnapshotDiagnostic::sanitized)
             .collect::<Vec<_>>();
-        diagnostics.extend(capture_identity_diagnostics(&targets, &domains, &snapshots));
+        diagnostics.extend(capture_identity_diagnostics(
+            &targets, &domains, &events, &snapshots,
+        ));
         Self {
             targets: DevtoolsTargetTree::new(targets),
             domains,
@@ -342,6 +344,7 @@ const CAPTURE_DIAGNOSTIC_PROBE_ID: &str = "devtools.capture";
 fn capture_identity_diagnostics(
     targets: &[DevtoolsTargetSnapshot],
     domains: &[DevtoolsDomainSnapshot],
+    events: &[DevtoolsEventRecord],
     snapshots: &[SnapshotEnvelope],
 ) -> Vec<SnapshotDiagnostic> {
     let mut diagnostics = Vec::new();
@@ -375,6 +378,33 @@ fn capture_identity_diagnostics(
                     domain.target_id.as_str()
                 ),
             ));
+        }
+    }
+
+    for event in events {
+        if let Some(target_id) = event.target_id_ref() {
+            if !target_ids.contains(target_id.as_str()) {
+                diagnostics.push(capture_diagnostic(
+                    "capture.missing_event_target",
+                    format!(
+                        "event {} references missing target {}",
+                        event.id(),
+                        target_id.as_str()
+                    ),
+                ));
+            }
+        }
+        if let Some(domain_id) = event.domain_id_ref() {
+            if !domain_ids.contains(domain_id.as_str()) {
+                diagnostics.push(capture_diagnostic(
+                    "capture.missing_event_domain",
+                    format!(
+                        "event {} references missing domain {}",
+                        event.id(),
+                        domain_id.as_str()
+                    ),
+                ));
+            }
         }
     }
 
