@@ -6,6 +6,8 @@ pub mod adapters;
 pub mod command;
 #[cfg(feature = "docking")]
 pub mod docking;
+mod domain;
+mod event;
 #[cfg(feature = "form")]
 pub mod form;
 #[cfg(feature = "gpui")]
@@ -20,10 +22,16 @@ mod registry;
 #[cfg(feature = "resource")]
 pub mod resource;
 mod snapshot;
+mod target;
 pub mod timeline;
 #[cfg(feature = "ui-components")]
 pub mod ui_components;
 
+pub use domain::{DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot};
+pub use event::{
+    DEFAULT_DEVTOOLS_EVENT_LIMIT, DevtoolsEventBatch, DevtoolsEventKind, DevtoolsEventRecord,
+    DevtoolsEventRecorder,
+};
 #[cfg(feature = "gpui")]
 pub use gpui::DevtoolsInspector;
 pub use inspector::{
@@ -40,5 +48,8 @@ pub use registry::{DevtoolsRegistry, DevtoolsRegistryError};
 pub use snapshot::{
     SnapshotCollection, SnapshotDiagnostic, SnapshotEnvelope, SnapshotKind, SnapshotNode,
     SnapshotTree,
+};
+pub use target::{
+    DevtoolsTargetId, DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsTargetTree,
 };
 pub use timeline::{DEFAULT_TIMELINE_EVENT_LIMIT, TimelineEventSnapshot, TimelineSnapshot};

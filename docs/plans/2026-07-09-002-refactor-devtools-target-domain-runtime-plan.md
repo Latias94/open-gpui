@@ -70,6 +70,20 @@ Inspector and gallery:
 - AE3. Given a bounded event recorder with capacity 2 and five events, when it is exported, two ordered events remain and the omitted count is 3.
 - AE4. Given a `DockViewportRuntimeStatus` with platform capabilities, lifecycle records, and visual affordances, when converted to a capture, docking target rows and graph nodes reflect those public facts without private field access.
 - AE5. Given the gallery DevTools collection, when contract tests run, both legacy snapshot probes and the new capture projections are asserted so downstream users can migrate gradually.
+- AE6. Given a developer investigating a panel tear-off failure, the DevTools capture can show the selected target, docking domain status, route/drop/tear-off outcome, and related event sequence without reading private docking fields.
+- AE7. Given a developer filing a bug report, the inspector can export a sanitized target/domain/event capture that includes schema metadata, retained/omitted event counts, diagnostics, and no raw path/email/token-like values.
+- AE8. Given a viewport runtime state change, the target/domain/event projections let a developer trace which viewport target changed, which domain emitted the fact, and which ordered event records explain the transition.
+
+### MVP Checkpoint
+
+After U3, before expanding into docking adapter migration and UI work, the implementation must demonstrate one minimum valuable protocol slice:
+
+- A legacy registry collection projects into `DevtoolsCapture` without breaking `SnapshotCollection`.
+- At least one real first-party producer, preferably command or layout, appears as a target/domain snapshot.
+- `DevtoolsEventRecorder` exports a sanitized ordered timeline with retained count, omitted count, and recorder limit.
+- `DevtoolsInspectorState` can consume the capture enough for deterministic target/domain/event rows in tests.
+
+If this checkpoint fails to make a concrete debugging task easier, pause and narrow the protocol before continuing to U4-U7.
 
 ### Scope Boundaries
 
@@ -82,12 +96,14 @@ Out of scope: Chrome DevTools Protocol compatibility, remote debugging, live mut
 - Baseline plan: `docs/plans/2026-07-09-001-feat-devtools-ecosystem-deepening-plan.md`.
 - Baseline verification: `docs/knowledge/engineering/verification/2026-07-09-devtools-ecosystem-final-verification.md`.
 - DevTools prior memory: `docs/knowledge/engineering/subagents/2026-07-09-devtools-ecosystem-prior-memory.md`.
+- Docking runtime authority ADR: `docs/adr/0012-docking-runtime-capability-alignment.md`.
+- Command runtime authority doc: `docs/ui/command-ecosystem.md`.
 - Current DevTools surface: `crates/devtools/src/snapshot.rs`, `crates/devtools/src/registry.rs`, `crates/devtools/src/inspector.rs`, `crates/devtools/src/timeline.rs`, `crates/devtools/src/layout.rs`, `crates/devtools/src/docking.rs`.
 - Docking public status surface: `crates/gpui_docking/src/viewport_runtime_status.rs`, `crates/gpui_docking/src/debug.rs`, `crates/gpui_docking/src/advanced.rs`.
-- Chromium reference: `repo-ref/chromium-devtools-frontend/front_end/core/sdk/TargetManager.ts`, `repo-ref/chromium-devtools-frontend/front_end/core/sdk/Target.ts`, `repo-ref/chromium-devtools-frontend/front_end/core/sdk/SDKModel.ts`, `repo-ref/chromium-devtools-frontend/front_end/panels/timeline/README.md`.
-- Flutter reference: `repo-ref/flutter-devtools/packages/devtools_app/lib/src/service/service_manager.dart`, `repo-ref/flutter-devtools/packages/devtools_app/lib/src/screens/inspector/inspector_controller.dart`, `repo-ref/flutter-devtools/packages/devtools_app/lib/src/screens/performance/performance_controller.dart`.
-- React reference: `repo-ref/react-devtools/packages/react-devtools-shared/src/backend/agent.js`, `repo-ref/react-devtools/packages/react-devtools-shared/src/backend/profilingHooks.js`, `repo-ref/react-devtools/packages/react-devtools-shared/src/frontend/types.js`.
-- Dear ImGui reference: `repo-ref/imgui/imgui_internal.h` metrics/debug log and docking/viewport debug concepts.
+- Chromium reference at `f3c10df`: `repo-ref/chromium-devtools-frontend/front_end/core/sdk/TargetManager.ts`, `repo-ref/chromium-devtools-frontend/front_end/core/sdk/Target.ts`, `repo-ref/chromium-devtools-frontend/front_end/core/sdk/SDKModel.ts`, `repo-ref/chromium-devtools-frontend/front_end/panels/timeline/README.md`.
+- Flutter reference at `12d5956`: `repo-ref/flutter-devtools/packages/devtools_app/lib/src/service/service_manager.dart`, `repo-ref/flutter-devtools/packages/devtools_app/lib/src/screens/inspector/inspector_controller.dart`, `repo-ref/flutter-devtools/packages/devtools_app/lib/src/screens/performance/performance_controller.dart`.
+- React reference at `5123b06`: `repo-ref/react-devtools/packages/react-devtools-shared/src/backend/agent.js`, `repo-ref/react-devtools/packages/react-devtools-shared/src/backend/profilingHooks.js`, `repo-ref/react-devtools/packages/react-devtools-shared/src/frontend/types.js`.
+- Dear ImGui reference at `4be08b1ec`: `repo-ref/imgui/imgui_internal.h` metrics/debug log and docking/viewport debug concepts.
 
 ## Planning Contract
 
@@ -100,6 +116,17 @@ Out of scope: Chrome DevTools Protocol compatibility, remote debugging, live mut
 - KTD5. Docking adapters consume public `DockViewportRuntimeStatus` and debug summaries only. Missing graph facts become stable diagnostics or summary nodes, not private reach-through.
 - KTD6. Inspector state owns target/domain/event projection. GPUI rendering consumes state projections so tests can validate behavior without a live window.
 - KTD7. The gallery migrates by dogfooding capture while preserving legacy collection assertions. This avoids a flag day for downstream snapshot consumers.
+- KTD8. `DevtoolsEventRecorder` assigns a monotonically increasing sequence at append time. Retention, export order, filtering, and omitted-count calculations use that sequence; timestamps and durations are display metadata only.
+- KTD9. The protocol core must compile without GPUI or optional adapters. Feature-gated adapters can depend on their source crates, but target/domain/event capture DTOs stay renderer-neutral.
+
+### Core Protocol API Semantics
+
+- `DevtoolsRegistry` remains the central entry point. It evolves from a probe registry into a compatibility registry that can collect legacy `SnapshotCollection` and richer `DevtoolsCapture` views.
+- Registration-time identity failures should return `DevtoolsRegistryError` where the invalid or duplicate identity is known before collection.
+- Collection-time producer failures should become sanitized diagnostics inside `DevtoolsCapture` and, where useful, diagnostic domain snapshots.
+- Target/domain/event provider traits are allowed only when at least two concrete producers need the abstraction. Until then, prefer small helper functions and explicit capture builders.
+- Legacy `collect()` remains the flat snapshot view. New protocol consumers should use `collect_capture()` or `DevtoolsInspectorState::from_capture()`.
+- Duplicate and invalid target, domain, and probe identities must be covered by tests, including legacy probe projection conflicts.
 
 ### High-Level Technical Design
 
@@ -125,13 +152,14 @@ flowchart TB
 
 ### Sequencing
 
-1. Add core target/domain/capture DTOs and tests before touching UI or docking.
+1. Harden the existing core target/domain/capture DTOs and tests before touching UI or docking.
 2. Extend registry/probe collection to produce captures while keeping `collect()` behavior stable.
-3. Add event recorder and timeline projection so docking can emit events into an established model.
-4. Rewrite docking adapter around target/domain/graph/events using public runtime status.
-5. Wrap existing command/layout/timeline producers into domain snapshots.
-6. Upgrade inspector state and GPUI UI to target/domain/event projections.
-7. Move gallery/docs/tests to the new capture dogfood path, then run verification and review.
+3. Harden the existing event recorder and timeline projection so docking can emit events into an established model.
+4. Run the MVP checkpoint and narrow the protocol if the slice does not improve a real debugging task.
+5. Rewrite docking adapter around target/domain/graph/events using public runtime status.
+6. Wrap existing command/layout/timeline producers into domain snapshots.
+7. Upgrade inspector state and GPUI UI to target/domain/event projections.
+8. Move gallery/docs/tests to the new capture dogfood path, then run verification and review.
 
 ### Risks and Dependencies
 
@@ -145,7 +173,7 @@ flowchart TB
 
 ### U1. Target, Domain, and Capture Core
 
-Goal: add the typed read model that relates snapshots to targets and domains.
+Goal: harden the typed read model that relates snapshots to targets and domains.
 
 Requirements: R1, R2, R3, R5, R6, R18.
 
@@ -159,9 +187,10 @@ Files:
 
 Approach:
 
-- Add `DevtoolsTargetId`, `DevtoolsTargetKind`, `DevtoolsTargetSnapshot`, and `DevtoolsTargetTree` with sanitized ids, labels, optional parent ids, metadata, and deterministic ordering.
-- Add `DevtoolsDomainKind`, `DevtoolsDomainId`, and `DevtoolsDomainSnapshot` that attach a domain to a target and optionally hold a `SnapshotEnvelope`.
-- Add `DevtoolsCapture` with targets, domains, events, diagnostics, and legacy snapshots; add conversion back to `SnapshotCollection`.
+- Continue from the existing `target.rs`, `domain.rs`, and `event.rs` modules instead of creating duplicate protocol files.
+- Harden `DevtoolsTargetId`, `DevtoolsTargetKind`, `DevtoolsTargetSnapshot`, and `DevtoolsTargetTree` with sanitized ids, labels, optional parent ids, metadata, and deterministic ordering.
+- Harden `DevtoolsDomainKind`, `DevtoolsDomainId`, and `DevtoolsDomainSnapshot` that attach a domain to a target and optionally hold a `SnapshotEnvelope`.
+- Harden `DevtoolsCapture` with targets, domains, events, diagnostics, and legacy snapshots; add conversion back to `SnapshotCollection`.
 - Keep constructors small and typed; avoid a trait abstraction until at least two real producers need it.
 
 Test scenarios:
@@ -170,6 +199,7 @@ Test scenarios:
 - A capture created from legacy snapshots contains probe targets and domain snapshots in deterministic order.
 - `SnapshotCollection` round-trip from capture preserves legacy snapshots and diagnostics.
 - Custom target/domain kinds do not leak token-like text.
+- Duplicate and invalid target, domain, and probe identities produce stable errors or diagnostics, including legacy projection conflicts.
 
 Verification:
 
@@ -178,7 +208,7 @@ Verification:
 
 ### U2. Registry Capture Pipeline
 
-Goal: make `DevtoolsRegistry` collect both legacy snapshots and target/domain captures.
+Goal: make `DevtoolsRegistry` collect both legacy snapshots and target/domain captures with explicit identity and failure semantics.
 
 Requirements: R3, R4, R5, R6, R14, R17.
 
@@ -197,12 +227,14 @@ Approach:
 - Add optional target metadata support to closure-backed probes only if U1 tests show the default probe target is too weak; otherwise keep the first slice compatibility-first.
 - Preserve `DevtoolsRegistry::collect()` behavior and duplicate-probe errors.
 - Make collection failures appear as capture diagnostics and diagnostic-domain facts where useful.
+- Keep provider traits out of the first slice unless at least two producers need them; if traits are introduced, define registration-time validation and collection-time diagnostics in `DevtoolsRegistry`.
 
 Test scenarios:
 
 - Existing registry collection tests pass unchanged.
 - Capture collection over mixed successful and failing probes creates deterministic targets, domains, diagnostics, and legacy snapshots.
 - Duplicate probe registration still fails before any target/domain state is produced.
+- Duplicate and invalid domain/probe projection cases cannot silently overwrite capture rows.
 
 Verification:
 
@@ -211,7 +243,7 @@ Verification:
 
 ### U3. Bounded Event Recorder and Timeline Projection
 
-Goal: add a reusable local event history that timeline and docking can share.
+Goal: harden the reusable local event history that timeline and docking can share.
 
 Requirements: R5, R6, R8, R9, R10, R13, R18.
 
@@ -225,16 +257,18 @@ Files:
 
 Approach:
 
-- Add `DevtoolsEventKind`, `DevtoolsEventRecord`, `DevtoolsEventRecorder`, and `DevtoolsEventBatch` with a bounded `VecDeque`.
-- Store sequence order as the primary ordering field; support optional timestamp and duration for producers that have clock facts.
+- Continue from the existing `event.rs` module; do not create an `events.rs` sibling.
+- Harden `DevtoolsEventKind`, `DevtoolsEventRecord`, `DevtoolsEventRecorder`, and `DevtoolsEventBatch` with a bounded `VecDeque`.
+- Assign sequence order at append time as the primary ordering field; support optional timestamp and duration for producers that have clock facts.
 - Include optional target/domain references so events can be filtered without parsing payload JSON.
 - Add a `TimelineSnapshot` projection from event batches while keeping existing timeline constructors working.
+- Sanitize at record time and at export/projection boundaries so retained recorder state does not hold raw sensitive event channels.
 
 Test scenarios:
 
 - Recorder capacity bounds exported events and reports omitted counts.
 - Event labels, ids, target ids, domain ids, and payloads are sanitized.
-- Timeline projection preserves sequence order and optional duration.
+- Timeline projection preserves sequence order, optional timestamp, optional duration, retained count, omitted count, and recorder limit.
 - Existing motion timeline tests remain green.
 
 Verification:
@@ -262,12 +296,14 @@ Approach:
 - Add `docking_runtime_capture(status)` or equivalent that creates a docking root target, platform capability domain, lifecycle viewport targets, visual affordance targets, graph domain, and bounded events.
 - Keep `docking_runtime_probe_snapshot(status)` as a compatibility wrapper over the new domain graph output.
 - If `DockViewportRuntimeStatus` lacks a public field needed for a target, add a narrow public status accessor or emit `runtime.unavailable`.
+- Every new docking accessor must declare source ownership, intended stability level, redaction expectations, and source-crate tests before DevTools consumes it.
 
 Test scenarios:
 
 - Platform capabilities become a docking domain under a docking runtime target.
 - Lifecycle records create viewport targets with route/input/platform request summaries.
 - Visual affordance records create child targets and events without leaking debug labels.
+- Activation, close, should-close, route, drop outcome, tear-off, platform sync, placement restore, rejected, unavailable, stale, minimized, and missing-route-facts states have typed or stable diagnostic coverage.
 - Legacy docking probe snapshot still serializes the same high-level runtime summary.
 
 Verification:
@@ -332,7 +368,10 @@ Approach:
 - Add `DevtoolsInspectorState::from_capture()` while keeping `new(SnapshotCollection)` as a compatibility constructor.
 - Add public row DTOs for targets, domains, and events with selected flags, labels, counts, and category/domain metadata.
 - Update filtering to search target labels, domain labels, snapshot labels, diagnostics, and event labels in one deterministic pass.
+- Use a single-select target tree/list and a single-select domain facet/tab for the selected target. The text filter narrows targets, domains, legacy snapshot rows, diagnostics, and events without becoming another selection axis.
+- Define selected detail priority as domain snapshot detail first, selected event detail second, then legacy snapshot JSON fallback for compatibility.
 - Render a compact target list, domain summary/tabs, selected detail, and event strip/list using existing UI component style.
+- Provide keyboard/focus behavior for target rows, domain facets/tabs, event rows, selected detail copy/export controls, and unavailable/unsupported/no-selected states.
 
 Test scenarios:
 
@@ -340,6 +379,8 @@ Test scenarios:
 - Filtering by target, domain, event, or legacy snapshot kind moves selection to the first visible result.
 - Legacy `DevtoolsInspectorState::new(collection)` still exposes snapshot rows and category summaries.
 - GPUI debug selectors exist for root, target list, domain list, event list, selected detail, and diagnostics.
+- Inspector rows or stable selectors cover unsupported, unavailable, stale, rejected, minimized, and missing-route-facts docking states.
+- Copy/export controls have readable labels and success/failure feedback that tests can assert at the state/model level.
 
 Verification:
 
@@ -391,6 +432,10 @@ Required local gates:
 | Gate | Command | Done Signal |
 |---|---|---|
 | Format | `cargo fmt -p open-gpui-devtools -p open-gpui-ui-foundation-gallery -p open-gpui-docking` | Changed Rust files are formatted. |
+| DevTools renderer-neutral core | `cargo check -p open-gpui-devtools --no-default-features --tests --locked` | Target/domain/event protocol compiles without GPUI or optional adapters. |
+| DevTools command feature | `cargo check -p open-gpui-devtools --features command --tests --locked` | Command adapter wrappers compile independently. |
+| DevTools docking feature | `cargo check -p open-gpui-devtools --features docking --tests --locked` | Docking adapter wrappers compile independently. |
+| DevTools GPUI feature | `cargo check -p open-gpui-devtools --features gpui --tests --locked` | Inspector UI compiles behind the GPUI feature. |
 | DevTools compile | `cargo check -p open-gpui-devtools --all-features --tests --locked` | All feature-gated DevTools code compiles. |
 | DevTools tests | `cargo nextest run -p open-gpui-devtools --all-features --no-fail-fast --locked` | Target/domain/event/docking/inspector tests pass. |
 | Docking status tests | `cargo nextest run -p open-gpui-docking viewport_runtime_status host_debug --no-fail-fast --locked` | Public docking status/debug assumptions remain valid. |
@@ -407,6 +452,7 @@ Conditional gates:
 Quality gates:
 
 - Run a simplification pass after U3/U4 if capture/domain/event wrappers duplicate structure.
+- Run the MVP checkpoint after U3 and record the result in engineering memory before starting U4.
 - Run `ce-code-review mode:agent depth:full` before final push because this is a cross-cutting public API and sanitizer-sensitive refactor.
 - Apply eligible review findings, record residuals if any, and keep the plan body free of execution status.
 
@@ -418,7 +464,10 @@ Global done criteria:
 - `DevtoolsCapture` is the richer target/domain/event read model, and `SnapshotCollection` remains usable for legacy consumers.
 - Registry capture collection, event recording, docking capture, domain wrappers, inspector projections, and gallery dogfood are covered by tests.
 - No new DevTools API bypasses sanitizer/redaction for ids, labels, diagnostics, events, or JSON payloads.
+- Event recorder ordering is defined by append-time sequence and tests assert optional timestamp/duration, retained count, omitted count, and recorder limit.
 - Docking adapters consume public runtime status/debug facts only.
+- Any new docking accessor added for DevTools has source ownership, stability, redaction, and source-crate tests documented or encoded near the owning crate.
+- Inspector navigation uses the documented single-select target and single-select domain model, with keyboard/focus behavior and readable copy/export feedback covered at the state/model or UI selector level.
 - Required verification gates pass or any environmental failure is documented with command, reason, and scoped replacement evidence.
 - Dead-end code, duplicate adapters, and static demo-only helpers introduced during this work are removed.
 - Engineering memory records major progress, review, final verification, and pushed commit state.
@@ -429,6 +478,7 @@ Per-unit done criteria:
 - U1 is done when target/domain/capture DTOs compile, are documented, and pass sanitizer/round-trip tests.
 - U2 is done when `collect_capture()` maps legacy probes into deterministic targets/domains without changing `collect()`.
 - U3 is done when bounded event recorder and timeline projection tests pass.
+- The MVP checkpoint is done when legacy projection, one real first-party domain producer, ordered sanitized events, and inspector state rows compose in one testable slice.
 - U4 is done when docking runtime status produces target/domain/graph/event facts and legacy docking snapshot compatibility remains covered.
 - U5 is done when existing adapter families can emit domain snapshots under feature gates without payload duplication.
 - U6 is done when inspector state and GPUI UI expose target/domain/event projections with deterministic filtering and selectors.

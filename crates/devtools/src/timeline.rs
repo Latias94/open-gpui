@@ -1,8 +1,8 @@
 //! Renderer-neutral DevTools timeline snapshots.
 
 use crate::{
-    ProbeId, ProbeSnapshotError, SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotProbe,
-    SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
+    DevtoolsEventBatch, ProbeId, ProbeSnapshotError, SnapshotEnvelope, SnapshotKind, SnapshotNode,
+    SnapshotProbe, SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
     adapters::{sanitize_json_value, sanitize_sensitive_text, snapshot_node_with_payload},
 };
 
@@ -119,6 +119,51 @@ impl TimelineSnapshot {
         }
     }
 
+    /// Creates a timeline snapshot from a DevTools event batch.
+    pub fn from_event_batch(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        batch: &DevtoolsEventBatch,
+    ) -> Self {
+        let events = batch.events.iter().map(|event| {
+            let mut snapshot = TimelineEventSnapshot::new(
+                event.id(),
+                event.label(),
+                event.kind().as_label(),
+                event.sequence(),
+            );
+            if let Some(timestamp_ms) = event.timestamp_ms_value() {
+                snapshot = snapshot.timestamp_ms(timestamp_ms);
+            }
+            if let Some(duration_ms) = event.duration_ms_value() {
+                snapshot = snapshot.duration_ms(duration_ms);
+            }
+            let mut payload = serde_json::Map::new();
+            if let Some(target_id) = event.target_id_ref() {
+                payload.insert(
+                    "target_id".to_owned(),
+                    serde_json::Value::String(target_id.as_str().to_owned()),
+                );
+            }
+            if let Some(domain_id) = event.domain_id_ref() {
+                payload.insert(
+                    "domain_id".to_owned(),
+                    serde_json::Value::String(domain_id.as_str().to_owned()),
+                );
+            }
+            if let Some(event_payload) = event.payload() {
+                payload.insert("payload".to_owned(), event_payload.clone());
+            }
+            if !payload.is_empty() {
+                snapshot = snapshot.with_payload(serde_json::Value::Object(payload));
+            }
+            snapshot
+        });
+        let mut timeline = Self::with_event_limit(id, label, events, batch.max_events);
+        timeline.omitted_events = batch.omitted_events;
+        timeline
+    }
+
     /// Returns the sanitized timeline id.
     pub fn id(&self) -> &str {
         &self.id
@@ -153,6 +198,7 @@ impl TimelineSnapshot {
                 "id": self.id,
                 "label": self.label,
                 "event_count": self.events.len(),
+                "retained_event_count": self.events.len(),
                 "max_events": self.max_events,
                 "omitted_events": self.omitted_events,
             }),

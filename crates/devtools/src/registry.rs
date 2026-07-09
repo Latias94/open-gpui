@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    DevtoolsProbe, ProbeId, ProbeSnapshotError, SnapshotCollection, SnapshotDiagnostic,
-    SnapshotKind, SnapshotProbe, SnapshotProbeSnapshot,
+    DevtoolsCapture, DevtoolsProbe, ProbeId, ProbeSnapshotError, SnapshotCollection,
+    SnapshotDiagnostic, SnapshotKind, SnapshotProbe, SnapshotProbeSnapshot,
 };
 
 /// Registry of read-only devtools probes.
@@ -72,6 +72,11 @@ impl DevtoolsRegistry {
             }
         }
         collection
+    }
+
+    /// Collects a target/domain/event capture while preserving legacy snapshots.
+    pub fn collect_capture(&self) -> DevtoolsCapture {
+        DevtoolsCapture::from_snapshot_collection(self.collect())
     }
 }
 

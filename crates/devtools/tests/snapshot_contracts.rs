@@ -133,6 +133,35 @@ fn registry_registers_closure_backed_snapshot_probes() {
 }
 
 #[test]
+fn registry_collects_target_domain_capture_from_legacy_probes() {
+    let mut registry = DevtoolsRegistry::default();
+    registry
+        .register(StaticProbe::new("theme", SnapshotKind::Theme))
+        .unwrap();
+    registry.register(FailingProbe::new("resource")).unwrap();
+
+    let capture = registry.collect_capture();
+
+    assert_eq!(capture.snapshots.len(), 1);
+    assert_eq!(capture.diagnostics.len(), 1);
+    assert_eq!(
+        capture
+            .targets
+            .targets
+            .iter()
+            .map(|target| target.id.as_str())
+            .collect::<Vec<_>>(),
+        ["app", "probe.theme"]
+    );
+    assert_eq!(capture.domains.len(), 1);
+    assert_eq!(capture.domains[0].kind.as_label(), "theme");
+    assert_eq!(
+        capture.snapshot_collection().snapshots[0].probe_id.as_str(),
+        "theme"
+    );
+}
+
+#[test]
 fn snapshot_export_preserves_tree_and_redaction_summary() {
     let mut redaction = SnapshotRedactionSummary::default();
     redaction.record_redacted("password");
