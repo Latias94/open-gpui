@@ -111,9 +111,12 @@ fn gpui_inspector_surface_exposes_category_debug_selectors() {
 #[cfg(feature = "docking")]
 #[test]
 fn framework_adapters_convert_docking_runtime_status() {
+    use open_gpui_docking::DockSpaceId;
     use open_gpui_docking::advanced::{
-        DockViewportPlatformCapabilityRecord, DockViewportRestoreReadinessRecord,
-        DockViewportRuntimeStatus,
+        DockViewportInputStatus, DockViewportLifecycleRecord, DockViewportPlatformCapabilityRecord,
+        DockViewportPlatformRequestStatus, DockViewportRestoreReadinessRecord,
+        DockViewportRouteStatus, DockViewportRuntimeStatus, DockViewportVisualAffordanceRecord,
+        DockVisualAffordanceDebugSummary,
     };
 
     let mut status = DockViewportRuntimeStatus::default();
@@ -131,12 +134,50 @@ fn framework_adapters_convert_docking_runtime_status() {
         matched: 2,
         missing: 1,
     });
+    status.viewport_lifecycle.push(DockViewportLifecycleRecord {
+        space: DockSpaceId::from("primary"),
+        window_id: open_gpui::WindowId::from(7),
+        route_status: DockViewportRouteStatus::RouteReady,
+        input_status: DockViewportInputStatus::ReceivesInput,
+        platform_request_status: DockViewportPlatformRequestStatus {
+            close_requested: false,
+            resize_requested: true,
+        },
+        coordinate_status: None,
+        facts_generation: 11,
+    });
+    status
+        .visual_affordances
+        .push(DockViewportVisualAffordanceRecord {
+            space: DockSpaceId::from("primary"),
+            window_id: open_gpui::WindowId::from(7),
+            summary: DockVisualAffordanceDebugSummary {
+                space: Some("primary".to_owned()),
+                frame_generation: Some(3),
+                layer_count: 2,
+                active_count: 1,
+                active: None,
+                motion_state: Some("settled".to_owned()),
+                churn_signature: "primary:2:1".to_owned(),
+            },
+        });
 
     let snapshot = docking::docking_runtime_probe_snapshot(&status);
+    let capture = docking::docking_runtime_capture(&status);
     let serialized = serde_json::to_string(&snapshot.tree()).unwrap();
+    let capture_serialized = serde_json::to_string(&capture).unwrap();
 
     assert!(serialized.contains("Viewport runtime"));
     assert!(serialized.contains("platform_viewport_windows"));
     assert!(serialized.contains("\"matched\":2"));
     assert!(serialized.contains("\"missing\":1"));
+    assert!(serialized.contains("\"route_status\":\"route-ready\""));
+    assert!(serialized.contains("\"resize_requested\":true"));
+    assert!(capture_serialized.contains("\"kind\":\"Runtime\""));
+    assert!(capture_serialized.contains("\"kind\":\"Docking\""));
+    assert!(capture_serialized.contains("docking.visual-affordance.0"));
+    assert!(capture_serialized.contains("Visual affordance"));
+    assert_eq!(capture.domains.len(), 1);
+    assert_eq!(capture.events.len(), 1);
+    assert_eq!(capture.snapshots.len(), 1);
 }

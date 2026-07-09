@@ -63,6 +63,8 @@ pub enum DevtoolsTargetKind {
     Panel,
     /// Legacy probe target.
     Probe,
+    /// Runtime subsystem target.
+    Runtime,
     /// Custom application-provided target.
     Custom(String),
 }
@@ -77,6 +79,7 @@ impl DevtoolsTargetKind {
             Self::Dockspace => "dockspace",
             Self::Panel => "panel",
             Self::Probe => "probe",
+            Self::Runtime => "runtime",
             Self::Custom(label) => label.as_str(),
         }
     }
