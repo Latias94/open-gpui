@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     DevtoolsDomainId, DevtoolsTargetId,
-    adapters::{sanitize_json_value, sanitize_sensitive_text},
+    adapters::{sanitize_json_value, sanitize_sensitive_text, stable_node_id},
 };
 
 /// Default maximum number of events retained by a DevTools event recorder.
@@ -51,7 +51,7 @@ impl DevtoolsEventKind {
     }
 }
 
-/// Stable identity for a DevTools event across diff, replay, and inspector selection.
+/// Stable event-instance identity for diff, replay, and inspector selection.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct DevtoolsEventIdentity {
     /// Sanitized event scope id.
@@ -93,9 +93,14 @@ impl DevtoolsEventIdentity {
         )
     }
 
-    /// Returns a deterministic string key for maps and UI rows.
+    /// Returns a deterministic sanitized key for maps and UI rows.
     pub fn as_key(&self) -> String {
-        format!("{}:{}:{}", self.scope_id, self.sequence, self.event_id)
+        let sequence = self.sequence.to_string();
+        stable_node_id([
+            self.scope_id.as_str(),
+            sequence.as_str(),
+            self.event_id.as_str(),
+        ])
     }
 }
 
@@ -223,7 +228,7 @@ impl DevtoolsEventRecord {
         self.payload.as_ref()
     }
 
-    /// Returns the stable event identity used by diff, replay, and inspector selection.
+    /// Returns the stable event-instance identity used by diff, replay, and inspector selection.
     pub fn identity(&self) -> DevtoolsEventIdentity {
         DevtoolsEventIdentity::from_event(self)
     }

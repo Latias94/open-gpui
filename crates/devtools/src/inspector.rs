@@ -275,25 +275,7 @@ impl DevtoolsInspectorState {
         Ok(self)
     }
 
-    /// Selects an event by append-time sequence and moves target/domain selection when present.
-    pub fn select_event(mut self, sequence: u64) -> Result<Self, DevtoolsInspectorError> {
-        let event = self
-            .events
-            .iter()
-            .find(|event| event.sequence() == sequence)
-            .ok_or(DevtoolsInspectorError::UnknownEvent(sequence))?;
-        if let Some(target_id) = event.target_id_ref() {
-            self.selected_target_id = Some(target_id.clone());
-        }
-        if let Some(domain_id) = event.domain_id_ref() {
-            self.selected_domain_id = Some(domain_id.clone());
-        }
-        self.selected_event_identity = Some(event.identity());
-        self.active_detail_kind = Some(DevtoolsInspectorDetailKind::Event);
-        Ok(self)
-    }
-
-    /// Selects an event by stable identity and moves target/domain selection when present.
+    /// Selects an event by stable event-instance identity and moves target/domain selection when present.
     pub fn select_event_identity(
         mut self,
         identity: &DevtoolsEventIdentity,
@@ -357,13 +339,6 @@ impl DevtoolsInspectorState {
     /// Returns the selected domain id.
     pub fn selected_domain_id(&self) -> Option<&DevtoolsDomainId> {
         self.selected_domain_id.as_ref()
-    }
-
-    /// Returns the selected event sequence.
-    pub fn selected_event_sequence(&self) -> Option<u64> {
-        self.selected_event_identity
-            .as_ref()
-            .map(|identity| identity.sequence)
     }
 
     /// Returns the selected event identity.
@@ -1039,9 +1014,9 @@ pub struct DevtoolsDomainRow {
 /// One event row shown by a read-only devtools inspector.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DevtoolsEventRow {
-    /// Stable append-time event sequence.
+    /// Recorder append-time event sequence retained only as display metadata.
     pub sequence: u64,
-    /// Stable event identity across scope, sequence, and event id.
+    /// Stable event-instance identity across scope, sequence, and event id.
     pub event_identity: DevtoolsEventIdentity,
     /// Stable event id.
     pub event_id: String,
@@ -1246,9 +1221,6 @@ pub enum DevtoolsInspectorError {
     /// The requested domain is not present in the capture.
     #[error("unknown devtools domain: {0}")]
     UnknownDomain(DevtoolsDomainId),
-    /// The requested event sequence is not present in the capture.
-    #[error("unknown devtools event sequence: {0}")]
-    UnknownEvent(u64),
     /// The requested event identity is not present in the capture.
     #[error("unknown devtools event identity: {0}")]
     UnknownEventIdentity(DevtoolsEventIdentity),

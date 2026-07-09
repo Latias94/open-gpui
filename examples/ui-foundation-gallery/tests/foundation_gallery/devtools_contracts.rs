@@ -434,15 +434,21 @@ fn devtools_gallery_smoke_clicks_inspector_rows_and_actions(cx: &mut open_gpui::
     });
     scroll_page_selector_into_view(&shell, cx, &event_selector);
     click(cx, &event_selector);
-    let (selected_event, active_detail_kind, feedback) = cx.update(|_, app| {
+    let (selected_event_key, active_detail_kind, feedback) = cx.update(|_, app| {
         let inspector = inspector.read(app);
         (
-            inspector.state().selected_event_sequence(),
+            inspector
+                .state()
+                .selected_event_identity()
+                .map(|identity| identity.as_key()),
             inspector.state().active_detail_kind(),
             inspector.feedback_label().map(ToString::to_string),
         )
     });
-    assert_eq!(selected_event, Some(0));
+    assert_eq!(
+        selected_event_key.as_deref(),
+        event_selector.strip_prefix("devtools-inspector:event:")
+    );
     assert_eq!(
         active_detail_kind,
         Some(open_gpui_devtools::DevtoolsInspectorDetailKind::Event)

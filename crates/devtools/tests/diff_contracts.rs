@@ -67,7 +67,7 @@ fn event_identity_includes_scope_sequence_and_event_id() {
         .map(|row| row.identity.as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(event_identities, ["scope.a:0:refresh", "scope.b:0:refresh"]);
+    assert_eq!(event_identities, ["scope.a.0.refresh", "scope.b.0.refresh"]);
 }
 
 #[test]

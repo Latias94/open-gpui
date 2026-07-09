@@ -1,10 +1,11 @@
 use open_gpui_devtools::{
     DevtoolsCapture, DevtoolsDiffStatus, DevtoolsDomainId, DevtoolsDomainKind,
-    DevtoolsDomainSnapshot, DevtoolsEventKind, DevtoolsEventRecord, DevtoolsEventRecorder,
-    DevtoolsInspectorDetailKind, DevtoolsInspectorError, DevtoolsInspectorState, DevtoolsRegistry,
-    DevtoolsSession, DevtoolsSnapshotCategory, DevtoolsTargetId, DevtoolsTargetKind,
-    DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId, SnapshotCollection, SnapshotDiagnostic,
-    SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotRedactionSummary, SnapshotTree,
+    DevtoolsDomainSnapshot, DevtoolsEventIdentity, DevtoolsEventKind, DevtoolsEventRecord,
+    DevtoolsEventRecorder, DevtoolsInspectorDetailKind, DevtoolsInspectorError,
+    DevtoolsInspectorState, DevtoolsRegistry, DevtoolsSession, DevtoolsSnapshotCategory,
+    DevtoolsTargetId, DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId,
+    SnapshotCollection, SnapshotDiagnostic, SnapshotEnvelope, SnapshotKind, SnapshotNode,
+    SnapshotRedactionSummary, SnapshotTree,
 };
 
 #[test]
@@ -165,7 +166,12 @@ fn inspector_projects_capture_targets_domains_and_events() {
 
     assert_eq!(state.selected_target_id().unwrap(), &timeline_target_id);
     assert_eq!(state.selected_domain_id().unwrap(), &timeline_domain_id);
-    assert_eq!(state.selected_event_sequence(), Some(0));
+    assert_eq!(
+        state
+            .selected_event_identity()
+            .map(|identity| identity.sequence),
+        Some(0)
+    );
     assert_eq!(
         state
             .target_rows()
@@ -223,8 +229,9 @@ fn inspector_event_selection_overrides_domain_snapshot_detail() {
         base_capture.diagnostics,
     );
 
+    let event_identity = capture.events[0].identity();
     let state = DevtoolsInspectorState::from_capture(capture)
-        .select_event(0)
+        .select_event_identity(&event_identity)
         .unwrap();
     let detail = state.selected_detail().expect("selected event detail");
 
@@ -333,12 +340,13 @@ fn inspector_selects_targets_domains_and_event_only_detail() {
         Vec::new(),
     );
 
+    let event_identity = capture.events[0].identity();
     let state = DevtoolsInspectorState::from_capture(capture)
         .select_target(&target_id)
         .unwrap()
         .select_domain(&domain_id)
         .unwrap()
-        .select_event(0)
+        .select_event_identity(&event_identity)
         .unwrap();
 
     assert_eq!(&state.selected_target().unwrap().id, &target_id);
@@ -423,6 +431,46 @@ fn inspector_event_identity_survives_cross_scope_sequence_collisions() {
         Some("scope.b")
     );
     assert_eq!(replaced.selected_event_identity(), Some(&identity_b));
+}
+
+#[test]
+fn inspector_treats_new_recorder_sequence_as_new_event_instance() {
+    let target_id = DevtoolsTargetId::new("runtime.events");
+    let first_capture = logical_event_instance_capture(&target_id, 0);
+    let first_identity = first_capture.events[0].identity();
+    let state = DevtoolsInspectorState::from_capture(first_capture)
+        .select_event_identity(&first_identity)
+        .unwrap();
+
+    let replaced = state.replace_capture(logical_event_instance_capture(&target_id, 1));
+    let selected_identity = replaced
+        .selected_event_identity()
+        .expect("replacement should select visible logical event as a new instance");
+
+    assert_ne!(selected_identity, &first_identity);
+    assert_eq!(selected_identity.scope_id, first_identity.scope_id);
+    assert_eq!(selected_identity.event_id, first_identity.event_id);
+    assert_eq!(selected_identity.sequence, 1);
+}
+
+#[test]
+fn event_identity_key_sanitizes_sensitive_and_selector_fragments() {
+    let identity = DevtoolsEventIdentity::new(
+        "alice@example.com /Users/alice/project",
+        7,
+        "deploy token=secret value #row [item]",
+    );
+    let key = identity.as_key();
+
+    assert!(!key.contains("alice@example.com"));
+    assert!(!key.contains("/Users/alice"));
+    assert!(!key.contains("secret"));
+    assert!(!key.contains(' '));
+    assert!(!key.contains('#'));
+    assert!(!key.contains('['));
+    assert!(!key.contains(']'));
+    assert!(key.contains("7"));
+    assert!(key.contains("deploy"));
 }
 
 fn collection() -> SnapshotCollection {
@@ -569,6 +617,48 @@ fn event_identity_capture(target_id: &DevtoolsTargetId, scopes: [&str; 2]) -> De
             .target_id(target_id.clone())
             .domain_id(domain_id.clone())
     });
+
+    DevtoolsCapture::new(
+        DevtoolsTargetTree::new([target]),
+        [domain],
+        events,
+        Vec::<SnapshotEnvelope>::new(),
+        Vec::new(),
+    )
+}
+
+fn logical_event_instance_capture(target_id: &DevtoolsTargetId, sequence: u64) -> DevtoolsCapture {
+    let domain_id = DevtoolsDomainId::from_parts(["runtime", "events"]);
+    let target = DevtoolsTargetSnapshot::new(
+        target_id.clone(),
+        DevtoolsTargetKind::Runtime,
+        "Runtime events",
+    );
+    let domain = DevtoolsDomainSnapshot::new(
+        domain_id.clone(),
+        target_id.clone(),
+        DevtoolsDomainKind::Timeline,
+        "Runtime timeline",
+    );
+    let mut recorder = DevtoolsEventRecorder::new("scope.logical", "Logical scope", 8);
+    for index in 0..sequence {
+        recorder.record(DevtoolsEventRecord::new(
+            format!("warmup.{index}"),
+            "Warmup",
+            DevtoolsEventKind::Instant,
+        ));
+    }
+    recorder.record(
+        DevtoolsEventRecord::new("refresh", "Refresh", DevtoolsEventKind::Instant)
+            .target_id(target_id.clone())
+            .domain_id(domain_id.clone()),
+    );
+    let events = recorder
+        .snapshot()
+        .events
+        .into_iter()
+        .filter(|event| event.id() == "refresh")
+        .collect::<Vec<_>>();
 
     DevtoolsCapture::new(
         DevtoolsTargetTree::new([target]),
