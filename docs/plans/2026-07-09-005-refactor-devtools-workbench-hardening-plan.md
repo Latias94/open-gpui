@@ -50,6 +50,7 @@ The durable direction is identity-first and session-backed. UI rows may display 
 - R3. Sequence-only event selection APIs must be removed or demoted out of the public selection contract; sequence may remain only as display metadata derived from `DevtoolsEventIdentity`.
 - R4. Root and feature-module exports must make common APIs easy to find while keeping optional adapter APIs behind their feature modules.
 - R5. Superseded static, duplicate, or compatibility-only DevTools code must be deleted unless a test or documented public compatibility reason remains.
+- R5a. Event debug selectors must be derived from sanitized and stable `DevtoolsEventIdentity::as_key()` values; raw `Debug` formatting, raw event ids, and sequence-only selectors are forbidden.
 
 **Gallery dogfood**
 
@@ -74,6 +75,10 @@ The durable direction is identity-first and session-backed. UI rows may display 
 - R18. Gallery DevTools refresh/history/diff controls must have explicit idle, refreshing, no-change, no-previous-frame, capture-error, selection-preserved, and selection-remapped states with stable selectors and keyboard activation.
 - R19. Docking-native DevTools refresh must run from an explicit action or test helper outside render; render must only display the current inspector controller.
 - R20. DevTools workbench interactions touched by this plan must preserve practical keyboard/focus behavior and expose stable control names for contract tests.
+- R21. Frame history UI must read only bounded in-memory sanitized `DevtoolsSession` frames; this refactor must not add disk persistence, automatic clipboard/export side effects, or unbounded history caches.
+- R22. Any new Gallery or docking live fact must pass through an explicit DTO/enum allowlist and the existing sanitizer, never `Debug` formatting of whole shell/runtime structs.
+- R23. Identity-derived debug selectors must be built from sanitized/escaped `DevtoolsEventIdentity::as_key()` output, with regressions for raw emails, token-like strings, path-like strings, whitespace, and selector-special characters.
+- R24. App-author-facing documentation or examples must show the minimal stable path to create a session, register allowlisted live facts, embed a GPUI inspector, refresh it, and read a sanitized diff.
 
 ### Acceptance Examples
 
@@ -88,6 +93,9 @@ The durable direction is identity-first and session-backed. UI rows may display 
 - AE9. Given Gallery DevTools controls, Refresh is keyboard-activatable, Frame History and Diff controls expose stable selectors, and no-previous-frame/no-change/capture-error states are observable.
 - AE10. Given docking-native DevTools, an explicit refresh action updates the session generation and controller from current docking runtime status without mutating state during render.
 - AE11. Given the same logical event emitted with a new recorder sequence, `DevtoolsEventIdentity` is treated as a new event instance; exact identities preserve selection, and disappeared identities remap only through documented fallback policy.
+- AE12. Given event scope/id strings containing email, token-like, path-like, whitespace, or selector-special characters, GPUI debug selectors and exports contain only sanitized identity keys.
+- AE13. Given a session history limit, Gallery and docking workbench history views never expose more retained frames than the bounded sanitized session export.
+- AE14. Given an application author reading the DevTools docs, they can follow one minimal integration path that uses the same public primitives as Gallery and docking-native without reaching into private modules or serializing whole runtime structs.
 
 ### Scope Boundaries
 
@@ -121,6 +129,9 @@ Out of scope: Chrome DevTools Protocol, WebSocket/TCP transport, property editin
 - KTD5. Embed the reusable inspector in docking-native before adding more docking-specific DevTools projection. A summary line proves less than real controller wiring, click selectors, detail export, and session refresh.
 - KTD6. Keep runtime fact ownership outside DevTools. GPUI and docking examples provide DTO/status facts; DevTools sanitizes, snapshots, diffs, and renders them.
 - KTD7. Use focused contract tests as the safety net for fearless refactor. Module moves and API cleanup are acceptable only when no-default, feature-gated, Gallery, docking-native, public API, and doc gates remain green.
+- KTD8. Treat `DevtoolsEventIdentity` as event-instance identity, not a cross-refresh logical event key. Exact identity retention preserves selection; logical remapping is a documented fallback, never an implicit sequence match.
+- KTD9. Treat live runtime facts as an allowlist boundary. Add narrow DTO fields only for facts the UI and tests need, then sanitize at ingestion; broad serialization of shell/runtime state is a blocker.
+- KTD10. Keep UI work as contract proof, not product redesign. Gallery and docking changes should expose the smallest controls and layout needed to prove shell-owned refresh, bounded history, sanitized diffs, and embedded inspector dogfood.
 
 ### Assumptions
 
@@ -128,6 +139,7 @@ Out of scope: Chrome DevTools Protocol, WebSocket/TCP transport, property editin
 - The DevTools crate is still pre-1.0 enough that removing sequence-only event selection is the right break, provided the migration path is documented in README/changelog text.
 - Existing local prior-art checkouts under `repo-ref/` are sufficient for directional comparison; no new reference repositories are required for this refactor.
 - Gallery and docking-native should prove the live workbench through existing GPUI test harnesses rather than new screenshot baseline infrastructure.
+- Gallery live facts should start with low-sensitivity, developer-understandable shell/runtime facts such as active page/category, current component route, viewport capability/density, or focus marker; user-entered text and labels remain outside the capture contract.
 
 ### High-Level Technical Design
 
@@ -163,7 +175,7 @@ flowchart TB
 
 ### Sequencing
 
-1. Split `crates/devtools/src/gpui.rs` without semantic changes and update feature-gated tests.
+1. Split `crates/devtools/src/gpui.rs` without semantic changes and update feature-gated tests. U1 is intentionally first because U2, U4, and U5 all touch controller/render/runtime boundaries; if the split grows larger than expected, stop at a compiling ownership split and defer extra tidy work so identity and live dogfood value still lands.
 2. Remove sequence-only event selection from the public contract and update tests/selectors to identity-first APIs.
 3. Clean root/module exports and docs so the moved files are discoverable.
 4. Move Gallery runtime state to a shell-owned session owner and add refresh/history/diff tests through the shell.
@@ -197,46 +209,48 @@ flowchart TB
 ### U2. Make Event Identity the Only Selection Key
 
 - **Goal:** Remove sequence-only event selection from the public inspector selection contract.
-- **Requirements:** R2, R3, R5, R14, R15, AE1, AE2, AE6, AE11.
+- **Requirements:** R2, R3, R5, R5a, R14, R15, R23, AE1, AE2, AE6, AE11, AE12.
 - **Files:** Modify `crates/devtools/src/inspector.rs`, `crates/devtools/src/event.rs`, new GPUI render module files from U1, `crates/devtools/tests/inspector_contracts.rs`, `crates/devtools/tests/diff_contracts.rs`, `examples/ui-foundation-gallery/tests/foundation_gallery/devtools_contracts.rs`, `crates/devtools/README.md`, `CHANGELOG.md`.
-- **Approach:** Remove or hide `DevtoolsInspectorState::select_event(sequence)` and its `UnknownEvent(u64)` error path. Keep `DevtoolsEventRow.sequence` and a derived display accessor only if tests or UI copy need it. Update all row clicks, debug selectors, state replacement, and tests to build/select by `DevtoolsEventIdentity`. Add a source guard that fails if GPUI event selectors or tests reintroduce sequence-only selection.
-- **Test scenarios:** Same-sequence cross-scope events select correctly; exact identities preserve selection after frame replacement; same logical event with a new recorder identity is treated as a new event instance; filtering event rows keeps selected identity when present and applies only the documented fallback when absent; sequence display remains visible but cannot drive selection; replay/import uses identity and still rejects malformed input safely.
+- **Approach:** Remove or hide `DevtoolsInspectorState::select_event(sequence)` and its `UnknownEvent(u64)` error path. Keep `DevtoolsEventRow.sequence` and a derived display accessor only if tests or UI copy need it. Update all row clicks, debug selectors, state replacement, and tests to build/select by `DevtoolsEventIdentity`. Add a source guard that fails if GPUI event selectors or tests reintroduce sequence-only selection or raw `Debug` identity selector formatting.
+- **Test scenarios:** Same-sequence cross-scope events select correctly; exact identities preserve selection after frame replacement; same logical event with a new recorder identity is treated as a new event instance; filtering event rows keeps selected identity when present and applies only the documented fallback when absent; sequence display remains visible but cannot drive selection; replay/import uses identity and still rejects malformed input safely; selector tests inject email, token-like, path-like, whitespace, and selector-special strings and prove debug selectors use sanitized `DevtoolsEventIdentity::as_key()` values.
 - **Verification:** `cargo nextest run -p open-gpui-devtools --all-features --test inspector_contracts --test diff_contracts --test session_contracts --no-fail-fast --locked`; source scan confirms no `select_event(0)` or `devtools-inspector:event:{sequence}` style selector remains.
 
 ### U3. Clean DevTools Public Layering and Documentation
 
 - **Goal:** Make DevTools root exports and feature modules easy to navigate after the split and breaking cleanup.
-- **Requirements:** R4, R5, R15, AE7.
+- **Requirements:** R4, R5, R15, R24, AE7, AE14.
 - **Files:** Modify `crates/devtools/src/lib.rs`, `crates/devtools/README.md`, `docs/verification.md`, `CHANGELOG.md`, `docs/release/breaking-changes.md`, and any public API snapshot inputs required by `xtask`.
-- **Approach:** Group root re-exports by core protocol, session/diff, inspector state, snapshots/probes, and feature-gated UI adapters. Keep optional adapter modules public under their existing feature names. Document the identity-first event selection migration and the app-provided GPUI runtime DTO boundary.
-- **Test scenarios:** Public API scan passes; README references existing paths and feature flags; changelog and release breaking inventory have a migration note for sequence-only selection removal; doc link scan passes.
+- **Approach:** Group root re-exports by core protocol, session/diff, inspector state, snapshots/probes, and feature-gated UI adapters. Keep optional adapter modules public under their existing feature names. Document the identity-first event selection migration, the app-provided GPUI runtime DTO boundary, and the minimal app-author integration path used by Gallery and docking-native.
+- **Test scenarios:** Public API scan passes; README references existing paths and feature flags; changelog and release breaking inventory have a migration note for sequence-only selection removal; a minimal app-author guide shows session creation, allowlisted live facts, embedded inspector refresh, and sanitized diff reading; doc link scan passes.
 - **Verification:** `cargo run -p xtask -- scan-public-api --check`; `cargo run -p xtask -- scan-doc-links`; `cargo run -p xtask -- verify-release-docs`.
 
 ### U4. Make Gallery DevTools Shell-Owned and Live
 
 - **Goal:** Move Gallery DevTools UI state from deterministic helper reconstruction to a shell-owned live session.
-- **Requirements:** R6, R7, R8, R9, R13, R17, R18, R20, AE3, AE4, AE6, AE8, AE9.
+- **Requirements:** R6, R7, R8, R9, R13, R17, R18, R20, R21, R22, AE3, AE4, AE6, AE8, AE9, AE13.
 - **Files:** Modify `examples/ui-foundation-gallery/src/pages/devtools.rs`, `examples/ui-foundation-gallery/src/shell.rs`, `examples/ui-foundation-gallery/tests/foundation_gallery/devtools_contracts.rs`.
-- **Approach:** Factor the provider/registry builder so both tests and `GalleryShell` use the same capture sources. Add a `GalleryDevtoolsWorkbench` or equivalent shell field that owns `DevtoolsSession`, refreshes it, and updates the existing `DevtoolsInspectorController` with `update_session_frame()`. Include at least one shell-provided runtime fact that tests can mutate before refresh, so live refresh proves more than deterministic fixture replay. Add user-facing Refresh, Frame History, and Diff controls with stable selectors, keyboard activation, and explicit state labels for idle, refreshing, no-change, no-previous-frame, capture-error, selection-preserved, and selection-remapped. Keep deterministic fixture functions for offline contract tests, but name and structure them so UI code cannot accidentally rebuild a fresh session as its live state.
-- **Test scenarios:** Initial Gallery DevTools controller renders from generation 1 or 2 consistently; a shell refresh increments the same session generation; a changed shell fact appears in the refreshed frame and diff; selected event identity survives when the row remains present; disappeared event identity remaps deterministically; Refresh is keyboard-activatable and focus/selection remain coherent after refresh and filtering; no-previous-frame/no-change/capture-error states are observable through selectors; legacy `devtools_gallery_capture()` and `devtools_gallery_collection()` still work for compatibility tests; static builder guard still passes.
+- **Approach:** Factor the provider/registry builder so both tests and `GalleryShell` use the same capture sources. Add a `GalleryDevtoolsWorkbench` or equivalent shell field that owns `DevtoolsSession`, refreshes it, and updates the existing `DevtoolsInspectorController` with `update_session_frame()`. Include at least one allowlisted, developer-understandable shell-provided runtime fact that tests can mutate before refresh, preferring active page/category, current component route, viewport capability/density, or focus marker over opaque counters. This proves live refresh is more than deterministic fixture replay without serializing whole shell structs. Add user-facing Refresh, Frame History, and Diff controls with stable selectors, keyboard activation, and explicit state labels for idle, refreshing, no-change, no-previous-frame, capture-error, selection-preserved, and selection-remapped. Frame History reads only bounded sanitized session frames. Keep deterministic fixture functions for offline contract tests, but name and structure them so UI code cannot accidentally rebuild a fresh session as its live state.
+- **Boundary:** Ship only the control states required to prove shell-owned refresh, bounded in-memory history, sanitized diff visibility, and selection preservation/remap contracts. Visual polish, expanded state presentation, or broad Gallery shell layout redesign is deferred unless the existing UI surface already supports it cheaply.
+- **Test scenarios:** Initial Gallery DevTools controller renders from generation 1 or 2 consistently; a shell refresh increments the same session generation; a changed allowlisted shell fact appears in the refreshed frame and diff; selected event identity survives when the row remains present; disappeared event identity remaps deterministically; Refresh is keyboard-activatable and focus/selection remain coherent after refresh and filtering; no-previous-frame/no-change/capture-error states are observable through selectors; retained frame count never exceeds the session limit; live fact tests inject sensitive-looking strings and prove frame, diff, detail, export JSON, and selectors stay sanitized; legacy `devtools_gallery_capture()` and `devtools_gallery_collection()` still work for compatibility tests; static builder guard still passes.
 - **Verification:** `cargo check -p open-gpui-ui-foundation-gallery --all-targets --locked`; `cargo nextest run -p open-gpui-ui-foundation-gallery devtools_gallery --no-fail-fast --locked`.
 
 ### U5. Embed a Docking-Native DevTools Inspector Panel
 
 - **Goal:** Replace docking-native summary-only dogfood with a real embedded DevTools inspector controller over docking runtime status.
-- **Requirements:** R10, R11, R12, R13, R19, R20, AE5, AE6, AE10.
+- **Requirements:** R10, R11, R12, R13, R19, R20, R21, R22, AE5, AE6, AE10, AE13.
 - **Files:** Modify `examples/docking-native/Cargo.toml`, `examples/docking-native/src/main.rs`.
-- **Approach:** Enable the `gpui` feature for `open_gpui_devtools` in the example. Add a narrow `DockingDevtoolsPanel` or equivalent entity that owns a `DevtoolsSession` and a `DevtoolsInspectorController`. Define the panel's entry point and layout relative to the existing runtime status panel, then refresh through an explicit action or test helper: read public runtime status and viewport capabilities, capture through the existing docking DevTools adapter, refresh the session, and call `DevtoolsInspectorController::update_session_frame()`. Do not update controller state from render. Keep the existing text summary as compact runtime context only if it remains useful.
-- **Test scenarios:** The example compiles with `docking` and `gpui` DevTools features; the DevTools panel is discoverable from the demo layout and renders the inspector root selector; explicit refresh produces a new generation with docking target/domain/event rows; Refresh has a stable selector and control name; unsupported platform capability diagnostics remain explicit; no dependency direction changes in `open_gpui_docking`.
-- **Verification:** `cargo check -p open-gpui-docking-native --all-targets --locked`; `cargo nextest run -p open-gpui-docking-native runtime_status_panel devtools --no-fail-fast --locked`.
+- **Approach:** Enable the `gpui` feature for `open_gpui_devtools` in the example. Add a narrow `DockingDevtoolsPanel` or equivalent entity that owns a `DevtoolsSession` and a `DevtoolsInspectorController`. Define the panel's entry point and layout relative to the existing runtime status panel, then refresh through an explicit action or test helper: read public runtime status and viewport capabilities, capture through the existing docking DevTools adapter, refresh the session, and call `DevtoolsInspectorController::update_session_frame()`. Do not update controller state from render and do not `Debug`-format whole docking status structs into capture payloads. Keep the existing text summary as compact runtime context only if it remains useful.
+- **Boundary:** The embedded inspector is local to `examples/docking-native` and must reuse existing demo layout structures. Do not add new `open_gpui_docking` APIs or redesign docking navigation unless public runtime status cannot be captured otherwise.
+- **Test scenarios:** The example compiles with `docking` and `gpui` DevTools features; the DevTools panel is discoverable from the demo layout and renders the inspector root selector; explicit refresh produces a new generation with docking target/domain/event rows; Refresh has a stable selector and control name; unsupported platform capability diagnostics remain explicit; retained frame count never exceeds the session limit; sensitive-looking runtime strings stay sanitized; no dependency direction changes in `open_gpui_docking`.
+- **Verification:** `cargo check -p open-gpui-docking-native --all-targets --locked`; `cargo nextest run -p open-gpui-docking-native --no-fail-fast --locked runtime_status_panel` and the new docking DevTools inspector contract tests added by U5.
 
 ### U6. Final Hardening, Memory, and Landing
 
 - **Goal:** Prove the refactor did not weaken session, replay, redaction, docs, or public API boundaries.
-- **Requirements:** R13, R14, R15, R16, AE6, AE7.
+- **Requirements:** R13, R14, R15, R16, R21, R22, R23, R24, AE6, AE7, AE12, AE13, AE14.
 - **Files:** Modify tests/docs touched by prior units; update or supersede `docs/knowledge/engineering/verification/2026-07-09-devtools-inspector-click-dogfood.md`; add memory concepts under `docs/knowledge/engineering/progress/`, `docs/knowledge/engineering/verification/`, and `docs/knowledge/engineering/subagents/` only when they capture durable execution facts.
-- **Approach:** Run focused gates first, then the DevTools all-features suite, then example gates and xtask scanners. Use engineering memory for subagent findings, verification summaries, commits, and final handoff; do not write execution progress into this plan.
-- **Test scenarios:** Import validation still rejects bad schema and oversized event batches; redaction tests still hide emails, token-like strings, raw text, clipboard contents, and paths; redaction-induced identity collisions remain deterministic and do not expose raw values; no-default DevTools compiles; public API and doc link scans pass; final `git diff --check` is clean.
+- **Approach:** Run focused gates first, then the DevTools all-features suite, then example gates and xtask scanners. Use engineering memory for subagent findings, verification summaries, commits, and final handoff; do not write execution progress into this plan. U3 owns API/export documentation, migration notes, and the minimal R24 README snippet; U6 owns final scan-driven doc fixes and stale-memory correction.
+- **Test scenarios:** Import validation still rejects bad schema and oversized event batches; redaction tests still hide emails, token-like strings, raw text, clipboard contents, paths, and selector-special raw identity fragments; redaction-induced identity collisions remain deterministic and do not expose raw values; Gallery/docking history views stay bounded and in-memory; no-default DevTools compiles; public API and doc link scans pass; final `git diff --check` is clean.
 - **Verification:** Commands in the Verification Contract all pass or are documented as not applicable with a concrete reason.
 
 ---
@@ -253,20 +267,26 @@ flowchart TB
 | Gallery DevTools | `cargo nextest run -p open-gpui-ui-foundation-gallery devtools_gallery --no-fail-fast --locked` | Shell-owned session and legacy fixture compatibility pass. |
 | Gallery compile | `cargo check -p open-gpui-ui-foundation-gallery --all-targets --locked` | Gallery example and tests compile. |
 | Docking-native compile | `cargo check -p open-gpui-docking-native --all-targets --locked` | Embedded inspector panel compiles in the native docking example. |
-| Docking-native dogfood | `cargo nextest run -p open-gpui-docking-native runtime_status_panel devtools --no-fail-fast --locked` | Runtime status summary and embedded inspector dogfood tests pass. |
+| Docking-native dogfood | `cargo nextest run -p open-gpui-docking-native --no-fail-fast --locked runtime_status_panel` and the new docking DevTools inspector contract tests added by U5 | Runtime status summary and embedded inspector dogfood tests pass. |
 | API and docs | `cargo run -p xtask -- scan-public-api --check`; `cargo run -p xtask -- scan-doc-links`; `cargo run -p xtask -- verify-release-docs` | Public API tiers, links, and release docs reflect the breaking cleanup. |
-| Redaction collision | `cargo nextest run -p open-gpui-devtools --all-features redaction collision --no-fail-fast --locked` or the equivalent named regression tests if filters change during implementation. | Redaction-induced identity collisions remain covered after the API/module cleanup. |
+| Redaction and import regressions | `cargo nextest run -p open-gpui-devtools --all-features --test diff_contracts --test session_contracts --test inspector_contracts --no-fail-fast --locked` | Redaction-induced identity collisions, import bounds, re-sanitization, and cross-scope event identity still pass after the API/module cleanup. |
 | UI interaction contracts | Covered by the DevTools, Gallery DevTools, and docking-native dogfood nextest gates with tests for keyboard refresh activation, focus/selection retention, and stable control names. | Workbench controls changed by this plan remain operable and test-addressable. |
-| Source guards | Run the PowerShell source guard below. | No sequence-only selection or selector patterns remain outside this plan's guard text and changelog migration examples. |
+| Source guards | Run the PowerShell source guard below. | No sequence-only selection, sequence selector, or raw Debug identity selector patterns remain outside this plan's guard text and changelog migration examples. |
 | Diff hygiene | `git diff --check` | No whitespace or conflict-marker issues remain. |
 
 Source guard:
 
 ```powershell
-rg -n "select_event\(0\)|select_event\(sequence|devtools-inspector:event:\{sequence\}" crates examples docs/knowledge/engineering
+$sequencePattern = 'select_event\(0\)|select_event\(sequence|devtools-inspector:event:\{sequence\}'
+rg -n $sequencePattern crates examples docs/knowledge/engineering
 if ($LASTEXITCODE -eq 0) { exit 1 }
-if ($LASTEXITCODE -eq 1) { exit 0 }
-exit $LASTEXITCODE
+if ($LASTEXITCODE -gt 1) { exit $LASTEXITCODE }
+
+$debugIdentityPattern = 'format!\(".*DevtoolsEventIdentity|Debug.*DevtoolsEventIdentity'
+rg -n $debugIdentityPattern crates examples docs/knowledge/engineering
+if ($LASTEXITCODE -eq 0) { exit 1 }
+if ($LASTEXITCODE -gt 1) { exit $LASTEXITCODE }
+exit 0
 ```
 
 ---
@@ -279,6 +299,9 @@ exit $LASTEXITCODE
 - Gallery DevTools UI state is shell-owned/session-backed and tests prove a live refresh path through the existing controller using at least one mutable real shell fact.
 - Docking-native embeds a real DevTools inspector controller panel backed by docking runtime capture.
 - No raw sensitive payload, raw text, clipboard content, unredacted app label, or private runtime fact is introduced into capture, diff, detail, or export JSON.
+- New live facts are explicit allowlisted DTO/enum fields, not broad serialized shell/runtime state, and Frame History remains bounded, in-memory, and sanitized.
+- Identity-derived selectors use sanitized/escaped identity keys and have regressions for secret-like and selector-special input.
+- App-author-facing docs show a minimal stable integration path for session creation, allowlisted live facts, embedded inspector refresh, and sanitized diff reading.
 - README, changelog, public API scans, docs scans, and engineering memory describe the breaking cleanup and live workbench model.
 - The stale inspector-click dogfood memory no longer teaches `devtools-inspector:event:0` as the current selector contract.
 - Dead-end code from attempted approaches is removed before final commit.
