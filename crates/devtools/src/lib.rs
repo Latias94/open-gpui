@@ -2,6 +2,8 @@
 #![warn(missing_docs)]
 
 pub mod adapters;
+#[cfg(feature = "command")]
+pub mod command;
 #[cfg(feature = "docking")]
 pub mod docking;
 #[cfg(feature = "form")]

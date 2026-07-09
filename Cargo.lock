@@ -4150,6 +4150,7 @@ name = "open-gpui-devtools"
 version = "0.2.0"
 dependencies = [
  "open-gpui",
+ "open-gpui-command",
  "open-gpui-docking",
  "open-gpui-form",
  "open-gpui-motion",
