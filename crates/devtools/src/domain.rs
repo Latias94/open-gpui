@@ -263,6 +263,14 @@ impl DevtoolsCapture {
         diagnostics.extend(capture_identity_diagnostics(
             &targets, &domains, &events, &snapshots,
         ));
+        let mut diagnostic_keys = BTreeSet::new();
+        diagnostics.retain(|diagnostic| {
+            diagnostic_keys.insert((
+                diagnostic.probe_id.as_str().to_owned(),
+                diagnostic.code.clone(),
+                diagnostic.message.clone(),
+            ))
+        });
         Self {
             targets: DevtoolsTargetTree::new(targets),
             domains,

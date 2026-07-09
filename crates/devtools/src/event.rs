@@ -51,6 +51,54 @@ impl DevtoolsEventKind {
     }
 }
 
+/// Stable identity for a DevTools event across diff, replay, and inspector selection.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct DevtoolsEventIdentity {
+    /// Sanitized event scope id.
+    pub scope_id: String,
+    /// Recorder-assigned event sequence.
+    pub sequence: u64,
+    /// Sanitized event id.
+    pub event_id: String,
+}
+
+impl DevtoolsEventIdentity {
+    /// Creates a sanitized event identity.
+    pub fn new(scope_id: impl Into<String>, sequence: u64, event_id: impl Into<String>) -> Self {
+        let scope_id = sanitize_sensitive_text(&scope_id.into());
+        let event_id = sanitize_sensitive_text(&event_id.into());
+        Self {
+            scope_id: if scope_id.trim().is_empty() {
+                DEFAULT_DEVTOOLS_EVENT_SCOPE_ID.to_owned()
+            } else {
+                scope_id
+            },
+            sequence,
+            event_id: if event_id.trim().is_empty() {
+                "event".to_owned()
+            } else {
+                event_id
+            },
+        }
+    }
+
+    /// Builds the stable identity for an event record.
+    pub fn from_event(event: &DevtoolsEventRecord) -> Self {
+        Self::new(
+            event
+                .scope_id_ref()
+                .unwrap_or(DEFAULT_DEVTOOLS_EVENT_SCOPE_ID),
+            event.sequence(),
+            event.id(),
+        )
+    }
+
+    /// Returns a deterministic string key for maps and UI rows.
+    pub fn as_key(&self) -> String {
+        format!("{}:{}:{}", self.scope_id, self.sequence, self.event_id)
+    }
+}
+
 /// One sanitized event record exported by DevTools.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DevtoolsEventRecord {
@@ -167,6 +215,11 @@ impl DevtoolsEventRecord {
     /// Returns the optional sanitized payload.
     pub const fn payload(&self) -> Option<&serde_json::Value> {
         self.payload.as_ref()
+    }
+
+    /// Returns the stable event identity used by diff, replay, and inspector selection.
+    pub fn identity(&self) -> DevtoolsEventIdentity {
+        DevtoolsEventIdentity::from_event(self)
     }
 
     /// Returns this event with every exported channel sanitized.

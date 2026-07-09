@@ -4,6 +4,7 @@
 pub mod adapters;
 #[cfg(feature = "command")]
 pub mod command;
+mod diff;
 #[cfg(feature = "docking")]
 pub mod docking;
 mod domain;
@@ -21,17 +22,21 @@ mod redaction;
 mod registry;
 #[cfg(feature = "resource")]
 pub mod resource;
+mod session;
 mod snapshot;
 mod target;
 pub mod timeline;
 #[cfg(feature = "ui-components")]
 pub mod ui_components;
 
+pub use diff::{
+    DevtoolsCaptureDiff, DevtoolsDiffKind, DevtoolsDiffRow, DevtoolsDiffStatus, DevtoolsDiffSummary,
+};
 pub use domain::{DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot};
 pub use event::{
     DEFAULT_DEVTOOLS_EVENT_LIMIT, DEFAULT_DEVTOOLS_EVENT_SCOPE_ID,
-    DEFAULT_DEVTOOLS_EVENT_SCOPE_LABEL, DevtoolsEventBatch, DevtoolsEventKind, DevtoolsEventRecord,
-    DevtoolsEventRecorder,
+    DEFAULT_DEVTOOLS_EVENT_SCOPE_LABEL, DevtoolsEventBatch, DevtoolsEventIdentity,
+    DevtoolsEventKind, DevtoolsEventRecord, DevtoolsEventRecorder,
 };
 #[cfg(feature = "gpui")]
 pub use gpui::{DevtoolsInspector, DevtoolsInspectorController};
@@ -51,6 +56,12 @@ pub use probe::{
 };
 pub use redaction::SnapshotRedactionSummary;
 pub use registry::{DevtoolsRegistry, DevtoolsRegistryError};
+pub use session::{
+    DEFAULT_DEVTOOLS_SESSION_HISTORY_LIMIT, DEVTOOLS_SESSION_PROTOCOL_VERSION,
+    DEVTOOLS_SESSION_SCHEMA_VERSION, DevtoolsSession, DevtoolsSessionConnectionState,
+    DevtoolsSessionError, DevtoolsSessionExport, DevtoolsSessionFrame, DevtoolsSessionImportError,
+    DevtoolsSessionImportLimits,
+};
 pub use snapshot::{
     SnapshotCollection, SnapshotDiagnostic, SnapshotEnvelope, SnapshotKind, SnapshotNode,
     SnapshotTree,
