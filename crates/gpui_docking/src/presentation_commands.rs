@@ -6,7 +6,7 @@ use crate::{
     transition_geometry::DockTransitionPlan,
 };
 use open_gpui::{Context, Window};
-use open_gpui_motion::advanced::{MotionModel, MotionPreset, MotionSpec};
+use open_gpui_motion::MotionTransition;
 
 impl DockHost {
     /// Presents one pane as a zoomed full-host pane without mutating the dock graph.
@@ -16,7 +16,7 @@ impl DockHost {
             return self.zoom_pane_with_scene(
                 target,
                 previous,
-                MotionPreset::continuity(preference).resolve_model(),
+                MotionTransition::continuity(preference),
                 None,
                 cx,
             );
@@ -36,7 +36,7 @@ impl DockHost {
         &mut self,
         target: DockNodeId,
         previous: DockPresentationScene,
-        model: MotionModel,
+        transition: MotionTransition,
         window: Option<&Window>,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -46,14 +46,14 @@ impl DockHost {
 
         let space = self.space().clone();
         self.zoom_state_mut().zoom(space, target);
-        let preference = model.preference();
+        let preference = transition.preference();
         let Some(zoom_scene) = self.zoom_state().resolve(&previous, preference) else {
             cx.notify();
             return true;
         };
         let plan = DockTransitionPlan::from_zoom_scene(&previous, &zoom_scene, preference);
         self.set_last_presentation_scene(zoom_scene.scene.clone());
-        self.execute_transition_plan_with_model(plan, model, window, cx);
+        self.execute_transition_plan(plan, transition, window, cx);
         true
     }
 
@@ -68,7 +68,7 @@ impl DockHost {
             return self.unzoom_with_scene(
                 previous,
                 final_scene,
-                MotionPreset::continuity(preference).resolve_model(),
+                MotionTransition::continuity(preference),
                 None,
                 cx,
             );
@@ -87,7 +87,7 @@ impl DockHost {
         &mut self,
         previous: DockPresentationScene,
         final_scene: DockPresentationScene,
-        model: MotionModel,
+        transition: MotionTransition,
         window: Option<&Window>,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -96,9 +96,9 @@ impl DockHost {
             return false;
         }
 
-        let plan = DockTransitionPlan::between(&previous, &final_scene, model.preference());
+        let plan = DockTransitionPlan::between(&previous, &final_scene, transition.preference());
         self.set_last_presentation_scene(final_scene.clone());
-        self.execute_transition_plan_with_model(plan, model, window, cx);
+        self.execute_transition_plan(plan, transition, window, cx);
         true
     }
 
@@ -122,7 +122,7 @@ impl DockHost {
                 target,
                 &item,
                 scene,
-                MotionSpec::immediate(),
+                MotionTransition::immediate(),
                 None,
                 cx,
             );
@@ -144,7 +144,7 @@ impl DockHost {
         else {
             return false;
         };
-        self.focus_pane_with_scene(target.tabs, scene, MotionSpec::immediate(), None, cx)
+        self.focus_pane_with_scene(target.tabs, scene, MotionTransition::immediate(), None, cx)
     }
 
     fn request_focus_pane_command(
@@ -171,7 +171,7 @@ impl DockHost {
         &mut self,
         target: DockNodeId,
         scene: DockPresentationScene,
-        spec: MotionSpec,
+        transition: MotionTransition,
         window: Option<&Window>,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -181,7 +181,7 @@ impl DockHost {
         if !changed {
             return false;
         }
-        self.execute_focus_ring_transition(target, &item, scene, spec, window, cx);
+        self.execute_focus_ring_transition(target, &item, scene, transition, window, cx);
         true
     }
 
@@ -190,7 +190,7 @@ impl DockHost {
         target: DockNodeId,
         item: &DockItemId,
         scene: DockPresentationScene,
-        spec: MotionSpec,
+        transition: MotionTransition,
         window: Option<&Window>,
         cx: &mut Context<Self>,
     ) {
@@ -199,8 +199,9 @@ impl DockHost {
             .iter()
             .find(|focus| focus.tabs == target && &focus.item == item)
         {
-            let plan = DockTransitionPlan::from_focus_region(&scene, focus, spec.preference());
-            self.execute_transition_plan(plan, spec, window, cx);
+            let plan =
+                DockTransitionPlan::from_focus_region(&scene, focus, transition.preference());
+            self.execute_transition_plan(plan, transition, window, cx);
         }
     }
 
@@ -208,35 +209,13 @@ impl DockHost {
     pub fn execute_transition_plan(
         &mut self,
         plan: DockTransitionPlan,
-        spec: MotionSpec,
-        window: Option<&Window>,
-        cx: &mut Context<Self>,
-    ) -> DockTransitionExecutionState {
-        self.execute_transition_plan_with_model(plan, MotionModel::timeline(spec), window, cx)
-    }
-
-    /// Executes a docking transition plan with an explicit motion preset.
-    pub fn execute_transition_plan_with_preset(
-        &mut self,
-        plan: DockTransitionPlan,
-        preset: MotionPreset,
-        window: Option<&Window>,
-        cx: &mut Context<Self>,
-    ) -> DockTransitionExecutionState {
-        self.execute_transition_plan_with_model(plan, preset.resolve_model(), window, cx)
-    }
-
-    /// Executes a docking transition plan with an explicit motion model.
-    pub fn execute_transition_plan_with_model(
-        &mut self,
-        plan: DockTransitionPlan,
-        model: MotionModel,
+        transition: MotionTransition,
         _window: Option<&Window>,
         cx: &mut Context<Self>,
     ) -> DockTransitionExecutionState {
         let state = self
             .transition_executor_mut()
-            .execute_model(plan, model)
+            .execute(plan, transition)
             .state;
         cx.notify();
         state
@@ -254,10 +233,10 @@ impl DockHost {
     pub(crate) fn execute_visual_affordance_transition_plan(
         &mut self,
         plan: DockTransitionPlan,
-        spec: MotionSpec,
+        transition: MotionTransition,
     ) -> DockTransitionExecutionState {
         self.visual_affordance_transition_executor_mut()
-            .execute(plan, spec)
+            .execute(plan, transition)
             .state
     }
 

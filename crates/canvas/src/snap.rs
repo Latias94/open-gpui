@@ -1,8 +1,9 @@
 use crate::transform::{CanvasResizeHandle, resize_bounds_by_handle};
 use crate::{
-    CanvasDefaultEdgeRouter, CanvasDocument, CanvasGeometryFacts, CanvasKindRegistry,
-    CanvasRecordGeometry, CanvasRecordId, CanvasSelection,
+    CanvasDocument, CanvasKindRegistry, CanvasRecordId, CanvasSelection,
+    geometry_facts::{CanvasGeometryFacts, CanvasRecordGeometry},
     record_scope::{CanvasRecordScopeOptions, collect_selection_record_scope},
+    routing::CanvasDefaultEdgeRouter,
 };
 use indexmap::IndexSet;
 use open_gpui::{Bounds, Pixels, Point, px};

@@ -68,7 +68,7 @@ fn package_manifest_stays_foundation_scoped() {
 
     assert!(manifest.contains("open_gpui.workspace = true"));
     assert!(manifest.contains("open_gpui_devtools = { workspace = true"));
-    assert!(manifest.contains(r#"features = ["gpui", "form", "resource", "motion"]"#));
+    assert!(manifest.contains(r#"features = ["gpui", "form", "resource", "motion", "command"]"#));
     assert!(manifest.contains("open_gpui_form.workspace = true"));
     assert!(manifest.contains("open_gpui_resource.workspace = true"));
     assert!(manifest.contains("open_gpui_ui_core.workspace = true"));

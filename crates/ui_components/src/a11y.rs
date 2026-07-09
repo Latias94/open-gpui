@@ -60,6 +60,25 @@ pub enum A11yValueKind {
     Selection,
 }
 
+/// Semantic state or focus behavior covered by component accessibility evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum A11yStateEvidence {
+    /// The component evidence covers disabled state propagation.
+    Disabled,
+    /// The component evidence covers selected state propagation.
+    Selected,
+    /// The component evidence covers checked or toggled state propagation.
+    Checked,
+    /// The component evidence covers expanded/collapsed state propagation.
+    Expanded,
+    /// The component evidence covers value metadata propagation.
+    Value,
+    /// The component evidence covers focusable interactive behavior.
+    Focusable,
+    /// The component evidence covers a structural row or overlay that must not be interactive.
+    NonInteractiveStructural,
+}
+
 /// Renderer-neutral value metadata for accessibility assertions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct A11yValueMetadata {

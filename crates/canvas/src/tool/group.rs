@@ -1,6 +1,6 @@
 use crate::{
-    CanvasDocument, CanvasEndpoint, CanvasGeometryFacts, CanvasRecordId, CanvasSelection,
-    CanvasShape, CanvasTransaction, DocumentCommand, ShapeId,
+    CanvasDocument, CanvasEndpoint, CanvasRecordId, CanvasSelection, CanvasShape,
+    CanvasTransaction, DocumentCommand, ShapeId, geometry_facts::CanvasGeometryFacts,
     record_scope::normalize_record_candidates,
 };
 use indexmap::IndexSet;

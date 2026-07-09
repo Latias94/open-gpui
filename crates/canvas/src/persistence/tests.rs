@@ -1,12 +1,14 @@
 use super::*;
 use crate::{
     CanvasEditor, CanvasEvent, CanvasHandle, CanvasKeyModifiers, CanvasKindRegistry, CanvasNode,
-    CanvasNodeKind, CanvasNodeSchemaPolicy, CanvasRecordBindingRelation, CanvasRecordId,
-    CanvasRecordKind, CanvasRecordRelation, CanvasRelationChange, CanvasSchemaError,
+    CanvasNodeKind, CanvasNodeSchemaPolicy, CanvasRecordId, CanvasRecordKind, CanvasSchemaError,
     CanvasSelection, CanvasShape, CanvasStore, CanvasTool, CanvasToolContext, CanvasToolId,
     CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentCommand,
     DocumentError, EdgeId, HandleRole, NodeId, PointerButton, ShapeId,
+    changes::CanvasRelationChange,
+    format,
     persistence::store::{apply_persistent_tool_effect, apply_persistent_tool_effects},
+    relations::{CanvasRecordBindingRelation, CanvasRecordRelation},
     test_support::{child_frame_fixture, connected_pair_fixture, document_fixture},
     tool::CanvasToolEffect,
 };
@@ -471,7 +473,7 @@ fn json_persistence_codec_round_trips_checkpoint_envelope() {
     assert_eq!(envelope.codec_version, CANVAS_PERSISTENCE_CODEC_VERSION);
     assert_eq!(
         envelope.document_format_version,
-        crate::CANVAS_DOCUMENT_FORMAT_VERSION
+        format::CANVAS_DOCUMENT_FORMAT_VERSION
     );
     assert_eq!(envelope.kind(), CanvasPersistenceRecordKind::Checkpoint);
     assert_eq!(envelope.sequence(), 7);
@@ -556,7 +558,7 @@ fn json_persistence_codec_rejects_unsupported_document_format_version() {
     assert_eq!(
         err,
         CanvasPersistenceCodecError::UnsupportedDocumentFormatVersion {
-            expected: crate::CANVAS_DOCUMENT_FORMAT_VERSION,
+            expected: format::CANVAS_DOCUMENT_FORMAT_VERSION,
             found: 999,
         }
     );

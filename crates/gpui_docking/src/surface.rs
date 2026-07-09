@@ -2,6 +2,7 @@ mod builder;
 mod panel;
 mod state;
 mod viewport;
+mod viewport_readiness;
 
 pub use builder::{DockSurfaceBuildError, DockSurfaceBuilder};
 pub use panel::{
@@ -17,6 +18,14 @@ pub use viewport::{
     DockSurfaceViewportSession, DockSurfaceViewportShouldCloseOutcome,
     DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportSpecError,
     DockSurfaceViewportUnavailable,
+};
+pub use viewport_readiness::{
+    DockSurfaceViewportFlagCapabilities, DockSurfaceViewportFlagWarning,
+    DockSurfaceViewportInputStatus, DockSurfaceViewportLifecycleReadiness,
+    DockSurfaceViewportPlatformCapabilities, DockSurfaceViewportPlatformReadiness,
+    DockSurfaceViewportReadiness, DockSurfaceViewportReadinessReport,
+    DockSurfaceViewportReadinessStatus, DockSurfaceViewportRouteStatus,
+    DockSurfaceViewportStaleReason, DockSurfaceViewportUnsupportedFlag,
 };
 
 use crate::{

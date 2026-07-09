@@ -1,4 +1,5 @@
 use super::*;
+use crate::record_scope::CanvasResolvedSelectionScope;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CanvasPaintInteractionFrame {
@@ -73,7 +74,7 @@ pub struct CanvasPaintSnapGuide {
 pub(super) fn interaction_frame(
     model: &CanvasPaintModel,
     options: CanvasPaintOptions,
-    selection_scope: Option<&crate::CanvasResolvedSelectionScope>,
+    selection_scope: Option<&CanvasResolvedSelectionScope>,
 ) -> CanvasPaintInteractionFrame {
     match model.interaction.state() {
         CanvasPaintInteractionState::Selecting { origin, current } => CanvasPaintInteractionFrame {
@@ -144,7 +145,7 @@ pub(super) fn interaction_frame(
 
 fn structural_selection_bounds(
     model: &CanvasPaintModel,
-    selection_scope: Option<&crate::CanvasResolvedSelectionScope>,
+    selection_scope: Option<&CanvasResolvedSelectionScope>,
 ) -> Option<Bounds<Pixels>> {
     let selection_scope = selection_scope?;
     let facts = CanvasGeometryFacts::with_kind_registry(

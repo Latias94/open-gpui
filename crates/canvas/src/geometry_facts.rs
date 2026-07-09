@@ -1,8 +1,11 @@
 use crate::{
-    CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdge,
-    CanvasEdgeRouter, CanvasEndpoint, CanvasHandle, CanvasKindRegistry, CanvasNode, CanvasRecordId,
-    CanvasRoutePath, CanvasRouteRequest, CanvasRouteSegment, CanvasSelection, CanvasShape,
-    DocumentError, HitOptions, HitRecord, HitTarget,
+    CanvasConnectionEndpointRole, CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle,
+    CanvasKindRegistry, CanvasNode, CanvasRecordId, CanvasSelection, CanvasShape, DocumentError,
+    HitOptions, HitRecord, HitTarget,
+    routing::{
+        CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,
+        CanvasRouteSegment,
+    },
 };
 use open_gpui::{Bounds, Pixels, Point, px};
 

@@ -1,6 +1,8 @@
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryFacts, CanvasKindRegistry,
-    CanvasRecordId, EdgeId, HandleId, NodeId, ShapeId,
+    CanvasDocument, CanvasDocumentDiff, CanvasKindRegistry, CanvasRecordId, EdgeId, HandleId,
+    NodeId, ShapeId,
+    geometry_facts::CanvasGeometryFacts,
+    routing::CanvasEdgeRouter,
     runtime_query::{hit_matches, query_matches},
     spatial_cache::{dirty_record_ids, remove_record},
 };
@@ -218,8 +220,9 @@ impl SpatialIndex {
 mod tests {
     use super::*;
     use crate::{
-        CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasNode, CanvasRoutePath,
-        CanvasRouteRequest, CanvasShape, CanvasTransaction, DocumentCommand,
+        CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasShape, CanvasTransaction,
+        DocumentCommand,
+        routing::{CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest},
         test_support::{CanvasCommandGenerator, TestRng, document_fixture},
     };
     use open_gpui::{Bounds, point, px, size};

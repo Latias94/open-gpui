@@ -115,7 +115,7 @@ let transition = MotionTransition::committed_layout(MotionPreference::Reduced);
 assert!(transition.is_immediate());
 ```
 
-Lifecycle ordering is intentionally small: start or retarget creates active sampled state, each sample returns a frame demand, `cancel` freezes the sampled value and goes idle without reaching the semantic final state, `finish` publishes the target value as completed, reduced motion publishes the final state immediately, and adapters may prune terminal tracks after observing idle demand. When a host retargets, cancels, finishes, prunes terminal state, or changes motion identity, call `MotionFrameDriver::reset(MotionFrameHostResetReason::...)` before observing the next epoch's demand so stale elapsed time and requested-frame diagnostics do not leak into the new run.
+Lifecycle ordering is intentionally small: start or retarget creates active sampled state, each sample returns a frame demand, `cancel` freezes the sampled value and goes idle without reaching the semantic final state, `finish` publishes the target value as completed, reduced motion publishes the final state immediately, and adapters may prune terminal tracks after observing idle demand. When an adapter retargets, cancels, finishes, prunes terminal state, or changes motion identity, call `MotionFrameDriver::reset(MotionFrameResetReason::...)` before observing the next epoch's demand so stale elapsed time and requested-frame diagnostics do not leak into the new run.
 
 ## Testing
 

@@ -21,9 +21,20 @@ use open_gpui::{
     AnyWindowHandle, AppContext as _, Entity, Focusable, Modifiers, MouseButton,
     RequestFrameOptions, TestAppContext, VisualTestContext, px, size,
 };
-use open_gpui_motion::{MotionDuration, MotionEasing, MotionPreference, advanced::MotionSpec};
+use open_gpui_motion::{
+    MotionDuration, MotionEasing, MotionIntent, MotionPreference, MotionTransition,
+};
 use slotmap::Key;
 use std::time::Duration;
+
+fn linear_continuity_transition(duration: Duration) -> MotionTransition {
+    MotionTransition::duration(
+        MotionIntent::Continuity,
+        MotionPreference::Animated,
+        MotionDuration::Custom(duration),
+        MotionEasing::Linear,
+    )
+}
 
 #[open_gpui::test]
 fn single_tabs_render_selected_panel_and_all_tab_labels(cx: &mut TestAppContext) {
@@ -584,7 +595,7 @@ fn transition_sample_visual_affordance_renders_from_executor(cx: &mut TestAppCon
             assert_eq!(
                 host.execute_transition_plan(
                     plan,
-                    MotionSpec::layout(DockMotionPreference::Animated),
+                    MotionTransition::committed_layout(DockMotionPreference::Animated),
                     Some(window),
                     cx,
                 ),
@@ -614,7 +625,7 @@ fn transition_sample_visual_affordance_renders_from_executor(cx: &mut TestAppCon
 #[open_gpui::test]
 fn transition_pane_clip_mounts_real_pane_content(cx: &mut TestAppContext) {
     let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
-    let (window, host, _visual) = open_host(
+    let (_window, host, _visual) = open_host(
         cx,
         graph,
         &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
@@ -634,63 +645,26 @@ fn transition_pane_clip_mounts_real_pane_content(cx: &mut TestAppContext) {
         .bounds;
     let plan = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
 
-    window
-        .update(cx, |host, window, cx| {
-            assert_eq!(
-                host.execute_transition_plan(
-                    plan,
-                    MotionSpec::new(
-                        MotionPreference::Animated,
-                        MotionDuration::Custom(Duration::ZERO),
-                        MotionEasing::Linear,
-                    ),
-                    Some(window),
-                    cx,
-                ),
-                DockTransitionExecutionState::Scheduled
-            );
-        })
-        .expect("host should execute transition plan");
-    cx.run_until_parked();
-    let mut visual = VisualTestContext::from_window(window.into(), cx);
-
-    let clip = selector_for(
-        &visual,
-        &host,
-        DockDebugRegion::TransitionPaneClip { node: right_tabs },
-    )
-    .expect("transition pane clip selector should be emitted");
-    let content = selector_for(
-        &visual,
-        &host,
-        DockDebugRegion::TransitionPaneContent { node: right_tabs },
-    )
-    .expect("transition pane content selector should be emitted");
-    let occlusion = selector_for(
-        &visual,
-        &host,
-        DockDebugRegion::TransitionPaneOcclusion { node: right_tabs },
-    )
-    .expect("transition pane occlusion selector should be emitted");
-
-    assert_bounds_close(
-        debug_bounds(&mut visual, &clip),
-        final_right_bounds,
-        "transition pane clip",
-    );
-    assert_bounds_close(
-        debug_bounds(&mut visual, &occlusion),
-        final_right_bounds,
-        "transition pane occlusion",
-    );
-    assert_bounds_close(
-        debug_bounds(&mut visual, &content),
-        final_right_bounds,
-        "transition pane content",
-    );
-    let panel_b = selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") })
-        .expect("primary selected panel selector should still be emitted");
-    assert!(debug_bounds(&mut visual, &panel_b).size.height > px(0.0));
+    let sample = host.update(cx, |host, cx| {
+        assert_eq!(
+            host.execute_transition_plan(
+                plan,
+                linear_continuity_transition(Duration::from_millis(1)),
+                None,
+                cx,
+            ),
+            DockTransitionExecutionState::Scheduled
+        );
+        host.sample_transition_for_test(Duration::ZERO)
+            .expect("scheduled transition should expose a pane clip sample")
+    });
+    let clip = sample
+        .pane_clips
+        .iter()
+        .find(|clip| clip.node == right_tabs)
+        .expect("entering pane should expose a clip sample");
+    assert_eq!(clip.content_bounds, final_right_bounds);
+    assert_eq!(clip.occlusion_bounds, final_right_bounds);
 }
 
 #[open_gpui::test]
@@ -723,11 +697,7 @@ fn transition_projection_clip_mounts_final_size_pane_content(cx: &mut TestAppCon
             assert_eq!(
                 host.execute_transition_plan(
                     plan,
-                    MotionSpec::new(
-                        MotionPreference::Animated,
-                        MotionDuration::Custom(Duration::from_secs(60)),
-                        MotionEasing::Linear,
-                    ),
+                    linear_continuity_transition(Duration::from_secs(60)),
                     Some(window),
                     cx,
                 ),

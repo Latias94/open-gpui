@@ -1,8 +1,8 @@
 use crate::{
     BindingId, CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordId,
-    CanvasRecordRelations, CanvasSelection, CanvasShape, CanvasTransaction, DocumentCommand,
-    EdgeId, NodeId, ShapeId,
+    CanvasSelection, CanvasShape, CanvasTransaction, DocumentCommand, EdgeId, NodeId, ShapeId,
     record_scope::{CanvasRecordScopeOptions, resolve_selection_scope_with_predicates},
+    relations::CanvasRecordRelations,
 };
 use indexmap::IndexMap;
 use open_gpui::{Pixels, Point};
@@ -213,7 +213,7 @@ fn is_copyable_record(document: &CanvasDocument, record_id: &CanvasRecordId) -> 
 
 fn copied_selection(
     selection: &CanvasSelection,
-    copied_records: &crate::CanvasRecordScope,
+    copied_records: &crate::record_scope::CanvasRecordScope,
 ) -> CanvasSelection {
     let mut copied_selection = CanvasSelection::default();
     for record_id in selection
@@ -330,7 +330,8 @@ mod tests {
     use super::*;
     use crate::test_support::document_fixture;
     use crate::{
-        BindingId, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordBindingRelation, CanvasShape,
+        BindingId, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasShape,
+        relations::CanvasRecordBindingRelation,
     };
     use open_gpui::{Bounds, point, px, size};
 

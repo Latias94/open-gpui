@@ -3,7 +3,19 @@ use open_gpui::{
     App, Bounds, Context, FocusHandle, InteractiveElement, KeyDownEvent, Window, WindowBounds,
     WindowOptions, div, px, rgb, size,
 };
+use open_gpui_docking::prelude::{
+    DockPanelPlacement, DockSurface, DockSurfaceViewportOpenOutcome,
+    DockSurfaceViewportReadinessStatus, DockSurfaceViewportUnavailable,
+};
 use wasm_bindgen::JsValue;
+
+struct DockingProbe {
+    readiness: &'static str,
+    outcome: &'static str,
+    opened: bool,
+    window_delta: u64,
+    registered_spaces: u64,
+}
 
 struct SmokeWeb {
     focus_handle: FocusHandle,
@@ -11,16 +23,22 @@ struct SmokeWeb {
     key_events: u64,
     shell_interactions: u64,
     platform_viewport_windows: bool,
+    docking_probe: DockingProbe,
 }
 
 impl SmokeWeb {
-    fn new(platform_viewport_windows: bool, cx: &mut Context<Self>) -> Self {
+    fn new(
+        platform_viewport_windows: bool,
+        docking_probe: DockingProbe,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let smoke = Self {
             focus_handle: cx.focus_handle(),
             click_events: 0,
             key_events: 0,
             shell_interactions: 0,
             platform_viewport_windows,
+            docking_probe,
         };
         smoke.publish_probe();
         smoke
@@ -65,6 +83,31 @@ impl SmokeWeb {
             &probe,
             &"platformViewportWindows".into(),
             &JsValue::from_bool(self.platform_viewport_windows),
+        );
+        let _ = js_sys::Reflect::set(
+            &probe,
+            &"dockingViewportReadiness".into(),
+            &JsValue::from_str(self.docking_probe.readiness),
+        );
+        let _ = js_sys::Reflect::set(
+            &probe,
+            &"dockingViewportOutcome".into(),
+            &JsValue::from_str(self.docking_probe.outcome),
+        );
+        let _ = js_sys::Reflect::set(
+            &probe,
+            &"dockingViewportOpened".into(),
+            &JsValue::from_bool(self.docking_probe.opened),
+        );
+        let _ = js_sys::Reflect::set(
+            &probe,
+            &"dockingViewportWindowDelta".into(),
+            &JsValue::from_f64(self.docking_probe.window_delta as f64),
+        );
+        let _ = js_sys::Reflect::set(
+            &probe,
+            &"dockingViewportRegisteredSpaces".into(),
+            &JsValue::from_f64(self.docking_probe.registered_spaces as f64),
         );
         let _ = js_sys::Reflect::set(
             window.as_ref(),
@@ -115,7 +158,7 @@ impl Render for SmokeWeb {
                     .bg(rgb(0x1b222c))
                     .child("Open GPUI Web Smoke")
                     .child(format!(
-                        "clicks={} keys={} shell={} platform_viewports={}",
+                        "clicks={} keys={} shell={} platform_viewports={} docking={}",
                         self.click_events,
                         self.key_events,
                         self.shell_interactions,
@@ -123,9 +166,74 @@ impl Render for SmokeWeb {
                             "supported"
                         } else {
                             "unsupported"
-                        }
+                        },
+                        self.docking_probe.outcome
                     )),
             )
+    }
+}
+
+struct SmokeDockPanel;
+
+impl Render for SmokeDockPanel {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+fn smoke_dock_panel(cx: &mut App) -> open_gpui::AnyView {
+    cx.new(|_| SmokeDockPanel).into()
+}
+
+fn docking_probe(cx: &mut App) -> DockingProbe {
+    let surface = DockSurface::builder("main")
+        .panel_placements([DockPanelPlacement::center("editor")])
+        .panel_factory("editor", "Editor", smoke_dock_panel)
+        .allow_platform_viewports(true)
+        .build(cx)
+        .expect("smoke docking surface should validate");
+    let spec = open_gpui_docking::prelude::DockSurfaceViewportSpec::new(
+        "main",
+        WindowOptions::default(),
+    );
+    let readiness = surface.viewports().readiness(&spec, cx);
+    let readiness = match readiness.status() {
+        DockSurfaceViewportReadinessStatus::Openable => "openable",
+        DockSurfaceViewportReadinessStatus::PolicyDisabled(_) => "policy_disabled",
+        DockSurfaceViewportReadinessStatus::BackendUnsupported => "backend_unsupported",
+        DockSurfaceViewportReadinessStatus::FlagUnsupported { .. } => "flag_unsupported",
+        DockSurfaceViewportReadinessStatus::InvalidPlacement { .. } => "invalid_placement",
+    };
+
+    let before_windows = cx.windows().len();
+    let outcome = surface.viewports().open_spec(spec, cx);
+    let after_windows = cx.windows().len();
+    let opened = outcome.opened();
+    let outcome = match outcome {
+        DockSurfaceViewportOpenOutcome::Opened(_) => "opened",
+        DockSurfaceViewportOpenOutcome::Unavailable(
+            DockSurfaceViewportUnavailable::PolicyDisabled(_),
+        ) => "policy_disabled",
+        DockSurfaceViewportOpenOutcome::Unavailable(
+            DockSurfaceViewportUnavailable::BackendUnsupported,
+        ) => "backend_unsupported",
+        DockSurfaceViewportOpenOutcome::Unavailable(
+            DockSurfaceViewportUnavailable::FlagUnsupported { .. },
+        ) => "flag_unsupported",
+        DockSurfaceViewportOpenOutcome::Unavailable(
+            DockSurfaceViewportUnavailable::InvalidPlacement { .. },
+        ) => "invalid_placement",
+        DockSurfaceViewportOpenOutcome::Unavailable(DockSurfaceViewportUnavailable::OpenFailed(
+            _,
+        )) => "open_failed",
+    };
+
+    DockingProbe {
+        readiness,
+        outcome,
+        opened,
+        window_delta: after_windows.saturating_sub(before_windows) as u64,
+        registered_spaces: surface.registered_viewport_spaces().len() as u64,
     }
 }
 
@@ -139,13 +247,14 @@ fn main() {
     )
     .run(|cx: &mut App| {
         let platform_viewport_windows = cx.viewport_capabilities().platform_viewport_windows;
+        let docking_probe = docking_probe(cx);
         let bounds = Bounds::centered(None, size(px(640.0), px(420.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|cx| SmokeWeb::new(platform_viewport_windows, cx)),
+            |_, cx| cx.new(|cx| SmokeWeb::new(platform_viewport_windows, docking_probe, cx)),
         )
         .expect("failed to open smoke window");
         cx.activate(true);

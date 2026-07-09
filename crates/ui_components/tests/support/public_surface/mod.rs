@@ -243,6 +243,14 @@ fn assert_inventory_contains_controlled_input(component: &str, input: &str) {
     );
 }
 
+fn assert_inventory_contains_policy_hint(component: &str, input: &str) {
+    let entry = component_api_entry(component);
+    assert!(
+        entry.policy_hints.contains(&input),
+        "{component} inventory should classify `{input}` as a policy or adapter hint"
+    );
+}
+
 fn assert_inventory_contains_default_seed(component: &str, builder: &str, runtime_value: &str) {
     let entry = component_api_entry(component);
     assert!(

@@ -12,6 +12,7 @@ path = "main.rs"
 
 [dependencies]
 js-sys = "0.3.103"
+open_gpui_docking = { package = "open-gpui-docking", path = "../../../gpui_docking" }
 open_gpui = { package = "open-gpui", path = "../../../gpui", default-features = false }
 open_gpui_platform = { package = "open-gpui-platform", path = "../../../gpui_platform" }
 wasm-bindgen = "0.2.126"

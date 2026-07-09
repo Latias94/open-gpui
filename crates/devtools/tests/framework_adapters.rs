@@ -48,14 +48,14 @@ fn framework_adapters_convert_accessibility_evidence() {
 #[test]
 fn framework_adapters_convert_motion_frame_demand_and_driver() {
     use open_gpui_motion::{
-        MotionFrameDemand, MotionFrameDriver, MotionFrameHostResetReason, MotionFrameReason,
+        MotionFrameDemand, MotionFrameDriver, MotionFrameReason, MotionFrameResetReason,
     };
     use std::time::Duration;
 
     let demand = MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender);
     let demand_snapshot = motion::motion_frame_demand_probe_snapshot(demand);
     let mut driver = MotionFrameDriver::new();
-    driver.reset(MotionFrameHostResetReason::Retarget);
+    driver.reset(MotionFrameResetReason::Retarget);
     let _ = driver.sample_elapsed(Duration::from_millis(16), |clock| (clock.elapsed(), demand));
     let driver_snapshot = motion::motion_frame_driver_probe_snapshot(&driver);
     let serialized = format!(

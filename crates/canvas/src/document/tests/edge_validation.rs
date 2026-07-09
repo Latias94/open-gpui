@@ -1,4 +1,5 @@
 use super::*;
+use crate::routing::{CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest};
 
 #[test]
 fn removes_edges_when_node_is_removed() {
@@ -229,13 +230,9 @@ fn edge_bounds_include_route_points_and_interaction_width() {
 fn edge_bounds_can_use_custom_router_path() {
     struct OffsetRouter;
 
-    impl crate::CanvasEdgeRouter for OffsetRouter {
-        fn route_edge(&self, request: crate::CanvasRouteRequest<'_>) -> crate::CanvasRoutePath {
-            crate::CanvasRoutePath::polyline([
-                request.source,
-                point(px(50.0), px(120.0)),
-                request.target,
-            ])
+    impl CanvasEdgeRouter for OffsetRouter {
+        fn route_edge(&self, request: CanvasRouteRequest<'_>) -> CanvasRoutePath {
+            CanvasRoutePath::polyline([request.source, point(px(50.0), px(120.0)), request.target])
         }
     }
 

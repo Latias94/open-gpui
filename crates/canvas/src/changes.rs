@@ -1,6 +1,6 @@
 use crate::{
-    CanvasEdge, CanvasNode, CanvasRecordId, CanvasRecordRelation, CanvasShape, CanvasTransaction,
-    CanvasValue, DocumentCommand,
+    CanvasEdge, CanvasNode, CanvasRecordId, CanvasShape, CanvasTransaction, CanvasValue,
+    DocumentCommand, relations::CanvasRecordRelation,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -332,8 +332,10 @@ impl CanvasTransaction {
 mod tests {
     use super::*;
     use crate::{
-        BindingId, CanvasEdge, CanvasEndpoint, CanvasRecordBindingRelation,
-        CanvasRecordGroupRelation, CanvasRecordParentRelation, EdgeId, NodeId, ShapeId,
+        BindingId, CanvasEdge, CanvasEndpoint, EdgeId, NodeId, ShapeId,
+        relations::{
+            CanvasRecordBindingRelation, CanvasRecordGroupRelation, CanvasRecordParentRelation,
+        },
     };
     use open_gpui::{Bounds, point, px, size};
 

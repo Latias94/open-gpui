@@ -5,7 +5,7 @@ use super::frame::{
 };
 use super::model::{CanvasPaintModel, CanvasPaintTheme};
 use super::style::{edge_paint_style, node_paint_style, shape_paint_style};
-use crate::{CanvasRouteSegment, HitTarget};
+use crate::{HitTarget, routing::CanvasRouteSegment};
 use open_gpui::{
     App, Bounds, ContentMask, Hsla, PathBuilder, Pixels, Point, Window, px, quad, size,
 };

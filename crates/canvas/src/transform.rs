@@ -1,6 +1,7 @@
 use crate::{
-    CanvasDefaultEdgeRouter, CanvasDocument, CanvasGeometryFacts, CanvasKindRegistry,
-    CanvasRecordGeometry, CanvasRecordId, CanvasSelection, NodeId, ShapeId,
+    CanvasDocument, CanvasKindRegistry, CanvasRecordId, CanvasSelection, NodeId, ShapeId,
+    geometry_facts::{CanvasGeometryFacts, CanvasRecordGeometry},
+    routing::CanvasDefaultEdgeRouter,
 };
 use open_gpui::{Bounds, Pixels, Point, Size, px};
 use serde::{Deserialize, Serialize};

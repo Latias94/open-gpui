@@ -20,7 +20,7 @@ The stable browser proof lives in `crates/gpui_web/examples/smoke_web` and is ex
 cargo run -p xtask -- web-smoke
 ```
 
-The smoke builds a single-threaded web example with Trunk, serves it locally, opens a headless Chrome/Chromium/Edge browser, and verifies app readiness, canvas initialization, focus/input delivery, a single-window shell interaction, and explicit unsupported platform viewport windows.
+The smoke builds a single-threaded web example with Trunk, serves it locally, opens a headless Chrome/Chromium/Edge browser, and verifies app readiness, canvas initialization, focus/input delivery, a single-window shell interaction, explicit unsupported platform viewport windows, and a `DockSurface` viewport probe that returns typed `backend_unsupported` without opening a browser popout window.
 
 The older `hello_web` example remains useful for local shared-memory and atomics experiments, but it is not the required CI smoke path.
 

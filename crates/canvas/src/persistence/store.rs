@@ -1,8 +1,9 @@
 use crate::{
-    CanvasCommittedMutation, CanvasDocument, CanvasDocumentDiff, CanvasEditor, CanvasEvent,
-    CanvasPreparedMutation, CanvasRecordOperationBatch, CanvasRelationOperationBatch,
-    CanvasSnapshot, CanvasToolId, CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry,
-    CanvasTransaction, DocumentError, tool::CanvasToolEffect,
+    CanvasDocument, CanvasDocumentDiff, CanvasEditor, CanvasEvent, CanvasSnapshot, CanvasToolId,
+    CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentError,
+    changes::{CanvasRecordOperationBatch, CanvasRelationOperationBatch},
+    mutation::{CanvasCommittedMutation, CanvasPreparedMutation},
+    tool::CanvasToolEffect,
 };
 use crate::{CanvasStore, CanvasStoreChange};
 use std::{convert::Infallible, error::Error, fmt};

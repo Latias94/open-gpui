@@ -106,6 +106,14 @@ impl MotionTransition {
         )
     }
 
+    /// Creates the standard visual-affordance preview transition.
+    pub fn visual_affordance(preference: MotionPreference) -> Self {
+        Self::from_model(
+            MotionIntent::VisualAffordance,
+            MotionModel::spring(MotionSpringSpec::affordance(preference)),
+        )
+    }
+
     /// Creates the standard committed-layout transition.
     pub fn committed_layout(preference: MotionPreference) -> Self {
         Self::from_model(
@@ -134,6 +142,11 @@ impl MotionTransition {
     /// Returns the product intent.
     pub const fn intent(self) -> MotionIntent {
         self.intent
+    }
+
+    /// Returns the motion preference carried by this transition.
+    pub const fn preference(self) -> MotionPreference {
+        self.model.preference()
     }
 
     /// Returns whether this transition participates in spatial motion policy.
@@ -303,11 +316,119 @@ impl MotionProgressRun {
     }
 }
 
-/// Driver update returned after observing frame demand.
-pub type MotionFrameDriverUpdate = MotionFrameHostUpdate;
+/// Product-level reason an adapter starts a new local motion frame epoch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionFrameResetReason {
+    /// The adapter replaced the target of an existing motion from the current sampled value.
+    Retarget,
+    /// The adapter cancelled an active motion without publishing the semantic final state.
+    Cancel,
+    /// The adapter forced a motion to its semantic final state.
+    Finish,
+    /// The adapter removed terminal tracks or presentation state after idle demand was observed.
+    PruneTerminal,
+    /// The adapter replaced the stable motion identity, such as a row key, pane id, or panel set.
+    MotionIdentityChanged,
+}
 
-/// Driver sample returned after sampling through a frame driver.
-pub type MotionFrameDriverSample<T> = MotionFrameHostSample<T>;
+impl MotionFrameResetReason {
+    const fn into_host(self) -> MotionFrameHostResetReason {
+        match self {
+            Self::Retarget => MotionFrameHostResetReason::Retarget,
+            Self::Cancel => MotionFrameHostResetReason::Cancel,
+            Self::Finish => MotionFrameHostResetReason::Finish,
+            Self::PruneTerminal => MotionFrameHostResetReason::PruneTerminal,
+            Self::MotionIdentityChanged => MotionFrameHostResetReason::MotionIdentityChanged,
+        }
+    }
+
+    const fn from_host(reason: MotionFrameHostResetReason) -> Self {
+        match reason {
+            MotionFrameHostResetReason::Retarget => Self::Retarget,
+            MotionFrameHostResetReason::Cancel => Self::Cancel,
+            MotionFrameHostResetReason::Finish => Self::Finish,
+            MotionFrameHostResetReason::PruneTerminal => Self::PruneTerminal,
+            MotionFrameHostResetReason::MotionIdentityChanged => Self::MotionIdentityChanged,
+        }
+    }
+}
+
+/// Adapter decision produced after a frame driver observes motion demand.
+#[must_use = "adapter frame updates must be translated into the owner's frame request API"]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MotionFrameDriverUpdate {
+    update: MotionFrameHostUpdate,
+}
+
+impl MotionFrameDriverUpdate {
+    /// Returns the frame demand that produced this update.
+    pub const fn frame_demand(self) -> MotionFrameDemand {
+        self.update.frame_demand()
+    }
+
+    /// Returns whether the adapter should request another frame.
+    pub const fn should_request_frame(self) -> bool {
+        self.update.should_request_frame()
+    }
+
+    /// Returns the driver's cumulative requested-frame count after this update.
+    pub const fn requested_frames(self) -> u64 {
+        self.update.requested_frames()
+    }
+}
+
+impl From<MotionFrameHostUpdate> for MotionFrameDriverUpdate {
+    fn from(update: MotionFrameHostUpdate) -> Self {
+        Self { update }
+    }
+}
+
+/// Value sampled through a frame driver plus the adapter decision.
+#[must_use = "frame driver samples include the adapter's next-frame decision"]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MotionFrameDriverSample<T> {
+    sample: MotionFrameHostSample<T>,
+}
+
+impl<T> MotionFrameDriverSample<T> {
+    /// Returns the sampled value.
+    pub const fn value(&self) -> &T {
+        self.sample.value()
+    }
+
+    /// Consumes the sample and returns the sampled value.
+    pub fn into_value(self) -> T {
+        self.sample.into_value()
+    }
+
+    /// Returns the clamped clock used for sampling.
+    pub const fn clock(&self) -> MotionClockSample {
+        self.sample.clock()
+    }
+
+    /// Returns the driver update produced after sampling.
+    pub const fn update(&self) -> MotionFrameDriverUpdate {
+        MotionFrameDriverUpdate {
+            update: self.sample.update(),
+        }
+    }
+
+    /// Returns the frame demand that produced this sample.
+    pub const fn frame_demand(&self) -> MotionFrameDemand {
+        self.sample.frame_demand()
+    }
+
+    /// Returns whether the adapter should request another frame.
+    pub const fn should_request_frame(&self) -> bool {
+        self.sample.should_request_frame()
+    }
+}
+
+impl<T> From<MotionFrameHostSample<T>> for MotionFrameDriverSample<T> {
+    fn from(sample: MotionFrameHostSample<T>) -> Self {
+        Self { sample }
+    }
+}
 
 /// Adapter-owned frame driver facade.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -334,8 +455,10 @@ impl MotionFrameDriver {
     }
 
     /// Returns the reason the current local motion epoch was last reset.
-    pub const fn last_reset_reason(&self) -> Option<MotionFrameHostResetReason> {
-        self.host.last_reset_reason()
+    pub fn last_reset_reason(&self) -> Option<MotionFrameResetReason> {
+        self.host
+            .last_reset_reason()
+            .map(MotionFrameResetReason::from_host)
     }
 
     /// Returns how many frame requests this driver has asked the adapter to issue.
@@ -344,13 +467,13 @@ impl MotionFrameDriver {
     }
 
     /// Resets elapsed time and demand state for a new local motion epoch.
-    pub const fn reset(&mut self, reason: MotionFrameHostResetReason) {
-        self.host.reset(reason);
+    pub const fn reset(&mut self, reason: MotionFrameResetReason) {
+        self.host.reset(reason.into_host());
     }
 
     /// Observes a frame demand and returns the adapter decision for this render pass.
     pub fn observe(&mut self, frame_demand: MotionFrameDemand) -> MotionFrameDriverUpdate {
-        self.host.observe(frame_demand)
+        self.host.observe(frame_demand).into()
     }
 
     /// Combines many frame demands and returns the adapter decision for this render pass.
@@ -358,7 +481,7 @@ impl MotionFrameDriver {
         &mut self,
         demands: impl IntoIterator<Item = MotionFrameDemand>,
     ) -> MotionFrameDriverUpdate {
-        self.host.observe_all(demands)
+        self.host.observe_all(demands).into()
     }
 
     /// Samples motion from explicit adapter elapsed time and records the frame demand.
@@ -367,7 +490,7 @@ impl MotionFrameDriver {
         requested_elapsed: Duration,
         sample: impl FnOnce(MotionClockSample) -> (T, MotionFrameDemand),
     ) -> MotionFrameDriverSample<T> {
-        self.host.sample_elapsed(requested_elapsed, sample)
+        self.host.sample_elapsed(requested_elapsed, sample).into()
     }
 }
 

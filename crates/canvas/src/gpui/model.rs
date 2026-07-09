@@ -1,8 +1,9 @@
+use crate::routing::{CanvasDefaultEdgeRouter, CanvasEdgeRouter};
 use crate::session::ToolState;
 use crate::{
-    CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdgeRoute,
-    CanvasEdgeRouteKind, CanvasEdgeRouter, CanvasEditor, CanvasEndpoint, CanvasKindRegistry,
-    CanvasRuntime, CanvasSelection, CanvasSnapGuide, CanvasViewport, HitTarget,
+    CanvasConnectionEndpointRole, CanvasDocument, CanvasEdgeRoute, CanvasEdgeRouteKind,
+    CanvasEditor, CanvasEndpoint, CanvasKindRegistry, CanvasRuntime, CanvasSelection,
+    CanvasSnapGuide, CanvasViewport, HitTarget,
 };
 use open_gpui::{Hsla, Pixels, TextAlign, px, rgb};
 use std::sync::Arc;

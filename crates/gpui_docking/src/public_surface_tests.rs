@@ -272,6 +272,22 @@ fn common_import_paths_compile() {
             found: 0,
         },
     };
+    let root_viewport_readiness_type: Option<root::DockSurfaceViewportReadiness> = None;
+    let prelude_viewport_readiness_status = prelude::DockSurfaceViewportReadinessStatus::Openable;
+    let root_viewport_platform_capabilities =
+        root::DockSurfaceViewportPlatformCapabilities::default();
+    let prelude_viewport_flag_capabilities =
+        prelude::DockSurfaceViewportFlagCapabilities::default();
+    let root_viewport_flag_warning =
+        root::DockSurfaceViewportFlagWarning::PointerInputPassThroughUnsupported;
+    let prelude_viewport_route_status = prelude::DockSurfaceViewportRouteStatus::RouteReady;
+    let root_viewport_input_status = root::DockSurfaceViewportInputStatus::ReceivesInput;
+    let prelude_viewport_stale_reason = prelude::DockSurfaceViewportStaleReason::WindowFactsChanged;
+    let root_viewport_platform_readiness: Option<root::DockSurfaceViewportPlatformReadiness> = None;
+    let prelude_viewport_lifecycle_readiness: Option<
+        prelude::DockSurfaceViewportLifecycleReadiness,
+    > = None;
+    let root_viewport_readiness_report_len = root::DockSurfaceViewportReadinessReport::len;
     let root_viewport_report_into_outcomes = root::DockSurfaceViewportOpenReport::into_outcomes;
     let prelude_viewport_restore_report_len = prelude::DockSurfaceViewportRestoreReport::len;
     let root_viewport_restore_outcome_space = root::DockSurfaceViewportRestoreOutcome::space;
@@ -323,6 +339,17 @@ fn common_import_paths_compile() {
         prelude_close_status,
         root_viewport_spec.space(),
         prelude_viewport_spec_error,
+        root_viewport_readiness_type,
+        prelude_viewport_readiness_status,
+        root_viewport_platform_capabilities,
+        prelude_viewport_flag_capabilities,
+        root_viewport_flag_warning,
+        prelude_viewport_route_status,
+        root_viewport_input_status,
+        prelude_viewport_stale_reason,
+        root_viewport_platform_readiness,
+        prelude_viewport_lifecycle_readiness,
+        root_viewport_readiness_report_len,
         root_viewport_report_into_outcomes,
         prelude_viewport_restore_report_len,
         root_viewport_restore_outcome_space,

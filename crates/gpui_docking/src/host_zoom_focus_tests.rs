@@ -11,14 +11,22 @@ use crate::{
 };
 use open_gpui::{AppContext as _, Bounds, TestAppContext, point, px, size};
 use open_gpui_motion::{
-    MotionDuration, MotionEasing, MotionPreference,
-    advanced::{MotionModel, MotionSpec},
+    MotionDuration, MotionEasing, MotionIntent, MotionPreference, MotionTransition,
 };
 use slotmap::Key;
 use std::time::Duration;
 
 fn host_bounds(width: f32, height: f32) -> Bounds<open_gpui::Pixels> {
     Bounds::new(point(px(0.0), px(0.0)), size(px(width), px(height)))
+}
+
+fn linear_continuity_transition(duration: Duration) -> MotionTransition {
+    MotionTransition::duration(
+        MotionIntent::Continuity,
+        MotionPreference::Animated,
+        MotionDuration::Custom(duration),
+        MotionEasing::Linear,
+    )
 }
 
 #[open_gpui::test]
@@ -272,20 +280,10 @@ fn host_zoom_command_samples_egress_and_focus_ring_transition(cx: &mut TestAppCo
     );
     let bounds = host_bounds(400.0, 220.0);
     let previous = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
-    let spec = MotionSpec::new(
-        MotionPreference::Animated,
-        MotionDuration::Custom(Duration::from_millis(100)),
-        MotionEasing::Linear,
-    );
+    let transition = linear_continuity_transition(Duration::from_millis(100));
 
     host.update(cx, |host, cx| {
-        assert!(host.zoom_pane_with_scene(
-            right_tabs,
-            previous.clone(),
-            MotionModel::timeline(spec),
-            None,
-            cx
-        ));
+        assert!(host.zoom_pane_with_scene(right_tabs, previous.clone(), transition, None, cx));
         let start = host
             .sample_transition_for_test(Duration::from_millis(0))
             .expect("zoom command should schedule a transition sample");
@@ -339,7 +337,7 @@ fn host_unzoom_command_samples_restored_scene_without_graph_mutation(cx: &mut Te
         assert!(host.unzoom_with_scene(
             zoomed.clone(),
             base.clone(),
-            MotionModel::timeline(MotionSpec::layout(DockMotionPreference::Reduced)),
+            MotionTransition::committed_layout(DockMotionPreference::Reduced),
             None,
             cx
         ));
@@ -373,20 +371,10 @@ fn host_unzoom_command_retargets_from_active_zoom_sample(cx: &mut TestAppContext
     );
     let bounds = host_bounds(400.0, 220.0);
     let base = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
-    let spec = MotionSpec::new(
-        MotionPreference::Animated,
-        MotionDuration::Custom(Duration::from_millis(100)),
-        MotionEasing::Linear,
-    );
+    let transition = linear_continuity_transition(Duration::from_millis(100));
 
     host.update(cx, |host, cx| {
-        assert!(host.zoom_pane_with_scene(
-            right_tabs,
-            base.clone(),
-            MotionModel::timeline(spec),
-            None,
-            cx
-        ));
+        assert!(host.zoom_pane_with_scene(right_tabs, base.clone(), transition, None, cx));
         let zoom_midpoint = host
             .sample_transition_for_test(Duration::from_millis(50))
             .expect("zoom should be active at midpoint");
@@ -404,13 +392,7 @@ fn host_unzoom_command_retargets_from_active_zoom_sample(cx: &mut TestAppContext
             .bounds;
         let zoomed = zoom_midpoint.final_scene.clone();
 
-        assert!(host.unzoom_with_scene(
-            zoomed,
-            base.clone(),
-            MotionModel::timeline(spec),
-            None,
-            cx
-        ));
+        assert!(host.unzoom_with_scene(zoomed, base.clone(), transition, None, cx));
         let unzoom_start = host
             .sample_transition_for_test(Duration::from_millis(50))
             .expect("unzoom should start from the active zoom sample");
@@ -509,7 +491,7 @@ fn host_focus_command_samples_focus_ring_without_overriding_focus_authority(
         assert!(host.focus_pane_with_scene(
             right_tabs,
             scene.clone(),
-            MotionSpec::layout(DockMotionPreference::Animated),
+            MotionTransition::committed_layout(DockMotionPreference::Animated),
             None,
             cx
         ));
@@ -552,7 +534,7 @@ fn public_focus_command_uses_immediate_overlay_only_feedback(cx: &mut TestAppCon
             .expect("public focus command should expose immediate focus feedback")
     });
 
-    assert!(execution.model.is_immediate());
+    assert!(execution.transition.is_immediate());
     assert_eq!(
         execution.state,
         crate::transition_executor::DockTransitionExecutionState::Immediate

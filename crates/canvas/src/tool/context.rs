@@ -1,20 +1,21 @@
 use std::fmt;
 
+use crate::geometry_facts::{CanvasGeometryFacts, CanvasRecordGeometry, connection_hit_options};
 use crate::record_scope::{
-    CanvasRecordScopeOptions, include_internal_edges, resolve_selection_scope_with_predicates,
+    CanvasRecordScope, CanvasRecordScopeOptions, include_internal_edges,
+    resolve_selection_scope_with_predicates, selection_record_scope,
 };
+use crate::routing::CanvasEdgeRouter;
 use crate::session::ToolState;
 use crate::transform::{
     CanvasResizeHandle, CanvasTransformHandle, canvas_transform_handles, resize_bounds_by_handle,
 };
 use crate::{
-    CanvasConnectionEndpointRole, CanvasDocument, CanvasEdgeRouter, CanvasEndpoint,
-    CanvasGeometryFacts, CanvasHistory, CanvasKindRegistry, CanvasRecordGeometry, CanvasRecordId,
-    CanvasRecordScope, CanvasRuntime, CanvasSelection, CanvasSelectionMode, CanvasTool,
-    CanvasToolId, CanvasTransaction, CanvasViewport, DEFAULT_SNAP_THRESHOLD, DocumentCommand,
-    DocumentError, EdgeId, HitOptions, HitRecord, HitTarget, NodeId, ShapeId,
-    connection_hit_options, selection_record_scope, snap_delta_for_resize_selection,
-    snap_delta_for_selection,
+    CanvasConnectionEndpointRole, CanvasDocument, CanvasEndpoint, CanvasHistory,
+    CanvasKindRegistry, CanvasRecordId, CanvasRuntime, CanvasSelection, CanvasSelectionMode,
+    CanvasTool, CanvasToolId, CanvasTransaction, CanvasViewport, DEFAULT_SNAP_THRESHOLD,
+    DocumentCommand, DocumentError, EdgeId, HitOptions, HitRecord, HitTarget, NodeId, ShapeId,
+    snap_delta_for_resize_selection, snap_delta_for_selection,
 };
 use indexmap::IndexSet;
 use open_gpui::{Bounds, Pixels, Point, px, size};

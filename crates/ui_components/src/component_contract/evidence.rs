@@ -1,6 +1,6 @@
 //! Typed component evidence consumed by contract tests, gallery dogfood, and drift scans.
 
-use crate::a11y::{A11yLabelSource, A11yValueKind};
+use crate::a11y::{A11yLabelSource, A11yStateEvidence, A11yValueKind};
 use open_gpui_ui_core::{AccessibleAction, Orientation, Role};
 
 use super::{ComponentA11yEvidence, ComponentConformanceGate};
@@ -14,6 +14,7 @@ pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[
         value_kind: None,
         orientation: None,
         actions: &[AccessibleAction::Click],
+        state_coverage: &[A11yStateEvidence::Disabled, A11yStateEvidence::Selected],
     },
     ComponentA11yEvidence {
         component: "IconButton",
@@ -22,6 +23,7 @@ pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[
         value_kind: None,
         orientation: None,
         actions: &[AccessibleAction::Click],
+        state_coverage: &[A11yStateEvidence::Disabled],
     },
     ComponentA11yEvidence {
         component: "Checkbox",
@@ -30,6 +32,7 @@ pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[
         value_kind: None,
         orientation: None,
         actions: &[AccessibleAction::Click],
+        state_coverage: &[A11yStateEvidence::Checked, A11yStateEvidence::Disabled],
     },
     ComponentA11yEvidence {
         component: "Slider",
@@ -42,6 +45,7 @@ pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[
             AccessibleAction::Decrement,
             AccessibleAction::SetValue,
         ],
+        state_coverage: &[A11yStateEvidence::Disabled, A11yStateEvidence::Value],
     },
     ComponentA11yEvidence {
         component: "NumberInput",
@@ -54,6 +58,7 @@ pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[
             AccessibleAction::Decrement,
             AccessibleAction::SetValue,
         ],
+        state_coverage: &[A11yStateEvidence::Disabled, A11yStateEvidence::Value],
     },
     ComponentA11yEvidence {
         component: "Progress",
@@ -62,6 +67,7 @@ pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[
         value_kind: Some(A11yValueKind::Percent),
         orientation: None,
         actions: &[],
+        state_coverage: &[A11yStateEvidence::Value],
     },
     ComponentA11yEvidence {
         component: "Listbox option",
@@ -70,6 +76,11 @@ pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[
         value_kind: Some(A11yValueKind::Selection),
         orientation: None,
         actions: &[AccessibleAction::Click],
+        state_coverage: &[
+            A11yStateEvidence::Disabled,
+            A11yStateEvidence::Selected,
+            A11yStateEvidence::Value,
+        ],
     },
     ComponentA11yEvidence {
         component: "Tree item",
@@ -78,6 +89,11 @@ pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[
         value_kind: None,
         orientation: None,
         actions: &[AccessibleAction::Click, AccessibleAction::Focus],
+        state_coverage: &[
+            A11yStateEvidence::Expanded,
+            A11yStateEvidence::Focusable,
+            A11yStateEvidence::Selected,
+        ],
     },
     ComponentA11yEvidence {
         component: "Table",
@@ -86,6 +102,7 @@ pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[
         value_kind: Some(A11yValueKind::Count),
         orientation: None,
         actions: &[],
+        state_coverage: &[A11yStateEvidence::Value],
     },
     ComponentA11yEvidence {
         component: "VirtualizedList row",
@@ -94,6 +111,20 @@ pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[
         value_kind: Some(A11yValueKind::Count),
         orientation: None,
         actions: &[AccessibleAction::Click, AccessibleAction::Focus],
+        state_coverage: &[
+            A11yStateEvidence::Focusable,
+            A11yStateEvidence::Selected,
+            A11yStateEvidence::Value,
+        ],
+    },
+    ComponentA11yEvidence {
+        component: "VirtualizedList structural row",
+        role: Role::Group,
+        label_source: A11yLabelSource::VisibleText,
+        value_kind: None,
+        orientation: None,
+        actions: &[],
+        state_coverage: &[A11yStateEvidence::NonInteractiveStructural],
     },
     ComponentA11yEvidence {
         component: "Splitter handle",
@@ -102,6 +133,7 @@ pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[
         value_kind: None,
         orientation: Some(Orientation::Vertical),
         actions: &[AccessibleAction::Increment, AccessibleAction::Decrement],
+        state_coverage: &[A11yStateEvidence::Disabled, A11yStateEvidence::Focusable],
     },
 ];
 
@@ -243,9 +275,12 @@ pub const COMPONENT_CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "VirtualizedListState::typeahead_target",
             "VirtualizedListState::range_selection_change",
             "VirtualizedListBehaviorSnapshot::sticky_section",
+            "VirtualizedListGpuiExt::render_row",
+            "virtualized_list_row_context_carries_custom_renderer_invariants",
             "virtualized_list_runtime_reveals_active_row_and_emits_activation",
             "virtualized_list_runtime_typeahead_reveals_without_selection",
             "virtualized_list_runtime_shift_navigation_replaces_range_selection",
+            "custom-renderer",
             "components_gallery_smoke_virtualized_list_scroll_stays_inside_sample",
             "components_gallery_smoke_virtualized_list_card_wheel_does_not_leak_to_page",
             "components_gallery_smoke_virtualized_list_keyboard_reveals_and_activates",

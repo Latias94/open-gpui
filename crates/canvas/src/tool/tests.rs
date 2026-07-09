@@ -4,9 +4,11 @@ use super::*;
 use crate::{
     CanvasEdge, CanvasKindRegistry, CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeHitTest,
     CanvasNodeInteractionPolicy, CanvasNodeKind, CanvasNodeResizeProposal, CanvasNodeSchemaPolicy,
-    CanvasNodeTransformPolicy, CanvasRecordId, CanvasRecordKind, CanvasRecordScopeOptions,
-    CanvasResizeHandle, CanvasRoutePath, CanvasRouteRequest, CanvasSchemaError, CanvasShape,
-    CanvasTransformTarget, CanvasValue, HandleId, HitOptions, canvas_transform_handles,
+    CanvasNodeTransformPolicy, CanvasRecordId, CanvasRecordKind, CanvasResizeHandle,
+    CanvasSchemaError, CanvasShape, CanvasTransformTarget, CanvasValue, HandleId, HitOptions,
+    canvas_transform_handles,
+    record_scope::CanvasRecordScopeOptions,
+    routing::{CanvasRoutePath, CanvasRouteRequest},
     test_support::{connected_pair_fixture, document_fixture},
 };
 use open_gpui::{point, px, size};

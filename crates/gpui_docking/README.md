@@ -16,9 +16,9 @@ Low-level controller, graph, action, workspace, host, raw layout parts, and runt
 - `DockSurface` as the app-level owner for controller state, host-window creation, panel commands, and typed viewport capability outcomes.
 - `DockSurfaceSnapshot` as the app-level persistence payload that combines durable layout with
   facade-opened viewport placement hints.
-- `DockSurfaceViewportSession`, `DockSurfaceViewportSpec`, `DockSurfaceViewportOpenReport`, and
-  `DockSurfaceViewportRestoreReport` as facade-level platform window lifecycle, requests, and batch
-  outcomes for multi-viewport applications.
+- `DockSurfaceViewportSession`, `DockSurfaceViewportSpec`, `DockSurfaceViewportReadinessReport`,
+  `DockSurfaceViewportOpenReport`, and `DockSurfaceViewportRestoreReport` as facade-level platform
+  window lifecycle, requests, capability checks, and batch outcomes for multi-viewport applications.
 - `DockSurfaceViewportShouldCloseOutcome` and `DockSurfaceViewportCloseOutcome` as facade-level
   lifecycle results for platform close hooks, including merge-back close policies.
 - `DockLayout` as the common durable persistence type for serialization and validation. Raw
@@ -49,7 +49,7 @@ Platform viewport windows fail closed unless both gates are true:
 - Application policy allows them through `DockSurfaceBuilder::allow_platform_viewports(true)` or `DockPolicy`.
 - The active backend reports `PlatformViewportCapabilities::platform_viewport_windows`.
 
-`DockSurface::viewports` returns a `DockSurfaceViewportSession` for the common multi-window path. The session opens detached dock spaces, restores saved placement data, exports placement snapshots, and handles GPUI close hooks while keeping applications away from raw runtime handles. `DockSurface::open_viewport_spec` and `DockSurface::open_viewports` remain available for direct request construction and return facade outcomes so applications can distinguish policy-disabled, backend-unsupported, and backend-open failures without parsing opaque errors. Unsupported backends should no-op for open or tear-off requests instead of constructing partial runtime state. Web and other backends without platform window support stay on the single-window route.
+`DockSurface::viewports` returns a `DockSurfaceViewportSession` for the common multi-window path. The session can check `readiness`, `readiness_many`, or `restore_readiness` before opening windows, then open detached dock spaces, restore saved placement data, export placement snapshots, and handle GPUI close hooks while keeping applications away from raw runtime handles. Readiness and open outcomes distinguish policy-disabled, backend-unsupported, unsupported requested platform flags, invalid placement, and backend-open failures without parsing opaque errors. Unsupported backends should no-op for open or tear-off requests instead of constructing partial runtime state. Web and other backends without platform window support stay on the single-window route.
 
 Use `DockSurface::export_snapshot` for the common persistence path. The snapshot stores `DockLayout` for logical dock spaces plus `DockViewportPlacementLayout` for platform-window hints, without storing GPUI views or platform window handles. Applications that need custom storage can still persist `DockLayout` and viewport placement separately; `DockSurfaceViewportSpec::with_saved_placement` applies placement hints to fallback GPUI window options before a viewport opens. Applications can call `DockSurface::export_viewport_placement` to snapshot only facade-opened platform windows and `DockSurface::check_viewport_placement_restore` to validate saved placement before reopening windows, without importing `DockViewportRuntimeHandle`.
 

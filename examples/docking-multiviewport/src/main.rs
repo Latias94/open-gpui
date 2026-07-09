@@ -165,6 +165,11 @@ fn handle_secondary_open_outcome(outcome: DockSurfaceViewportOpenOutcome) {
         ) => {
             log::warn!("secondary docking viewport placement is invalid: {error}");
         }
+        DockSurfaceViewportOpenOutcome::Unavailable(
+            DockSurfaceViewportUnavailable::FlagUnsupported { flags },
+        ) => {
+            log::warn!("secondary docking viewport uses unsupported window flags: {flags:?}");
+        }
     }
 }
 

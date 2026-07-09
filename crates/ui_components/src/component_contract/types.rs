@@ -1,7 +1,7 @@
 //! Component contract row and classification types.
 
 use super::component_render_inputs;
-use crate::a11y::{A11yLabelSource, A11yValueKind};
+use crate::a11y::{A11yLabelSource, A11yStateEvidence, A11yValueKind};
 use open_gpui_ui_core::{AccessibleAction, Orientation, Role};
 
 /// Builder/runtime-value pair for a defaulted state seed.
@@ -151,6 +151,8 @@ pub struct ComponentA11yEvidence {
     pub orientation: Option<Orientation>,
     /// Supported accessibility actions covered by the representative contract.
     pub actions: &'static [AccessibleAction],
+    /// Semantic state and focus behavior covered by this evidence row.
+    pub state_coverage: &'static [A11yStateEvidence],
 }
 
 /// One component conformance gate shown by product documentation and gallery dogfood.

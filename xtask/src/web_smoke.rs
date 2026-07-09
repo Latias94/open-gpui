@@ -293,8 +293,49 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
         );
     }
 
+    if final_state
+        .pointer("/probe/dockingViewportReadiness")
+        .and_then(Value::as_str)
+        != Some("backend_unsupported")
+    {
+        return Err(
+            "web smoke expected DockSurface viewport readiness to report backend_unsupported"
+                .to_string(),
+        );
+    }
+
+    if final_state
+        .pointer("/probe/dockingViewportOutcome")
+        .and_then(Value::as_str)
+        != Some("backend_unsupported")
+    {
+        return Err(
+            "web smoke expected DockSurface viewport open outcome to report backend_unsupported"
+                .to_string(),
+        );
+    }
+
+    if final_state
+        .pointer("/probe/dockingViewportOpened")
+        .and_then(Value::as_bool)
+        != Some(false)
+        || final_state
+            .pointer("/probe/dockingViewportWindowDelta")
+            .and_then(Value::as_u64)
+            != Some(0)
+        || final_state
+            .pointer("/probe/dockingViewportRegisteredSpaces")
+            .and_then(Value::as_u64)
+            != Some(0)
+    {
+        return Err(
+            "web smoke expected unsupported DockSurface viewport request to avoid windows and registrations"
+                .to_string(),
+        );
+    }
+
     println!(
-        "web smoke passed: app ready, canvas initialized, input delivered, shell interaction observed, platform viewports unsupported"
+        "web smoke passed: app ready, canvas initialized, input delivered, shell interaction observed, platform viewports unsupported, DockSurface viewport gate typed unsupported"
     );
     Ok(())
 }

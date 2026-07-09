@@ -31,7 +31,7 @@ use open_gpui::{
     MouseUpEvent, ParentElement, Pixels, Render, Rgba, SharedString, Styled, Window, black, canvas,
     div, point, px, quad, rgb, rgba,
 };
-use open_gpui_motion::advanced::MotionSpec;
+use open_gpui_motion::MotionTransition;
 use std::{cell::RefCell, rc::Rc};
 
 pub(crate) type DockViewportHostSceneFrameSlot = Rc<RefCell<Option<DockViewportHostSceneFrame>>>;
@@ -1226,7 +1226,7 @@ impl DockHost {
             self.set_last_visual_affordance_scene(affordance_scene.clone());
             self.execute_visual_affordance_transition_plan(
                 plan,
-                MotionSpec::affordance(session.motion_preference()),
+                MotionTransition::visual_affordance(session.motion_preference()),
             );
         }
 

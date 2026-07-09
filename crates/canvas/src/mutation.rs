@@ -1,7 +1,11 @@
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasKindRegistry, CanvasRecord, CanvasRecordChange,
-    CanvasRecordId, CanvasRecordOperationBatch, CanvasRecordRelation, CanvasRelationChange,
-    CanvasRelationOperationBatch, CanvasTransaction, DocumentCommand, DocumentError,
+    CanvasDocument, CanvasDocumentDiff, CanvasKindRegistry, CanvasRecordId, CanvasTransaction,
+    DocumentCommand, DocumentError,
+    changes::{
+        CanvasRecord, CanvasRecordChange, CanvasRecordOperationBatch, CanvasRelationChange,
+        CanvasRelationOperationBatch,
+    },
+    relations::CanvasRecordRelation,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -292,9 +296,11 @@ mod tests {
     use super::*;
     use crate::test_support::{child_frame_fixture, connected_pair_fixture, document_fixture};
     use crate::{
-        CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordBindingRelation,
-        CanvasRecordGroupRelation, CanvasRecordId, CanvasRecordParentRelation, DocumentCommand,
-        EdgeId, NodeId, ShapeId,
+        CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordId, DocumentCommand, EdgeId, NodeId,
+        ShapeId,
+        relations::{
+            CanvasRecordBindingRelation, CanvasRecordGroupRelation, CanvasRecordParentRelation,
+        },
     };
     use open_gpui::{point, px, size};
 

@@ -2,14 +2,18 @@ use super::model::{
     CanvasPaintInteractionState, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
 };
 use super::style::{parse_color, positive_pixels};
+use crate::geometry_facts::{CanvasGeometryFacts, connection_hit_options};
+use crate::record_scope::{CanvasRecordScopeOptions, resolve_selection_scope};
+use crate::routing::{
+    CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,
+    CanvasRouteSegment,
+};
 use crate::tool::RECONNECT_HANDLE_VIEW_SIZE;
 use crate::{
-    CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasEdge, CanvasEdgeRoute,
-    CanvasEdgeRouteKind, CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryFacts, CanvasKindLabel,
-    CanvasRecordId, CanvasRecordScopeOptions, CanvasResolvedSelectionScope, CanvasRoutePath,
-    CanvasRouteRequest, CanvasRouteSegment, CanvasSelection, CanvasSnapAxis, CanvasSnapGuide,
+    CanvasConnectionEndpointRole, CanvasEdge, CanvasEdgeRoute, CanvasEdgeRouteKind, CanvasEndpoint,
+    CanvasKindLabel, CanvasRecordId, CanvasSelection, CanvasSnapAxis, CanvasSnapGuide,
     CanvasTransformHandle, CanvasTransformTarget, CanvasViewport, EdgeId, HitOptions, HitTarget,
-    canvas_transform_handles, connection_hit_options, resolve_selection_scope,
+    canvas_transform_handles,
 };
 use open_gpui::{
     Bounds, Hsla, Pixels, Point, SharedString, TextRun, Window, WrappedLine, px, size,

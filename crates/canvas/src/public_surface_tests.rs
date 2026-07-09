@@ -13,10 +13,11 @@ fn source_line_contains_identifier(line: &str, token: &str) -> bool {
 
 fn source_contains_public_use_token(file_name: &str, token: &str) -> bool {
     let source = read_source_file(file_name);
+    let mut brace_depth = 0usize;
     let mut in_public_use = false;
     for line in source.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("pub use ") {
+        if brace_depth == 0 && trimmed.starts_with("pub use ") {
             in_public_use = true;
         }
         if in_public_use && source_line_contains_identifier(trimmed, token) {
@@ -25,6 +26,15 @@ fn source_contains_public_use_token(file_name: &str, token: &str) -> bool {
         if in_public_use && trimmed.ends_with(';') {
             in_public_use = false;
         }
+        let opens = trimmed
+            .chars()
+            .filter(|character| *character == '{')
+            .count();
+        let closes = trimmed
+            .chars()
+            .filter(|character| *character == '}')
+            .count();
+        brace_depth = brace_depth.saturating_add(opens).saturating_sub(closes);
     }
     false
 }
@@ -38,12 +48,28 @@ fn root_facade_import_paths_compile() {
         std::mem::size_of::<root::CanvasDocumentBuilder>(),
         std::mem::size_of::<root::CanvasSnapshot>(),
         std::mem::size_of::<root::CanvasRuntime>(),
-        std::mem::size_of::<root::CanvasPaintFrame>(),
         std::mem::size_of::<root::CanvasEditor>(),
         std::mem::size_of::<root::CanvasStore>(),
         std::mem::size_of::<root::CanvasKindRegistry>(),
         std::mem::size_of::<root::CanvasViewport>(),
         std::mem::size_of::<root::JsonCanvas>(),
+    );
+}
+
+#[test]
+fn adapter_persistence_and_advanced_import_paths_compile() {
+    use crate::{adapter, advanced, persistence};
+    let _: Option<&dyn persistence::CanvasPersistenceStore<Error = std::convert::Infallible>> =
+        None;
+
+    let _ = (
+        std::mem::size_of::<adapter::CanvasPaintFrame>(),
+        std::mem::size_of::<adapter::CanvasPaintModel>(),
+        std::mem::size_of::<adapter::CanvasPaintOptions>(),
+        std::mem::size_of::<persistence::CanvasJsonPersistenceCodec>(),
+        std::mem::size_of::<advanced::CanvasGraphIndex>(),
+        std::mem::size_of::<advanced::CanvasGeometryFacts<'static>>(),
+        std::mem::size_of::<advanced::SpatialIndex>(),
     );
 }
 
@@ -54,7 +80,6 @@ fn root_exports_core_facade_tokens_explicitly() {
         "CanvasDocumentBuilder",
         "CanvasSnapshot",
         "CanvasRuntime",
-        "CanvasPaintFrame",
         "CanvasEditor",
         "CanvasStore",
         "CanvasKindRegistry",
@@ -64,6 +89,24 @@ fn root_exports_core_facade_tokens_explicitly() {
         assert!(
             source_contains_public_use_token("lib.rs", token),
             "canvas root should explicitly export {token}"
+        );
+    }
+}
+
+#[test]
+fn root_does_not_reexport_tiered_adapter_persistence_or_advanced_tokens() {
+    for token in [
+        "CanvasPaintFrame",
+        "CanvasPaintModel",
+        "CanvasPersistenceStore",
+        "CanvasJsonPersistenceCodec",
+        "CanvasGraphIndex",
+        "CanvasGeometryFacts",
+        "SpatialIndex",
+    ] {
+        assert!(
+            !source_contains_public_use_token("lib.rs", token),
+            "canvas root should not re-export tiered token {token}"
         );
     }
 }
@@ -84,7 +127,6 @@ fn root_does_not_make_split_modules_public() {
         "json_canvas",
         "layer",
         "mutation",
-        "persistence",
         "record_scope",
         "relations",
         "routing",
@@ -107,10 +149,14 @@ fn root_does_not_make_split_modules_public() {
         );
     }
 
-    assert!(
-        source.lines().any(|line| line.trim() == "pub mod index;"),
-        "index remains the only doc-hidden public module on the canvas root"
-    );
+    for module in ["adapter", "advanced", "persistence"] {
+        assert!(
+            source
+                .lines()
+                .any(|line| line.trim().starts_with(&format!("pub mod {module}"))),
+            "canvas `{module}` tier must stay public"
+        );
+    }
 }
 
 #[test]

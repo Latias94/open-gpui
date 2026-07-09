@@ -13,12 +13,11 @@ mod geometry_facts;
 mod gesture;
 mod gpui;
 mod graph;
-#[doc(hidden)]
-pub mod index;
+mod index;
 mod json_canvas;
 mod layer;
 mod mutation;
-mod persistence;
+pub mod persistence;
 #[cfg(test)]
 mod public_surface_tests;
 mod record_scope;
@@ -36,11 +35,59 @@ mod test_support;
 mod tool;
 mod transform;
 
-pub use changes::{
-    CanvasChangeOrigin, CanvasRecord, CanvasRecordChange, CanvasRecordOperation,
-    CanvasRecordOperationBatch, CanvasRelationChange, CanvasRelationOperation,
-    CanvasRelationOperationBatch,
-};
+pub mod adapter {
+    //! GPUI adapter types and rendering helpers for canvas views.
+
+    pub use crate::gpui::{
+        CanvasConnectionPreviewRoute, CanvasEditorInputHandler, CanvasEditorInputMapper,
+        CanvasInputMapper, CanvasPaintConnectionPreview, CanvasPaintConnectionTargetFeedback,
+        CanvasPaintConnectionTargetState, CanvasPaintEdgeGeometry, CanvasPaintFrame,
+        CanvasPaintInteraction, CanvasPaintInteractionFrame, CanvasPaintLabel, CanvasPaintModel,
+        CanvasPaintOptions, CanvasPaintReconnectEndpoint, CanvasPaintReconnectHandle,
+        CanvasPaintReconnectHandleShape, CanvasPaintRecord, CanvasPaintSnapGuide, CanvasPaintTheme,
+        CanvasPaintTransformHandle, CanvasPaintWireVisualState, CanvasPreparedPaintFrame,
+        CanvasSceneFrame, CanvasSceneLayerItem, CanvasSceneLayerPhase, CanvasSceneRecordGroup,
+        CanvasWidgetOverlayFrame, CanvasWidgetOverlayHitPriority, CanvasWidgetOverlayOptions,
+        CanvasWidgetOverlayPlacement, canvas_editor_scene_view_with_frame, canvas_editor_view,
+        canvas_editor_view_with_frame, canvas_scene_view, canvas_view, collect_visible_records,
+        collect_widget_overlay_frame, paint_canvas_frame, paint_canvas_scene_phase,
+        prepaint_canvas_frame, prepare_canvas_frame, register_canvas_editor_input,
+    };
+}
+
+pub mod advanced {
+    //! Lower-level graph, geometry, routing, relation, mutation, and indexing APIs.
+
+    pub use crate::changes::{
+        CanvasChangeOrigin, CanvasRecord, CanvasRecordChange, CanvasRecordOperation,
+        CanvasRecordOperationBatch, CanvasRelationChange, CanvasRelationOperation,
+        CanvasRelationOperationBatch,
+    };
+    pub use crate::geometry_facts::{
+        CanvasGeometryFacts, CanvasRecordGeometry, CanvasResolvedEdgeGeometry,
+        connection_hit_options,
+    };
+    pub use crate::graph::{
+        CanvasEdgeDirection, CanvasGraph, CanvasGraphEndpointIds, CanvasGraphIndex,
+        CanvasIndexedGraph,
+    };
+    pub use crate::index::SpatialIndex;
+    pub use crate::mutation::{CanvasCommittedMutation, CanvasPreparedMutation};
+    pub use crate::record_scope::{
+        CanvasRecordScope, CanvasRecordScopeOptions, CanvasResolvedSelectionScope,
+        normalize_selection, resolve_selection_scope, selection_record_scope,
+    };
+    pub use crate::relations::{
+        CanvasRecordBindingRelation, CanvasRecordGroupRelation, CanvasRecordParentRelation,
+        CanvasRecordRelation, CanvasRecordRelationKey, CanvasRecordRelationKind,
+        CanvasRecordRelations, CanvasRecordRelationsBuilder,
+    };
+    pub use crate::routing::{
+        CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,
+        CanvasRouteSegment,
+    };
+}
+
 pub use clipboard::{CanvasClipboardPayload, CanvasPasteTransaction};
 pub use document::{
     BindingId, CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentBuilder,
@@ -49,71 +96,13 @@ pub use document::{
     CanvasTransaction, CanvasValue, DocumentCommand, DocumentError, EdgeId, HandleId, HandleRole,
     NodeId, ShapeId,
 };
-pub use format::{
-    CANVAS_DOCUMENT_FORMAT_VERSION, CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION,
-    CANVAS_SNAPSHOT_MIGRATIONS, CanvasSnapshotMigration, default_document_format_version,
-    migrate_canvas_snapshot, validate_canvas_document_format_version,
-};
 pub use geometry::{CanvasViewport, TransformError};
-pub use geometry_facts::{
-    CanvasGeometryFacts, CanvasRecordGeometry, CanvasResolvedEdgeGeometry, connection_hit_options,
-};
-pub use gpui::{
-    CanvasConnectionPreviewRoute, CanvasEditorInputHandler, CanvasEditorInputMapper,
-    CanvasInputMapper, CanvasPaintConnectionPreview, CanvasPaintConnectionTargetFeedback,
-    CanvasPaintConnectionTargetState, CanvasPaintEdgeGeometry, CanvasPaintFrame,
-    CanvasPaintInteraction, CanvasPaintInteractionFrame, CanvasPaintLabel, CanvasPaintModel,
-    CanvasPaintOptions, CanvasPaintReconnectEndpoint, CanvasPaintReconnectHandle,
-    CanvasPaintReconnectHandleShape, CanvasPaintRecord, CanvasPaintSnapGuide, CanvasPaintTheme,
-    CanvasPaintTransformHandle, CanvasPaintWireVisualState, CanvasPreparedPaintFrame,
-    CanvasSceneFrame, CanvasSceneLayerItem, CanvasSceneLayerPhase, CanvasSceneRecordGroup,
-    CanvasWidgetOverlayFrame, CanvasWidgetOverlayHitPriority, CanvasWidgetOverlayOptions,
-    CanvasWidgetOverlayPlacement, canvas_editor_scene_view_with_frame, canvas_editor_view,
-    canvas_editor_view_with_frame, canvas_scene_view, canvas_view, collect_visible_records,
-    collect_widget_overlay_frame, paint_canvas_frame, paint_canvas_scene_phase,
-    prepaint_canvas_frame, prepare_canvas_frame, register_canvas_editor_input,
-};
-pub use graph::{
-    CanvasEdgeDirection, CanvasGraph, CanvasGraphEndpointIds, CanvasGraphIndex, CanvasIndexedGraph,
-};
 pub use index::{HitOptions, HitRecord, HitTarget};
 pub use json_canvas::{
     JsonCanvas, JsonCanvasEdge, JsonCanvasEndpointShape, JsonCanvasError, JsonCanvasNode,
     JsonCanvasSide, document_from_json_canvas_str, document_to_json_canvas_string,
 };
 pub use layer::CanvasZOrderCommand;
-pub use mutation::{CanvasCommittedMutation, CanvasPreparedMutation};
-pub use persistence::{
-    CANVAS_LORO_CRDT_FEATURE, CANVAS_PERSISTENCE_ADAPTERS, CANVAS_PERSISTENCE_CODEC_VERSION,
-    CANVAS_REDB_STORE_FEATURE, CANVAS_RKYV_SNAPSHOT_FEATURE, CanvasCheckpoint,
-    CanvasEncodedLogEntry, CanvasJsonPersistenceCodec, CanvasLogEntry, CanvasLogEntryKind,
-    CanvasPersistenceAdapter, CanvasPersistenceAdapterStatus, CanvasPersistenceByteStore,
-    CanvasPersistenceByteStoreAdapter, CanvasPersistenceByteStoreError, CanvasPersistenceCodec,
-    CanvasPersistenceCodecError, CanvasPersistenceCursor, CanvasPersistenceEnvelope,
-    CanvasPersistenceError, CanvasPersistenceRecord, CanvasPersistenceRecordKind,
-    CanvasPersistenceStore, CanvasPersistentToolRegistryError, CanvasReplayError,
-    MemoryCanvasPersistenceByteStore, MemoryCanvasPersistenceStore,
-    apply_persistent_store_transaction, apply_persistent_tool_intent,
-    apply_persistent_tool_intents, apply_persistent_transaction,
-    canvas_persistence_adapter_statuses, handle_persistent_event,
-    handle_persistent_event_with_custom_tool, handle_persistent_event_with_tool_registry,
-    load_canvas_document, load_canvas_persistence_cursor, redo_persistent_store_transaction,
-    redo_persistent_transaction, replay_canvas_log, save_canvas_checkpoint,
-    save_canvas_store_checkpoint, undo_persistent_store_transaction, undo_persistent_transaction,
-};
-pub use record_scope::{
-    CanvasRecordScope, CanvasRecordScopeOptions, CanvasResolvedSelectionScope, normalize_selection,
-    resolve_selection_scope, selection_record_scope,
-};
-pub use relations::{
-    CanvasRecordBindingRelation, CanvasRecordGroupRelation, CanvasRecordParentRelation,
-    CanvasRecordRelation, CanvasRecordRelationKey, CanvasRecordRelationKind, CanvasRecordRelations,
-    CanvasRecordRelationsBuilder,
-};
-pub use routing::{
-    CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,
-    CanvasRouteSegment,
-};
 pub use runtime::CanvasRuntime;
 pub use schema::{
     CanvasEdgeKind, CanvasEdgeRenderPolicy, CanvasEdgeSchemaPolicy, CanvasKindLabel,

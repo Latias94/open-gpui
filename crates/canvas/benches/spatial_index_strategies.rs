@@ -1,11 +1,11 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
-use open_gpui_canvas::index::SpatialIndex;
+use open_gpui_canvas::adapter::{CanvasPaintModel, CanvasPaintOptions, collect_visible_records};
+use open_gpui_canvas::advanced::{CanvasCommittedMutation, SpatialIndex};
 use open_gpui_canvas::{
-    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasPaintModel,
-    CanvasPaintOptions, CanvasRecordId, CanvasRuntime, CanvasShape, CanvasTransaction,
-    CanvasViewport, DocumentCommand, HitOptions, HitRecord, HitTarget, NodeId,
-    collect_visible_records,
+    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasRecordId,
+    CanvasRuntime, CanvasShape, CanvasTransaction, CanvasViewport, DocumentCommand, HitOptions,
+    HitRecord, HitTarget, NodeId,
 };
 use rstar::{AABB as RStarAabb, RTree, RTreeObject};
 use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
@@ -573,7 +573,7 @@ fn move_selected_nodes<'a>(
     document: &mut CanvasDocument,
     selected: impl IntoIterator<Item = &'a NodeId>,
     frame: usize,
-) -> open_gpui_canvas::CanvasCommittedMutation {
+) -> CanvasCommittedMutation {
     let commands = selected
         .into_iter()
         .map(|id| {

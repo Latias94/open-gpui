@@ -3,12 +3,15 @@ use open_gpui::{
     WindowBounds, WindowOptions, div, point, prelude::*, px, rgb, size,
 };
 use open_gpui_canvas::{
-    CanvasClipboardPayload, CanvasEditor, CanvasEditorInputHandler, CanvasEvent, CanvasKindLabel,
-    CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeRenderPolicy,
-    CanvasNodeResizeProposal, CanvasNodeSchemaPolicy, CanvasNodeTransformPolicy, CanvasPaintModel,
-    CanvasPaintOptions, CanvasPaintTheme, CanvasRecordKind, CanvasSchemaError, CanvasToolIntent,
-    CanvasWidgetOverlayFrame, CanvasWidgetOverlayHitPriority, CanvasWidgetOverlayOptions,
-    CanvasZOrderCommand, DocumentError, HitTarget, NodeId, canvas_editor_view_with_frame,
+    CanvasClipboardPayload, CanvasEditor, CanvasEvent, CanvasKindLabel, CanvasKindPaint,
+    CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeRenderPolicy,
+    CanvasNodeResizeProposal, CanvasNodeSchemaPolicy, CanvasNodeTransformPolicy, CanvasRecordKind,
+    CanvasSchemaError, CanvasToolIntent, CanvasZOrderCommand, DocumentError, HitTarget, NodeId,
+    adapter::{
+        CanvasEditorInputHandler, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
+        CanvasWidgetOverlayFrame, CanvasWidgetOverlayHitPriority, CanvasWidgetOverlayOptions,
+        canvas_editor_view_with_frame,
+    },
     document_from_json_canvas_str,
 };
 use open_gpui_platform::application;
