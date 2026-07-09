@@ -43,7 +43,10 @@ pub use layout::{
     LayoutBoundsSnapshot, LayoutNodeSnapshot, LayoutPointSnapshot, LayoutSizeSnapshot,
     LayoutSnapshot,
 };
-pub use probe::{DevtoolsProbe, ProbeId, ProbeSnapshotError, SnapshotProbe, SnapshotProbeSnapshot};
+pub use probe::{
+    CaptureProvider, DevtoolsCaptureProvider, DevtoolsProbe, ProbeId, ProbeSnapshotError,
+    SnapshotProbe, SnapshotProbeSnapshot,
+};
 pub use redaction::SnapshotRedactionSummary;
 pub use registry::{DevtoolsRegistry, DevtoolsRegistryError};
 pub use snapshot::{

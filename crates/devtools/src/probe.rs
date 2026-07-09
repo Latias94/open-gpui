@@ -1,7 +1,7 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    SnapshotEnvelope, SnapshotKind, SnapshotRedactionSummary, SnapshotTree,
+    DevtoolsCapture, SnapshotEnvelope, SnapshotKind, SnapshotRedactionSummary, SnapshotTree,
     adapters::sanitize_sensitive_text,
 };
 
@@ -57,6 +57,15 @@ pub trait DevtoolsProbe: Send + Sync {
 
     /// Collects the current read-only snapshot.
     fn snapshot(&self) -> Result<SnapshotEnvelope, ProbeSnapshotError>;
+}
+
+/// Read-only provider of a rich target/domain/event DevTools capture.
+pub trait DevtoolsCaptureProvider: Send + Sync {
+    /// Returns the stable provider id.
+    fn id(&self) -> &ProbeId;
+
+    /// Collects the current read-only capture.
+    fn capture(&self) -> Result<DevtoolsCapture, ProbeSnapshotError>;
 }
 
 /// Snapshot data returned by a lightweight probe adapter.
@@ -136,6 +145,43 @@ where
             SnapshotEnvelope::new(self.id.clone(), self.kind.clone(), snapshot.tree)
                 .with_redaction(snapshot.redaction)
         })
+    }
+}
+
+/// Closure-backed read-only capture provider adapter.
+///
+/// Use this for app-owned integrations that already produce a target/domain/event capture and
+/// should participate in registry-level collection alongside legacy snapshot probes.
+pub struct CaptureProvider<F> {
+    id: ProbeId,
+    capture: F,
+}
+
+impl<F> CaptureProvider<F> {
+    /// Creates a capture provider from a non-empty id string.
+    pub fn new(id: impl Into<String>, capture: F) -> Result<Self, ProbeSnapshotError> {
+        Ok(Self {
+            id: ProbeId::new(id)?,
+            capture,
+        })
+    }
+
+    /// Creates a capture provider from an existing probe id.
+    pub fn from_probe_id(id: ProbeId, capture: F) -> Self {
+        Self { id, capture }
+    }
+}
+
+impl<F> DevtoolsCaptureProvider for CaptureProvider<F>
+where
+    F: Fn() -> Result<DevtoolsCapture, ProbeSnapshotError> + Send + Sync,
+{
+    fn id(&self) -> &ProbeId {
+        &self.id
+    }
+
+    fn capture(&self) -> Result<DevtoolsCapture, ProbeSnapshotError> {
+        (self.capture)().map(DevtoolsCapture::sanitized)
     }
 }
 

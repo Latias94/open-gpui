@@ -1,6 +1,9 @@
 use open_gpui_devtools::{
-    DevtoolsProbe, DevtoolsRegistry, ProbeId, ProbeSnapshotError, SnapshotEnvelope, SnapshotKind,
-    SnapshotNode, SnapshotProbe, SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
+    DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot,
+    DevtoolsEventKind, DevtoolsEventRecord, DevtoolsProbe, DevtoolsRegistry, DevtoolsTargetId,
+    DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId, ProbeSnapshotError,
+    SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotProbe, SnapshotProbeSnapshot,
+    SnapshotRedactionSummary, SnapshotTree,
 };
 
 struct StaticProbe {
@@ -162,6 +165,137 @@ fn registry_collects_target_domain_capture_from_legacy_probes() {
 }
 
 #[test]
+fn registry_collects_provider_captures_with_legacy_probe_projection() {
+    let mut registry = DevtoolsRegistry::default();
+    registry
+        .register(StaticProbe::new("theme", SnapshotKind::Theme))
+        .unwrap();
+    registry
+        .register_capture_provider_fn("provider.command", || {
+            Ok(provider_capture(
+                "runtime.command",
+                DevtoolsDomainKind::Command,
+                "command.registry.changed",
+            ))
+        })
+        .unwrap();
+
+    let legacy = registry.collect();
+    assert_eq!(legacy.snapshots.len(), 1);
+    assert_eq!(legacy.snapshots[0].probe_id.as_str(), "theme");
+
+    let capture = registry.collect_capture();
+    let target_ids = capture
+        .targets
+        .targets
+        .iter()
+        .map(|target| target.id.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(target_ids, ["app", "probe.theme", "runtime.command"]);
+    assert_eq!(capture.domains.len(), 2);
+    assert_eq!(capture.events.len(), 1);
+    assert_eq!(capture.events[0].id(), "command.registry.changed");
+    assert_eq!(capture.snapshot_collection().snapshots.len(), 1);
+}
+
+#[test]
+fn registry_reports_capture_provider_failures_as_diagnostics() {
+    let mut registry = DevtoolsRegistry::default();
+    registry
+        .register_capture_provider_fn("provider.failing", || {
+            Err(ProbeSnapshotError::CollectionFailed(
+                "provider unavailable".to_owned(),
+            ))
+        })
+        .unwrap();
+
+    let capture = registry.collect_capture();
+
+    assert_eq!(capture.diagnostics.len(), 1);
+    assert_eq!(capture.diagnostics[0].probe_id.as_str(), "provider.failing");
+    assert!(
+        capture.diagnostics[0]
+            .message
+            .contains("provider unavailable")
+    );
+}
+
+#[test]
+fn registry_rejects_duplicate_capture_provider_identity() {
+    let mut registry = DevtoolsRegistry::default();
+    registry
+        .register_capture_provider_fn("provider.command", || {
+            Ok(provider_capture(
+                "runtime.command",
+                DevtoolsDomainKind::Command,
+                "command.registry.changed",
+            ))
+        })
+        .unwrap();
+
+    let duplicate = registry.register_capture_provider_fn("provider.command", || {
+        Ok(provider_capture(
+            "runtime.command.other",
+            DevtoolsDomainKind::Command,
+            "command.registry.changed",
+        ))
+    });
+
+    assert!(duplicate.is_err());
+}
+
+#[test]
+fn registry_rejects_capture_provider_identity_that_matches_probe() {
+    let mut registry = DevtoolsRegistry::default();
+    registry
+        .register(StaticProbe::new("theme", SnapshotKind::Theme))
+        .unwrap();
+
+    let duplicate = registry.register_capture_provider_fn("theme", || {
+        Ok(provider_capture(
+            "runtime.theme",
+            DevtoolsDomainKind::Theme,
+            "theme.changed",
+        ))
+    });
+
+    assert!(duplicate.is_err());
+}
+
+#[test]
+fn registry_preserves_provider_capture_identity_diagnostics() {
+    let mut registry = DevtoolsRegistry::default();
+    registry
+        .register_capture_provider_fn("provider.command", || {
+            Ok(provider_capture(
+                "runtime.shared",
+                DevtoolsDomainKind::Command,
+                "command.registry.changed",
+            ))
+        })
+        .unwrap();
+    registry
+        .register_capture_provider_fn("provider.layout", || {
+            Ok(provider_capture(
+                "runtime.shared",
+                DevtoolsDomainKind::Layout,
+                "layout.changed",
+            ))
+        })
+        .unwrap();
+
+    let capture = registry.collect_capture();
+
+    assert!(
+        capture
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "capture.duplicate_target")
+    );
+}
+
+#[test]
 fn snapshot_export_preserves_tree_and_redaction_summary() {
     let mut redaction = SnapshotRedactionSummary::default();
     redaction.record_redacted("password");
@@ -179,4 +313,35 @@ fn snapshot_export_preserves_tree_and_redaction_summary() {
     assert_eq!(value["tree"]["nodes"][0]["id"], "field:password");
     assert_eq!(value["redaction"]["redacted_values"], 1);
     assert_eq!(value["redaction"]["notes"][0], "password");
+}
+
+fn provider_capture(
+    target_id: &str,
+    domain_kind: DevtoolsDomainKind,
+    event_id: &str,
+) -> DevtoolsCapture {
+    let target_id = DevtoolsTargetId::new(target_id);
+    let domain_id = DevtoolsDomainId::from_parts(["domain", target_id.as_str()]);
+    let target = DevtoolsTargetSnapshot::new(
+        target_id.clone(),
+        DevtoolsTargetKind::Runtime,
+        "Runtime provider",
+    );
+    let domain = DevtoolsDomainSnapshot::new(
+        domain_id.clone(),
+        target_id.clone(),
+        domain_kind,
+        "Provider domain",
+    );
+    let event = DevtoolsEventRecord::new(event_id, "Provider event", DevtoolsEventKind::Instant)
+        .target_id(target_id)
+        .domain_id(domain_id);
+
+    DevtoolsCapture::new(
+        DevtoolsTargetTree::new([target]),
+        [domain],
+        [event],
+        Vec::<SnapshotEnvelope>::new(),
+        Vec::new(),
+    )
 }
