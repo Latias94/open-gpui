@@ -98,6 +98,16 @@ fn framework_adapters_convert_scroll_viewport_snapshots() {
     assert_eq!(diagnostic.code, "runtime.unavailable");
 }
 
+#[cfg(feature = "gpui")]
+#[test]
+fn gpui_inspector_surface_exposes_category_debug_selectors() {
+    let source = include_str!("../src/gpui.rs");
+
+    assert!(source.contains("devtools-inspector:category-summaries"));
+    assert!(source.contains("devtools-inspector:category:{category_label}"));
+    assert!(source.contains("devtools-inspector:row:{probe_id}"));
+}
+
 #[cfg(feature = "docking")]
 #[test]
 fn framework_adapters_convert_docking_runtime_status() {

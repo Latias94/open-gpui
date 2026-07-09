@@ -11,6 +11,7 @@ pub mod form;
 #[cfg(feature = "gpui")]
 pub mod gpui;
 mod inspector;
+pub mod layout;
 #[cfg(feature = "motion")]
 pub mod motion;
 mod probe;
@@ -19,12 +20,20 @@ mod registry;
 #[cfg(feature = "resource")]
 pub mod resource;
 mod snapshot;
+pub mod timeline;
 #[cfg(feature = "ui-components")]
 pub mod ui_components;
 
 #[cfg(feature = "gpui")]
 pub use gpui::DevtoolsInspector;
-pub use inspector::{DevtoolsInspectorError, DevtoolsInspectorState, DevtoolsSnapshotRow};
+pub use inspector::{
+    DevtoolsInspectorError, DevtoolsInspectorState, DevtoolsSnapshotCategory,
+    DevtoolsSnapshotCategorySummary, DevtoolsSnapshotRow,
+};
+pub use layout::{
+    LayoutBoundsSnapshot, LayoutNodeSnapshot, LayoutPointSnapshot, LayoutSizeSnapshot,
+    LayoutSnapshot,
+};
 pub use probe::{DevtoolsProbe, ProbeId, ProbeSnapshotError, SnapshotProbe, SnapshotProbeSnapshot};
 pub use redaction::SnapshotRedactionSummary;
 pub use registry::{DevtoolsRegistry, DevtoolsRegistryError};
@@ -32,3 +41,4 @@ pub use snapshot::{
     SnapshotCollection, SnapshotDiagnostic, SnapshotEnvelope, SnapshotKind, SnapshotNode,
     SnapshotTree,
 };
+pub use timeline::{DEFAULT_TIMELINE_EVENT_LIMIT, TimelineEventSnapshot, TimelineSnapshot};
