@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 
 pub mod adapters;
+mod artifact;
 #[cfg(feature = "command")]
 pub mod command;
 mod diff;
@@ -31,6 +32,12 @@ pub mod timeline;
 pub mod ui_components;
 mod workbench;
 
+pub use artifact::{
+    DEVTOOLS_ARTIFACT_RECORD_SCHEMA_VERSION, DevtoolsArtifact, DevtoolsArtifactFileMode,
+    DevtoolsArtifactFileSink, DevtoolsArtifactJsonlSink, DevtoolsArtifactKind,
+    DevtoolsArtifactMetadata, DevtoolsArtifactRecord, DevtoolsArtifactSink,
+    DevtoolsArtifactWriteError,
+};
 pub use diff::{
     DevtoolsCaptureDiff, DevtoolsDiffKind, DevtoolsDiffRow, DevtoolsDiffStatus, DevtoolsDiffSummary,
 };

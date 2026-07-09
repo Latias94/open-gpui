@@ -268,6 +268,41 @@ Artifact reads are non-blocking by default: missing or partial inputs fail fast.
 `--poll-ms <n>`. `stream` flushes one report record per retained frame so command-line consumers can
 process JSONL incrementally.
 
+Application-owned workbenches can also write schema-versioned artifact records for headless
+consumers. The application still decides when to refresh runtime facts; DevTools only wraps and
+writes already-sanitized captures, sessions, or reports:
+
+```rust
+# use open_gpui_devtools::{
+#     DevtoolsArtifact, DevtoolsArtifactFileMode, DevtoolsArtifactFileSink,
+#     DevtoolsArtifactMetadata, DevtoolsArtifactRecord, DevtoolsArtifactSink, DevtoolsCapture,
+#     DevtoolsReport,
+# };
+let capture = DevtoolsCapture::default();
+let report = DevtoolsReport::from_capture(&capture);
+let record = DevtoolsArtifactRecord::new(
+    DevtoolsArtifactMetadata::new("my-app.devtools")
+        .scenario_id("startup")
+        .sequence(1)
+        .flush_reason("manual-refresh"),
+    DevtoolsArtifact::report(&report),
+);
+
+let output_path = std::env::temp_dir().join("open-gpui-devtools-latest-report.json");
+let mut sink = DevtoolsArtifactFileSink::new(
+    &output_path,
+    DevtoolsArtifactFileMode::ReplaceAtomic,
+);
+sink.write_record(&record)?;
+std::fs::remove_file(output_path)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Use `DevtoolsArtifactFileMode::AppendJsonl` or `DevtoolsArtifactJsonlSink` when a caller wants one
+flushed JSON record per refresh. Artifact records use
+`open-gpui-devtools-artifact-record/v1` and carry sanitized producer/scenario metadata, sequence,
+generation/session hints when available, flush reason, optional timestamp, and redaction counts.
+
 With the `form` feature enabled, convert a public form snapshot directly:
 
 ```rust
