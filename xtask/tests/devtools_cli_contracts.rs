@@ -57,7 +57,7 @@ fn query_selectors_return_deterministic_rows() {
     assert_query_count(&capture, ["--domain-kind", "docking"], 1);
     assert_query_count(&capture, ["--event-id", "viewport.opened"], 1);
     assert_query_count(&capture, ["--snapshot-kind", "layout"], 1);
-    assert_query_count(&capture, ["--finding-at-or-above", "warning"], 1);
+    assert_query_count(&capture, ["--finding-at-or-above", "warning"], 2);
 
     let session = fixture("simple-session.json");
     assert_query_count(&session, ["--generation", "2"], 1);

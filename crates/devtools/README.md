@@ -261,12 +261,29 @@ cargo run -p xtask -- devtools report --input devtools-session.json --format jso
 cargo run -p xtask -- devtools diagnose --input devtools-session.json --format markdown --fail-on warning
 cargo run -p xtask -- devtools diff --before before-capture.json --after after-capture.json --format markdown
 cargo run -p xtask -- devtools stream --input devtools-session.json --format jsonl --interval-ms 50
+cargo run -p xtask -- devtools query --input devtools-session.json --row-kind domain --domain-kind command
+cargo run -p xtask -- devtools assert --input devtools-session.json --finding-at-or-above warning --format json
+cargo run -p xtask -- devtools follow --input target/devtools/latest.json --limit 3 --timeout-ms 5000
 ```
 
 Artifact reads are non-blocking by default: missing or partial inputs fail fast. Add
 `--timeout-ms <n>` to poll for a producer that is writing the artifact, and tune polling with
-`--poll-ms <n>`. `stream` flushes one report record per retained frame so command-line consumers can
-process JSONL incrementally.
+`--poll-ms <n>`. `report`, `diagnose`, `diff`, `stream`, `query`, and `assert` accept `--input -`
+where the command consumes one artifact from stdin. Commands with an `--output` flag treat `-` as
+stdout.
+
+`query` and `assert` intentionally expose a small selector vocabulary: row kind, target id/kind,
+domain id/kind, event id/identity, snapshot kind/probe id, finding id/category/severity, diff
+kind/status, and generation. JSON output uses `open-gpui-devtools-query/v1` or
+`open-gpui-devtools-assert/v1`; Markdown output is for issue comments. `assert` exits non-zero when
+selectors have no matches, finding severity crosses `--fail-on-finding`, generation is lower than
+`--min-generation`, or diff change requirements are not met.
+
+`stream` expands retained frames from one artifact. `follow` is the long-running mode for producer
+files: `--input-mode latest` polls a latest JSON artifact and emits when sequence, generation, or
+content changes; `--input-mode jsonl` consumes appended artifact records and waits for complete
+lines. Both modes flush each JSONL or Markdown record before polling again and stay bounded through
+`--limit`, `--timeout-ms`, and `--idle-after-ms`.
 
 Application-owned workbenches can also write schema-versioned artifact records for headless
 consumers. The application still decides when to refresh runtime facts; DevTools only wraps and
@@ -302,6 +319,23 @@ Use `DevtoolsArtifactFileMode::AppendJsonl` or `DevtoolsArtifactJsonlSink` when 
 flushed JSON record per refresh. Artifact records use
 `open-gpui-devtools-artifact-record/v1` and carry sanitized producer/scenario metadata, sequence,
 generation/session hints when available, flush reason, optional timestamp, and redaction counts.
+
+Checked-in fixtures live under `crates/devtools/tests/fixtures/`:
+
+- `simple-capture.json` and `simple-session.json` keep CLI stdin/stdout, wait, query, assert, and
+  follow tests small.
+- `gallery-session.json` and `gallery-report.json` cover Gallery command, form, resource, layout,
+  timeline, motion, GPUI runtime, accessibility/theme, and redaction facts.
+- `docking-session.json` and `docking-report.json` cover docking-native runtime targets, viewport
+  facts, platform capability findings, and route readiness diagnostics.
+
+Fixture artifacts are sanitized, versioned, and intended for contract tests and examples only. They
+are not persistent trace storage.
+
+Gallery exposes `devtools_gallery_headless_artifacts()` for deterministic session/report artifacts.
+Docking-native exposes `docking_native_headless_artifacts()` over public
+`DockViewportRuntimeStatus` records. Both helpers keep runtime refresh authority in the example or
+application that owns the UI.
 
 With the `form` feature enabled, convert a public form snapshot directly:
 
@@ -383,7 +417,9 @@ cargo nextest run -p open-gpui-devtools --features form,resource form_resource_a
 cargo nextest run -p open-gpui-devtools --features gpui,motion,docking framework_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features docking --test docking_runtime_contracts --no-fail-fast --locked
 cargo check -p xtask --locked
+cargo nextest run -p xtask --test devtools_cli_contracts --no-fail-fast --locked
 cargo run -p xtask -- devtools --help
+cargo run -p xtask -- scan-public-api --check
 ```
 
 When changing the gallery inspector surface, also run:

@@ -151,29 +151,24 @@ fn follow_jsonl(args: FollowArgs, stdout: &mut impl Write) -> Result<(), ()> {
 
     loop {
         match fs::read_to_string(&args.input) {
-            Ok(source) => match emit_jsonl_lines(
-                stdout,
-                &source,
-                consumed_lines,
-                emitted,
-                false,
-                &args,
-            ) {
-                Ok(progress) => {
-                    consumed_lines = progress.consumed_lines;
-                    if progress.emitted > emitted {
-                        emitted = progress.emitted;
-                        last_emit = Instant::now();
-                        last_error = None;
-                        if limit_reached(emitted, args.limit) {
-                            return Ok(());
+            Ok(source) => {
+                match emit_jsonl_lines(stdout, &source, consumed_lines, emitted, false, &args) {
+                    Ok(progress) => {
+                        consumed_lines = progress.consumed_lines;
+                        if progress.emitted > emitted {
+                            emitted = progress.emitted;
+                            last_emit = Instant::now();
+                            last_error = None;
+                            if limit_reached(emitted, args.limit) {
+                                return Ok(());
+                            }
                         }
                     }
+                    Err(error) => {
+                        last_error = Some(error);
+                    }
                 }
-                Err(error) => {
-                    last_error = Some(error);
-                }
-            },
+            }
             Err(error) => {
                 last_error = Some(format!(
                     "failed to read devtools JSONL `{}`: {error}",

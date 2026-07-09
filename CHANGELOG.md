@@ -34,6 +34,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `open-gpui-devtools` split its GPUI feature implementation into runtime DTO/capture, inspector controller, and render modules while preserving the `open_gpui_devtools::gpui` facade and root re-exports.
 - `open-gpui-devtools` now exposes `DevtoolsWorkbench`, a renderer-neutral app-owned wrapper around local sessions, bounded history, refresh status, inspector state, and sanitized diff readouts.
 - `open-gpui-devtools` now exposes `DevtoolsReport` and `open-gpui-devtools-report/v1` for headless diagnostics, and `xtask devtools` can render, diagnose, diff, and stream DevTools artifacts as JSON, Markdown, or JSONL.
+- `open-gpui-devtools` now exposes schema-versioned artifact records and writer sinks for app-owned capture/session/report producers; `xtask devtools` can query, assert, and follow artifacts through stable selectors and bounded wait semantics.
+- Gallery and docking-native now publish deterministic sanitized DevTools fixture artifacts, and DevTools reports include first-pass docking, layout, motion, command, form, and resource findings for headless UI debugging.
 
 ### Security
 

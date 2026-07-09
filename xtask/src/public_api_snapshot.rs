@@ -48,6 +48,10 @@ struct PublicApiSurface {
 fn public_api_surfaces() -> &'static [PublicApiSurface] {
     &[
         PublicApiSurface {
+            name: "devtools",
+            scan: scan_devtools_public_api,
+        },
+        PublicApiSurface {
             name: "docking",
             scan: scan_docking_public_api,
         },
@@ -68,6 +72,68 @@ fn public_api_surfaces() -> &'static [PublicApiSurface] {
             scan: scan_canvas_public_api,
         },
     ]
+}
+
+fn scan_devtools_public_api(root: &Path, failures: &mut Vec<String>) {
+    let source_dir = root.join("crates/devtools/src");
+    let root_exports = root_reexport_tokens(&source_dir, "lib.rs", failures);
+    let expected_exports = devtools_root_export_allowlist();
+    let extra = root_exports
+        .difference(&expected_exports)
+        .cloned()
+        .collect::<Vec<_>>();
+    let missing = expected_exports
+        .difference(&root_exports)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !extra.is_empty() || !missing.is_empty() {
+        failures.push(format!(
+            "crates/devtools/src/lib.rs: root export allowlist drifted; extra [{}], missing [{}]",
+            extra.join(", "),
+            missing.join(", ")
+        ));
+    }
+
+    let Some(lib_source) = read_to_string(&source_dir.join("lib.rs"), failures) else {
+        return;
+    };
+    let public_modules = public_module_declarations(&lib_source);
+    let expected_modules = [
+        "adapters",
+        "command",
+        "docking",
+        "form",
+        "gpui",
+        "layout",
+        "motion",
+        "resource",
+        "timeline",
+        "ui_components",
+    ]
+    .into_iter()
+    .map(ToOwned::to_owned)
+    .collect::<BTreeSet<_>>();
+    let extra_modules = public_modules
+        .difference(&expected_modules)
+        .cloned()
+        .collect::<Vec<_>>();
+    let missing_modules = expected_modules
+        .difference(&public_modules)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !extra_modules.is_empty() || !missing_modules.is_empty() {
+        failures.push(format!(
+            "crates/devtools/src/lib.rs: public module allowlist drifted; extra [{}], missing [{}]",
+            extra_modules.join(", "),
+            missing_modules.join(", ")
+        ));
+    }
+
+    reject_public_reexport_wildcards(
+        &source_dir.join("lib.rs"),
+        "devtools root public re-exports must stay explicit so artifact/report/session APIs are intentional",
+        failures,
+    );
 }
 
 fn scan_docking_public_api(root: &Path, failures: &mut Vec<String>) {
@@ -813,6 +879,22 @@ fn collect_public_reexport_token(item: &str, exports: &mut BTreeSet<String>) {
     }
 }
 
+fn public_module_declarations(source: &str) -> BTreeSet<String> {
+    source
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("pub mod ")?;
+            let name = rest
+                .split(|character: char| {
+                    character == ';' || character == '{' || character.is_whitespace()
+                })
+                .next()
+                .unwrap_or_default();
+            (!name.is_empty()).then(|| name.to_owned())
+        })
+        .collect()
+}
+
 fn public_signature_tokens(path: &Path, failures: &mut Vec<String>) -> BTreeSet<String> {
     let Some(source) = read_to_string(path, failures) else {
         return BTreeSet::new();
@@ -1022,6 +1104,116 @@ fn ui_components_prelude_helper_allowlist() -> BTreeSet<&'static str> {
     .collect()
 }
 
+fn devtools_root_export_allowlist() -> BTreeSet<String> {
+    [
+        "CaptureProvider",
+        "DEFAULT_DEVTOOLS_EVENT_LIMIT",
+        "DEFAULT_DEVTOOLS_EVENT_SCOPE_ID",
+        "DEFAULT_DEVTOOLS_EVENT_SCOPE_LABEL",
+        "DEFAULT_DEVTOOLS_SESSION_HISTORY_LIMIT",
+        "DEFAULT_TIMELINE_EVENT_LIMIT",
+        "DEVTOOLS_ARTIFACT_RECORD_SCHEMA_VERSION",
+        "DEVTOOLS_REPORT_SCHEMA_VERSION",
+        "DEVTOOLS_SESSION_PROTOCOL_VERSION",
+        "DEVTOOLS_SESSION_SCHEMA_VERSION",
+        "DevtoolsArtifact",
+        "DevtoolsArtifactFileMode",
+        "DevtoolsArtifactFileSink",
+        "DevtoolsArtifactJsonlSink",
+        "DevtoolsArtifactKind",
+        "DevtoolsArtifactMetadata",
+        "DevtoolsArtifactRecord",
+        "DevtoolsArtifactSink",
+        "DevtoolsArtifactWriteError",
+        "DevtoolsCapture",
+        "DevtoolsCaptureDiff",
+        "DevtoolsCaptureProvider",
+        "DevtoolsDiffKind",
+        "DevtoolsDiffRow",
+        "DevtoolsDiffStatus",
+        "DevtoolsDiffSummary",
+        "DevtoolsDomainId",
+        "DevtoolsDomainKind",
+        "DevtoolsDomainRow",
+        "DevtoolsDomainSnapshot",
+        "DevtoolsEventBatch",
+        "DevtoolsEventIdentity",
+        "DevtoolsEventKind",
+        "DevtoolsEventRecord",
+        "DevtoolsEventRecorder",
+        "DevtoolsEventRow",
+        "DevtoolsInspector",
+        "DevtoolsInspectorCaptureExport",
+        "DevtoolsInspectorController",
+        "DevtoolsInspectorDetail",
+        "DevtoolsInspectorDetailKind",
+        "DevtoolsInspectorError",
+        "DevtoolsInspectorJsonAction",
+        "DevtoolsInspectorSessionFrameSummary",
+        "DevtoolsInspectorState",
+        "DevtoolsProbe",
+        "DevtoolsRegistry",
+        "DevtoolsRegistryError",
+        "DevtoolsReport",
+        "DevtoolsReportFinding",
+        "DevtoolsReportSeverity",
+        "DevtoolsReportSource",
+        "DevtoolsReportSourceKind",
+        "DevtoolsReportSummary",
+        "DevtoolsSession",
+        "DevtoolsSessionConnectionState",
+        "DevtoolsSessionError",
+        "DevtoolsSessionExport",
+        "DevtoolsSessionFrame",
+        "DevtoolsSessionImportError",
+        "DevtoolsSessionImportLimits",
+        "DevtoolsSnapshotCategory",
+        "DevtoolsSnapshotCategorySummary",
+        "DevtoolsSnapshotRow",
+        "DevtoolsTargetId",
+        "DevtoolsTargetKind",
+        "DevtoolsTargetRow",
+        "DevtoolsTargetSnapshot",
+        "DevtoolsTargetTree",
+        "DevtoolsWorkbench",
+        "DevtoolsWorkbenchDiffState",
+        "DevtoolsWorkbenchRefreshStatus",
+        "GpuiRuntimeFocusSnapshot",
+        "GpuiRuntimeFrameSnapshot",
+        "GpuiRuntimeInputSnapshot",
+        "GpuiRuntimePointSnapshot",
+        "GpuiRuntimeRectSnapshot",
+        "GpuiRuntimeScrollSnapshot",
+        "GpuiRuntimeSizeSnapshot",
+        "GpuiRuntimeSnapshot",
+        "GpuiRuntimeWindowSnapshot",
+        "LayoutBoundsSnapshot",
+        "LayoutNodeSnapshot",
+        "LayoutPointSnapshot",
+        "LayoutSizeSnapshot",
+        "LayoutSnapshot",
+        "ProbeId",
+        "ProbeSnapshotError",
+        "SnapshotCollection",
+        "SnapshotDiagnostic",
+        "SnapshotEnvelope",
+        "SnapshotKind",
+        "SnapshotNode",
+        "SnapshotProbe",
+        "SnapshotProbeSnapshot",
+        "SnapshotRedactionSummary",
+        "SnapshotTree",
+        "TimelineEventSnapshot",
+        "TimelineSnapshot",
+        "gpui_runtime_capture",
+        "gpui_runtime_capture_provider",
+        "gpui_runtime_probe_snapshot",
+    ]
+    .into_iter()
+    .map(ToOwned::to_owned)
+    .collect()
+}
+
 fn ui_core_prelude_allowlist() -> BTreeSet<String> {
     [
         "AccessibleAction",
@@ -1194,10 +1386,76 @@ mod tests {
 
         assert_eq!(
             surface_names,
-            ["canvas", "docking", "motion", "ui-components", "ui-core"]
-                .into_iter()
-                .collect()
+            [
+                "canvas",
+                "devtools",
+                "docking",
+                "motion",
+                "ui-components",
+                "ui-core"
+            ]
+            .into_iter()
+            .collect()
         );
+    }
+
+    #[test]
+    fn devtools_public_api_scan_tracks_artifact_pipeline_exports() {
+        let root = temp_root("devtools_public_api");
+        let devtools_src = root.join("crates/devtools/src");
+        fs::create_dir_all(&devtools_src).unwrap();
+        let modules = [
+            "adapters",
+            "command",
+            "docking",
+            "form",
+            "gpui",
+            "layout",
+            "motion",
+            "resource",
+            "timeline",
+            "ui_components",
+        ]
+        .into_iter()
+        .map(|module| format!("pub mod {module};"))
+        .collect::<Vec<_>>()
+        .join("\n");
+        let exports = devtools_root_export_allowlist()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ");
+        fs::write(
+            devtools_src.join("lib.rs"),
+            format!("{modules}\npub use api::{{{exports}}};\n"),
+        )
+        .unwrap();
+
+        let mut failures = Vec::new();
+        scan_devtools_public_api(&root, &mut failures);
+        assert!(failures.is_empty(), "{failures:?}");
+
+        fs::write(
+            devtools_src.join("lib.rs"),
+            "pub mod adapters;\npub mod report_rules;\npub use api::{DevtoolsArtifact, DevtoolsReport, LeakedReportRule};\n",
+        )
+        .unwrap();
+
+        let mut failures = Vec::new();
+        scan_devtools_public_api(&root, &mut failures);
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.contains("root export allowlist drifted")),
+            "{failures:?}"
+        );
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.contains("public module allowlist drifted")),
+            "{failures:?}"
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

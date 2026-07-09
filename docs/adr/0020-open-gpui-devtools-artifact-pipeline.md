@@ -39,7 +39,12 @@ The accepted shape is:
   - append JSONL records
   - write JSONL to any caller-owned writer, including stdout
 - Application/example code owns when to refresh runtime facts. DevTools serializes sanitized payloads but does not run a background runtime, mutate UI state, or own docking/GPUI authority.
-- `xtask devtools` remains a consumer/orchestrator over artifacts. Future `query`, `assert`, and `follow` commands must use this same artifact record shape instead of inventing command-specific envelopes.
+- `xtask devtools` remains a consumer/orchestrator over artifacts. `query`, `assert`, and `follow` use this same artifact record shape instead of inventing command-specific envelopes.
+- Artifact reads are fail-fast by default. Bounded `--timeout-ms` polling is the only blocking read mode.
+- `query` exposes a deliberately small selector vocabulary over row kind, target, domain, event, snapshot, finding, diff, and generation facts.
+- `assert` turns the same selectors plus finding, generation, and diff predicates into a process health gate with machine-readable JSON reasons.
+- `follow` is explicit long-running behavior. It either polls an atomically replaced latest JSON artifact or consumes appended JSONL artifact records; it flushes each emitted JSONL or Markdown record.
+- Reports may add domain-specific findings from stable DTOs, but they must not become arbitrary raw JSON dumps.
 
 ```mermaid
 flowchart LR
@@ -61,6 +66,8 @@ flowchart LR
 - CLI and fixture tests can operate on small reproducible records without launching a GUI.
 - Follow/watch semantics can advance on artifact sequence, generation, or content identity rather than attaching to a process.
 - Report/query/assert commands can retain stable metadata across capture, session, and report inputs.
+- Gallery and docking-native can publish deterministic headless artifacts as dogfood while keeping runtime authority in the app/example.
+- Public API scanning now treats the devtools root exports as an intentional allowlist so artifact writer types are visible and report-rule internals stay private.
 - The artifact record is intentionally Open GPUI-specific. CDP, DAP, LSP, and SARIF adapters remain possible future exports, not the core protocol.
 
 ## Alternatives Considered

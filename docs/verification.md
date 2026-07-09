@@ -92,6 +92,34 @@ text values, unredacted window titles, and accessibility labels remain outside t
 contract. Docking runtime facts must come from public `DockViewportRuntimeStatus` records; missing
 private facts are not inferred.
 
+For the 2026-07 DevTools headless artifact pipeline, the focused local gates are:
+
+```powershell
+cargo fmt -p open-gpui-devtools -p open-gpui-ui-foundation-gallery -p open-gpui-docking-native -p xtask --check
+cargo check -p open-gpui-devtools --tests --locked
+cargo check -p open-gpui-devtools --all-features --tests --locked
+cargo nextest run -p open-gpui-devtools --all-features --test artifact_contracts --test report_contracts --test docking_runtime_contracts --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --all-features --no-fail-fast --locked
+cargo check -p xtask --locked
+cargo nextest run -p xtask --test devtools_cli_contracts --no-fail-fast --locked
+cargo run -p xtask -- devtools --help
+cargo check -p open-gpui-ui-foundation-gallery --all-targets --locked
+cargo nextest run -p open-gpui-ui-foundation-gallery devtools --no-fail-fast --locked
+cargo check -p open-gpui-docking-native --all-targets --locked
+cargo nextest run -p open-gpui-docking-native devtools --no-fail-fast --locked
+cargo run -p xtask -- scan-public-api --check
+cargo run -p xtask -- scan-doc-links
+cargo run -p xtask -- verify-release-docs
+git diff --check
+```
+
+The checked-in artifacts under `crates/devtools/tests/fixtures/` are the fixture owner for CLI
+smoke: they cover report, diagnose, diff, stream, query, assert, follow, and bounded wait behavior
+without launching Gallery or docking-native. `scan-public-api` includes the `open-gpui-devtools`
+root export allowlist so artifact writer types remain intentional and report-rule internals remain
+private. The headless pipeline remains local/offline only: no CDP bridge, remote transport, runtime
+mutation API, screenshot baseline store, or persistent trace database is part of this gate.
+
 For the 2026-07 scroll viewport and wheel-input intent slice, the core contract is that tracked
 scroll surfaces emit committed post-layout viewport facts, typed wheel intent controls default
 scrolling and propagation, and focus-on-wheel is opt-in rather than implicit. The focused local
