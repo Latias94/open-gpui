@@ -4,13 +4,13 @@ title: "DevTools target domain runtime"
 description: "Target/domain/event capture runtime refactor for open-gpui DevTools."
 timestamp: 2026-07-09T03:29:24Z
 status: "active"
-last_seen: 2026-07-09T04:32:02Z
+last_seen: 2026-07-09T04:40:55Z
 registration_id: "devtools-target-domain-runtime-codex-root"
 producer_id: "codex-root"
 source_workspace: "F:\\SourceCodes\\Rust\\open-gpui"
 related_plan: "docs/plans/2026-07-09-002-refactor-devtools-target-domain-runtime-plan.md"
 git_branch: "main"
-git_commit: "d7c92768"
+git_commit: "07fc0f81"
 latest_link: "docs/plans/2026-07-09-002-refactor-devtools-target-domain-runtime-plan.md"
 ---
 
@@ -20,7 +20,7 @@ Execute U1-U7 from the target/domain/runtime plan; keep DevTools local, read-onl
 
 # Current Claim
 
-Plan reviewed and revised after headless doc review. U1-U4 capture and docking runtime slices are committed locally through `d7c92768`.
+Plan reviewed and revised after headless doc review. U1-U5 capture, docking runtime, and adapter-domain slices are committed locally through `07fc0f81`.
 
 # Latest Links
 
@@ -28,6 +28,6 @@ Plan reviewed and revised after headless doc review. U1-U4 capture and docking r
 
 # Handoff
 
-Start U5. The MVP checkpoint passed, and U4 now projects docking runtime status into target/domain/event capture while keeping the legacy docking snapshot wrapper stable.
+Start U6. First-party command, form, resource, layout, and timeline adapters now emit domain captures while preserving their legacy snapshot APIs.
 
 # Citations
