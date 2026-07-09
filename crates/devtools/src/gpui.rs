@@ -1,9 +1,10 @@
 //! GPUI read-only inspector surface.
 
 use crate::{
-    DevtoolsDomainId, DevtoolsInspectorDetail, DevtoolsInspectorState, DevtoolsTargetId, ProbeId,
-    SnapshotDiagnostic, SnapshotEnvelope, SnapshotNode, SnapshotProbeSnapshot,
-    SnapshotRedactionSummary, SnapshotTree,
+    DevtoolsCapture, DevtoolsDiffRow, DevtoolsDomainId, DevtoolsInspectorDetail,
+    DevtoolsInspectorSessionFrameSummary, DevtoolsInspectorState, DevtoolsSessionFrame,
+    DevtoolsTargetId, ProbeId, SnapshotDiagnostic, SnapshotEnvelope, SnapshotNode,
+    SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
     adapters::snapshot_node_with_payload,
     layout::{
         LayoutBoundsSnapshot, LayoutNodeSnapshot, LayoutPointSnapshot, LayoutSizeSnapshot,
@@ -90,6 +91,21 @@ impl DevtoolsInspectorController {
     /// Returns the latest interactive feedback label.
     pub fn feedback_label(&self) -> Option<&SharedString> {
         self.feedback_label.as_ref()
+    }
+
+    /// Replaces the current capture while preserving inspector filter and selection when possible.
+    pub fn update_capture(&mut self, capture: DevtoolsCapture, cx: &mut Context<Self>) {
+        self.state = self.state.clone().replace_capture(capture);
+        self.feedback_label = Some("DevTools capture refreshed".into());
+        cx.notify();
+    }
+
+    /// Replaces the current session frame while preserving inspector filter and selection when possible.
+    pub fn update_session_frame(&mut self, frame: DevtoolsSessionFrame, cx: &mut Context<Self>) {
+        let generation = frame.generation;
+        self.state = self.state.clone().replace_session_frame(frame);
+        self.feedback_label = Some(format!("DevTools session frame #{generation} loaded").into());
+        cx.notify();
     }
 
     fn select_target(&mut self, target_id: &DevtoolsTargetId) {
@@ -297,6 +313,8 @@ impl RenderOnce for DevtoolsInspector {
         let selected_snapshot = self.state.selected_snapshot().cloned();
         let selected_detail = self.state.selected_detail();
         let diagnostics = self.state.diagnostics().to_vec();
+        let session_frame = self.state.session_frame().cloned();
+        let diff_rows = self.state.diff_rows().to_vec();
 
         div()
             .id(self.id)
@@ -332,6 +350,9 @@ impl RenderOnce for DevtoolsInspector {
                     ),
             )
             .child(render_category_summaries(category_summaries))
+            .when(session_frame.is_some() || !diff_rows.is_empty(), |this| {
+                this.child(render_session_workbench(session_frame, diff_rows))
+            })
             .child(
                 div()
                     .flex()
@@ -363,6 +384,8 @@ impl Render for DevtoolsInspectorController {
         let selected_detail = self.state.selected_detail();
         let diagnostics = self.state.diagnostics().to_vec();
         let feedback_label = self.feedback_label.clone();
+        let session_frame = self.state.session_frame().cloned();
+        let diff_rows = self.state.diff_rows().to_vec();
 
         div()
             .id(self.id.clone())
@@ -412,6 +435,9 @@ impl Render for DevtoolsInspectorController {
                 )
             })
             .child(render_category_summaries(category_summaries))
+            .when(session_frame.is_some() || !diff_rows.is_empty(), |this| {
+                this.child(render_session_workbench(session_frame, diff_rows))
+            })
             .child(
                 div()
                     .flex()
@@ -473,6 +499,119 @@ fn render_category_summaries(
                     snapshot_count, total_nodes, redacted_values, diagnostics
                 )))
         }))
+}
+
+fn render_session_workbench(
+    session_frame: Option<DevtoolsInspectorSessionFrameSummary>,
+    diff_rows: Vec<DevtoolsDiffRow>,
+) -> impl IntoElement {
+    let diff_count = diff_rows.len();
+    div()
+        .debug_selector(|| "devtools-inspector:session-workbench".to_owned())
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(0xe2e4dc))
+        .bg(rgb(0xf7f8f2))
+        .p_2()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .when_some(session_frame, |this, frame| {
+            this.child(
+                div()
+                    .debug_selector(|| "devtools-inspector:session-frame".to_owned())
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(session_pill("session", frame.session_id))
+                    .child(session_pill("generation", frame.generation.to_string()))
+                    .child(session_pill(
+                        "previous",
+                        frame
+                            .previous_generation
+                            .map_or_else(|| "none".to_owned(), |generation| generation.to_string()),
+                    ))
+                    .child(session_pill("diff rows", frame.diff_row_count.to_string())),
+            )
+        })
+        .when(diff_count > 0, |this| {
+            this.child(
+                div()
+                    .debug_selector(|| "devtools-inspector:diff-list".to_owned())
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(section_label("Diff"))
+                    .children(diff_rows.into_iter().take(12).map(render_diff_row))
+                    .when(diff_count > 12, |this| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0x5a6472))
+                                .child(format!("{} more diff rows", diff_count - 12)),
+                        )
+                    }),
+            )
+        })
+}
+
+fn session_pill(label: impl Into<String>, value: impl Into<String>) -> impl IntoElement {
+    div()
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(0xe2e4dc))
+        .bg(rgb(0xffffff))
+        .px_2()
+        .py_1()
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(0x5a6472))
+                .child(label.into()),
+        )
+        .child(
+            div()
+                .text_xs()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .child(value.into()),
+        )
+}
+
+fn render_diff_row(row: DevtoolsDiffRow) -> impl IntoElement {
+    let identity = row.identity.clone();
+    div()
+        .id(format!("devtools-inspector-diff:{identity}"))
+        .debug_selector(move || format!("devtools-inspector:diff:{identity}"))
+        .rounded_sm()
+        .border_1()
+        .border_color(if row.status == crate::DevtoolsDiffStatus::Unchanged {
+            rgb(0xe2e4dc)
+        } else {
+            rgb(0x1f7a66)
+        })
+        .bg(if row.status == crate::DevtoolsDiffStatus::Unchanged {
+            rgb(0xfcfcf8)
+        } else {
+            rgb(0xe8f3ef)
+        })
+        .px_2()
+        .py_1()
+        .child(
+            div()
+                .text_xs()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .child(format!(
+                    "{} / {}",
+                    row.kind.as_label(),
+                    row.status.as_label()
+                )),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(0x5a6472))
+                .child(format!("{} / {}", row.identity, row.label)),
+        )
 }
 
 fn render_capture_navigation(

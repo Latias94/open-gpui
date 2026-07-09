@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainSnapshot, DevtoolsEventRecord,
-    DevtoolsTargetId, DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId, SnapshotCollection,
-    SnapshotDiagnostic, SnapshotEnvelope, SnapshotKind, SnapshotNode,
+    DevtoolsCapture, DevtoolsDiffRow, DevtoolsDomainId, DevtoolsDomainSnapshot,
+    DevtoolsEventIdentity, DevtoolsEventRecord, DevtoolsSessionFrame, DevtoolsTargetId,
+    DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId, SnapshotCollection, SnapshotDiagnostic,
+    SnapshotEnvelope, SnapshotKind, SnapshotNode,
 };
 
 /// High-level family for a DevTools snapshot row.
@@ -79,9 +80,11 @@ pub struct DevtoolsInspectorState {
     selected_probe_id: Option<ProbeId>,
     selected_target_id: Option<DevtoolsTargetId>,
     selected_domain_id: Option<DevtoolsDomainId>,
-    selected_event_sequence: Option<u64>,
+    selected_event_identity: Option<DevtoolsEventIdentity>,
     active_detail_kind: Option<DevtoolsInspectorDetailKind>,
     filter: String,
+    session_frame: Option<DevtoolsInspectorSessionFrameSummary>,
+    diff_rows: Vec<DevtoolsDiffRow>,
 }
 
 impl DevtoolsInspectorState {
@@ -104,9 +107,11 @@ impl DevtoolsInspectorState {
             selected_probe_id,
             selected_target_id: None,
             selected_domain_id: None,
-            selected_event_sequence: None,
+            selected_event_identity: None,
             active_detail_kind,
             filter: String::new(),
+            session_frame: None,
+            diff_rows: Vec::new(),
         }
     }
 
@@ -130,13 +135,13 @@ impl DevtoolsInspectorState {
                     .map(|target| target.id.clone())
             });
         let selected_domain_id = first_domain_for_target(&capture.domains, &selected_target_id);
-        let selected_event_sequence = capture.events.first().map(DevtoolsEventRecord::sequence);
+        let selected_event_identity = capture.events.first().map(DevtoolsEventRecord::identity);
         let active_detail_kind = default_detail_kind(
             &capture.domains,
             &capture.events,
             &collection.snapshots,
             &selected_domain_id,
-            selected_event_sequence,
+            &selected_event_identity,
             &selected_probe_id,
         );
 
@@ -149,10 +154,49 @@ impl DevtoolsInspectorState {
             selected_probe_id,
             selected_target_id,
             selected_domain_id,
-            selected_event_sequence,
+            selected_event_identity,
             active_detail_kind,
             filter: String::new(),
+            session_frame: None,
+            diff_rows: Vec::new(),
         }
+    }
+
+    /// Creates inspector state for a captured session frame.
+    pub fn from_session_frame(frame: DevtoolsSessionFrame) -> Self {
+        let summary = DevtoolsInspectorSessionFrameSummary::from_frame(&frame);
+        let diff_rows = frame
+            .diff_from_previous
+            .map(|diff| diff.rows)
+            .unwrap_or_default();
+        let mut state = Self::from_capture(frame.capture);
+        state.session_frame = Some(summary);
+        state.diff_rows = diff_rows;
+        state
+    }
+
+    /// Replaces the capture while preserving filter and selection when possible.
+    pub fn replace_capture(self, capture: DevtoolsCapture) -> Self {
+        self.replace_with(Self::from_capture(capture))
+    }
+
+    /// Replaces the session frame while preserving filter and selection when possible.
+    pub fn replace_session_frame(self, frame: DevtoolsSessionFrame) -> Self {
+        self.replace_with(Self::from_session_frame(frame))
+    }
+
+    fn replace_with(self, mut next: Self) -> Self {
+        next.filter = self.filter;
+        next.selected_probe_id = self.selected_probe_id;
+        next.selected_target_id = self.selected_target_id;
+        next.selected_domain_id = self.selected_domain_id;
+        next.selected_event_identity = self.selected_event_identity;
+        next.active_detail_kind = self.active_detail_kind;
+        next.sync_target_selection_to_filter();
+        next.sync_domain_selection_to_filter();
+        next.sync_event_selection_to_filter();
+        next.sync_active_detail_kind();
+        next
     }
 
     /// Applies a case-insensitive filter over targets, domains, events, probe ids, kind labels, and node labels.
@@ -244,7 +288,28 @@ impl DevtoolsInspectorState {
         if let Some(domain_id) = event.domain_id_ref() {
             self.selected_domain_id = Some(domain_id.clone());
         }
-        self.selected_event_sequence = Some(sequence);
+        self.selected_event_identity = Some(event.identity());
+        self.active_detail_kind = Some(DevtoolsInspectorDetailKind::Event);
+        Ok(self)
+    }
+
+    /// Selects an event by stable identity and moves target/domain selection when present.
+    pub fn select_event_identity(
+        mut self,
+        identity: &DevtoolsEventIdentity,
+    ) -> Result<Self, DevtoolsInspectorError> {
+        let event = self
+            .events
+            .iter()
+            .find(|event| event.identity() == *identity)
+            .ok_or_else(|| DevtoolsInspectorError::UnknownEventIdentity(identity.clone()))?;
+        if let Some(target_id) = event.target_id_ref() {
+            self.selected_target_id = Some(target_id.clone());
+        }
+        if let Some(domain_id) = event.domain_id_ref() {
+            self.selected_domain_id = Some(domain_id.clone());
+        }
+        self.selected_event_identity = Some(event.identity());
         self.active_detail_kind = Some(DevtoolsInspectorDetailKind::Event);
         Ok(self)
     }
@@ -296,7 +361,14 @@ impl DevtoolsInspectorState {
 
     /// Returns the selected event sequence.
     pub fn selected_event_sequence(&self) -> Option<u64> {
-        self.selected_event_sequence
+        self.selected_event_identity
+            .as_ref()
+            .map(|identity| identity.sequence)
+    }
+
+    /// Returns the selected event identity.
+    pub fn selected_event_identity(&self) -> Option<&DevtoolsEventIdentity> {
+        self.selected_event_identity.as_ref()
     }
 
     /// Returns the active detail kind requested by the latest selection command.
@@ -318,15 +390,25 @@ impl DevtoolsInspectorState {
 
     /// Returns the selected event, if any.
     pub fn selected_event(&self) -> Option<&DevtoolsEventRecord> {
-        let selected = self.selected_event_sequence?;
+        let selected = self.selected_event_identity.as_ref()?;
         self.events
             .iter()
-            .find(|event| event.sequence() == selected)
+            .find(|event| event.identity() == *selected)
     }
 
     /// Returns probe diagnostics from failed snapshot collection.
     pub fn diagnostics(&self) -> &[SnapshotDiagnostic] {
         &self.diagnostics
+    }
+
+    /// Returns session frame metadata when this state was built from a session frame.
+    pub fn session_frame(&self) -> Option<&DevtoolsInspectorSessionFrameSummary> {
+        self.session_frame.as_ref()
+    }
+
+    /// Returns diff rows attached to the current session frame.
+    pub fn diff_rows(&self) -> &[DevtoolsDiffRow] {
+        &self.diff_rows
     }
 
     /// Returns the current filter text.
@@ -451,7 +533,11 @@ impl DevtoolsInspectorState {
                 timestamp_ms: event.timestamp_ms_value(),
                 duration_ms: event.duration_ms_value(),
                 has_payload: event.payload().is_some(),
-                selected: self.selected_event_sequence == Some(event.sequence()),
+                event_identity: event.identity(),
+                selected: self
+                    .selected_event_identity
+                    .as_ref()
+                    .is_some_and(|identity| *identity == event.identity()),
             })
             .collect()
     }
@@ -614,13 +700,13 @@ impl DevtoolsInspectorState {
 
     fn select_adjacent_event(self, step: SelectionStep) -> Result<Self, DevtoolsInspectorError> {
         let rows = self.event_rows();
-        let sequence = adjacent_item(
-            rows.iter().map(|row| row.sequence).collect(),
-            self.selected_event_sequence.as_ref(),
+        let identity = adjacent_item(
+            rows.iter().map(|row| row.event_identity.clone()).collect(),
+            self.selected_event_identity.as_ref(),
             step,
         )
         .ok_or(DevtoolsInspectorError::NoVisibleEvent)?;
-        self.select_event(sequence)
+        self.select_event_identity(&identity)
     }
 
     fn detail_for_kind(
@@ -736,17 +822,20 @@ impl DevtoolsInspectorState {
     }
 
     fn sync_event_selection_to_filter(&mut self) {
-        let selected_is_visible = self.selected_event_sequence.is_some_and(|selected| {
-            self.events
-                .iter()
-                .any(|event| event.sequence() == selected && self.event_is_visible(event))
-        });
+        let selected_is_visible = self
+            .selected_event_identity
+            .as_ref()
+            .is_some_and(|selected| {
+                self.events
+                    .iter()
+                    .any(|event| event.identity() == *selected && self.event_is_visible(event))
+            });
         if !selected_is_visible {
-            self.selected_event_sequence = self
+            self.selected_event_identity = self
                 .events
                 .iter()
                 .find(|event| self.event_is_visible(event))
-                .map(DevtoolsEventRecord::sequence);
+                .map(DevtoolsEventRecord::identity);
         }
     }
 
@@ -764,7 +853,7 @@ impl DevtoolsInspectorState {
             &self.events,
             &self.snapshots,
             &self.selected_domain_id,
-            self.selected_event_sequence,
+            &self.selected_event_identity,
             &self.selected_probe_id,
         );
     }
@@ -874,6 +963,33 @@ pub struct DevtoolsSnapshotRow {
     pub selected: bool,
 }
 
+/// Session frame metadata shown by a live-capable inspector.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DevtoolsInspectorSessionFrameSummary {
+    /// Sanitized session id.
+    pub session_id: String,
+    /// Current frame generation.
+    pub generation: u64,
+    /// Previous generation used for diff, if any.
+    pub previous_generation: Option<u64>,
+    /// Number of diff rows attached to this frame.
+    pub diff_row_count: usize,
+}
+
+impl DevtoolsInspectorSessionFrameSummary {
+    fn from_frame(frame: &DevtoolsSessionFrame) -> Self {
+        Self {
+            session_id: frame.session_id.clone(),
+            generation: frame.generation,
+            previous_generation: frame.previous_generation,
+            diff_row_count: frame
+                .diff_from_previous
+                .as_ref()
+                .map_or(0, |diff| diff.rows.len()),
+        }
+    }
+}
+
 /// One target row shown by a read-only devtools inspector.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DevtoolsTargetRow {
@@ -925,6 +1041,8 @@ pub struct DevtoolsDomainRow {
 pub struct DevtoolsEventRow {
     /// Stable append-time event sequence.
     pub sequence: u64,
+    /// Stable event identity across scope, sequence, and event id.
+    pub event_identity: DevtoolsEventIdentity,
     /// Stable event id.
     pub event_id: String,
     /// Stable event kind label.
@@ -1131,6 +1249,9 @@ pub enum DevtoolsInspectorError {
     /// The requested event sequence is not present in the capture.
     #[error("unknown devtools event sequence: {0}")]
     UnknownEvent(u64),
+    /// The requested event identity is not present in the capture.
+    #[error("unknown devtools event identity: {0}")]
+    UnknownEventIdentity(DevtoolsEventIdentity),
     /// No snapshot is selected.
     #[error("no selected devtools snapshot")]
     NoSelectedSnapshot,
@@ -1180,7 +1301,7 @@ fn default_detail_kind(
     events: &[DevtoolsEventRecord],
     snapshots: &[SnapshotEnvelope],
     selected_domain_id: &Option<DevtoolsDomainId>,
-    selected_event_sequence: Option<u64>,
+    selected_event_identity: &Option<DevtoolsEventIdentity>,
     selected_probe_id: &Option<ProbeId>,
 ) -> Option<DevtoolsInspectorDetailKind> {
     if selected_domain_id.as_ref().is_some_and(|selected| {
@@ -1191,8 +1312,9 @@ fn default_detail_kind(
         return Some(DevtoolsInspectorDetailKind::DomainSnapshot);
     }
 
-    if selected_event_sequence
-        .is_some_and(|selected| events.iter().any(|event| event.sequence() == selected))
+    if selected_event_identity
+        .as_ref()
+        .is_some_and(|selected| events.iter().any(|event| event.identity() == *selected))
     {
         return Some(DevtoolsInspectorDetailKind::Event);
     }

@@ -1,10 +1,10 @@
 use open_gpui_devtools::{
-    DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot,
-    DevtoolsEventKind, DevtoolsEventRecord, DevtoolsEventRecorder, DevtoolsInspectorDetailKind,
-    DevtoolsInspectorError, DevtoolsInspectorState, DevtoolsSnapshotCategory, DevtoolsTargetId,
-    DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId, SnapshotCollection,
-    SnapshotDiagnostic, SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotRedactionSummary,
-    SnapshotTree,
+    DevtoolsCapture, DevtoolsDiffStatus, DevtoolsDomainId, DevtoolsDomainKind,
+    DevtoolsDomainSnapshot, DevtoolsEventKind, DevtoolsEventRecord, DevtoolsEventRecorder,
+    DevtoolsInspectorDetailKind, DevtoolsInspectorError, DevtoolsInspectorState, DevtoolsRegistry,
+    DevtoolsSession, DevtoolsSnapshotCategory, DevtoolsTargetId, DevtoolsTargetKind,
+    DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId, SnapshotCollection, SnapshotDiagnostic,
+    SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotRedactionSummary, SnapshotTree,
 };
 
 #[test]
@@ -352,6 +352,79 @@ fn inspector_selects_targets_domains_and_event_only_detail() {
     assert_eq!(detail.json["id"], "command.dispatch");
 }
 
+#[test]
+fn inspector_projects_session_frame_and_diff_rows() {
+    let mut session = DevtoolsSession::new("gallery.session", registry_for_values([1, 2]));
+    session.refresh().unwrap();
+    let frame = session.refresh().unwrap();
+
+    let state = DevtoolsInspectorState::from_session_frame(frame);
+
+    let session_frame = state.session_frame().expect("session frame summary");
+    assert_eq!(session_frame.session_id, "gallery.session");
+    assert_eq!(session_frame.generation, 2);
+    assert_eq!(session_frame.previous_generation, Some(1));
+    assert_eq!(session_frame.diff_row_count, state.diff_rows().len());
+    assert!(
+        state
+            .diff_rows()
+            .iter()
+            .any(|row| row.status == DevtoolsDiffStatus::Changed)
+    );
+}
+
+#[test]
+fn inspector_replace_session_frame_preserves_filter_and_selection() {
+    let mut session = DevtoolsSession::new("replace.session", registry_for_values([1, 2]));
+    let first = session.refresh().unwrap();
+    let second = session.refresh().unwrap();
+    let target_id = DevtoolsTargetId::from_parts(["runtime", "session"]);
+
+    let state = DevtoolsInspectorState::from_session_frame(first)
+        .select_target(&target_id)
+        .unwrap()
+        .with_filter("runtime");
+    let replaced = state.replace_session_frame(second);
+
+    assert_eq!(replaced.filter(), "runtime");
+    assert_eq!(replaced.selected_target_id(), Some(&target_id));
+    assert_eq!(replaced.session_frame().unwrap().generation, 2);
+    assert!(!replaced.diff_rows().is_empty());
+}
+
+#[test]
+fn inspector_replace_capture_degrades_missing_selection_to_visible_target() {
+    let removed_id = DevtoolsTargetId::new("runtime.removed");
+    let next_id = DevtoolsTargetId::new("runtime.next");
+    let state = DevtoolsInspectorState::from_capture(capture_for_target(&removed_id, 1))
+        .select_target(&removed_id)
+        .unwrap();
+
+    let replaced = state.replace_capture(capture_for_target(&next_id, 2));
+
+    assert_eq!(replaced.selected_target_id(), Some(&next_id));
+    assert_eq!(replaced.selected_domain().unwrap().target_id, next_id);
+}
+
+#[test]
+fn inspector_event_identity_survives_cross_scope_sequence_collisions() {
+    let target_id = DevtoolsTargetId::new("runtime.events");
+    let capture = event_identity_capture(&target_id, ["scope.a", "scope.b"]);
+    let identity_b = capture.events[1].identity();
+    let state = DevtoolsInspectorState::from_capture(capture)
+        .select_event_identity(&identity_b)
+        .unwrap();
+
+    let replaced =
+        state.replace_capture(event_identity_capture(&target_id, ["scope.b", "scope.a"]));
+
+    assert_eq!(
+        replaced.selected_event().unwrap().scope_id_ref(),
+        Some("scope.b")
+    );
+    assert_eq!(replaced.selected_event_identity(), Some(&identity_b));
+}
+
 fn collection() -> SnapshotCollection {
     SnapshotCollection {
         snapshots: vec![form_snapshot(), resource_snapshot()],
@@ -415,4 +488,93 @@ fn ecosystem_collection() -> SnapshotCollection {
         ],
         diagnostics: Vec::new(),
     }
+}
+
+fn registry_for_values(values: [usize; 2]) -> DevtoolsRegistry {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let values = Arc::new(values);
+    let index = Arc::new(AtomicUsize::new(0));
+    let provider_values = Arc::clone(&values);
+    let provider_index = Arc::clone(&index);
+    let mut registry = DevtoolsRegistry::default();
+    registry
+        .register_capture_provider_fn("provider.session", move || {
+            let index = provider_index
+                .fetch_add(1, Ordering::SeqCst)
+                .min(provider_values.len() - 1);
+            Ok(capture_for_value(provider_values[index]))
+        })
+        .unwrap();
+    registry
+}
+
+fn capture_for_value(value: usize) -> DevtoolsCapture {
+    let target_id = DevtoolsTargetId::from_parts(["runtime", "session"]);
+    capture_for_target(&target_id, value)
+}
+
+fn capture_for_target(target_id: &DevtoolsTargetId, value: usize) -> DevtoolsCapture {
+    let domain_id = DevtoolsDomainId::from_parts(["runtime", target_id.as_str(), "state"]);
+    let target = DevtoolsTargetSnapshot::new(
+        target_id.clone(),
+        DevtoolsTargetKind::Runtime,
+        format!("Runtime {value}"),
+    );
+    let domain = DevtoolsDomainSnapshot::new(
+        domain_id.clone(),
+        target_id.clone(),
+        DevtoolsDomainKind::Diagnostic,
+        "Runtime state",
+    )
+    .with_summary(serde_json::json!({ "value": value }));
+    let event = DevtoolsEventRecord::new(
+        "runtime.changed",
+        "Runtime changed",
+        DevtoolsEventKind::Instant,
+    )
+    .scope_id("runtime")
+    .target_id(target_id.clone())
+    .domain_id(domain_id)
+    .with_payload(serde_json::json!({ "value": value }));
+
+    DevtoolsCapture::new(
+        DevtoolsTargetTree::new([target]),
+        [domain],
+        [event],
+        Vec::<SnapshotEnvelope>::new(),
+        Vec::new(),
+    )
+}
+
+fn event_identity_capture(target_id: &DevtoolsTargetId, scopes: [&str; 2]) -> DevtoolsCapture {
+    let domain_id = DevtoolsDomainId::from_parts(["runtime", "events"]);
+    let target = DevtoolsTargetSnapshot::new(
+        target_id.clone(),
+        DevtoolsTargetKind::Runtime,
+        "Runtime events",
+    );
+    let domain = DevtoolsDomainSnapshot::new(
+        domain_id.clone(),
+        target_id.clone(),
+        DevtoolsDomainKind::Timeline,
+        "Runtime timeline",
+    );
+    let events = scopes.map(|scope| {
+        DevtoolsEventRecord::new("refresh", "Refresh", DevtoolsEventKind::Instant)
+            .scope_id(scope)
+            .target_id(target_id.clone())
+            .domain_id(domain_id.clone())
+    });
+
+    DevtoolsCapture::new(
+        DevtoolsTargetTree::new([target]),
+        [domain],
+        events,
+        Vec::<SnapshotEnvelope>::new(),
+        Vec::new(),
+    )
 }

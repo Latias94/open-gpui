@@ -43,8 +43,8 @@ pub use gpui::{DevtoolsInspector, DevtoolsInspectorController};
 pub use inspector::{
     DevtoolsDomainRow, DevtoolsEventRow, DevtoolsInspectorCaptureExport, DevtoolsInspectorDetail,
     DevtoolsInspectorDetailKind, DevtoolsInspectorError, DevtoolsInspectorJsonAction,
-    DevtoolsInspectorState, DevtoolsSnapshotCategory, DevtoolsSnapshotCategorySummary,
-    DevtoolsSnapshotRow, DevtoolsTargetRow,
+    DevtoolsInspectorSessionFrameSummary, DevtoolsInspectorState, DevtoolsSnapshotCategory,
+    DevtoolsSnapshotCategorySummary, DevtoolsSnapshotRow, DevtoolsTargetRow,
 };
 pub use layout::{
     LayoutBoundsSnapshot, LayoutNodeSnapshot, LayoutPointSnapshot, LayoutSizeSnapshot,

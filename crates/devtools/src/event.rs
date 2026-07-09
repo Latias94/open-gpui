@@ -99,6 +99,12 @@ impl DevtoolsEventIdentity {
     }
 }
 
+impl std::fmt::Display for DevtoolsEventIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.as_key())
+    }
+}
+
 /// One sanitized event record exported by DevTools.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DevtoolsEventRecord {
