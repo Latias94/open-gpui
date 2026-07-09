@@ -1,7 +1,7 @@
 //! Devtools inspector gallery page.
 
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicU64, Ordering},
 };
 
@@ -15,11 +15,12 @@ use open_gpui_command::{
     CommandKeymapResolution, CommandRegistrySnapshot, GpuiCommandActionMap,
 };
 use open_gpui_devtools::{
-    DevtoolsCapture, DevtoolsDomainId, DevtoolsEventKind, DevtoolsEventRecord,
+    DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsEventKind, DevtoolsEventRecord,
     DevtoolsEventRecorder, DevtoolsInspectorState, DevtoolsRegistry, DevtoolsSession,
-    DevtoolsSessionExport, DevtoolsSessionFrame, DevtoolsTargetId, ProbeId, SnapshotCollection,
-    SnapshotDiagnostic, SnapshotKind, command as devtools_command, form, gpui, motion, resource,
-    ui_components,
+    DevtoolsSessionError, DevtoolsSessionExport, DevtoolsSessionFrame, DevtoolsTargetId,
+    DevtoolsTargetKind, DevtoolsTargetSnapshot, ProbeId, SnapshotCollection, SnapshotDiagnostic,
+    SnapshotKind, adapters::sanitize_sensitive_text, command as devtools_command, form, gpui,
+    motion, resource, ui_components,
 };
 use open_gpui_motion::{MotionFrameDemand, MotionFrameReason};
 use open_gpui_resource::PaginatedResourceSnapshotView;
@@ -60,6 +61,240 @@ actions!(
     [OpenCommandPalette, SaveWorkspace, ToggleDevtools]
 );
 
+/// Allowlisted shell facts that Gallery contributes to its live DevTools workbench.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GalleryDevtoolsLiveFacts {
+    active_page: String,
+    viewport_width_px: f32,
+    shell_mode: String,
+    density: String,
+    control_size: String,
+}
+
+impl GalleryDevtoolsLiveFacts {
+    /// Creates sanitized Gallery shell facts for DevTools capture.
+    pub fn new(
+        active_page: impl AsRef<str>,
+        viewport_width_px: f32,
+        shell_mode: impl AsRef<str>,
+        density: impl AsRef<str>,
+        control_size: impl AsRef<str>,
+    ) -> Self {
+        Self {
+            active_page: sanitize_sensitive_text(active_page.as_ref()),
+            viewport_width_px,
+            shell_mode: sanitize_sensitive_text(shell_mode.as_ref()),
+            density: sanitize_sensitive_text(density.as_ref()),
+            control_size: sanitize_sensitive_text(control_size.as_ref()),
+        }
+    }
+
+    fn default_devtools_page() -> Self {
+        Self::new("devtools", 1040.0, "desktop", "comfortable", "md")
+    }
+}
+
+/// Latest user-visible Gallery DevTools workbench refresh outcome.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GalleryDevtoolsRefreshStatus {
+    /// The workbench has an initialized frame and no refresh is in progress.
+    Idle,
+    /// A refresh completed with at least one changed diff row.
+    Changed,
+    /// A refresh completed without changed diff rows.
+    NoChange,
+    /// A refresh failed before the inspector controller could be updated.
+    CaptureError,
+}
+
+impl GalleryDevtoolsRefreshStatus {
+    /// Returns the stable status label used by tests and UI selectors.
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Changed => "changed",
+            Self::NoChange => "no-change",
+            Self::CaptureError => "capture-error",
+        }
+    }
+}
+
+/// Latest user-visible selection retention outcome after a Gallery DevTools refresh.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GalleryDevtoolsSelectionStatus {
+    /// No event selection was active before refresh.
+    None,
+    /// The exact event identity remained selected after refresh.
+    Preserved,
+    /// The previous event identity disappeared and inspector state selected another visible event.
+    Remapped,
+}
+
+impl GalleryDevtoolsSelectionStatus {
+    /// Returns the stable status label used by tests and UI selectors.
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Preserved => "selection-preserved",
+            Self::Remapped => "selection-remapped",
+        }
+    }
+}
+
+/// Shell-owned Gallery DevTools session and bounded history owner.
+pub struct GalleryDevtoolsWorkbench {
+    session: DevtoolsSession,
+    live_facts: Arc<Mutex<GalleryDevtoolsLiveFacts>>,
+    refresh_status: GalleryDevtoolsRefreshStatus,
+    selection_status: GalleryDevtoolsSelectionStatus,
+    last_error: Option<String>,
+}
+
+impl std::fmt::Debug for GalleryDevtoolsWorkbench {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GalleryDevtoolsWorkbench")
+            .field("session_id", &self.session.session_id())
+            .field("current_generation", &self.current_generation())
+            .field("retained_frames", &self.retained_frames())
+            .field("refresh_status", &self.refresh_status)
+            .field("selection_status", &self.selection_status)
+            .finish()
+    }
+}
+
+impl GalleryDevtoolsWorkbench {
+    /// Creates a live Gallery DevTools workbench seeded with two deterministic frames.
+    pub fn new(initial_facts: GalleryDevtoolsLiveFacts) -> Self {
+        let live_facts = Arc::new(Mutex::new(initial_facts.clone()));
+        let session = devtools_gallery_session_with_facts(Arc::clone(&live_facts));
+        let mut workbench = Self {
+            session,
+            live_facts,
+            refresh_status: GalleryDevtoolsRefreshStatus::Idle,
+            selection_status: GalleryDevtoolsSelectionStatus::None,
+            last_error: None,
+        };
+        workbench
+            .refresh_with_facts(initial_facts.clone())
+            .expect("gallery devtools workbench first refresh succeeds");
+        workbench
+            .refresh_with_facts(initial_facts)
+            .expect("gallery devtools workbench second refresh succeeds");
+        workbench.refresh_status = GalleryDevtoolsRefreshStatus::Idle;
+        workbench
+    }
+
+    /// Returns the inspector state for the current shell-owned frame.
+    pub fn inspector_state(&self) -> DevtoolsInspectorState {
+        self.session
+            .current_frame()
+            .cloned()
+            .map(DevtoolsInspectorState::from_session_frame)
+            .unwrap_or_else(|| DevtoolsInspectorState::from_capture(DevtoolsCapture::default()))
+    }
+
+    /// Refreshes the shell-owned session with new allowlisted Gallery facts.
+    pub fn refresh_with_facts(
+        &mut self,
+        facts: GalleryDevtoolsLiveFacts,
+    ) -> Result<DevtoolsSessionFrame, DevtoolsSessionError> {
+        self.set_live_facts(facts);
+        match self.session.refresh() {
+            Ok(frame) => {
+                self.refresh_status = if frame
+                    .diff_from_previous
+                    .as_ref()
+                    .is_some_and(|diff| diff.summary.changed > 0 || diff.summary.added > 0)
+                {
+                    GalleryDevtoolsRefreshStatus::Changed
+                } else {
+                    GalleryDevtoolsRefreshStatus::NoChange
+                };
+                self.last_error = None;
+                Ok(frame)
+            }
+            Err(error) => {
+                self.refresh_status = GalleryDevtoolsRefreshStatus::CaptureError;
+                self.last_error = Some(error.to_string());
+                Err(error)
+            }
+        }
+    }
+
+    /// Records the event selection retention outcome after a controller refresh.
+    pub fn set_selection_status(&mut self, status: GalleryDevtoolsSelectionStatus) {
+        self.selection_status = status;
+    }
+
+    /// Returns the latest refresh status.
+    pub const fn refresh_status(&self) -> GalleryDevtoolsRefreshStatus {
+        self.refresh_status
+    }
+
+    /// Returns the latest selection status.
+    pub const fn selection_status(&self) -> GalleryDevtoolsSelectionStatus {
+        self.selection_status
+    }
+
+    /// Returns the retained frame count.
+    pub fn retained_frames(&self) -> usize {
+        self.session.frames().len()
+    }
+
+    /// Returns the configured session history limit.
+    pub const fn history_limit(&self) -> usize {
+        self.session.history_limit()
+    }
+
+    /// Returns the current generation, if a frame exists.
+    pub fn current_generation(&self) -> Option<u64> {
+        self.session.current_frame().map(|frame| frame.generation)
+    }
+
+    /// Returns the previous generation, if one is attached to the current frame.
+    pub fn previous_generation(&self) -> Option<u64> {
+        self.session
+            .current_frame()
+            .and_then(|frame| frame.previous_generation)
+    }
+
+    /// Returns the current diff row count.
+    pub fn diff_row_count(&self) -> usize {
+        self.session
+            .current_frame()
+            .and_then(|frame| frame.diff_from_previous.as_ref())
+            .map_or(0, |diff| diff.rows.len())
+    }
+
+    /// Returns the current diff state label.
+    pub fn diff_state_label(&self) -> &'static str {
+        let Some(frame) = self.session.current_frame() else {
+            return "no-previous-frame";
+        };
+        let Some(diff) = frame.diff_from_previous.as_ref() else {
+            return "no-previous-frame";
+        };
+        if diff.summary.changed > 0 || diff.summary.added > 0 || diff.summary.removed > 0 {
+            "changed"
+        } else {
+            "no-change"
+        }
+    }
+
+    /// Returns the latest sanitized refresh error, if one exists.
+    pub fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
+    }
+
+    fn set_live_facts(&self, facts: GalleryDevtoolsLiveFacts) {
+        let mut live_facts = self
+            .live_facts
+            .lock()
+            .expect("gallery devtools live facts lock is not poisoned");
+        *live_facts = facts;
+    }
+}
+
 /// Returns the deterministic devtools inspector state used by the gallery.
 pub fn devtools_gallery_state() -> DevtoolsInspectorState {
     DevtoolsInspectorState::from_session_frame(devtools_gallery_session_frame())
@@ -94,23 +329,50 @@ pub fn devtools_gallery_session_export() -> DevtoolsSessionExport {
 }
 
 fn devtools_gallery_session() -> DevtoolsSession {
+    devtools_gallery_session_with_facts(Arc::new(Mutex::new(
+        GalleryDevtoolsLiveFacts::default_devtools_page(),
+    )))
+}
+
+fn devtools_gallery_session_with_facts(
+    live_facts: Arc<Mutex<GalleryDevtoolsLiveFacts>>,
+) -> DevtoolsSession {
     let mut registry = DevtoolsRegistry::default();
     let refresh_index = Arc::new(AtomicU64::new(0));
     let provider_refresh_index = Arc::clone(&refresh_index);
+    let provider_live_facts = Arc::clone(&live_facts);
     registry
         .register_capture_provider_fn("gallery.devtools", move || {
             let refresh_index = provider_refresh_index.fetch_add(1, Ordering::SeqCst) + 1;
-            Ok(devtools_gallery_provider_capture(refresh_index))
+            let live_facts = provider_live_facts
+                .lock()
+                .map_err(|_| {
+                    open_gpui_devtools::ProbeSnapshotError::CollectionFailed(
+                        "gallery live facts lock poisoned".to_owned(),
+                    )
+                })?
+                .clone();
+            Ok(devtools_gallery_provider_capture(
+                refresh_index,
+                &live_facts,
+            ))
         })
         .expect("unique gallery devtools capture provider");
 
     DevtoolsSession::new("gallery.devtools", registry).with_history_limit(4)
 }
 
-fn devtools_gallery_provider_capture(refresh_index: u64) -> DevtoolsCapture {
+fn devtools_gallery_provider_capture(
+    refresh_index: u64,
+    live_facts: &GalleryDevtoolsLiveFacts,
+) -> DevtoolsCapture {
     let collection = devtools_gallery_legacy_collection();
     let base_capture = DevtoolsCapture::from_snapshot_collection(collection);
     let gpui_capture = gpui::gpui_runtime_capture(&gallery_gpui_runtime_sample(refresh_index));
+    let shell_target_id =
+        DevtoolsTargetId::from_parts(["gallery", "shell", live_facts.active_page.as_str()]);
+    let shell_domain_id = DevtoolsDomainId::from_parts(["gallery", "shell", "live"]);
+    let shell_payload = gallery_shell_live_payload(refresh_index, live_facts);
     let timeline_probe_id = ProbeId::new("timeline.motion-frame").expect("valid timeline probe id");
     let timeline_target_id = DevtoolsTargetId::from_probe_id(&timeline_probe_id);
     let timeline_domain_id =
@@ -132,11 +394,39 @@ fn devtools_gallery_provider_capture(refresh_index: u64) -> DevtoolsCapture {
             "needs_frame": refresh_index % 2 == 0,
         })),
     );
+    recorder.record(
+        DevtoolsEventRecord::new(
+            "gallery.shell-live-facts",
+            "Gallery shell live facts",
+            DevtoolsEventKind::Instant,
+        )
+        .target_id(shell_target_id.clone())
+        .domain_id(shell_domain_id.clone())
+        .timestamp_ms(80 + refresh_index)
+        .with_payload(shell_payload.clone()),
+    );
     let event_batch = recorder.snapshot();
     let mut targets = base_capture.targets.targets;
     targets.extend(gpui_capture.targets.targets);
+    targets.push(
+        DevtoolsTargetSnapshot::new(
+            shell_target_id.clone(),
+            DevtoolsTargetKind::App,
+            "Gallery shell",
+        )
+        .with_metadata(shell_payload.clone()),
+    );
     let mut domains = base_capture.domains;
     domains.extend(gpui_capture.domains);
+    domains.push(
+        open_gpui_devtools::DevtoolsDomainSnapshot::new(
+            shell_domain_id,
+            shell_target_id,
+            DevtoolsDomainKind::Custom("gallery-shell".to_owned()),
+            "Gallery shell live facts",
+        )
+        .with_summary(shell_payload),
+    );
     let mut events = event_batch.events;
     events.extend(gpui_capture.events);
     let mut snapshots = base_capture.snapshots;
@@ -151,6 +441,20 @@ fn devtools_gallery_provider_capture(refresh_index: u64) -> DevtoolsCapture {
         snapshots,
         diagnostics,
     )
+}
+
+fn gallery_shell_live_payload(
+    refresh_index: u64,
+    live_facts: &GalleryDevtoolsLiveFacts,
+) -> serde_json::Value {
+    serde_json::json!({
+        "refresh_index": refresh_index,
+        "active_page": live_facts.active_page,
+        "viewport_width_px": live_facts.viewport_width_px,
+        "shell_mode": live_facts.shell_mode,
+        "density": live_facts.density,
+        "control_size": live_facts.control_size,
+    })
 }
 
 /// Returns the deterministic snapshot collection used by the gallery.
@@ -449,7 +753,7 @@ mod tests {
         );
         assert!(rows.iter().any(|row| row.probe_id.as_str() == "theme"));
         assert_eq!(state.diagnostics().len(), 1);
-        assert_eq!(state.target_rows().len(), 14);
+        assert_eq!(state.target_rows().len(), 15);
         let event_state = devtools_gallery_state().with_filter("motion-frame-demand");
         assert!(event_state.event_rows().iter().any(|row| {
             row.event_id == "gallery.motion-frame-demand" && row.kind_label == "instant"

@@ -135,6 +135,7 @@ pub struct GalleryShell {
     focus_a11y: FocusA11yPageState,
     overlay: OverlayPageState,
     components_focus: pages::components::ComponentFocusMode,
+    devtools_workbench: pages::devtools::GalleryDevtoolsWorkbench,
     devtools_inspector: open_gpui::Entity<DevtoolsInspectorController>,
 }
 
@@ -142,6 +143,10 @@ impl GalleryShell {
     fn build(selected_page: GalleryPage, cx: &mut Context<Self>) -> Self {
         cx.set_global(pages::components::TableSampleRuntimeLog::default());
         cx.set_global(pages::components::TreeSampleRuntimeLog::default());
+        let initial_snapshot = foundation_snapshot(DEFAULT_GALLERY_WIDTH, selected_page);
+        let devtools_facts = Self::devtools_live_facts(initial_snapshot);
+        let devtools_workbench = pages::devtools::GalleryDevtoolsWorkbench::new(devtools_facts);
+        let devtools_state = devtools_workbench.inspector_state();
 
         Self {
             selected_page,
@@ -181,13 +186,10 @@ impl GalleryShell {
             focus_a11y: FocusA11yPageState::default(),
             overlay: OverlayPageState::default(),
             components_focus: pages::components::ComponentFocusMode::All,
+            devtools_workbench,
             devtools_inspector: cx.new(|cx| {
-                DevtoolsInspectorController::new(
-                    "gallery-devtools-inspector",
-                    pages::devtools::devtools_gallery_state(),
-                    cx,
-                )
-                .title("Gallery DevTools Inspector")
+                DevtoolsInspectorController::new("gallery-devtools-inspector", devtools_state, cx)
+                    .title("Gallery DevTools Inspector")
             }),
         }
     }
@@ -220,6 +222,37 @@ impl GalleryShell {
         &self.devtools_inspector
     }
 
+    pub fn devtools_workbench(&self) -> &pages::devtools::GalleryDevtoolsWorkbench {
+        &self.devtools_workbench
+    }
+
+    pub fn refresh_devtools(&mut self, cx: &mut Context<Self>) {
+        let facts = Self::devtools_live_facts(self.snapshot());
+        let selected_before = self
+            .devtools_inspector
+            .read(cx)
+            .state()
+            .selected_event_identity()
+            .cloned();
+
+        if let Ok(frame) = self.devtools_workbench.refresh_with_facts(facts) {
+            let selection_status = self.devtools_inspector.update(cx, |inspector, cx| {
+                inspector.update_session_frame(frame, cx);
+                let selected_after = inspector.state().selected_event_identity().cloned();
+                match selected_before {
+                    None => pages::devtools::GalleryDevtoolsSelectionStatus::None,
+                    Some(before) if selected_after.as_ref() == Some(&before) => {
+                        pages::devtools::GalleryDevtoolsSelectionStatus::Preserved
+                    }
+                    Some(_) => pages::devtools::GalleryDevtoolsSelectionStatus::Remapped,
+                }
+            });
+            self.devtools_workbench
+                .set_selection_status(selection_status);
+        }
+        cx.notify();
+    }
+
     /// Returns the page scroll handle used by gallery smoke tests and anchored jumps.
     pub fn page_scroll_handle(&self) -> &ScrollHandle {
         &self.page_scroll_handle
@@ -236,6 +269,18 @@ impl GalleryShell {
         let mut snapshot = foundation_snapshot(self.width, self.selected_page);
         snapshot.components_focus = self.components_focus;
         snapshot
+    }
+
+    fn devtools_live_facts(
+        snapshot: GalleryShellSnapshot,
+    ) -> pages::devtools::GalleryDevtoolsLiveFacts {
+        pages::devtools::GalleryDevtoolsLiveFacts::new(
+            snapshot.selected_page.id(),
+            snapshot.viewport_width.as_f32(),
+            snapshot.shell_mode.as_str(),
+            snapshot.density.as_str(),
+            snapshot.control_size.as_str(),
+        )
     }
 
     fn select_page(&mut self, page: GalleryPage, cx: &mut Context<Self>) {
@@ -568,19 +613,101 @@ impl GalleryShell {
                 pages::components::render_components_page(self, snapshot, cx).into_any_element()
             }
 
-            GalleryPage::Devtools => self.render_devtools_page(snapshot).into_any_element(),
+            GalleryPage::Devtools => self.render_devtools_page(snapshot, cx).into_any_element(),
         }
     }
 
-    fn render_devtools_page(&self, snapshot: GalleryShellSnapshot) -> impl IntoElement {
+    fn render_devtools_page(
+        &self,
+        snapshot: GalleryShellSnapshot,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         div()
             .id("gallery-devtools-page")
             .debug_selector(|| "gallery:devtools-page".into())
             .flex()
             .flex_col()
             .gap_4()
+            .child(self.render_devtools_toolbar(snapshot, cx))
             .child(self.devtools_inspector.clone())
             .child(self.render_signal_list(snapshot.selected_page))
+    }
+
+    fn render_devtools_toolbar(
+        &self,
+        snapshot: GalleryShellSnapshot,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let generation = self
+            .devtools_workbench
+            .current_generation()
+            .map_or_else(|| "none".to_owned(), |generation| generation.to_string());
+        let previous_generation = self
+            .devtools_workbench
+            .previous_generation()
+            .map_or_else(|| "none".to_owned(), |generation| generation.to_string());
+        let frame_count = self.devtools_workbench.retained_frames();
+        let history_limit = self.devtools_workbench.history_limit();
+        let diff_rows = self.devtools_workbench.diff_row_count();
+        let refresh_state = self.devtools_workbench.refresh_status().as_label();
+        let selection_state = self.devtools_workbench.selection_status().as_label();
+        let diff_state = self.devtools_workbench.diff_state_label();
+        let active_page = snapshot.selected_page.id();
+
+        div()
+            .id("gallery-devtools-toolbar")
+            .debug_selector(|| "gallery-devtools:toolbar".into())
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(0xd6d8ce))
+            .bg(rgb(0xffffff))
+            .p_3()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .debug_selector(|| "gallery-devtools:refresh".into())
+                    .child(
+                        Button::new("gallery-devtools-refresh-button", "Refresh")
+                            .variant(ButtonVariant::Secondary)
+                            .with_size(Size::Small)
+                            .accessibility_description("Refresh Gallery DevTools session")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.refresh_devtools(cx);
+                            })),
+                    ),
+            )
+            .child(devtools_status_pill(
+                "refresh-state",
+                "refresh",
+                refresh_state,
+            ))
+            .child(devtools_status_pill(
+                "frame-history",
+                "history",
+                format!("{frame_count}/{history_limit} frames"),
+            ))
+            .child(devtools_status_pill(
+                "generation",
+                "generation",
+                format!("{generation} prev {previous_generation}"),
+            ))
+            .child(devtools_status_pill(
+                "diff-state",
+                "diff",
+                format!("{diff_state} / {diff_rows} rows"),
+            ))
+            .child(devtools_status_pill(
+                "selection-state",
+                "selection",
+                selection_state,
+            ))
+            .child(devtools_status_pill("active-page", "page", active_page))
+            .when_some(self.devtools_workbench.last_error(), |this, error| {
+                this.child(devtools_status_pill("capture-error", "error", error))
+            })
     }
 
     fn render_tokens_page(&self, snapshot: GalleryShellSnapshot) -> impl IntoElement {
@@ -3003,6 +3130,30 @@ impl GalleryShell {
             }))
             .child(label)
     }
+}
+
+fn devtools_status_pill(
+    id: &'static str,
+    label: &'static str,
+    value: impl Into<String>,
+) -> impl IntoElement {
+    let value = value.into();
+    div()
+        .id(format!("gallery-devtools-{id}"))
+        .debug_selector(move || format!("gallery-devtools:{id}"))
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(0xe1e4da))
+        .bg(rgb(0xfcfcf8))
+        .px_2()
+        .py_1()
+        .child(div().text_xs().text_color(rgb(0x5a6472)).child(label))
+        .child(
+            div()
+                .text_xs()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .child(value),
+        )
 }
 
 /// Opens the foundation gallery window.

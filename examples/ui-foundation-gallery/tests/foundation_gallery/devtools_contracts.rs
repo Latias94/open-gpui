@@ -74,9 +74,11 @@ fn devtools_gallery_capture_projects_targets_domains_and_events() {
 
     assert!(target_ids.contains(&"app"));
     assert!(target_ids.contains(&"gpui.runtime.gallery"));
+    assert!(target_ids.contains(&"gallery.shell.devtools"));
     assert!(target_ids.contains(&"probe.command.registry"));
     assert!(target_ids.contains(&"probe.layout.scroll-viewport"));
     assert!(domain_labels.contains(&"command"));
+    assert!(domain_labels.contains(&"gallery-shell"));
     assert!(domain_labels.contains(&"gpui-runtime"));
     assert!(domain_labels.contains(&"layout"));
     assert!(domain_labels.contains(&"timeline"));
@@ -85,6 +87,12 @@ fn devtools_gallery_capture_projects_targets_domains_and_events() {
             .events
             .iter()
             .any(|event| event.id() == "gallery.motion-frame-demand")
+    );
+    assert!(
+        capture
+            .events
+            .iter()
+            .any(|event| event.id() == "gallery.shell-live-facts")
     );
     assert!(
         capture
@@ -130,7 +138,8 @@ fn devtools_gallery_session_frame_exposes_history_and_diff() {
         row.status == DevtoolsDiffStatus::Changed
             && (row.identity.contains("gpui.runtime.gallery")
                 || row.identity.contains("gpui.frame-metadata")
-                || row.identity.contains("gallery.motion-frame-demand"))
+                || row.identity.contains("gallery.motion-frame-demand")
+                || row.identity.contains("gallery.shell"))
     }));
     assert!(diff.rows.iter().any(|row| {
         row.kind == DevtoolsDiffKind::Snapshot
@@ -142,6 +151,53 @@ fn devtools_gallery_session_frame_exposes_history_and_diff() {
     assert!(export_json.contains("open-gpui-devtools-session/v1"));
     assert!(!export_json.contains("raw_text"));
     assert!(!export_json.contains("clipboard_contents"));
+}
+
+#[test]
+fn devtools_gallery_workbench_refreshes_from_shell_live_facts() {
+    let mut workbench = pages::devtools::GalleryDevtoolsWorkbench::new(
+        pages::devtools::GalleryDevtoolsLiveFacts::new(
+            "tokens",
+            1040.0,
+            "desktop",
+            "comfortable",
+            "md",
+        ),
+    );
+    let initial_generation = workbench.current_generation().expect("seeded frame");
+
+    let frame = workbench
+        .refresh_with_facts(pages::devtools::GalleryDevtoolsLiveFacts::new(
+            "devtools", 720.0, "mobile", "compact", "sm",
+        ))
+        .expect("live facts refresh succeeds");
+    let frame_json = serde_json::to_string(&frame).unwrap();
+
+    assert!(frame.generation > initial_generation);
+    assert_eq!(
+        workbench.refresh_status(),
+        pages::devtools::GalleryDevtoolsRefreshStatus::Changed
+    );
+    assert!(workbench.retained_frames() <= workbench.history_limit());
+    assert!(frame_json.contains("\"active_page\":\"devtools\""));
+    assert!(frame_json.contains("\"viewport_width_px\":720.0"));
+    assert!(frame_json.contains("gallery.shell-live-facts"));
+
+    let sensitive_frame = workbench
+        .refresh_with_facts(pages::devtools::GalleryDevtoolsLiveFacts::new(
+            "alice@example.com /Users/alice/project token=secret",
+            680.0,
+            "desktop",
+            "comfortable",
+            "md",
+        ))
+        .expect("sensitive-looking live facts refresh succeeds");
+    let sensitive_json = serde_json::to_string(&sensitive_frame).unwrap();
+
+    assert!(!sensitive_json.contains("alice@example.com"));
+    assert!(!sensitive_json.contains("/Users/alice"));
+    assert!(!sensitive_json.contains("secret"));
+    assert!(workbench.retained_frames() <= workbench.history_limit());
 }
 
 #[test]
@@ -454,6 +510,44 @@ fn devtools_gallery_smoke_clicks_inspector_rows_and_actions(cx: &mut open_gpui::
         Some(open_gpui_devtools::DevtoolsInspectorDetailKind::Event)
     );
     assert_eq!(feedback.as_deref(), Some("Selected event #0"));
+
+    assert!(cx.debug_bounds("gallery-devtools:toolbar").is_some());
+    assert!(cx.debug_bounds("gallery-devtools:refresh").is_some());
+    assert!(cx.debug_bounds("gallery-devtools:frame-history").is_some());
+    assert!(cx.debug_bounds("gallery-devtools:diff-state").is_some());
+    let generation_before = cx.update(|_, app| {
+        shell
+            .read(app)
+            .devtools_workbench()
+            .current_generation()
+            .expect("current devtools generation")
+    });
+    scroll_page_selector_into_view(&shell, cx, "gallery-devtools:refresh");
+    click(cx, "gallery-devtools:refresh");
+    let (generation_after, refresh_status, selection_status, retained_frames, history_limit) = cx
+        .update(|_, app| {
+            let shell = shell.read(app);
+            let workbench = shell.devtools_workbench();
+            (
+                workbench
+                    .current_generation()
+                    .expect("refreshed devtools generation"),
+                workbench.refresh_status(),
+                workbench.selection_status(),
+                workbench.retained_frames(),
+                workbench.history_limit(),
+            )
+        });
+    assert!(generation_after > generation_before);
+    assert_eq!(
+        refresh_status,
+        pages::devtools::GalleryDevtoolsRefreshStatus::Changed
+    );
+    assert_eq!(
+        selection_status,
+        pages::devtools::GalleryDevtoolsSelectionStatus::Preserved
+    );
+    assert!(retained_frames <= history_limit);
 
     scroll_page_selector_into_view(&shell, cx, "devtools-inspector:export-capture");
     click(cx, "devtools-inspector:export-capture");
