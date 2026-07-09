@@ -32,8 +32,8 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_devtools::SnapshotKind",
     "open_gpui_devtools::SnapshotRedactionSummary",
     "open_gpui_devtools::command::command_registry_snapshot_probe",
-    "open_gpui_devtools::command::command_keybinding_projection_probe",
-    "open_gpui_devtools::command::command_keymap_resolution_probe",
+    "open_gpui_devtools::command::command_keybinding_projection_snapshot_probe",
+    "open_gpui_devtools::command::command_keymap_resolution_snapshot_probe",
     "open_gpui_devtools::form::form_snapshot_probe",
     "open_gpui_devtools::gpui::scroll_viewport_layout_probe_snapshot",
     "open_gpui_devtools::resource::resource_snapshot_probe",
@@ -79,7 +79,7 @@ pub fn devtools_gallery_collection() -> SnapshotCollection {
         .expect("unique command registry probe");
     registry
         .register(
-            devtools_command::command_keybinding_projection_probe(
+            devtools_command::command_keybinding_projection_snapshot_probe(
                 "command.keybindings",
                 command_keybinding_projection_sample,
             )
@@ -88,7 +88,7 @@ pub fn devtools_gallery_collection() -> SnapshotCollection {
         .expect("unique command keybinding probe");
     registry
         .register(
-            devtools_command::command_keymap_resolution_probe(
+            devtools_command::command_keymap_resolution_snapshot_probe(
                 "command.keymap",
                 command_keymap_resolution_sample,
             )
