@@ -19,6 +19,7 @@ mod registry;
 #[cfg(feature = "resource")]
 pub mod resource;
 mod snapshot;
+pub mod timeline;
 #[cfg(feature = "ui-components")]
 pub mod ui_components;
 
@@ -35,3 +36,4 @@ pub use snapshot::{
     SnapshotCollection, SnapshotDiagnostic, SnapshotEnvelope, SnapshotKind, SnapshotNode,
     SnapshotTree,
 };
+pub use timeline::{DEFAULT_TIMELINE_EVENT_LIMIT, TimelineEventSnapshot, TimelineSnapshot};

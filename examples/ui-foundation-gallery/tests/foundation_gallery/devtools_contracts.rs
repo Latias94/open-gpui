@@ -19,7 +19,8 @@ fn devtools_gallery_collects_registry_backed_snapshots() {
             "form",
             "motion",
             "resource",
-            "theme"
+            "theme",
+            "timeline.motion-frame"
         ]
     );
     assert_eq!(
@@ -110,6 +111,12 @@ fn devtools_gallery_snapshots_reflect_component_sample_state() {
             .iter()
             .any(|snapshot| snapshot.probe_id.as_str() == "motion")
     );
+    assert!(
+        collection
+            .snapshots
+            .iter()
+            .any(|snapshot| snapshot.probe_id.as_str() == "timeline.motion-frame")
+    );
     assert!(!form_json.contains("gallery-secret"));
     assert!(!resource_json.contains("gallery-secret"));
 }
@@ -134,6 +141,23 @@ fn devtools_gallery_command_snapshots_reflect_command_runtime_facts() {
     assert!(command_json.contains("missing-action"));
     assert!(command_json.contains("\"pending\":true"));
     assert!(command_json.contains("Pending commands"));
+}
+
+#[test]
+fn devtools_gallery_timeline_snapshot_reflects_motion_frame_demand() {
+    let collection = pages::devtools::devtools_gallery_collection();
+    let timeline = collection
+        .snapshots
+        .iter()
+        .find(|snapshot| snapshot.probe_id.as_str() == "timeline.motion-frame")
+        .expect("motion timeline snapshot");
+    let timeline_json = serde_json::to_string(timeline).unwrap();
+
+    assert_eq!(timeline.kind.as_label(), "timeline");
+    assert!(timeline_json.contains("Motion frame demand"));
+    assert!(timeline_json.contains("\"needs_frame\":true"));
+    assert!(timeline_json.contains("update-render"));
+    assert!(!timeline_json.contains("UpdateRender"));
 }
 
 #[test]

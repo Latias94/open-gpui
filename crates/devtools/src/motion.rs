@@ -7,6 +7,7 @@ use open_gpui_motion::{
 use crate::{
     SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
     adapters::snapshot_node_with_payload,
+    timeline::{TimelineEventSnapshot, TimelineSnapshot},
 };
 
 /// Converts a single frame-demand decision into a DevTools tree.
@@ -40,6 +41,29 @@ pub fn motion_frame_driver_probe_snapshot(driver: &MotionFrameDriver) -> Snapsho
 
     SnapshotProbeSnapshot::new(SnapshotTree::new([root]))
         .with_redaction(SnapshotRedactionSummary::default())
+}
+
+/// Converts a single frame-demand decision into a DevTools timeline tree.
+pub fn motion_frame_demand_timeline_snapshot(demand: MotionFrameDemand) -> TimelineSnapshot {
+    TimelineSnapshot::new(
+        "motion-frame-demand",
+        "Motion frame demand",
+        [
+            TimelineEventSnapshot::new("frame-demand", "Frame demand", "motion", 0).with_payload(
+                serde_json::json!({
+                    "needs_frame": demand.needs_frame(),
+                    "reason": demand.reason().map(motion_frame_reason_label),
+                }),
+            ),
+        ],
+    )
+}
+
+/// Converts a single frame-demand decision into a DevTools timeline probe snapshot.
+pub fn motion_frame_demand_timeline_probe_snapshot(
+    demand: MotionFrameDemand,
+) -> SnapshotProbeSnapshot {
+    motion_frame_demand_timeline_snapshot(demand).probe_snapshot()
 }
 
 fn motion_demand_node<I, S>(

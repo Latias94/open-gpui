@@ -32,6 +32,7 @@ mutation and live property editing are intentionally out of scope for the initia
   snapshots without making source crates depend on devtools.
 - `command` exposes feature-gated adapters for command registries, keybinding projections,
   projection diagnostics, shortcut conflicts, and keymap resolution.
+- `timeline` exposes renderer-neutral bounded event snapshots for timeline-style inspection.
 - `DevtoolsInspectorState` provides filter, selection, category summaries, row projection,
   diagnostics, and JSON export without requiring a GPUI window.
 - `DevtoolsInspector` is available only with the `gpui` feature and renders a read-only local
@@ -124,10 +125,12 @@ For focused devtools changes, run:
 cargo fmt -p open-gpui-devtools
 cargo check -p open-gpui-devtools --tests --locked
 cargo check -p open-gpui-devtools --features command --tests --locked
+cargo check -p open-gpui-devtools --features motion --tests --locked
 cargo check -p open-gpui-devtools --features form,resource --tests --locked
 cargo check -p open-gpui-devtools --features gpui,motion,docking --tests --locked
 cargo nextest run -p open-gpui-devtools --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features command --test command_adapters --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --features motion timeline --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features form,resource form_resource_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features gpui,motion,docking framework_adapters --no-fail-fast --locked
 ```

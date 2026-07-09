@@ -36,6 +36,7 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_devtools::ui_components::theme_probe_snapshot",
     "open_gpui_devtools::ui_components::a11y_evidence_probe_snapshot",
     "open_gpui_devtools::motion::motion_frame_demand_probe_snapshot",
+    "open_gpui_devtools::motion::motion_frame_demand_timeline_probe_snapshot",
 ];
 
 actions!(
@@ -103,6 +104,13 @@ pub fn devtools_gallery_collection() -> SnapshotCollection {
             ))
         })
         .expect("unique motion probe");
+    registry
+        .register_snapshot_probe("timeline.motion-frame", SnapshotKind::Timeline, || {
+            Ok(motion::motion_frame_demand_timeline_probe_snapshot(
+                MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender),
+            ))
+        })
+        .expect("unique motion timeline probe");
     registry
         .register(
             resource::resource_snapshot_probe(
@@ -223,7 +231,7 @@ mod tests {
         let state = devtools_gallery_state();
         let rows = state.snapshot_rows();
 
-        assert_eq!(rows.len(), 8);
+        assert_eq!(rows.len(), 9);
         assert!(rows.iter().any(
             |row| row.probe_id.as_str() == "accessibility" && row.kind_label == "accessibility"
         ));
@@ -248,6 +256,12 @@ mod tests {
             && row.kind_label == "resource"
             && row.redacted_values == 2));
         assert!(rows.iter().any(|row| row.probe_id.as_str() == "motion"));
+        assert!(
+            rows.iter()
+                .any(|row| row.probe_id.as_str() == "timeline.motion-frame"
+                    && row.category_label == "timeline"
+                    && row.kind_label == "timeline")
+        );
         assert!(rows.iter().any(|row| row.probe_id.as_str() == "theme"));
         assert_eq!(state.diagnostics().len(), 2);
     }
