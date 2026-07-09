@@ -59,7 +59,7 @@ During local development, use workspace path dependencies instead of registry ve
 - Use `open-gpui-ui-components` for the official GPUI component library, including typed action projection, host-controlled `VirtualizedList`, and component contract evidence.
 - Use `open-gpui-form` for renderer-neutral form ownership: field identity, dirty/touched/visited meta, validation generations, submit/reset lifecycle, typed lenses, dynamic JSON values, and redacted snapshots.
 - Use `open-gpui-resource` for renderer-neutral async query and mutation ownership: deterministic query keys, observers, stale/invalidate state, retry policy, pagination snapshots, mutation lifecycle, and redacted cache diagnostics. Fetching stays protocol-agnostic.
-- Use `open-gpui-devtools` for read-only local inspection: app-owned probes and feature-gated first-party adapters collect serializable snapshot envelopes, command facts, timeline events, layout geometry, diagnostics, redaction summaries, and an optional GPUI inspector surface behind the `gpui` feature.
+- Use `open-gpui-devtools` for read-only local inspection: app-owned probes and feature-gated first-party adapters collect target/domain/event captures, legacy snapshot envelopes, command facts, timeline events, layout geometry, diagnostics, redaction summaries, and an optional GPUI inspector surface behind the `gpui` feature.
 - Use `open-gpui-motion` when a component or domain crate needs deterministic, renderer-neutral motion samples and frame-demand facts. It is not a global animation engine.
 - Use `open-gpui-docking` for retained tab stacks, splits, product panel placement, in-window floating panels, and capability-gated platform viewport windows. Start with the minimal example before the diagnostic dogfood example.
 - Use `open-gpui-web` only for web backend work; most applications should continue to enter through `open-gpui-platform`.
@@ -89,7 +89,7 @@ See [docs/ui/command-ecosystem.md](docs/ui/command-ecosystem.md), [docs/ui/compo
   Tree, and VirtualizedList; see [crates/ui_components/README.md](crates/ui_components/README.md)
 - `crates/form`: renderer-neutral form state, validation, submission, lenses, and redacted snapshots; see [crates/form/README.md](crates/form/README.md)
 - `crates/resource`: renderer-neutral async query/mutation state, observers, retry policy, pagination, and redacted snapshots; see [crates/resource/README.md](crates/resource/README.md)
-- `crates/devtools`: read-only probe registry, serializable snapshot envelopes, command/timeline/layout adapters, diagnostics, and optional GPUI inspector UI; see [crates/devtools/README.md](crates/devtools/README.md)
+- `crates/devtools`: read-only target/domain/event capture, probe registry, serializable snapshot envelopes, command/timeline/layout adapters, diagnostics, and optional GPUI inspector UI; see [crates/devtools/README.md](crates/devtools/README.md)
 - `crates/motion`: renderer-neutral `open-gpui-motion` timing, spring, policy, projection, and
   frame-demand primitives; see [crates/motion/README.md](crates/motion/README.md)
 - `crates/gpui_docking`: retained docking graph, workspace, host, and viewport primitives; see

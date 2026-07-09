@@ -56,6 +56,36 @@ fn devtools_gallery_collects_registry_backed_snapshots() {
 }
 
 #[test]
+fn devtools_gallery_capture_projects_targets_domains_and_events() {
+    let capture = pages::devtools::devtools_gallery_capture();
+    let target_ids = capture
+        .targets
+        .targets
+        .iter()
+        .map(|target| target.id.as_str())
+        .collect::<Vec<_>>();
+    let domain_labels = capture
+        .domains
+        .iter()
+        .map(|domain| domain.kind.as_label())
+        .collect::<Vec<_>>();
+
+    assert!(target_ids.contains(&"app"));
+    assert!(target_ids.contains(&"probe.command.registry"));
+    assert!(target_ids.contains(&"probe.layout.scroll-viewport"));
+    assert!(domain_labels.contains(&"command"));
+    assert!(domain_labels.contains(&"layout"));
+    assert!(domain_labels.contains(&"timeline"));
+    assert!(
+        capture
+            .events
+            .iter()
+            .any(|event| event.id() == "gallery.motion-frame-demand")
+    );
+    assert_eq!(capture.snapshot_collection().snapshots.len(), 10);
+}
+
+#[test]
 fn devtools_gallery_snapshots_reflect_component_sample_state() {
     let collection = pages::devtools::devtools_gallery_collection();
     let form = collection
@@ -217,5 +247,6 @@ fn devtools_gallery_does_not_keep_static_demo_snapshot_builders() {
     assert!(!source.contains("fn form_snapshot"));
     assert!(!source.contains("fn resource_snapshot"));
     assert!(!source.contains("fn docking_snapshot"));
+    assert!(source.contains("DevtoolsCapture::from_snapshot_collection"));
     assert!(source.contains("DevtoolsRegistry::default()"));
 }

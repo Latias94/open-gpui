@@ -2,8 +2,9 @@
 
 Read-only inspection snapshots and local devtools surfaces for Open GPUI applications.
 
-This crate owns the devtools probe and snapshot vocabulary. Default builds stay renderer-neutral and
-do not depend on GPUI. Optional features connect specialized panels and GPUI UI surfaces later:
+This crate owns the devtools target, domain, event, probe, and snapshot vocabulary. Default builds
+stay renderer-neutral and do not depend on GPUI. Optional features connect specialized panels and
+GPUI UI surfaces later:
 
 - `form` for `open-gpui-form` snapshots.
 - `resource` for `open-gpui-resource` snapshots.
@@ -22,20 +23,30 @@ mutation and live property editing are intentionally out of scope for the initia
 - `DevtoolsProbe` is implemented by app-owned snapshot providers.
 - `DevtoolsRegistry` collects snapshots and converts probe failures into diagnostics instead of
   panicking.
-- `SnapshotEnvelope`, `SnapshotTree`, `SnapshotNode`, and `SnapshotKind` are serializable DTOs for
-  tests, gallery samples, and downstream tools. `SnapshotKind::Command`,
+- `DevtoolsCapture` is the rich local protocol output. It contains a target tree, domain outputs,
+  bounded event records, compatibility snapshots, and diagnostics.
+- `DevtoolsTargetSnapshot`, `DevtoolsDomainSnapshot`, and `DevtoolsEventRecord` are serializable
+  DTOs for target/domain/event inspection. They are local read-only facts, not a remote debugging
+  bridge or Chrome DevTools Protocol clone.
+- `SnapshotEnvelope`, `SnapshotTree`, `SnapshotNode`, and `SnapshotKind` remain the legacy-compatible
+  snapshot DTOs for tests, gallery samples, and downstream tools. `SnapshotKind::Command`,
   `SnapshotKind::Timeline`, and `SnapshotKind::Layout` are first-class observability families.
 - `SnapshotRedactionSummary` records what was removed before a snapshot reached devtools.
 - `adapters` contains shared helpers for stable node ids, sanitized payloads, and diagnostic-safe
   labels.
 - `form` and `resource` expose feature-gated first-party adapters that consume public headless
-  snapshots without making source crates depend on devtools.
+  snapshots without making source crates depend on devtools. They also expose data-domain capture
+  helpers.
 - `command` exposes feature-gated adapters for command registries, keybinding projections,
-  projection diagnostics, shortcut conflicts, and keymap resolution.
-- `timeline` exposes renderer-neutral bounded event snapshots for timeline-style inspection.
-- `layout` exposes renderer-neutral committed geometry snapshots for layout-style inspection.
+  projection diagnostics, shortcut conflicts, and keymap resolution. It also exposes command-domain
+  capture helpers.
+- `timeline` exposes renderer-neutral bounded event snapshots and timeline-domain capture helpers.
+- `layout` exposes renderer-neutral committed geometry snapshots and layout-domain capture helpers.
+- `docking` exposes capture-first runtime diagnostics when public docking status records are
+  available.
 - `DevtoolsInspectorState` provides filter, selection, category summaries, row projection,
-  diagnostics, and JSON export without requiring a GPUI window.
+  target/domain/event navigation, diagnostics, selected-detail JSON, and legacy snapshot export
+  without requiring a GPUI window.
 - `DevtoolsInspector` is available only with the `gpui` feature and renders a read-only local
   inspector with existing UI components.
 
@@ -59,8 +70,27 @@ registry.register_snapshot_probe("theme", SnapshotKind::Theme, || {
 })?;
 let collection = registry.collect();
 assert_eq!(collection.snapshots.len(), 1);
+let capture = registry.collect_capture();
+assert_eq!(capture.domains.len(), 1);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+## Target/Domain/Event Capture
+
+New integrations should prefer `DevtoolsCapture` when they need inspector navigation. A capture is
+still local and read-only:
+
+- Targets identify the inspected producer, such as an application, runtime subsystem, viewport, or
+  legacy probe.
+- Domains group facts by concern, such as command, layout, timeline, data, docking, or motion.
+- Events are bounded append-time records for recent local activity. Older records are omitted by the
+  recorder capacity instead of growing without limit.
+- `capture.snapshot_collection()` keeps old snapshot consumers working while new inspectors use
+  `DevtoolsInspectorState::from_capture(capture)`.
+
+Feature-gated adapters provide capture helpers such as `command_registry_capture`, `form_capture`,
+`resource_capture`, `layout_capture`, and `timeline_capture`. The GPUI inspector consumes the same
+state model but does not mutate application state.
 
 With the `form` feature enabled, convert a public form snapshot directly:
 
@@ -130,7 +160,9 @@ cargo check -p open-gpui-devtools --features motion --tests --locked
 cargo check -p open-gpui-devtools --features gpui --tests --locked
 cargo check -p open-gpui-devtools --features form,resource --tests --locked
 cargo check -p open-gpui-devtools --features gpui,motion,docking --tests --locked
+cargo check -p open-gpui-devtools --all-features --tests --locked
 cargo nextest run -p open-gpui-devtools --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --test inspector_contracts --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features command --test command_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features motion timeline --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features gpui layout --no-fail-fast --locked
@@ -145,6 +177,7 @@ cargo nextest run -p open-gpui-ui-foundation-gallery devtools --no-fail-fast --l
 cargo run -p open-gpui-ui-foundation-gallery -- --page devtools
 ```
 
-The gallery DevTools page dogfoods the command adapters by collecting registry, keybinding
-projection, and keymap-resolution snapshots through `DevtoolsRegistry`. Keep future gallery probes
-registry-backed; do not reintroduce static DevTools snapshot builders for the page itself.
+The gallery DevTools page dogfoods the capture path through `devtools_gallery_capture()` and keeps
+`devtools_gallery_collection()` as the legacy snapshot view. Keep future gallery probes
+registry-backed or capture-backed; do not reintroduce static DevTools snapshot builders for the page
+itself.

@@ -246,6 +246,7 @@ cargo check -p open-gpui-devtools --no-default-features --features ui-components
 cargo check -p open-gpui-ui-components --tests --locked
 cargo check -p open-gpui-ui-foundation-gallery --tests --locked
 cargo nextest run -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --test inspector_contracts --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features command --test command_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features motion timeline --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features gpui layout --no-fail-fast --locked
@@ -259,13 +260,17 @@ cargo nextest run -p open-gpui-ui-foundation-gallery form resource devtools --no
 a live GPUI window. `open-gpui-resource` remains protocol-agnostic, so resource tests should drive
 query and mutation generations around fake app-owned fetch results instead of introducing HTTP
 policy. Devtools is read-only: tests should assert snapshot collection, filtering, diagnostics,
-selection, JSON export, and redaction summaries without mutating app state.
+selection, target/domain/event capture, selected-detail JSON export, and redaction summaries
+without mutating app state. On Windows, if `open-gpui-devtools --all-features` nextest hits
+`link.exe` LNK1102 while linking test binaries, rerun the same gate with `CARGO_BUILD_JOBS=1`; do
+not treat the first linker out-of-memory as a code pass.
 
 The Components gallery has an `ecosystem-adapters` section for `FormFieldProjection`,
 `ResourceCollectionProjection`, and `ResourceMutationProjection`. DevTools consumes those same
 redacted form/resource snapshots through feature-gated first-party adapters, and framework facts
 come from the `ui-components`, `gpui`, `motion`, and `docking` adapter modules when public
-read-only snapshots exist. The DevTools gallery page is a separate registry-backed dogfood page:
+read-only snapshots exist. The DevTools gallery page is a separate registry-backed and
+capture-backed dogfood page:
 
 ```sh
 cargo run -p open-gpui-ui-foundation-gallery -- --page devtools

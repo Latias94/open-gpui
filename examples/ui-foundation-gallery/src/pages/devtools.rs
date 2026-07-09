@@ -10,8 +10,10 @@ use open_gpui_command::{
     CommandKeymapResolution, CommandRegistrySnapshot, GpuiCommandActionMap,
 };
 use open_gpui_devtools::{
-    DevtoolsInspectorState, DevtoolsRegistry, ProbeId, SnapshotCollection, SnapshotDiagnostic,
-    SnapshotKind, command as devtools_command, form, gpui, motion, resource, ui_components,
+    DevtoolsCapture, DevtoolsDomainId, DevtoolsEventKind, DevtoolsEventRecord,
+    DevtoolsEventRecorder, DevtoolsInspectorState, DevtoolsRegistry, DevtoolsTargetId, ProbeId,
+    SnapshotCollection, SnapshotDiagnostic, SnapshotKind, command as devtools_command, form, gpui,
+    motion, resource, ui_components,
 };
 use open_gpui_motion::{MotionFrameDemand, MotionFrameReason};
 use open_gpui_resource::PaginatedResourceSnapshotView;
@@ -26,8 +28,12 @@ pub const SUMMARY: &str = "Read-only local inspection over redacted snapshot pro
 /// Foundation signals exercised by this page.
 pub const SIGNALS: &[&str] = &[
     "open_gpui_devtools::DevtoolsRegistry",
+    "open_gpui_devtools::DevtoolsCapture",
     "open_gpui_devtools::DevtoolsInspectorState",
     "open_gpui_devtools::DevtoolsInspector",
+    "open_gpui_devtools::DevtoolsTargetId",
+    "open_gpui_devtools::DevtoolsDomainId",
+    "open_gpui_devtools::DevtoolsEventRecorder",
     "open_gpui_devtools::SnapshotEnvelope",
     "open_gpui_devtools::SnapshotKind",
     "open_gpui_devtools::SnapshotRedactionSummary",
@@ -50,11 +56,50 @@ actions!(
 
 /// Returns the deterministic devtools inspector state used by the gallery.
 pub fn devtools_gallery_state() -> DevtoolsInspectorState {
-    DevtoolsInspectorState::new(devtools_gallery_collection())
+    DevtoolsInspectorState::from_capture(devtools_gallery_capture())
+}
+
+/// Returns the deterministic target/domain/event capture used by the gallery.
+pub fn devtools_gallery_capture() -> DevtoolsCapture {
+    let collection = devtools_gallery_legacy_collection();
+    let base_capture = DevtoolsCapture::from_snapshot_collection(collection);
+    let timeline_probe_id = ProbeId::new("timeline.motion-frame").expect("valid timeline probe id");
+    let timeline_target_id = DevtoolsTargetId::from_probe_id(&timeline_probe_id);
+    let timeline_domain_id =
+        DevtoolsDomainId::from_probe_snapshot(&timeline_probe_id, &SnapshotKind::Timeline);
+    let mut recorder = DevtoolsEventRecorder::with_capacity(16);
+    recorder.record(
+        DevtoolsEventRecord::new(
+            "gallery.motion-frame-demand",
+            "Gallery motion frame demand",
+            DevtoolsEventKind::Instant,
+        )
+        .target_id(timeline_target_id)
+        .domain_id(timeline_domain_id)
+        .timestamp_ms(42)
+        .with_payload(serde_json::json!({
+            "page": "devtools",
+            "source": "ui-foundation-gallery",
+            "needs_frame": true,
+        })),
+    );
+    let event_batch = recorder.snapshot();
+
+    DevtoolsCapture::new(
+        base_capture.targets,
+        base_capture.domains,
+        event_batch.events,
+        base_capture.snapshots,
+        base_capture.diagnostics,
+    )
 }
 
 /// Returns the deterministic snapshot collection used by the gallery.
 pub fn devtools_gallery_collection() -> SnapshotCollection {
+    devtools_gallery_capture().snapshot_collection()
+}
+
+fn devtools_gallery_legacy_collection() -> SnapshotCollection {
     let mut registry = DevtoolsRegistry::default();
     let form_snapshot = form_devtools_dogfood_snapshot();
     let resource_snapshots = resource_devtools_dogfood_snapshots();
@@ -292,5 +337,10 @@ mod tests {
         );
         assert!(rows.iter().any(|row| row.probe_id.as_str() == "theme"));
         assert_eq!(state.diagnostics().len(), 2);
+        assert_eq!(state.target_rows().len(), 11);
+        let event_state = devtools_gallery_state().with_filter("motion-frame-demand");
+        assert!(event_state.event_rows().iter().any(|row| {
+            row.event_id == "gallery.motion-frame-demand" && row.kind_label == "instant"
+        }));
     }
 }
