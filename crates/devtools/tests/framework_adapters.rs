@@ -194,7 +194,7 @@ fn framework_adapters_convert_gpui_runtime_metadata() {
 #[cfg(feature = "gpui")]
 #[test]
 fn gpui_inspector_surface_exposes_category_debug_selectors() {
-    let source = include_str!("../src/gpui.rs");
+    let source = include_str!("../src/gpui/render.rs");
 
     assert!(source.contains("devtools-inspector:category-summaries"));
     assert!(source.contains("devtools-inspector:category:{category_label}"));
