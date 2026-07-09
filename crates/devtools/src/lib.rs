@@ -39,7 +39,13 @@ pub use event::{
     DevtoolsEventKind, DevtoolsEventRecord, DevtoolsEventRecorder,
 };
 #[cfg(feature = "gpui")]
-pub use gpui::{DevtoolsInspector, DevtoolsInspectorController};
+pub use gpui::{
+    DevtoolsInspector, DevtoolsInspectorController, GpuiRuntimeFocusSnapshot,
+    GpuiRuntimeFrameSnapshot, GpuiRuntimeInputSnapshot, GpuiRuntimePointSnapshot,
+    GpuiRuntimeRectSnapshot, GpuiRuntimeScrollSnapshot, GpuiRuntimeSizeSnapshot,
+    GpuiRuntimeSnapshot, GpuiRuntimeWindowSnapshot, gpui_runtime_capture,
+    gpui_runtime_capture_provider, gpui_runtime_probe_snapshot,
+};
 pub use inspector::{
     DevtoolsDomainRow, DevtoolsEventRow, DevtoolsInspectorCaptureExport, DevtoolsInspectorDetail,
     DevtoolsInspectorDetailKind, DevtoolsInspectorError, DevtoolsInspectorJsonAction,

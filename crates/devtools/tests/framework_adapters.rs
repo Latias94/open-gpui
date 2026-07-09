@@ -100,6 +100,99 @@ fn framework_adapters_convert_scroll_viewport_snapshots() {
 
 #[cfg(feature = "gpui")]
 #[test]
+fn framework_adapters_convert_gpui_runtime_metadata() {
+    use open_gpui::{ScrollViewportChangeSource, ScrollViewportSnapshot, bounds, point, px, size};
+    use open_gpui_devtools::DevtoolsCaptureProvider;
+
+    let viewport = ScrollViewportSnapshot::new(
+        12,
+        ScrollViewportChangeSource::InitialLayout,
+        bounds(point(px(1.0), px(2.0)), size(px(320.0), px(240.0))),
+        point(px(8.0), px(16.0)),
+        point(px(80.0), px(160.0)),
+        size(px(640.0), px(480.0)),
+    );
+    let runtime = gpui::GpuiRuntimeSnapshot {
+        runtime_id: "gallery".to_owned(),
+        generation: 3,
+        windows: vec![gpui::GpuiRuntimeWindowSnapshot {
+            window_id: 42,
+            display_id: Some("display-1".to_owned()),
+            active: true,
+            focused: true,
+            bounds: Some(gpui::GpuiRuntimeRectSnapshot {
+                origin: gpui::GpuiRuntimePointSnapshot { x: 0.0, y: 0.0 },
+                size: gpui::GpuiRuntimeSizeSnapshot {
+                    width: 800.0,
+                    height: 600.0,
+                },
+            }),
+            content_size: Some(gpui::GpuiRuntimeSizeSnapshot {
+                width: 780.0,
+                height: 560.0,
+            }),
+            scale_factor: Some(1.0),
+        }],
+        focus: Some(gpui::GpuiRuntimeFocusSnapshot {
+            active_window_id: Some(42),
+            focused_window_id: Some(42),
+            focus_scope_count: 2,
+            focus_handle_count: 5,
+        }),
+        input: Some(gpui::GpuiRuntimeInputSnapshot {
+            key_down_count: 4,
+            pointer_event_count: 3,
+            scroll_event_count: 2,
+            text_input_event_count: 1,
+            ime_event_count: 0,
+            clipboard_event_count: 1,
+            last_event_kind: Some("key-down".to_owned()),
+        }),
+        frame: Some(gpui::GpuiRuntimeFrameSnapshot {
+            requested_frames: 9,
+            painted_frames: 8,
+            animation_frame_count: 2,
+            last_frame_duration_ms: Some(16.0),
+            last_presented_generation: Some(3),
+        }),
+        scroll_viewports: vec![gpui::GpuiRuntimeScrollSnapshot::from_scroll_viewport(
+            viewport,
+        )],
+        diagnostics: Vec::new(),
+    };
+
+    let capture = gpui::gpui_runtime_capture(&runtime);
+    let probe = gpui::gpui_runtime_probe_snapshot(&runtime);
+    let provider_runtime = runtime.clone();
+    let provider =
+        gpui::gpui_runtime_capture_provider("gpui.runtime", move || provider_runtime.clone())
+            .expect("valid GPUI runtime provider");
+    let provider_capture = provider.capture().expect("provider capture succeeds");
+    let serialized = format!(
+        "{}{}{}",
+        serde_json::to_string(&capture).unwrap(),
+        serde_json::to_string(&probe.tree()).unwrap(),
+        serde_json::to_string(&provider_capture).unwrap()
+    );
+
+    assert!(serialized.contains("gpui-runtime"));
+    assert!(serialized.contains("gpui.input-metadata"));
+    assert!(serialized.contains("gpui.frame-metadata"));
+    assert!(serialized.contains("\"key_down_count\":4"));
+    assert!(serialized.contains("\"text_input_event_count\":1"));
+    assert!(serialized.contains("\"clipboard_event_count\":1"));
+    assert!(serialized.contains("initial-layout"));
+    assert!(serialized.contains("\"window_count\":1"));
+    assert!(!serialized.contains("clipboard_contents"));
+    assert!(!serialized.contains("raw_text"));
+    assert_eq!(capture.events.len(), 2);
+    assert_eq!(capture.domains.len(), 1);
+    assert_eq!(capture.snapshots.len(), 1);
+    assert_eq!(provider_capture.events.len(), 2);
+}
+
+#[cfg(feature = "gpui")]
+#[test]
 fn gpui_inspector_surface_exposes_category_debug_selectors() {
     let source = include_str!("../src/gpui.rs");
 

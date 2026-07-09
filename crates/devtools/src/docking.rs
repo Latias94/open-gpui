@@ -8,22 +8,194 @@ use open_gpui_docking::advanced::{
     DockViewportRouteTarget, DockViewportRuntimeStatus, DockViewportStaleStatusReason,
     DockViewportTearOffRecord, DockViewportVisualAffordanceRecord,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     CaptureProvider, DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot,
     DevtoolsEventKind, DevtoolsEventRecord, DevtoolsTargetId, DevtoolsTargetKind,
-    DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId, ProbeSnapshotError, SnapshotEnvelope,
-    SnapshotKind, SnapshotNode, SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
-    adapters::snapshot_node_with_payload,
+    DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId, ProbeSnapshotError, SnapshotDiagnostic,
+    SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotProbeSnapshot, SnapshotRedactionSummary,
+    SnapshotTree,
+    adapters::{sanitize_sensitive_text, snapshot_node_with_payload},
 };
 
 const DOCKING_RUNTIME_PROBE_ID: &str = "docking.runtime";
+
+/// Diagnostic code emitted when public platform facts say viewport windows are unsupported.
+pub const DOCKING_PLATFORM_VIEWPORT_WINDOWS_UNSUPPORTED: &str =
+    "docking.platform_viewport_windows.unsupported";
+
+/// Structured DevTools projection of one docking viewport runtime status.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DockingRuntimeInspection {
+    /// Stable runtime target id used by the DevTools target tree.
+    pub runtime_target_id: DevtoolsTargetId,
+    /// Stable docking domain id used by the DevTools domain output.
+    pub domain_id: DevtoolsDomainId,
+    /// Compact status summary suitable for headers and history rows.
+    pub summary: DockingRuntimeSummary,
+    /// Platform capability facts, present only when the application supplied them.
+    pub platform_capabilities: Option<DockingPlatformCapabilityRow>,
+    /// Saved-placement restore facts, present only after a restore check ran.
+    pub placement_restore: Option<DockingPlacementRestoreRow>,
+    /// Per-viewport lifecycle rows in deterministic runtime order.
+    pub viewport_lifecycle: Vec<DockingViewportLifecycleRow>,
+    /// Optional route/drop/tear-off/close/sync facts that were actually observed.
+    pub runtime_events: Vec<DockingRuntimeEventRow>,
+    /// Visual affordance rows published by rendered viewport hosts.
+    pub visual_affordances: Vec<DockingVisualAffordanceRow>,
+    /// Diagnostics derived only from explicit public fact records.
+    pub diagnostics: Vec<SnapshotDiagnostic>,
+}
+
+/// Header-level counts and capability hints for a docking runtime inspection.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DockingRuntimeSummary {
+    /// Whether platform capability facts were present in the status.
+    pub platform_capabilities_present: bool,
+    /// Whether platform viewport windows are supported, when that fact is present.
+    pub platform_viewport_windows: Option<bool>,
+    /// Whether saved-placement restore facts were present in the status.
+    pub placement_restore_present: bool,
+    /// Number of registered viewport lifecycle rows.
+    pub viewport_lifecycle_count: usize,
+    /// Number of lifecycle rows that are route-ready.
+    pub route_ready_count: usize,
+    /// Number of lifecycle rows with stale route facts.
+    pub stale_viewport_count: usize,
+    /// Number of lifecycle rows missing required route facts.
+    pub missing_route_facts_count: usize,
+    /// Number of optional runtime event rows that are present.
+    pub runtime_event_count: usize,
+    /// Number of visual affordance rows published by hosts.
+    pub visual_affordance_count: usize,
+    /// Number of diagnostics produced from explicit public facts.
+    pub diagnostic_count: usize,
+}
+
+/// Platform capability facts relevant to multi-viewport debugging.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DockingPlatformCapabilityRow {
+    /// Whether independent application viewport windows can be opened.
+    pub platform_viewport_windows: bool,
+    /// Whether bounds are reported in a shared desktop coordinate space.
+    pub global_window_bounds: bool,
+    /// Whether the platform can report windows in front-to-back order.
+    pub window_stack: bool,
+    /// Whether display visible bounds exclude reserved work areas.
+    pub display_work_area: bool,
+    /// Whether per-window DPI scale facts are reliable.
+    pub dpi_scale: bool,
+    /// Whether already-open windows can be moved or resized programmatically.
+    pub live_window_move: bool,
+    /// Whether native no-input windows are supported.
+    pub no_input_windows: bool,
+    /// Whether hovered-window queries ignore no-input application windows.
+    pub hovered_window_ignores_no_input: bool,
+}
+
+/// Saved-placement restore readiness facts.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DockingPlacementRestoreRow {
+    /// Number of saved placements that matched registered runtime windows.
+    pub matched: usize,
+    /// Number of saved placements without a registered runtime window.
+    pub missing: usize,
+    /// Whether any saved placement is currently missing.
+    pub has_missing: bool,
+}
+
+/// One registered platform viewport lifecycle row.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DockingViewportLifecycleRow {
+    /// Stable target id matching the target tree entry for this viewport.
+    pub target_id: DevtoolsTargetId,
+    /// Deterministic index from the runtime status vector.
+    pub index: usize,
+    /// Logical dock space rendered by the viewport.
+    pub space: String,
+    /// GPUI window id currently bound to the dock space.
+    pub window_id: u64,
+    /// Stable route status label.
+    pub route_status: String,
+    /// Stable input status label.
+    pub input_status: String,
+    /// Whether the platform requested that this viewport should close.
+    pub close_requested: bool,
+    /// Whether the platform requested or reported an authoritative resize.
+    pub resize_requested: bool,
+    /// Latest lifecycle facts generation.
+    pub facts_generation: u64,
+    /// Display id for coordinate facts, when the backend supplied one.
+    pub display_id: Option<String>,
+    /// Coordinate space backing the latest viewport bounds.
+    pub coordinate_space: Option<String>,
+    /// Route-facts generation attached to the coordinate facts.
+    pub coordinate_facts_generation: Option<u64>,
+}
+
+/// One present optional runtime event row for route/drop/close/tear-off diagnostics.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DockingRuntimeEventRow {
+    /// Stable event id used by the DevTools event stream.
+    pub event_id: String,
+    /// Human-readable event label.
+    pub label: String,
+    /// Target that owns the event.
+    pub target_id: DevtoolsTargetId,
+    /// Domain that owns the event.
+    pub domain_id: DevtoolsDomainId,
+    /// Sanitized structured payload for the event.
+    pub payload: serde_json::Value,
+}
+
+/// One visual affordance diagnostic row published by a viewport host.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DockingVisualAffordanceRow {
+    /// Stable target id matching the visual-affordance target tree entry.
+    pub target_id: DevtoolsTargetId,
+    /// Deterministic index from the runtime status vector.
+    pub index: usize,
+    /// Logical dock space rendered by the host.
+    pub space: String,
+    /// GPUI window id that produced the diagnostic.
+    pub window_id: u64,
+    /// Dock space reported by the visual summary, when present.
+    pub summary_space: Option<String>,
+    /// Render-frame generation attached to the scene, when present.
+    pub frame_generation: Option<u64>,
+    /// Total number of visual affordance layers.
+    pub layer_count: usize,
+    /// Number of active visual affordance layers.
+    pub active_count: usize,
+    /// Stable id of the first active layer, when present.
+    pub active_layer_id: Option<String>,
+    /// Kind of the first active layer, when present.
+    pub active_layer_kind: Option<String>,
+    /// Scope of the first active layer, when present.
+    pub active_layer_scope: Option<String>,
+    /// State of the first active layer, when present.
+    pub active_layer_state: Option<String>,
+    /// Target node id of the first active layer, when present.
+    pub active_target_node: Option<u64>,
+    /// Drop zone of the first active layer, when present.
+    pub active_zone: Option<String>,
+    /// Drag payload index of the first active layer, when present.
+    pub active_payload_index: Option<usize>,
+    /// Whether the active layer carried a label that was intentionally not exported.
+    pub active_has_label: bool,
+    /// Current visual affordance motion executor state, when present.
+    pub motion_state: Option<String>,
+    /// Stable churn signature for visual-affordance retarget debugging.
+    pub churn_signature: String,
+}
 
 /// Converts a docking viewport runtime status into a target/domain/event capture.
 pub fn docking_runtime_capture(status: &DockViewportRuntimeStatus) -> DevtoolsCapture {
     let runtime_target_id = docking_runtime_target_id();
     let runtime_domain_id = docking_runtime_domain_id();
     let snapshot = docking_runtime_snapshot_envelope(status);
+    let diagnostics = docking_runtime_diagnostics(status);
 
     let mut targets = vec![
         DevtoolsTargetSnapshot::new(
@@ -154,7 +326,7 @@ pub fn docking_runtime_capture(status: &DockViewportRuntimeStatus) -> DevtoolsCa
             }),
     );
 
-    let domain = DevtoolsDomainSnapshot::new(
+    let mut domain = DevtoolsDomainSnapshot::new(
         runtime_domain_id,
         runtime_target_id,
         DevtoolsDomainKind::Docking,
@@ -162,13 +334,16 @@ pub fn docking_runtime_capture(status: &DockViewportRuntimeStatus) -> DevtoolsCa
     )
     .with_summary(runtime_summary_payload(status))
     .with_snapshot(snapshot.clone());
+    for diagnostic in diagnostics.iter().cloned() {
+        domain = domain.with_diagnostic(diagnostic);
+    }
 
     DevtoolsCapture::new(
         DevtoolsTargetTree::new(targets),
         [domain],
         events,
         [snapshot],
-        Vec::new(),
+        diagnostics,
     )
 }
 
@@ -192,14 +367,316 @@ pub fn docking_runtime_probe_snapshot(status: &DockViewportRuntimeStatus) -> Sna
         .with_redaction(SnapshotRedactionSummary::default())
 }
 
+/// Converts docking runtime status into structured rows for inspector/workbench UIs.
+pub fn docking_runtime_inspection(status: &DockViewportRuntimeStatus) -> DockingRuntimeInspection {
+    let runtime_target_id = docking_runtime_target_id();
+    let domain_id = docking_runtime_domain_id();
+    let runtime_events = docking_runtime_event_rows(status, &runtime_target_id, &domain_id);
+    let diagnostics = docking_runtime_diagnostics(status);
+    let summary =
+        DockingRuntimeSummary::from_status(status, runtime_events.len(), diagnostics.len());
+
+    DockingRuntimeInspection {
+        runtime_target_id,
+        domain_id,
+        summary,
+        platform_capabilities: status
+            .platform_capabilities
+            .map(DockingPlatformCapabilityRow::from),
+        placement_restore: status
+            .placement_restore
+            .map(DockingPlacementRestoreRow::from),
+        viewport_lifecycle: status
+            .viewport_lifecycle
+            .iter()
+            .enumerate()
+            .map(|(index, lifecycle)| DockingViewportLifecycleRow::from_lifecycle(index, lifecycle))
+            .collect(),
+        runtime_events,
+        visual_affordances: status
+            .visual_affordances
+            .iter()
+            .enumerate()
+            .map(|(index, affordance)| DockingVisualAffordanceRow::from_record(index, affordance))
+            .collect(),
+        diagnostics,
+    }
+}
+
+impl DockingRuntimeSummary {
+    fn from_status(
+        status: &DockViewportRuntimeStatus,
+        runtime_event_count: usize,
+        diagnostic_count: usize,
+    ) -> Self {
+        Self {
+            platform_capabilities_present: status.platform_capabilities.is_some(),
+            platform_viewport_windows: status
+                .platform_capabilities
+                .map(|capabilities| capabilities.platform_viewport_windows),
+            placement_restore_present: status.placement_restore.is_some(),
+            viewport_lifecycle_count: status.viewport_lifecycle.len(),
+            route_ready_count: status
+                .viewport_lifecycle
+                .iter()
+                .filter(|lifecycle| {
+                    matches!(lifecycle.route_status, DockViewportRouteStatus::RouteReady)
+                })
+                .count(),
+            stale_viewport_count: status
+                .viewport_lifecycle
+                .iter()
+                .filter(|lifecycle| {
+                    matches!(
+                        lifecycle.route_status,
+                        DockViewportRouteStatus::Stale { .. }
+                    )
+                })
+                .count(),
+            missing_route_facts_count: status
+                .viewport_lifecycle
+                .iter()
+                .filter(|lifecycle| {
+                    matches!(
+                        lifecycle.route_status,
+                        DockViewportRouteStatus::MissingRouteFacts
+                    )
+                })
+                .count(),
+            runtime_event_count,
+            visual_affordance_count: status.visual_affordances.len(),
+            diagnostic_count,
+        }
+    }
+}
+
+impl From<DockViewportPlatformCapabilityRecord> for DockingPlatformCapabilityRow {
+    fn from(capabilities: DockViewportPlatformCapabilityRecord) -> Self {
+        Self {
+            platform_viewport_windows: capabilities.platform_viewport_windows,
+            global_window_bounds: capabilities.global_window_bounds,
+            window_stack: capabilities.window_stack,
+            display_work_area: capabilities.display_work_area,
+            dpi_scale: capabilities.dpi_scale,
+            live_window_move: capabilities.live_window_move,
+            no_input_windows: capabilities.no_input_windows,
+            hovered_window_ignores_no_input: capabilities.hovered_window_ignores_no_input,
+        }
+    }
+}
+
+impl From<DockViewportRestoreReadinessRecord> for DockingPlacementRestoreRow {
+    fn from(restore: DockViewportRestoreReadinessRecord) -> Self {
+        Self {
+            matched: restore.matched,
+            missing: restore.missing,
+            has_missing: restore.missing > 0,
+        }
+    }
+}
+
+impl DockingViewportLifecycleRow {
+    fn from_lifecycle(index: usize, lifecycle: &DockViewportLifecycleRecord) -> Self {
+        Self {
+            target_id: lifecycle_target_id(index, lifecycle),
+            index,
+            space: sanitize_sensitive_text(lifecycle.space.as_str()),
+            window_id: lifecycle.window_id.as_u64(),
+            route_status: route_status_label(&lifecycle.route_status).to_owned(),
+            input_status: input_status_label(lifecycle.input_status).to_owned(),
+            close_requested: lifecycle.platform_request_status.close_requested,
+            resize_requested: lifecycle.platform_request_status.resize_requested,
+            facts_generation: lifecycle.facts_generation,
+            display_id: lifecycle
+                .coordinate_status
+                .as_ref()
+                .and_then(|status| status.display_id)
+                .map(|display_id| sanitize_sensitive_text(&format!("{display_id:?}"))),
+            coordinate_space: lifecycle
+                .coordinate_status
+                .as_ref()
+                .map(|status| sanitize_sensitive_text(&format!("{:?}", status.coordinate_space))),
+            coordinate_facts_generation: lifecycle
+                .coordinate_status
+                .as_ref()
+                .map(|status| status.facts_generation),
+        }
+    }
+}
+
+impl DockingVisualAffordanceRow {
+    fn from_record(index: usize, record: &DockViewportVisualAffordanceRecord) -> Self {
+        let active = record.summary.active.as_ref();
+
+        Self {
+            target_id: visual_affordance_target_id(index, record),
+            index,
+            space: sanitize_sensitive_text(record.space.as_str()),
+            window_id: record.window_id.as_u64(),
+            summary_space: record.summary.space.as_deref().map(sanitize_sensitive_text),
+            frame_generation: record.summary.frame_generation,
+            layer_count: record.summary.layer_count,
+            active_count: record.summary.active_count,
+            active_layer_id: active.map(|layer| sanitize_sensitive_text(&layer.id)),
+            active_layer_kind: active.map(|layer| sanitize_sensitive_text(&layer.kind)),
+            active_layer_scope: active.map(|layer| sanitize_sensitive_text(&layer.scope)),
+            active_layer_state: active.map(|layer| sanitize_sensitive_text(&layer.state)),
+            active_target_node: active.and_then(|layer| layer.target_node),
+            active_zone: active
+                .and_then(|layer| layer.zone.as_ref())
+                .map(|zone| sanitize_sensitive_text(&format!("{zone:?}"))),
+            active_payload_index: active.and_then(|layer| layer.payload_index),
+            active_has_label: active.is_some_and(|layer| layer.label.is_some()),
+            motion_state: record
+                .summary
+                .motion_state
+                .as_deref()
+                .map(sanitize_sensitive_text),
+            churn_signature: sanitize_sensitive_text(&record.summary.churn_signature),
+        }
+    }
+}
+
+fn docking_runtime_diagnostics(status: &DockViewportRuntimeStatus) -> Vec<SnapshotDiagnostic> {
+    let Some(capabilities) = status.platform_capabilities else {
+        return Vec::new();
+    };
+    if capabilities.platform_viewport_windows {
+        return Vec::new();
+    }
+
+    vec![SnapshotDiagnostic::new(
+        docking_runtime_probe_id(),
+        DOCKING_PLATFORM_VIEWPORT_WINDOWS_UNSUPPORTED,
+        "platform viewport windows are unsupported by current platform capabilities",
+    )]
+}
+
+fn docking_runtime_event_rows(
+    status: &DockViewportRuntimeStatus,
+    target_id: &DevtoolsTargetId,
+    domain_id: &DevtoolsDomainId,
+) -> Vec<DockingRuntimeEventRow> {
+    let mut rows = Vec::new();
+    push_optional_runtime_event_row(
+        &mut rows,
+        target_id,
+        domain_id,
+        "docking.last-route",
+        "Last viewport route",
+        status.last_route.as_ref().map(route_payload),
+    );
+    push_optional_runtime_event_row(
+        &mut rows,
+        target_id,
+        domain_id,
+        "docking.last-drop-outcome",
+        "Last drop outcome",
+        status.last_drop_outcome.as_ref().map(|outcome| {
+            serde_json::json!({
+                "kind": format!("{:?}", outcome.kind),
+                "has_action": outcome.action.is_some(),
+                "has_error": outcome.error.is_some(),
+                "action": outcome.action.map(|action| format!("{action:?}")),
+                "error": outcome.error.as_ref().map(|error| format!("{error:?}")),
+            })
+        }),
+    );
+    push_optional_runtime_event_row(
+        &mut rows,
+        target_id,
+        domain_id,
+        "docking.last-activation",
+        "Last activation",
+        status.last_activation.as_ref().map(|activation| {
+            serde_json::json!({
+                "space": activation.space.as_str(),
+                "window_id": activation.window_id.as_u64(),
+                "focus_request": format!("{:?}", activation.focus_request),
+            })
+        }),
+    );
+    push_optional_runtime_event_row(
+        &mut rows,
+        target_id,
+        domain_id,
+        "docking.last-close",
+        "Last close",
+        status.last_close.as_ref().map(|close| {
+            serde_json::json!({
+                "space": close.space().map(|space| space.as_str()),
+                "window_id": close.window_id().as_u64(),
+                "status": format!("{:?}", close.status()),
+            })
+        }),
+    );
+    push_optional_runtime_event_row(
+        &mut rows,
+        target_id,
+        domain_id,
+        "docking.last-should-close",
+        "Last should-close",
+        status.last_should_close.as_ref().map(|outcome| {
+            serde_json::json!({
+                "space": outcome.space.as_ref().map(|space| space.as_str()),
+                "window_id": outcome.window_id.as_u64(),
+                "status": format!("{:?}", outcome.status),
+                "allows_close": outcome.allows_close(),
+            })
+        }),
+    );
+    push_optional_runtime_event_row(
+        &mut rows,
+        target_id,
+        domain_id,
+        "docking.last-tear-off",
+        "Last tear-off",
+        status.last_tear_off.as_ref().map(tear_off_payload),
+    );
+    push_optional_runtime_event_row(
+        &mut rows,
+        target_id,
+        domain_id,
+        "docking.last-platform-sync",
+        "Last platform sync",
+        status
+            .last_platform_sync
+            .as_ref()
+            .map(platform_sync_payload),
+    );
+    rows
+}
+
+fn push_optional_runtime_event_row(
+    rows: &mut Vec<DockingRuntimeEventRow>,
+    target_id: &DevtoolsTargetId,
+    domain_id: &DevtoolsDomainId,
+    event_id: &'static str,
+    label: &'static str,
+    payload: Option<serde_json::Value>,
+) {
+    if let Some(payload) = payload {
+        rows.push(DockingRuntimeEventRow {
+            event_id: sanitize_sensitive_text(event_id),
+            label: sanitize_sensitive_text(label),
+            target_id: target_id.clone(),
+            domain_id: domain_id.clone(),
+            payload,
+        });
+    }
+}
+
 fn docking_runtime_snapshot_envelope(status: &DockViewportRuntimeStatus) -> SnapshotEnvelope {
     SnapshotEnvelope::new(
-        ProbeId::new(DOCKING_RUNTIME_PROBE_ID)
-            .expect("internal docking runtime probe id is non-empty"),
+        docking_runtime_probe_id(),
         SnapshotKind::Docking,
         docking_runtime_tree(status),
     )
     .with_redaction(SnapshotRedactionSummary::default())
+}
+
+fn docking_runtime_probe_id() -> ProbeId {
+    ProbeId::new(DOCKING_RUNTIME_PROBE_ID).expect("internal docking runtime probe id is non-empty")
 }
 
 fn docking_runtime_tree(status: &DockViewportRuntimeStatus) -> SnapshotTree {
