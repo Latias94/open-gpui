@@ -263,3 +263,140 @@ fn devtools_gallery_does_not_keep_static_demo_snapshot_builders() {
     assert!(source.contains("DevtoolsRegistry::default()"));
     assert!(source.contains("register_capture_provider_fn"));
 }
+
+#[open_gpui::test]
+fn devtools_gallery_smoke_clicks_inspector_rows_and_actions(cx: &mut open_gpui::TestAppContext) {
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Devtools);
+    let inspector = cx.update(|_, app| shell.read(app).devtools_inspector().clone());
+
+    assert!(
+        cx.debug_bounds("devtools-inspector:gallery-devtools-inspector:root")
+            .is_some(),
+        "expected the stateful DevTools inspector controller to render on the gallery page"
+    );
+
+    scroll_page_selector_into_view(&shell, cx, "devtools-inspector:row:resource");
+    click(cx, "devtools-inspector:row:resource");
+    let (selected_probe, active_detail_kind, feedback) = cx.update(|_, app| {
+        let inspector = inspector.read(app);
+        (
+            inspector
+                .state()
+                .selected_probe_id()
+                .map(|probe_id| probe_id.as_str().to_owned()),
+            inspector.state().active_detail_kind(),
+            inspector.feedback_label().map(ToString::to_string),
+        )
+    });
+    assert_eq!(selected_probe.as_deref(), Some("resource"));
+    assert_eq!(
+        active_detail_kind,
+        Some(open_gpui_devtools::DevtoolsInspectorDetailKind::LegacySnapshot)
+    );
+    assert_eq!(
+        feedback.as_deref(),
+        Some("Selected snapshot resource"),
+        "expected clicking a legacy snapshot row to update controller feedback"
+    );
+
+    scroll_page_selector_into_view(&shell, cx, "devtools-inspector:copy-detail");
+    click(cx, "devtools-inspector:copy-detail");
+    let feedback = cx.update(|_, app| {
+        inspector
+            .read(app)
+            .feedback_label()
+            .map(ToString::to_string)
+    });
+    assert_eq!(feedback.as_deref(), Some("Selected detail JSON copied"));
+
+    scroll_page_selector_into_view(&shell, cx, "devtools-inspector:target:probe.form");
+    click(cx, "devtools-inspector:target:probe.form");
+    let (selected_target, active_detail_kind, feedback) = cx.update(|_, app| {
+        let inspector = inspector.read(app);
+        (
+            inspector
+                .state()
+                .selected_target_id()
+                .map(|target_id| target_id.as_str().to_owned()),
+            inspector.state().active_detail_kind(),
+            inspector.feedback_label().map(ToString::to_string),
+        )
+    });
+    assert_eq!(selected_target.as_deref(), Some("probe.form"));
+    assert_eq!(
+        active_detail_kind,
+        Some(open_gpui_devtools::DevtoolsInspectorDetailKind::DomainSnapshot)
+    );
+    assert_eq!(
+        feedback.as_deref(),
+        Some("Selected target probe.form"),
+        "expected target row click feedback before selecting its visible domain"
+    );
+
+    let form_domain_selector = cx.update(|_, app| {
+        inspector
+            .read(app)
+            .state()
+            .domain_rows()
+            .into_iter()
+            .find(|row| row.label == "form")
+            .map(|row| format!("devtools-inspector:domain:{}", row.domain_id.as_str()))
+            .expect("expected form domain row")
+    });
+    scroll_page_selector_into_view(&shell, cx, &form_domain_selector);
+    click(cx, &form_domain_selector);
+    let (selected_domain, active_detail_kind, feedback) = cx.update(|_, app| {
+        let inspector = inspector.read(app);
+        (
+            inspector
+                .state()
+                .selected_domain_id()
+                .map(|domain_id| domain_id.as_str().to_owned()),
+            inspector.state().active_detail_kind(),
+            inspector.feedback_label().map(ToString::to_string),
+        )
+    });
+    assert!(
+        selected_domain
+            .as_deref()
+            .is_some_and(|domain_id| domain_id.contains("form")),
+        "expected clicking the form domain row to select the form domain, got {selected_domain:?}"
+    );
+    assert_eq!(
+        active_detail_kind,
+        Some(open_gpui_devtools::DevtoolsInspectorDetailKind::DomainSnapshot)
+    );
+    assert!(
+        feedback
+            .as_deref()
+            .is_some_and(|label| label.starts_with("Selected domain ")),
+        "expected domain click feedback, got {feedback:?}"
+    );
+
+    scroll_page_selector_into_view(&shell, cx, "devtools-inspector:event:0");
+    click(cx, "devtools-inspector:event:0");
+    let (selected_event, active_detail_kind, feedback) = cx.update(|_, app| {
+        let inspector = inspector.read(app);
+        (
+            inspector.state().selected_event_sequence(),
+            inspector.state().active_detail_kind(),
+            inspector.feedback_label().map(ToString::to_string),
+        )
+    });
+    assert_eq!(selected_event, Some(0));
+    assert_eq!(
+        active_detail_kind,
+        Some(open_gpui_devtools::DevtoolsInspectorDetailKind::Event)
+    );
+    assert_eq!(feedback.as_deref(), Some("Selected event #0"));
+
+    scroll_page_selector_into_view(&shell, cx, "devtools-inspector:export-capture");
+    click(cx, "devtools-inspector:export-capture");
+    let feedback = cx.update(|_, app| {
+        inspector
+            .read(app)
+            .feedback_label()
+            .map(ToString::to_string)
+    });
+    assert_eq!(feedback.as_deref(), Some("DevTools capture JSON exported"));
+}
