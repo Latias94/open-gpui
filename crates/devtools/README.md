@@ -28,6 +28,14 @@ mutation and live property editing are intentionally out of scope for the initia
   panicking.
 - `DevtoolsCapture` is the rich local protocol output. It contains a target tree, domain outputs,
   bounded event records, compatibility snapshots, and diagnostics.
+- `DevtoolsSession` wraps a registry with bounded local history, monotonic generations, and
+  `DevtoolsSessionFrame` records. Refreshing a session collects a sanitized capture and computes
+  a sanitized diff from the previous retained frame.
+- `DevtoolsCaptureDiff` compares sanitized targets, domains, events, snapshots, and diagnostics.
+  Redaction-induced identity collisions are explicit diff rows and never overwrite another row.
+- `DevtoolsSessionExport` is the offline replay/import envelope. Replay means loading already
+  captured local frames into inspector state after schema, protocol, history, size, and event-count
+  validation. It is not a remote transport and does not mutate application state.
 - `DevtoolsTargetSnapshot`, `DevtoolsDomainSnapshot`, and `DevtoolsEventRecord` are serializable
   DTOs for target/domain/event inspection. They are local read-only facts, not a remote debugging
   bridge or Chrome DevTools Protocol clone.
@@ -48,11 +56,15 @@ mutation and live property editing are intentionally out of scope for the initia
   without resetting the append sequence.
 - `timeline` exposes renderer-neutral bounded event snapshots and timeline-domain capture helpers.
 - `layout` exposes renderer-neutral committed geometry snapshots and layout-domain capture helpers.
-- `docking` exposes capture-first runtime diagnostics and a capture provider constructor when
-  public docking status records are available.
+- `docking` exposes capture-first runtime diagnostics, structured multi-viewport inspection rows,
+  explicit capability diagnostics, and a capture provider constructor when public docking status
+  records are available.
+- `gpui` exposes metadata-only `GpuiRuntimeSnapshot` adapters for app/window/focus/input/frame and
+  scroll facts. Raw user input, clipboard payloads, editable text values, unredacted titles, and
+  accessibility labels do not belong in runtime metadata.
 - `DevtoolsInspectorState` provides filter, selection, category summaries, row projection,
-  target/domain/event navigation, diagnostics, selected-detail JSON, and legacy snapshot export
-  without requiring a GPUI window.
+  session-frame loading, diff rows, target/domain/event navigation, diagnostics, selected-detail
+  JSON, and legacy snapshot export without requiring a GPUI window.
 - `DevtoolsInspector` is available only with the `gpui` feature and renders a static read-only
   local inspector with existing UI components.
 - `DevtoolsInspectorController` is available only with the `gpui` feature and owns interactive
@@ -128,6 +140,28 @@ Feature-gated adapters provide capture helpers such as `command_registry_capture
 `resource_capture`, `layout_capture`, and `timeline_capture`. The GPUI inspector consumes the same
 state model but does not mutate application state.
 
+## Sessions, Diffs, And Replay
+
+Use `DevtoolsSession` when an inspector needs to answer what changed after a local runtime action.
+The session owns only a local registry and a bounded in-memory frame history:
+
+```rust
+use open_gpui_devtools::{DevtoolsRegistry, DevtoolsSession};
+
+let registry = DevtoolsRegistry::default();
+let mut session = DevtoolsSession::new("local.devtools", registry).with_history_limit(4);
+let first = session.refresh()?;
+let second = session.refresh()?;
+assert_eq!(first.generation, 1);
+assert_eq!(second.previous_generation, Some(1));
+assert!(second.diff_from_previous.is_some());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Session export/import is an offline replay path for already-sanitized local frames. Import validates
+schema, protocol, history bounds, JSON size, and per-frame event count before rebuilding canonical
+diffs. It deliberately has no network transport, no remote debugging protocol, and no mutation API.
+
 With the `form` feature enabled, convert a public form snapshot directly:
 
 ```rust
@@ -198,22 +232,28 @@ cargo check -p open-gpui-devtools --features form,resource --tests --locked
 cargo check -p open-gpui-devtools --features gpui,motion,docking --tests --locked
 cargo check -p open-gpui-devtools --all-features --tests --locked
 cargo nextest run -p open-gpui-devtools --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --all-features --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --test inspector_contracts --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --test session_contracts --test diff_contracts --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features command --test command_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features motion timeline --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features gpui layout --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features form,resource form_resource_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features gpui,motion,docking framework_adapters --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --features docking --test docking_runtime_contracts --no-fail-fast --locked
 ```
 
 When changing the gallery inspector surface, also run:
 
 ```sh
 cargo nextest run -p open-gpui-ui-foundation-gallery devtools --no-fail-fast --locked
+cargo check -p open-gpui-docking-native --tests --locked
+cargo nextest run -p open-gpui-docking-native runtime_status_panel_exports_devtools_dogfood_capture --no-fail-fast --locked
 cargo run -p open-gpui-ui-foundation-gallery -- --page devtools
 ```
 
-The gallery DevTools page dogfoods the capture path through `devtools_gallery_capture()` and keeps
-`devtools_gallery_collection()` as the legacy snapshot view. Keep future gallery probes
-registry-backed or capture-backed; do not reintroduce static DevTools snapshot builders for the page
-itself.
+The gallery DevTools page dogfoods the session path through `devtools_gallery_session_frame()` and
+keeps `devtools_gallery_capture()` plus `devtools_gallery_collection()` as compatibility views. The
+native docking example dogfoods `docking_runtime_inspection()` over real runtime status. Keep future
+gallery probes registry-backed or capture-backed; do not reintroduce static DevTools snapshot
+builders for the page itself.

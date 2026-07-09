@@ -59,6 +59,33 @@ cargo run -p xtask -- verify-release-docs --version <version> --notes-output tar
 
 `verify-release-docs` checks the target changelog section, rejects manually wrapped changelog bullets and paragraphs, validates user-facing README dependency versions, and requires crate-local README metadata for public entry crates. Daily verification checks `docs/release/breaking-changes.md` against `CHANGELOG.md` `[Unreleased]`; release-note generation checks the same inventory against the selected version section because that is the text published to GitHub Releases. `scan-doc-links` checks strict user-facing relative links in root docs, release docs, verification docs, ADR index, and public crate READMEs. Historical plans and engineering logs are intentionally outside the strict link gate until they are archived or indexed.
 
+For the 2026-07 DevTools live runtime workbench slice, the focused local gates are:
+
+```powershell
+cargo fmt -p open-gpui-devtools -p open-gpui-ui-foundation-gallery -p open-gpui-docking-native
+cargo check -p open-gpui-devtools --no-default-features --tests --locked
+cargo check -p open-gpui-devtools --features gpui --tests --locked
+cargo check -p open-gpui-devtools --features docking --tests --locked
+cargo check -p open-gpui-devtools --all-features --tests --locked
+$env:CARGO_BUILD_JOBS = '1'; cargo nextest run -p open-gpui-devtools --all-features --no-fail-fast --locked
+cargo check -p open-gpui-ui-foundation-gallery --tests --locked
+cargo nextest run -p open-gpui-ui-foundation-gallery devtools --no-fail-fast --locked
+cargo check -p open-gpui-docking-native --tests --locked
+cargo nextest run -p open-gpui-docking-native runtime_status_panel_exports_devtools_dogfood_capture --no-fail-fast --locked
+rg "fn (theme_snapshot|form_snapshot|resource_snapshot|docking_snapshot)" examples/ui-foundation-gallery/src/pages/devtools.rs
+cargo run -p xtask -- scan-doc-links
+cargo run -p xtask -- scan-public-api --check
+git diff --check
+```
+
+The `rg` static-builder guard should return no matches. DevTools session replay is local/offline
+only: imports validate schema, protocol, bounded history, JSON size, and event counts before
+recomputing diffs, and they do not introduce remote transport or mutation APIs. GPUI runtime
+metadata is intentionally narrow: app/window/focus/input/frame/scroll counters and geometry are
+allowed, while raw user input, clipboard payloads, editable text values, unredacted window titles,
+and accessibility labels remain outside the capture contract. Docking runtime facts must come from
+public `DockViewportRuntimeStatus` records; missing private facts are not inferred.
+
 For the 2026-07 scroll viewport and wheel-input intent slice, the core contract is that tracked
 scroll surfaces emit committed post-layout viewport facts, typed wheel intent controls default
 scrolling and propagation, and focus-on-wheel is opt-in rather than implicit. The focused local
