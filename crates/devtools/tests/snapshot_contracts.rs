@@ -222,6 +222,31 @@ fn registry_reports_capture_provider_failures_as_diagnostics() {
 }
 
 #[test]
+fn registry_provider_only_capture_does_not_add_empty_legacy_app_target() {
+    let mut registry = DevtoolsRegistry::default();
+    registry
+        .register_capture_provider_fn("provider.command", || {
+            Ok(provider_capture(
+                "runtime.command",
+                DevtoolsDomainKind::Command,
+                "command.registry.changed",
+            ))
+        })
+        .unwrap();
+
+    let capture = registry.collect_capture();
+    let target_ids = capture
+        .targets
+        .targets
+        .iter()
+        .map(|target| target.id.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(target_ids, ["runtime.command"]);
+    assert!(capture.diagnostics.is_empty());
+}
+
+#[test]
 fn registry_rejects_duplicate_capture_provider_identity() {
     let mut registry = DevtoolsRegistry::default();
     registry

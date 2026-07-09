@@ -61,13 +61,24 @@ pub fn devtools_gallery_state() -> DevtoolsInspectorState {
 
 /// Returns the deterministic target/domain/event capture used by the gallery.
 pub fn devtools_gallery_capture() -> DevtoolsCapture {
+    let mut registry = DevtoolsRegistry::default();
+    registry
+        .register_capture_provider_fn("gallery.devtools", || {
+            Ok(devtools_gallery_provider_capture())
+        })
+        .expect("unique gallery devtools capture provider");
+
+    registry.collect_capture()
+}
+
+fn devtools_gallery_provider_capture() -> DevtoolsCapture {
     let collection = devtools_gallery_legacy_collection();
     let base_capture = DevtoolsCapture::from_snapshot_collection(collection);
     let timeline_probe_id = ProbeId::new("timeline.motion-frame").expect("valid timeline probe id");
     let timeline_target_id = DevtoolsTargetId::from_probe_id(&timeline_probe_id);
     let timeline_domain_id =
         DevtoolsDomainId::from_probe_snapshot(&timeline_probe_id, &SnapshotKind::Timeline);
-    let mut recorder = DevtoolsEventRecorder::with_capacity(16);
+    let mut recorder = DevtoolsEventRecorder::new("gallery.devtools", "Gallery DevTools", 16);
     recorder.record(
         DevtoolsEventRecord::new(
             "gallery.motion-frame-demand",

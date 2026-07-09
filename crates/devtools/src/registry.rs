@@ -123,7 +123,11 @@ impl DevtoolsRegistry {
 
     /// Collects a target/domain/event capture while preserving legacy snapshots.
     pub fn collect_capture(&self) -> DevtoolsCapture {
-        let legacy_capture = DevtoolsCapture::from_snapshot_collection(self.collect());
+        let legacy_capture = if self.probes.is_empty() {
+            DevtoolsCapture::default()
+        } else {
+            DevtoolsCapture::from_snapshot_collection(self.collect())
+        };
         let mut targets = legacy_capture.targets.targets;
         let mut domains = legacy_capture.domains;
         let mut events = legacy_capture.events;

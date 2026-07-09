@@ -82,6 +82,18 @@ fn devtools_gallery_capture_projects_targets_domains_and_events() {
             .iter()
             .any(|event| event.id() == "gallery.motion-frame-demand")
     );
+    assert!(
+        capture
+            .events
+            .iter()
+            .any(|event| event.scope_id_ref() == Some("gallery.devtools"))
+    );
+    assert!(
+        !capture
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.starts_with("capture.duplicate_"))
+    );
     assert_eq!(capture.snapshot_collection().snapshots.len(), 10);
 }
 
@@ -249,4 +261,5 @@ fn devtools_gallery_does_not_keep_static_demo_snapshot_builders() {
     assert!(!source.contains("fn docking_snapshot"));
     assert!(source.contains("DevtoolsCapture::from_snapshot_collection"));
     assert!(source.contains("DevtoolsRegistry::default()"));
+    assert!(source.contains("register_capture_provider_fn"));
 }
