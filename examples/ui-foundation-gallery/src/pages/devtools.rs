@@ -15,11 +15,12 @@ use open_gpui_command::{
     CommandKeymapResolution, CommandRegistrySnapshot, GpuiCommandActionMap,
 };
 use open_gpui_devtools::{
-    DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsEventKind, DevtoolsEventRecord,
-    DevtoolsEventRecorder, DevtoolsInspectorState, DevtoolsRegistry, DevtoolsSession,
-    DevtoolsSessionError, DevtoolsSessionExport, DevtoolsSessionFrame, DevtoolsTargetId,
-    DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsWorkbench, DevtoolsWorkbenchRefreshStatus,
-    ProbeId, SnapshotCollection, SnapshotDiagnostic, SnapshotKind,
+    DevtoolsArtifact, DevtoolsArtifactMetadata, DevtoolsArtifactRecord, DevtoolsCapture,
+    DevtoolsDomainId, DevtoolsDomainKind, DevtoolsEventKind, DevtoolsEventRecord,
+    DevtoolsEventRecorder, DevtoolsInspectorState, DevtoolsRegistry, DevtoolsReport,
+    DevtoolsSession, DevtoolsSessionError, DevtoolsSessionExport, DevtoolsSessionFrame,
+    DevtoolsTargetId, DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsWorkbench,
+    DevtoolsWorkbenchRefreshStatus, ProbeId, SnapshotCollection, SnapshotDiagnostic, SnapshotKind,
     adapters::sanitize_sensitive_text, command as devtools_command, form, gpui, motion, resource,
     ui_components,
 };
@@ -56,6 +57,12 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_devtools::motion::motion_frame_demand_probe_snapshot",
     "open_gpui_devtools::motion::motion_frame_demand_timeline_probe_snapshot",
 ];
+
+/// Producer id used by deterministic Gallery headless artifacts.
+pub const DEVTOOLS_GALLERY_ARTIFACT_PRODUCER_ID: &str = "ui-foundation-gallery.devtools";
+/// Scenario id used by deterministic Gallery headless artifacts.
+pub const DEVTOOLS_GALLERY_ARTIFACT_SCENARIO_ID: &str = "gallery.devtools.headless";
+const DEVTOOLS_GALLERY_ARTIFACT_TIMESTAMP_MS: u64 = 1_725_000_000_000;
 
 actions!(
     gallery_devtools_command,
@@ -264,6 +271,51 @@ pub fn devtools_gallery_session_export() -> DevtoolsSessionExport {
         .refresh()
         .expect("gallery devtools session second refresh succeeds");
     session.export()
+}
+
+/// Deterministic headless Gallery artifacts used by fixtures and CLI contract tests.
+#[derive(Clone, Debug)]
+pub struct GalleryDevtoolsHeadlessArtifacts {
+    /// Sanitized two-frame Gallery session export.
+    pub session_export: DevtoolsSessionExport,
+    /// Report derived from the current Gallery session frame.
+    pub report: DevtoolsReport,
+    /// Artifact record wrapping the session export.
+    pub session_record: DevtoolsArtifactRecord,
+    /// Artifact record wrapping the report.
+    pub report_record: DevtoolsArtifactRecord,
+}
+
+/// Builds deterministic Gallery DevTools artifacts without launching a GUI window.
+pub fn devtools_gallery_headless_artifacts() -> GalleryDevtoolsHeadlessArtifacts {
+    let session_export = devtools_gallery_session_export();
+    let report = DevtoolsReport::from_session_export(&session_export);
+    let session_record = DevtoolsArtifactRecord::new(
+        devtools_gallery_artifact_metadata(0, "fixture-session"),
+        DevtoolsArtifact::session_export(&session_export),
+    );
+    let report_record = DevtoolsArtifactRecord::new(
+        devtools_gallery_artifact_metadata(1, "fixture-report"),
+        DevtoolsArtifact::report(&report),
+    );
+
+    GalleryDevtoolsHeadlessArtifacts {
+        session_export,
+        report,
+        session_record,
+        report_record,
+    }
+}
+
+fn devtools_gallery_artifact_metadata(
+    sequence: u64,
+    flush_reason: &str,
+) -> DevtoolsArtifactMetadata {
+    DevtoolsArtifactMetadata::new(DEVTOOLS_GALLERY_ARTIFACT_PRODUCER_ID)
+        .scenario_id(DEVTOOLS_GALLERY_ARTIFACT_SCENARIO_ID)
+        .sequence(sequence)
+        .flush_reason(flush_reason)
+        .timestamp_ms(DEVTOOLS_GALLERY_ARTIFACT_TIMESTAMP_MS + sequence)
 }
 
 fn devtools_gallery_session() -> DevtoolsSession {

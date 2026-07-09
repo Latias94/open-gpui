@@ -1,5 +1,7 @@
 use super::*;
-use open_gpui_devtools::{DevtoolsDiffKind, DevtoolsDiffStatus};
+use open_gpui_devtools::{
+    DevtoolsArtifactJsonlSink, DevtoolsArtifactSink, DevtoolsDiffKind, DevtoolsDiffStatus,
+};
 
 #[test]
 fn devtools_gallery_collects_registry_backed_snapshots() {
@@ -154,6 +156,75 @@ fn devtools_gallery_session_frame_exposes_history_and_diff() {
 }
 
 #[test]
+fn devtools_gallery_headless_artifacts_use_artifact_records() {
+    let artifacts = pages::devtools::devtools_gallery_headless_artifacts();
+    let mut sink = DevtoolsArtifactJsonlSink::new(Vec::new());
+
+    sink.write_record(&artifacts.session_record)
+        .expect("session artifact record writes");
+    sink.write_record(&artifacts.report_record)
+        .expect("report artifact record writes");
+
+    let jsonl = String::from_utf8(sink.into_inner()).expect("artifact JSONL is utf8");
+    let lines = jsonl.lines().collect::<Vec<_>>();
+
+    assert_eq!(artifacts.session_export.current_generation, Some(2));
+    assert_eq!(artifacts.report.source.generation, Some(2));
+    assert_eq!(
+        artifacts.session_record.metadata.producer_id,
+        pages::devtools::DEVTOOLS_GALLERY_ARTIFACT_PRODUCER_ID
+    );
+    assert_eq!(
+        artifacts.session_record.metadata.scenario_id.as_deref(),
+        Some(pages::devtools::DEVTOOLS_GALLERY_ARTIFACT_SCENARIO_ID)
+    );
+    assert_eq!(artifacts.session_record.metadata.generation, Some(2));
+    assert_eq!(artifacts.report_record.metadata.generation, Some(2));
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].contains("\"artifact_kind\":\"session-export\""));
+    assert!(lines[1].contains("\"artifact_kind\":\"report\""));
+}
+
+#[test]
+fn devtools_gallery_headless_fixtures_match_producer_output() {
+    let artifacts = pages::devtools::devtools_gallery_headless_artifacts();
+
+    assert_fixture_matches(
+        "gallery-session.json",
+        &serde_json::to_string_pretty(&artifacts.session_export).unwrap(),
+    );
+    assert_fixture_matches(
+        "gallery-report.json",
+        &serde_json::to_string_pretty(&artifacts.report).unwrap(),
+    );
+}
+
+#[test]
+#[ignore = "regenerates checked-in DevTools fixtures"]
+fn regenerate_devtools_gallery_headless_fixtures() {
+    let artifacts = pages::devtools::devtools_gallery_headless_artifacts();
+    let fixture_dir = gallery_fixture_dir();
+
+    std::fs::create_dir_all(&fixture_dir).expect("fixture directory can be created");
+    std::fs::write(
+        fixture_dir.join("gallery-session.json"),
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&artifacts.session_export).unwrap()
+        ),
+    )
+    .expect("gallery session fixture can be written");
+    std::fs::write(
+        fixture_dir.join("gallery-report.json"),
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&artifacts.report).unwrap()
+        ),
+    )
+    .expect("gallery report fixture can be written");
+}
+
+#[test]
 fn devtools_gallery_workbench_refreshes_from_shell_live_facts() {
     let mut workbench = pages::devtools::GalleryDevtoolsWorkbench::new(
         pages::devtools::GalleryDevtoolsLiveFacts::new(
@@ -198,6 +269,28 @@ fn devtools_gallery_workbench_refreshes_from_shell_live_facts() {
     assert!(!sensitive_json.contains("/Users/alice"));
     assert!(!sensitive_json.contains("secret"));
     assert!(workbench.retained_frames() <= workbench.history_limit());
+}
+
+fn assert_fixture_matches(name: &str, actual: &str) {
+    let expected = std::fs::read_to_string(gallery_fixture_dir().join(name))
+        .unwrap_or_else(|error| panic!("failed to read fixture {name}: {error}"));
+    assert_eq!(normalize_json(&expected), normalize_json(actual));
+}
+
+fn gallery_fixture_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("gallery crate is under examples")
+        .parent()
+        .expect("examples has a workspace parent")
+        .join("crates")
+        .join("devtools")
+        .join("tests")
+        .join("fixtures")
+}
+
+fn normalize_json(value: &str) -> String {
+    value.replace("\r\n", "\n").trim_end().to_owned()
 }
 
 #[test]

@@ -1,0 +1,40 @@
+{
+  "schema_version": "open-gpui-devtools-report/v1",
+  "source": {
+    "kind": "session-export",
+    "session_id": "gallery.devtools",
+    "generation": 2,
+    "previous_generation": 1,
+    "retained_frames": 2
+  },
+  "summary": {
+    "target_count": 15,
+    "domain_count": 12,
+    "event_count": 4,
+    "snapshot_count": 11,
+    "diagnostic_count": 1,
+    "redacted_value_count": 7,
+    "diff_row_count": 43,
+    "added_diff_rows": 0,
+    "removed_diff_rows": 0,
+    "changed_diff_rows": 9,
+    "collision_diff_rows": 0,
+    "finding_count": 1,
+    "error_count": 0,
+    "warning_count": 1,
+    "info_count": 0
+  },
+  "findings": [
+    {
+      "id": "capture-diagnostic.runtime.unavailable",
+      "severity": "warning",
+      "category": "capture-diagnostic",
+      "title": "runtime.unavailable",
+      "message": "docking runtime is not mounted in this gallery page",
+      "target_id": null,
+      "domain_id": null,
+      "event_identity": null,
+      "recommendation": "Inspect the producer that emitted this DevTools diagnostic."
+    }
+  ]
+}
