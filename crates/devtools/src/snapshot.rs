@@ -32,6 +32,8 @@ pub enum SnapshotKind {
     Resource,
     /// Probe diagnostic state.
     Diagnostic,
+    /// Command registry, keybinding, and keymap resolution state.
+    Command,
     /// Custom app-provided snapshot.
     Custom(String),
 }
@@ -51,6 +53,7 @@ impl SnapshotKind {
             Self::Form => Cow::Borrowed("form"),
             Self::Resource => Cow::Borrowed("resource"),
             Self::Diagnostic => Cow::Borrowed("diagnostic"),
+            Self::Command => Cow::Borrowed("command"),
             Self::Custom(label) => Cow::Owned(sanitize_sensitive_text(label)),
         }
     }
@@ -82,9 +85,10 @@ impl Serialize for SnapshotKind {
             Self::Form => serializer.serialize_unit_variant("SnapshotKind", 8, "Form"),
             Self::Resource => serializer.serialize_unit_variant("SnapshotKind", 9, "Resource"),
             Self::Diagnostic => serializer.serialize_unit_variant("SnapshotKind", 10, "Diagnostic"),
+            Self::Command => serializer.serialize_unit_variant("SnapshotKind", 11, "Command"),
             Self::Custom(label) => serializer.serialize_newtype_variant(
                 "SnapshotKind",
-                11,
+                12,
                 "Custom",
                 &sanitize_sensitive_text(label),
             ),
@@ -110,6 +114,7 @@ impl<'de> Deserialize<'de> for SnapshotKind {
             Form,
             Resource,
             Diagnostic,
+            Command,
             Custom(String),
         }
 
@@ -125,6 +130,7 @@ impl<'de> Deserialize<'de> for SnapshotKind {
             SnapshotKindValue::Form => Self::Form,
             SnapshotKindValue::Resource => Self::Resource,
             SnapshotKindValue::Diagnostic => Self::Diagnostic,
+            SnapshotKindValue::Command => Self::Command,
             SnapshotKindValue::Custom(label) => Self::Custom(sanitize_sensitive_text(&label)),
         })
     }

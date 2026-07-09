@@ -10,6 +10,7 @@ do not depend on GPUI. Optional features connect specialized panels and GPUI UI 
 - `ui-components` for theme and accessibility contract snapshots.
 - `motion` for `open-gpui-motion` frame-demand snapshots.
 - `docking` for `open-gpui-docking` runtime diagnostics.
+- `command` for `open-gpui-command` registry, keybinding, and keymap-resolution snapshots.
 - `gpui` for core GPUI scroll snapshots and native inspector UI elements. It also enables
   `ui-components` because the inspector UI uses component primitives.
 
@@ -28,6 +29,8 @@ mutation and live property editing are intentionally out of scope for the initia
   labels.
 - `form` and `resource` expose feature-gated first-party adapters that consume public headless
   snapshots without making source crates depend on devtools.
+- `command` exposes feature-gated adapters for command registries, keybinding projections,
+  projection diagnostics, shortcut conflicts, and keymap resolution.
 - `DevtoolsInspectorState` provides filter, selection, row projection, diagnostics, and JSON export
   without requiring a GPUI window.
 - `DevtoolsInspector` is available only with the `gpui` feature and renders a read-only local
@@ -119,9 +122,11 @@ For focused devtools changes, run:
 ```sh
 cargo fmt -p open-gpui-devtools
 cargo check -p open-gpui-devtools --tests --locked
+cargo check -p open-gpui-devtools --features command --tests --locked
 cargo check -p open-gpui-devtools --features form,resource --tests --locked
 cargo check -p open-gpui-devtools --features gpui,motion,docking --tests --locked
 cargo nextest run -p open-gpui-devtools --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --features command --test command_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features form,resource form_resource_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features gpui,motion,docking framework_adapters --no-fail-fast --locked
 ```

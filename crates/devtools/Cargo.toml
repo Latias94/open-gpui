@@ -16,6 +16,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
+command = ["dep:open_gpui_command"]
 docking = ["dep:open_gpui_docking"]
 form = ["dep:open_gpui_form"]
 gpui = ["dep:open_gpui", "ui-components"]
@@ -25,6 +26,7 @@ ui-components = ["dep:open_gpui_ui_components"]
 
 [dependencies]
 open_gpui = { workspace = true, optional = true }
+open_gpui_command = { workspace = true, optional = true }
 open_gpui_docking = { workspace = true, optional = true }
 open_gpui_form = { workspace = true, optional = true }
 open_gpui_motion = { workspace = true, optional = true }
@@ -33,6 +35,9 @@ open_gpui_ui_components = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+open_gpui = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true
