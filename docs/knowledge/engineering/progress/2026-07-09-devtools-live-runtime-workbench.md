@@ -21,6 +21,7 @@ Implemented the DevTools live runtime workbench plan through five reviewable com
 - `934239ec` added session-frame/diff projections to inspector state and the GPUI inspector controller.
 - `6f72b9c7` added docking runtime inspection rows, explicit platform capability diagnostics, and GPUI runtime metadata capture.
 - `e7c8e6cd` switched Gallery DevTools to a deterministic two-refresh session workbench and added docking-native dogfood capture.
+- The merge with remote `84fccaf9` added Gallery click dogfood coverage; resolving it moved GPUI event row debug selectors from sequence-only ids to `DevtoolsEventIdentity::as_key()` so same-sequence events across scopes remain clickable.
 
 # Durable Decisions
 
@@ -29,6 +30,7 @@ Implemented the DevTools live runtime workbench plan through five reviewable com
 - GPUI runtime instrumentation is devtools-owned metadata. Apps fill `GpuiRuntimeSnapshot` from public facts; raw text input, clipboard payloads, unredacted titles, and accessibility labels stay outside the contract.
 - Docking DevTools consumes public `DockViewportRuntimeStatus` records. Missing private facts are not inferred; unsupported platform viewport windows become diagnostics only when the public capability record is present.
 - Gallery keeps `devtools_gallery_capture()` and `devtools_gallery_collection()` compatibility, but the primary state now comes from `devtools_gallery_session_frame()`.
+- GPUI event row debug selectors must use event identity keys, not sequence numbers. Session-backed captures can contain multiple events with `sequence=0` from different producers.
 
 # Current Surface
 

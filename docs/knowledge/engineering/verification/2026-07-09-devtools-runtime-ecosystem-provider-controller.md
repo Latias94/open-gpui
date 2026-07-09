@@ -1,8 +1,9 @@
 ---
 type: Verification Evidence
 title: DevTools runtime ecosystem provider controller verification
-timestamp: 2026-07-09
+timestamp: 2026-07-09T06:54:18Z
 status: passed
+git_branch: main
 related_plan: ../../../plans/2026-07-09-003-refactor-devtools-runtime-ecosystem-plan.md
 tags:
   - devtools
@@ -59,3 +60,5 @@ Focused gates run during the implementation:
 ## Follow-Up Risk
 
 The GPUI controller includes real click handlers and clipboard actions, but the gallery visual test harness did not reliably dispatch simulated clicks into this entity subtree during this run. State command contracts cover selection/copy/export behavior, and package checks cover the GPUI wiring. A future dogfood pass should add a harness-level click test once the event dispatch route is understood.
+
+Resolved later on 2026-07-09 by `docs/knowledge/engineering/verification/2026-07-09-devtools-inspector-click-dogfood.md`, which adds a gallery-level click smoke that verifies rendered row/action selectors update the stateful controller entity.

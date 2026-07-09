@@ -23,7 +23,7 @@ Final focused verification on Windows / PowerShell passed:
 - `cargo check -p open-gpui-devtools --all-features --tests --locked`
 - `$env:CARGO_BUILD_JOBS = '1'; cargo nextest run -p open-gpui-devtools --all-features --no-fail-fast --locked` passed 83/83.
 - `cargo check -p open-gpui-ui-foundation-gallery --tests --locked`
-- `cargo nextest run -p open-gpui-ui-foundation-gallery devtools --no-fail-fast --locked` passed 12/12.
+- `cargo nextest run -p open-gpui-ui-foundation-gallery devtools --no-fail-fast --locked` passed 13/13 after merging remote click dogfood coverage.
 - `cargo check -p open-gpui-docking-native --tests --locked`
 - `cargo nextest run -p open-gpui-docking-native runtime_status_panel_exports_devtools_dogfood_capture --no-fail-fast --locked` passed 1/1.
 - Static builder guard returned no matches: `rg "fn (theme_snapshot|form_snapshot|resource_snapshot|docking_snapshot)" examples/ui-foundation-gallery/src/pages/devtools.rs`.
@@ -36,6 +36,7 @@ Final focused verification on Windows / PowerShell passed:
 - Broad devtools `nextest` was run with `CARGO_BUILD_JOBS=1` to avoid Windows resource contention.
 - `scan-public-api --check` passed without xtask inventory changes, so new public DevTools APIs are accepted by the current tier scan.
 - `scan-doc-links` passed after updating `crates/devtools/README.md` and `docs/verification.md`.
+- Remote `84fccaf9` added a Gallery inspector click dogfood test. The merge resolution changed GPUI event row selectors to identity keys and the focused Gallery test passed after that fix.
 
 # Citations
 

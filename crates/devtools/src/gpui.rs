@@ -2,11 +2,11 @@
 
 use crate::{
     CaptureProvider, DevtoolsCapture, DevtoolsDiffRow, DevtoolsDomainId, DevtoolsDomainKind,
-    DevtoolsDomainSnapshot, DevtoolsEventKind, DevtoolsEventRecord, DevtoolsInspectorDetail,
-    DevtoolsInspectorSessionFrameSummary, DevtoolsInspectorState, DevtoolsSessionFrame,
-    DevtoolsTargetId, DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId,
-    ProbeSnapshotError, SnapshotDiagnostic, SnapshotEnvelope, SnapshotKind, SnapshotNode,
-    SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
+    DevtoolsDomainSnapshot, DevtoolsEventIdentity, DevtoolsEventKind, DevtoolsEventRecord,
+    DevtoolsInspectorDetail, DevtoolsInspectorSessionFrameSummary, DevtoolsInspectorState,
+    DevtoolsSessionFrame, DevtoolsTargetId, DevtoolsTargetKind, DevtoolsTargetSnapshot,
+    DevtoolsTargetTree, ProbeId, ProbeSnapshotError, SnapshotDiagnostic, SnapshotEnvelope,
+    SnapshotKind, SnapshotNode, SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
     adapters::{sanitize_sensitive_text, snapshot_node_with_payload},
     layout::{
         LayoutBoundsSnapshot, LayoutNodeSnapshot, LayoutPointSnapshot, LayoutSizeSnapshot,
@@ -135,9 +135,10 @@ impl DevtoolsInspectorController {
         }
     }
 
-    fn select_event(&mut self, sequence: u64) {
-        match self.state.clone().select_event(sequence) {
+    fn select_event_identity(&mut self, identity: &DevtoolsEventIdentity) {
+        match self.state.clone().select_event_identity(identity) {
             Ok(state) => {
+                let sequence = identity.sequence;
                 self.state = state;
                 self.feedback_label = Some(format!("Selected event #{sequence}").into());
             }
@@ -1190,14 +1191,15 @@ fn render_interactive_event_rows(
         .gap_1()
         .child(section_label("Events"))
         .children(rows.into_iter().map(|row| {
-            let sequence = row.sequence;
+            let event_identity = row.event_identity.clone();
+            let event_identity_key = event_identity.as_key();
             interactive_row_shell(
-                format!("devtools-inspector-event:{sequence}"),
-                move || format!("devtools-inspector:event:{sequence}"),
+                format!("devtools-inspector-event:{event_identity_key}"),
+                move || format!("devtools-inspector:event:{event_identity_key}"),
                 row.selected,
             )
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.select_event(sequence);
+                this.select_event_identity(&event_identity);
                 cx.notify();
             }))
             .child(
@@ -1406,12 +1408,10 @@ fn render_event_rows(rows: Vec<crate::DevtoolsEventRow>) -> impl IntoElement {
         .gap_1()
         .child(section_label("Events"))
         .children(rows.into_iter().map(|row| {
+            let event_identity_key = row.event_identity.as_key();
             div()
-                .id(format!("devtools-inspector-event:{}", row.sequence))
-                .debug_selector({
-                    let sequence = row.sequence;
-                    move || format!("devtools-inspector:event:{sequence}")
-                })
+                .id(format!("devtools-inspector-event:{event_identity_key}"))
+                .debug_selector(move || format!("devtools-inspector:event:{event_identity_key}"))
                 .rounded_sm()
                 .border_1()
                 .border_color(if row.selected {

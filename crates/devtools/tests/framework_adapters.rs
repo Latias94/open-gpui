@@ -203,7 +203,8 @@ fn gpui_inspector_surface_exposes_category_debug_selectors() {
     assert!(source.contains("devtools-inspector:domain-list"));
     assert!(source.contains("devtools-inspector:domain:{domain_id}"));
     assert!(source.contains("devtools-inspector:event-list"));
-    assert!(source.contains("devtools-inspector:event:{sequence}"));
+    assert!(source.contains("event_identity.as_key()"));
+    assert!(source.contains("devtools-inspector:event:{event_identity_key}"));
     assert!(source.contains("devtools-inspector:selected-detail"));
     assert!(source.contains("devtools-inspector:diagnostics"));
     assert!(source.contains("devtools-inspector:row:{probe_id}"));
