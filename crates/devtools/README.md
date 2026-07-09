@@ -20,8 +20,11 @@ mutation and live property editing are intentionally out of scope for the initia
 
 ## Public Contract
 
-- `DevtoolsProbe` is implemented by app-owned snapshot providers.
-- `DevtoolsRegistry` collects snapshots and converts probe failures into diagnostics instead of
+- `DevtoolsProbe` is implemented by app-owned legacy snapshot providers.
+- `DevtoolsCaptureProvider` is implemented by app-owned rich capture providers that contribute
+  targets, domains, events, compatibility snapshots, and diagnostics.
+- `DevtoolsRegistry` collects legacy probes and capture providers, preserves `collect()` as the
+  snapshot-only compatibility path, and converts collection failures into diagnostics instead of
   panicking.
 - `DevtoolsCapture` is the rich local protocol output. It contains a target tree, domain outputs,
   bounded event records, compatibility snapshots, and diagnostics.
@@ -40,15 +43,20 @@ mutation and live property editing are intentionally out of scope for the initia
 - `command` exposes feature-gated adapters for command registries, keybinding projections,
   projection diagnostics, shortcut conflicts, and keymap resolution. It also exposes command-domain
   capture helpers.
+- `DevtoolsEventRecorder` is a scoped, bounded local recorder. It exports retained count, omitted
+  count, capacity, next sequence, scope id, and scope label; `drain()` clears retained events
+  without resetting the append sequence.
 - `timeline` exposes renderer-neutral bounded event snapshots and timeline-domain capture helpers.
 - `layout` exposes renderer-neutral committed geometry snapshots and layout-domain capture helpers.
-- `docking` exposes capture-first runtime diagnostics when public docking status records are
-  available.
+- `docking` exposes capture-first runtime diagnostics and a capture provider constructor when
+  public docking status records are available.
 - `DevtoolsInspectorState` provides filter, selection, category summaries, row projection,
   target/domain/event navigation, diagnostics, selected-detail JSON, and legacy snapshot export
   without requiring a GPUI window.
-- `DevtoolsInspector` is available only with the `gpui` feature and renders a read-only local
-  inspector with existing UI components.
+- `DevtoolsInspector` is available only with the `gpui` feature and renders a static read-only
+  local inspector with existing UI components.
+- `DevtoolsInspectorController` is available only with the `gpui` feature and owns interactive
+  inspector state, row selection, keyboard navigation, copy/export feedback, and clipboard writes.
 
 ## Basic Use
 
@@ -75,6 +83,33 @@ assert_eq!(capture.domains.len(), 1);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+Capture-first producers can register alongside or instead of legacy probes:
+
+```rust
+use open_gpui_devtools::{
+    DevtoolsCapture, DevtoolsRegistry, DevtoolsTargetSnapshot, DevtoolsTargetId,
+    DevtoolsTargetKind, DevtoolsTargetTree,
+};
+
+let mut registry = DevtoolsRegistry::default();
+registry.register_capture_provider_fn("runtime.commands", || {
+    let target = DevtoolsTargetSnapshot::new(
+        DevtoolsTargetId::new("runtime.commands"),
+        DevtoolsTargetKind::Runtime,
+        "Command runtime",
+    );
+    Ok(DevtoolsCapture::new(
+        DevtoolsTargetTree::new([target]),
+        [],
+        [],
+        [],
+        [],
+    ))
+})?;
+assert_eq!(registry.collect_capture().targets.targets.len(), 1);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## Target/Domain/Event Capture
 
 New integrations should prefer `DevtoolsCapture` when they need inspector navigation. A capture is
@@ -84,7 +119,8 @@ still local and read-only:
   legacy probe.
 - Domains group facts by concern, such as command, layout, timeline, data, docking, or motion.
 - Events are bounded append-time records for recent local activity. Older records are omitted by the
-  recorder capacity instead of growing without limit.
+  recorder capacity instead of growing without limit. Scopes make application, window, or runtime
+  sessions explicit without requiring a global event bus.
 - `capture.snapshot_collection()` keeps old snapshot consumers working while new inspectors use
   `DevtoolsInspectorState::from_capture(capture)`.
 
