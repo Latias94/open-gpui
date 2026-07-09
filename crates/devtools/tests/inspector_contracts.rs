@@ -1,7 +1,8 @@
 use open_gpui_devtools::{
-    DevtoolsInspectorState, DevtoolsSnapshotCategory, ProbeId, SnapshotCollection,
-    SnapshotDiagnostic, SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotRedactionSummary,
-    SnapshotTree,
+    DevtoolsCapture, DevtoolsDomainId, DevtoolsEventKind, DevtoolsEventRecord,
+    DevtoolsEventRecorder, DevtoolsInspectorState, DevtoolsSnapshotCategory, DevtoolsTargetId,
+    ProbeId, SnapshotCollection, SnapshotDiagnostic, SnapshotEnvelope, SnapshotKind, SnapshotNode,
+    SnapshotRedactionSummary, SnapshotTree,
 };
 
 #[test]
@@ -113,6 +114,53 @@ fn inspector_surfaces_diagnostics_for_failed_probes() {
             .message
             .contains("motion runtime unavailable")
     );
+}
+
+#[test]
+fn inspector_projects_capture_targets_domains_and_events() {
+    let base_capture = DevtoolsCapture::from_snapshot_collection(ecosystem_collection());
+    let timeline_probe_id = ProbeId::new("timeline").unwrap();
+    let timeline_target_id = DevtoolsTargetId::from_probe_id(&timeline_probe_id);
+    let timeline_domain_id =
+        DevtoolsDomainId::from_probe_snapshot(&timeline_probe_id, &SnapshotKind::Timeline);
+    let mut recorder = DevtoolsEventRecorder::with_capacity(8);
+    recorder.record(
+        DevtoolsEventRecord::new(
+            "timeline.frame",
+            "Timeline frame",
+            DevtoolsEventKind::Instant,
+        )
+        .target_id(timeline_target_id.clone())
+        .domain_id(timeline_domain_id.clone())
+        .timestamp_ms(42),
+    );
+    let event_batch = recorder.snapshot();
+    let capture = DevtoolsCapture::new(
+        base_capture.targets,
+        base_capture.domains,
+        event_batch.events,
+        base_capture.snapshots,
+        base_capture.diagnostics,
+    );
+
+    let state = DevtoolsInspectorState::from_capture(capture).with_filter("timeline");
+
+    assert_eq!(state.selected_target_id().unwrap(), &timeline_target_id);
+    assert_eq!(state.selected_domain_id().unwrap(), &timeline_domain_id);
+    assert_eq!(state.selected_event_sequence(), Some(0));
+    assert_eq!(
+        state
+            .target_rows()
+            .iter()
+            .map(|row| row.target_id.as_str())
+            .collect::<Vec<_>>(),
+        ["probe.timeline"]
+    );
+    assert_eq!(state.domain_rows()[0].kind_label, "timeline");
+    assert!(state.domain_rows()[0].has_snapshot);
+    assert_eq!(state.event_rows()[0].event_id, "timeline.frame");
+    assert_eq!(state.event_rows()[0].timestamp_ms, Some(42));
+    assert!(state.event_rows()[0].selected);
 }
 
 fn collection() -> SnapshotCollection {

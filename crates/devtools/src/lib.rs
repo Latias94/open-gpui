@@ -35,8 +35,9 @@ pub use event::{
 #[cfg(feature = "gpui")]
 pub use gpui::DevtoolsInspector;
 pub use inspector::{
-    DevtoolsInspectorError, DevtoolsInspectorState, DevtoolsSnapshotCategory,
-    DevtoolsSnapshotCategorySummary, DevtoolsSnapshotRow,
+    DevtoolsDomainRow, DevtoolsEventRow, DevtoolsInspectorError, DevtoolsInspectorState,
+    DevtoolsSnapshotCategory, DevtoolsSnapshotCategorySummary, DevtoolsSnapshotRow,
+    DevtoolsTargetRow,
 };
 pub use layout::{
     LayoutBoundsSnapshot, LayoutNodeSnapshot, LayoutPointSnapshot, LayoutSizeSnapshot,

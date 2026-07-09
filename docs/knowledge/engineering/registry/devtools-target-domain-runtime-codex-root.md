@@ -4,7 +4,7 @@ title: "DevTools target domain runtime"
 description: "Target/domain/event capture runtime refactor for open-gpui DevTools."
 timestamp: 2026-07-09T03:29:24Z
 status: "active"
-last_seen: 2026-07-09T04:08:30Z
+last_seen: 2026-07-09T04:20:00Z
 registration_id: "devtools-target-domain-runtime-codex-root"
 producer_id: "codex-root"
 source_workspace: "F:\\SourceCodes\\Rust\\open-gpui"
@@ -28,6 +28,6 @@ Plan reviewed and revised after headless doc review. U1-U3 capture core slice is
 
 # Handoff
 
-Continue from U4. The target/domain/capture/event core exists, passes DevTools all-features tests, and should not be duplicated.
+Start U4. The MVP checkpoint passed: `DevtoolsInspectorState::from_capture()` projects target/domain/event rows and DevTools all-features tests pass.
 
 # Citations
