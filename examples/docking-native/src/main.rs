@@ -1,7 +1,13 @@
+use std::sync::{Arc, Mutex};
+
 use open_gpui::{
     App, Bounds, ClickEvent, Context, Entity, InteractiveElement, IntoElement, ParentElement,
     Pixels, Render, Styled, Window, WindowBounds, WindowOptions, div, point, prelude::*, px, rgb,
     size,
+};
+use open_gpui_devtools::{
+    DevtoolsInspectorController, DevtoolsInspectorState, DevtoolsRegistry, DevtoolsSession,
+    DevtoolsSessionError, DevtoolsSessionFrame, ProbeSnapshotError,
 };
 use open_gpui_docking::{
     DockItemId, DockLayout, DockPanel, DockPanelDescriptor, DockPanelOpenOutcome,
@@ -40,11 +46,140 @@ struct DemoPanel {
 struct RuntimeStatusPanel {
     runtime: DockViewportRuntimeHandle,
     controller: Entity<DockController>,
+    devtools_panel: DockingDevtoolsPanel,
     placement: DockViewportPlacementLayout,
     primary_bounds: Bounds<Pixels>,
     secondary_bounds: Bounds<Pixels>,
     central_bounds: Bounds<Pixels>,
     last_operation: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DockingDevtoolsRefreshStatus {
+    Idle,
+    Changed,
+    NoChange,
+    CaptureError,
+}
+
+impl DockingDevtoolsRefreshStatus {
+    const fn as_label(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Changed => "changed",
+            Self::NoChange => "no-change",
+            Self::CaptureError => "capture-error",
+        }
+    }
+}
+
+struct DockingDevtoolsPanel {
+    session: DevtoolsSession,
+    status: Arc<Mutex<DockViewportRuntimeStatus>>,
+    inspector: Entity<DevtoolsInspectorController>,
+    refresh_status: DockingDevtoolsRefreshStatus,
+    last_error: Option<String>,
+}
+
+impl DockingDevtoolsPanel {
+    fn new(
+        initial_status: DockViewportRuntimeStatus,
+        cx: &mut Context<RuntimeStatusPanel>,
+    ) -> Self {
+        let status = Arc::new(Mutex::new(initial_status));
+        let mut session = docking_runtime_devtools_session(Arc::clone(&status));
+        let frame = session
+            .refresh()
+            .expect("docking devtools initial capture should succeed");
+        let inspector = cx.new(|cx| {
+            DevtoolsInspectorController::new(
+                "docking-devtools-inspector",
+                DevtoolsInspectorState::from_session_frame(frame),
+                cx,
+            )
+            .title("Docking Runtime DevTools")
+        });
+
+        Self {
+            session,
+            status,
+            inspector,
+            refresh_status: DockingDevtoolsRefreshStatus::Idle,
+            last_error: None,
+        }
+    }
+
+    fn refresh(
+        &mut self,
+        status: DockViewportRuntimeStatus,
+        cx: &mut Context<RuntimeStatusPanel>,
+    ) -> Result<DevtoolsSessionFrame, DevtoolsSessionError> {
+        {
+            let mut status_slot = self
+                .status
+                .lock()
+                .expect("docking runtime status lock should not be poisoned");
+            *status_slot = status;
+        }
+
+        match self.session.refresh() {
+            Ok(frame) => {
+                self.refresh_status = if frame.diff_from_previous.as_ref().is_some_and(|diff| {
+                    diff.summary.added > 0
+                        || diff.summary.changed > 0
+                        || diff.summary.removed > 0
+                        || diff.summary.collisions > 0
+                }) {
+                    DockingDevtoolsRefreshStatus::Changed
+                } else {
+                    DockingDevtoolsRefreshStatus::NoChange
+                };
+                self.last_error = None;
+                self.inspector.update(cx, |inspector, cx| {
+                    inspector.update_session_frame(frame.clone(), cx);
+                });
+                Ok(frame)
+            }
+            Err(error) => {
+                self.refresh_status = DockingDevtoolsRefreshStatus::CaptureError;
+                self.last_error = Some(error.to_string());
+                Err(error)
+            }
+        }
+    }
+
+    fn current_generation(&self) -> Option<u64> {
+        self.session.current_frame().map(|frame| frame.generation)
+    }
+
+    fn previous_generation(&self) -> Option<u64> {
+        self.session.previous_frame().map(|frame| frame.generation)
+    }
+
+    fn retained_frames(&self) -> usize {
+        self.session.frames().len()
+    }
+
+    fn history_limit(&self) -> usize {
+        self.session.history_limit()
+    }
+
+    fn diff_label(&self) -> String {
+        self.session
+            .current_frame()
+            .and_then(|frame| frame.diff_from_previous.as_ref())
+            .map(|diff| {
+                format!(
+                    "added={} changed={} removed={} collisions={} rows={}",
+                    diff.summary.added,
+                    diff.summary.changed,
+                    diff.summary.removed,
+                    diff.summary.collisions,
+                    diff.rows.len()
+                )
+            })
+            .unwrap_or_else(|| "no-previous-frame".to_string())
+    }
 }
 
 impl RuntimeStatusPanel {
@@ -55,10 +190,17 @@ impl RuntimeStatusPanel {
         primary_bounds: Bounds<Pixels>,
         secondary_bounds: Bounds<Pixels>,
         central_bounds: Bounds<Pixels>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let initial_status = runtime
+            .runtime_status()
+            .with_platform_capabilities(cx.viewport_capabilities());
+        let devtools_panel = DockingDevtoolsPanel::new(initial_status, cx);
+
         Self {
             runtime,
             controller,
+            devtools_panel,
             placement,
             primary_bounds,
             secondary_bounds,
@@ -127,6 +269,96 @@ impl RuntimeStatusPanel {
         self.set_operation_log(message, cx);
     }
 
+    fn current_runtime_status(&self, cx: &mut Context<Self>) -> DockViewportRuntimeStatus {
+        self.runtime
+            .runtime_status()
+            .with_platform_capabilities(cx.viewport_capabilities())
+    }
+
+    fn refresh_devtools_inspector(&mut self, cx: &mut Context<Self>) {
+        let status = self.current_runtime_status(cx);
+        match self.devtools_panel.refresh(status, cx) {
+            Ok(frame) => self.set_operation_log(
+                format!(
+                    "refreshed devtools inspector: generation {}",
+                    frame.generation
+                ),
+                cx,
+            ),
+            Err(error) => self.set_operation_log(format!("refresh devtools failed: {error}"), cx),
+        }
+    }
+
+    fn render_devtools_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let generation = self
+            .devtools_panel
+            .current_generation()
+            .map(|generation| generation.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        let previous_generation = self
+            .devtools_panel
+            .previous_generation()
+            .map(|generation| generation.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        let history = format!(
+            "{}/{} frames",
+            self.devtools_panel.retained_frames(),
+            self.devtools_panel.history_limit()
+        );
+        let diff = self.devtools_panel.diff_label();
+        let refresh_status = self.devtools_panel.refresh_status.as_label();
+        let last_error = self.devtools_panel.last_error.clone();
+
+        div()
+            .id("docking-devtools:panel")
+            .debug_selector(|| "docking-devtools:panel".to_string())
+            .flex()
+            .flex_col()
+            .gap_2()
+            .border_1()
+            .border_color(rgb(0xd6d8ce))
+            .bg(rgb(0xffffff))
+            .p_3()
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(control_button_with_id(
+                        "docking-devtools:refresh",
+                        "Refresh DevTools",
+                        cx.listener(|this, _, _, cx| {
+                            this.refresh_devtools_inspector(cx);
+                        }),
+                    ))
+                    .child(docking_devtools_status_pill(
+                        "refresh-state",
+                        "refresh",
+                        refresh_status,
+                    ))
+                    .child(docking_devtools_status_pill(
+                        "frame-history",
+                        "history",
+                        history,
+                    ))
+                    .child(docking_devtools_status_pill(
+                        "generation",
+                        "generation",
+                        format!("{generation} prev {previous_generation}"),
+                    ))
+                    .child(docking_devtools_status_pill("diff-state", "diff", diff))
+                    .when_some(last_error, |element, error| {
+                        element.child(docking_devtools_status_pill(
+                            "capture-error",
+                            "error",
+                            error,
+                        ))
+                    }),
+            )
+            .child(self.devtools_panel.inspector.clone())
+    }
+
     fn fallback_bounds(&self, space: &DockSpaceId) -> Bounds<Pixels> {
         if space.as_str() == SECONDARY_SPACE {
             self.secondary_bounds
@@ -141,10 +373,7 @@ impl RuntimeStatusPanel {
 impl Render for RuntimeStatusPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let lines = {
-            let status = self
-                .runtime
-                .runtime_status()
-                .with_platform_capabilities(cx.viewport_capabilities());
+            let status = self.current_runtime_status(cx);
             let flag_capabilities =
                 DockViewportPlatformFlagCapabilityRecord::from(cx.viewport_flag_capabilities());
             let spaces = self
@@ -284,6 +513,7 @@ impl Render for RuntimeStatusPanel {
                             ),
                     ),
             )
+            .child(self.render_devtools_panel(cx))
             .child(
                 div()
                     .flex()
@@ -407,8 +637,19 @@ fn control_button(
     label: &str,
     listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
+    control_button_with_id(format!("runtime-control:{label}"), label, listener)
+}
+
+fn control_button_with_id(
+    id: impl Into<String>,
+    label: &str,
+    listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let id = id.into();
+    let debug_id = id.clone();
     div()
-        .id(format!("runtime-control:{label}"))
+        .id(id)
+        .debug_selector(|| debug_id)
         .px_2()
         .py_1()
         .border_1()
@@ -420,6 +661,33 @@ fn control_button(
         .text_color(rgb(0x1f2937))
         .on_click(listener)
         .child(label.to_string())
+}
+
+fn docking_devtools_status_pill(
+    id: &'static str,
+    label: &'static str,
+    value: impl Into<String>,
+) -> impl IntoElement {
+    let debug_id = format!("docking-devtools:{id}");
+    div()
+        .id(debug_id.clone())
+        .debug_selector(|| debug_id)
+        .flex()
+        .items_center()
+        .gap_1()
+        .px_2()
+        .py_1()
+        .border_1()
+        .border_color(rgb(0xd6d8ce))
+        .bg(rgb(0xf8fafc))
+        .text_color(rgb(0x253041))
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(0x667085))
+                .child(label.to_string()),
+        )
+        .child(div().text_xs().child(value.into()))
 }
 
 fn restore_secondary_panels(controller: &mut DockController) -> String {
@@ -531,6 +799,28 @@ fn docking_runtime_devtools_summary(status: &DockViewportRuntimeStatus) -> Strin
         inspection.summary.visual_affordance_count,
         inspection.summary.diagnostic_count
     )
+}
+
+fn docking_runtime_devtools_session(
+    status: Arc<Mutex<DockViewportRuntimeStatus>>,
+) -> DevtoolsSession {
+    let mut registry = DevtoolsRegistry::default();
+    registry
+        .register_capture_provider_fn("docking.runtime", move || {
+            let status = status
+                .lock()
+                .map_err(|_| {
+                    ProbeSnapshotError::CollectionFailed(
+                        "docking runtime status lock poisoned".to_string(),
+                    )
+                })?
+                .clone();
+            Ok(open_gpui_devtools::docking::docking_runtime_capture(
+                &status,
+            ))
+        })
+        .expect("docking runtime capture provider id should be valid");
+    DevtoolsSession::new("docking.runtime", registry).with_history_limit(4)
 }
 
 #[cfg(test)]
@@ -1176,7 +1466,7 @@ fn main() {
             size(px(460.0), px(220.0)),
         );
         let placement = saved_viewport_placement(primary_bounds, secondary_bounds, central_bounds);
-        let runtime_panel = cx.new(|_| {
+        let runtime_panel = cx.new(|cx| {
             RuntimeStatusPanel::new(
                 runtime.clone(),
                 controller.clone(),
@@ -1184,6 +1474,7 @@ fn main() {
                 primary_bounds,
                 secondary_bounds,
                 central_bounds,
+                cx,
             )
         });
         controller.update(cx, |controller, _| {
@@ -1331,6 +1622,37 @@ mod tests {
         cx.run_until_parked();
         let visual = VisualTestContext::from_window(opened.window(), cx);
         (host, visual)
+    }
+
+    fn attach_runtime_status_panel(
+        cx: &mut TestAppContext,
+        controller: &Entity<DockController>,
+        runtime: &DockViewportRuntimeHandle,
+    ) -> Entity<RuntimeStatusPanel> {
+        let primary_bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(920.0), px(640.0)));
+        let secondary_bounds = Bounds::new(point(px(944.0), px(0.0)), size(px(460.0), px(360.0)));
+        let central_bounds = Bounds::new(point(px(944.0), px(384.0)), size(px(460.0), px(220.0)));
+        let placement = saved_viewport_placement(primary_bounds, secondary_bounds, central_bounds);
+        let panel = cx.new(|cx| {
+            RuntimeStatusPanel::new(
+                runtime.clone(),
+                controller.clone(),
+                placement,
+                primary_bounds,
+                secondary_bounds,
+                central_bounds,
+                cx,
+            )
+        });
+        controller.update(cx, |controller, _| {
+            controller
+                .attach_panel_view("runtime", panel.clone())
+                .expect("runtime panel descriptor should exist");
+            controller
+                .select_item_in_space("runtime")
+                .expect("runtime panel should be selectable in the primary space");
+        });
+        panel
     }
 
     #[test]
@@ -2338,6 +2660,152 @@ mod tests {
             CENTRAL_SPACE,
             central_bounds,
             "Empty central dogfood",
+        );
+    }
+
+    #[test]
+    fn docking_devtools_session_refreshes_bounded_runtime_frames() {
+        let status_slot = Arc::new(Mutex::new(DockViewportRuntimeStatus::default()));
+        let mut session = docking_runtime_devtools_session(Arc::clone(&status_slot));
+
+        let first = session
+            .refresh()
+            .expect("first docking devtools refresh should succeed");
+        assert_eq!(first.generation, 1);
+
+        for generation in 2..=7 {
+            status_slot
+                .lock()
+                .expect("test status lock should not be poisoned")
+                .viewport_lifecycle = vec![DockViewportLifecycleRecord {
+                space: DockSpaceId::from(SPACE),
+                window_id: open_gpui::WindowId::from(generation),
+                route_status: DockViewportRouteStatus::RouteReady,
+                input_status: DockViewportInputStatus::ReceivesInput,
+                platform_request_status: DockViewportPlatformRequestStatus::default(),
+                coordinate_status: None,
+                facts_generation: generation,
+            }];
+            let frame = session
+                .refresh()
+                .expect("docking devtools refresh should keep succeeding");
+            assert_eq!(frame.generation, generation);
+        }
+
+        assert_eq!(session.history_limit(), 4);
+        assert_eq!(session.frames().len(), 4);
+        let current = session
+            .current_frame()
+            .expect("bounded session should retain the latest frame");
+        assert!(current.diff_from_previous.is_some());
+        assert!(
+            current
+                .capture
+                .targets
+                .targets
+                .iter()
+                .any(|target| target.label == "Docking runtime")
+        );
+        assert!(
+            current
+                .capture
+                .domains
+                .iter()
+                .any(|domain| domain.kind.as_label() == "docking")
+        );
+        let export = session.export();
+        assert_eq!(export.frames.len(), 4);
+        let serialized = serde_json::to_string(&export).unwrap();
+        assert!(serialized.contains("Docking runtime"));
+    }
+
+    #[open_gpui::test]
+    fn runtime_status_panel_refreshes_embedded_devtools_outside_render(cx: &mut TestAppContext) {
+        let controller = cx.new(|_| build_controller());
+        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+        let panel = attach_runtime_status_panel(cx, &controller, &runtime);
+
+        let before_render =
+            panel.read_with(cx, |panel, _| panel.devtools_panel.current_generation());
+        assert_eq!(before_render, Some(1));
+
+        let (_primary_host, _primary_visual) = open_dogfood_viewport(
+            cx,
+            &runtime,
+            SPACE,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(920.0), px(640.0))),
+        );
+
+        let after_render =
+            panel.read_with(cx, |panel, _| panel.devtools_panel.current_generation());
+        assert_eq!(
+            after_render, before_render,
+            "rendering the runtime panel must not advance the devtools session"
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.refresh_devtools_inspector(cx);
+            assert_eq!(panel.devtools_panel.current_generation(), Some(2));
+            assert_eq!(
+                panel.devtools_panel.refresh_status,
+                DockingDevtoolsRefreshStatus::Changed
+            );
+            assert!(panel.devtools_panel.retained_frames() <= panel.devtools_panel.history_limit());
+        });
+    }
+
+    #[open_gpui::test]
+    fn runtime_status_panel_renders_embedded_devtools_inspector(cx: &mut TestAppContext) {
+        let controller = cx.new(|_| build_controller());
+        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+        let panel = attach_runtime_status_panel(cx, &controller, &runtime);
+        let (_primary_host, mut primary_visual) = open_dogfood_viewport(
+            cx,
+            &runtime,
+            SPACE,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(920.0), px(640.0))),
+        );
+
+        assert!(
+            primary_visual
+                .debug_bounds("docking-devtools:panel")
+                .is_some()
+        );
+        assert!(
+            primary_visual
+                .debug_bounds("docking-devtools:refresh")
+                .is_some()
+        );
+        assert!(
+            primary_visual
+                .debug_bounds("devtools-inspector:docking-devtools-inspector:root")
+                .is_some()
+        );
+
+        let before = panel.read_with(cx, |panel, _| panel.devtools_panel.current_generation());
+        let refresh_bounds = debug_bounds(&mut primary_visual, "docking-devtools:refresh");
+        primary_visual.simulate_click(refresh_bounds.center(), Default::default());
+        cx.run_until_parked();
+
+        let after = panel.read_with(cx, |panel, _| panel.devtools_panel.current_generation());
+        assert!(
+            after > before,
+            "clicking the rendered refresh control should advance session generation"
+        );
+        assert!(
+            primary_visual
+                .debug_bounds("docking-devtools:generation")
+                .is_some()
+        );
+        assert!(
+            primary_visual
+                .debug_bounds("docking-devtools:frame-history")
+                .is_some()
+        );
+        assert!(
+            primary_visual
+                .debug_bounds("docking-devtools:diff-state")
+                .is_some()
         );
     }
 
