@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `open-gpui-ui-core` now keeps the root prelude foundation-only; table, split, grid viewport, and virtualizer contracts should be imported from their module-local preludes rather than relying on `open_gpui_ui_core::prelude::*`.
 - `open-gpui` scroll handlers now return typed intent and committed viewport facts; update `InteractiveElement::on_scroll_wheel`, `InteractiveElement::capture_scroll_wheel`, `Interactivity::on_scroll_wheel`, and `Interactivity::capture_scroll_wheel` callbacks to return `ScrollWheelIntent`, and update exhaustive matches on `ScrollViewportChangeSource`.
 - `open-gpui-devtools` now sanitizes exported diagnostics and adapter payloads by default; replace `SnapshotDiagnostic { probe_id, message }` with `SnapshotDiagnostic::new` or `SnapshotDiagnostic::collection_failed`, avoid raw private values in `ProbeId::new`, handle `SnapshotKind::as_label` returning `Cow`, update snapshot assertions for sanitized `SnapshotNode::new` output, import adapter helpers from `open_gpui_devtools::adapters::*`, and rename command helpers such as `command_keybinding_projection_envelope` to the new `..._snapshot_...` forms.
+- `open-gpui-devtools` event selection is now identity-first: replace `DevtoolsInspectorState::select_event(sequence)` and `selected_event_sequence()` with `select_event_identity(&row.event_identity)` and `selected_event_identity()`, and treat `DevtoolsEventIdentity::as_key()` as a sanitized stable selector/diff key rather than the old colon-joined raw-ish display string.
 
 ### Changed
 
@@ -30,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Release verification now checks changelog release notes, user-facing README versions, public crate README coverage, breaking-change inventory coverage, and public documentation links before publishing crates or GitHub Release notes.
 - Open GPUI now declares Rust 1.92 as the workspace MSRV and verifies MSRV drift, duplicate dependency versions, and cargo-audit results through a dedicated dependency-health gate.
 - User entry points now include a minimal single-window docking example and refreshed crate READMEs for component, motion, docking, web, platform, and verification workflows.
+- `open-gpui-devtools` split its GPUI feature implementation into runtime DTO/capture, inspector controller, and render modules while preserving the `open_gpui_devtools::gpui` facade and root re-exports.
 
 ### Security
 

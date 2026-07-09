@@ -54,6 +54,10 @@ mutation and live property editing are intentionally out of scope for the initia
 - `DevtoolsEventRecorder` is a scoped, bounded local recorder. It exports retained count, omitted
   count, capacity, next sequence, scope id, and scope label; `drain()` clears retained events
   without resetting the append sequence.
+- `DevtoolsEventIdentity` is the event-instance identity for selection, debug selectors, diff rows,
+  and replay frames. Event `sequence` remains display metadata only; callers should select events
+  with `DevtoolsInspectorState::select_event_identity` and read
+  `DevtoolsInspectorState::selected_event_identity`.
 - `timeline` exposes renderer-neutral bounded event snapshots and timeline-domain capture helpers.
 - `layout` exposes renderer-neutral committed geometry snapshots and layout-domain capture helpers.
 - `docking` exposes capture-first runtime diagnostics, structured multi-viewport inspection rows,
@@ -140,6 +144,21 @@ Feature-gated adapters provide capture helpers such as `command_registry_capture
 `resource_capture`, `layout_capture`, and `timeline_capture`. The GPUI inspector consumes the same
 state model but does not mutate application state.
 
+Event rows are identity-first. Use the row identity for selection and keep `sequence` for display
+only:
+
+```rust
+use open_gpui_devtools::{DevtoolsCapture, DevtoolsInspectorState};
+
+let state = DevtoolsInspectorState::from_capture(DevtoolsCapture::default());
+let next = state.event_rows().first().map(|row| row.event_identity.clone());
+if let Some(identity) = next {
+    let state = state.select_event_identity(&identity)?;
+    assert_eq!(state.selected_event_identity(), Some(&identity));
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## Sessions, Diffs, And Replay
 
 Use `DevtoolsSession` when an inspector needs to answer what changed after a local runtime action.
@@ -161,6 +180,33 @@ assert!(second.diff_from_previous.is_some());
 Session export/import is an offline replay path for already-sanitized local frames. Import validates
 schema, protocol, history bounds, JSON size, and per-frame event count before rebuilding canonical
 diffs. It deliberately has no network transport, no remote debugging protocol, and no mutation API.
+
+## Minimal App-Author Workbench
+
+An application-owned DevTools workbench should keep runtime authority in the app and let DevTools
+own only sanitized frames and inspector state:
+
+1. Build a `DevtoolsRegistry` from legacy probes, capture providers, or narrow app-owned DTOs.
+2. Wrap it in `DevtoolsSession::new(...).with_history_limit(...)`.
+3. Call `refresh()` from an explicit user action or test helper.
+4. Build `DevtoolsInspectorState::from_session_frame(frame)` or update an existing
+   `DevtoolsInspectorController` with `update_session_frame(frame, cx)`.
+5. Read `frame.diff_from_previous` or `state.diff_rows()` for sanitized change summaries.
+
+With the `gpui` feature, Gallery and docking-native use this same pattern: the shell/example owns
+the `DevtoolsSession`, app code supplies allowlisted runtime facts, and the controller is only the
+local inspector view.
+
+```rust,ignore
+let mut session = DevtoolsSession::new("app.devtools", registry).with_history_limit(8);
+let frame = session.refresh()?;
+let state = DevtoolsInspectorState::from_session_frame(frame.clone());
+
+// In a GPUI entity update handler, not during render:
+inspector.update(cx, |inspector, cx| {
+    inspector.update_session_frame(frame, cx);
+});
+```
 
 With the `form` feature enabled, convert a public form snapshot directly:
 

@@ -66,25 +66,31 @@ cargo fmt -p open-gpui-devtools -p open-gpui-ui-foundation-gallery -p open-gpui-
 cargo check -p open-gpui-devtools --no-default-features --tests --locked
 cargo check -p open-gpui-devtools --features gpui --tests --locked
 cargo check -p open-gpui-devtools --features docking --tests --locked
-cargo check -p open-gpui-devtools --all-features --tests --locked
 $env:CARGO_BUILD_JOBS = '1'; cargo nextest run -p open-gpui-devtools --all-features --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --all-features --test diff_contracts --test session_contracts --test inspector_contracts --no-fail-fast --locked
 cargo check -p open-gpui-ui-foundation-gallery --tests --locked
 cargo nextest run -p open-gpui-ui-foundation-gallery devtools --no-fail-fast --locked
 cargo check -p open-gpui-docking-native --tests --locked
-cargo nextest run -p open-gpui-docking-native runtime_status_panel_exports_devtools_dogfood_capture --no-fail-fast --locked
+cargo nextest run -p open-gpui-docking-native --no-fail-fast --locked runtime_status_panel
 rg "fn (theme_snapshot|form_snapshot|resource_snapshot|docking_snapshot)" examples/ui-foundation-gallery/src/pages/devtools.rs
+$sequencePattern = 'select_event\(0\)|select_event\(sequence|devtools-inspector:event:\{sequence\}'
+rg -n $sequencePattern crates examples docs/knowledge/engineering
+$debugIdentityPattern = 'format!\(".*DevtoolsEventIdentity|Debug.*DevtoolsEventIdentity'
+rg -n $debugIdentityPattern crates examples docs/knowledge/engineering
 cargo run -p xtask -- scan-doc-links
 cargo run -p xtask -- scan-public-api --check
 git diff --check
 ```
 
-The `rg` static-builder guard should return no matches. DevTools session replay is local/offline
-only: imports validate schema, protocol, bounded history, JSON size, and event counts before
-recomputing diffs, and they do not introduce remote transport or mutation APIs. GPUI runtime
-metadata is intentionally narrow: app/window/focus/input/frame/scroll counters and geometry are
-allowed, while raw user input, clipboard payloads, editable text values, unredacted window titles,
-and accessibility labels remain outside the capture contract. Docking runtime facts must come from
-public `DockViewportRuntimeStatus` records; missing private facts are not inferred.
+The `rg` static-builder and sequence/debug-selector guards should return no matches. DevTools
+session replay is local/offline only: imports validate schema, protocol, bounded history, JSON
+size, and event counts before recomputing diffs, and they do not introduce remote transport or
+mutation APIs. Event selection is identity-first through `DevtoolsEventIdentity`; append sequence is
+display metadata only. GPUI runtime metadata is intentionally narrow: app/window/focus/input/frame
+and scroll counters and geometry are allowed, while raw user input, clipboard payloads, editable
+text values, unredacted window titles, and accessibility labels remain outside the capture
+contract. Docking runtime facts must come from public `DockViewportRuntimeStatus` records; missing
+private facts are not inferred.
 
 For the 2026-07 scroll viewport and wheel-input intent slice, the core contract is that tracked
 scroll surfaces emit committed post-layout viewport facts, typed wheel intent controls default
