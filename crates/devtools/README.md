@@ -59,6 +59,7 @@ assert_eq!(collection.snapshots.len(), 1);
 With the `form` feature enabled, convert a public form snapshot directly:
 
 ```rust
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 # #[cfg(feature = "form")]
 # {
 use open_gpui_devtools::{form, ProbeId};
@@ -67,7 +68,8 @@ use open_gpui_form::FormSnapshot;
 let snapshot = FormSnapshot::default();
 let envelope = form::form_snapshot_envelope(ProbeId::new("form")?, &snapshot);
 assert_eq!(envelope.probe_id.as_str(), "form");
-# Ok::<(), Box<dyn std::error::Error>>(())
+# }
+# Ok(())
 # }
 ```
 
@@ -75,6 +77,7 @@ With the `resource` feature enabled, pass query, mutation, and paginated snapsho
 resource adapter:
 
 ```rust
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 # #[cfg(feature = "resource")]
 # {
 use open_gpui_devtools::{resource, ProbeId};
@@ -95,7 +98,8 @@ let envelope = resource::resource_snapshot_envelope(
     [],
 );
 assert_eq!(envelope.redaction.redacted_values, 0);
-# Ok::<(), Box<dyn std::error::Error>>(())
+# }
+# Ok(())
 # }
 ```
 

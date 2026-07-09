@@ -250,3 +250,11 @@ fn duplicate_snapshot_probe_ids_still_fail() {
 fn stable_node_id_uses_fallback_for_empty_segments() {
     assert_eq!(stable_node_id(["", "  "]), "node");
 }
+
+#[test]
+fn adapter_payload_module_stays_private_implementation_detail() {
+    let source = include_str!("../src/adapters/mod.rs");
+
+    assert!(source.contains("mod payload;"));
+    assert!(!source.contains("pub mod payload;"));
+}
