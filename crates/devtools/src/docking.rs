@@ -24,6 +24,10 @@ const DOCKING_RUNTIME_PROBE_ID: &str = "docking.runtime";
 /// Diagnostic code emitted when public platform facts say viewport windows are unsupported.
 pub const DOCKING_PLATFORM_VIEWPORT_WINDOWS_UNSUPPORTED: &str =
     "docking.platform_viewport_windows.unsupported";
+/// Diagnostic code emitted when public lifecycle facts say route facts are missing.
+pub const DOCKING_VIEWPORT_ROUTE_FACTS_MISSING: &str = "docking.viewport.route_facts.missing";
+/// Diagnostic code emitted when public lifecycle facts say route facts are stale.
+pub const DOCKING_VIEWPORT_ROUTE_FACTS_STALE: &str = "docking.viewport.route_facts.stale";
 
 /// Structured DevTools projection of one docking viewport runtime status.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -538,18 +542,49 @@ impl DockingVisualAffordanceRow {
 }
 
 fn docking_runtime_diagnostics(status: &DockViewportRuntimeStatus) -> Vec<SnapshotDiagnostic> {
-    let Some(capabilities) = status.platform_capabilities else {
-        return Vec::new();
-    };
-    if capabilities.platform_viewport_windows {
-        return Vec::new();
+    let mut diagnostics = Vec::new();
+
+    if status
+        .platform_capabilities
+        .is_some_and(|capabilities| !capabilities.platform_viewport_windows)
+    {
+        diagnostics.push(SnapshotDiagnostic::new(
+            docking_runtime_probe_id(),
+            DOCKING_PLATFORM_VIEWPORT_WINDOWS_UNSUPPORTED,
+            "platform viewport windows are unsupported by current platform capabilities",
+        ));
     }
 
-    vec![SnapshotDiagnostic::new(
-        docking_runtime_probe_id(),
-        DOCKING_PLATFORM_VIEWPORT_WINDOWS_UNSUPPORTED,
-        "platform viewport windows are unsupported by current platform capabilities",
-    )]
+    for lifecycle in &status.viewport_lifecycle {
+        match lifecycle.route_status {
+            DockViewportRouteStatus::MissingRouteFacts => {
+                diagnostics.push(SnapshotDiagnostic::new(
+                    docking_runtime_probe_id(),
+                    DOCKING_VIEWPORT_ROUTE_FACTS_MISSING,
+                    format!(
+                        "viewport `{}` is registered but has no route facts",
+                        lifecycle.space.as_str()
+                    ),
+                ));
+            }
+            DockViewportRouteStatus::Stale { reason } => {
+                diagnostics.push(SnapshotDiagnostic::new(
+                    docking_runtime_probe_id(),
+                    DOCKING_VIEWPORT_ROUTE_FACTS_STALE,
+                    format!(
+                        "viewport `{}` has stale route facts: {}",
+                        lifecycle.space.as_str(),
+                        stale_reason_label(reason)
+                    ),
+                ));
+            }
+            DockViewportRouteStatus::RegisteredNotReady
+            | DockViewportRouteStatus::RouteReady
+            | DockViewportRouteStatus::Minimized => {}
+        }
+    }
+
+    diagnostics
 }
 
 fn docking_runtime_event_rows(
@@ -1039,10 +1074,26 @@ fn platform_sync_payload(record: &DockViewportPlatformSyncRecord) -> serde_json:
 }
 
 fn visual_affordance_payload(record: &DockViewportVisualAffordanceRecord) -> serde_json::Value {
+    let active = record.summary.active.as_ref();
     serde_json::json!({
         "space": record.space.as_str(),
         "window_id": record.window_id.as_u64(),
-        "summary": format!("{:?}", record.summary),
+        "summary_space": record.summary.space.as_deref(),
+        "frame_generation": record.summary.frame_generation,
+        "layer_count": record.summary.layer_count,
+        "active_count": record.summary.active_count,
+        "active": active.map(|layer| serde_json::json!({
+            "id": layer.id.as_str(),
+            "kind": layer.kind.as_str(),
+            "scope": layer.scope.as_str(),
+            "state": layer.state.as_str(),
+            "target_node": layer.target_node,
+            "zone": layer.zone.as_ref().map(|zone| format!("{zone:?}")),
+            "payload_index": layer.payload_index,
+            "has_label": layer.label.is_some(),
+        })),
+        "motion_state": record.summary.motion_state.as_deref(),
+        "churn_signature": record.summary.churn_signature.as_str(),
     })
 }
 
@@ -1055,6 +1106,12 @@ fn route_status_label(status: &DockViewportRouteStatus) -> &'static str {
         },
         DockViewportRouteStatus::Minimized => "minimized",
         DockViewportRouteStatus::MissingRouteFacts => "missing-route-facts",
+    }
+}
+
+fn stale_reason_label(reason: DockViewportStaleStatusReason) -> &'static str {
+    match reason {
+        DockViewportStaleStatusReason::WindowFactsChanged => "window-facts-changed",
     }
 }
 

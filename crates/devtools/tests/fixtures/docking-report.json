@@ -1,0 +1,73 @@
+{
+  "schema_version": "open-gpui-devtools-report/v1",
+  "source": {
+    "kind": "session-export",
+    "session_id": "docking.runtime",
+    "generation": 2,
+    "previous_generation": 1,
+    "retained_frames": 2
+  },
+  "summary": {
+    "target_count": 4,
+    "domain_count": 1,
+    "event_count": 4,
+    "snapshot_count": 1,
+    "diagnostic_count": 4,
+    "redacted_value_count": 0,
+    "diff_row_count": 14,
+    "added_diff_rows": 8,
+    "removed_diff_rows": 2,
+    "changed_diff_rows": 3,
+    "collision_diff_rows": 0,
+    "finding_count": 4,
+    "error_count": 0,
+    "warning_count": 4,
+    "info_count": 0
+  },
+  "findings": [
+    {
+      "id": "capture-diagnostic.docking.platform_viewport_windows.unsupported",
+      "severity": "warning",
+      "category": "capture-diagnostic",
+      "title": "docking.platform_viewport_windows.unsupported",
+      "message": "platform viewport windows are unsupported by current platform capabilities",
+      "target_id": null,
+      "domain_id": null,
+      "event_identity": null,
+      "recommendation": "Inspect the producer that emitted this DevTools diagnostic."
+    },
+    {
+      "id": "capture-diagnostic.docking.viewport.route_facts.stale",
+      "severity": "warning",
+      "category": "capture-diagnostic",
+      "title": "docking.viewport.route_facts.stale",
+      "message": "viewport `docking-preview` has stale route facts: window-facts-changed",
+      "target_id": null,
+      "domain_id": null,
+      "event_identity": null,
+      "recommendation": "Inspect the producer that emitted this DevTools diagnostic."
+    },
+    {
+      "id": "domain-diagnostic.docking.platform_viewport_windows.unsupported",
+      "severity": "warning",
+      "category": "domain-diagnostic",
+      "title": "docking.platform_viewport_windows.unsupported",
+      "message": "platform viewport windows are unsupported by current platform capabilities",
+      "target_id": "docking.runtime",
+      "domain_id": "docking.runtime",
+      "event_identity": null,
+      "recommendation": "Inspect the producer that emitted this DevTools diagnostic."
+    },
+    {
+      "id": "domain-diagnostic.docking.viewport.route_facts.stale",
+      "severity": "warning",
+      "category": "domain-diagnostic",
+      "title": "docking.viewport.route_facts.stale",
+      "message": "viewport `docking-preview` has stale route facts: window-facts-changed",
+      "target_id": "docking.runtime",
+      "domain_id": "docking.runtime",
+      "event_identity": null,
+      "recommendation": "Inspect the producer that emitted this DevTools diagnostic."
+    }
+  ]
+}

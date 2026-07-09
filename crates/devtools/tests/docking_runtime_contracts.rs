@@ -2,8 +2,11 @@
 
 use open_gpui::WindowId;
 use open_gpui_devtools::{
-    DevtoolsDiffKind, DevtoolsDiffStatus, docking,
-    docking::DOCKING_PLATFORM_VIEWPORT_WINDOWS_UNSUPPORTED,
+    DevtoolsDiffKind, DevtoolsDiffStatus, DevtoolsReport, docking,
+    docking::{
+        DOCKING_PLATFORM_VIEWPORT_WINDOWS_UNSUPPORTED, DOCKING_VIEWPORT_ROUTE_FACTS_MISSING,
+        DOCKING_VIEWPORT_ROUTE_FACTS_STALE,
+    },
 };
 use open_gpui_docking::{
     DockItemId, DockSpaceId,
@@ -12,9 +15,10 @@ use open_gpui_docking::{
         DockViewportLifecycleRecord, DockViewportPayloadRecord,
         DockViewportPlatformCapabilityRecord, DockViewportPlatformRequestStatus,
         DockViewportRestoreReadinessRecord, DockViewportRouteStatus, DockViewportRuntimeStatus,
-        DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementRecord,
-        DockViewportTearOffRecord, DockViewportVisualAffordanceRecord,
-        DockVisualAffordanceDebugLayer, DockVisualAffordanceDebugSummary,
+        DockViewportStaleStatusReason, DockViewportTearOffOutcomeKind,
+        DockViewportTearOffPlacementRecord, DockViewportTearOffRecord,
+        DockViewportVisualAffordanceRecord, DockVisualAffordanceDebugLayer,
+        DockVisualAffordanceDebugSummary,
     },
 };
 
@@ -77,6 +81,10 @@ fn docking_runtime_inspection_projects_public_status_rows() {
     let serialized = serde_json::to_string(&inspection).unwrap();
     assert!(serialized.contains("docking.platform_viewport_windows.unsupported"));
     assert!(!serialized.contains("Sensitive Editor Label"));
+
+    let capture_json = serde_json::to_string(&docking::docking_runtime_capture(&status)).unwrap();
+    assert!(capture_json.contains("\"has_label\":true"));
+    assert!(!capture_json.contains("Sensitive Editor Label"));
 }
 
 #[test]
@@ -101,6 +109,47 @@ fn docking_runtime_capture_attaches_explicit_capability_diagnostics() {
     assert!(supported.domains[0].diagnostics.is_empty());
     assert!(absent.diagnostics.is_empty());
     assert!(absent.domains[0].diagnostics.is_empty());
+}
+
+#[test]
+fn docking_runtime_report_surfaces_explicit_route_fact_findings() {
+    let mut status = runtime_status(false);
+    status.viewport_lifecycle.push(DockViewportLifecycleRecord {
+        space: DockSpaceId::from("missing-route"),
+        window_id: WindowId::from(8),
+        route_status: DockViewportRouteStatus::MissingRouteFacts,
+        input_status: DockViewportInputStatus::ReceivesInput,
+        platform_request_status: DockViewportPlatformRequestStatus::default(),
+        coordinate_status: None,
+        facts_generation: 12,
+    });
+    status.viewport_lifecycle.push(DockViewportLifecycleRecord {
+        space: DockSpaceId::from("stale-route"),
+        window_id: WindowId::from(9),
+        route_status: DockViewportRouteStatus::Stale {
+            reason: DockViewportStaleStatusReason::WindowFactsChanged,
+        },
+        input_status: DockViewportInputStatus::ReceivesInput,
+        platform_request_status: DockViewportPlatformRequestStatus::default(),
+        coordinate_status: None,
+        facts_generation: 13,
+    });
+
+    let capture = docking::docking_runtime_capture(&status);
+    let report = DevtoolsReport::from_capture(&capture);
+
+    assert!(report.findings.iter().any(|finding| {
+        finding.id == format!("capture-diagnostic.{DOCKING_PLATFORM_VIEWPORT_WINDOWS_UNSUPPORTED}")
+            && finding.severity.as_label() == "warning"
+    }));
+    assert!(report.findings.iter().any(|finding| {
+        finding.id == format!("capture-diagnostic.{DOCKING_VIEWPORT_ROUTE_FACTS_MISSING}")
+            && finding.severity.as_label() == "error"
+    }));
+    assert!(report.findings.iter().any(|finding| {
+        finding.id == format!("capture-diagnostic.{DOCKING_VIEWPORT_ROUTE_FACTS_STALE}")
+            && finding.severity.as_label() == "warning"
+    }));
 }
 
 #[test]

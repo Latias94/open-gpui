@@ -6,19 +6,26 @@ use open_gpui::{
     size,
 };
 use open_gpui_devtools::{
-    DevtoolsInspectorController, DevtoolsInspectorState, DevtoolsRegistry, DevtoolsSession,
-    DevtoolsSessionError, DevtoolsSessionFrame, DevtoolsWorkbench, ProbeSnapshotError,
+    DevtoolsArtifact, DevtoolsArtifactMetadata, DevtoolsArtifactRecord,
+    DevtoolsInspectorController, DevtoolsInspectorState, DevtoolsRegistry, DevtoolsReport,
+    DevtoolsSession, DevtoolsSessionError, DevtoolsSessionExport, DevtoolsSessionFrame,
+    DevtoolsWorkbench, ProbeSnapshotError,
 };
 use open_gpui_docking::{
     DockItemId, DockLayout, DockPanel, DockPanelDescriptor, DockPanelOpenOutcome,
     DockPanelPlacement, DockSpaceId, DockViewportPlacement, DockViewportPlacementLayout,
     DockViewportWindowBounds,
     advanced::{
-        DockViewportCoordinateSpaceRecord, DockViewportLifecycleRecord,
+        DockViewportCoordinateSpaceRecord, DockViewportCoordinateStatusRecord,
+        DockViewportDropOutcomeKind, DockViewportDropOutcomeRecord, DockViewportInputStatus,
+        DockViewportLifecycleRecord, DockViewportPayloadRecord,
         DockViewportPlatformCapabilityRecord, DockViewportPlatformFlagCapabilityRecord,
-        DockViewportPlatformSyncRecord, DockViewportReleaseUnavailableRecord,
-        DockViewportRestoreReadinessRecord, DockViewportRuntimeStatus,
-        DockViewportTearOffPlacementRecord, DockVisualAffordanceDebugSummary,
+        DockViewportPlatformRequestStatus, DockViewportPlatformSyncRecord,
+        DockViewportReleaseUnavailableRecord, DockViewportRestoreReadinessRecord,
+        DockViewportRouteStatus, DockViewportRuntimeStatus, DockViewportStaleStatusReason,
+        DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementRecord,
+        DockViewportTearOffRecord, DockViewportVisualAffordanceRecord,
+        DockVisualAffordanceDebugLayer, DockVisualAffordanceDebugSummary,
     },
     model::{
         DockActionApplyError, DockController, DockLayoutCentralRegion, DockLayoutSpace,
@@ -35,6 +42,9 @@ const PRIMARY_DOCK_CLASS: &str = "primary-demo";
 const SECONDARY_DOCK_CLASS: &str = "secondary-demo";
 const CENTRAL_DOCK_CLASS: &str = "central-demo";
 const DOCKING_DEBUG_PREFIX: &str = "[DEBUG-docking-native]";
+pub const DOCKING_NATIVE_ARTIFACT_PRODUCER_ID: &str = "docking-native.devtools";
+pub const DOCKING_NATIVE_ARTIFACT_SCENARIO_ID: &str = "docking-native.headless";
+const DOCKING_NATIVE_ARTIFACT_TIMESTAMP_MS: u64 = 1_725_100_000_000;
 
 struct DemoPanel {
     title: &'static str,
@@ -780,6 +790,162 @@ fn docking_runtime_devtools_session(
         })
         .expect("docking runtime capture provider id should be valid");
     DevtoolsSession::new("docking.runtime", registry).with_history_limit(4)
+}
+
+#[derive(Clone, Debug)]
+pub struct DockingNativeHeadlessArtifacts {
+    pub session_export: DevtoolsSessionExport,
+    pub report: DevtoolsReport,
+    pub session_record: DevtoolsArtifactRecord,
+    pub report_record: DevtoolsArtifactRecord,
+}
+
+pub fn docking_native_headless_artifacts() -> DockingNativeHeadlessArtifacts {
+    let status_slot = Arc::new(Mutex::new(docking_native_headless_status(1)));
+    let mut session = docking_runtime_devtools_session(Arc::clone(&status_slot));
+    session
+        .refresh()
+        .expect("docking native headless first refresh succeeds");
+    *status_slot
+        .lock()
+        .expect("docking native headless status lock is not poisoned") =
+        docking_native_headless_status(2);
+    session
+        .refresh()
+        .expect("docking native headless second refresh succeeds");
+
+    let session_export = session.export();
+    let report = DevtoolsReport::from_session_export(&session_export);
+    let session_record = DevtoolsArtifactRecord::new(
+        docking_native_artifact_metadata(0, "fixture-session"),
+        DevtoolsArtifact::session_export(&session_export),
+    );
+    let report_record = DevtoolsArtifactRecord::new(
+        docking_native_artifact_metadata(1, "fixture-report"),
+        DevtoolsArtifact::report(&report),
+    );
+
+    DockingNativeHeadlessArtifacts {
+        session_export,
+        report,
+        session_record,
+        report_record,
+    }
+}
+
+pub fn docking_native_artifact_metadata(
+    sequence: u64,
+    flush_reason: &str,
+) -> DevtoolsArtifactMetadata {
+    DevtoolsArtifactMetadata::new(DOCKING_NATIVE_ARTIFACT_PRODUCER_ID)
+        .scenario_id(DOCKING_NATIVE_ARTIFACT_SCENARIO_ID)
+        .sequence(sequence)
+        .flush_reason(flush_reason)
+        .timestamp_ms(DOCKING_NATIVE_ARTIFACT_TIMESTAMP_MS + sequence)
+}
+
+pub fn docking_native_headless_status(generation: u64) -> DockViewportRuntimeStatus {
+    let mut status = DockViewportRuntimeStatus::default();
+    status.platform_capabilities = Some(DockViewportPlatformCapabilityRecord {
+        platform_viewport_windows: false,
+        global_window_bounds: true,
+        window_stack: true,
+        display_work_area: true,
+        dpi_scale: true,
+        live_window_move: false,
+        no_input_windows: true,
+        hovered_window_ignores_no_input: false,
+    });
+    status.placement_restore = Some(DockViewportRestoreReadinessRecord {
+        matched: 1,
+        missing: 1,
+    });
+    status.viewport_lifecycle.push(DockViewportLifecycleRecord {
+        space: DockSpaceId::from(SPACE),
+        window_id: open_gpui::WindowId::from(10 + generation),
+        route_status: if generation == 1 {
+            DockViewportRouteStatus::MissingRouteFacts
+        } else {
+            DockViewportRouteStatus::RouteReady
+        },
+        input_status: DockViewportInputStatus::ReceivesInput,
+        platform_request_status: DockViewportPlatformRequestStatus {
+            close_requested: false,
+            resize_requested: generation > 1,
+        },
+        coordinate_status: (generation > 1).then_some(DockViewportCoordinateStatusRecord {
+            display_id: None,
+            coordinate_space: DockViewportCoordinateSpaceRecord::GlobalScreen,
+            facts_generation: generation,
+        }),
+        facts_generation: generation,
+    });
+    if generation > 1 {
+        status.viewport_lifecycle.push(DockViewportLifecycleRecord {
+            space: DockSpaceId::from(SECONDARY_SPACE),
+            window_id: open_gpui::WindowId::from(20 + generation),
+            route_status: DockViewportRouteStatus::Stale {
+                reason: DockViewportStaleStatusReason::WindowFactsChanged,
+            },
+            input_status: DockViewportInputStatus::NoInputPassThrough,
+            platform_request_status: DockViewportPlatformRequestStatus {
+                close_requested: true,
+                resize_requested: false,
+            },
+            coordinate_status: Some(DockViewportCoordinateStatusRecord {
+                display_id: None,
+                coordinate_space: DockViewportCoordinateSpaceRecord::WindowLocal,
+                facts_generation: generation,
+            }),
+            facts_generation: generation,
+        });
+        status.last_drop_outcome = Some(DockViewportDropOutcomeRecord {
+            kind: DockViewportDropOutcomeKind::Error,
+            action: None,
+            error: None,
+        });
+        status.last_tear_off = Some(DockViewportTearOffRecord {
+            kind: DockViewportTearOffOutcomeKind::Completed,
+            placement_source: Some(DockViewportTearOffPlacementRecord::Suggested),
+            source_space: DockSpaceId::from(SPACE),
+            target_space: DockSpaceId::from(SECONDARY_SPACE),
+            payload: DockViewportPayloadRecord::Item {
+                item: DockItemId::from("headless-editor"),
+            },
+        });
+        status.last_platform_sync = Some(DockViewportPlatformSyncRecord {
+            window_id: open_gpui::WindowId::from(20 + generation),
+            applied: Vec::new(),
+            skipped_requests: Vec::new(),
+            unsupported_requests: Vec::new(),
+        });
+        status
+            .visual_affordances
+            .push(DockViewportVisualAffordanceRecord {
+                space: DockSpaceId::from(SECONDARY_SPACE),
+                window_id: open_gpui::WindowId::from(20 + generation),
+                summary: DockVisualAffordanceDebugSummary {
+                    space: Some(SECONDARY_SPACE.to_owned()),
+                    frame_generation: Some(generation),
+                    layer_count: 2,
+                    active_count: 1,
+                    active: Some(DockVisualAffordanceDebugLayer {
+                        id: "headless-active-layer".to_owned(),
+                        kind: "drop-guide".to_owned(),
+                        scope: "viewport".to_owned(),
+                        state: "active".to_owned(),
+                        target_node: Some(42),
+                        zone: None,
+                        payload_index: Some(0),
+                        label: Some("Headless Editor".to_owned()),
+                    }),
+                    motion_state: Some("settled".to_owned()),
+                    churn_signature: "docking-preview:2:1".to_owned(),
+                },
+            });
+    }
+
+    status
 }
 
 #[cfg(test)]
@@ -2678,6 +2844,90 @@ mod tests {
         assert!(serialized.contains("Docking runtime"));
     }
 
+    #[test]
+    fn docking_native_headless_artifacts_use_shared_records() {
+        let artifacts = docking_native_headless_artifacts();
+        let mut sink = open_gpui_devtools::DevtoolsArtifactJsonlSink::new(Vec::new());
+
+        open_gpui_devtools::DevtoolsArtifactSink::write_record(
+            &mut sink,
+            &artifacts.session_record,
+        )
+        .expect("session artifact record writes");
+        open_gpui_devtools::DevtoolsArtifactSink::write_record(&mut sink, &artifacts.report_record)
+            .expect("report artifact record writes");
+
+        let jsonl = String::from_utf8(sink.into_inner()).expect("artifact JSONL is utf8");
+        let lines = jsonl.lines().collect::<Vec<_>>();
+
+        assert_eq!(artifacts.session_export.current_generation, Some(2));
+        assert_eq!(artifacts.report.source.generation, Some(2));
+        assert_eq!(
+            artifacts.session_record.metadata.producer_id,
+            DOCKING_NATIVE_ARTIFACT_PRODUCER_ID
+        );
+        assert_eq!(
+            artifacts.session_record.metadata.scenario_id.as_deref(),
+            Some(DOCKING_NATIVE_ARTIFACT_SCENARIO_ID)
+        );
+        assert_eq!(artifacts.session_record.metadata.generation, Some(2));
+        assert_eq!(artifacts.report_record.metadata.generation, Some(2));
+        assert!(artifacts.report.findings.iter().any(|finding| {
+            finding
+                .id
+                .contains("docking.platform_viewport_windows.unsupported")
+        }));
+        assert!(
+            artifacts
+                .report
+                .findings
+                .iter()
+                .any(|finding| { finding.id.contains("docking.viewport.route_facts.stale") })
+        );
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("\"artifact_kind\":\"session-export\""));
+        assert!(lines[1].contains("\"artifact_kind\":\"report\""));
+    }
+
+    #[test]
+    fn docking_native_headless_fixtures_match_producer_output() {
+        let artifacts = docking_native_headless_artifacts();
+
+        assert_devtools_fixture_matches(
+            "docking-session.json",
+            &serde_json::to_string_pretty(&artifacts.session_export).unwrap(),
+        );
+        assert_devtools_fixture_matches(
+            "docking-report.json",
+            &serde_json::to_string_pretty(&artifacts.report).unwrap(),
+        );
+    }
+
+    #[test]
+    #[ignore = "regenerates checked-in DevTools fixtures"]
+    fn regenerate_docking_native_headless_fixtures() {
+        let artifacts = docking_native_headless_artifacts();
+        let fixture_dir = devtools_fixture_dir();
+
+        std::fs::create_dir_all(&fixture_dir).expect("fixture directory can be created");
+        std::fs::write(
+            fixture_dir.join("docking-session.json"),
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&artifacts.session_export).unwrap()
+            ),
+        )
+        .expect("docking session fixture can be written");
+        std::fs::write(
+            fixture_dir.join("docking-report.json"),
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&artifacts.report).unwrap()
+            ),
+        )
+        .expect("docking report fixture can be written");
+    }
+
     #[open_gpui::test]
     fn runtime_status_panel_refreshes_embedded_devtools_outside_render(cx: &mut TestAppContext) {
         let controller = cx.new(|_| build_controller());
@@ -2933,6 +3183,28 @@ mod tests {
                 .any(|domain| domain.kind.as_label() == "docking")
         );
         assert_eq!(capture.diagnostics.len(), 1);
+    }
+
+    fn assert_devtools_fixture_matches(name: &str, actual: &str) {
+        let expected = std::fs::read_to_string(devtools_fixture_dir().join(name))
+            .unwrap_or_else(|error| panic!("failed to read fixture {name}: {error}"));
+        assert_eq!(normalize_json(&expected), normalize_json(actual));
+    }
+
+    fn devtools_fixture_dir() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("docking-native example is under examples")
+            .parent()
+            .expect("examples has a workspace parent")
+            .join("crates")
+            .join("devtools")
+            .join("tests")
+            .join("fixtures")
+    }
+
+    fn normalize_json(value: &str) -> String {
+        value.replace("\r\n", "\n").trim_end().to_owned()
     }
 
     fn assert_viewport_title(

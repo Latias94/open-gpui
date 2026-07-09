@@ -1,0 +1,1704 @@
+{
+  "schema_version": "open-gpui-devtools-session/v1",
+  "protocol_version": "open-gpui-devtools-local/v1",
+  "session_id": "docking.runtime",
+  "connection_state": "Connected",
+  "history_limit": 4,
+  "retained_frames": 2,
+  "current_generation": 2,
+  "frames": [
+    {
+      "session_id": "docking.runtime",
+      "generation": 1,
+      "previous_generation": null,
+      "capture": {
+        "targets": {
+          "targets": [
+            {
+              "id": "docking.runtime",
+              "kind": "Runtime",
+              "label": "Docking runtime",
+              "parent_id": null,
+              "metadata": {
+                "has_platform_capabilities": true,
+                "has_placement_restore": true,
+                "viewport_lifecycle_count": 1,
+                "has_last_route": false,
+                "has_last_drop_outcome": false,
+                "has_last_activation": false,
+                "has_last_close": false,
+                "has_last_should_close": false,
+                "has_last_tear_off": false,
+                "has_last_platform_sync": false,
+                "visual_affordance_count": 0
+              }
+            },
+            {
+              "id": "docking.viewport.0.docking-demo.4294967307",
+              "kind": "Viewport",
+              "label": "Viewport docking-demo",
+              "parent_id": "docking.runtime",
+              "metadata": {
+                "space": "docking-demo",
+                "window_id": 4294967307,
+                "route_status": "missing-route-facts",
+                "input_status": "receives-input",
+                "platform_request_status": {
+                  "close_requested": false,
+                  "resize_requested": false
+                },
+                "coordinate_status": null,
+                "facts_generation": 1
+              }
+            }
+          ]
+        },
+        "domains": [
+          {
+            "id": "docking.runtime",
+            "target_id": "docking.runtime",
+            "kind": "Docking",
+            "label": "Docking runtime",
+            "summary": {
+              "has_platform_capabilities": true,
+              "has_placement_restore": true,
+              "viewport_lifecycle_count": 1,
+              "has_last_route": false,
+              "has_last_drop_outcome": false,
+              "has_last_activation": false,
+              "has_last_close": false,
+              "has_last_should_close": false,
+              "has_last_tear_off": false,
+              "has_last_platform_sync": false,
+              "visual_affordance_count": 0
+            },
+            "snapshot": {
+              "probe_id": "docking.runtime",
+              "kind": "Docking",
+              "tree": {
+                "nodes": [
+                  {
+                    "id": "docking.viewport-runtime",
+                    "label": "Viewport runtime",
+                    "payload": {
+                      "has_platform_capabilities": true,
+                      "has_placement_restore": true,
+                      "viewport_lifecycle_count": 1,
+                      "has_last_route": false,
+                      "has_last_drop_outcome": false,
+                      "has_last_activation": false,
+                      "has_last_close": false,
+                      "has_last_should_close": false,
+                      "has_last_tear_off": false,
+                      "has_last_platform_sync": false,
+                      "visual_affordance_count": 0
+                    },
+                    "children": [
+                      {
+                        "id": "docking.viewport-runtime.platform",
+                        "label": "Platform capabilities",
+                        "payload": {
+                          "platform_viewport_windows": false,
+                          "global_window_bounds": true,
+                          "window_stack": true,
+                          "display_work_area": true,
+                          "dpi_scale": true,
+                          "live_window_move": false,
+                          "no_input_windows": true,
+                          "hovered_window_ignores_no_input": false
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.placement-restore",
+                        "label": "Placement restore",
+                        "payload": {
+                          "matched": 1,
+                          "missing": 1
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.lifecycle.0",
+                        "label": "Viewport lifecycle 0",
+                        "payload": {
+                          "space": "docking-demo",
+                          "window_id": 4294967307,
+                          "route_status": "missing-route-facts",
+                          "input_status": "receives-input",
+                          "platform_request_status": {
+                            "close_requested": false,
+                            "resize_requested": false
+                          },
+                          "coordinate_status": null,
+                          "facts_generation": 1
+                        },
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              "redaction": {
+                "redacted_values": 0,
+                "notes": []
+              }
+            },
+            "diagnostics": [
+              {
+                "probe_id": "docking.runtime",
+                "code": "docking.platform_viewport_windows.unsupported",
+                "message": "platform viewport windows are unsupported by current platform capabilities"
+              },
+              {
+                "probe_id": "docking.runtime",
+                "code": "docking.viewport.route_facts.missing",
+                "message": "viewport `docking-demo` is registered but has no route facts"
+              }
+            ]
+          }
+        ],
+        "events": [],
+        "snapshots": [
+          {
+            "probe_id": "docking.runtime",
+            "kind": "Docking",
+            "tree": {
+              "nodes": [
+                {
+                  "id": "docking.viewport-runtime",
+                  "label": "Viewport runtime",
+                  "payload": {
+                    "has_platform_capabilities": true,
+                    "has_placement_restore": true,
+                    "viewport_lifecycle_count": 1,
+                    "has_last_route": false,
+                    "has_last_drop_outcome": false,
+                    "has_last_activation": false,
+                    "has_last_close": false,
+                    "has_last_should_close": false,
+                    "has_last_tear_off": false,
+                    "has_last_platform_sync": false,
+                    "visual_affordance_count": 0
+                  },
+                  "children": [
+                    {
+                      "id": "docking.viewport-runtime.platform",
+                      "label": "Platform capabilities",
+                      "payload": {
+                        "platform_viewport_windows": false,
+                        "global_window_bounds": true,
+                        "window_stack": true,
+                        "display_work_area": true,
+                        "dpi_scale": true,
+                        "live_window_move": false,
+                        "no_input_windows": true,
+                        "hovered_window_ignores_no_input": false
+                      },
+                      "children": []
+                    },
+                    {
+                      "id": "docking.viewport-runtime.placement-restore",
+                      "label": "Placement restore",
+                      "payload": {
+                        "matched": 1,
+                        "missing": 1
+                      },
+                      "children": []
+                    },
+                    {
+                      "id": "docking.viewport-runtime.lifecycle.0",
+                      "label": "Viewport lifecycle 0",
+                      "payload": {
+                        "space": "docking-demo",
+                        "window_id": 4294967307,
+                        "route_status": "missing-route-facts",
+                        "input_status": "receives-input",
+                        "platform_request_status": {
+                          "close_requested": false,
+                          "resize_requested": false
+                        },
+                        "coordinate_status": null,
+                        "facts_generation": 1
+                      },
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            "redaction": {
+              "redacted_values": 0,
+              "notes": []
+            }
+          }
+        ],
+        "diagnostics": [
+          {
+            "probe_id": "docking.runtime",
+            "code": "docking.platform_viewport_windows.unsupported",
+            "message": "platform viewport windows are unsupported by current platform capabilities"
+          },
+          {
+            "probe_id": "docking.runtime",
+            "code": "docking.viewport.route_facts.missing",
+            "message": "viewport `docking-demo` is registered but has no route facts"
+          }
+        ]
+      },
+      "diff_from_previous": null
+    },
+    {
+      "session_id": "docking.runtime",
+      "generation": 2,
+      "previous_generation": 1,
+      "capture": {
+        "targets": {
+          "targets": [
+            {
+              "id": "docking.runtime",
+              "kind": "Runtime",
+              "label": "Docking runtime",
+              "parent_id": null,
+              "metadata": {
+                "has_platform_capabilities": true,
+                "has_placement_restore": true,
+                "viewport_lifecycle_count": 2,
+                "has_last_route": false,
+                "has_last_drop_outcome": true,
+                "has_last_activation": false,
+                "has_last_close": false,
+                "has_last_should_close": false,
+                "has_last_tear_off": true,
+                "has_last_platform_sync": true,
+                "visual_affordance_count": 1
+              }
+            },
+            {
+              "id": "docking.viewport.0.docking-demo.4294967308",
+              "kind": "Viewport",
+              "label": "Viewport docking-demo",
+              "parent_id": "docking.runtime",
+              "metadata": {
+                "space": "docking-demo",
+                "window_id": 4294967308,
+                "route_status": "route-ready",
+                "input_status": "receives-input",
+                "platform_request_status": {
+                  "close_requested": false,
+                  "resize_requested": true
+                },
+                "coordinate_status": {
+                  "display_id": null,
+                  "coordinate_space": "GlobalScreen",
+                  "facts_generation": 2
+                },
+                "facts_generation": 2
+              }
+            },
+            {
+              "id": "docking.viewport.1.docking-preview.4294967318",
+              "kind": "Viewport",
+              "label": "Viewport docking-preview",
+              "parent_id": "docking.runtime",
+              "metadata": {
+                "space": "docking-preview",
+                "window_id": 4294967318,
+                "route_status": "stale-window-facts-changed",
+                "input_status": "no-input-pass-through",
+                "platform_request_status": {
+                  "close_requested": true,
+                  "resize_requested": false
+                },
+                "coordinate_status": {
+                  "display_id": null,
+                  "coordinate_space": "WindowLocal",
+                  "facts_generation": 2
+                },
+                "facts_generation": 2
+              }
+            },
+            {
+              "id": "docking.visual-affordance.0.docking-preview.4294967318",
+              "kind": "Viewport",
+              "label": "Visual affordance docking-preview",
+              "parent_id": "docking.runtime",
+              "metadata": {
+                "space": "docking-preview",
+                "window_id": 4294967318,
+                "summary_space": "docking-preview",
+                "frame_generation": 2,
+                "layer_count": 2,
+                "active_count": 1,
+                "active": {
+                  "id": "headless-active-layer",
+                  "kind": "drop-guide",
+                  "scope": "viewport",
+                  "state": "active",
+                  "target_node": 42,
+                  "zone": null,
+                  "payload_index": 0,
+                  "has_label": true
+                },
+                "motion_state": "settled",
+                "churn_signature": "docking-preview:2:1"
+              }
+            }
+          ]
+        },
+        "domains": [
+          {
+            "id": "docking.runtime",
+            "target_id": "docking.runtime",
+            "kind": "Docking",
+            "label": "Docking runtime",
+            "summary": {
+              "has_platform_capabilities": true,
+              "has_placement_restore": true,
+              "viewport_lifecycle_count": 2,
+              "has_last_route": false,
+              "has_last_drop_outcome": true,
+              "has_last_activation": false,
+              "has_last_close": false,
+              "has_last_should_close": false,
+              "has_last_tear_off": true,
+              "has_last_platform_sync": true,
+              "visual_affordance_count": 1
+            },
+            "snapshot": {
+              "probe_id": "docking.runtime",
+              "kind": "Docking",
+              "tree": {
+                "nodes": [
+                  {
+                    "id": "docking.viewport-runtime",
+                    "label": "Viewport runtime",
+                    "payload": {
+                      "has_platform_capabilities": true,
+                      "has_placement_restore": true,
+                      "viewport_lifecycle_count": 2,
+                      "has_last_route": false,
+                      "has_last_drop_outcome": true,
+                      "has_last_activation": false,
+                      "has_last_close": false,
+                      "has_last_should_close": false,
+                      "has_last_tear_off": true,
+                      "has_last_platform_sync": true,
+                      "visual_affordance_count": 1
+                    },
+                    "children": [
+                      {
+                        "id": "docking.viewport-runtime.platform",
+                        "label": "Platform capabilities",
+                        "payload": {
+                          "platform_viewport_windows": false,
+                          "global_window_bounds": true,
+                          "window_stack": true,
+                          "display_work_area": true,
+                          "dpi_scale": true,
+                          "live_window_move": false,
+                          "no_input_windows": true,
+                          "hovered_window_ignores_no_input": false
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.placement-restore",
+                        "label": "Placement restore",
+                        "payload": {
+                          "matched": 1,
+                          "missing": 1
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.lifecycle.0",
+                        "label": "Viewport lifecycle 0",
+                        "payload": {
+                          "space": "docking-demo",
+                          "window_id": 4294967308,
+                          "route_status": "route-ready",
+                          "input_status": "receives-input",
+                          "platform_request_status": {
+                            "close_requested": false,
+                            "resize_requested": true
+                          },
+                          "coordinate_status": {
+                            "display_id": null,
+                            "coordinate_space": "GlobalScreen",
+                            "facts_generation": 2
+                          },
+                          "facts_generation": 2
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.lifecycle.1",
+                        "label": "Viewport lifecycle 1",
+                        "payload": {
+                          "space": "docking-preview",
+                          "window_id": 4294967318,
+                          "route_status": "stale-window-facts-changed",
+                          "input_status": "no-input-pass-through",
+                          "platform_request_status": {
+                            "close_requested": true,
+                            "resize_requested": false
+                          },
+                          "coordinate_status": {
+                            "display_id": null,
+                            "coordinate_space": "WindowLocal",
+                            "facts_generation": 2
+                          },
+                          "facts_generation": 2
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.last-drop-outcome",
+                        "label": "last-drop-outcome",
+                        "payload": {
+                          "kind": "Error",
+                          "has_action": false,
+                          "has_error": false,
+                          "action": null,
+                          "error": null
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.last-tear-off",
+                        "label": "last-tear-off",
+                        "payload": {
+                          "kind": "Completed",
+                          "placement_source": "Suggested",
+                          "source_space": "docking-demo",
+                          "target_space": "docking-preview",
+                          "payload": {
+                            "kind": "item",
+                            "item": "headless-editor"
+                          }
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.last-platform-sync",
+                        "label": "last-platform-sync",
+                        "payload": {
+                          "window_id": 4294967318,
+                          "applied_count": 0,
+                          "skipped_count": 0,
+                          "unsupported_count": 0,
+                          "applied": [],
+                          "skipped_requests": [],
+                          "unsupported_requests": []
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.visual-affordance.0",
+                        "label": "Visual affordance 0",
+                        "payload": {
+                          "space": "docking-preview",
+                          "window_id": 4294967318,
+                          "summary_space": "docking-preview",
+                          "frame_generation": 2,
+                          "layer_count": 2,
+                          "active_count": 1,
+                          "active": {
+                            "id": "headless-active-layer",
+                            "kind": "drop-guide",
+                            "scope": "viewport",
+                            "state": "active",
+                            "target_node": 42,
+                            "zone": null,
+                            "payload_index": 0,
+                            "has_label": true
+                          },
+                          "motion_state": "settled",
+                          "churn_signature": "docking-preview:2:1"
+                        },
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              "redaction": {
+                "redacted_values": 0,
+                "notes": []
+              }
+            },
+            "diagnostics": [
+              {
+                "probe_id": "docking.runtime",
+                "code": "docking.platform_viewport_windows.unsupported",
+                "message": "platform viewport windows are unsupported by current platform capabilities"
+              },
+              {
+                "probe_id": "docking.runtime",
+                "code": "docking.viewport.route_facts.stale",
+                "message": "viewport `docking-preview` has stale route facts: window-facts-changed"
+              }
+            ]
+          }
+        ],
+        "events": [
+          {
+            "sequence": 0,
+            "scope_id": null,
+            "id": "docking.last-drop-outcome",
+            "label": "Last drop outcome",
+            "kind": "Instant",
+            "target_id": "docking.runtime",
+            "domain_id": "docking.runtime",
+            "timestamp_ms": null,
+            "duration_ms": null,
+            "payload": {
+              "kind": "Error",
+              "has_action": false,
+              "has_error": false,
+              "action": null,
+              "error": null
+            }
+          },
+          {
+            "sequence": 0,
+            "scope_id": null,
+            "id": "docking.last-tear-off",
+            "label": "Last tear-off",
+            "kind": "Instant",
+            "target_id": "docking.runtime",
+            "domain_id": "docking.runtime",
+            "timestamp_ms": null,
+            "duration_ms": null,
+            "payload": {
+              "kind": "Completed",
+              "placement_source": "Suggested",
+              "source_space": "docking-demo",
+              "target_space": "docking-preview",
+              "payload": {
+                "kind": "item",
+                "item": "headless-editor"
+              }
+            }
+          },
+          {
+            "sequence": 0,
+            "scope_id": null,
+            "id": "docking.last-platform-sync",
+            "label": "Last platform sync",
+            "kind": "Instant",
+            "target_id": "docking.runtime",
+            "domain_id": "docking.runtime",
+            "timestamp_ms": null,
+            "duration_ms": null,
+            "payload": {
+              "window_id": 4294967318,
+              "applied_count": 0,
+              "skipped_count": 0,
+              "unsupported_count": 0,
+              "applied": [],
+              "skipped_requests": [],
+              "unsupported_requests": []
+            }
+          },
+          {
+            "sequence": 0,
+            "scope_id": null,
+            "id": "docking.visual-affordance.0",
+            "label": "Visual affordance 0",
+            "kind": "Instant",
+            "target_id": "docking.visual-affordance.0.docking-preview.4294967318",
+            "domain_id": "docking.runtime",
+            "timestamp_ms": null,
+            "duration_ms": null,
+            "payload": {
+              "space": "docking-preview",
+              "window_id": 4294967318,
+              "summary_space": "docking-preview",
+              "frame_generation": 2,
+              "layer_count": 2,
+              "active_count": 1,
+              "active": {
+                "id": "headless-active-layer",
+                "kind": "drop-guide",
+                "scope": "viewport",
+                "state": "active",
+                "target_node": 42,
+                "zone": null,
+                "payload_index": 0,
+                "has_label": true
+              },
+              "motion_state": "settled",
+              "churn_signature": "docking-preview:2:1"
+            }
+          }
+        ],
+        "snapshots": [
+          {
+            "probe_id": "docking.runtime",
+            "kind": "Docking",
+            "tree": {
+              "nodes": [
+                {
+                  "id": "docking.viewport-runtime",
+                  "label": "Viewport runtime",
+                  "payload": {
+                    "has_platform_capabilities": true,
+                    "has_placement_restore": true,
+                    "viewport_lifecycle_count": 2,
+                    "has_last_route": false,
+                    "has_last_drop_outcome": true,
+                    "has_last_activation": false,
+                    "has_last_close": false,
+                    "has_last_should_close": false,
+                    "has_last_tear_off": true,
+                    "has_last_platform_sync": true,
+                    "visual_affordance_count": 1
+                  },
+                  "children": [
+                    {
+                      "id": "docking.viewport-runtime.platform",
+                      "label": "Platform capabilities",
+                      "payload": {
+                        "platform_viewport_windows": false,
+                        "global_window_bounds": true,
+                        "window_stack": true,
+                        "display_work_area": true,
+                        "dpi_scale": true,
+                        "live_window_move": false,
+                        "no_input_windows": true,
+                        "hovered_window_ignores_no_input": false
+                      },
+                      "children": []
+                    },
+                    {
+                      "id": "docking.viewport-runtime.placement-restore",
+                      "label": "Placement restore",
+                      "payload": {
+                        "matched": 1,
+                        "missing": 1
+                      },
+                      "children": []
+                    },
+                    {
+                      "id": "docking.viewport-runtime.lifecycle.0",
+                      "label": "Viewport lifecycle 0",
+                      "payload": {
+                        "space": "docking-demo",
+                        "window_id": 4294967308,
+                        "route_status": "route-ready",
+                        "input_status": "receives-input",
+                        "platform_request_status": {
+                          "close_requested": false,
+                          "resize_requested": true
+                        },
+                        "coordinate_status": {
+                          "display_id": null,
+                          "coordinate_space": "GlobalScreen",
+                          "facts_generation": 2
+                        },
+                        "facts_generation": 2
+                      },
+                      "children": []
+                    },
+                    {
+                      "id": "docking.viewport-runtime.lifecycle.1",
+                      "label": "Viewport lifecycle 1",
+                      "payload": {
+                        "space": "docking-preview",
+                        "window_id": 4294967318,
+                        "route_status": "stale-window-facts-changed",
+                        "input_status": "no-input-pass-through",
+                        "platform_request_status": {
+                          "close_requested": true,
+                          "resize_requested": false
+                        },
+                        "coordinate_status": {
+                          "display_id": null,
+                          "coordinate_space": "WindowLocal",
+                          "facts_generation": 2
+                        },
+                        "facts_generation": 2
+                      },
+                      "children": []
+                    },
+                    {
+                      "id": "docking.viewport-runtime.last-drop-outcome",
+                      "label": "last-drop-outcome",
+                      "payload": {
+                        "kind": "Error",
+                        "has_action": false,
+                        "has_error": false,
+                        "action": null,
+                        "error": null
+                      },
+                      "children": []
+                    },
+                    {
+                      "id": "docking.viewport-runtime.last-tear-off",
+                      "label": "last-tear-off",
+                      "payload": {
+                        "kind": "Completed",
+                        "placement_source": "Suggested",
+                        "source_space": "docking-demo",
+                        "target_space": "docking-preview",
+                        "payload": {
+                          "kind": "item",
+                          "item": "headless-editor"
+                        }
+                      },
+                      "children": []
+                    },
+                    {
+                      "id": "docking.viewport-runtime.last-platform-sync",
+                      "label": "last-platform-sync",
+                      "payload": {
+                        "window_id": 4294967318,
+                        "applied_count": 0,
+                        "skipped_count": 0,
+                        "unsupported_count": 0,
+                        "applied": [],
+                        "skipped_requests": [],
+                        "unsupported_requests": []
+                      },
+                      "children": []
+                    },
+                    {
+                      "id": "docking.viewport-runtime.visual-affordance.0",
+                      "label": "Visual affordance 0",
+                      "payload": {
+                        "space": "docking-preview",
+                        "window_id": 4294967318,
+                        "summary_space": "docking-preview",
+                        "frame_generation": 2,
+                        "layer_count": 2,
+                        "active_count": 1,
+                        "active": {
+                          "id": "headless-active-layer",
+                          "kind": "drop-guide",
+                          "scope": "viewport",
+                          "state": "active",
+                          "target_node": 42,
+                          "zone": null,
+                          "payload_index": 0,
+                          "has_label": true
+                        },
+                        "motion_state": "settled",
+                        "churn_signature": "docking-preview:2:1"
+                      },
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            "redaction": {
+              "redacted_values": 0,
+              "notes": []
+            }
+          }
+        ],
+        "diagnostics": [
+          {
+            "probe_id": "docking.runtime",
+            "code": "docking.platform_viewport_windows.unsupported",
+            "message": "platform viewport windows are unsupported by current platform capabilities"
+          },
+          {
+            "probe_id": "docking.runtime",
+            "code": "docking.viewport.route_facts.stale",
+            "message": "viewport `docking-preview` has stale route facts: window-facts-changed"
+          }
+        ]
+      },
+      "diff_from_previous": {
+        "rows": [
+          {
+            "kind": "Target",
+            "identity": "docking.runtime",
+            "label": "Docking runtime",
+            "status": "Changed",
+            "previous": {
+              "id": "docking.runtime",
+              "kind": "Runtime",
+              "label": "Docking runtime",
+              "parent_id": null,
+              "metadata": {
+                "has_platform_capabilities": true,
+                "has_placement_restore": true,
+                "viewport_lifecycle_count": 1,
+                "has_last_route": false,
+                "has_last_drop_outcome": false,
+                "has_last_activation": false,
+                "has_last_close": false,
+                "has_last_should_close": false,
+                "has_last_tear_off": false,
+                "has_last_platform_sync": false,
+                "visual_affordance_count": 0
+              }
+            },
+            "current": {
+              "id": "docking.runtime",
+              "kind": "Runtime",
+              "label": "Docking runtime",
+              "parent_id": null,
+              "metadata": {
+                "has_platform_capabilities": true,
+                "has_placement_restore": true,
+                "viewport_lifecycle_count": 2,
+                "has_last_route": false,
+                "has_last_drop_outcome": true,
+                "has_last_activation": false,
+                "has_last_close": false,
+                "has_last_should_close": false,
+                "has_last_tear_off": true,
+                "has_last_platform_sync": true,
+                "visual_affordance_count": 1
+              }
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Target",
+            "identity": "docking.viewport.0.docking-demo.4294967307",
+            "label": "Viewport docking-demo",
+            "status": "Removed",
+            "previous": {
+              "id": "docking.viewport.0.docking-demo.4294967307",
+              "kind": "Viewport",
+              "label": "Viewport docking-demo",
+              "parent_id": "docking.runtime",
+              "metadata": {
+                "space": "docking-demo",
+                "window_id": 4294967307,
+                "route_status": "missing-route-facts",
+                "input_status": "receives-input",
+                "platform_request_status": {
+                  "close_requested": false,
+                  "resize_requested": false
+                },
+                "coordinate_status": null,
+                "facts_generation": 1
+              }
+            },
+            "current": null,
+            "diagnostic": null
+          },
+          {
+            "kind": "Target",
+            "identity": "docking.viewport.0.docking-demo.4294967308",
+            "label": "Viewport docking-demo",
+            "status": "Added",
+            "previous": null,
+            "current": {
+              "id": "docking.viewport.0.docking-demo.4294967308",
+              "kind": "Viewport",
+              "label": "Viewport docking-demo",
+              "parent_id": "docking.runtime",
+              "metadata": {
+                "space": "docking-demo",
+                "window_id": 4294967308,
+                "route_status": "route-ready",
+                "input_status": "receives-input",
+                "platform_request_status": {
+                  "close_requested": false,
+                  "resize_requested": true
+                },
+                "coordinate_status": {
+                  "display_id": null,
+                  "coordinate_space": "GlobalScreen",
+                  "facts_generation": 2
+                },
+                "facts_generation": 2
+              }
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Target",
+            "identity": "docking.viewport.1.docking-preview.4294967318",
+            "label": "Viewport docking-preview",
+            "status": "Added",
+            "previous": null,
+            "current": {
+              "id": "docking.viewport.1.docking-preview.4294967318",
+              "kind": "Viewport",
+              "label": "Viewport docking-preview",
+              "parent_id": "docking.runtime",
+              "metadata": {
+                "space": "docking-preview",
+                "window_id": 4294967318,
+                "route_status": "stale-window-facts-changed",
+                "input_status": "no-input-pass-through",
+                "platform_request_status": {
+                  "close_requested": true,
+                  "resize_requested": false
+                },
+                "coordinate_status": {
+                  "display_id": null,
+                  "coordinate_space": "WindowLocal",
+                  "facts_generation": 2
+                },
+                "facts_generation": 2
+              }
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Target",
+            "identity": "docking.visual-affordance.0.docking-preview.4294967318",
+            "label": "Visual affordance docking-preview",
+            "status": "Added",
+            "previous": null,
+            "current": {
+              "id": "docking.visual-affordance.0.docking-preview.4294967318",
+              "kind": "Viewport",
+              "label": "Visual affordance docking-preview",
+              "parent_id": "docking.runtime",
+              "metadata": {
+                "space": "docking-preview",
+                "window_id": 4294967318,
+                "summary_space": "docking-preview",
+                "frame_generation": 2,
+                "layer_count": 2,
+                "active_count": 1,
+                "active": {
+                  "id": "headless-active-layer",
+                  "kind": "drop-guide",
+                  "scope": "viewport",
+                  "state": "active",
+                  "target_node": 42,
+                  "zone": null,
+                  "payload_index": 0,
+                  "has_label": true
+                },
+                "motion_state": "settled",
+                "churn_signature": "docking-preview:2:1"
+              }
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Domain",
+            "identity": "docking.runtime",
+            "label": "Docking runtime",
+            "status": "Changed",
+            "previous": {
+              "id": "docking.runtime",
+              "target_id": "docking.runtime",
+              "kind": "Docking",
+              "label": "Docking runtime",
+              "summary": {
+                "has_platform_capabilities": true,
+                "has_placement_restore": true,
+                "viewport_lifecycle_count": 1,
+                "has_last_route": false,
+                "has_last_drop_outcome": false,
+                "has_last_activation": false,
+                "has_last_close": false,
+                "has_last_should_close": false,
+                "has_last_tear_off": false,
+                "has_last_platform_sync": false,
+                "visual_affordance_count": 0
+              },
+              "snapshot": {
+                "probe_id": "docking.runtime",
+                "kind": "Docking",
+                "tree": {
+                  "nodes": [
+                    {
+                      "id": "docking.viewport-runtime",
+                      "label": "Viewport runtime",
+                      "payload": {
+                        "has_platform_capabilities": true,
+                        "has_placement_restore": true,
+                        "viewport_lifecycle_count": 1,
+                        "has_last_route": false,
+                        "has_last_drop_outcome": false,
+                        "has_last_activation": false,
+                        "has_last_close": false,
+                        "has_last_should_close": false,
+                        "has_last_tear_off": false,
+                        "has_last_platform_sync": false,
+                        "visual_affordance_count": 0
+                      },
+                      "children": [
+                        {
+                          "id": "docking.viewport-runtime.platform",
+                          "label": "Platform capabilities",
+                          "payload": {
+                            "platform_viewport_windows": false,
+                            "global_window_bounds": true,
+                            "window_stack": true,
+                            "display_work_area": true,
+                            "dpi_scale": true,
+                            "live_window_move": false,
+                            "no_input_windows": true,
+                            "hovered_window_ignores_no_input": false
+                          },
+                          "children": []
+                        },
+                        {
+                          "id": "docking.viewport-runtime.placement-restore",
+                          "label": "Placement restore",
+                          "payload": {
+                            "matched": 1,
+                            "missing": 1
+                          },
+                          "children": []
+                        },
+                        {
+                          "id": "docking.viewport-runtime.lifecycle.0",
+                          "label": "Viewport lifecycle 0",
+                          "payload": {
+                            "space": "docking-demo",
+                            "window_id": 4294967307,
+                            "route_status": "missing-route-facts",
+                            "input_status": "receives-input",
+                            "platform_request_status": {
+                              "close_requested": false,
+                              "resize_requested": false
+                            },
+                            "coordinate_status": null,
+                            "facts_generation": 1
+                          },
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "redaction": {
+                  "redacted_values": 0,
+                  "notes": []
+                }
+              },
+              "diagnostics": [
+                {
+                  "probe_id": "docking.runtime",
+                  "code": "docking.platform_viewport_windows.unsupported",
+                  "message": "platform viewport windows are unsupported by current platform capabilities"
+                },
+                {
+                  "probe_id": "docking.runtime",
+                  "code": "docking.viewport.route_facts.missing",
+                  "message": "viewport `docking-demo` is registered but has no route facts"
+                }
+              ]
+            },
+            "current": {
+              "id": "docking.runtime",
+              "target_id": "docking.runtime",
+              "kind": "Docking",
+              "label": "Docking runtime",
+              "summary": {
+                "has_platform_capabilities": true,
+                "has_placement_restore": true,
+                "viewport_lifecycle_count": 2,
+                "has_last_route": false,
+                "has_last_drop_outcome": true,
+                "has_last_activation": false,
+                "has_last_close": false,
+                "has_last_should_close": false,
+                "has_last_tear_off": true,
+                "has_last_platform_sync": true,
+                "visual_affordance_count": 1
+              },
+              "snapshot": {
+                "probe_id": "docking.runtime",
+                "kind": "Docking",
+                "tree": {
+                  "nodes": [
+                    {
+                      "id": "docking.viewport-runtime",
+                      "label": "Viewport runtime",
+                      "payload": {
+                        "has_platform_capabilities": true,
+                        "has_placement_restore": true,
+                        "viewport_lifecycle_count": 2,
+                        "has_last_route": false,
+                        "has_last_drop_outcome": true,
+                        "has_last_activation": false,
+                        "has_last_close": false,
+                        "has_last_should_close": false,
+                        "has_last_tear_off": true,
+                        "has_last_platform_sync": true,
+                        "visual_affordance_count": 1
+                      },
+                      "children": [
+                        {
+                          "id": "docking.viewport-runtime.platform",
+                          "label": "Platform capabilities",
+                          "payload": {
+                            "platform_viewport_windows": false,
+                            "global_window_bounds": true,
+                            "window_stack": true,
+                            "display_work_area": true,
+                            "dpi_scale": true,
+                            "live_window_move": false,
+                            "no_input_windows": true,
+                            "hovered_window_ignores_no_input": false
+                          },
+                          "children": []
+                        },
+                        {
+                          "id": "docking.viewport-runtime.placement-restore",
+                          "label": "Placement restore",
+                          "payload": {
+                            "matched": 1,
+                            "missing": 1
+                          },
+                          "children": []
+                        },
+                        {
+                          "id": "docking.viewport-runtime.lifecycle.0",
+                          "label": "Viewport lifecycle 0",
+                          "payload": {
+                            "space": "docking-demo",
+                            "window_id": 4294967308,
+                            "route_status": "route-ready",
+                            "input_status": "receives-input",
+                            "platform_request_status": {
+                              "close_requested": false,
+                              "resize_requested": true
+                            },
+                            "coordinate_status": {
+                              "display_id": null,
+                              "coordinate_space": "GlobalScreen",
+                              "facts_generation": 2
+                            },
+                            "facts_generation": 2
+                          },
+                          "children": []
+                        },
+                        {
+                          "id": "docking.viewport-runtime.lifecycle.1",
+                          "label": "Viewport lifecycle 1",
+                          "payload": {
+                            "space": "docking-preview",
+                            "window_id": 4294967318,
+                            "route_status": "stale-window-facts-changed",
+                            "input_status": "no-input-pass-through",
+                            "platform_request_status": {
+                              "close_requested": true,
+                              "resize_requested": false
+                            },
+                            "coordinate_status": {
+                              "display_id": null,
+                              "coordinate_space": "WindowLocal",
+                              "facts_generation": 2
+                            },
+                            "facts_generation": 2
+                          },
+                          "children": []
+                        },
+                        {
+                          "id": "docking.viewport-runtime.last-drop-outcome",
+                          "label": "last-drop-outcome",
+                          "payload": {
+                            "kind": "Error",
+                            "has_action": false,
+                            "has_error": false,
+                            "action": null,
+                            "error": null
+                          },
+                          "children": []
+                        },
+                        {
+                          "id": "docking.viewport-runtime.last-tear-off",
+                          "label": "last-tear-off",
+                          "payload": {
+                            "kind": "Completed",
+                            "placement_source": "Suggested",
+                            "source_space": "docking-demo",
+                            "target_space": "docking-preview",
+                            "payload": {
+                              "kind": "item",
+                              "item": "headless-editor"
+                            }
+                          },
+                          "children": []
+                        },
+                        {
+                          "id": "docking.viewport-runtime.last-platform-sync",
+                          "label": "last-platform-sync",
+                          "payload": {
+                            "window_id": 4294967318,
+                            "applied_count": 0,
+                            "skipped_count": 0,
+                            "unsupported_count": 0,
+                            "applied": [],
+                            "skipped_requests": [],
+                            "unsupported_requests": []
+                          },
+                          "children": []
+                        },
+                        {
+                          "id": "docking.viewport-runtime.visual-affordance.0",
+                          "label": "Visual affordance 0",
+                          "payload": {
+                            "space": "docking-preview",
+                            "window_id": 4294967318,
+                            "summary_space": "docking-preview",
+                            "frame_generation": 2,
+                            "layer_count": 2,
+                            "active_count": 1,
+                            "active": {
+                              "id": "headless-active-layer",
+                              "kind": "drop-guide",
+                              "scope": "viewport",
+                              "state": "active",
+                              "target_node": 42,
+                              "zone": null,
+                              "payload_index": 0,
+                              "has_label": true
+                            },
+                            "motion_state": "settled",
+                            "churn_signature": "docking-preview:2:1"
+                          },
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "redaction": {
+                  "redacted_values": 0,
+                  "notes": []
+                }
+              },
+              "diagnostics": [
+                {
+                  "probe_id": "docking.runtime",
+                  "code": "docking.platform_viewport_windows.unsupported",
+                  "message": "platform viewport windows are unsupported by current platform capabilities"
+                },
+                {
+                  "probe_id": "docking.runtime",
+                  "code": "docking.viewport.route_facts.stale",
+                  "message": "viewport `docking-preview` has stale route facts: window-facts-changed"
+                }
+              ]
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Event",
+            "identity": "app.0.docking.last-drop-outcome",
+            "label": "Last drop outcome",
+            "status": "Added",
+            "previous": null,
+            "current": {
+              "sequence": 0,
+              "scope_id": null,
+              "id": "docking.last-drop-outcome",
+              "label": "Last drop outcome",
+              "kind": "Instant",
+              "target_id": "docking.runtime",
+              "domain_id": "docking.runtime",
+              "timestamp_ms": null,
+              "duration_ms": null,
+              "payload": {
+                "kind": "Error",
+                "has_action": false,
+                "has_error": false,
+                "action": null,
+                "error": null
+              }
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Event",
+            "identity": "app.0.docking.last-platform-sync",
+            "label": "Last platform sync",
+            "status": "Added",
+            "previous": null,
+            "current": {
+              "sequence": 0,
+              "scope_id": null,
+              "id": "docking.last-platform-sync",
+              "label": "Last platform sync",
+              "kind": "Instant",
+              "target_id": "docking.runtime",
+              "domain_id": "docking.runtime",
+              "timestamp_ms": null,
+              "duration_ms": null,
+              "payload": {
+                "window_id": 4294967318,
+                "applied_count": 0,
+                "skipped_count": 0,
+                "unsupported_count": 0,
+                "applied": [],
+                "skipped_requests": [],
+                "unsupported_requests": []
+              }
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Event",
+            "identity": "app.0.docking.last-tear-off",
+            "label": "Last tear-off",
+            "status": "Added",
+            "previous": null,
+            "current": {
+              "sequence": 0,
+              "scope_id": null,
+              "id": "docking.last-tear-off",
+              "label": "Last tear-off",
+              "kind": "Instant",
+              "target_id": "docking.runtime",
+              "domain_id": "docking.runtime",
+              "timestamp_ms": null,
+              "duration_ms": null,
+              "payload": {
+                "kind": "Completed",
+                "placement_source": "Suggested",
+                "source_space": "docking-demo",
+                "target_space": "docking-preview",
+                "payload": {
+                  "kind": "item",
+                  "item": "headless-editor"
+                }
+              }
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Event",
+            "identity": "app.0.docking.visual-affordance.0",
+            "label": "Visual affordance 0",
+            "status": "Added",
+            "previous": null,
+            "current": {
+              "sequence": 0,
+              "scope_id": null,
+              "id": "docking.visual-affordance.0",
+              "label": "Visual affordance 0",
+              "kind": "Instant",
+              "target_id": "docking.visual-affordance.0.docking-preview.4294967318",
+              "domain_id": "docking.runtime",
+              "timestamp_ms": null,
+              "duration_ms": null,
+              "payload": {
+                "space": "docking-preview",
+                "window_id": 4294967318,
+                "summary_space": "docking-preview",
+                "frame_generation": 2,
+                "layer_count": 2,
+                "active_count": 1,
+                "active": {
+                  "id": "headless-active-layer",
+                  "kind": "drop-guide",
+                  "scope": "viewport",
+                  "state": "active",
+                  "target_node": 42,
+                  "zone": null,
+                  "payload_index": 0,
+                  "has_label": true
+                },
+                "motion_state": "settled",
+                "churn_signature": "docking-preview:2:1"
+              }
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Snapshot",
+            "identity": "docking.runtime:docking",
+            "label": "docking",
+            "status": "Changed",
+            "previous": {
+              "probe_id": "docking.runtime",
+              "kind": "Docking",
+              "tree": {
+                "nodes": [
+                  {
+                    "id": "docking.viewport-runtime",
+                    "label": "Viewport runtime",
+                    "payload": {
+                      "has_platform_capabilities": true,
+                      "has_placement_restore": true,
+                      "viewport_lifecycle_count": 1,
+                      "has_last_route": false,
+                      "has_last_drop_outcome": false,
+                      "has_last_activation": false,
+                      "has_last_close": false,
+                      "has_last_should_close": false,
+                      "has_last_tear_off": false,
+                      "has_last_platform_sync": false,
+                      "visual_affordance_count": 0
+                    },
+                    "children": [
+                      {
+                        "id": "docking.viewport-runtime.platform",
+                        "label": "Platform capabilities",
+                        "payload": {
+                          "platform_viewport_windows": false,
+                          "global_window_bounds": true,
+                          "window_stack": true,
+                          "display_work_area": true,
+                          "dpi_scale": true,
+                          "live_window_move": false,
+                          "no_input_windows": true,
+                          "hovered_window_ignores_no_input": false
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.placement-restore",
+                        "label": "Placement restore",
+                        "payload": {
+                          "matched": 1,
+                          "missing": 1
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.lifecycle.0",
+                        "label": "Viewport lifecycle 0",
+                        "payload": {
+                          "space": "docking-demo",
+                          "window_id": 4294967307,
+                          "route_status": "missing-route-facts",
+                          "input_status": "receives-input",
+                          "platform_request_status": {
+                            "close_requested": false,
+                            "resize_requested": false
+                          },
+                          "coordinate_status": null,
+                          "facts_generation": 1
+                        },
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              "redaction": {
+                "redacted_values": 0,
+                "notes": []
+              }
+            },
+            "current": {
+              "probe_id": "docking.runtime",
+              "kind": "Docking",
+              "tree": {
+                "nodes": [
+                  {
+                    "id": "docking.viewport-runtime",
+                    "label": "Viewport runtime",
+                    "payload": {
+                      "has_platform_capabilities": true,
+                      "has_placement_restore": true,
+                      "viewport_lifecycle_count": 2,
+                      "has_last_route": false,
+                      "has_last_drop_outcome": true,
+                      "has_last_activation": false,
+                      "has_last_close": false,
+                      "has_last_should_close": false,
+                      "has_last_tear_off": true,
+                      "has_last_platform_sync": true,
+                      "visual_affordance_count": 1
+                    },
+                    "children": [
+                      {
+                        "id": "docking.viewport-runtime.platform",
+                        "label": "Platform capabilities",
+                        "payload": {
+                          "platform_viewport_windows": false,
+                          "global_window_bounds": true,
+                          "window_stack": true,
+                          "display_work_area": true,
+                          "dpi_scale": true,
+                          "live_window_move": false,
+                          "no_input_windows": true,
+                          "hovered_window_ignores_no_input": false
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.placement-restore",
+                        "label": "Placement restore",
+                        "payload": {
+                          "matched": 1,
+                          "missing": 1
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.lifecycle.0",
+                        "label": "Viewport lifecycle 0",
+                        "payload": {
+                          "space": "docking-demo",
+                          "window_id": 4294967308,
+                          "route_status": "route-ready",
+                          "input_status": "receives-input",
+                          "platform_request_status": {
+                            "close_requested": false,
+                            "resize_requested": true
+                          },
+                          "coordinate_status": {
+                            "display_id": null,
+                            "coordinate_space": "GlobalScreen",
+                            "facts_generation": 2
+                          },
+                          "facts_generation": 2
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.lifecycle.1",
+                        "label": "Viewport lifecycle 1",
+                        "payload": {
+                          "space": "docking-preview",
+                          "window_id": 4294967318,
+                          "route_status": "stale-window-facts-changed",
+                          "input_status": "no-input-pass-through",
+                          "platform_request_status": {
+                            "close_requested": true,
+                            "resize_requested": false
+                          },
+                          "coordinate_status": {
+                            "display_id": null,
+                            "coordinate_space": "WindowLocal",
+                            "facts_generation": 2
+                          },
+                          "facts_generation": 2
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.last-drop-outcome",
+                        "label": "last-drop-outcome",
+                        "payload": {
+                          "kind": "Error",
+                          "has_action": false,
+                          "has_error": false,
+                          "action": null,
+                          "error": null
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.last-tear-off",
+                        "label": "last-tear-off",
+                        "payload": {
+                          "kind": "Completed",
+                          "placement_source": "Suggested",
+                          "source_space": "docking-demo",
+                          "target_space": "docking-preview",
+                          "payload": {
+                            "kind": "item",
+                            "item": "headless-editor"
+                          }
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.last-platform-sync",
+                        "label": "last-platform-sync",
+                        "payload": {
+                          "window_id": 4294967318,
+                          "applied_count": 0,
+                          "skipped_count": 0,
+                          "unsupported_count": 0,
+                          "applied": [],
+                          "skipped_requests": [],
+                          "unsupported_requests": []
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "docking.viewport-runtime.visual-affordance.0",
+                        "label": "Visual affordance 0",
+                        "payload": {
+                          "space": "docking-preview",
+                          "window_id": 4294967318,
+                          "summary_space": "docking-preview",
+                          "frame_generation": 2,
+                          "layer_count": 2,
+                          "active_count": 1,
+                          "active": {
+                            "id": "headless-active-layer",
+                            "kind": "drop-guide",
+                            "scope": "viewport",
+                            "state": "active",
+                            "target_node": 42,
+                            "zone": null,
+                            "payload_index": 0,
+                            "has_label": true
+                          },
+                          "motion_state": "settled",
+                          "churn_signature": "docking-preview:2:1"
+                        },
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              "redaction": {
+                "redacted_values": 0,
+                "notes": []
+              }
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Diagnostic",
+            "identity": "docking.runtime:docking.platform_viewport_windows.unsupported",
+            "label": "docking.platform_viewport_windows.unsupported",
+            "status": "Unchanged",
+            "previous": {
+              "probe_id": "docking.runtime",
+              "code": "docking.platform_viewport_windows.unsupported",
+              "message": "platform viewport windows are unsupported by current platform capabilities"
+            },
+            "current": {
+              "probe_id": "docking.runtime",
+              "code": "docking.platform_viewport_windows.unsupported",
+              "message": "platform viewport windows are unsupported by current platform capabilities"
+            },
+            "diagnostic": null
+          },
+          {
+            "kind": "Diagnostic",
+            "identity": "docking.runtime:docking.viewport.route_facts.missing",
+            "label": "docking.viewport.route_facts.missing",
+            "status": "Removed",
+            "previous": {
+              "probe_id": "docking.runtime",
+              "code": "docking.viewport.route_facts.missing",
+              "message": "viewport `docking-demo` is registered but has no route facts"
+            },
+            "current": null,
+            "diagnostic": null
+          },
+          {
+            "kind": "Diagnostic",
+            "identity": "docking.runtime:docking.viewport.route_facts.stale",
+            "label": "docking.viewport.route_facts.stale",
+            "status": "Added",
+            "previous": null,
+            "current": {
+              "probe_id": "docking.runtime",
+              "code": "docking.viewport.route_facts.stale",
+              "message": "viewport `docking-preview` has stale route facts: window-facts-changed"
+            },
+            "diagnostic": null
+          }
+        ],
+        "summary": {
+          "added": 8,
+          "removed": 2,
+          "changed": 3,
+          "unchanged": 1,
+          "collisions": 0
+        }
+      }
+    }
+  ]
+}
