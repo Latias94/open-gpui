@@ -22,6 +22,7 @@ The gate runs:
 - `cargo run -p xtask -- dependency-health`
 - `cargo run -p xtask -- scan-theme-drift`
 - `cargo run -p xtask -- scan-import-boundary`
+- `cargo run -p xtask -- scan-public-api --check`
 - `cargo run -p xtask -- scan-ui-contract`
 
 The GitHub Actions `Verify` workflow also runs stable wasm surface checks on the Linux matrix:
@@ -39,7 +40,7 @@ These are stable, single-threaded wasm gates. The Linux matrix also runs the sta
 cargo run -p xtask -- web-smoke
 ```
 
-`xtask web-smoke` builds `crates/gpui_web/examples/smoke_web` with Trunk, serves the generated files with cross-origin isolation headers, opens a headless Chrome/Chromium/Edge browser, and verifies app readiness, DOM/canvas initialization, focus/input delivery, a single-window shell interaction, and the explicit unsupported platform-viewport capability on web. The smoke intentionally avoids the nightly shared-memory example so CI proves the default stable browser path.
+`xtask web-smoke` builds `crates/gpui_web/examples/smoke_web` with Trunk, serves the generated files with cross-origin isolation headers, opens a headless Chrome/Chromium/Edge browser, and verifies app readiness, DOM/canvas initialization, focus/input delivery, a single-window shell interaction, the explicit unsupported platform-viewport capability on web, and a `DockSurface` viewport readiness/open probe that returns typed `backend_unsupported` without creating a window or runtime registration. The smoke intentionally avoids the nightly shared-memory example so CI proves the default stable browser path.
 
 Nightly shared-memory/atomics checks for `hello_web` remain optional verification, not CI requirements.
 
@@ -765,10 +766,7 @@ The v0.3 public API freeze also has a workspace-level tier gate:
 cargo run -p xtask -- scan-public-api --check
 ```
 
-This gate checks root, prelude, common, default, advanced, model, runtime, and
-adapter ownership for docking, motion, UI components, and UI core. It is a
-deterministic tier scan today and is the integration point for a future
-rustdoc-json or cargo-public-api snapshot backend.
+This gate checks root, prelude, common, default, advanced, model, runtime, adapter, and persistence ownership for docking, motion, UI components, UI core, and canvas. Canvas coverage includes the root common facade plus the explicit `adapter`, `persistence`, and `advanced` tiers. It is a deterministic tier scan today and is the integration point for a future rustdoc-json or cargo-public-api snapshot backend.
 
 Accessibility contract coverage now has its own semantic gate. `ComponentA11yContract` validates
 role/name/value/action facts without a live platform backend, while the existing GPUI adapter tests

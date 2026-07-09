@@ -7,6 +7,17 @@ handles without adopting DOM-style per-node rendering.
 The crate is still pre-1.0. The core API is intentionally small and favors stable document,
 command, query, tool, and persistence boundaries over early feature breadth.
 
+## Public API Tiers
+
+- Root exports are the common document, record, editor, store, viewport, JSON Canvas, schema, snap,
+  transform, and command APIs most applications need.
+- `open_gpui_canvas::adapter` contains GPUI-specific paint models, frame construction, input
+  mapping, widget-overlay helpers, and view helpers.
+- `open_gpui_canvas::persistence` contains checkpoint/log replay, codecs, byte stores, in-memory
+  stores, and document-format migration constants.
+- `open_gpui_canvas::advanced` contains low-level graph indexes, geometry facts, relation records,
+  mutation batches, routing traits, and spatial-index diagnostics.
+
 ## Design
 
 - `CanvasDocument` stores nodes, edges, and shapes as separate record collections.
@@ -122,7 +133,7 @@ notifications as appropriate.
 ## Query Graph Structure
 
 ```rust
-use open_gpui_canvas::{CanvasEdgeDirection, NodeId};
+use open_gpui_canvas::{NodeId, advanced::CanvasEdgeDirection};
 
 fn inspect(document: &open_gpui_canvas::CanvasDocument) {
     let graph = document.graph();
@@ -144,7 +155,10 @@ fn inspect(document: &open_gpui_canvas::CanvasDocument) {
 spatial, and edge-geometry caches behind one owner.
 
 ```rust
-use open_gpui_canvas::{CanvasEdgeDirection, CanvasGraphIndex, NodeId};
+use open_gpui_canvas::{
+    NodeId,
+    advanced::{CanvasEdgeDirection, CanvasGraphIndex},
+};
 
 fn inspect_with_index(document: &open_gpui_canvas::CanvasDocument) {
     let index = CanvasGraphIndex::rebuild(document);
@@ -449,7 +463,7 @@ orthogonal, and cubic-bezier intent into renderer-neutral `CanvasRouteSegment` v
 testing and GPUI painting can share.
 
 ```rust
-use open_gpui_canvas::{CanvasDefaultEdgeRouter, CanvasEdgeRouter};
+use open_gpui_canvas::advanced::{CanvasDefaultEdgeRouter, CanvasEdgeRouter};
 
 fn route(document: &open_gpui_canvas::CanvasDocument, edge: &open_gpui_canvas::CanvasEdge) {
     let path = document.edge_route_path_with_router(edge, &CanvasDefaultEdgeRouter).unwrap();
@@ -483,7 +497,7 @@ Keyboard events are owned by the focused element and should be forwarded explici
 `CanvasInputMapper::key_down_event` or `CanvasEditorInputHandler::dispatch_key_down`.
 
 ```rust
-use open_gpui_canvas::{
+use open_gpui_canvas::adapter::{
     CanvasEditorInputHandler, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
     CanvasInputMapper, canvas_editor_view,
 };
@@ -514,7 +528,9 @@ fn handle_key_down(view: &mut MyView, event: &open_gpui::KeyDownEvent) {
 Custom renderers and read-only previews can still use the lower-level `canvas_view` path directly.
 
 ```rust
-use open_gpui_canvas::{CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, canvas_view};
+use open_gpui_canvas::adapter::{
+    CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, canvas_view,
+};
 
 fn preview(document: open_gpui_canvas::CanvasDocument) {
     let model = CanvasPaintModel::new(document, Default::default());
@@ -531,7 +547,7 @@ querying the document a second time. Overlay placements carry only target identi
 bounds, z-order, and hit priority; application widget state stays outside the canvas document.
 
 ```rust
-use open_gpui_canvas::{
+use open_gpui_canvas::adapter::{
     CanvasPaintFrame, CanvasWidgetOverlayOptions, CanvasWidgetOverlayPlacement,
 };
 
@@ -699,8 +715,11 @@ The default crate ships only the persistence contract and an in-memory store.
 
 ```rust
 use open_gpui_canvas::{
-    CanvasCheckpoint, CanvasDocument, CanvasNode, CanvasPersistenceCursor, CanvasStore,
-    CanvasPersistenceStore, CanvasTransaction, DocumentCommand, MemoryCanvasPersistenceStore,
+    CanvasDocument, CanvasNode, CanvasStore, CanvasTransaction, DocumentCommand,
+};
+use open_gpui_canvas::persistence::{
+    CanvasCheckpoint, CanvasPersistenceCursor, CanvasPersistenceStore,
+    MemoryCanvasPersistenceStore,
     apply_persistent_store_transaction, load_canvas_document, save_canvas_store_checkpoint,
 };
 
@@ -746,9 +765,10 @@ stores and future codecs validate the same supported document-version range with
 snapshot rules.
 
 ```rust
-use open_gpui_canvas::{
-    CanvasCheckpoint, CanvasDocument, CanvasPersistenceByteStoreAdapter,
-    CanvasPersistenceStore, MemoryCanvasPersistenceByteStore,
+use open_gpui_canvas::CanvasDocument;
+use open_gpui_canvas::persistence::{
+    CanvasCheckpoint, CanvasPersistenceByteStoreAdapter, CanvasPersistenceStore,
+    MemoryCanvasPersistenceByteStore,
 };
 
 let mut store =

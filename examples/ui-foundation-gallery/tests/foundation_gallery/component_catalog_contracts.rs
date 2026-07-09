@@ -207,7 +207,7 @@ fn components_page_samples_expose_component_metadata() {
     );
 
     let a11y_claims = pages::components::COMPONENT_A11Y_CLAIMS;
-    assert_eq!(a11y_claims.len(), 11);
+    assert_eq!(a11y_claims.len(), 12);
     assert!(a11y_claims.iter().all(|claim| {
         claim.selector_prefix.starts_with("gallery:component-")
             && claim.evidence().label_source.provides_name()
@@ -227,6 +227,7 @@ fn components_page_samples_expose_component_metadata() {
         "Tree item",
         "Table",
         "VirtualizedList row",
+        "VirtualizedList structural row",
         "Splitter handle",
     ] {
         assert!(

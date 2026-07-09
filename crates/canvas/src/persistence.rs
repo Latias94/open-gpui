@@ -9,6 +9,11 @@ mod store;
 #[cfg(test)]
 mod tests;
 
+pub use crate::format::{
+    CANVAS_DOCUMENT_FORMAT_VERSION, CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION,
+    CANVAS_SNAPSHOT_MIGRATIONS, CanvasSnapshotMigration, default_document_format_version,
+    migrate_canvas_snapshot, validate_canvas_document_format_version,
+};
 pub use byte_store::{
     CanvasEncodedLogEntry, CanvasPersistenceByteStore, CanvasPersistenceByteStoreAdapter,
     CanvasPersistenceByteStoreError,

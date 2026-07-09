@@ -1,7 +1,7 @@
 use open_gpui_motion::{
     MotionClockSample, MotionDuration, MotionEasing, MotionFrameDemand, MotionFrameDriver,
-    MotionFrameHostResetReason, MotionFrameReason, MotionIntent, MotionPolicyContext,
-    MotionPreference, MotionProgressSequence, MotionProgressSequenceStepState, MotionProjection,
+    MotionFrameReason, MotionFrameResetReason, MotionIntent, MotionPolicyContext, MotionPreference,
+    MotionProgressSequence, MotionProgressSequenceStepState, MotionProjection,
     MotionProjectionClip, MotionRunState, MotionTransition,
     advanced::{
         MotionExecutionPlan, MotionModel, MotionPolicyInput, MotionProgressExecution,
@@ -148,14 +148,14 @@ fn frame_driver_reset_starts_a_new_adapter_epoch() {
     assert_eq!(frame_driver.last_elapsed(), Duration::from_millis(90));
     assert_eq!(frame_driver.requested_frames(), 1);
 
-    frame_driver.reset(MotionFrameHostResetReason::Retarget);
+    frame_driver.reset(MotionFrameResetReason::Retarget);
 
     assert_eq!(frame_driver.last_elapsed(), Duration::ZERO);
     assert_eq!(frame_driver.last_frame_demand(), MotionFrameDemand::Idle);
     assert_eq!(frame_driver.requested_frames(), 0);
     assert_eq!(
         frame_driver.last_reset_reason(),
-        Some(MotionFrameHostResetReason::Retarget)
+        Some(MotionFrameResetReason::Retarget)
     );
 
     let new_epoch =
@@ -203,17 +203,18 @@ fn scalar_controller_lifecycle_is_public_and_demand_driven() {
 
 #[test]
 fn sequence_plan_is_public_renderer_neutral_motion_composition() {
-    let model = MotionModel::timeline(MotionSpec::new(
+    let transition = MotionTransition::duration(
+        MotionIntent::CommittedLayout,
         MotionPreference::Animated,
         MotionDuration::Custom(Duration::from_millis(100)),
         MotionEasing::Linear,
-    ));
+    );
     let mut sequence = MotionProgressSequence::new();
 
     sequence
-        .append("first", model)
-        .insert_with_previous("parallel", model)
-        .insert_after_previous("after", model, Duration::from_millis(20));
+        .append("first", transition)
+        .insert_with_previous("parallel", transition)
+        .insert_after_previous("after", transition, Duration::from_millis(20));
 
     assert_eq!(sequence.steps()[0].start_at(), Duration::ZERO);
     assert_eq!(sequence.steps()[1].start_at(), Duration::ZERO);
@@ -245,6 +246,7 @@ fn low_level_motion_internals_are_explicit_advanced_imports() {
         "MotionScalarExecution",
         "MotionExecutionPlan",
         "MotionFrameHost",
+        "MotionFrameHostResetReason",
         "MotionSequence,",
         "MotionSpec",
         "MotionModel",

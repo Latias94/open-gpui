@@ -1,9 +1,9 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use open_gpui::{Bounds, point, px, size};
+use open_gpui_canvas::advanced::{CanvasRecordScopeOptions, selection_record_scope};
 use open_gpui_canvas::{
-    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordId,
-    CanvasRecordScopeOptions, CanvasSelection, CanvasShape, CanvasTransaction, DocumentCommand,
-    NodeId, ShapeId, selection_record_scope,
+    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordId, CanvasSelection,
+    CanvasShape, CanvasTransaction, DocumentCommand, NodeId, ShapeId,
 };
 
 const SHALLOW_WIDE_RECORDS: usize = 1_000;

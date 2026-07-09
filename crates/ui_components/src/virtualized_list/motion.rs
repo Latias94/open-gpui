@@ -1,5 +1,5 @@
 use open_gpui_motion::{
-    MotionFrameDemand, MotionFrameHostResetReason,
+    MotionFrameDemand, MotionFrameResetReason,
     advanced::{MotionModel, MotionPreset, MotionScalarController},
 };
 use open_gpui_ui_core::UiPx;
@@ -74,13 +74,13 @@ impl VirtualizedListActiveIndicatorSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct VirtualizedListActiveIndicatorUpdate {
     frame_demand: MotionFrameDemand,
-    reset_reason: Option<MotionFrameHostResetReason>,
+    reset_reason: Option<MotionFrameResetReason>,
 }
 
 impl VirtualizedListActiveIndicatorUpdate {
     const fn new(
         frame_demand: MotionFrameDemand,
-        reset_reason: Option<MotionFrameHostResetReason>,
+        reset_reason: Option<MotionFrameResetReason>,
     ) -> Self {
         Self {
             frame_demand,
@@ -96,7 +96,7 @@ impl VirtualizedListActiveIndicatorUpdate {
         self.frame_demand
     }
 
-    pub(super) const fn reset_reason(self) -> Option<MotionFrameHostResetReason> {
+    pub(super) const fn reset_reason(self) -> Option<MotionFrameResetReason> {
         self.reset_reason
     }
 }
@@ -142,8 +142,7 @@ impl VirtualizedListActiveIndicatorState {
 
     fn sample_at(&mut self, now: Instant) -> VirtualizedListActiveIndicatorUpdate {
         let frame_demand = self.sample_motion(now);
-        let reset_reason =
-            (!frame_demand.needs_frame()).then_some(MotionFrameHostResetReason::Finish);
+        let reset_reason = (!frame_demand.needs_frame()).then_some(MotionFrameResetReason::Finish);
         VirtualizedListActiveIndicatorUpdate::new(frame_demand, reset_reason)
     }
 
@@ -155,9 +154,9 @@ impl VirtualizedListActiveIndicatorState {
     ) -> VirtualizedListActiveIndicatorUpdate {
         let sampled = self.sampled_after_update(now);
         let reset_reason = if self.key == target.key {
-            MotionFrameHostResetReason::Retarget
+            MotionFrameResetReason::Retarget
         } else {
-            MotionFrameHostResetReason::MotionIdentityChanged
+            MotionFrameResetReason::MotionIdentityChanged
         };
         if model.is_immediate() || sampled.approximately_equals(target.bounds) {
             *self = Self::immediate(target.key, target.bounds, now);
@@ -216,7 +215,7 @@ impl VirtualizedListActiveIndicatorRuntime {
             ));
             return VirtualizedListActiveIndicatorUpdate::new(
                 MotionFrameDemand::Idle,
-                Some(MotionFrameHostResetReason::MotionIdentityChanged),
+                Some(MotionFrameResetReason::MotionIdentityChanged),
             );
         };
 
@@ -233,7 +232,7 @@ impl VirtualizedListActiveIndicatorRuntime {
             self.state = None;
             return VirtualizedListActiveIndicatorUpdate::new(
                 MotionFrameDemand::Idle,
-                Some(MotionFrameHostResetReason::Cancel),
+                Some(MotionFrameResetReason::Cancel),
             );
         }
         VirtualizedListActiveIndicatorUpdate::idle()

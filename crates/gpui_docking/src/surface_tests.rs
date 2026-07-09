@@ -3,15 +3,16 @@ use crate::{
     DockPanelPlacementTarget, DockSpaceId, DockSurface, DockSurfaceChange, DockSurfacePanelError,
     DockSurfacePanelLocationKind, DockSurfacePanelOutcome, DockSurfaceSnapshot,
     DockSurfaceViewportCloseStatus, DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenStatus,
-    DockSurfaceViewportSession, DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec,
-    DockSurfaceViewportUnavailable, DockViewportClosePolicy, DockViewportPlacement,
+    DockSurfaceViewportReadinessStatus, DockSurfaceViewportSession,
+    DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportUnavailable,
+    DockSurfaceViewportUnsupportedFlag, DockViewportClosePolicy, DockViewportPlacement,
     DockViewportPlacementLayout, DockViewportRestoreReadiness, DockViewportWindowBounds,
     DockViewportWindowState,
     model::{DockLayoutNode, DockLayoutSpace},
 };
 use open_gpui::{
-    App, AppContext as _, Bounds, DisplayId, IntoElement, Render, Window, WindowBounds,
-    WindowOptions, div, px, size,
+    App, AppContext as _, Bounds, DisplayId, IntoElement, Render, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowOptions, div, px, size,
 };
 
 struct TestPanel;
@@ -364,6 +365,32 @@ fn surface_open_viewport_reports_policy_disabled(cx: &mut open_gpui::TestAppCont
 }
 
 #[open_gpui::test]
+fn surface_viewport_readiness_reports_policy_disabled(cx: &mut open_gpui::TestAppContext) {
+    cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel_factory("editor", "Editor", test_panel)
+            .build(cx)
+            .expect("surface layout should validate");
+        let spec = DockSurfaceViewportSpec::new("main", viewport_options());
+
+        let readiness = surface.viewports().check_open_readiness(&spec, cx);
+
+        assert!(!readiness.is_openable());
+        assert!(readiness.status().is_policy_disabled());
+        assert_eq!(readiness.space(), surface.primary_space());
+        assert!(matches!(
+            readiness.status(),
+            DockSurfaceViewportReadinessStatus::PolicyDisabled(_)
+        ));
+        assert!(matches!(
+            readiness.unavailable_reason(),
+            Some(DockSurfaceViewportUnavailable::PolicyDisabled(_))
+        ));
+    });
+}
+
+#[open_gpui::test]
 fn surface_open_viewports_reports_policy_disabled_for_each_batch_spec(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -423,6 +450,85 @@ fn surface_open_viewport_reports_backend_unsupported_without_registration(
         ));
         assert_eq!(cx.windows().len(), before_windows);
         assert!(!surface.is_viewport_open(surface.primary_space()));
+    });
+}
+
+#[open_gpui::test]
+fn surface_viewport_readiness_reports_backend_unsupported(cx: &mut open_gpui::TestAppContext) {
+    cx.set_platform_viewport_windows(false);
+
+    cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel_factory("editor", "Editor", test_panel)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("surface layout should validate");
+        let spec = DockSurfaceViewportSpec::new("main", viewport_options());
+
+        let readiness = surface.check_viewport_open_readiness(&spec, cx);
+
+        assert!(!readiness.is_openable());
+        assert!(readiness.status().is_backend_unsupported());
+        assert!(
+            !readiness
+                .platform()
+                .capabilities()
+                .platform_viewport_windows
+        );
+        assert!(matches!(
+            readiness.unavailable_reason(),
+            Some(DockSurfaceViewportUnavailable::BackendUnsupported)
+        ));
+    });
+}
+
+#[open_gpui::test]
+fn surface_viewport_readiness_reports_unsupported_flags_without_opening(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    cx.set_platform_no_input_windows(false);
+
+    cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel_factory("editor", "Editor", test_panel)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("surface layout should validate");
+        let before_windows = cx.windows().len();
+        let mut options = viewport_options();
+        options.accepts_pointer_input = false;
+        options.window_background = WindowBackgroundAppearance::Transparent;
+        let spec = DockSurfaceViewportSpec::new("main", options);
+
+        let readiness = surface.viewports().readiness(&spec, cx);
+
+        assert!(!readiness.ready());
+        assert!(readiness.is_flag_unsupported());
+        assert_eq!(
+            readiness.unsupported_flags(),
+            &[
+                DockSurfaceViewportUnsupportedFlag::NoInputWindow,
+                DockSurfaceViewportUnsupportedFlag::AlphaWindow,
+            ]
+        );
+
+        let outcome = surface.open_viewport_spec(spec, cx);
+
+        let unavailable = outcome
+            .unavailable()
+            .expect("unsupported viewport flags should prevent opening");
+        assert!(unavailable.is_flag_unsupported());
+        assert_eq!(
+            unavailable.unsupported_flags(),
+            &[
+                DockSurfaceViewportUnsupportedFlag::NoInputWindow,
+                DockSurfaceViewportUnsupportedFlag::AlphaWindow,
+            ]
+        );
+        assert_eq!(cx.windows().len(), before_windows);
+        assert!(surface.registered_viewport_spaces().is_empty());
     });
 }
 
@@ -758,6 +864,63 @@ fn surface_saved_placement_restore_reports_invalid_placement_without_opening(
                 }
             )
         ));
+        assert_eq!(fallback_calls, 0);
+        assert_eq!(cx.windows().len(), before_windows);
+        assert!(surface.registered_viewport_spaces().is_empty());
+    });
+}
+
+#[open_gpui::test]
+fn surface_restore_readiness_reports_invalid_placement_without_fallback(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel_factory("editor", "Editor", test_panel)
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("surface layout should validate");
+        let mut placement = DockViewportPlacementLayout::new(vec![DockViewportPlacement {
+            space: "main".into(),
+            display_id: None,
+            window_bounds: None,
+            host_bounds: None,
+        }]);
+        placement.placement_version = 0;
+        let before_windows = cx.windows().len();
+        let mut fallback_calls = 0;
+
+        let report = surface.viewports().check_restore_readiness(
+            &placement,
+            |_| {
+                fallback_calls += 1;
+                viewport_options()
+            },
+            cx,
+        );
+
+        assert_eq!(report.len(), 1);
+        assert_eq!(report.openable_count(), 0);
+        assert_eq!(report.unavailable_count(), 1);
+        let readiness = report
+            .entries()
+            .iter()
+            .find(|readiness| readiness.space() == &DockSpaceId::from("main"))
+            .expect("invalid placement should still be keyed by saved space");
+        assert!(readiness.status().is_invalid_placement());
+        match readiness.status() {
+            DockSurfaceViewportReadinessStatus::InvalidPlacement { error } => {
+                assert!(matches!(
+                    error,
+                    crate::DockViewportPlacementValidationError::UnsupportedVersion {
+                        expected: 1,
+                        found: 0,
+                    }
+                ));
+            }
+            other => panic!("expected invalid placement readiness, got {other:?}"),
+        }
         assert_eq!(fallback_calls, 0);
         assert_eq!(cx.windows().len(), before_windows);
         assert!(surface.registered_viewport_spaces().is_empty());

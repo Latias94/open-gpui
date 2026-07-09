@@ -4,12 +4,15 @@ use open_gpui::{
 };
 use open_gpui_canvas::{
     CanvasClipboardPayload, CanvasDocument, CanvasEdge, CanvasEdgeRoute, CanvasEditor,
-    CanvasEditorInputHandler, CanvasEndpoint, CanvasEvent, CanvasHandle, CanvasKindRegistry,
-    CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeKind, CanvasPaintModel, CanvasPaintOptions,
-    CanvasPaintTheme, CanvasSelection, CanvasShape, CanvasStyle, CanvasTool, CanvasToolContext,
-    CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction,
-    CanvasZOrderCommand, DocumentCommand, DocumentError, HandleRole, NodeId, PointerButton,
-    canvas_editor_view,
+    CanvasEndpoint, CanvasEvent, CanvasHandle, CanvasKindRegistry, CanvasNode,
+    CanvasNodeGeometryPolicy, CanvasNodeKind, CanvasSelection, CanvasShape, CanvasStyle,
+    CanvasTool, CanvasToolContext, CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry,
+    CanvasTransaction, CanvasZOrderCommand, DocumentCommand, DocumentError, HandleRole, NodeId,
+    PointerButton,
+    adapter::{
+        CanvasEditorInputHandler, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
+        canvas_editor_view,
+    },
 };
 use open_gpui_platform::application;
 

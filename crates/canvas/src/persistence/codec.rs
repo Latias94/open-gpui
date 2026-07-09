@@ -1,5 +1,5 @@
 use super::{CanvasCheckpoint, CanvasLogEntry};
-use crate::{DocumentError, validate_canvas_document_format_version};
+use crate::{DocumentError, format::validate_canvas_document_format_version};
 use std::{error::Error, fmt};
 
 pub const CANVAS_PERSISTENCE_CODEC_VERSION: u32 = 1;
@@ -55,7 +55,7 @@ impl CanvasPersistenceRecord {
     pub fn document_format_version(&self) -> u32 {
         match self {
             Self::Checkpoint(checkpoint) => checkpoint.snapshot.format_version,
-            Self::LogEntry(_) => crate::CANVAS_DOCUMENT_FORMAT_VERSION,
+            Self::LogEntry(_) => crate::format::CANVAS_DOCUMENT_FORMAT_VERSION,
         }
     }
 }

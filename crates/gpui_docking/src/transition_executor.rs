@@ -11,23 +11,19 @@ use crate::{
 };
 use open_gpui::{Bounds, Pixels, point, size};
 use open_gpui_motion::{
-    MotionFrameDemand, MotionPolicyContext, MotionPolicyReport, MotionProgressSample,
-    MotionProjection, MotionProjectionClip, MotionSnapshot,
-    advanced::{
-        MotionExecutionPlan, MotionExecutionState, MotionModel, MotionPolicyInput,
-        MotionProgressExecution, MotionSpec,
-    },
-    motion_source_rect, preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
+    MotionFrameDemand, MotionPolicyReport, MotionProgressRun, MotionProgressSample,
+    MotionProjection, MotionProjectionClip, MotionSnapshot, MotionTransition, motion_source_rect,
+    preferred_motion_edge, retarget_motion_snapshots, reveal_rect_from_edge,
 };
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockTransitionExecution {
     pub(crate) plan: DockTransitionPlan,
-    pub(crate) model: MotionModel,
+    pub(crate) transition: MotionTransition,
     pub(crate) policy_report: MotionPolicyReport,
     pub(crate) state: DockTransitionExecutionState,
-    progress: MotionProgressExecution,
+    progress: MotionProgressRun,
     started_at: Instant,
     last_sample: Option<DockTransitionSample>,
     #[cfg(test)]
@@ -41,15 +37,6 @@ pub enum DockTransitionExecutionState {
     Immediate,
     /// Transition requested an animation frame and kept the final scene as the semantic target.
     Scheduled,
-}
-
-impl From<MotionExecutionState> for DockTransitionExecutionState {
-    fn from(state: MotionExecutionState) -> Self {
-        match state {
-            MotionExecutionState::Immediate => Self::Immediate,
-            MotionExecutionState::Scheduled => Self::Scheduled,
-        }
-    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -118,37 +105,23 @@ impl DockTransitionExecutor {
     pub(crate) fn execute(
         &mut self,
         plan: DockTransitionPlan,
-        spec: MotionSpec,
+        transition: MotionTransition,
     ) -> &DockTransitionExecution {
-        self.execute_model(plan, MotionModel::timeline(spec))
-    }
-
-    pub(crate) fn execute_model(
-        &mut self,
-        plan: DockTransitionPlan,
-        model: MotionModel,
-    ) -> &DockTransitionExecution {
-        let mut motion = MotionExecutionPlan::resolve(
-            MotionPolicyInput::new(MotionPolicyContext::Continuity, model)
-                .with_spatial_motion(!plan.is_immediate() && !model.is_immediate())
-                .with_reduced_motion_final_state(true),
-        );
-        if plan.is_immediate() {
-            motion = MotionExecutionPlan::resolve(
-                MotionPolicyInput::new(
-                    MotionPolicyContext::Continuity,
-                    MotionModel::timeline(MotionSpec::immediate()),
-                )
-                .with_reduced_motion_final_state(true),
-            );
-        }
+        let transition = if plan.is_immediate() {
+            MotionTransition::immediate()
+        } else {
+            transition.with_spatial_motion(transition.spatial_motion() && !plan.is_immediate())
+        };
+        let progress = transition.progress_run(Duration::ZERO);
+        let initial_sample = progress.sample_elapsed(Duration::ZERO);
         let state = if plan.is_immediate() {
             DockTransitionExecutionState::Immediate
+        } else if initial_sample.complete() {
+            DockTransitionExecutionState::Immediate
         } else {
-            DockTransitionExecutionState::from(motion.state())
+            DockTransitionExecutionState::Scheduled
         };
-        let model = motion.model();
-        let policy_report = motion.policy_report().clone();
+        let policy_report = progress.policy_report().clone();
 
         let plan = if state == DockTransitionExecutionState::Scheduled {
             match self.sample_active_for_retarget() {
@@ -162,10 +135,10 @@ impl DockTransitionExecutor {
         let started_at = Instant::now();
         self.current = Some(DockTransitionExecution {
             plan,
-            model,
+            transition,
             policy_report,
             state,
-            progress: MotionProgressExecution::start(motion, Duration::ZERO),
+            progress,
             started_at,
             last_sample: None,
             #[cfg(test)]
@@ -204,7 +177,9 @@ impl DockTransitionExecutor {
     pub(crate) fn sample_for_test(&mut self, now: Duration) -> Option<DockTransitionSample> {
         self.sample_motion(|execution| {
             let started_at = *execution.test_started_at.get_or_insert(now);
-            execution.progress.sample_at(now.saturating_sub(started_at))
+            execution
+                .progress
+                .sample_elapsed(now.saturating_sub(started_at))
         })
     }
 
@@ -226,7 +201,7 @@ impl DockTransitionExecutor {
 fn sample_progress_at_adapter_now(execution: &DockTransitionExecution) -> MotionProgressSample {
     execution
         .progress
-        .sample_at(Instant::now().saturating_duration_since(execution.started_at))
+        .sample_elapsed(Instant::now().saturating_duration_since(execution.started_at))
 }
 
 fn sample_execution(
@@ -553,7 +528,8 @@ mod tests {
     };
     use open_gpui::{point, px, size};
     use open_gpui_motion::{
-        MotionDuration, MotionEasing, MotionFrameReason, MotionPreference, advanced::MotionSpec,
+        MotionDuration, MotionEasing, MotionFrameReason, MotionIntent, MotionPreference,
+        MotionTransition,
     };
 
     fn node(id: u64) -> DockNodeId {
@@ -595,7 +571,8 @@ mod tests {
     #[test]
     fn animated_samples_publish_frame_demand_until_terminal() {
         let mut executor = DockTransitionExecutor::default();
-        let spec = MotionSpec::new(
+        let transition = MotionTransition::duration(
+            MotionIntent::Continuity,
             MotionPreference::Animated,
             MotionDuration::Custom(Duration::from_millis(200)),
             MotionEasing::Linear,
@@ -603,7 +580,7 @@ mod tests {
 
         assert_eq!(
             executor
-                .execute(resizing_plan(MotionPreference::Animated), spec)
+                .execute(resizing_plan(MotionPreference::Animated), transition)
                 .state,
             DockTransitionExecutionState::Scheduled
         );
@@ -650,7 +627,7 @@ mod tests {
             executor
                 .execute(
                     resizing_plan(MotionPreference::Reduced),
-                    MotionSpec::immediate()
+                    MotionTransition::immediate()
                 )
                 .state,
             DockTransitionExecutionState::Immediate

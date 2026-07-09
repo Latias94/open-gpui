@@ -29,11 +29,45 @@ pub(crate) fn scan_public_api(root: &Path, args: &[String]) -> Result<(), ()> {
 
 fn public_api_failures(root: &Path) -> Vec<String> {
     let mut failures = Vec::new();
-    scan_docking_public_api(root, &mut failures);
-    scan_motion_public_api(root, &mut failures);
-    scan_ui_components_public_api(root, &mut failures);
-    scan_ui_core_public_api(root, &mut failures);
+    for surface in public_api_surfaces() {
+        let start = failures.len();
+        (surface.scan)(root, &mut failures);
+        for failure in &mut failures[start..] {
+            *failure = format!("{}: {failure}", surface.name);
+        }
+    }
     failures
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PublicApiSurface {
+    name: &'static str,
+    scan: fn(&Path, &mut Vec<String>),
+}
+
+fn public_api_surfaces() -> &'static [PublicApiSurface] {
+    &[
+        PublicApiSurface {
+            name: "docking",
+            scan: scan_docking_public_api,
+        },
+        PublicApiSurface {
+            name: "motion",
+            scan: scan_motion_public_api,
+        },
+        PublicApiSurface {
+            name: "ui-components",
+            scan: scan_ui_components_public_api,
+        },
+        PublicApiSurface {
+            name: "ui-core",
+            scan: scan_ui_core_public_api,
+        },
+        PublicApiSurface {
+            name: "canvas",
+            scan: scan_canvas_public_api,
+        },
+    ]
 }
 
 fn scan_docking_public_api(root: &Path, failures: &mut Vec<String>) {
@@ -122,6 +156,7 @@ fn scan_motion_public_api(root: &Path, failures: &mut Vec<String>) {
         "MotionExecutionPlan",
         "MotionExecutionState",
         "MotionFrameHost",
+        "MotionFrameHostResetReason",
         "MotionFrameHostSample",
         "MotionFrameHostUpdate",
         "MotionModel",
@@ -170,6 +205,7 @@ fn scan_motion_public_api(root: &Path, failures: &mut Vec<String>) {
         "controller.rs",
         "frame_host.rs",
         "runtime.rs",
+        "sequence.rs",
         "spring.rs",
         "transition.rs",
     ] {
@@ -197,6 +233,21 @@ fn scan_motion_public_api(root: &Path, failures: &mut Vec<String>) {
             "MotionSpringSpec",
         ],
         "motion root facade signatures must hide low-level execution/model types",
+        failures,
+    );
+
+    let sequence_tokens = public_signature_tokens(&source_dir.join("sequence.rs"), failures);
+    reject_tokens(
+        "crates/motion",
+        "sequence.rs",
+        &sequence_tokens,
+        &[
+            "MotionExecutionPlan",
+            "MotionModel",
+            "MotionPolicyInput",
+            "MotionSpec",
+        ],
+        "root sequence facade signatures must accept facade transitions instead of low-level model types",
         failures,
     );
 }
@@ -325,6 +376,91 @@ fn scan_ui_core_public_api(root: &Path, failures: &mut Vec<String>) {
     }
 }
 
+fn scan_canvas_public_api(root: &Path, failures: &mut Vec<String>) {
+    let source_dir = root.join("crates/canvas/src");
+    let root_exports = root_reexport_tokens(&source_dir, "lib.rs", failures);
+
+    require_tokens(
+        "crates/canvas",
+        "lib.rs",
+        &root_exports,
+        &[
+            "CanvasDocument",
+            "CanvasDocumentBuilder",
+            "CanvasSnapshot",
+            "CanvasStore",
+            "CanvasKindRegistry",
+            "CanvasViewport",
+            "JsonCanvas",
+        ],
+        "canvas root must keep common document/editor/view imports available",
+        failures,
+    );
+
+    reject_tokens(
+        "crates/canvas",
+        "lib.rs",
+        &root_exports,
+        &[
+            "CanvasPaintFrame",
+            "CanvasPaintModel",
+            "CanvasPersistenceStore",
+            "CanvasJsonPersistenceCodec",
+            "CanvasGraphIndex",
+            "CanvasGeometryFacts",
+            "SpatialIndex",
+        ],
+        "canvas root must keep adapter, persistence, and advanced APIs behind explicit tiers",
+        failures,
+    );
+
+    let root_source = fs::read_to_string(source_dir.join("lib.rs")).unwrap_or_else(|error| {
+        failures.push(format!(
+            "crates/canvas/lib.rs could not be read while checking tiers: {error}"
+        ));
+        String::new()
+    });
+    for module in ["adapter", "advanced", "persistence"] {
+        if !root_source
+            .lines()
+            .any(|line| line.trim_start().starts_with(&format!("pub mod {module}")))
+        {
+            failures.push(format!(
+                "crates/canvas/lib.rs missing public `{module}` API tier"
+            ));
+        }
+    }
+
+    reject_public_reexport_wildcards(
+        &source_dir.join("lib.rs"),
+        "canvas root public re-exports must stay explicit so API tiers can be scanned",
+        failures,
+    );
+}
+
+fn require_tokens(
+    crate_label: &str,
+    file_name: &str,
+    actual: &BTreeSet<String>,
+    required: &[&str],
+    reason: &str,
+    failures: &mut Vec<String>,
+) {
+    let missing = required
+        .iter()
+        .filter(|token| !actual.contains(**token))
+        .copied()
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return;
+    }
+
+    failures.push(format!(
+        "{crate_label}/src/{file_name}: {reason}: missing {}",
+        missing.join(", ")
+    ));
+}
+
 fn reject_tokens(
     crate_label: &str,
     file_name: &str,
@@ -346,6 +482,18 @@ fn reject_tokens(
         "{crate_label}/src/{file_name}: {reason}: {}",
         leaked.join(", ")
     ));
+}
+
+fn reject_public_reexport_wildcards(path: &Path, reason: &str, failures: &mut Vec<String>) {
+    let Some(source) = read_to_string(path, failures) else {
+        return;
+    };
+
+    for (line_index, line) in source.lines().enumerate() {
+        if line.contains("pub use ") && line.contains("::*") {
+            failures.push(format!("{}:{}: {reason}", path.display(), line_index + 1));
+        }
+    }
 }
 
 fn reject_public_module(path: &Path, module: &str, reason: &str, failures: &mut Vec<String>) {
@@ -468,6 +616,58 @@ fn default_reexport_tokens(
         source
     };
     reexport_tokens_from_source(&source, source_dir, failures)
+}
+
+fn root_reexport_tokens(
+    source_dir: &Path,
+    file_name: &str,
+    failures: &mut Vec<String>,
+) -> BTreeSet<String> {
+    let Some(source) = read_to_string(&source_dir.join(file_name), failures) else {
+        return BTreeSet::new();
+    };
+    reexport_tokens_from_root_source(&source, source_dir, failures)
+}
+
+fn reexport_tokens_from_root_source(
+    source: &str,
+    base_dir: &Path,
+    failures: &mut Vec<String>,
+) -> BTreeSet<String> {
+    let mut exports = BTreeSet::new();
+    let mut statement = String::new();
+    let mut collecting = false;
+    let mut brace_depth = 0usize;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if collecting {
+            statement.push(' ');
+            statement.push_str(trimmed);
+        } else if brace_depth == 0 && trimmed.starts_with("pub use ") {
+            statement.clear();
+            statement.push_str(trimmed);
+            collecting = true;
+        }
+
+        if collecting && trimmed.ends_with(';') {
+            collect_public_reexport_tokens(&statement, base_dir, failures, &mut exports);
+            statement.clear();
+            collecting = false;
+        }
+
+        let opens = trimmed
+            .chars()
+            .filter(|character| *character == '{')
+            .count();
+        let closes = trimmed
+            .chars()
+            .filter(|character| *character == '}')
+            .count();
+        brace_depth = brace_depth.saturating_add(opens).saturating_sub(closes);
+    }
+
+    exports
 }
 
 fn reexport_tokens_from_source(
@@ -981,6 +1181,100 @@ mod tests {
         assert_eq!(failures.len(), 2, "{failures:?}");
         assert!(failures[0].contains("layout must stay private"));
         assert!(failures[1].contains("policy must stay private"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn public_api_surface_registry_includes_canvas() {
+        let surface_names = public_api_surfaces()
+            .iter()
+            .map(|surface| surface.name)
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(
+            surface_names,
+            ["canvas", "docking", "motion", "ui-components", "ui-core"]
+                .into_iter()
+                .collect()
+        );
+    }
+
+    #[test]
+    fn canvas_public_api_scan_keeps_common_root_imports_explicit() {
+        let root = temp_root("canvas_public_api");
+        let canvas_src = root.join("crates/canvas/src");
+        fs::create_dir_all(&canvas_src).unwrap();
+        fs::write(
+            canvas_src.join("lib.rs"),
+            r#"
+                pub mod adapter {}
+                pub mod advanced {}
+                pub mod persistence {}
+                pub use document::{CanvasDocument, CanvasDocumentBuilder, CanvasSnapshot};
+                pub use store::{CanvasStore};
+                pub use schema::{CanvasKindRegistry};
+                pub use geometry::{CanvasViewport};
+                pub use json_canvas::{JsonCanvas};
+            "#,
+        )
+        .unwrap();
+
+        let mut failures = Vec::new();
+        scan_canvas_public_api(&root, &mut failures);
+        assert!(failures.is_empty(), "{failures:?}");
+
+        fs::write(
+            canvas_src.join("lib.rs"),
+            r#"
+                pub mod adapter {}
+                pub mod advanced {}
+                pub mod persistence {}
+                pub use document::*;
+                pub use store::{CanvasStore};
+            "#,
+        )
+        .unwrap();
+
+        let mut failures = Vec::new();
+        scan_canvas_public_api(&root, &mut failures);
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.contains("missing CanvasDocument")),
+            "{failures:?}"
+        );
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.contains("re-exports must stay explicit")),
+            "{failures:?}"
+        );
+
+        fs::write(
+            canvas_src.join("lib.rs"),
+            r#"
+                pub mod adapter {}
+                pub mod advanced {}
+                pub mod persistence {}
+                pub use document::{CanvasDocument, CanvasDocumentBuilder, CanvasSnapshot};
+                pub use geometry::{CanvasViewport};
+                pub use gpui::{CanvasPaintFrame};
+                pub use json_canvas::{JsonCanvas};
+                pub use schema::{CanvasKindRegistry};
+                pub use store::{CanvasStore};
+            "#,
+        )
+        .unwrap();
+
+        let mut failures = Vec::new();
+        scan_canvas_public_api(&root, &mut failures);
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.contains("adapter, persistence, and advanced APIs")),
+            "{failures:?}"
+        );
 
         let _ = fs::remove_dir_all(root);
     }

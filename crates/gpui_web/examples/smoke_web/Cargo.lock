@@ -3078,6 +3078,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-docking"
+version = "0.2.0"
+dependencies = [
+ "log",
+ "open-gpui",
+ "open-gpui-motion",
+ "open-gpui-ui-core",
+ "serde",
+ "serde_json",
+ "slotmap",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "open-gpui-http-client"
 version = "0.2.0"
 dependencies = [
@@ -3205,6 +3219,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-motion"
+version = "0.2.0"
+
+[[package]]
 name = "open-gpui-platform"
 version = "0.2.0"
 dependencies = [
@@ -3263,6 +3281,13 @@ dependencies = [
  "log",
  "rayon",
  "tracing",
+]
+
+[[package]]
+name = "open-gpui-ui-core"
+version = "0.2.0"
+dependencies = [
+ "open-gpui-motion",
 ]
 
 [[package]]
@@ -4498,6 +4523,7 @@ version = "0.1.0"
 dependencies = [
  "js-sys",
  "open-gpui",
+ "open-gpui-docking",
  "open-gpui-platform",
  "wasm-bindgen",
  "web-sys",

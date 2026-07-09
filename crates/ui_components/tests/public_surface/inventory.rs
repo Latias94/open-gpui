@@ -426,6 +426,10 @@ fn component_api_inventory_keeps_regression_sentinels_for_stateful_components() 
         "selected_keys",
     );
     assert_inventory_contains_controlled_input("VirtualizedList", "reveal_key");
+    assert_inventory_contains_policy_hint("VirtualizedList", "from_shared_items");
+    assert_inventory_contains_policy_hint("VirtualizedList", "from_data_source");
+    assert_inventory_contains_policy_hint("VirtualizedList", "scroll_handle");
+    assert_inventory_contains_policy_hint("VirtualizedList", "render_row");
     assert_inventory_contains_callback(
         "VirtualizedList",
         "on_activate",

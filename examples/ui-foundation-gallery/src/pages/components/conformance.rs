@@ -63,6 +63,10 @@ pub const COMPONENT_A11Y_CLAIMS: &[ComponentA11yClaim] = &[
         selector_prefix: "gallery:component-virtualized-list-sample",
     },
     ComponentA11yClaim {
+        component: "VirtualizedList structural row",
+        selector_prefix: "gallery:component-virtualized-list-sample",
+    },
+    ComponentA11yClaim {
         component: "Splitter handle",
         selector_prefix: "gallery:component-splitter-sample",
     },

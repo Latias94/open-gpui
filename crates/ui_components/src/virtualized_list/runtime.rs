@@ -14,10 +14,7 @@ use open_gpui::{
     ScrollViewportProgrammaticSource, SharedString, StatefulInteractiveElement, Styled, Window,
     div, px,
 };
-use open_gpui_motion::{
-    MotionPreference,
-    advanced::{MotionFrameHost, MotionPreset},
-};
+use open_gpui_motion::{MotionFrameDriver, MotionPreference, advanced::MotionPreset};
 use open_gpui_ui_core::{Sizable, Size, ThemeTokens, UiPx, VirtualizerSnapshot};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -62,7 +59,7 @@ pub(super) struct VirtualizedListRuntime {
     pub(super) typeahead_buffer: String,
     pub(super) last_typeahead_at: Option<Instant>,
     pub(super) active_indicator: VirtualizedListActiveIndicatorRuntime,
-    pub(super) active_indicator_frame_host: MotionFrameHost,
+    pub(super) active_indicator_frame_host: MotionFrameDriver,
 }
 
 impl VirtualizedListRuntime {
@@ -417,7 +414,7 @@ impl RenderOnce for VirtualizedList {
             typeahead_buffer: String::new(),
             last_typeahead_at: None,
             active_indicator: VirtualizedListActiveIndicatorRuntime::default(),
-            active_indicator_frame_host: MotionFrameHost::new(),
+            active_indicator_frame_host: MotionFrameDriver::new(),
         });
         let runtime_state = runtime.read(cx).clone();
         let scroll_handle =

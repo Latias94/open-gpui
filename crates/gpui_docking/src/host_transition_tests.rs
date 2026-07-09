@@ -22,14 +22,23 @@ use crate::{
 };
 use open_gpui::{Bounds, TestAppContext, point, px, size};
 use open_gpui_motion::{
-    MotionDuration, MotionEasing, MotionFrameDemand, MotionFrameReason, MotionPreference,
-    advanced::{MotionModel, MotionPreset, MotionSpec, MotionSpringPreset},
+    MotionDuration, MotionEasing, MotionFrameDemand, MotionFrameReason, MotionIntent,
+    MotionPreference, MotionTransition,
 };
 use slotmap::Key;
 use std::time::Duration;
 
 fn host_bounds(width: f32, height: f32) -> Bounds<open_gpui::Pixels> {
     Bounds::new(point(px(0.0), px(0.0)), size(px(width), px(height)))
+}
+
+fn linear_continuity_transition(duration: Duration) -> MotionTransition {
+    MotionTransition::duration(
+        MotionIntent::Continuity,
+        MotionPreference::Animated,
+        MotionDuration::Custom(duration),
+        MotionEasing::Linear,
+    )
 }
 
 fn single_pane_scene(
@@ -217,9 +226,9 @@ fn transition_executor_reduces_or_schedules_without_changing_final_scene(cx: &mu
     let next = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
     let animated = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
     let animated_state = host.update(cx, |host, cx| {
-        host.execute_transition_plan_with_preset(
+        host.execute_transition_plan(
             animated,
-            MotionPreset::continuity(DockMotionPreference::Animated),
+            MotionTransition::continuity(DockMotionPreference::Animated),
             None,
             cx,
         )
@@ -230,17 +239,14 @@ fn transition_executor_reduces_or_schedules_without_changing_final_scene(cx: &mu
         .expect("animated transition should be stored");
     assert_eq!(stored.plan.final_scene, next);
     assert!(stored.policy_report.is_ok());
-    assert!(matches!(
-        stored.model,
-        MotionModel::Spring(spec)
-            if spec.preset() == Some(MotionSpringPreset::Continuity)
-    ));
+    assert_eq!(stored.transition.intent(), MotionIntent::Continuity);
+    assert_eq!(stored.transition.preference(), MotionPreference::Animated);
 
     let reduced = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Reduced);
     let reduced_sample = host.update(cx, |host, cx| {
-        let reduced_state = host.execute_transition_plan_with_preset(
+        let reduced_state = host.execute_transition_plan(
             reduced,
-            MotionPreset::continuity(DockMotionPreference::Reduced),
+            MotionTransition::continuity(DockMotionPreference::Reduced),
             None,
             cx,
         );
@@ -267,25 +273,19 @@ fn transition_executor_keeps_custom_spec_timeline_backed(cx: &mut TestAppContext
     let previous = single_pane_scene(left_tabs, bounds);
     let next = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
     let plan = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
-    let spec = MotionSpec::new(
-        MotionPreference::Animated,
-        MotionDuration::Custom(Duration::from_millis(240)),
-        MotionEasing::Linear,
-    );
+    let transition = linear_continuity_transition(Duration::from_millis(240));
 
     let stored = host.update(cx, |host, cx| {
         assert_eq!(
-            host.execute_transition_plan(plan, spec, None, cx),
+            host.execute_transition_plan(plan, transition, None, cx),
             DockTransitionExecutionState::Scheduled
         );
         host.clear_transition_execution_for_test()
             .expect("custom timeline execution should be stored")
     });
 
-    assert!(matches!(
-        stored.model,
-        MotionModel::Timeline(model_spec) if model_spec == spec
-    ));
+    assert_eq!(stored.transition.intent(), MotionIntent::Continuity);
+    assert_eq!(stored.transition.preference(), MotionPreference::Animated);
 }
 
 #[open_gpui::test]
@@ -302,15 +302,11 @@ fn transition_executor_samples_timeline_and_reveal_geometry(cx: &mut TestAppCont
     let previous = single_pane_scene(left_tabs, bounds);
     let next = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
     let plan = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
-    let spec = MotionSpec::new(
-        MotionPreference::Animated,
-        MotionDuration::Custom(Duration::from_millis(200)),
-        MotionEasing::Linear,
-    );
+    let transition = linear_continuity_transition(Duration::from_millis(200));
 
     host.update(cx, |host, cx| {
         assert_eq!(
-            host.execute_transition_plan(plan, spec, None, cx),
+            host.execute_transition_plan(plan, transition, None, cx),
             DockTransitionExecutionState::Scheduled
         );
 
@@ -459,11 +455,7 @@ fn transition_executor_replaces_active_execution_and_completes_reduced_motion_im
         assert_eq!(
             host.execute_transition_plan(
                 animated,
-                MotionSpec::new(
-                    MotionPreference::Animated,
-                    MotionDuration::Custom(Duration::from_millis(400)),
-                    MotionEasing::Linear,
-                ),
+                linear_continuity_transition(Duration::from_millis(400)),
                 None,
                 cx,
             ),
@@ -486,11 +478,7 @@ fn transition_executor_replaces_active_execution_and_completes_reduced_motion_im
         assert_eq!(
             host.execute_transition_plan(
                 replacement,
-                MotionSpec::new(
-                    MotionPreference::Animated,
-                    MotionDuration::Custom(Duration::from_millis(200)),
-                    MotionEasing::Linear,
-                ),
+                linear_continuity_transition(Duration::from_millis(200)),
                 None,
                 cx,
             ),
@@ -515,7 +503,7 @@ fn transition_executor_replaces_active_execution_and_completes_reduced_motion_im
 
         let reduced = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Reduced);
         assert_eq!(
-            host.execute_transition_plan(reduced, MotionSpec::immediate(), None, cx),
+            host.execute_transition_plan(reduced, MotionTransition::immediate(), None, cx),
             DockTransitionExecutionState::Immediate
         );
         let reduced_sample = host
@@ -779,15 +767,16 @@ fn visual_affordance_replacement_keeps_preview_layers_at_current_target_bounds(
         transition_plan_from_affordance_scene(&scene, &previous, DockMotionPreference::Animated);
     let replacement_plan =
         transition_plan_from_affordance_scene(&scene, &next, DockMotionPreference::Animated);
-    let spec = MotionSpec::new(
+    let transition = MotionTransition::duration(
+        MotionIntent::VisualAffordance,
         MotionPreference::Animated,
-        MotionDuration::Custom(Duration::from_millis(400)),
+        MotionDuration::Custom(Duration::from_millis(200)),
         MotionEasing::Linear,
     );
 
     host.update(cx, |host, _| {
         assert_eq!(
-            host.execute_visual_affordance_transition_plan(first_plan, spec),
+            host.execute_visual_affordance_transition_plan(first_plan, transition),
             DockTransitionExecutionState::Scheduled
         );
         assert!(
@@ -800,7 +789,7 @@ fn visual_affordance_replacement_keeps_preview_layers_at_current_target_bounds(
         );
 
         assert_eq!(
-            host.execute_visual_affordance_transition_plan(replacement_plan, spec),
+            host.execute_visual_affordance_transition_plan(replacement_plan, transition),
             DockTransitionExecutionState::Scheduled
         );
         let sample = host

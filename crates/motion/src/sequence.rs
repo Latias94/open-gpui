@@ -1,7 +1,8 @@
 //! Renderer-neutral sequence plans for composing many motion tracks.
 
 use crate::{
-    MotionFrameDemand, MotionFrameReason, MotionRunState, MotionScalarSample, spring::MotionModel,
+    MotionFrameDemand, MotionFrameReason, MotionRunState, MotionScalarSample,
+    transition::MotionTransition,
 };
 use std::time::Duration;
 
@@ -43,32 +44,37 @@ impl<K> MotionSequence<K> {
     }
 
     /// Inserts a step at an absolute sequence elapsed time.
-    pub fn insert_at(&mut self, key: K, model: MotionModel, start_at: Duration) -> &mut Self {
+    pub fn insert_at(
+        &mut self,
+        key: K,
+        transition: MotionTransition,
+        start_at: Duration,
+    ) -> &mut Self {
         self.steps
-            .push(MotionSequenceStep::new(key, model, start_at));
+            .push(MotionSequenceStep::new(key, transition, start_at));
         self
     }
 
     /// Appends a step after the current sequence duration hint.
-    pub fn append(&mut self, key: K, model: MotionModel) -> &mut Self {
-        self.insert_at(key, model, self.duration_hint())
+    pub fn append(&mut self, key: K, transition: MotionTransition) -> &mut Self {
+        self.insert_at(key, transition, self.duration_hint())
     }
 
     /// Inserts a step at the previous step's start time.
-    pub fn insert_with_previous(&mut self, key: K, model: MotionModel) -> &mut Self {
+    pub fn insert_with_previous(&mut self, key: K, transition: MotionTransition) -> &mut Self {
         let start_at = self
             .steps
             .last()
             .map(MotionSequenceStep::start_at)
             .unwrap_or(Duration::ZERO);
-        self.insert_at(key, model, start_at)
+        self.insert_at(key, transition, start_at)
     }
 
     /// Inserts a step after the previous step's end hint plus delay.
     pub fn insert_after_previous(
         &mut self,
         key: K,
-        model: MotionModel,
+        transition: MotionTransition,
         delay: Duration,
     ) -> &mut Self {
         let start_at = self
@@ -76,20 +82,20 @@ impl<K> MotionSequence<K> {
             .last()
             .map(MotionSequenceStep::end_hint)
             .unwrap_or(Duration::ZERO);
-        self.insert_at(key, model, saturating_duration_add(start_at, delay))
+        self.insert_at(key, transition, saturating_duration_add(start_at, delay))
     }
 
     /// Inserts many steps with a fixed stagger from a start time.
     pub fn insert_staggered(
         &mut self,
         keys: impl IntoIterator<Item = K>,
-        model: MotionModel,
+        transition: MotionTransition,
         start_at: Duration,
         stagger: Duration,
     ) -> &mut Self {
         let mut next_start = start_at;
         for key in keys {
-            self.insert_at(key, model, next_start);
+            self.insert_at(key, transition, next_start);
             next_start = saturating_duration_add(next_start, stagger);
         }
         self
@@ -129,19 +135,19 @@ impl<K: Clone> MotionSequence<K> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MotionSequenceStep<K> {
     key: K,
-    model: MotionModel,
+    transition: MotionTransition,
     start_at: Duration,
     duration_hint: Duration,
 }
 
 impl<K> MotionSequenceStep<K> {
     /// Creates a sequence step at an absolute sequence elapsed time.
-    pub fn new(key: K, model: MotionModel, start_at: Duration) -> Self {
+    pub fn new(key: K, transition: MotionTransition, start_at: Duration) -> Self {
         Self {
             key,
-            model,
+            transition,
             start_at,
-            duration_hint: model.sequence_duration_hint(),
+            duration_hint: transition.resolve_plan().model().sequence_duration_hint(),
         }
     }
 
@@ -150,9 +156,9 @@ impl<K> MotionSequenceStep<K> {
         &self.key
     }
 
-    /// Returns the step motion model.
-    pub const fn model(&self) -> MotionModel {
-        self.model
+    /// Returns the step transition.
+    pub const fn transition(&self) -> MotionTransition {
+        self.transition
     }
 
     /// Returns the absolute sequence time at which this step starts.
@@ -180,7 +186,7 @@ impl<K: Clone> MotionSequenceStep<K> {
 
         let local_elapsed = elapsed.saturating_sub(self.start_at);
         let sample = self
-            .model
+            .transition
             .sample_scalar_elapsed(0.0, 1.0, 0.0, local_elapsed);
         MotionSequenceStepSample::from_scalar(self.key.clone(), sample)
     }
@@ -344,28 +350,28 @@ fn saturating_duration_add(left: Duration, right: Duration) -> Duration {
 mod tests {
     use super::*;
     use crate::{
-        MotionDuration, MotionEasing, MotionPreference,
-        motion::MotionSpec,
+        MotionDuration, MotionEasing, MotionIntent, MotionPreference,
         spring::{MotionSpringPreset, MotionSpringSpec},
     };
 
-    fn linear_model(duration: Duration) -> MotionModel {
-        MotionModel::timeline(MotionSpec::new(
+    fn linear_transition(duration: Duration) -> MotionTransition {
+        MotionTransition::duration(
+            MotionIntent::CommittedLayout,
             MotionPreference::Animated,
             MotionDuration::Custom(duration),
             MotionEasing::Linear,
-        ))
+        )
     }
 
     #[test]
     fn sequence_positions_append_with_previous_and_after_previous() {
-        let model = linear_model(Duration::from_millis(100));
+        let transition = linear_transition(Duration::from_millis(100));
         let mut sequence = MotionSequence::new();
 
         sequence
-            .append("first", model)
-            .insert_with_previous("parallel", model)
-            .insert_after_previous("delayed", model, Duration::from_millis(20));
+            .append("first", transition)
+            .insert_with_previous("parallel", transition)
+            .insert_after_previous("delayed", transition, Duration::from_millis(20));
 
         assert_eq!(sequence.steps()[0].start_at(), Duration::ZERO);
         assert_eq!(sequence.steps()[1].start_at(), Duration::ZERO);
@@ -375,12 +381,12 @@ mod tests {
 
     #[test]
     fn staggered_steps_preserve_start_offsets() {
-        let model = linear_model(Duration::from_millis(50));
+        let transition = linear_transition(Duration::from_millis(50));
         let mut sequence = MotionSequence::new();
 
         sequence.insert_staggered(
             ["a", "b", "c"],
-            model,
+            transition,
             Duration::from_millis(10),
             Duration::from_millis(20),
         );
@@ -393,9 +399,9 @@ mod tests {
 
     #[test]
     fn sequence_samples_pending_active_and_completed_steps() {
-        let model = linear_model(Duration::from_millis(100));
+        let transition = linear_transition(Duration::from_millis(100));
         let mut sequence = MotionSequence::new();
-        sequence.insert_at("row", model, Duration::from_millis(50));
+        sequence.insert_at("row", transition, Duration::from_millis(50));
 
         let pending = sequence.sample_at(Duration::ZERO);
         let pending_step = pending.step(&"row").expect("row step");
@@ -420,9 +426,9 @@ mod tests {
 
     #[test]
     fn reduced_motion_step_completes_without_frame_demand_at_start() {
-        let model = MotionModel::timeline(MotionSpec::committed_layout(MotionPreference::Reduced));
+        let transition = MotionTransition::committed_layout(MotionPreference::Reduced);
         let mut sequence = MotionSequence::new();
-        sequence.insert_at("panel", model, Duration::ZERO);
+        sequence.insert_at("panel", transition, Duration::ZERO);
 
         let sample = sequence.sample_at(Duration::ZERO);
         let step = sample.step(&"panel").expect("panel step");
@@ -436,10 +442,12 @@ mod tests {
     #[test]
     fn spring_sequence_duration_hint_uses_review_duration() {
         let spring = MotionSpringSpec::layout(MotionPreference::Animated);
-        let model = MotionModel::spring(spring);
+        let transition = MotionTransition::committed_layout(MotionPreference::Animated);
         let mut sequence = MotionSequence::new();
 
-        sequence.append("spring", model).append("next", model);
+        sequence
+            .append("spring", transition)
+            .append("next", transition);
 
         assert_eq!(
             sequence.steps()[0].duration_hint(),

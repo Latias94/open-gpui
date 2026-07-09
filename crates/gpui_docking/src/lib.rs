@@ -304,11 +304,17 @@ pub use surface::{
     DockSurfaceFloatingPanelSnapshot, DockSurfacePanelError, DockSurfacePanelLocation,
     DockSurfacePanelLocationKind, DockSurfacePanelOutcome, DockSurfacePanelSnapshot,
     DockSurfaceSnapshot, DockSurfaceViewportCloseOutcome, DockSurfaceViewportCloseStatus,
+    DockSurfaceViewportFlagCapabilities, DockSurfaceViewportFlagWarning,
+    DockSurfaceViewportInputStatus, DockSurfaceViewportLifecycleReadiness,
     DockSurfaceViewportOpenOutcome, DockSurfaceViewportOpenReport, DockSurfaceViewportOpenStatus,
-    DockSurfaceViewportOpened, DockSurfaceViewportRestoreOutcome, DockSurfaceViewportRestoreReport,
-    DockSurfaceViewportSession, DockSurfaceViewportShouldCloseOutcome,
-    DockSurfaceViewportShouldCloseStatus, DockSurfaceViewportSpec, DockSurfaceViewportSpecError,
-    DockSurfaceViewportUnavailable,
+    DockSurfaceViewportOpened, DockSurfaceViewportPlatformCapabilities,
+    DockSurfaceViewportPlatformReadiness, DockSurfaceViewportReadiness,
+    DockSurfaceViewportReadinessReport, DockSurfaceViewportReadinessStatus,
+    DockSurfaceViewportRestoreOutcome, DockSurfaceViewportRestoreReport,
+    DockSurfaceViewportRouteStatus, DockSurfaceViewportSession,
+    DockSurfaceViewportShouldCloseOutcome, DockSurfaceViewportShouldCloseStatus,
+    DockSurfaceViewportSpec, DockSurfaceViewportSpecError, DockSurfaceViewportStaleReason,
+    DockSurfaceViewportUnavailable, DockSurfaceViewportUnsupportedFlag,
 };
 pub(crate) use viewport::*;
 #[cfg(test)]

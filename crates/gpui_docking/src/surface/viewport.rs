@@ -1,11 +1,14 @@
-use super::{DockSurface, DockSurfaceChange, DockSurfaceSnapshot};
+use super::{
+    DockSurface, DockSurfaceChange, DockSurfaceSnapshot, DockSurfaceViewportReadiness,
+    DockSurfaceViewportReadinessReport, DockSurfaceViewportUnsupportedFlag,
+};
 use crate::{
     DockPolicyError, DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy,
     DockViewportCloseStatus, DockViewportOpenOutcome, DockViewportOpenStatus,
     DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportRestoreReadiness, DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus,
 };
-use open_gpui::{AnyWindowHandle, App, AppContext as _, WindowId, WindowOptions};
+use open_gpui::{AnyWindowHandle, App, WindowId, WindowOptions};
 use thiserror::Error;
 
 /// Facade object for managing platform viewport windows owned by one [`DockSurface`].
@@ -140,6 +143,11 @@ pub enum DockSurfaceViewportUnavailable {
         /// Structured validation error from the placement validator.
         error: DockViewportPlacementValidationError,
     },
+    /// The request asked for platform viewport flags the active backend cannot honor.
+    FlagUnsupported {
+        /// Unsupported platform viewport flags requested by the spec.
+        flags: Vec<DockSurfaceViewportUnsupportedFlag>,
+    },
     /// The request reached GPUI window opening but the backend returned an error.
     OpenFailed(String),
 }
@@ -185,6 +193,54 @@ impl DockSurfaceViewportSession {
         placement: &DockViewportPlacementLayout,
     ) -> Result<DockViewportRestoreReadiness, DockViewportPlacementValidationError> {
         self.surface.check_viewport_placement_restore(placement)
+    }
+
+    /// Checks whether a platform viewport request can open without mutating runtime state.
+    pub fn check_open_readiness(
+        &self,
+        spec: &DockSurfaceViewportSpec,
+        cx: &mut App,
+    ) -> DockSurfaceViewportReadiness {
+        self.surface.check_viewport_open_readiness(spec, cx)
+    }
+
+    /// Checks whether a platform viewport request can open without mutating runtime state.
+    pub fn readiness(
+        &self,
+        spec: &DockSurfaceViewportSpec,
+        cx: &mut App,
+    ) -> DockSurfaceViewportReadiness {
+        self.check_open_readiness(spec, cx)
+    }
+
+    /// Checks a batch of platform viewport requests without opening windows.
+    pub fn readiness_many(
+        &self,
+        specs: impl IntoIterator<Item = DockSurfaceViewportSpec>,
+        cx: &mut App,
+    ) -> DockSurfaceViewportReadinessReport {
+        self.surface.viewport_readiness_many(specs, cx)
+    }
+
+    /// Checks saved platform viewport placement and request readiness without opening windows.
+    pub fn check_restore_readiness(
+        &self,
+        placement: &DockViewportPlacementLayout,
+        fallback_options: impl FnMut(&DockSpaceId) -> WindowOptions,
+        cx: &mut App,
+    ) -> DockSurfaceViewportReadinessReport {
+        self.surface
+            .check_viewport_restore_readiness(placement, fallback_options, cx)
+    }
+
+    /// Checks saved platform viewport placement and request readiness without opening windows.
+    pub fn restore_readiness(
+        &self,
+        placement: &DockViewportPlacementLayout,
+        fallback_options: impl FnMut(&DockSpaceId) -> WindowOptions,
+        cx: &mut App,
+    ) -> DockSurfaceViewportReadinessReport {
+        self.check_restore_readiness(placement, fallback_options, cx)
     }
 
     /// Opens or reuses a controller-backed platform viewport window for one dock space.
@@ -588,6 +644,19 @@ impl DockSurfaceViewportUnavailable {
         matches!(self, Self::InvalidPlacement { .. })
     }
 
+    /// Returns true when requested platform viewport flags are unsupported.
+    pub fn is_flag_unsupported(&self) -> bool {
+        matches!(self, Self::FlagUnsupported { .. })
+    }
+
+    /// Unsupported platform viewport flags requested by the spec.
+    pub fn unsupported_flags(&self) -> &[DockSurfaceViewportUnsupportedFlag] {
+        match self {
+            Self::FlagUnsupported { flags } => flags,
+            _ => &[],
+        }
+    }
+
     /// Returns structured placement validation details when serialized placement data was invalid.
     pub fn placement_validation_error(&self) -> Option<&DockViewportPlacementValidationError> {
         match self {
@@ -638,6 +707,39 @@ impl DockSurface {
         placement: &DockViewportPlacementLayout,
     ) -> Result<DockViewportRestoreReadiness, DockViewportPlacementValidationError> {
         self.viewport_runtime.check_placement_restore(placement)
+    }
+
+    /// Checks whether a platform viewport request can open without mutating runtime state.
+    pub fn check_viewport_open_readiness(
+        &self,
+        spec: &DockSurfaceViewportSpec,
+        cx: &mut App,
+    ) -> DockSurfaceViewportReadiness {
+        DockSurfaceViewportReadiness::check_open(self, spec, None, cx)
+    }
+
+    /// Checks a batch of platform viewport requests without opening windows.
+    pub fn viewport_readiness_many(
+        &self,
+        specs: impl IntoIterator<Item = DockSurfaceViewportSpec>,
+        cx: &mut App,
+    ) -> DockSurfaceViewportReadinessReport {
+        DockSurfaceViewportReadinessReport::new(
+            specs
+                .into_iter()
+                .map(|spec| self.check_viewport_open_readiness(&spec, cx))
+                .collect(),
+        )
+    }
+
+    /// Checks saved platform viewport placement and request readiness without opening windows.
+    pub fn check_viewport_restore_readiness(
+        &self,
+        placement: &DockViewportPlacementLayout,
+        fallback_options: impl FnMut(&DockSpaceId) -> WindowOptions,
+        cx: &mut App,
+    ) -> DockSurfaceViewportReadinessReport {
+        DockSurfaceViewportReadinessReport::check_restore(self, placement, fallback_options, cx)
     }
 
     /// Handles a GPUI window should-close callback for a facade-opened viewport window.
@@ -697,19 +799,9 @@ impl DockSurface {
         spec: DockSurfaceViewportSpec,
         cx: &mut App,
     ) -> DockSurfaceViewportOpenOutcome {
-        let policy_result = cx.read_entity(&self.controller, |controller, _| {
-            controller.policy().validate_platform_viewports()
-        });
-        if let Err(error) = policy_result {
-            return DockSurfaceViewportOpenOutcome::Unavailable(
-                DockSurfaceViewportUnavailable::PolicyDisabled(error),
-            );
-        }
-
-        if !cx.viewport_capabilities().platform_viewport_windows {
-            return DockSurfaceViewportOpenOutcome::Unavailable(
-                DockSurfaceViewportUnavailable::BackendUnsupported,
-            );
+        let readiness = self.check_viewport_open_readiness(&spec, cx);
+        if let Some(reason) = readiness.unavailable_reason() {
+            return DockSurfaceViewportOpenOutcome::Unavailable(reason);
         }
 
         self.open_viewport_spec_without_preflight(spec, cx)
@@ -738,37 +830,17 @@ impl DockSurface {
         specs: impl IntoIterator<Item = DockSurfaceViewportSpec>,
         cx: &mut App,
     ) -> DockSurfaceViewportOpenReport {
-        let specs = specs.into_iter();
-        let policy_result = cx.read_entity(&self.controller, |controller, _| {
-            controller.policy().validate_platform_viewports()
-        });
-        if let Err(error) = policy_result {
-            return DockSurfaceViewportOpenReport::new(
-                specs
-                    .map(|_| {
-                        DockSurfaceViewportOpenOutcome::Unavailable(
-                            DockSurfaceViewportUnavailable::PolicyDisabled(error.clone()),
-                        )
-                    })
-                    .collect(),
-            );
-        }
-
-        if !cx.viewport_capabilities().platform_viewport_windows {
-            return DockSurfaceViewportOpenReport::new(
-                specs
-                    .map(|_| {
-                        DockSurfaceViewportOpenOutcome::Unavailable(
-                            DockSurfaceViewportUnavailable::BackendUnsupported,
-                        )
-                    })
-                    .collect(),
-            );
-        }
-
         DockSurfaceViewportOpenReport::new(
             specs
-                .map(|spec| self.open_viewport_spec_without_preflight(spec, cx))
+                .into_iter()
+                .map(|spec| {
+                    let readiness = self.check_viewport_open_readiness(&spec, cx);
+                    if let Some(reason) = readiness.unavailable_reason() {
+                        DockSurfaceViewportOpenOutcome::Unavailable(reason)
+                    } else {
+                        self.open_viewport_spec_without_preflight(spec, cx)
+                    }
+                })
                 .collect(),
         )
     }

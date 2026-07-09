@@ -1,7 +1,7 @@
 //! DevTools adapters for `open-gpui-motion` frame-demand facts.
 
 use open_gpui_motion::{
-    MotionFrameDemand, MotionFrameDriver, MotionFrameHostResetReason, MotionFrameReason,
+    MotionFrameDemand, MotionFrameDriver, MotionFrameReason, MotionFrameResetReason,
 };
 
 use crate::{
@@ -30,7 +30,7 @@ pub fn motion_frame_driver_probe_snapshot(driver: &MotionFrameDriver) -> Snapsho
             "requested_frames": driver.requested_frames(),
             "last_reset_reason": driver
                 .last_reset_reason()
-                .map(motion_frame_host_reset_reason_label),
+                .map(motion_frame_reset_reason_label),
         }),
     );
     root = root.with_child(motion_demand_node(
@@ -92,12 +92,12 @@ fn motion_frame_reason_label(reason: MotionFrameReason) -> &'static str {
     }
 }
 
-fn motion_frame_host_reset_reason_label(reason: MotionFrameHostResetReason) -> &'static str {
+fn motion_frame_reset_reason_label(reason: MotionFrameResetReason) -> &'static str {
     match reason {
-        MotionFrameHostResetReason::Retarget => "retarget",
-        MotionFrameHostResetReason::Cancel => "cancel",
-        MotionFrameHostResetReason::Finish => "finish",
-        MotionFrameHostResetReason::PruneTerminal => "prune-terminal",
-        MotionFrameHostResetReason::MotionIdentityChanged => "motion-identity-changed",
+        MotionFrameResetReason::Retarget => "retarget",
+        MotionFrameResetReason::Cancel => "cancel",
+        MotionFrameResetReason::Finish => "finish",
+        MotionFrameResetReason::PruneTerminal => "prune-terminal",
+        MotionFrameResetReason::MotionIdentityChanged => "motion-identity-changed",
     }
 }

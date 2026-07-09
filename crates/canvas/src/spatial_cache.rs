@@ -1,6 +1,6 @@
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryFacts, CanvasGraphIndex,
-    CanvasKindRegistry, CanvasRecordId, HitRecord, HitTarget,
+    CanvasDocument, CanvasDocumentDiff, CanvasKindRegistry, CanvasRecordId, HitRecord, HitTarget,
+    geometry_facts::CanvasGeometryFacts, graph::CanvasGraphIndex, routing::CanvasEdgeRouter,
 };
 use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Bounds, Pixels, Point, Size, px};
@@ -397,6 +397,7 @@ fn aabb_extents(bounds: Bounds<Pixels>) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routing::CanvasDefaultEdgeRouter;
     use crate::test_support::document_fixture;
     use crate::{CanvasEdge, CanvasEndpoint, CanvasNode, CanvasShape, DocumentCommand, NodeId};
     use open_gpui::{point, px, size};
@@ -412,8 +413,7 @@ mod tests {
         front.z_index = 2;
         let document = document_fixture().node(back).shape(front).build();
 
-        let cache =
-            CanvasSpatialCache::rebuild_with_router(&document, &crate::CanvasDefaultEdgeRouter);
+        let cache = CanvasSpatialCache::rebuild_with_router(&document, &CanvasDefaultEdgeRouter);
 
         assert_eq!(
             cache
@@ -440,7 +440,7 @@ mod tests {
             ))
             .build();
         let mut cache =
-            CanvasSpatialCache::rebuild_with_router(&document, &crate::CanvasDefaultEdgeRouter);
+            CanvasSpatialCache::rebuild_with_router(&document, &CanvasDefaultEdgeRouter);
 
         let mut moved = document.node(&NodeId::from("a")).unwrap().clone();
         moved.position = point(px(200.0), px(0.0));
@@ -454,7 +454,7 @@ mod tests {
             &document,
             &diff,
             &graph_index,
-            &crate::CanvasDefaultEdgeRouter,
+            &CanvasDefaultEdgeRouter,
         );
 
         assert!(
@@ -490,7 +490,7 @@ mod tests {
             ))
             .build();
         let mut cache =
-            CanvasSpatialCache::rebuild_with_router(&document, &crate::CanvasDefaultEdgeRouter);
+            CanvasSpatialCache::rebuild_with_router(&document, &CanvasDefaultEdgeRouter);
 
         let mut moved = document.node(&NodeId::from("a")).unwrap().clone();
         moved.position = point(px(40.0), px(0.0));
@@ -504,7 +504,7 @@ mod tests {
             &document,
             &diff,
             &graph_index,
-            &crate::CanvasDefaultEdgeRouter,
+            &CanvasDefaultEdgeRouter,
         );
 
         assert!(

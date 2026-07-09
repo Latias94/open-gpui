@@ -1,7 +1,9 @@
+use crate::mutation::CanvasCommittedMutation;
 use crate::mutation::CanvasMutationJournal;
+use crate::relations::CanvasRecordRelation;
 use crate::{
-    CanvasCommittedMutation, CanvasDocument, CanvasKindRegistry, CanvasRecordId,
-    CanvasRecordRelation, CanvasTransaction, DocumentCommand, DocumentError,
+    CanvasDocument, CanvasKindRegistry, CanvasRecordId, CanvasTransaction, DocumentCommand,
+    DocumentError,
 };
 
 #[derive(Clone, Debug, PartialEq)]

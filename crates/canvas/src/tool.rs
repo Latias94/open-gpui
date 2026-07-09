@@ -1,12 +1,12 @@
 use crate::gesture::CanvasPreparedGestureCommit;
 use crate::layer::CanvasZOrderCommand;
+use crate::routing::{CanvasDefaultEdgeRouter, CanvasEdgeRouter};
 use crate::session::{CanvasToolSession, CanvasToolSessionEffect, CanvasToolSessionSnapshot};
 use crate::{
-    CanvasClipboardPayload, CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument,
-    CanvasDocumentDiff, CanvasEdgeRouter, CanvasEndpoint, CanvasKindRegistry,
-    CanvasPasteTransaction, CanvasRecordId, CanvasRuntime, CanvasStore, CanvasStoreChange,
-    CanvasStoreListenerId, CanvasTransaction, CanvasViewport, DocumentCommand, DocumentError,
-    EdgeId, HitTarget, NodeId, ShapeId,
+    CanvasClipboardPayload, CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentDiff,
+    CanvasEndpoint, CanvasKindRegistry, CanvasPasteTransaction, CanvasRecordId, CanvasRuntime,
+    CanvasStore, CanvasStoreChange, CanvasStoreListenerId, CanvasTransaction, CanvasViewport,
+    DocumentCommand, DocumentError, EdgeId, HitTarget, NodeId, ShapeId,
 };
 use indexmap::IndexSet;
 use open_gpui::{Bounds, Pixels, Point};

@@ -31,6 +31,10 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         ]);
     root_a11y_contract.validate().unwrap();
     prelude_a11y_contract.validate().unwrap();
+    assert_eq!(
+        root::A11yStateEvidence::Disabled,
+        prelude::A11yStateEvidence::Disabled
+    );
 
     let root_button = root::Button::new("save", "Save");
     let root_accordion = root::Accordion::new("accordion")

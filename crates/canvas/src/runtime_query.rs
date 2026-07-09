@@ -1,7 +1,10 @@
 use crate::spatial_cache::{CanvasSpatialCache, IndexedHitRecord};
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryFacts, CanvasGraphIndex,
-    CanvasKindRegistry, CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord, HitTarget,
+    CanvasDocument, CanvasDocumentDiff, CanvasKindRegistry, EdgeId, HitOptions, HitRecord,
+    HitTarget,
+    geometry_facts::{CanvasGeometryFacts, CanvasResolvedEdgeGeometry},
+    graph::CanvasGraphIndex,
+    routing::CanvasEdgeRouter,
 };
 use indexmap::IndexMap;
 use open_gpui::{Bounds, Pixels, Point};
@@ -193,8 +196,8 @@ mod tests {
     use super::*;
     use crate::test_support::document_fixture;
     use crate::{
-        CanvasDefaultEdgeRouter, CanvasHandle, CanvasNode, CanvasShape, CanvasTransaction,
-        DocumentCommand, NodeId,
+        CanvasHandle, CanvasNode, CanvasShape, CanvasTransaction, DocumentCommand, NodeId,
+        routing::CanvasDefaultEdgeRouter,
     };
     use open_gpui::{point, px, size};
 

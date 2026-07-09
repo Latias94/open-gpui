@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use crate::gesture::CanvasPreparedGestureCommit;
-use crate::mutation::CanvasPreparedMutation;
+use crate::mutation::{CanvasCommittedMutation, CanvasPreparedMutation};
+use crate::routing::{CanvasDefaultEdgeRouter, CanvasEdgeRouter};
 use crate::{
-    CanvasCommittedMutation, CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff,
-    CanvasEdgeRouter, CanvasHistory, CanvasKindRegistry, CanvasRuntime, CanvasTransaction,
-    DocumentError,
+    CanvasDocument, CanvasDocumentDiff, CanvasHistory, CanvasKindRegistry, CanvasRuntime,
+    CanvasTransaction, DocumentError,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -511,8 +511,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        CanvasNode, CanvasRecordId, CanvasRecordRelation, CanvasRelationChange, DocumentCommand,
-        NodeId, ShapeId,
+        CanvasNode, CanvasRecordId, DocumentCommand, NodeId, ShapeId,
+        changes::CanvasRelationChange,
+        relations::CanvasRecordRelation,
         test_support::{child_frame_fixture, document_fixture},
     };
 

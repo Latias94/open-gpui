@@ -736,7 +736,10 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             },
         ],
         policy_hints: &[
+            "from_shared_items",
             "from_data_source",
+            "scroll_handle",
+            "render_row",
             "selection_mode",
             "viewport_item_count",
             "row_height",

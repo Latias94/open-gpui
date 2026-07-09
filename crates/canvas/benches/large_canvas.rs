@@ -1,11 +1,14 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use open_gpui::{BenchAppContext, Bounds, point, px, size};
-use open_gpui_canvas::index::SpatialIndex;
+use open_gpui_canvas::adapter::{
+    CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, collect_visible_records,
+    prepaint_canvas_frame,
+};
+use open_gpui_canvas::advanced::SpatialIndex;
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasKindLabel, CanvasKindRegistry,
-    CanvasNode, CanvasNodeKind, CanvasNodeRenderPolicy, CanvasPaintModel, CanvasPaintOptions,
-    CanvasPaintTheme, CanvasTransaction, CanvasViewport, DocumentCommand, collect_visible_records,
-    prepaint_canvas_frame,
+    CanvasNode, CanvasNodeKind, CanvasNodeRenderPolicy, CanvasTransaction, CanvasViewport,
+    DocumentCommand,
 };
 
 const LABELED_NODE_KIND: &str = "benchmark-labeled-node";

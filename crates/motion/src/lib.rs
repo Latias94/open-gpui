@@ -24,7 +24,6 @@ pub mod transition;
 pub use controller::{
     MotionClockSample, MotionFrameDemand, MotionFrameReason, MotionProgressSample,
 };
-pub use frame_host::MotionFrameHostResetReason;
 pub use geometry::{
     MotionEdges, MotionPoint, MotionPx, MotionRect, MotionSize, motion_edges, motion_point,
     motion_px, motion_rect, motion_size,
@@ -46,6 +45,6 @@ pub use sequence::{
 };
 pub use spring::{MotionScalarSample, MotionSpringPhysics};
 pub use transition::{
-    MotionFrameDriver, MotionFrameDriverSample, MotionFrameDriverUpdate, MotionIntent,
-    MotionProgressRun, MotionScalarRun, MotionScalarRunSample, MotionTransition,
+    MotionFrameDriver, MotionFrameDriverSample, MotionFrameDriverUpdate, MotionFrameResetReason,
+    MotionIntent, MotionProgressRun, MotionScalarRun, MotionScalarRunSample, MotionTransition,
 };

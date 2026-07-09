@@ -11,7 +11,7 @@ mod style;
 
 #[cfg(test)]
 use open_gpui_motion::{
-    MotionFrameDemand, MotionFrameHostResetReason, MotionPreference, advanced::MotionPreset,
+    MotionFrameDemand, MotionFrameResetReason, MotionPreference, advanced::MotionPreset,
 };
 #[cfg(test)]
 use open_gpui_ui_core::ui_px;
@@ -1195,7 +1195,7 @@ mod tests {
         assert_eq!(first_update.frame_demand(), MotionFrameDemand::Idle);
         assert_eq!(
             first_update.reset_reason(),
-            Some(MotionFrameHostResetReason::MotionIdentityChanged)
+            Some(MotionFrameResetReason::MotionIdentityChanged)
         );
         let first_snapshot = indicator.snapshot().expect("visible indicator");
         assert_eq!(
@@ -1211,7 +1211,7 @@ mod tests {
         assert!(demand.frame_demand().needs_frame());
         assert_eq!(
             demand.reset_reason(),
-            Some(MotionFrameHostResetReason::MotionIdentityChanged)
+            Some(MotionFrameResetReason::MotionIdentityChanged)
         );
         let moving = indicator.snapshot().expect("moving indicator");
         assert_eq!(
@@ -1225,7 +1225,7 @@ mod tests {
         assert_eq!(final_demand.frame_demand(), MotionFrameDemand::Idle);
         assert_eq!(
             final_demand.reset_reason(),
-            Some(MotionFrameHostResetReason::Finish)
+            Some(MotionFrameResetReason::Finish)
         );
         let final_snapshot = indicator.snapshot().expect("settled indicator");
         assert_eq!(final_snapshot.top(), ui_px(40.0));
@@ -1245,14 +1245,14 @@ mod tests {
         assert_eq!(first_update.frame_demand(), MotionFrameDemand::Idle);
         assert_eq!(
             first_update.reset_reason(),
-            Some(MotionFrameHostResetReason::MotionIdentityChanged)
+            Some(MotionFrameResetReason::MotionIdentityChanged)
         );
         let demand = indicator.sync(&second, start + Duration::from_millis(16), reduced);
 
         assert_eq!(demand.frame_demand(), MotionFrameDemand::Idle);
         assert_eq!(
             demand.reset_reason(),
-            Some(MotionFrameHostResetReason::MotionIdentityChanged)
+            Some(MotionFrameResetReason::MotionIdentityChanged)
         );
         let snapshot = indicator.snapshot().expect("reduced indicator");
         assert_eq!(
@@ -1278,10 +1278,7 @@ mod tests {
 
         let demand = indicator.sync(&offscreen, start + Duration::from_millis(16), model);
         assert_eq!(demand.frame_demand(), MotionFrameDemand::Idle);
-        assert_eq!(
-            demand.reset_reason(),
-            Some(MotionFrameHostResetReason::Cancel)
-        );
+        assert_eq!(demand.reset_reason(), Some(MotionFrameResetReason::Cancel));
         assert!(indicator.snapshot().is_none());
         assert!(indicator.state.is_none());
     }

@@ -890,8 +890,8 @@ scene rather than from render-local rectangles.
 
 Component accessibility assertions use `ComponentA11yContract` rather than a live platform
 accessibility backend. The contract records `A11yLabelSource`, `A11yDescriptionSource`, selected,
-checked, expanded, disabled, `A11yValueMetadata`, `A11yValueKind`, orientation, and supported
-`AccessibleAction` values for a component or component part. Validation returns
+checked, expanded, disabled, `A11yValueMetadata`, `A11yValueKind`, `A11yStateEvidence`,
+orientation, and supported `AccessibleAction` values for a component or component part. Validation returns
 `A11yContractViolation` with `A11yContractError` when a role that requires an accessible name,
 value metadata, or action omits that fact. Focused tests in `crates/ui_components/tests/a11y.rs`
 cover representative primitives, form controls, icon-only controls, overlays, listbox choices,
@@ -956,9 +956,9 @@ these gates visible:
 - Splitter runtime fractions continue to share one constraint solver;
 - Tabs keep overflow and roving-focus behavior visible in the page;
 - icon-only affordances and labels keep their accessible metadata explicit;
-- `COMPONENT_A11Y_EVIDENCE` keeps representative roles, label sources, value metadata,
-  orientation, and actions aligned with `ComponentA11yContract`; gallery `COMPONENT_A11Y_CLAIMS`
-  bind those facts to sample selectors.
+- `COMPONENT_A11Y_EVIDENCE` keeps representative roles, label sources, state/focus coverage, value
+  metadata, orientation, and actions aligned with `ComponentA11yContract`; gallery
+  `COMPONENT_A11Y_CLAIMS` bind those facts to sample selectors.
 - `cargo run -p xtask -- scan-ui-contract` keeps contract rows, default exports, docs tokens,
   conformance evidence, a11y claims, and the theme schema artifact aligned before gallery smoke
   tests are needed.

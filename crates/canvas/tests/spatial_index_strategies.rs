@@ -1,10 +1,12 @@
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
-use open_gpui_canvas::index::SpatialIndex;
+use open_gpui_canvas::advanced::{
+    CanvasCommittedMutation, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest, SpatialIndex,
+};
 use open_gpui_canvas::{
-    CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasHandle, CanvasKindRegistry,
-    CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeKind, CanvasRecordId, CanvasRoutePath,
-    CanvasRouteRequest, CanvasRuntime, CanvasShape, CanvasShapeGeometryPolicy, CanvasShapeKind,
-    CanvasTransaction, DocumentCommand, HitOptions, HitRecord, HitTarget, NodeId,
+    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasKindRegistry, CanvasNode,
+    CanvasNodeGeometryPolicy, CanvasNodeKind, CanvasRecordId, CanvasRuntime, CanvasShape,
+    CanvasShapeGeometryPolicy, CanvasShapeKind, CanvasTransaction, DocumentCommand, HitOptions,
+    HitRecord, HitTarget, NodeId,
 };
 use rstar::{AABB as RStarAabb, RTree, RTreeObject};
 use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
@@ -837,7 +839,7 @@ fn move_selected_nodes(
     document: &mut CanvasDocument,
     selected_nodes: &[NodeId],
     frame: f32,
-) -> open_gpui_canvas::CanvasCommittedMutation {
+) -> CanvasCommittedMutation {
     let mut commands = Vec::new();
     for (index, id) in selected_nodes.iter().enumerate() {
         let mut node = document.node(id).unwrap().clone();

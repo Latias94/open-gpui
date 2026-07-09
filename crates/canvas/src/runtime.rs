@@ -1,7 +1,10 @@
 use crate::{
-    CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter,
-    CanvasGeometryFacts, CanvasGraphIndex, CanvasIndexedGraph, CanvasKindRegistry, CanvasRecordId,
-    CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord, mutation::CanvasCommittedMutation,
+    CanvasDocument, CanvasDocumentDiff, CanvasKindRegistry, CanvasRecordId, EdgeId, HitOptions,
+    HitRecord,
+    geometry_facts::{CanvasGeometryFacts, CanvasResolvedEdgeGeometry},
+    graph::{CanvasGraphIndex, CanvasIndexedGraph},
+    mutation::CanvasCommittedMutation,
+    routing::{CanvasDefaultEdgeRouter, CanvasEdgeRouter},
     runtime_query::CanvasRuntimeQuery,
 };
 use indexmap::IndexMap;
@@ -338,7 +341,8 @@ mod tests {
     use crate::{
         CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasKindRegistry, CanvasNode,
         CanvasNodeGeometryPolicy, CanvasNodeHitTest, CanvasNodeInteractionPolicy, CanvasNodeKind,
-        CanvasRoutePath, CanvasRouteRequest, CanvasTransaction, DocumentCommand, EdgeId, NodeId,
+        CanvasTransaction, DocumentCommand, EdgeId, NodeId,
+        routing::{CanvasRoutePath, CanvasRouteRequest},
     };
     use open_gpui::{Bounds, point, px, size};
 

@@ -804,6 +804,17 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         source_home: "a11y.rs",
     },
     ComponentContractEntry {
+        name: "A11yStateEvidence",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        family: Some("accessibility"),
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("A11yStateEvidence"),
+        default_export: true,
+        source_inputs: &["a11y.rs"],
+        source_home: "a11y.rs",
+    },
+    ComponentContractEntry {
         name: "A11yContractError",
         owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
         family: Some("accessibility"),

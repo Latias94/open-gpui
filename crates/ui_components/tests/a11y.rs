@@ -1,10 +1,10 @@
 use open_gpui::div;
 use open_gpui_ui_components::{
-    A11yContractError, A11yLabelSource, A11yValueKind, A11yValueMetadata, Button,
-    COMPONENT_A11Y_EVIDENCE, Checkbox, ComponentA11yContract, Dialog, IconButton, Listbox, Menu,
-    MenuItem, NumberInput, Progress, Slider, Splitter, SplitterPanel, SplitterPanelDescriptor,
-    Table, Tree, TreeItemDescriptor, VirtualizedList, VirtualizedListItemDescriptor,
-    VirtualizedListStatusKind, listbox::ListboxOption,
+    A11yContractError, A11yLabelSource, A11yStateEvidence, A11yValueKind, A11yValueMetadata,
+    Button, COMPONENT_A11Y_EVIDENCE, Checkbox, ComponentA11yContract, Dialog, IconButton, Listbox,
+    Menu, MenuItem, NumberInput, Progress, Slider, Splitter, SplitterPanel,
+    SplitterPanelDescriptor, Table, Tree, TreeItemDescriptor, VirtualizedList,
+    VirtualizedListItemDescriptor, VirtualizedListStatusKind, listbox::ListboxOption,
 };
 use open_gpui_ui_core::{
     AccessibleAction, Orientation, Role, TableColumn, TableRow, TableState, Toggled, ui_px,
@@ -61,6 +61,20 @@ fn component_contract_a11y_evidence_is_valid() {
             contract = contract.with_orientation(orientation);
         }
 
+        assert!(
+            !evidence.state_coverage.is_empty(),
+            "component a11y evidence `{}` must declare state or focus coverage",
+            evidence.component
+        );
+        assert_unique_state_coverage(evidence.component, evidence.state_coverage);
+        if evidence.state_coverage.contains(&A11yStateEvidence::Value) {
+            assert!(
+                evidence.value_kind.is_some(),
+                "component a11y evidence `{}` declares value coverage without value metadata",
+                evidence.component
+            );
+        }
+
         contract.validate().unwrap_or_else(|violation| {
             panic!(
                 "component a11y evidence `{}` failed validation: {:?}",
@@ -69,6 +83,54 @@ fn component_contract_a11y_evidence_is_valid() {
             )
         });
     }
+}
+
+#[test]
+fn component_contract_a11y_evidence_records_state_and_focus_coverage() {
+    assert_state_coverage(
+        "Button",
+        &[A11yStateEvidence::Disabled, A11yStateEvidence::Selected],
+    );
+    assert_state_coverage(
+        "Checkbox",
+        &[A11yStateEvidence::Checked, A11yStateEvidence::Disabled],
+    );
+    assert_state_coverage(
+        "Slider",
+        &[A11yStateEvidence::Disabled, A11yStateEvidence::Value],
+    );
+    assert_state_coverage(
+        "Listbox option",
+        &[
+            A11yStateEvidence::Disabled,
+            A11yStateEvidence::Selected,
+            A11yStateEvidence::Value,
+        ],
+    );
+    assert_state_coverage(
+        "Tree item",
+        &[
+            A11yStateEvidence::Expanded,
+            A11yStateEvidence::Focusable,
+            A11yStateEvidence::Selected,
+        ],
+    );
+    assert_state_coverage(
+        "VirtualizedList row",
+        &[
+            A11yStateEvidence::Focusable,
+            A11yStateEvidence::Selected,
+            A11yStateEvidence::Value,
+        ],
+    );
+    assert_state_coverage(
+        "VirtualizedList structural row",
+        &[A11yStateEvidence::NonInteractiveStructural],
+    );
+    assert_state_coverage(
+        "Splitter handle",
+        &[A11yStateEvidence::Disabled, A11yStateEvidence::Focusable],
+    );
 }
 
 #[test]
@@ -352,4 +414,25 @@ fn representative_component_a11y_contracts_are_valid() {
 
 fn contract(component: &'static str, role: Role) -> ComponentA11yContract {
     ComponentA11yContract::new(component, role)
+}
+
+fn assert_state_coverage(component: &str, expected: &[A11yStateEvidence]) {
+    let evidence = COMPONENT_A11Y_EVIDENCE
+        .iter()
+        .find(|evidence| evidence.component == component)
+        .unwrap_or_else(|| panic!("missing a11y evidence for `{component}`"));
+
+    assert_eq!(
+        evidence.state_coverage, expected,
+        "unexpected a11y state coverage for `{component}`"
+    );
+}
+
+fn assert_unique_state_coverage(component: &str, coverage: &[A11yStateEvidence]) {
+    for (index, state) in coverage.iter().enumerate() {
+        assert!(
+            !coverage[..index].contains(state),
+            "component a11y evidence `{component}` repeats state coverage `{state:?}`"
+        );
+    }
 }
