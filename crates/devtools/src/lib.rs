@@ -11,6 +11,7 @@ pub mod form;
 #[cfg(feature = "gpui")]
 pub mod gpui;
 mod inspector;
+pub mod layout;
 #[cfg(feature = "motion")]
 pub mod motion;
 mod probe;
@@ -28,6 +29,10 @@ pub use gpui::DevtoolsInspector;
 pub use inspector::{
     DevtoolsInspectorError, DevtoolsInspectorState, DevtoolsSnapshotCategory,
     DevtoolsSnapshotCategorySummary, DevtoolsSnapshotRow,
+};
+pub use layout::{
+    LayoutBoundsSnapshot, LayoutNodeSnapshot, LayoutPointSnapshot, LayoutSizeSnapshot,
+    LayoutSnapshot,
 };
 pub use probe::{DevtoolsProbe, ProbeId, ProbeSnapshotError, SnapshotProbe, SnapshotProbeSnapshot};
 pub use redaction::SnapshotRedactionSummary;

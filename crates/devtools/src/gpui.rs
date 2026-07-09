@@ -4,6 +4,10 @@ use crate::{
     DevtoolsInspectorState, ProbeId, SnapshotDiagnostic, SnapshotEnvelope, SnapshotNode,
     SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
     adapters::snapshot_node_with_payload,
+    layout::{
+        LayoutBoundsSnapshot, LayoutNodeSnapshot, LayoutPointSnapshot, LayoutSizeSnapshot,
+        LayoutSnapshot,
+    },
 };
 use open_gpui::prelude::*;
 use open_gpui::{
@@ -63,6 +67,28 @@ pub fn scroll_viewport_probe_snapshot(snapshot: ScrollViewportSnapshot) -> Snaps
         .with_redaction(SnapshotRedactionSummary::default())
 }
 
+/// Converts a committed GPUI scroll viewport snapshot into a DevTools layout snapshot.
+pub fn scroll_viewport_layout_snapshot(snapshot: ScrollViewportSnapshot) -> LayoutSnapshot {
+    let node = LayoutNodeSnapshot::new("scroll.viewport", "Scroll viewport")
+        .bounds(layout_bounds_snapshot(snapshot.bounds()))
+        .scroll_offset(layout_point_snapshot(snapshot.offset()))
+        .max_scroll_offset(layout_point_snapshot(snapshot.max_offset()))
+        .content_size(layout_size_snapshot(snapshot.content_size()))
+        .with_payload(serde_json::json!({
+            "generation": snapshot.generation(),
+            "source": scroll_viewport_source_label(snapshot.source()),
+        }));
+
+    LayoutSnapshot::new("scroll-viewport", "Scroll viewport layout", [node])
+}
+
+/// Converts a committed GPUI scroll viewport snapshot into a DevTools layout probe snapshot.
+pub fn scroll_viewport_layout_probe_snapshot(
+    snapshot: ScrollViewportSnapshot,
+) -> SnapshotProbeSnapshot {
+    scroll_viewport_layout_snapshot(snapshot).probe_snapshot()
+}
+
 /// Creates a sanitized diagnostic for an unavailable scroll viewport snapshot.
 pub fn scroll_viewport_unavailable_diagnostic(probe_id: ProbeId) -> SnapshotDiagnostic {
     SnapshotDiagnostic::new(
@@ -109,6 +135,21 @@ fn size_payload(size: GpuiSize<Pixels>) -> serde_json::Value {
         "width": size.width.as_f32(),
         "height": size.height.as_f32(),
     })
+}
+
+fn layout_bounds_snapshot(bounds: Bounds<Pixels>) -> LayoutBoundsSnapshot {
+    LayoutBoundsSnapshot::new(
+        layout_point_snapshot(bounds.origin),
+        layout_size_snapshot(bounds.size),
+    )
+}
+
+fn layout_point_snapshot(point: Point<Pixels>) -> LayoutPointSnapshot {
+    LayoutPointSnapshot::new(point.x.as_f32() as f64, point.y.as_f32() as f64)
+}
+
+fn layout_size_snapshot(size: GpuiSize<Pixels>) -> LayoutSizeSnapshot {
+    LayoutSizeSnapshot::new(size.width.as_f32() as f64, size.height.as_f32() as f64)
 }
 
 impl RenderOnce for DevtoolsInspector {

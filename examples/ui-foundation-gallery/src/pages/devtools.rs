@@ -1,6 +1,9 @@
 //! Devtools inspector gallery page.
 
-use open_gpui::{KeyBinding, KeyContext, Keymap, actions};
+use open_gpui::{
+    KeyBinding, KeyContext, Keymap, ScrollViewportChangeSource, ScrollViewportSnapshot, actions,
+    bounds, point, px, size,
+};
 use open_gpui_command::{
     CommandAvailabilityMap, CommandContribution, CommandDescriptor, CommandIconDescriptor,
     CommandKeyBinding, CommandKeyBindingProjection, CommandKeyBindingRegistry,
@@ -32,6 +35,7 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_devtools::command::command_keybinding_projection_probe",
     "open_gpui_devtools::command::command_keymap_resolution_probe",
     "open_gpui_devtools::form::form_snapshot_probe",
+    "open_gpui_devtools::gpui::scroll_viewport_layout_probe_snapshot",
     "open_gpui_devtools::resource::resource_snapshot_probe",
     "open_gpui_devtools::ui_components::theme_probe_snapshot",
     "open_gpui_devtools::ui_components::a11y_evidence_probe_snapshot",
@@ -97,6 +101,13 @@ pub fn devtools_gallery_collection() -> SnapshotCollection {
                 .expect("valid form probe"),
         )
         .expect("unique form probe");
+    registry
+        .register_snapshot_probe("layout.scroll-viewport", SnapshotKind::Layout, || {
+            Ok(gpui::scroll_viewport_layout_probe_snapshot(
+                gallery_scroll_viewport_sample(),
+            ))
+        })
+        .expect("unique layout scroll viewport probe");
     registry
         .register_snapshot_probe("motion", SnapshotKind::Motion, || {
             Ok(motion::motion_frame_demand_probe_snapshot(
@@ -211,6 +222,17 @@ fn command_action_map() -> GpuiCommandActionMap {
         .action("gallery.devtools.toggle", ToggleDevtools)
 }
 
+fn gallery_scroll_viewport_sample() -> ScrollViewportSnapshot {
+    ScrollViewportSnapshot::new(
+        42,
+        ScrollViewportChangeSource::InitialLayout,
+        bounds(point(px(12.0), px(24.0)), size(px(640.0), px(360.0))),
+        point(px(8.0), px(16.0)),
+        point(px(80.0), px(160.0)),
+        size(px(960.0), px(720.0)),
+    )
+}
+
 fn unmounted_framework_diagnostics() -> Vec<SnapshotDiagnostic> {
     vec![
         gpui::scroll_viewport_unavailable_diagnostic(ProbeId::new("scroll").unwrap()),
@@ -231,7 +253,7 @@ mod tests {
         let state = devtools_gallery_state();
         let rows = state.snapshot_rows();
 
-        assert_eq!(rows.len(), 9);
+        assert_eq!(rows.len(), 10);
         assert!(rows.iter().any(
             |row| row.probe_id.as_str() == "accessibility" && row.kind_label == "accessibility"
         ));
@@ -252,6 +274,12 @@ mod tests {
         assert!(rows.iter().any(|row| row.probe_id.as_str() == "form"
             && row.kind_label == "form"
             && row.redacted_values == 5));
+        assert!(
+            rows.iter()
+                .any(|row| row.probe_id.as_str() == "layout.scroll-viewport"
+                    && row.category_label == "layout"
+                    && row.kind_label == "layout")
+        );
         assert!(rows.iter().any(|row| row.probe_id.as_str() == "resource"
             && row.kind_label == "resource"
             && row.redacted_values == 2));

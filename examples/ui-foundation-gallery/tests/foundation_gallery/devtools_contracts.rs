@@ -17,6 +17,7 @@ fn devtools_gallery_collects_registry_backed_snapshots() {
             "command.keymap",
             "command.registry",
             "form",
+            "layout.scroll-viewport",
             "motion",
             "resource",
             "theme",
@@ -97,6 +98,12 @@ fn devtools_gallery_snapshots_reflect_component_sample_state() {
         collection
             .snapshots
             .iter()
+            .any(|snapshot| snapshot.probe_id.as_str() == "layout.scroll-viewport")
+    );
+    assert!(
+        collection
+            .snapshots
+            .iter()
             .any(|snapshot| snapshot.probe_id.as_str() == "theme")
     );
     assert!(
@@ -119,6 +126,25 @@ fn devtools_gallery_snapshots_reflect_component_sample_state() {
     );
     assert!(!form_json.contains("gallery-secret"));
     assert!(!resource_json.contains("gallery-secret"));
+}
+
+#[test]
+fn devtools_gallery_layout_snapshot_reflects_scroll_viewport_geometry() {
+    let collection = pages::devtools::devtools_gallery_collection();
+    let layout = collection
+        .snapshots
+        .iter()
+        .find(|snapshot| snapshot.probe_id.as_str() == "layout.scroll-viewport")
+        .expect("scroll layout snapshot");
+    let layout_json = serde_json::to_string(layout).unwrap();
+
+    assert_eq!(layout.kind.as_label(), "layout");
+    assert!(layout_json.contains("Scroll viewport layout"));
+    assert!(layout_json.contains("initial-layout"));
+    assert!(layout_json.contains("\"generation\":42"));
+    assert!(layout_json.contains("\"width\":640.0"));
+    assert!(layout_json.contains("\"x\":8.0"));
+    assert!(!layout_json.contains("InitialLayout"));
 }
 
 #[test]
