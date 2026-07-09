@@ -1,0 +1,125 @@
+{
+  "targets": {
+    "targets": [
+      {
+        "id": "app",
+        "kind": "App",
+        "label": "Fixture App",
+        "parent_id": null,
+        "metadata": {
+          "role": "root"
+        }
+      },
+      {
+        "id": "viewport.main",
+        "kind": "Viewport",
+        "label": "Main Viewport",
+        "parent_id": "app",
+        "metadata": {
+          "bounds": {
+            "x": 0,
+            "y": 0,
+            "width": 800,
+            "height": 600
+          }
+        }
+      },
+      {
+        "id": "panel.console",
+        "kind": "Panel",
+        "label": "Console Panel",
+        "parent_id": "viewport.main",
+        "metadata": null
+      }
+    ]
+  },
+  "domains": [
+    {
+      "id": "domain.docking.main",
+      "target_id": "viewport.main",
+      "kind": "Docking",
+      "label": "Docking Runtime",
+      "summary": {
+        "viewport_count": 1,
+        "active_panel": "panel.console"
+      },
+      "snapshot": null,
+      "diagnostics": []
+    },
+    {
+      "id": "domain.layout.main",
+      "target_id": "viewport.main",
+      "kind": "Layout",
+      "label": "Layout Bounds",
+      "summary": {
+        "zero_size_count": 1
+      },
+      "snapshot": {
+        "probe_id": "probe.layout",
+        "kind": "Layout",
+        "tree": {
+          "nodes": [
+            {
+              "id": "root",
+              "label": "Root",
+              "payload": {
+                "bounds": [0, 0, 800, 600]
+              },
+              "children": []
+            }
+          ]
+        },
+        "redaction": {
+          "redacted_values": 1,
+          "notes": ["fixture secret redacted"]
+        }
+      },
+      "diagnostics": [
+        {
+          "probe_id": "probe.layout",
+          "code": "layout.zero_size",
+          "message": "Fixture warning for zero-size child."
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "sequence": 1,
+      "scope_id": "fixture",
+      "id": "viewport.opened",
+      "label": "Viewport opened",
+      "kind": "Instant",
+      "target_id": "viewport.main",
+      "domain_id": "domain.docking.main",
+      "timestamp_ms": 10,
+      "duration_ms": null,
+      "payload": {
+        "route": "home"
+      }
+    }
+  ],
+  "snapshots": [
+    {
+      "probe_id": "probe.layout",
+      "kind": "Layout",
+      "tree": {
+        "nodes": [
+          {
+            "id": "root",
+            "label": "Root",
+            "payload": {
+              "bounds": [0, 0, 800, 600]
+            },
+            "children": []
+          }
+        ]
+      },
+      "redaction": {
+        "redacted_values": 1,
+        "notes": ["fixture secret redacted"]
+      }
+    }
+  ],
+  "diagnostics": []
+}

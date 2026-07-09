@@ -84,7 +84,7 @@ pub(super) fn write_stream_record(
 
 pub(super) fn write_output(path: Option<&Path>, output: Result<String, ()>) -> Result<(), ()> {
     let output = output?;
-    match path {
+    match path.filter(|path| *path != Path::new("-")) {
         Some(path) => {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).map_err(|error| {

@@ -5,10 +5,12 @@ use open_gpui_devtools::{DevtoolsReport, DevtoolsReportSeverity};
 
 use super::{
     artifact::{LoadedArtifact, WaitArgs, load_artifact, load_capture, load_report},
+    query::{AssertArgs, QueryArgs, assert_command, query_command},
     render::{
         DevtoolsOutputFormat, DevtoolsStreamFormat, render_diff_markdown, render_report,
         write_output, write_stream_record,
     },
+    watch::{FollowArgs, follow_command},
 };
 
 #[derive(Args, Debug)]
@@ -27,6 +29,12 @@ enum DevtoolsCommand {
     Diff(DiffArgs),
     /// Stream retained session frames as JSONL or markdown.
     Stream(StreamArgs),
+    /// Query typed rows from a DevTools artifact.
+    Query(QueryArgs),
+    /// Assert DevTools query, finding, generation, or diff conditions.
+    Assert(AssertArgs),
+    /// Follow a latest artifact file or appended JSONL artifact stream.
+    Follow(FollowArgs),
 }
 
 #[derive(Args, Debug)]
@@ -123,6 +131,9 @@ pub(crate) fn devtools(_root: &std::path::Path, args: DevtoolsArgs) -> Result<()
         DevtoolsCommand::Diagnose(args) => diagnose(args),
         DevtoolsCommand::Diff(args) => diff(args),
         DevtoolsCommand::Stream(args) => stream(args),
+        DevtoolsCommand::Query(args) => query_command(args),
+        DevtoolsCommand::Assert(args) => assert_command(args),
+        DevtoolsCommand::Follow(args) => follow_command(args),
     }
 }
 

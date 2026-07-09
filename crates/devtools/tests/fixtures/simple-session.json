@@ -1,0 +1,111 @@
+{
+  "schema_version": "open-gpui-devtools-session/v1",
+  "protocol_version": "open-gpui-devtools-local/v1",
+  "session_id": "fixture-session",
+  "connection_state": "Connected",
+  "history_limit": 8,
+  "retained_frames": 2,
+  "current_generation": 2,
+  "frames": [
+    {
+      "session_id": "fixture-session",
+      "generation": 1,
+      "previous_generation": null,
+      "capture": {
+        "targets": {
+          "targets": [
+            {
+              "id": "app",
+              "kind": "App",
+              "label": "Fixture App",
+              "parent_id": null,
+              "metadata": null
+            },
+            {
+              "id": "viewport.main",
+              "kind": "Viewport",
+              "label": "Main Viewport",
+              "parent_id": "app",
+              "metadata": null
+            }
+          ]
+        },
+        "domains": [
+          {
+            "id": "domain.docking.main",
+            "target_id": "viewport.main",
+            "kind": "Docking",
+            "label": "Docking Runtime",
+            "summary": {
+              "viewport_count": 1
+            },
+            "snapshot": null,
+            "diagnostics": []
+          }
+        ],
+        "events": [],
+        "snapshots": [],
+        "diagnostics": []
+      },
+      "diff_from_previous": null
+    },
+    {
+      "session_id": "fixture-session",
+      "generation": 2,
+      "previous_generation": 1,
+      "capture": {
+        "targets": {
+          "targets": [
+            {
+              "id": "app",
+              "kind": "App",
+              "label": "Fixture App",
+              "parent_id": null,
+              "metadata": null
+            },
+            {
+              "id": "viewport.main",
+              "kind": "Viewport",
+              "label": "Main Viewport Active",
+              "parent_id": "app",
+              "metadata": null
+            }
+          ]
+        },
+        "domains": [
+          {
+            "id": "domain.docking.main",
+            "target_id": "viewport.main",
+            "kind": "Docking",
+            "label": "Docking Runtime",
+            "summary": {
+              "viewport_count": 1,
+              "active_panel": "panel.console"
+            },
+            "snapshot": null,
+            "diagnostics": []
+          }
+        ],
+        "events": [
+          {
+            "sequence": 1,
+            "scope_id": "fixture",
+            "id": "viewport.opened",
+            "label": "Viewport opened",
+            "kind": "Instant",
+            "target_id": "viewport.main",
+            "domain_id": "domain.docking.main",
+            "timestamp_ms": 10,
+            "duration_ms": null,
+            "payload": {
+              "route": "home"
+            }
+          }
+        ],
+        "snapshots": [],
+        "diagnostics": []
+      },
+      "diff_from_previous": null
+    }
+  ]
+}
