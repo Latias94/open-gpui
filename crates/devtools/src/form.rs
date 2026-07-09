@@ -3,7 +3,9 @@
 use open_gpui_form::{FieldSnapshot, FormSnapshot, RedactedValue};
 
 use crate::{
-    ProbeId, ProbeSnapshotError, SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotProbe,
+    DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot,
+    DevtoolsTargetId, DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId,
+    ProbeSnapshotError, SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotProbe,
     SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
     adapters::{sanitize_sensitive_text, snapshot_node_with_payload, summary_payload},
 };
@@ -18,6 +20,38 @@ pub fn form_probe_snapshot(snapshot: &FormSnapshot) -> SnapshotProbeSnapshot {
 pub fn form_snapshot_envelope(probe_id: ProbeId, snapshot: &FormSnapshot) -> SnapshotEnvelope {
     let (tree, redaction) = form_tree_and_redaction(snapshot);
     SnapshotEnvelope::new(probe_id, SnapshotKind::Form, tree).with_redaction(redaction)
+}
+
+/// Converts a form snapshot into a first-party DevTools capture.
+pub fn form_capture(probe_id: ProbeId, snapshot: &FormSnapshot) -> DevtoolsCapture {
+    let envelope = form_snapshot_envelope(probe_id.clone(), snapshot);
+    let target_id = DevtoolsTargetId::from_parts(["form", probe_id.as_str()]);
+    let domain_id = DevtoolsDomainId::from_parts(["form", probe_id.as_str()]);
+    let target =
+        DevtoolsTargetSnapshot::new(target_id.clone(), DevtoolsTargetKind::Runtime, "Form state")
+            .with_metadata(serde_json::json!({
+                "probe_id": probe_id.as_str(),
+                "domain": "data",
+                "semantic_id": "form",
+            }));
+    let domain =
+        DevtoolsDomainSnapshot::new(domain_id, target_id, DevtoolsDomainKind::Data, "Form state")
+            .with_summary(serde_json::json!({
+                "status": &snapshot.status,
+                "field_count": snapshot.fields.len(),
+                "error_count": snapshot.errors.len(),
+                "submit_count": snapshot.submit_count,
+                "redacted_values": envelope.redaction.redacted_values,
+            }))
+            .with_snapshot(envelope.clone());
+
+    DevtoolsCapture::new(
+        DevtoolsTargetTree::new([target]),
+        [domain],
+        Vec::new(),
+        [envelope],
+        Vec::new(),
+    )
 }
 
 /// Builds a closure-backed form snapshot probe.

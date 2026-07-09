@@ -10,7 +10,9 @@ use open_gpui_command::{
 };
 
 use crate::{
-    ProbeId, ProbeSnapshotError, SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotProbe,
+    DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot,
+    DevtoolsTargetId, DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId,
+    ProbeSnapshotError, SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotProbe,
     SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
     adapters::snapshot_node_with_payload,
 };
@@ -34,6 +36,26 @@ pub fn command_registry_snapshot_envelope(
         command_registry_tree(snapshot),
     )
     .with_redaction(SnapshotRedactionSummary::default())
+}
+
+/// Converts a command registry snapshot into a first-party DevTools capture.
+pub fn command_registry_capture(
+    probe_id: ProbeId,
+    snapshot: &CommandRegistrySnapshot,
+) -> DevtoolsCapture {
+    let envelope = command_registry_snapshot_envelope(probe_id.clone(), snapshot);
+    command_capture_from_envelope(
+        &probe_id,
+        "registry",
+        "Command registry",
+        serde_json::json!({
+            "revision": snapshot.revision(),
+            "command_count": snapshot.len(),
+            "source_count": command_registry_source_count(snapshot),
+            "empty": snapshot.is_empty(),
+        }),
+        envelope,
+    )
 }
 
 /// Builds a closure-backed command registry snapshot probe.
@@ -73,6 +95,29 @@ pub fn command_keybinding_projection_snapshot_envelope(
     .with_redaction(SnapshotRedactionSummary::default())
 }
 
+/// Converts command keybinding projection facts into a first-party DevTools capture.
+pub fn command_keybinding_projection_capture(
+    probe_id: ProbeId,
+    projection: &CommandKeyBindingProjection,
+) -> DevtoolsCapture {
+    let envelope = command_keybinding_projection_snapshot_envelope(probe_id.clone(), projection);
+    command_capture_from_envelope(
+        &probe_id,
+        "keybindings",
+        "Command keybindings",
+        serde_json::json!({
+            "projected_binding_count": projection.projected_entries().len(),
+            "installed_key_binding_count": projection.key_bindings().len(),
+            "diagnostic_count": projection.diagnostics().len(),
+            "conflict_count": projection.conflicts().len(),
+            "clean": projection.is_clean(),
+            "has_conflicts": projection.has_conflicts(),
+            "strictly_clean": projection.is_strictly_clean(),
+        }),
+        envelope,
+    )
+}
+
 /// Builds a closure-backed command keybinding projection snapshot probe.
 pub fn command_keybinding_projection_snapshot_probe<F>(
     id: impl Into<String>,
@@ -110,6 +155,34 @@ pub fn command_keymap_resolution_snapshot_envelope(
     .with_redaction(SnapshotRedactionSummary::default())
 }
 
+/// Converts one command keymap resolution into a first-party DevTools capture.
+pub fn command_keymap_resolution_capture(
+    probe_id: ProbeId,
+    resolution: &CommandKeymapResolution,
+) -> DevtoolsCapture {
+    let envelope = command_keymap_resolution_snapshot_envelope(probe_id.clone(), resolution);
+    command_capture_from_envelope(
+        &probe_id,
+        "keymap-resolution",
+        "Command keymap resolution",
+        serde_json::json!({
+            "input": resolution.input(),
+            "input_label": resolution.input_label(),
+            "pending": resolution.is_pending(),
+            "matched_count": resolution.matched_commands().len(),
+            "pending_count": resolution.pending_commands().len(),
+            "has_pending_commands": resolution.has_pending_commands(),
+            "primary_command": resolution
+                .primary_command()
+                .map(CommandKeymapResolvedCommand::command_id),
+            "primary_dispatchable_command": resolution
+                .primary_dispatchable_command()
+                .map(CommandKeymapResolvedCommand::command_id),
+        }),
+        envelope,
+    )
+}
+
 /// Builds a closure-backed command keymap resolution snapshot probe.
 pub fn command_keymap_resolution_snapshot_probe<F>(
     id: impl Into<String>,
@@ -126,13 +199,46 @@ where
     })
 }
 
-fn command_registry_tree(snapshot: &CommandRegistrySnapshot) -> SnapshotTree {
-    let source_count = snapshot
+fn command_capture_from_envelope(
+    probe_id: &ProbeId,
+    semantic_id: &'static str,
+    label: &'static str,
+    summary: serde_json::Value,
+    envelope: SnapshotEnvelope,
+) -> DevtoolsCapture {
+    let target_id = DevtoolsTargetId::from_parts(["command", semantic_id, probe_id.as_str()]);
+    let domain_id = DevtoolsDomainId::from_parts(["command", semantic_id, probe_id.as_str()]);
+    let target = DevtoolsTargetSnapshot::new(target_id.clone(), DevtoolsTargetKind::Runtime, label)
+        .with_metadata(serde_json::json!({
+            "probe_id": probe_id.as_str(),
+            "domain": "command",
+            "semantic_id": semantic_id,
+        }));
+    let domain =
+        DevtoolsDomainSnapshot::new(domain_id, target_id, DevtoolsDomainKind::Command, label)
+            .with_summary(summary)
+            .with_snapshot(envelope.clone());
+
+    DevtoolsCapture::new(
+        DevtoolsTargetTree::new([target]),
+        [domain],
+        Vec::new(),
+        [envelope],
+        Vec::new(),
+    )
+}
+
+fn command_registry_source_count(snapshot: &CommandRegistrySnapshot) -> usize {
+    snapshot
         .contributions()
         .iter()
         .filter_map(CommandContribution::source_ref)
         .collect::<BTreeSet<_>>()
-        .len();
+        .len()
+}
+
+fn command_registry_tree(snapshot: &CommandRegistrySnapshot) -> SnapshotTree {
+    let source_count = command_registry_source_count(snapshot);
     let mut root = snapshot_node_with_payload(
         ["command", "registry"],
         "Command registry",

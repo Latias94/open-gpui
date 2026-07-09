@@ -1,6 +1,8 @@
 #![cfg(all(feature = "form", feature = "resource"))]
 
-use open_gpui_devtools::{DevtoolsProbe, ProbeId, SnapshotKind, form, resource};
+use open_gpui_devtools::{
+    DevtoolsDomainKind, DevtoolsProbe, DevtoolsTargetKind, ProbeId, SnapshotKind, form, resource,
+};
 use open_gpui_form::{
     FieldId, FieldMetaSnapshot, FieldPath, FieldSnapshot, FormSnapshot, FormStatus, RedactedValue,
 };
@@ -39,10 +41,14 @@ fn form_resource_adapters_count_redacted_form_fields() {
 
     let probe_snapshot = form::form_probe_snapshot(&snapshot);
     let envelope = form::form_snapshot_envelope(ProbeId::new("form").unwrap(), &snapshot);
+    let capture = form::form_capture(ProbeId::new("form.capture").unwrap(), &snapshot);
     let serialized = serde_json::to_string(&envelope).unwrap();
 
     assert_eq!(probe_snapshot.redaction().redacted_values, 1);
     assert_eq!(envelope.kind, SnapshotKind::Form);
+    assert_eq!(capture.targets.targets[0].kind, DevtoolsTargetKind::Runtime);
+    assert_eq!(capture.domains[0].kind, DevtoolsDomainKind::Data);
+    assert_eq!(capture.snapshots[0].kind, SnapshotKind::Form);
     assert!(serialized.contains("SubmitFailed"));
     assert!(serialized.contains("submit_count"));
     assert!(serialized.contains("admin"));
@@ -80,10 +86,19 @@ fn form_resource_adapters_convert_resource_mutation_and_pages() {
         [&mutation],
         [&page_view],
     );
+    let capture = resource::resource_capture(
+        ProbeId::new("resource.capture").unwrap(),
+        [&resource],
+        [&mutation],
+        [&page_view],
+    );
     let serialized = serde_json::to_string(&envelope).unwrap();
 
     assert_eq!(envelope.kind, SnapshotKind::Resource);
     assert_eq!(envelope.redaction.redacted_values, 2);
+    assert_eq!(capture.targets.targets[0].kind, DevtoolsTargetKind::Runtime);
+    assert_eq!(capture.domains[0].kind, DevtoolsDomainKind::Data);
+    assert_eq!(capture.snapshots[0].kind, SnapshotKind::Resource);
     assert!(serialized.contains("Refetching"));
     assert!(serialized.contains("observer_count"));
     assert!(serialized.contains("fetch_attempts"));

@@ -3,7 +3,9 @@
 use serde::Serialize;
 
 use crate::{
-    ProbeId, ProbeSnapshotError, SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotProbe,
+    DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot,
+    DevtoolsTargetId, DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId,
+    ProbeSnapshotError, SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotProbe,
     SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
     adapters::{sanitize_json_value, sanitize_sensitive_text, snapshot_node_with_payload},
 };
@@ -223,6 +225,43 @@ impl LayoutSnapshot {
         SnapshotEnvelope::new(probe_id, SnapshotKind::Layout, self.tree())
             .with_redaction(SnapshotRedactionSummary::default())
     }
+
+    /// Converts this layout snapshot into a first-party DevTools capture.
+    pub fn capture(&self, probe_id: ProbeId) -> DevtoolsCapture {
+        let envelope = self.envelope(probe_id.clone());
+        let target_id = DevtoolsTargetId::from_parts(["layout", self.id(), probe_id.as_str()]);
+        let domain_id = DevtoolsDomainId::from_parts(["layout", self.id(), probe_id.as_str()]);
+        let target = DevtoolsTargetSnapshot::new(
+            target_id.clone(),
+            DevtoolsTargetKind::Runtime,
+            self.label(),
+        )
+        .with_metadata(serde_json::json!({
+            "probe_id": probe_id.as_str(),
+            "domain": "layout",
+            "layout_id": self.id(),
+        }));
+        let domain = DevtoolsDomainSnapshot::new(
+            domain_id,
+            target_id,
+            DevtoolsDomainKind::Layout,
+            self.label(),
+        )
+        .with_summary(serde_json::json!({
+            "id": self.id(),
+            "label": self.label(),
+            "root_nodes": self.nodes().len(),
+        }))
+        .with_snapshot(envelope.clone());
+
+        DevtoolsCapture::new(
+            DevtoolsTargetTree::new([target]),
+            [domain],
+            Vec::new(),
+            [envelope],
+            Vec::new(),
+        )
+    }
 }
 
 /// Converts a layout snapshot into a probe snapshot.
@@ -233,6 +272,11 @@ pub fn layout_probe_snapshot(snapshot: &LayoutSnapshot) -> SnapshotProbeSnapshot
 /// Converts a layout snapshot into an envelope.
 pub fn layout_snapshot_envelope(probe_id: ProbeId, snapshot: &LayoutSnapshot) -> SnapshotEnvelope {
     snapshot.envelope(probe_id)
+}
+
+/// Converts a layout snapshot into a first-party DevTools capture.
+pub fn layout_capture(probe_id: ProbeId, snapshot: &LayoutSnapshot) -> DevtoolsCapture {
+    snapshot.capture(probe_id)
 }
 
 /// Builds a closure-backed layout snapshot probe.

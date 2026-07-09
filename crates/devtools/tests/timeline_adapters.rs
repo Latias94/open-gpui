@@ -1,5 +1,6 @@
 use open_gpui_devtools::{
-    ProbeId, SnapshotKind, TimelineEventSnapshot, TimelineSnapshot, timeline,
+    DevtoolsDomainKind, DevtoolsTargetKind, ProbeId, SnapshotKind, TimelineEventSnapshot,
+    TimelineSnapshot, timeline,
 };
 
 #[test]
@@ -23,9 +24,13 @@ fn timeline_snapshots_sanitize_events_and_payloads() {
     );
     let envelope =
         timeline::timeline_snapshot_envelope(ProbeId::new("timeline").unwrap(), &snapshot);
+    let capture = timeline::timeline_capture(ProbeId::new("timeline.capture").unwrap(), &snapshot);
     let serialized = serde_json::to_string(&envelope).unwrap();
 
     assert_eq!(envelope.kind, SnapshotKind::Timeline);
+    assert_eq!(capture.targets.targets[0].kind, DevtoolsTargetKind::Runtime);
+    assert_eq!(capture.domains[0].kind, DevtoolsDomainKind::Timeline);
+    assert_eq!(capture.snapshots[0].kind, SnapshotKind::Timeline);
     assert!(serialized.contains("timeline"));
     assert!(serialized.contains("\"order\":7"));
     assert!(serialized.contains("\"timestamp_ms\":12"));

@@ -1,6 +1,6 @@
 use open_gpui_devtools::{
-    LayoutBoundsSnapshot, LayoutNodeSnapshot, LayoutPointSnapshot, LayoutSizeSnapshot,
-    LayoutSnapshot, ProbeId, SnapshotKind, layout,
+    DevtoolsDomainKind, DevtoolsTargetKind, LayoutBoundsSnapshot, LayoutNodeSnapshot,
+    LayoutPointSnapshot, LayoutSizeSnapshot, LayoutSnapshot, ProbeId, SnapshotKind, layout,
 };
 
 #[test]
@@ -26,9 +26,13 @@ fn layout_snapshots_sanitize_nodes_and_payloads() {
         }))],
     );
     let envelope = layout::layout_snapshot_envelope(ProbeId::new("layout").unwrap(), &snapshot);
+    let capture = layout::layout_capture(ProbeId::new("layout.capture").unwrap(), &snapshot);
     let serialized = serde_json::to_string(&envelope).unwrap();
 
     assert_eq!(envelope.kind, SnapshotKind::Layout);
+    assert_eq!(capture.targets.targets[0].kind, DevtoolsTargetKind::Runtime);
+    assert_eq!(capture.domains[0].kind, DevtoolsDomainKind::Layout);
+    assert_eq!(capture.snapshots[0].kind, SnapshotKind::Layout);
     assert!(serialized.contains("\"width\":300.0"));
     assert!(serialized.contains("\"height\":200.0"));
     assert!(serialized.contains("\"max_scroll_offset\""));

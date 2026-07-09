@@ -6,7 +6,9 @@ use open_gpui_command::{
     CommandKeyBinding, CommandKeyBindingProjection, CommandKeyBindingRegistry,
     CommandRegistrySnapshot, GpuiCommandActionMap,
 };
-use open_gpui_devtools::{DevtoolsProbe, ProbeId, SnapshotKind, command};
+use open_gpui_devtools::{
+    DevtoolsDomainKind, DevtoolsProbe, DevtoolsTargetKind, ProbeId, SnapshotKind, command,
+};
 
 actions!(
     devtools_command_adapter_tests,
@@ -53,9 +55,14 @@ fn command_registry_adapter_projects_metadata_and_sanitizes() {
 
     let envelope =
         command::command_registry_snapshot_envelope(ProbeId::new("command").unwrap(), &snapshot);
+    let capture =
+        command::command_registry_capture(ProbeId::new("command.registry").unwrap(), &snapshot);
     let serialized = serde_json::to_string(&envelope).unwrap();
 
     assert_eq!(envelope.kind, SnapshotKind::Command);
+    assert_eq!(capture.targets.targets[0].kind, DevtoolsTargetKind::Runtime);
+    assert_eq!(capture.domains[0].kind, DevtoolsDomainKind::Command);
+    assert_eq!(capture.snapshots[0].kind, SnapshotKind::Command);
     assert!(serialized.contains("Command registry"));
     assert!(serialized.contains("workspace.open"));
     assert!(serialized.contains("folder-open"));
@@ -77,6 +84,10 @@ fn command_keybinding_projection_adapter_reports_diagnostics_and_conflicts() {
         ProbeId::new("command.keybindings").unwrap(),
         &projection,
     );
+    let capture = command::command_keybinding_projection_capture(
+        ProbeId::new("command.keybindings.capture").unwrap(),
+        &projection,
+    );
     let probe_snapshot = projection_probe.snapshot().unwrap();
     let serialized = serde_json::to_string(&envelope).unwrap();
 
@@ -85,6 +96,8 @@ fn command_keybinding_projection_adapter_reports_diagnostics_and_conflicts() {
     assert_eq!(projection.diagnostics().len(), 2);
     assert_eq!(envelope.kind, SnapshotKind::Command);
     assert_eq!(probe_snapshot.kind, SnapshotKind::Command);
+    assert_eq!(capture.domains[0].kind, DevtoolsDomainKind::Command);
+    assert_eq!(capture.snapshots[0].kind, SnapshotKind::Command);
     assert!(serialized.contains("\"conflict_count\":1"));
     assert!(serialized.contains("\"diagnostic_count\":2"));
     assert!(serialized.contains("missing-action"));
@@ -173,9 +186,21 @@ fn command_keymap_resolution_adapter_reports_pending_and_matched_commands() {
         ProbeId::new("command.disabled").unwrap(),
         &disabled,
     );
+    let disabled_capture = command::command_keymap_resolution_capture(
+        ProbeId::new("command.disabled.capture").unwrap(),
+        &disabled,
+    );
     let disabled_serialized = serde_json::to_string(&disabled_envelope).unwrap();
 
     assert_eq!(disabled_envelope.kind, SnapshotKind::Command);
+    assert_eq!(
+        disabled_capture.domains[0].kind,
+        DevtoolsDomainKind::Command
+    );
+    assert_eq!(
+        disabled_capture.targets.targets[0].kind,
+        DevtoolsTargetKind::Runtime
+    );
     assert!(disabled_serialized.contains("\"state\":\"disabled\""));
     assert!(disabled_serialized.contains("\"reason\":\"token=[redacted]\""));
     assert!(!disabled_serialized.contains("raw-disabled"));

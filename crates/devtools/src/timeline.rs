@@ -1,7 +1,9 @@
 //! Renderer-neutral DevTools timeline snapshots.
 
 use crate::{
-    DevtoolsEventBatch, ProbeId, ProbeSnapshotError, SnapshotEnvelope, SnapshotKind, SnapshotNode,
+    DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot,
+    DevtoolsEventBatch, DevtoolsTargetId, DevtoolsTargetKind, DevtoolsTargetSnapshot,
+    DevtoolsTargetTree, ProbeId, ProbeSnapshotError, SnapshotEnvelope, SnapshotKind, SnapshotNode,
     SnapshotProbe, SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
     adapters::{sanitize_json_value, sanitize_sensitive_text, snapshot_node_with_payload},
 };
@@ -221,6 +223,46 @@ impl TimelineSnapshot {
         SnapshotEnvelope::new(probe_id, SnapshotKind::Timeline, self.tree())
             .with_redaction(SnapshotRedactionSummary::default())
     }
+
+    /// Converts this timeline snapshot into a first-party DevTools capture.
+    pub fn capture(&self, probe_id: ProbeId) -> DevtoolsCapture {
+        let envelope = self.envelope(probe_id.clone());
+        let target_id = DevtoolsTargetId::from_parts(["timeline", self.id(), probe_id.as_str()]);
+        let domain_id = DevtoolsDomainId::from_parts(["timeline", self.id(), probe_id.as_str()]);
+        let target = DevtoolsTargetSnapshot::new(
+            target_id.clone(),
+            DevtoolsTargetKind::Runtime,
+            self.label(),
+        )
+        .with_metadata(serde_json::json!({
+            "probe_id": probe_id.as_str(),
+            "domain": "timeline",
+            "timeline_id": self.id(),
+        }));
+        let domain = DevtoolsDomainSnapshot::new(
+            domain_id,
+            target_id,
+            DevtoolsDomainKind::Timeline,
+            self.label(),
+        )
+        .with_summary(serde_json::json!({
+            "id": self.id(),
+            "label": self.label(),
+            "event_count": self.events().len(),
+            "retained_event_count": self.events().len(),
+            "max_events": self.max_events(),
+            "omitted_events": self.omitted_events(),
+        }))
+        .with_snapshot(envelope.clone());
+
+        DevtoolsCapture::new(
+            DevtoolsTargetTree::new([target]),
+            [domain],
+            Vec::new(),
+            [envelope],
+            Vec::new(),
+        )
+    }
 }
 
 /// Converts a timeline snapshot into a probe snapshot.
@@ -234,6 +276,11 @@ pub fn timeline_snapshot_envelope(
     snapshot: &TimelineSnapshot,
 ) -> SnapshotEnvelope {
     snapshot.envelope(probe_id)
+}
+
+/// Converts a timeline snapshot into a first-party DevTools capture.
+pub fn timeline_capture(probe_id: ProbeId, snapshot: &TimelineSnapshot) -> DevtoolsCapture {
+    snapshot.capture(probe_id)
 }
 
 /// Builds a closure-backed timeline snapshot probe.

@@ -6,7 +6,9 @@ use open_gpui_resource::{
 };
 
 use crate::{
-    ProbeId, ProbeSnapshotError, SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotProbe,
+    DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot,
+    DevtoolsTargetId, DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId,
+    ProbeSnapshotError, SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotProbe,
     SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
     adapters::{sanitize_sensitive_text, snapshot_node_with_payload, summary_payload},
 };
@@ -40,6 +42,62 @@ where
 {
     let (tree, redaction) = resource_tree_and_redaction(resources, mutations, paginated);
     SnapshotEnvelope::new(probe_id, SnapshotKind::Resource, tree).with_redaction(redaction)
+}
+
+/// Converts resource, mutation, and paginated snapshots into a first-party DevTools capture.
+pub fn resource_capture<'a, R, M, P>(
+    probe_id: ProbeId,
+    resources: R,
+    mutations: M,
+    paginated: P,
+) -> DevtoolsCapture
+where
+    R: IntoIterator<Item = &'a ResourceSnapshot>,
+    M: IntoIterator<Item = &'a MutationSnapshot>,
+    P: IntoIterator<Item = &'a PaginatedResourceSnapshotView>,
+{
+    let resources = resources.into_iter().collect::<Vec<_>>();
+    let mutations = mutations.into_iter().collect::<Vec<_>>();
+    let paginated = paginated.into_iter().collect::<Vec<_>>();
+    let envelope = resource_snapshot_envelope(
+        probe_id.clone(),
+        resources.iter().copied(),
+        mutations.iter().copied(),
+        paginated.iter().copied(),
+    );
+    let target_id = DevtoolsTargetId::from_parts(["resource", probe_id.as_str()]);
+    let domain_id = DevtoolsDomainId::from_parts(["resource", probe_id.as_str()]);
+    let target = DevtoolsTargetSnapshot::new(
+        target_id.clone(),
+        DevtoolsTargetKind::Runtime,
+        "Resource state",
+    )
+    .with_metadata(serde_json::json!({
+        "probe_id": probe_id.as_str(),
+        "domain": "data",
+        "semantic_id": "resource",
+    }));
+    let domain = DevtoolsDomainSnapshot::new(
+        domain_id,
+        target_id,
+        DevtoolsDomainKind::Data,
+        "Resource state",
+    )
+    .with_summary(serde_json::json!({
+        "resource_count": resources.len(),
+        "mutation_count": mutations.len(),
+        "paginated_count": paginated.len(),
+        "redacted_values": envelope.redaction.redacted_values,
+    }))
+    .with_snapshot(envelope.clone());
+
+    DevtoolsCapture::new(
+        DevtoolsTargetTree::new([target]),
+        [domain],
+        Vec::new(),
+        [envelope],
+        Vec::new(),
+    )
 }
 
 /// Builds a closure-backed resource snapshot probe.
