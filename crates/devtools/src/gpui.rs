@@ -1,8 +1,8 @@
 //! GPUI read-only inspector surface.
 
 use crate::{
-    DevtoolsInspectorState, ProbeId, SnapshotDiagnostic, SnapshotEnvelope, SnapshotNode,
-    SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
+    DevtoolsInspectorDetail, DevtoolsInspectorState, ProbeId, SnapshotDiagnostic, SnapshotEnvelope,
+    SnapshotNode, SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
     adapters::snapshot_node_with_payload,
     layout::{
         LayoutBoundsSnapshot, LayoutNodeSnapshot, LayoutPointSnapshot, LayoutSizeSnapshot,
@@ -156,8 +156,12 @@ impl RenderOnce for DevtoolsInspector {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let debug_id = self.id.to_string();
         let category_summaries = self.state.category_summaries();
-        let rows = self.state.snapshot_rows();
-        let selected = self.state.selected_snapshot().cloned();
+        let snapshot_rows = self.state.snapshot_rows();
+        let target_rows = self.state.target_rows();
+        let domain_rows = self.state.domain_rows();
+        let event_rows = self.state.event_rows();
+        let selected_snapshot = self.state.selected_snapshot().cloned();
+        let selected_detail = self.state.selected_detail();
         let diagnostics = self.state.diagnostics().to_vec();
 
         div()
@@ -199,8 +203,13 @@ impl RenderOnce for DevtoolsInspector {
                     .flex()
                     .gap_3()
                     .min_h(px(0.0))
-                    .child(render_snapshot_rows(rows))
-                    .child(render_selected_snapshot(selected)),
+                    .child(render_capture_navigation(
+                        target_rows,
+                        domain_rows,
+                        event_rows,
+                        snapshot_rows,
+                    ))
+                    .child(render_selected_detail(selected_detail, selected_snapshot)),
             )
             .when(!diagnostics.is_empty(), |this| {
                 this.child(render_diagnostics(diagnostics))
@@ -247,58 +256,254 @@ fn render_category_summaries(
         }))
 }
 
+fn render_capture_navigation(
+    targets: Vec<crate::DevtoolsTargetRow>,
+    domains: Vec<crate::DevtoolsDomainRow>,
+    events: Vec<crate::DevtoolsEventRow>,
+    snapshots: Vec<crate::DevtoolsSnapshotRow>,
+) -> impl IntoElement {
+    div()
+        .debug_selector(|| "devtools-inspector:capture-navigation".to_owned())
+        .w(px(320.0))
+        .min_w(px(260.0))
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(render_target_rows(targets))
+        .child(render_domain_rows(domains))
+        .child(render_event_rows(events))
+        .child(render_snapshot_rows(snapshots))
+}
+
+fn render_target_rows(rows: Vec<crate::DevtoolsTargetRow>) -> impl IntoElement {
+    let is_empty = rows.is_empty();
+    div()
+        .debug_selector(|| "devtools-inspector:target-list".to_owned())
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(section_label("Targets"))
+        .children(rows.into_iter().map(|row| {
+            div()
+                .id(format!(
+                    "devtools-inspector-target:{}",
+                    row.target_id.as_str()
+                ))
+                .debug_selector({
+                    let target_id = row.target_id.as_str().to_owned();
+                    move || format!("devtools-inspector:target:{target_id}")
+                })
+                .rounded_sm()
+                .border_1()
+                .border_color(if row.selected {
+                    rgb(0x1f7a66)
+                } else {
+                    rgb(0xe2e4dc)
+                })
+                .bg(if row.selected {
+                    rgb(0xe8f3ef)
+                } else {
+                    rgb(0xfcfcf8)
+                })
+                .px_2()
+                .py_1()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(open_gpui::FontWeight::BOLD)
+                        .child(row.label),
+                )
+                .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
+                    "{} / {} domains / {} events / {} children",
+                    row.kind_label, row.domain_count, row.event_count, row.child_target_count
+                )))
+        }))
+        .when(is_empty, |this| this.child(empty_state("No targets")))
+}
+
+fn render_domain_rows(rows: Vec<crate::DevtoolsDomainRow>) -> impl IntoElement {
+    let is_empty = rows.is_empty();
+    div()
+        .debug_selector(|| "devtools-inspector:domain-list".to_owned())
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(section_label("Domains"))
+        .children(rows.into_iter().map(|row| {
+            div()
+                .id(format!(
+                    "devtools-inspector-domain:{}",
+                    row.domain_id.as_str()
+                ))
+                .debug_selector({
+                    let domain_id = row.domain_id.as_str().to_owned();
+                    move || format!("devtools-inspector:domain:{domain_id}")
+                })
+                .rounded_sm()
+                .border_1()
+                .border_color(if row.selected {
+                    rgb(0x1f7a66)
+                } else {
+                    rgb(0xe2e4dc)
+                })
+                .bg(if row.selected {
+                    rgb(0xe8f3ef)
+                } else {
+                    rgb(0xfcfcf8)
+                })
+                .px_2()
+                .py_1()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(open_gpui::FontWeight::BOLD)
+                        .child(row.label),
+                )
+                .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
+                    "{} / roots {} / events {} / diagnostics {} / redacted {}",
+                    row.kind_label,
+                    row.snapshot_root_nodes,
+                    row.event_count,
+                    row.diagnostic_count,
+                    row.redacted_values
+                )))
+        }))
+        .when(is_empty, |this| this.child(empty_state("No domains")))
+}
+
+fn render_event_rows(rows: Vec<crate::DevtoolsEventRow>) -> impl IntoElement {
+    let is_empty = rows.is_empty();
+    div()
+        .debug_selector(|| "devtools-inspector:event-list".to_owned())
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(section_label("Events"))
+        .children(rows.into_iter().map(|row| {
+            div()
+                .id(format!("devtools-inspector-event:{}", row.sequence))
+                .debug_selector({
+                    let sequence = row.sequence;
+                    move || format!("devtools-inspector:event:{sequence}")
+                })
+                .rounded_sm()
+                .border_1()
+                .border_color(if row.selected {
+                    rgb(0x1f7a66)
+                } else {
+                    rgb(0xe2e4dc)
+                })
+                .bg(if row.selected {
+                    rgb(0xe8f3ef)
+                } else {
+                    rgb(0xfcfcf8)
+                })
+                .px_2()
+                .py_1()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(open_gpui::FontWeight::BOLD)
+                        .child(row.label),
+                )
+                .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
+                    "#{} / {} / payload {}",
+                    row.sequence, row.kind_label, row.has_payload
+                )))
+        }))
+        .when(is_empty, |this| this.child(empty_state("No events")))
+}
+
 fn render_snapshot_rows(rows: Vec<crate::DevtoolsSnapshotRow>) -> impl IntoElement {
-    ScrollArea::new(
-        "devtools-inspector-snapshot-list",
+    let is_empty = rows.is_empty();
+    div()
+        .debug_selector(|| "devtools-inspector:snapshot-list".to_owned())
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(section_label("Legacy snapshots"))
+        .child(
+            ScrollArea::new(
+                "devtools-inspector-snapshot-list",
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .children(rows.into_iter().map(|row| {
+                        div()
+                            .id(format!("devtools-inspector-row:{}", row.probe_id.as_str()))
+                            .debug_selector({
+                                let probe_id = row.probe_id.as_str().to_owned();
+                                move || format!("devtools-inspector:row:{probe_id}")
+                            })
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(if row.selected {
+                                rgb(0x1f7a66)
+                            } else {
+                                rgb(0xe2e4dc)
+                            })
+                            .bg(if row.selected {
+                                rgb(0xe8f3ef)
+                            } else {
+                                rgb(0xfcfcf8)
+                            })
+                            .px_2()
+                            .py_2()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child(row.probe_id.as_str().to_owned()),
+                            )
+                            .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
+                                "{} / {} / roots {} / nodes {} / redacted {}",
+                                row.category_label,
+                                row.kind_label,
+                                row.root_nodes,
+                                row.total_nodes,
+                                row.redacted_values
+                            )))
+                    })),
+            )
+            .with_size(Size::Small),
+        )
+        .when(is_empty, |this| {
+            this.child(empty_state("No legacy snapshots"))
+        })
+}
+
+fn render_selected_detail(
+    detail: Option<DevtoolsInspectorDetail>,
+    fallback_snapshot: Option<SnapshotEnvelope>,
+) -> impl IntoElement {
+    let content = if let Some(detail) = detail {
+        let payload = detail.json.to_string();
         div()
+            .debug_selector(|| "devtools-inspector:selected-detail-content".to_owned())
             .flex()
             .flex_col()
             .gap_2()
-            .children(rows.into_iter().map(|row| {
+            .child(
                 div()
-                    .id(format!("devtools-inspector-row:{}", row.probe_id.as_str()))
-                    .debug_selector({
-                        let probe_id = row.probe_id.as_str().to_owned();
-                        move || format!("devtools-inspector:row:{probe_id}")
-                    })
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(if row.selected {
-                        rgb(0x1f7a66)
-                    } else {
-                        rgb(0xe2e4dc)
-                    })
-                    .bg(if row.selected {
-                        rgb(0xe8f3ef)
-                    } else {
-                        rgb(0xfcfcf8)
-                    })
-                    .px_2()
-                    .py_2()
+                    .text_sm()
+                    .font_weight(open_gpui::FontWeight::BOLD)
+                    .child(format!("{} / {}", detail.kind_label, detail.label)),
+            )
+            .child(div().text_xs().text_color(rgb(0x5a6472)).child(payload))
+            .child(
+                div()
                     .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(open_gpui::FontWeight::BOLD)
-                            .child(row.probe_id.as_str().to_owned()),
-                    )
-                    .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
-                        "{} / {} / roots {} / nodes {} / redacted {}",
-                        row.category_label,
-                        row.kind_label,
-                        row.root_nodes,
-                        row.total_nodes,
-                        row.redacted_values
-                    )))
-            })),
-    )
-    .with_size(Size::Small)
-}
-
-fn render_selected_snapshot(snapshot: Option<SnapshotEnvelope>) -> impl IntoElement {
-    let content = if let Some(snapshot) = snapshot {
+                    .gap_2()
+                    .child(detail.copy_label)
+                    .child(detail.export_label)
+                    .child(detail.feedback_label),
+            )
+            .into_any_element()
+    } else if let Some(snapshot) = fallback_snapshot {
         div()
             .flex()
             .flex_col()
@@ -330,11 +535,12 @@ fn render_selected_snapshot(snapshot: Option<SnapshotEnvelope>) -> impl IntoElem
         div()
             .text_sm()
             .text_color(rgb(0x5a6472))
-            .child("No snapshot selected")
+            .child("No detail selected")
             .into_any_element()
     };
 
     div()
+        .debug_selector(|| "devtools-inspector:selected-detail".to_owned())
         .flex_1()
         .min_w(px(0.0))
         .rounded_sm()
@@ -379,6 +585,7 @@ fn render_snapshot_node(node: SnapshotNode, depth: usize) -> AnyElement {
 
 fn render_diagnostics(diagnostics: Vec<crate::SnapshotDiagnostic>) -> impl IntoElement {
     div()
+        .debug_selector(|| "devtools-inspector:diagnostics".to_owned())
         .rounded_sm()
         .border_1()
         .border_color(rgb(0xd9c7a8))
@@ -394,4 +601,16 @@ fn render_diagnostics(diagnostics: Vec<crate::SnapshotDiagnostic>) -> impl IntoE
                 diagnostic.message
             ))
         }))
+}
+
+fn section_label(label: &'static str) -> impl IntoElement {
+    div()
+        .text_xs()
+        .font_weight(open_gpui::FontWeight::BOLD)
+        .text_color(rgb(0x2f3947))
+        .child(label)
+}
+
+fn empty_state(label: &'static str) -> impl IntoElement {
+    div().text_xs().text_color(rgb(0x7a8492)).child(label)
 }

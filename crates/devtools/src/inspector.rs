@@ -176,6 +176,53 @@ impl DevtoolsInspectorState {
         Ok(self)
     }
 
+    /// Selects a target by id without mutating captured data.
+    pub fn select_target(
+        mut self,
+        target_id: &DevtoolsTargetId,
+    ) -> Result<Self, DevtoolsInspectorError> {
+        if !self.targets.iter().any(|target| &target.id == target_id) {
+            return Err(DevtoolsInspectorError::UnknownTarget(target_id.clone()));
+        }
+        self.selected_target_id = Some(target_id.clone());
+        self.sync_domain_selection_to_filter();
+        self.sync_event_selection_to_filter();
+        Ok(self)
+    }
+
+    /// Selects a domain by id and moves target selection to the owning target.
+    pub fn select_domain(
+        mut self,
+        domain_id: &DevtoolsDomainId,
+    ) -> Result<Self, DevtoolsInspectorError> {
+        let domain = self
+            .domains
+            .iter()
+            .find(|domain| &domain.id == domain_id)
+            .ok_or_else(|| DevtoolsInspectorError::UnknownDomain(domain_id.clone()))?;
+        self.selected_target_id = Some(domain.target_id.clone());
+        self.selected_domain_id = Some(domain.id.clone());
+        self.sync_event_selection_to_filter();
+        Ok(self)
+    }
+
+    /// Selects an event by append-time sequence and moves target/domain selection when present.
+    pub fn select_event(mut self, sequence: u64) -> Result<Self, DevtoolsInspectorError> {
+        let event = self
+            .events
+            .iter()
+            .find(|event| event.sequence() == sequence)
+            .ok_or(DevtoolsInspectorError::UnknownEvent(sequence))?;
+        if let Some(target_id) = event.target_id_ref() {
+            self.selected_target_id = Some(target_id.clone());
+        }
+        if let Some(domain_id) = event.domain_id_ref() {
+            self.selected_domain_id = Some(domain_id.clone());
+        }
+        self.selected_event_sequence = Some(sequence);
+        Ok(self)
+    }
+
     /// Returns the selected probe id.
     pub fn selected_probe_id(&self) -> Option<&ProbeId> {
         self.selected_probe_id.as_ref()
@@ -194,6 +241,26 @@ impl DevtoolsInspectorState {
     /// Returns the selected event sequence.
     pub fn selected_event_sequence(&self) -> Option<u64> {
         self.selected_event_sequence
+    }
+
+    /// Returns the selected target, if any.
+    pub fn selected_target(&self) -> Option<&DevtoolsTargetSnapshot> {
+        let selected = self.selected_target_id.as_ref()?;
+        self.targets.iter().find(|target| &target.id == selected)
+    }
+
+    /// Returns the selected domain, if any.
+    pub fn selected_domain(&self) -> Option<&DevtoolsDomainSnapshot> {
+        let selected = self.selected_domain_id.as_ref()?;
+        self.domains.iter().find(|domain| &domain.id == selected)
+    }
+
+    /// Returns the selected event, if any.
+    pub fn selected_event(&self) -> Option<&DevtoolsEventRecord> {
+        let selected = self.selected_event_sequence?;
+        self.events
+            .iter()
+            .find(|event| event.sequence() == selected)
     }
 
     /// Returns probe diagnostics from failed snapshot collection.
@@ -239,6 +306,30 @@ impl DevtoolsInspectorState {
                 kind_label: target.kind.as_label().to_owned(),
                 label: target.label.clone(),
                 parent_id: target.parent_id.clone(),
+                child_target_count: self
+                    .targets
+                    .iter()
+                    .filter(|candidate| {
+                        candidate
+                            .parent_id
+                            .as_ref()
+                            .is_some_and(|parent_id| parent_id == &target.id)
+                    })
+                    .count(),
+                domain_count: self
+                    .domains
+                    .iter()
+                    .filter(|domain| domain.target_id == target.id)
+                    .count(),
+                event_count: self
+                    .events
+                    .iter()
+                    .filter(|event| {
+                        event
+                            .target_id_ref()
+                            .is_some_and(|target_id| target_id == &target.id)
+                    })
+                    .count(),
                 selected: self
                     .selected_target_id
                     .as_ref()
@@ -251,18 +342,30 @@ impl DevtoolsInspectorState {
     pub fn domain_rows(&self) -> Vec<DevtoolsDomainRow> {
         self.domains
             .iter()
-            .filter(|domain| {
-                self.selected_target_id
-                    .as_ref()
-                    .is_none_or(|target_id| &domain.target_id == target_id)
-                    && self.domain_matches_filter(domain)
-            })
+            .filter(|domain| self.domain_is_visible(domain))
             .map(|domain| DevtoolsDomainRow {
                 domain_id: domain.id.clone(),
                 target_id: domain.target_id.clone(),
                 kind_label: domain.kind.as_label().to_owned(),
                 label: domain.label.clone(),
                 has_snapshot: domain.snapshot.is_some(),
+                snapshot_root_nodes: domain
+                    .snapshot
+                    .as_ref()
+                    .map_or(0, |snapshot| snapshot.tree.nodes.len()),
+                redacted_values: domain
+                    .snapshot
+                    .as_ref()
+                    .map_or(0, |snapshot| snapshot.redaction.redacted_values),
+                event_count: self
+                    .events
+                    .iter()
+                    .filter(|event| {
+                        event
+                            .domain_id_ref()
+                            .is_some_and(|domain_id| domain_id == &domain.id)
+                    })
+                    .count(),
                 diagnostic_count: domain.diagnostics.len(),
                 selected: self
                     .selected_domain_id
@@ -276,17 +379,7 @@ impl DevtoolsInspectorState {
     pub fn event_rows(&self) -> Vec<DevtoolsEventRow> {
         self.events
             .iter()
-            .filter(|event| {
-                self.selected_target_id.as_ref().is_none_or(|target_id| {
-                    event
-                        .target_id_ref()
-                        .is_none_or(|event_target| event_target == target_id)
-                }) && self.selected_domain_id.as_ref().is_none_or(|domain_id| {
-                    event
-                        .domain_id_ref()
-                        .is_none_or(|event_domain| event_domain == domain_id)
-                }) && self.event_matches_filter(event)
-            })
+            .filter(|event| self.event_is_visible(event))
             .map(|event| DevtoolsEventRow {
                 sequence: event.sequence(),
                 event_id: event.id().to_owned(),
@@ -296,6 +389,7 @@ impl DevtoolsInspectorState {
                 domain_id: event.domain_id_ref().cloned(),
                 timestamp_ms: event.timestamp_ms_value(),
                 duration_ms: event.duration_ms_value(),
+                has_payload: event.payload().is_some(),
                 selected: self.selected_event_sequence == Some(event.sequence()),
             })
             .collect()
@@ -362,6 +456,51 @@ impl DevtoolsInspectorState {
         serde_json::to_value(snapshot).map_err(DevtoolsInspectorError::SerializeSnapshot)
     }
 
+    /// Returns the selected detail using domain snapshot, selected event, then legacy snapshot priority.
+    pub fn selected_detail(&self) -> Option<DevtoolsInspectorDetail> {
+        if let Some(domain) = self.selected_domain() {
+            if let Some(snapshot) = domain.snapshot.as_ref() {
+                let json = serde_json::to_value(snapshot).ok()?;
+                return Some(DevtoolsInspectorDetail::new(
+                    DevtoolsInspectorDetailKind::DomainSnapshot,
+                    format!("{} / {}", domain.label, domain.kind.as_label()),
+                    json,
+                ));
+            }
+        }
+
+        if let Some(event) = self.selected_event() {
+            let json = serde_json::to_value(event).ok()?;
+            return Some(DevtoolsInspectorDetail::new(
+                DevtoolsInspectorDetailKind::Event,
+                format!("{} / {}", event.label(), event.kind().as_label()),
+                json,
+            ));
+        }
+
+        if let Some(snapshot) = self.selected_snapshot() {
+            let json = serde_json::to_value(snapshot).ok()?;
+            return Some(DevtoolsInspectorDetail::new(
+                DevtoolsInspectorDetailKind::LegacySnapshot,
+                format!(
+                    "{} / {}",
+                    snapshot.probe_id.as_str(),
+                    snapshot.kind.as_label()
+                ),
+                json,
+            ));
+        }
+
+        None
+    }
+
+    /// Returns the selected detail as JSON using the documented detail priority.
+    pub fn selected_detail_json(&self) -> Result<serde_json::Value, DevtoolsInspectorError> {
+        self.selected_detail()
+            .map(|detail| detail.json)
+            .ok_or(DevtoolsInspectorError::NoSelectedDetail)
+    }
+
     fn matches_filter(&self, snapshot: &SnapshotEnvelope) -> bool {
         if self.filter.is_empty() {
             return true;
@@ -421,25 +560,15 @@ impl DevtoolsInspectorState {
 
     fn sync_domain_selection_to_filter(&mut self) {
         let selected_is_visible = self.selected_domain_id.as_ref().is_some_and(|selected| {
-            self.domains.iter().any(|domain| {
-                &domain.id == selected
-                    && self
-                        .selected_target_id
-                        .as_ref()
-                        .is_none_or(|target_id| &domain.target_id == target_id)
-                    && self.domain_matches_filter(domain)
-            })
+            self.domains
+                .iter()
+                .any(|domain| &domain.id == selected && self.domain_is_visible(domain))
         });
         if !selected_is_visible {
             self.selected_domain_id = self
                 .domains
                 .iter()
-                .find(|domain| {
-                    self.selected_target_id
-                        .as_ref()
-                        .is_none_or(|target_id| &domain.target_id == target_id)
-                        && self.domain_matches_filter(domain)
-                })
+                .find(|domain| self.domain_is_visible(domain))
                 .map(|domain| domain.id.clone());
         }
     }
@@ -448,15 +577,34 @@ impl DevtoolsInspectorState {
         let selected_is_visible = self.selected_event_sequence.is_some_and(|selected| {
             self.events
                 .iter()
-                .any(|event| event.sequence() == selected && self.event_matches_filter(event))
+                .any(|event| event.sequence() == selected && self.event_is_visible(event))
         });
         if !selected_is_visible {
             self.selected_event_sequence = self
                 .events
                 .iter()
-                .find(|event| self.event_matches_filter(event))
+                .find(|event| self.event_is_visible(event))
                 .map(DevtoolsEventRecord::sequence);
         }
+    }
+
+    fn domain_is_visible(&self, domain: &DevtoolsDomainSnapshot) -> bool {
+        self.selected_target_id
+            .as_ref()
+            .is_none_or(|target_id| &domain.target_id == target_id)
+            && self.domain_matches_filter(domain)
+    }
+
+    fn event_is_visible(&self, event: &DevtoolsEventRecord) -> bool {
+        self.selected_target_id.as_ref().is_none_or(|target_id| {
+            event
+                .target_id_ref()
+                .is_none_or(|event_target| event_target == target_id)
+        }) && self.selected_domain_id.as_ref().is_none_or(|domain_id| {
+            event
+                .domain_id_ref()
+                .is_none_or(|event_domain| event_domain == domain_id)
+        }) && self.event_matches_filter(event)
     }
 
     fn target_matches_filter(&self, target: &DevtoolsTargetSnapshot) -> bool {
@@ -504,6 +652,12 @@ impl DevtoolsInspectorState {
                 .diagnostics
                 .iter()
                 .any(|diagnostic| self.diagnostic_matches_filter(diagnostic))
+            || self.events.iter().any(|event| {
+                event
+                    .domain_id_ref()
+                    .is_some_and(|domain_id| domain_id == &domain.id)
+                    && self.event_matches_filter(event)
+            })
     }
 
     fn event_matches_filter(&self, event: &DevtoolsEventRecord) -> bool {
@@ -558,6 +712,12 @@ pub struct DevtoolsTargetRow {
     pub label: String,
     /// Optional parent target id.
     pub parent_id: Option<DevtoolsTargetId>,
+    /// Number of direct child targets.
+    pub child_target_count: usize,
+    /// Number of domains attached to this target.
+    pub domain_count: usize,
+    /// Number of events attached to this target.
+    pub event_count: usize,
     /// Whether this target is selected.
     pub selected: bool,
 }
@@ -575,6 +735,12 @@ pub struct DevtoolsDomainRow {
     pub label: String,
     /// Whether a legacy snapshot backs this domain.
     pub has_snapshot: bool,
+    /// Number of root nodes in the backing legacy snapshot.
+    pub snapshot_root_nodes: usize,
+    /// Number of redacted values in the backing legacy snapshot.
+    pub redacted_values: usize,
+    /// Number of events attached to this domain.
+    pub event_count: usize,
     /// Number of diagnostics attached to this domain.
     pub diagnostic_count: usize,
     /// Whether this domain is selected.
@@ -600,8 +766,69 @@ pub struct DevtoolsEventRow {
     pub timestamp_ms: Option<u64>,
     /// Optional event duration in milliseconds.
     pub duration_ms: Option<u64>,
+    /// Whether the event has a payload.
+    pub has_payload: bool,
     /// Whether this event is selected.
     pub selected: bool,
+}
+
+/// Kind of selected inspector detail.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DevtoolsInspectorDetailKind {
+    /// Detail is the selected domain's legacy snapshot.
+    DomainSnapshot,
+    /// Detail is the selected event record.
+    Event,
+    /// Detail is the selected legacy snapshot fallback.
+    LegacySnapshot,
+}
+
+impl DevtoolsInspectorDetailKind {
+    /// Returns the stable display label for this detail kind.
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::DomainSnapshot => "domain-snapshot",
+            Self::Event => "event",
+            Self::LegacySnapshot => "legacy-snapshot",
+        }
+    }
+}
+
+/// Selected inspector detail ready for copy or export.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DevtoolsInspectorDetail {
+    /// Kind of selected detail.
+    pub kind: DevtoolsInspectorDetailKind,
+    /// Stable kind label.
+    pub kind_label: String,
+    /// Human-readable detail label.
+    pub label: String,
+    /// Redaction-preserving JSON payload for the selected detail.
+    pub json: serde_json::Value,
+    /// Readable copy control label.
+    pub copy_label: String,
+    /// Readable export control label.
+    pub export_label: String,
+    /// Readable success feedback for tests and UI copy.
+    pub feedback_label: String,
+}
+
+impl DevtoolsInspectorDetail {
+    fn new(
+        kind: DevtoolsInspectorDetailKind,
+        label: impl Into<String>,
+        json: serde_json::Value,
+    ) -> Self {
+        Self {
+            kind,
+            kind_label: kind.as_label().to_owned(),
+            label: label.into(),
+            json,
+            copy_label: "Copy selected detail JSON".to_owned(),
+            export_label: "Export selected detail JSON".to_owned(),
+            feedback_label: "Selected detail JSON is ready".to_owned(),
+        }
+    }
 }
 
 /// Aggregate facts for one visible inspector category.
@@ -664,9 +891,21 @@ pub enum DevtoolsInspectorError {
     /// The requested probe is not present in the snapshot collection.
     #[error("unknown devtools probe: {0}")]
     UnknownProbe(ProbeId),
+    /// The requested target is not present in the capture.
+    #[error("unknown devtools target: {0}")]
+    UnknownTarget(DevtoolsTargetId),
+    /// The requested domain is not present in the capture.
+    #[error("unknown devtools domain: {0}")]
+    UnknownDomain(DevtoolsDomainId),
+    /// The requested event sequence is not present in the capture.
+    #[error("unknown devtools event sequence: {0}")]
+    UnknownEvent(u64),
     /// No snapshot is selected.
     #[error("no selected devtools snapshot")]
     NoSelectedSnapshot,
+    /// No target/domain/event/legacy detail is selected.
+    #[error("no selected devtools detail")]
+    NoSelectedDetail,
     /// The selected snapshot could not be serialized.
     #[error("failed to serialize devtools snapshot")]
     SerializeSnapshot(#[source] serde_json::Error),

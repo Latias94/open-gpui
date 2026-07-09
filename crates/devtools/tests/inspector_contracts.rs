@@ -1,8 +1,10 @@
 use open_gpui_devtools::{
-    DevtoolsCapture, DevtoolsDomainId, DevtoolsEventKind, DevtoolsEventRecord,
-    DevtoolsEventRecorder, DevtoolsInspectorState, DevtoolsSnapshotCategory, DevtoolsTargetId,
-    ProbeId, SnapshotCollection, SnapshotDiagnostic, SnapshotEnvelope, SnapshotKind, SnapshotNode,
-    SnapshotRedactionSummary, SnapshotTree,
+    DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot,
+    DevtoolsEventKind, DevtoolsEventRecord, DevtoolsEventRecorder, DevtoolsInspectorDetailKind,
+    DevtoolsInspectorError, DevtoolsInspectorState, DevtoolsSnapshotCategory, DevtoolsTargetId,
+    DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId, SnapshotCollection,
+    SnapshotDiagnostic, SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotRedactionSummary,
+    SnapshotTree,
 };
 
 #[test]
@@ -143,7 +145,7 @@ fn inspector_projects_capture_targets_domains_and_events() {
         base_capture.diagnostics,
     );
 
-    let state = DevtoolsInspectorState::from_capture(capture).with_filter("timeline");
+    let state = DevtoolsInspectorState::from_capture(capture).with_filter("frame");
 
     assert_eq!(state.selected_target_id().unwrap(), &timeline_target_id);
     assert_eq!(state.selected_domain_id().unwrap(), &timeline_domain_id);
@@ -158,9 +160,84 @@ fn inspector_projects_capture_targets_domains_and_events() {
     );
     assert_eq!(state.domain_rows()[0].kind_label, "timeline");
     assert!(state.domain_rows()[0].has_snapshot);
+    assert_eq!(state.domain_rows()[0].snapshot_root_nodes, 1);
+    assert_eq!(state.domain_rows()[0].event_count, 1);
     assert_eq!(state.event_rows()[0].event_id, "timeline.frame");
     assert_eq!(state.event_rows()[0].timestamp_ms, Some(42));
     assert!(state.event_rows()[0].selected);
+    let detail = state.selected_detail().expect("selected detail");
+    assert_eq!(detail.kind, DevtoolsInspectorDetailKind::DomainSnapshot);
+    assert_eq!(detail.copy_label, "Copy selected detail JSON");
+    assert_eq!(detail.export_label, "Export selected detail JSON");
+    assert_eq!(detail.feedback_label, "Selected detail JSON is ready");
+    assert_eq!(
+        state.selected_detail_json().unwrap()["probe_id"],
+        "timeline"
+    );
+}
+
+#[test]
+fn inspector_empty_capture_has_no_selected_detail() {
+    let state = DevtoolsInspectorState::from_capture(DevtoolsCapture::default());
+
+    assert!(state.target_rows().is_empty());
+    assert!(state.domain_rows().is_empty());
+    assert!(state.event_rows().is_empty());
+    assert!(state.selected_detail().is_none());
+    assert!(matches!(
+        state.selected_detail_json(),
+        Err(DevtoolsInspectorError::NoSelectedDetail)
+    ));
+}
+
+#[test]
+fn inspector_selects_targets_domains_and_event_only_detail() {
+    let target_id = DevtoolsTargetId::from_parts(["runtime", "commands"]);
+    let domain_id = DevtoolsDomainId::from_parts(["runtime", "commands", "events"]);
+    let target = DevtoolsTargetSnapshot::new(
+        target_id.clone(),
+        DevtoolsTargetKind::Runtime,
+        "Command runtime",
+    );
+    let domain = DevtoolsDomainSnapshot::new(
+        domain_id.clone(),
+        target_id.clone(),
+        DevtoolsDomainKind::Command,
+        "Command events",
+    );
+    let event = DevtoolsEventRecord::new(
+        "command.dispatch",
+        "Command dispatched",
+        DevtoolsEventKind::Instant,
+    )
+    .target_id(target_id.clone())
+    .domain_id(domain_id.clone())
+    .with_payload(serde_json::json!({ "command": "workspace.open" }));
+    let capture = DevtoolsCapture::new(
+        DevtoolsTargetTree::new([target]),
+        [domain],
+        [event],
+        Vec::new(),
+        Vec::new(),
+    );
+
+    let state = DevtoolsInspectorState::from_capture(capture)
+        .select_target(&target_id)
+        .unwrap()
+        .select_domain(&domain_id)
+        .unwrap()
+        .select_event(0)
+        .unwrap();
+
+    assert_eq!(&state.selected_target().unwrap().id, &target_id);
+    assert_eq!(&state.selected_domain().unwrap().id, &domain_id);
+    assert_eq!(state.selected_event().unwrap().id(), "command.dispatch");
+    assert_eq!(state.target_rows()[0].domain_count, 1);
+    assert_eq!(state.target_rows()[0].event_count, 1);
+    assert!(state.event_rows()[0].has_payload);
+    let detail = state.selected_detail().expect("selected event detail");
+    assert_eq!(detail.kind, DevtoolsInspectorDetailKind::Event);
+    assert_eq!(detail.json["id"], "command.dispatch");
 }
 
 fn collection() -> SnapshotCollection {
