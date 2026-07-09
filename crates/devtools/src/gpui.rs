@@ -155,6 +155,7 @@ fn layout_size_snapshot(size: GpuiSize<Pixels>) -> LayoutSizeSnapshot {
 impl RenderOnce for DevtoolsInspector {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let debug_id = self.id.to_string();
+        let category_summaries = self.state.category_summaries();
         let rows = self.state.snapshot_rows();
         let selected = self.state.selected_snapshot().cloned();
         let diagnostics = self.state.diagnostics().to_vec();
@@ -192,6 +193,7 @@ impl RenderOnce for DevtoolsInspector {
                         ),
                     ),
             )
+            .child(render_category_summaries(category_summaries))
             .child(
                 div()
                     .flex()
@@ -204,6 +206,45 @@ impl RenderOnce for DevtoolsInspector {
                 this.child(render_diagnostics(diagnostics))
             })
     }
+}
+
+fn render_category_summaries(
+    summaries: Vec<crate::DevtoolsSnapshotCategorySummary>,
+) -> impl IntoElement {
+    div()
+        .debug_selector(|| "devtools-inspector:category-summaries".to_owned())
+        .flex()
+        .flex_wrap()
+        .gap_2()
+        .children(summaries.into_iter().map(|summary| {
+            let category_label = summary.category_label;
+            let snapshot_count = summary.snapshot_count;
+            let total_nodes = summary.total_nodes;
+            let redacted_values = summary.redacted_values;
+            let diagnostics = summary.diagnostics;
+            div()
+                .id(format!("devtools-inspector-category:{category_label}"))
+                .debug_selector({
+                    let category_label = category_label.clone();
+                    move || format!("devtools-inspector:category:{category_label}")
+                })
+                .rounded_sm()
+                .border_1()
+                .border_color(rgb(0xe2e4dc))
+                .bg(rgb(0xf7f8f2))
+                .px_2()
+                .py_1()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(open_gpui::FontWeight::BOLD)
+                        .child(category_label),
+                )
+                .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
+                    "{} snapshots / {} nodes / {} redacted / {} diagnostics",
+                    snapshot_count, total_nodes, redacted_values, diagnostics
+                )))
+        }))
 }
 
 fn render_snapshot_rows(rows: Vec<crate::DevtoolsSnapshotRow>) -> impl IntoElement {
@@ -244,8 +285,12 @@ fn render_snapshot_rows(rows: Vec<crate::DevtoolsSnapshotRow>) -> impl IntoEleme
                             .child(row.probe_id.as_str().to_owned()),
                     )
                     .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
-                        "{} / roots {} / nodes {} / redacted {}",
-                        row.kind_label, row.root_nodes, row.total_nodes, row.redacted_values
+                        "{} / {} / roots {} / nodes {} / redacted {}",
+                        row.category_label,
+                        row.kind_label,
+                        row.root_nodes,
+                        row.total_nodes,
+                        row.redacted_values
                     )))
             })),
     )

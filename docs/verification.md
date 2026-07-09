@@ -231,6 +231,10 @@ For focused `open-gpui-form`, `open-gpui-resource`, or `open-gpui-devtools` ecos
 ```sh
 cargo fmt -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
 cargo check -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools --tests --locked
+cargo check -p open-gpui-devtools --features command --tests --locked
+cargo check -p open-gpui-devtools --features motion --tests --locked
+cargo check -p open-gpui-devtools --features gpui --tests --locked
+cargo check -p open-gpui-devtools --all-features --tests --locked
 cargo check -p open-gpui-devtools --features form,resource --tests --locked
 cargo check -p open-gpui-devtools --features gpui,motion,docking --tests --locked
 cargo check -p open-gpui-devtools --no-default-features --features form --tests --locked
@@ -242,6 +246,9 @@ cargo check -p open-gpui-devtools --no-default-features --features ui-components
 cargo check -p open-gpui-ui-components --tests --locked
 cargo check -p open-gpui-ui-foundation-gallery --tests --locked
 cargo nextest run -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --features command --test command_adapters --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --features motion timeline --no-fail-fast --locked
+cargo nextest run -p open-gpui-devtools --features gpui layout --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features form,resource form_resource_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-devtools --features gpui,motion,docking framework_adapters --no-fail-fast --locked
 cargo nextest run -p open-gpui-ui-components form_adapter resource_adapter --no-fail-fast --locked
