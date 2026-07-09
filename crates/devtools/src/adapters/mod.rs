@@ -1,6 +1,6 @@
 //! Shared helpers for first-party DevTools snapshot adapters.
 
-pub mod payload;
+mod payload;
 
 use serde::Serialize;
 

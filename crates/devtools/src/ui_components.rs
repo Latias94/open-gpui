@@ -88,29 +88,54 @@ fn a11y_contract_node(contract: ComponentA11yContract) -> crate::SnapshotNode {
         contract.component(),
         serde_json::json!({
             "component": contract.component(),
-            "role": format!("{:?}", contract.role()),
-            "label_source": format!("{:?}", contract.label_source()),
-            "description_source": format!("{:?}", contract.description_source()),
+            "role": debug_variant_label(contract.role()),
+            "label_source": debug_variant_label(contract.label_source()),
+            "description_source": debug_variant_label(contract.description_source()),
             "selected": contract.selected(),
-            "checked": contract.checked().map(|checked| format!("{checked:?}")),
+            "checked": contract.checked().map(debug_variant_label),
             "expanded": contract.expanded(),
             "disabled": contract.disabled(),
             "value": contract.value().map(value_metadata_payload),
-            "orientation": contract.orientation().map(|orientation| format!("{orientation:?}")),
+            "orientation": contract.orientation().map(debug_variant_label),
             "actions": contract
                 .actions()
                 .iter()
-                .map(|action| format!("{action:?}"))
+                .copied()
+                .map(debug_variant_label)
                 .collect::<Vec<_>>(),
             "valid": validation.is_ok(),
-            "violation": validation.err().map(|violation| format!("{:?}", violation.error())),
+            "violation": validation.err().map(|violation| debug_variant_label(violation.error())),
         }),
     )
 }
 
 fn value_metadata_payload(value: A11yValueMetadata) -> serde_json::Value {
     serde_json::json!({
-        "kind": format!("{:?}", value.kind()),
+        "kind": debug_variant_label(value.kind()),
         "present": value.is_present(),
     })
+}
+
+fn debug_variant_label(value: impl std::fmt::Debug) -> String {
+    let value = format!("{value:?}");
+    let mut label = String::with_capacity(value.len());
+    let mut previous_was_separator = true;
+
+    for character in value.chars() {
+        if character.is_ascii_uppercase() {
+            if !previous_was_separator {
+                label.push('-');
+            }
+            label.push(character.to_ascii_lowercase());
+            previous_was_separator = false;
+        } else if character.is_ascii_alphanumeric() {
+            label.push(character.to_ascii_lowercase());
+            previous_was_separator = false;
+        } else if !previous_was_separator {
+            label.push('-');
+            previous_was_separator = true;
+        }
+    }
+
+    label.trim_matches('-').to_owned()
 }

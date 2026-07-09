@@ -38,19 +38,24 @@ fn framework_adapters_convert_accessibility_evidence() {
 
     assert!(serialized.contains("Accessibility contracts"));
     assert!(serialized.contains("Button"));
-    assert!(serialized.contains("Click"));
+    assert!(serialized.contains("\"role\":\"button\""));
+    assert!(serialized.contains("\"actions\":[\"click\"]"));
     assert!(serialized.contains("\"valid\":true"));
+    assert!(!serialized.contains("\"Click\""));
 }
 
 #[cfg(feature = "motion")]
 #[test]
 fn framework_adapters_convert_motion_frame_demand_and_driver() {
-    use open_gpui_motion::{MotionFrameDemand, MotionFrameDriver, MotionFrameReason};
+    use open_gpui_motion::{
+        MotionFrameDemand, MotionFrameDriver, MotionFrameHostResetReason, MotionFrameReason,
+    };
     use std::time::Duration;
 
     let demand = MotionFrameDemand::NeedsFrame(MotionFrameReason::UpdateRender);
     let demand_snapshot = motion::motion_frame_demand_probe_snapshot(demand);
     let mut driver = MotionFrameDriver::new();
+    driver.reset(MotionFrameHostResetReason::Retarget);
     let _ = driver.sample_elapsed(Duration::from_millis(16), |clock| (clock.elapsed(), demand));
     let driver_snapshot = motion::motion_frame_driver_probe_snapshot(&driver);
     let serialized = format!(
@@ -61,6 +66,9 @@ fn framework_adapters_convert_motion_frame_demand_and_driver() {
 
     assert!(serialized.contains("\"needs_frame\":true"));
     assert!(serialized.contains("update-render"));
+    assert!(serialized.contains("\"last_reset_reason\":\"retarget\""));
+    assert!(!serialized.contains("UpdateRender"));
+    assert!(!serialized.contains("Retarget"));
     assert!(serialized.contains("requested_frames"));
     assert!(serialized.contains("last_elapsed_ms"));
 }

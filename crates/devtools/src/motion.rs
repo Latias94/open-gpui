@@ -1,6 +1,8 @@
 //! DevTools adapters for `open-gpui-motion` frame-demand facts.
 
-use open_gpui_motion::{MotionFrameDemand, MotionFrameDriver, MotionFrameReason};
+use open_gpui_motion::{
+    MotionFrameDemand, MotionFrameDriver, MotionFrameHostResetReason, MotionFrameReason,
+};
 
 use crate::{
     SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
@@ -27,7 +29,7 @@ pub fn motion_frame_driver_probe_snapshot(driver: &MotionFrameDriver) -> Snapsho
             "requested_frames": driver.requested_frames(),
             "last_reset_reason": driver
                 .last_reset_reason()
-                .map(|reason| format!("{reason:?}")),
+                .map(motion_frame_host_reset_reason_label),
         }),
     );
     root = root.with_child(motion_demand_node(
@@ -63,5 +65,15 @@ fn motion_frame_reason_label(reason: MotionFrameReason) -> &'static str {
     match reason {
         MotionFrameReason::UpdateRender => "update-render",
         _ => "unknown",
+    }
+}
+
+fn motion_frame_host_reset_reason_label(reason: MotionFrameHostResetReason) -> &'static str {
+    match reason {
+        MotionFrameHostResetReason::Retarget => "retarget",
+        MotionFrameHostResetReason::Cancel => "cancel",
+        MotionFrameHostResetReason::Finish => "finish",
+        MotionFrameHostResetReason::PruneTerminal => "prune-terminal",
+        MotionFrameHostResetReason::MotionIdentityChanged => "motion-identity-changed",
     }
 }
