@@ -103,6 +103,22 @@ fn inspector_selection_and_export_do_not_mutate_collection() {
     assert_eq!(exported["probe_id"], "resource");
     assert_eq!(exported["redaction"]["redacted_values"], 1);
     assert_eq!(exported["tree"]["nodes"][0]["label"], "Projects");
+
+    let copied = selected.copy_selected_detail().unwrap();
+    assert_eq!(
+        copied.detail_kind,
+        DevtoolsInspectorDetailKind::LegacySnapshot
+    );
+    assert_eq!(copied.action_label, "Copy selected detail JSON");
+    assert_eq!(copied.feedback_label, "Selected detail JSON copied");
+    assert!(copied.pretty_json.contains("\"probe_id\": \"resource\""));
+
+    let exported_detail = selected.export_selected_detail().unwrap();
+    assert_eq!(exported_detail.action_label, "Export selected detail JSON");
+    assert_eq!(
+        exported_detail.feedback_label,
+        "Selected detail JSON exported"
+    );
 }
 
 #[test]
@@ -167,6 +183,10 @@ fn inspector_projects_capture_targets_domains_and_events() {
     assert!(state.event_rows()[0].selected);
     let detail = state.selected_detail().expect("selected detail");
     assert_eq!(detail.kind, DevtoolsInspectorDetailKind::DomainSnapshot);
+    assert_eq!(
+        state.active_detail_kind(),
+        Some(DevtoolsInspectorDetailKind::DomainSnapshot)
+    );
     assert_eq!(detail.copy_label, "Copy selected detail JSON");
     assert_eq!(detail.export_label, "Export selected detail JSON");
     assert_eq!(detail.feedback_label, "Selected detail JSON is ready");
@@ -174,6 +194,46 @@ fn inspector_projects_capture_targets_domains_and_events() {
         state.selected_detail_json().unwrap()["probe_id"],
         "timeline"
     );
+}
+
+#[test]
+fn inspector_event_selection_overrides_domain_snapshot_detail() {
+    let base_capture = DevtoolsCapture::from_snapshot_collection(ecosystem_collection());
+    let timeline_probe_id = ProbeId::new("timeline").unwrap();
+    let timeline_target_id = DevtoolsTargetId::from_probe_id(&timeline_probe_id);
+    let timeline_domain_id =
+        DevtoolsDomainId::from_probe_snapshot(&timeline_probe_id, &SnapshotKind::Timeline);
+    let mut recorder = DevtoolsEventRecorder::with_capacity(8);
+    recorder.record(
+        DevtoolsEventRecord::new(
+            "timeline.frame",
+            "Timeline frame",
+            DevtoolsEventKind::Instant,
+        )
+        .target_id(timeline_target_id)
+        .domain_id(timeline_domain_id)
+        .timestamp_ms(42),
+    );
+    let event_batch = recorder.snapshot();
+    let capture = DevtoolsCapture::new(
+        base_capture.targets,
+        base_capture.domains,
+        event_batch.events,
+        base_capture.snapshots,
+        base_capture.diagnostics,
+    );
+
+    let state = DevtoolsInspectorState::from_capture(capture)
+        .select_event(0)
+        .unwrap();
+    let detail = state.selected_detail().expect("selected event detail");
+
+    assert_eq!(
+        state.active_detail_kind(),
+        Some(DevtoolsInspectorDetailKind::Event)
+    );
+    assert_eq!(detail.kind, DevtoolsInspectorDetailKind::Event);
+    assert_eq!(detail.json["id"], "timeline.frame");
 }
 
 #[test]
@@ -188,6 +248,58 @@ fn inspector_empty_capture_has_no_selected_detail() {
         state.selected_detail_json(),
         Err(DevtoolsInspectorError::NoSelectedDetail)
     ));
+}
+
+#[test]
+fn inspector_selection_commands_move_visible_rows_and_clear_filter() {
+    let state = DevtoolsInspectorState::from_capture(DevtoolsCapture::from_snapshot_collection(
+        ecosystem_collection(),
+    ));
+
+    assert_eq!(
+        state.selected_target_id().unwrap().as_str(),
+        "probe.command"
+    );
+
+    let state = state.select_next_target().unwrap();
+    assert_eq!(
+        state.selected_target_id().unwrap().as_str(),
+        "probe.timeline"
+    );
+
+    let state = state.select_previous_target().unwrap();
+    assert_eq!(
+        state.selected_target_id().unwrap().as_str(),
+        "probe.command"
+    );
+
+    let filtered = state.with_filter("timeline");
+    assert_eq!(filtered.filter(), "timeline");
+    assert_eq!(filtered.target_rows().len(), 1);
+    assert_eq!(
+        filtered.selected_target_id().unwrap().as_str(),
+        "probe.timeline"
+    );
+
+    let unfiltered = filtered.clear_filter();
+    assert_eq!(unfiltered.filter(), "");
+    assert_eq!(unfiltered.target_rows().len(), 5);
+}
+
+#[test]
+fn inspector_export_capture_returns_sanitized_whole_capture_json() {
+    let state = DevtoolsInspectorState::from_capture(DevtoolsCapture::from_snapshot_collection(
+        collection(),
+    ));
+
+    let exported = state.export_capture().unwrap();
+    let serialized = exported.pretty_json.clone();
+
+    assert_eq!(exported.label, "DevTools capture JSON");
+    assert_eq!(exported.feedback_label, "DevTools capture JSON exported");
+    assert!(exported.json["targets"].is_object());
+    assert!(serialized.contains("\"diagnostics\""));
+    assert!(!serialized.contains("raw-password"));
 }
 
 #[test]

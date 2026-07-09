@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use crate::{
     DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainSnapshot, DevtoolsEventRecord,
-    DevtoolsTargetId, DevtoolsTargetSnapshot, ProbeId, SnapshotCollection, SnapshotDiagnostic,
-    SnapshotEnvelope, SnapshotKind, SnapshotNode,
+    DevtoolsTargetId, DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId, SnapshotCollection,
+    SnapshotDiagnostic, SnapshotEnvelope, SnapshotKind, SnapshotNode,
 };
 
 /// High-level family for a DevTools snapshot row.
@@ -80,6 +80,7 @@ pub struct DevtoolsInspectorState {
     selected_target_id: Option<DevtoolsTargetId>,
     selected_domain_id: Option<DevtoolsDomainId>,
     selected_event_sequence: Option<u64>,
+    active_detail_kind: Option<DevtoolsInspectorDetailKind>,
     filter: String,
 }
 
@@ -91,6 +92,9 @@ impl DevtoolsInspectorState {
             .snapshots
             .first()
             .map(|snapshot| snapshot.probe_id.clone());
+        let active_detail_kind = selected_probe_id
+            .as_ref()
+            .map(|_| DevtoolsInspectorDetailKind::LegacySnapshot);
         Self {
             snapshots: collection.snapshots,
             diagnostics: collection.diagnostics,
@@ -101,6 +105,7 @@ impl DevtoolsInspectorState {
             selected_target_id: None,
             selected_domain_id: None,
             selected_event_sequence: None,
+            active_detail_kind,
             filter: String::new(),
         }
     }
@@ -126,6 +131,14 @@ impl DevtoolsInspectorState {
             });
         let selected_domain_id = first_domain_for_target(&capture.domains, &selected_target_id);
         let selected_event_sequence = capture.events.first().map(DevtoolsEventRecord::sequence);
+        let active_detail_kind = default_detail_kind(
+            &capture.domains,
+            &capture.events,
+            &collection.snapshots,
+            &selected_domain_id,
+            selected_event_sequence,
+            &selected_probe_id,
+        );
 
         Self {
             snapshots: collection.snapshots,
@@ -137,6 +150,7 @@ impl DevtoolsInspectorState {
             selected_target_id,
             selected_domain_id,
             selected_event_sequence,
+            active_detail_kind,
             filter: String::new(),
         }
     }
@@ -160,7 +174,13 @@ impl DevtoolsInspectorState {
                     .map(|snapshot| snapshot.probe_id.clone());
             }
         }
+        self.sync_active_detail_kind();
         self
+    }
+
+    /// Clears the current filter and resynchronizes visible selections.
+    pub fn clear_filter(self) -> Self {
+        self.with_filter("")
     }
 
     /// Selects a probe by id without mutating the underlying snapshots.
@@ -173,6 +193,7 @@ impl DevtoolsInspectorState {
             return Err(DevtoolsInspectorError::UnknownProbe(probe_id.clone()));
         }
         self.selected_probe_id = Some(probe_id.clone());
+        self.active_detail_kind = Some(DevtoolsInspectorDetailKind::LegacySnapshot);
         Ok(self)
     }
 
@@ -187,6 +208,8 @@ impl DevtoolsInspectorState {
         self.selected_target_id = Some(target_id.clone());
         self.sync_domain_selection_to_filter();
         self.sync_event_selection_to_filter();
+        self.active_detail_kind = Some(DevtoolsInspectorDetailKind::DomainSnapshot);
+        self.sync_active_detail_kind();
         Ok(self)
     }
 
@@ -203,6 +226,8 @@ impl DevtoolsInspectorState {
         self.selected_target_id = Some(domain.target_id.clone());
         self.selected_domain_id = Some(domain.id.clone());
         self.sync_event_selection_to_filter();
+        self.active_detail_kind = Some(DevtoolsInspectorDetailKind::DomainSnapshot);
+        self.sync_active_detail_kind();
         Ok(self)
     }
 
@@ -220,7 +245,38 @@ impl DevtoolsInspectorState {
             self.selected_domain_id = Some(domain_id.clone());
         }
         self.selected_event_sequence = Some(sequence);
+        self.active_detail_kind = Some(DevtoolsInspectorDetailKind::Event);
         Ok(self)
+    }
+
+    /// Selects the next visible target row, wrapping at the end.
+    pub fn select_next_target(self) -> Result<Self, DevtoolsInspectorError> {
+        self.select_adjacent_target(SelectionStep::Next)
+    }
+
+    /// Selects the previous visible target row, wrapping at the beginning.
+    pub fn select_previous_target(self) -> Result<Self, DevtoolsInspectorError> {
+        self.select_adjacent_target(SelectionStep::Previous)
+    }
+
+    /// Selects the next visible domain row, wrapping at the end.
+    pub fn select_next_domain(self) -> Result<Self, DevtoolsInspectorError> {
+        self.select_adjacent_domain(SelectionStep::Next)
+    }
+
+    /// Selects the previous visible domain row, wrapping at the beginning.
+    pub fn select_previous_domain(self) -> Result<Self, DevtoolsInspectorError> {
+        self.select_adjacent_domain(SelectionStep::Previous)
+    }
+
+    /// Selects the next visible event row, wrapping at the end.
+    pub fn select_next_event(self) -> Result<Self, DevtoolsInspectorError> {
+        self.select_adjacent_event(SelectionStep::Next)
+    }
+
+    /// Selects the previous visible event row, wrapping at the beginning.
+    pub fn select_previous_event(self) -> Result<Self, DevtoolsInspectorError> {
+        self.select_adjacent_event(SelectionStep::Previous)
     }
 
     /// Returns the selected probe id.
@@ -241,6 +297,11 @@ impl DevtoolsInspectorState {
     /// Returns the selected event sequence.
     pub fn selected_event_sequence(&self) -> Option<u64> {
         self.selected_event_sequence
+    }
+
+    /// Returns the active detail kind requested by the latest selection command.
+    pub fn active_detail_kind(&self) -> Option<DevtoolsInspectorDetailKind> {
+        self.active_detail_kind
     }
 
     /// Returns the selected target, if any.
@@ -456,42 +517,17 @@ impl DevtoolsInspectorState {
         serde_json::to_value(snapshot).map_err(DevtoolsInspectorError::SerializeSnapshot)
     }
 
-    /// Returns the selected detail using domain snapshot, selected event, then legacy snapshot priority.
+    /// Returns the selected detail using the active selection command priority.
     pub fn selected_detail(&self) -> Option<DevtoolsInspectorDetail> {
-        if let Some(domain) = self.selected_domain() {
-            if let Some(snapshot) = domain.snapshot.as_ref() {
-                let json = serde_json::to_value(snapshot).ok()?;
-                return Some(DevtoolsInspectorDetail::new(
-                    DevtoolsInspectorDetailKind::DomainSnapshot,
-                    format!("{} / {}", domain.label, domain.kind.as_label()),
-                    json,
-                ));
+        if let Some(kind) = self.active_detail_kind {
+            if let Some(detail) = self.detail_for_kind(kind) {
+                return Some(detail);
             }
         }
 
-        if let Some(event) = self.selected_event() {
-            let json = serde_json::to_value(event).ok()?;
-            return Some(DevtoolsInspectorDetail::new(
-                DevtoolsInspectorDetailKind::Event,
-                format!("{} / {}", event.label(), event.kind().as_label()),
-                json,
-            ));
-        }
-
-        if let Some(snapshot) = self.selected_snapshot() {
-            let json = serde_json::to_value(snapshot).ok()?;
-            return Some(DevtoolsInspectorDetail::new(
-                DevtoolsInspectorDetailKind::LegacySnapshot,
-                format!(
-                    "{} / {}",
-                    snapshot.probe_id.as_str(),
-                    snapshot.kind.as_label()
-                ),
-                json,
-            ));
-        }
-
-        None
+        self.detail_for_kind(DevtoolsInspectorDetailKind::DomainSnapshot)
+            .or_else(|| self.detail_for_kind(DevtoolsInspectorDetailKind::Event))
+            .or_else(|| self.detail_for_kind(DevtoolsInspectorDetailKind::LegacySnapshot))
     }
 
     /// Returns the selected detail as JSON using the documented detail priority.
@@ -499,6 +535,132 @@ impl DevtoolsInspectorState {
         self.selected_detail()
             .map(|detail| detail.json)
             .ok_or(DevtoolsInspectorError::NoSelectedDetail)
+    }
+
+    /// Returns copy-ready selected detail JSON and feedback metadata.
+    pub fn copy_selected_detail(
+        &self,
+    ) -> Result<DevtoolsInspectorJsonAction, DevtoolsInspectorError> {
+        let detail = self
+            .selected_detail()
+            .ok_or(DevtoolsInspectorError::NoSelectedDetail)?;
+        DevtoolsInspectorJsonAction::from_detail(
+            detail,
+            "Selected detail JSON copied",
+            "Copy selected detail JSON",
+        )
+    }
+
+    /// Returns export-ready selected detail JSON and feedback metadata.
+    pub fn export_selected_detail(
+        &self,
+    ) -> Result<DevtoolsInspectorJsonAction, DevtoolsInspectorError> {
+        let detail = self
+            .selected_detail()
+            .ok_or(DevtoolsInspectorError::NoSelectedDetail)?;
+        DevtoolsInspectorJsonAction::from_detail(
+            detail,
+            "Selected detail JSON exported",
+            "Export selected detail JSON",
+        )
+    }
+
+    /// Reconstructs the current sanitized capture represented by inspector state.
+    pub fn current_capture(&self) -> DevtoolsCapture {
+        DevtoolsCapture::new(
+            DevtoolsTargetTree::new(self.targets.clone()),
+            self.domains.clone(),
+            self.events.clone(),
+            self.snapshots.clone(),
+            self.diagnostics.clone(),
+        )
+    }
+
+    /// Returns export-ready JSON for the whole current capture.
+    pub fn export_capture(&self) -> Result<DevtoolsInspectorCaptureExport, DevtoolsInspectorError> {
+        let json = serde_json::to_value(self.current_capture())
+            .map_err(DevtoolsInspectorError::SerializeCapture)?;
+        let pretty_json = serde_json::to_string_pretty(&json)
+            .map_err(DevtoolsInspectorError::SerializeCapture)?;
+        Ok(DevtoolsInspectorCaptureExport {
+            label: "DevTools capture JSON".to_owned(),
+            json,
+            pretty_json,
+            feedback_label: "DevTools capture JSON exported".to_owned(),
+        })
+    }
+
+    fn select_adjacent_target(self, step: SelectionStep) -> Result<Self, DevtoolsInspectorError> {
+        let rows = self.target_rows();
+        let target_id = adjacent_item(
+            rows.iter().map(|row| row.target_id.clone()).collect(),
+            self.selected_target_id.as_ref(),
+            step,
+        )
+        .ok_or(DevtoolsInspectorError::NoVisibleTarget)?;
+        self.select_target(&target_id)
+    }
+
+    fn select_adjacent_domain(self, step: SelectionStep) -> Result<Self, DevtoolsInspectorError> {
+        let rows = self.domain_rows();
+        let domain_id = adjacent_item(
+            rows.iter().map(|row| row.domain_id.clone()).collect(),
+            self.selected_domain_id.as_ref(),
+            step,
+        )
+        .ok_or(DevtoolsInspectorError::NoVisibleDomain)?;
+        self.select_domain(&domain_id)
+    }
+
+    fn select_adjacent_event(self, step: SelectionStep) -> Result<Self, DevtoolsInspectorError> {
+        let rows = self.event_rows();
+        let sequence = adjacent_item(
+            rows.iter().map(|row| row.sequence).collect(),
+            self.selected_event_sequence.as_ref(),
+            step,
+        )
+        .ok_or(DevtoolsInspectorError::NoVisibleEvent)?;
+        self.select_event(sequence)
+    }
+
+    fn detail_for_kind(
+        &self,
+        kind: DevtoolsInspectorDetailKind,
+    ) -> Option<DevtoolsInspectorDetail> {
+        match kind {
+            DevtoolsInspectorDetailKind::DomainSnapshot => {
+                let domain = self.selected_domain()?;
+                let snapshot = domain.snapshot.as_ref()?;
+                let json = serde_json::to_value(snapshot).ok()?;
+                Some(DevtoolsInspectorDetail::new(
+                    DevtoolsInspectorDetailKind::DomainSnapshot,
+                    format!("{} / {}", domain.label, domain.kind.as_label()),
+                    json,
+                ))
+            }
+            DevtoolsInspectorDetailKind::Event => {
+                let event = self.selected_event()?;
+                let json = serde_json::to_value(event).ok()?;
+                Some(DevtoolsInspectorDetail::new(
+                    DevtoolsInspectorDetailKind::Event,
+                    format!("{} / {}", event.label(), event.kind().as_label()),
+                    json,
+                ))
+            }
+            DevtoolsInspectorDetailKind::LegacySnapshot => {
+                let snapshot = self.selected_snapshot()?;
+                let json = serde_json::to_value(snapshot).ok()?;
+                Some(DevtoolsInspectorDetail::new(
+                    DevtoolsInspectorDetailKind::LegacySnapshot,
+                    format!(
+                        "{} / {}",
+                        snapshot.probe_id.as_str(),
+                        snapshot.kind.as_label()
+                    ),
+                    json,
+                ))
+            }
+        }
     }
 
     fn matches_filter(&self, snapshot: &SnapshotEnvelope) -> bool {
@@ -586,6 +748,25 @@ impl DevtoolsInspectorState {
                 .find(|event| self.event_is_visible(event))
                 .map(DevtoolsEventRecord::sequence);
         }
+    }
+
+    fn sync_active_detail_kind(&mut self) {
+        if self
+            .active_detail_kind
+            .and_then(|kind| self.detail_for_kind(kind))
+            .is_some()
+        {
+            return;
+        }
+
+        self.active_detail_kind = default_detail_kind(
+            &self.domains,
+            &self.events,
+            &self.snapshots,
+            &self.selected_domain_id,
+            self.selected_event_sequence,
+            &self.selected_probe_id,
+        );
     }
 
     fn domain_is_visible(&self, domain: &DevtoolsDomainSnapshot) -> bool {
@@ -831,6 +1012,58 @@ impl DevtoolsInspectorDetail {
     }
 }
 
+/// JSON action result produced by an inspector copy or export command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DevtoolsInspectorJsonAction {
+    /// Human-readable action label.
+    pub action_label: String,
+    /// Kind of detail included in this action.
+    pub detail_kind: DevtoolsInspectorDetailKind,
+    /// Stable detail kind label.
+    pub detail_kind_label: String,
+    /// Human-readable detail label.
+    pub detail_label: String,
+    /// Redaction-preserving JSON payload.
+    pub json: serde_json::Value,
+    /// Pretty JSON string ready for clipboard or file export.
+    pub pretty_json: String,
+    /// Human-readable action feedback.
+    pub feedback_label: String,
+}
+
+impl DevtoolsInspectorJsonAction {
+    fn from_detail(
+        detail: DevtoolsInspectorDetail,
+        feedback_label: impl Into<String>,
+        action_label: impl Into<String>,
+    ) -> Result<Self, DevtoolsInspectorError> {
+        let pretty_json = serde_json::to_string_pretty(&detail.json)
+            .map_err(DevtoolsInspectorError::SerializeDetail)?;
+        Ok(Self {
+            action_label: action_label.into(),
+            detail_kind: detail.kind,
+            detail_kind_label: detail.kind_label,
+            detail_label: detail.label,
+            json: detail.json,
+            pretty_json,
+            feedback_label: feedback_label.into(),
+        })
+    }
+}
+
+/// JSON export result for the whole current inspector capture.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DevtoolsInspectorCaptureExport {
+    /// Human-readable export label.
+    pub label: String,
+    /// Redaction-preserving capture JSON payload.
+    pub json: serde_json::Value,
+    /// Pretty JSON string ready for file export.
+    pub pretty_json: String,
+    /// Human-readable export feedback.
+    pub feedback_label: String,
+}
+
 /// Aggregate facts for one visible inspector category.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DevtoolsSnapshotCategorySummary {
@@ -858,6 +1091,12 @@ struct DevtoolsCategorySummaryBuilder {
     total_nodes: usize,
     redacted_values: usize,
     diagnostics: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectionStep {
+    Next,
+    Previous,
 }
 
 impl DevtoolsCategorySummaryBuilder {
@@ -906,9 +1145,24 @@ pub enum DevtoolsInspectorError {
     /// No target/domain/event/legacy detail is selected.
     #[error("no selected devtools detail")]
     NoSelectedDetail,
+    /// No visible target row can be selected.
+    #[error("no visible devtools target")]
+    NoVisibleTarget,
+    /// No visible domain row can be selected.
+    #[error("no visible devtools domain")]
+    NoVisibleDomain,
+    /// No visible event row can be selected.
+    #[error("no visible devtools event")]
+    NoVisibleEvent,
     /// The selected snapshot could not be serialized.
     #[error("failed to serialize devtools snapshot")]
     SerializeSnapshot(#[source] serde_json::Error),
+    /// The selected detail could not be serialized.
+    #[error("failed to serialize devtools detail")]
+    SerializeDetail(#[source] serde_json::Error),
+    /// The current capture could not be serialized.
+    #[error("failed to serialize devtools capture")]
+    SerializeCapture(#[source] serde_json::Error),
 }
 
 fn normalize_filter(filter: String) -> String {
@@ -927,6 +1181,64 @@ fn first_domain_for_target(
                 .is_none_or(|target_id| &domain.target_id == target_id)
         })
         .map(|domain| domain.id.clone())
+}
+
+fn default_detail_kind(
+    domains: &[DevtoolsDomainSnapshot],
+    events: &[DevtoolsEventRecord],
+    snapshots: &[SnapshotEnvelope],
+    selected_domain_id: &Option<DevtoolsDomainId>,
+    selected_event_sequence: Option<u64>,
+    selected_probe_id: &Option<ProbeId>,
+) -> Option<DevtoolsInspectorDetailKind> {
+    if selected_domain_id.as_ref().is_some_and(|selected| {
+        domains
+            .iter()
+            .any(|domain| &domain.id == selected && domain.snapshot.is_some())
+    }) {
+        return Some(DevtoolsInspectorDetailKind::DomainSnapshot);
+    }
+
+    if selected_event_sequence
+        .is_some_and(|selected| events.iter().any(|event| event.sequence() == selected))
+    {
+        return Some(DevtoolsInspectorDetailKind::Event);
+    }
+
+    if selected_probe_id.as_ref().is_some_and(|selected| {
+        snapshots
+            .iter()
+            .any(|snapshot| &snapshot.probe_id == selected)
+    }) {
+        return Some(DevtoolsInspectorDetailKind::LegacySnapshot);
+    }
+
+    None
+}
+
+fn adjacent_item<T>(items: Vec<T>, selected: Option<&T>, step: SelectionStep) -> Option<T>
+where
+    T: Clone + Eq,
+{
+    if items.is_empty() {
+        return None;
+    }
+
+    let selected_index = selected
+        .and_then(|selected| items.iter().position(|item| item == selected))
+        .unwrap_or(0);
+    let next_index = match step {
+        SelectionStep::Next => (selected_index + 1) % items.len(),
+        SelectionStep::Previous => {
+            if selected_index == 0 {
+                items.len() - 1
+            } else {
+                selected_index - 1
+            }
+        }
+    };
+
+    items.get(next_index).cloned()
 }
 
 fn count_node_tree(node: &SnapshotNode) -> usize {
