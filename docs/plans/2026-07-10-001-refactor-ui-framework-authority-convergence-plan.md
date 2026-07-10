@@ -23,7 +23,7 @@ Success is observable when:
 - nested overlays in one window share deterministic dismiss, modal, focus-loop, and focus-restore behavior while different windows remain isolated;
 - representative components are verified against the final AccessKit tree and AccessKit actions, not only hand-authored claims;
 - pointer, keyboard, accessibility, and programmatic activation enter one semantic callback path with role-specific key policy and exactly-once behavior;
-- theme v2 owns stable design scales and resolves app, window, and subtree context without app-global selection leakage;
+- the replacement theme v1 owns stable design scales and resolves app, window, and subtree context without app-global selection leakage;
 - collection typeahead has one deterministic, fake-clock-testable session implementation;
 - federated typed authorities project their own facts and are cross-checked structurally across component metadata, gallery, DevTools, docs, public surfaces, and executable scenarios;
 - the existing GPUI substrate, table engine, virtualizer, motion engine, text editing, choice models, and `FormStore` architecture remain deep modules rather than being rewritten for symmetry.
@@ -69,7 +69,7 @@ R7. Derive one accessibility semantic projection from each component's existing 
 
 R8. Replace public physical-click callbacks on official semantic controls with semantic activation or value-change callbacks. Activation source and domain payload must be typed; raw pointer detail remains available only through an explicitly named escape hatch where a real consumer needs it.
 
-R9. Theme v2 must retain a complete color scale. Typography, spacing, radius, elevation, density, and motion-policy are candidate public scales; each token enters schema/snapshot public contract only when at least two real recipes consume it. Unproven categories remain local and are recorded as intentionally deferred rather than padded to satisfy the plan.
+R9. The replacement theme v1 must retain a complete color scale. Typography, spacing, radius, elevation, density, and motion-policy are candidate public scales; each token enters schema/snapshot public contract only when at least two real recipes consume it. Unproven categories remain local and are recorded as intentionally deferred rather than padded to satisfy the plan.
 
 R10. Resolve theme context with precedence `subtree override > window selection/override > app selection > built-in fallback`. Runtime-owned effective revisions must be monotonic for effective changes; invalid loads must be atomic.
 
@@ -103,7 +103,7 @@ In scope:
 - focus scopes and the window overlay runtime;
 - accessibility migration for every official component that emits semantics, with deep final-tree/action parity for representative families;
 - semantic activation breaking APIs;
-- theme v2, effective revisions, window/subtree resolution, and deferred inheritance;
+- replacement theme v1, effective revisions, window/subtree resolution, and deferred inheritance;
 - shared collection typeahead;
 - typed conformance projections and deletion of duplicate/source-string authorities;
 - common public-surface cleanup, gallery, DevTools, ADRs, migration notes, and verification.
@@ -146,7 +146,7 @@ KTD10. **Conformance is federated and native tests remain native.** Component ro
 
 KTD11. **Public API cleanup is evidence-led.** Table's engine and `ActionDescriptor` are preservation gates. Diagnostic table snapshots can move out of common exports after a workspace consumer census, but deeper removal requires a superseding ADR and separate evidence.
 
-KTD12. **Breaking means clean migration.** No deprecated aliases are retained for old semantic callbacks, theme v1 in-memory models, overlay forwarding helpers, or evidence tables. A runtime theme v1 loader is added only if Phase 0 identifies a named external consumer or real v1 artifact; otherwise v1 is removed and documented as a clean v2 break.
+KTD12. **Breaking means clean replacement.** No deprecated aliases are retained for old semantic callbacks, color-only theme models/schema, overlay forwarding helpers, or evidence tables. The project is unreleased: the expanded theme contract deletes and replaces the old format in place and remains version `v1`; there is no compatibility loader, dual model, or `v2` naming.
 
 ### High-Level Technical Design
 
@@ -209,7 +209,7 @@ U2 Final AccessKit Harness ------+                               |
                                  +-> U5 A11y Semantic Authority  |
 U3 Focus Scope (preparatory) -> U4 Window Overlay Runtime -------+-> U6 Activation
                                                                  |
-U7 Scoped Theme Resolution -> U8 Theme V2 -----------------------+
+U7 Scoped Theme Resolution -> U8 Complete Theme V1 --------------+
 U9 Collection Typeahead -----------------------------------------+
                                                                  |
 U1 + U5 + U6 + U8 + U9 -> U10 Federated Conformance Cleanup -> U11 Final Audit
@@ -223,12 +223,12 @@ U2 and U3 have no logical dependency and may be developed independently, althoug
 - Open GPUI remains pre-1.0, so concentrated breaking changes are acceptable when documented and migrated atomically.
 - `cargo nextest` is the primary test runner; broad Windows builds may need `CARGO_BUILD_JOBS=1` to avoid linker/page-file failures.
 - `TestPlatform` can retain final accessibility updates without requiring a real OS accessibility bridge.
-- Theme schema v1 distribution outside the workspace is unknown. Phase 0 must inventory named consumers and artifacts before choosing a temporary v1 loader or a clean v2-only break.
+- The project and theme schema have not been released. Workspace call sites are migration targets, not compatibility obligations; the old color-only schema can be deleted and replaced by the complete contract under the `v1` name.
 - Existing ADRs remain binding unless explicitly superseded or amended by this work.
 
 ### Phased Delivery
 
-Phase 0: Commit this plan, create the breaking-change inventory, lock characterization tests, and record a consumer census. The census covers workspace and known out-of-tree consumers, public issues/roadmap evidence available to the repository, real example workflows, migration friction, and actual theme v1 artifacts. P0 correctness work may proceed immediately; broad API fleet migrations and compatibility code use the census to set their exact break surface.
+Phase 0: Commit this plan, create the breaking-change inventory, lock characterization tests, and inventory workspace consumers. The inventory sizes mechanical migrations and identifies legitimate raw-event consumers; it does not create compatibility code for unreleased APIs or schemas.
 
 Phase 1: Land correctness/proof foundations: U1 Form lifecycle and U2 final AccessKit harness.
 
@@ -236,7 +236,7 @@ Phase 2: Build U3 Focus Scope as a preparatory slice, then use U4's pilot and fl
 
 Phase 3: Land semantic convergence: U5 Accessibility and U6 Activation.
 
-Phase 4: Land design-context depth: U7 scoped theme resolution using the existing immutable snapshot, U8 Theme v2 on the proven scope channel, and U9 typeahead.
+Phase 4: Land design-context depth: U7 scoped theme resolution using the existing immutable snapshot, U8's complete replacement Theme v1 on the proven scope channel, and U9 typeahead.
 
 Phase 5: Delete duplicate authorities and align product surfaces through U10 and U11.
 
@@ -702,14 +702,14 @@ Using the existing immutable color `ThemeSnapshot`, Open GPUI gains app fallback
 
 **Unit gate**
 
-- Theme-scope/deferred tests and Gallery scoped-theme tests pass on the existing snapshot before Theme v2 begins.
+- Theme-scope/deferred tests and Gallery scoped-theme tests pass on the existing snapshot before the complete Theme v1 replacement begins.
 - Record the prototype evidence and selected implementation in the Theme Scope ADR. Stop any generic GPUI API if it requires a hidden app-global subtree map, changes arbitrary service lookup, or lacks an independent non-theme consumer.
 
-### U8. Introduce Theme V2 Design Scales And Effective Revisions
+### U8. Replace Color-Only Theme With Complete V1 Design Scales
 
 **Outcome**
 
-Theme v2 replaces the proven U7 scope payload with an immutable, schema-backed design contract for stable semantic scales. Runtime effective revision changes monotonically when effective content or selection changes; source-file revision remains metadata.
+The complete Theme v1 replaces the old color-only payload and schema with an immutable design contract for stable semantic scales. Runtime effective revision changes monotonically when effective content or selection changes; source-file revision remains metadata. This is an intentional clean break under the existing `v1` version name.
 
 **Primary files**
 
@@ -721,43 +721,42 @@ Theme v2 replaces the proven U7 scope payload with an immutable, schema-backed d
 - `crates/ui_components/src/theme/schema.rs`
 - `crates/ui_components/src/theme/recipes/`
 - `crates/ui_components/tests/theme.rs`
-- `docs/schemas/open-gpui-theme-v1.schema.json`
-- a v2 schema and breaking migration documentation
+- `docs/schemas/open-gpui-theme-v1.schema.json` replaced in place
+- breaking migration documentation for workspace call sites
 - existing theme xtask scanners
 - `docs/ui/migration-v0.3.md`
 - `docs/knowledge/engineering/decisions/` for amending the Theme Scope ADR with v2/revision/compatibility decisions
 
 **Behavioral work**
 
-- Inventory actual v1 theme files and named out-of-tree consumers before choosing compatibility behavior.
 - Add typed typography, spacing, radius, elevation, density, and motion-policy scales beside color only where each public token has at least two real recipe consumers.
 - Keep structural sizes local to component metrics and motion execution in `open-gpui-motion`.
 - Allocate monotonic effective revisions for changed registration, replacement, selection, and overrides; identical effective reloads do not bump.
 - Parse invalid or unknown content atomically with structured diagnostics and no active-state mutation.
-- If the census finds a real v1 artifact/consumer, provide one explicit v1-to-v2 loader with migration fixtures and no dual mutable model. Otherwise remove v1 runtime/schema support and publish a clean v2 breaking migration.
-- Migrate U7's app/window/subtree/deferred channel to the v2 payload without changing scope precedence.
+- Delete the old color-only definition/loader/schema shape and replace it directly; old serialized input is unsupported and no compatibility loader remains.
+- Migrate U7's app/window/subtree/deferred channel to the complete v1 payload without changing scope precedence.
 - Update Gallery token examples, DevTools theme projection, schema docs, and migration notes in this unit.
-- Amend the U7 Theme Scope ADR with the v2 payload, effective revision authority, and evidence-selected v1 compatibility branch.
+- Amend the U7 Theme Scope ADR with the complete v1 payload, effective revision authority, and clean-break decision.
 
 **Test scenarios**
 
 - Built-in themes are complete and schema round-trip.
-- The selected compatibility branch is tested: real v1 migration fixtures preserve color behavior, or v1 input is explicitly rejected after a documented clean break.
+- Old color-only fixtures fail against the replacement schema/loader, while new complete v1 fixtures round-trip; no fallback silently accepts the deleted shape.
 - Invalid types, missing required facts, duplicate/unknown tokens, and failed replacement leave registry/selection unchanged.
 - Same source revision with changed content bumps effective revision; identical effective content does not.
 - Compact density and reduced-motion policy reach at least two representative recipes without changing semantic output.
-- Every U7 window/subtree/deferred scope test passes unchanged with the v2 payload.
+- Every U7 window/subtree/deferred scope test passes unchanged with the complete v1 payload.
 
 **Deletion/replacement**
 
 - Delete color-only in-memory authority and production-only fallback paths superseded by v2.
 - Remove stable cross-family magic metrics only when recipes consume the replacement token.
-- Delete unused v1 compatibility code/schema when the census finds no real consumer.
+- Delete the old color-only schema/model, obsolete fixtures, and any compatibility parsing branch.
 - Do not move motion execution out of `open-gpui-motion`.
 
 **Unit gate**
 
-- Theme unit/integration/scope tests and theme drift/schema scanners pass for the evidence-selected compatibility branch.
+- Theme unit/integration/scope tests and theme drift/schema scanners pass against the sole complete v1 contract.
 - No token category is padded solely to satisfy the plan; absent two consumers, keep the metric local and record the category as intentionally not public.
 
 ### U9. Extract A Deterministic Collection Typeahead Session
@@ -951,7 +950,7 @@ Test execution rules:
 - Nested modal focus trap, controlled close, exit/reopen, callback reentrancy, trigger loss, LIFO restore, and multi-window isolation are proven with real GPUI tests.
 - Every official component that emits accessibility semantics derives the unified projection from resolved state and has no parallel evidence/assembly authority. Representative action, form, choice, overlay, navigation, collection, and table families are asserted in final AccessKit trees with real action dispatch and stable node identity; all remaining producers have projection/absence coverage.
 - Official semantic controls no longer expose legacy ClickEvent callbacks; semantic entry paths are role-correct, disabled-safe, and exactly once.
-- Theme scope is proven on the existing snapshot before Theme v2. Theme v2's required color scale and every consumer-proven candidate scale, evidence-selected v1 compatibility or clean rejection, effective revision, window/subtree scope, deferred inheritance, and recipe consumption pass focused tests and scanners; unproven categories are explicitly deferred rather than stubbed.
+- Theme scope is proven on the existing snapshot before replacement. The sole complete Theme v1 contract, required color scale, every consumer-proven candidate scale, clean rejection of the deleted color-only shape, effective revision, window/subtree scope, deferred inheritance, and recipe consumption pass focused tests and scanners; unproven categories are explicitly deferred rather than stubbed.
 - Tree and VirtualizedList no longer own duplicate typeahead buffer/timing implementations.
 - Federated typed component rows, Gallery probes, native scenario IDs, and public owners replace manual API inventory, a11y evidence, duplicate catalogs/maps, and source parsing wherever covered by U10 without recreating a central registry.
 - Table engine/virtualizer behavior is unchanged; any common-export narrowing is documented as a break and covered by characterization.
@@ -982,7 +981,7 @@ Test execution rules:
 
 - **P0 correctness:** U1 and U2. They fix data corruption risk and make a critical user-facing authority observable.
 - **P1 interaction/runtime:** U3-U6. They resolve modal, focus, accessibility, and activation correctness with the largest user impact.
-- **P2 framework depth:** U7-U9. Scoped resolution is proven before Theme v2 broadens its payload; typeahead improves interaction consistency independently.
+- **P2 framework depth:** U7-U9. Scoped resolution is proven before the complete Theme v1 replaces its payload; typeahead improves interaction consistency independently.
 - **P3 convergence/release:** U10-U11. They delete drift-prone scaffolding only after executable authorities can replace it.
 
 ### Explicit Preservation Gates
