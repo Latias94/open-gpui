@@ -134,6 +134,12 @@ impl NumberInputState {
         }
     }
 
+    /// Returns this state with asynchronous activity updated.
+    pub const fn with_busy(mut self, busy: bool) -> Self {
+        self.control = self.control.with_busy(busy);
+        self
+    }
+
     /// Returns the accessible label.
     pub fn label(&self) -> &str {
         &self.label
@@ -177,6 +183,11 @@ impl NumberInputState {
     /// Returns whether the input is invalid.
     pub const fn invalid(&self) -> bool {
         self.control.invalid()
+    }
+
+    /// Returns whether asynchronous work is pending for this input.
+    pub const fn busy(&self) -> bool {
+        self.control.busy()
     }
 
     /// Returns whether the input is required.
@@ -346,6 +357,12 @@ impl NumberInput {
         self
     }
 
+    /// Marks the input as having pending asynchronous work.
+    pub fn busy(mut self, busy: bool) -> Self {
+        self.control = self.control.with_busy(busy);
+        self
+    }
+
     /// Applies a token bundle.
     pub fn tokens(mut self, tokens: ThemeTokens) -> Self {
         self.tokens = tokens;
@@ -376,6 +393,7 @@ impl NumberInput {
             self.control.size(),
             self.tokens,
         )
+        .with_busy(self.control.busy())
     }
 }
 

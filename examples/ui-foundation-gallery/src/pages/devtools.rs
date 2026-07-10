@@ -28,7 +28,10 @@ use open_gpui_motion::{MotionFrameDemand, MotionFrameReason};
 use open_gpui_resource::PaginatedResourceSnapshotView;
 use open_gpui_ui_components::{COMPONENT_A11Y_EVIDENCE, ThemeSnapshot};
 
-use super::components::{form_devtools_dogfood_snapshot, resource_devtools_dogfood_snapshots};
+use super::components::{
+    form_devtools_dogfood_snapshot, form_devtools_validation_dogfood_snapshot,
+    resource_devtools_dogfood_snapshots,
+};
 
 /// Page title.
 pub const TITLE: &str = "DevTools";
@@ -356,7 +359,7 @@ fn devtools_gallery_provider_capture(
     refresh_index: u64,
     live_facts: &GalleryDevtoolsLiveFacts,
 ) -> DevtoolsCapture {
-    let collection = devtools_gallery_legacy_collection();
+    let collection = devtools_gallery_legacy_collection(refresh_index);
     let base_capture = DevtoolsCapture::from_snapshot_collection(collection);
     let gpui_capture = gpui::gpui_runtime_capture(&gallery_gpui_runtime_sample(refresh_index));
     let shell_target_id =
@@ -452,9 +455,13 @@ pub fn devtools_gallery_collection() -> SnapshotCollection {
     devtools_gallery_capture().snapshot_collection()
 }
 
-fn devtools_gallery_legacy_collection() -> SnapshotCollection {
+fn devtools_gallery_legacy_collection(refresh_index: u64) -> SnapshotCollection {
     let mut registry = DevtoolsRegistry::default();
-    let form_snapshot = form_devtools_dogfood_snapshot();
+    let form_snapshot = if refresh_index % 2 == 0 {
+        form_devtools_dogfood_snapshot()
+    } else {
+        form_devtools_validation_dogfood_snapshot()
+    };
     let resource_snapshots = resource_devtools_dogfood_snapshots();
     let resource_snapshot = resource_snapshots.resource;
     let mutation_snapshot = resource_snapshots.mutation;
@@ -698,6 +705,14 @@ mod tests {
     fn devtools_gallery_state_exposes_redacted_snapshots_and_diagnostics() {
         let state = devtools_gallery_state();
         let rows = state.snapshot_rows();
+        let form_snapshot = form_devtools_dogfood_snapshot();
+        let expected_form_redactions = form_snapshot.fields.len()
+            + form_snapshot.errors.len()
+            + form_snapshot
+                .fields
+                .iter()
+                .map(|field| field.meta.errors.len())
+                .sum::<usize>();
 
         assert_eq!(rows.len(), 11);
         assert!(rows.iter().any(
@@ -719,7 +734,7 @@ mod tests {
         );
         assert!(rows.iter().any(|row| row.probe_id.as_str() == "form"
             && row.kind_label == "form"
-            && row.redacted_values == 5));
+            && row.redacted_values == expected_form_redactions));
         assert!(
             rows.iter()
                 .any(|row| row.probe_id.as_str() == "layout.scroll-viewport"

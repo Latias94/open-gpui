@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{FieldId, FieldPath, RedactedValue};
 
 /// Current lifecycle status for a form.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum FormStatus {
     /// No submission or validation work is currently running.
     #[default]
@@ -63,5 +63,31 @@ impl FormSnapshot {
     /// Returns a field snapshot by path.
     pub fn field(&self, path: &FieldPath) -> Option<&FieldSnapshot> {
         self.fields.iter().find(|field| &field.path == path)
+    }
+
+    /// Returns the number of fields with current validation work.
+    pub fn validating_field_count(&self) -> usize {
+        self.fields
+            .iter()
+            .filter(|field| field.meta.validating)
+            .count()
+    }
+
+    /// Returns the number of fields with validation errors.
+    pub fn invalid_field_count(&self) -> usize {
+        self.fields
+            .iter()
+            .filter(|field| !field.meta.errors.is_empty())
+            .count()
+    }
+
+    /// Returns whether validation or submission work is active.
+    pub fn is_busy(&self) -> bool {
+        matches!(self.status, FormStatus::Validating | FormStatus::Submitting)
+    }
+
+    /// Returns whether the current snapshot is eligible to begin submission.
+    pub fn can_submit(&self) -> bool {
+        !self.is_busy() && self.invalid_field_count() == 0
     }
 }

@@ -1,6 +1,6 @@
 use open_gpui_form::{FieldPath, FormStatus, FormStore, RedactionPolicy};
 use open_gpui_ui_components::{
-    FormFieldConfig, FormFieldProjection, form_checkbox_value, form_number_value,
+    FormFieldConfig, FormFieldProjection, FormProjection, form_checkbox_value, form_number_value,
     form_select_value, form_text_value,
 };
 use open_gpui_ui_core::ThemeTokens;
@@ -91,6 +91,48 @@ fn form_projection_resolves_number_checkbox_and_select_values() {
         form_select_value(&serde_json::json!("option-a")).as_deref(),
         Some("option-a")
     );
+}
+
+#[test]
+fn form_projection_preserves_editability_while_validation_is_busy() {
+    let mut store = FormStore::default();
+    let email = FieldPath::new("account.email").unwrap();
+    store
+        .register_field(email.clone(), serde_json::json!("team@example.com"))
+        .unwrap();
+    let _ticket = store.begin_async_validation(&email).unwrap();
+    let snapshot = store.snapshot(RedactionPolicy::Expose);
+    let form = FormProjection::resolve(&snapshot, false);
+    let field = FormFieldProjection::resolve(
+        snapshot.status,
+        snapshot.field(&email).unwrap(),
+        FormFieldConfig::new("Email").required(true),
+    );
+
+    assert_eq!(snapshot.status, FormStatus::Validating);
+    assert!(form.busy());
+    assert!(form.validating());
+    assert!(!form.submit_enabled());
+    assert!(field.validating());
+    assert!(field.busy());
+    assert!(!field.disabled());
+
+    let field_state = field.field_state(ThemeTokens::default());
+    let text_state = field.text_input_state(
+        "team@example.com",
+        Some("you@example.com"),
+        ThemeTokens::default(),
+    );
+    let textarea_state = field.textarea_state("notes", Some("notes"), 3, ThemeTokens::default());
+    let number_state = field.number_input_state(3.0, 1.0, 5.0, 1.0, ThemeTokens::default());
+    let checkbox_state = field.checkbox_state(true, ThemeTokens::default());
+
+    assert!(field_state.busy());
+    assert!(text_state.busy());
+    assert!(text_state.control_state().input_enabled());
+    assert!(textarea_state.busy());
+    assert!(number_state.busy());
+    assert!(checkbox_state.busy());
 }
 
 fn field_snapshot(path: &str, value: serde_json::Value) -> open_gpui_form::FieldSnapshot {

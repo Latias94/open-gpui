@@ -391,6 +391,7 @@ pub(super) fn component_foundation_samples_section(
                         .read_only(state.read_only())
                         .invalid(state.invalid())
                         .required(state.required())
+                        .busy(state.busy())
                         .with_size(state.size())
                         .tokens(tokens),
                     )

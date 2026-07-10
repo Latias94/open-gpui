@@ -63,7 +63,10 @@ mod tree;
 #[path = "runtime/virtualized_list.rs"]
 mod virtualized_list;
 
-pub use form::{FormSampleRuntimeAction, FormSampleRuntimeLog, form_sample_runtime_log};
+pub use form::{
+    FormSampleRuntimeAction, FormSampleRuntimeCompletion, FormSampleRuntimeEvent,
+    FormSampleRuntimeLog, form_sample_runtime_log,
+};
 pub use resource::{
     ResourceSampleRuntimeEvent, ResourceSampleRuntimeLog, resource_sample_runtime_log,
 };

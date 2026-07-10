@@ -135,6 +135,7 @@ pub struct CheckboxState {
     disabled: bool,
     required: bool,
     invalid: bool,
+    busy: bool,
     metrics: CheckboxMetrics,
     colors: CheckboxColors,
     focus_ring: FocusRing,
@@ -161,6 +162,7 @@ impl CheckboxState {
             disabled,
             required,
             invalid,
+            busy: false,
             metrics: CheckboxMetrics::from_size(size),
             colors,
             focus_ring: FocusRing::from_color(colors.focus_ring()),
@@ -195,6 +197,17 @@ impl CheckboxState {
     /// Returns whether the checkbox is invalid.
     pub const fn invalid(self) -> bool {
         self.invalid
+    }
+
+    /// Returns this state with asynchronous activity updated.
+    pub const fn with_busy(mut self, busy: bool) -> Self {
+        self.busy = busy;
+        self
+    }
+
+    /// Returns whether asynchronous work is pending for this checkbox.
+    pub const fn busy(self) -> bool {
+        self.busy
     }
 
     /// Returns whether activation handlers should run.
@@ -250,6 +263,7 @@ pub struct Checkbox {
     disabled: bool,
     required: bool,
     invalid: bool,
+    busy: bool,
     size: Size,
     tokens: ThemeTokens,
     on_toggle: Option<Rc<dyn Fn(Toggled, &ClickEvent, &mut Window, &mut App)>>,
@@ -267,6 +281,7 @@ impl Checkbox {
             disabled: false,
             required: false,
             invalid: false,
+            busy: false,
             size: Size::Medium,
             tokens: ThemeTokens::default(),
             on_toggle: None,
@@ -334,6 +349,12 @@ impl Checkbox {
         self
     }
 
+    /// Marks the checkbox as having pending asynchronous work.
+    pub fn busy(mut self, busy: bool) -> Self {
+        self.busy = busy;
+        self
+    }
+
     /// Applies a token bundle.
     pub fn tokens(mut self, tokens: ThemeTokens) -> Self {
         self.tokens = tokens;
@@ -360,6 +381,7 @@ impl Checkbox {
             self.invalid,
             self.tokens,
         )
+        .with_busy(self.busy)
     }
 }
 

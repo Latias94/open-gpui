@@ -883,7 +883,7 @@
               "probe_id": "form",
               "snapshot_kind": "form",
               "root_nodes": 1,
-              "redacted_values": 5
+              "redacted_values": 6
             },
             "snapshot": {
               "probe_id": "form",
@@ -894,20 +894,20 @@
                     "id": "form",
                     "label": "Form",
                     "payload": {
-                      "status": "SubmitFailed",
+                      "status": "Idle",
                       "field_count": 5,
-                      "errors": [
-                        "submit rejected token=[redacted]"
-                      ],
-                      "submit_count": 1
+                      "validating_field_count": 0,
+                      "invalid_field_count": 1,
+                      "error_count": 0,
+                      "can_submit": false,
+                      "submit_count": 0
                     },
                     "children": [
                       {
-                        "id": "form.field.account.email",
-                        "label": "Field account.email",
+                        "id": "form.field.form-field-1346cf17c6aeac1f",
+                        "label": "Form field",
                         "payload": {
-                          "id": "account.email",
-                          "path": "account.email",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -916,38 +916,16 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": [
-                              "Enter a valid work email."
-                            ]
+                            "error_count": 1
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "form.field.profile.notes",
-                        "label": "Field profile.notes",
+                        "id": "form.field.form-field-7fa74215b38f489c",
+                        "label": "Form field",
                         "payload": {
-                          "id": "profile.notes",
-                          "path": "profile.notes",
-                          "value": {
-                            "kind": "redacted"
-                          },
-                          "meta": {
-                            "dirty": true,
-                            "touched": false,
-                            "visited": false,
-                            "validating": false,
-                            "errors": []
-                          }
-                        },
-                        "children": []
-                      },
-                      {
-                        "id": "form.field.workspace.alerts",
-                        "label": "Field workspace.alerts",
-                        "payload": {
-                          "id": "workspace.alerts",
-                          "path": "workspace.alerts",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -956,17 +934,16 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": []
+                            "error_count": 0
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "form.field.workspace.region",
-                        "label": "Field workspace.region",
+                        "id": "form.field.form-field-e24c15650916650c",
+                        "label": "Form field",
                         "payload": {
-                          "id": "workspace.region",
-                          "path": "workspace.region",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -975,17 +952,16 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": []
+                            "error_count": 0
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "form.field.workspace.seats",
-                        "label": "Field workspace.seats",
+                        "id": "form.field.form-field-1c0fdb0213c3b0bb",
+                        "label": "Form field",
                         "payload": {
-                          "id": "workspace.seats",
-                          "path": "workspace.seats",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -994,7 +970,25 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": []
+                            "error_count": 0
+                          }
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "form.field.form-field-0ed1c78ad0908cdb",
+                        "label": "Form field",
+                        "payload": {
+                          "semantic_id": "field",
+                          "value": {
+                            "kind": "redacted"
+                          },
+                          "meta": {
+                            "dirty": false,
+                            "touched": false,
+                            "visited": false,
+                            "validating": false,
+                            "error_count": 0
                           }
                         },
                         "children": []
@@ -1004,13 +998,14 @@
                 ]
               },
               "redaction": {
-                "redacted_values": 5,
+                "redacted_values": 6,
                 "notes": [
-                  "form field account.email",
-                  "form field profile.notes",
-                  "form field workspace.alerts",
-                  "form field workspace.region",
-                  "form field workspace.seats"
+                  "form field value",
+                  "form field error",
+                  "form field value",
+                  "form field value",
+                  "form field value",
+                  "form field value"
                 ]
               }
             },
@@ -2417,20 +2412,20 @@
                   "id": "form",
                   "label": "Form",
                   "payload": {
-                    "status": "SubmitFailed",
+                    "status": "Idle",
                     "field_count": 5,
-                    "errors": [
-                      "submit rejected token=[redacted]"
-                    ],
-                    "submit_count": 1
+                    "validating_field_count": 0,
+                    "invalid_field_count": 1,
+                    "error_count": 0,
+                    "can_submit": false,
+                    "submit_count": 0
                   },
                   "children": [
                     {
-                      "id": "form.field.account.email",
-                      "label": "Field account.email",
+                      "id": "form.field.form-field-1346cf17c6aeac1f",
+                      "label": "Form field",
                       "payload": {
-                        "id": "account.email",
-                        "path": "account.email",
+                        "semantic_id": "field",
                         "value": {
                           "kind": "redacted"
                         },
@@ -2439,38 +2434,16 @@
                           "touched": false,
                           "visited": false,
                           "validating": false,
-                          "errors": [
-                            "Enter a valid work email."
-                          ]
+                          "error_count": 1
                         }
                       },
                       "children": []
                     },
                     {
-                      "id": "form.field.profile.notes",
-                      "label": "Field profile.notes",
+                      "id": "form.field.form-field-7fa74215b38f489c",
+                      "label": "Form field",
                       "payload": {
-                        "id": "profile.notes",
-                        "path": "profile.notes",
-                        "value": {
-                          "kind": "redacted"
-                        },
-                        "meta": {
-                          "dirty": true,
-                          "touched": false,
-                          "visited": false,
-                          "validating": false,
-                          "errors": []
-                        }
-                      },
-                      "children": []
-                    },
-                    {
-                      "id": "form.field.workspace.alerts",
-                      "label": "Field workspace.alerts",
-                      "payload": {
-                        "id": "workspace.alerts",
-                        "path": "workspace.alerts",
+                        "semantic_id": "field",
                         "value": {
                           "kind": "redacted"
                         },
@@ -2479,17 +2452,16 @@
                           "touched": false,
                           "visited": false,
                           "validating": false,
-                          "errors": []
+                          "error_count": 0
                         }
                       },
                       "children": []
                     },
                     {
-                      "id": "form.field.workspace.region",
-                      "label": "Field workspace.region",
+                      "id": "form.field.form-field-e24c15650916650c",
+                      "label": "Form field",
                       "payload": {
-                        "id": "workspace.region",
-                        "path": "workspace.region",
+                        "semantic_id": "field",
                         "value": {
                           "kind": "redacted"
                         },
@@ -2498,17 +2470,16 @@
                           "touched": false,
                           "visited": false,
                           "validating": false,
-                          "errors": []
+                          "error_count": 0
                         }
                       },
                       "children": []
                     },
                     {
-                      "id": "form.field.workspace.seats",
-                      "label": "Field workspace.seats",
+                      "id": "form.field.form-field-1c0fdb0213c3b0bb",
+                      "label": "Form field",
                       "payload": {
-                        "id": "workspace.seats",
-                        "path": "workspace.seats",
+                        "semantic_id": "field",
                         "value": {
                           "kind": "redacted"
                         },
@@ -2517,7 +2488,25 @@
                           "touched": false,
                           "visited": false,
                           "validating": false,
-                          "errors": []
+                          "error_count": 0
+                        }
+                      },
+                      "children": []
+                    },
+                    {
+                      "id": "form.field.form-field-0ed1c78ad0908cdb",
+                      "label": "Form field",
+                      "payload": {
+                        "semantic_id": "field",
+                        "value": {
+                          "kind": "redacted"
+                        },
+                        "meta": {
+                          "dirty": false,
+                          "touched": false,
+                          "visited": false,
+                          "validating": false,
+                          "error_count": 0
                         }
                       },
                       "children": []
@@ -2527,13 +2516,14 @@
               ]
             },
             "redaction": {
-              "redacted_values": 5,
+              "redacted_values": 6,
               "notes": [
-                "form field account.email",
-                "form field profile.notes",
-                "form field workspace.alerts",
-                "form field workspace.region",
-                "form field workspace.seats"
+                "form field value",
+                "form field error",
+                "form field value",
+                "form field value",
+                "form field value",
+                "form field value"
               ]
             }
           },
@@ -4030,7 +4020,7 @@
               "probe_id": "form",
               "snapshot_kind": "form",
               "root_nodes": 1,
-              "redacted_values": 5
+              "redacted_values": 6
             },
             "snapshot": {
               "probe_id": "form",
@@ -4043,18 +4033,18 @@
                     "payload": {
                       "status": "SubmitFailed",
                       "field_count": 5,
-                      "errors": [
-                        "submit rejected token=[redacted]"
-                      ],
+                      "validating_field_count": 0,
+                      "invalid_field_count": 0,
+                      "error_count": 1,
+                      "can_submit": true,
                       "submit_count": 1
                     },
                     "children": [
                       {
-                        "id": "form.field.account.email",
-                        "label": "Field account.email",
+                        "id": "form.field.form-field-1346cf17c6aeac1f",
+                        "label": "Form field",
                         "payload": {
-                          "id": "account.email",
-                          "path": "account.email",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -4063,19 +4053,16 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": [
-                              "Enter a valid work email."
-                            ]
+                            "error_count": 0
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "form.field.profile.notes",
-                        "label": "Field profile.notes",
+                        "id": "form.field.form-field-7fa74215b38f489c",
+                        "label": "Form field",
                         "payload": {
-                          "id": "profile.notes",
-                          "path": "profile.notes",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -4084,17 +4071,16 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": []
+                            "error_count": 0
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "form.field.workspace.alerts",
-                        "label": "Field workspace.alerts",
+                        "id": "form.field.form-field-e24c15650916650c",
+                        "label": "Form field",
                         "payload": {
-                          "id": "workspace.alerts",
-                          "path": "workspace.alerts",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -4103,17 +4089,16 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": []
+                            "error_count": 0
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "form.field.workspace.region",
-                        "label": "Field workspace.region",
+                        "id": "form.field.form-field-1c0fdb0213c3b0bb",
+                        "label": "Form field",
                         "payload": {
-                          "id": "workspace.region",
-                          "path": "workspace.region",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -4122,17 +4107,16 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": []
+                            "error_count": 0
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "form.field.workspace.seats",
-                        "label": "Field workspace.seats",
+                        "id": "form.field.form-field-0ed1c78ad0908cdb",
+                        "label": "Form field",
                         "payload": {
-                          "id": "workspace.seats",
-                          "path": "workspace.seats",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -4141,7 +4125,7 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": []
+                            "error_count": 0
                           }
                         },
                         "children": []
@@ -4151,13 +4135,14 @@
                 ]
               },
               "redaction": {
-                "redacted_values": 5,
+                "redacted_values": 6,
                 "notes": [
-                  "form field account.email",
-                  "form field profile.notes",
-                  "form field workspace.alerts",
-                  "form field workspace.region",
-                  "form field workspace.seats"
+                  "form error",
+                  "form field value",
+                  "form field value",
+                  "form field value",
+                  "form field value",
+                  "form field value"
                 ]
               }
             },
@@ -5566,18 +5551,18 @@
                   "payload": {
                     "status": "SubmitFailed",
                     "field_count": 5,
-                    "errors": [
-                      "submit rejected token=[redacted]"
-                    ],
+                    "validating_field_count": 0,
+                    "invalid_field_count": 0,
+                    "error_count": 1,
+                    "can_submit": true,
                     "submit_count": 1
                   },
                   "children": [
                     {
-                      "id": "form.field.account.email",
-                      "label": "Field account.email",
+                      "id": "form.field.form-field-1346cf17c6aeac1f",
+                      "label": "Form field",
                       "payload": {
-                        "id": "account.email",
-                        "path": "account.email",
+                        "semantic_id": "field",
                         "value": {
                           "kind": "redacted"
                         },
@@ -5586,19 +5571,16 @@
                           "touched": false,
                           "visited": false,
                           "validating": false,
-                          "errors": [
-                            "Enter a valid work email."
-                          ]
+                          "error_count": 0
                         }
                       },
                       "children": []
                     },
                     {
-                      "id": "form.field.profile.notes",
-                      "label": "Field profile.notes",
+                      "id": "form.field.form-field-7fa74215b38f489c",
+                      "label": "Form field",
                       "payload": {
-                        "id": "profile.notes",
-                        "path": "profile.notes",
+                        "semantic_id": "field",
                         "value": {
                           "kind": "redacted"
                         },
@@ -5607,17 +5589,16 @@
                           "touched": false,
                           "visited": false,
                           "validating": false,
-                          "errors": []
+                          "error_count": 0
                         }
                       },
                       "children": []
                     },
                     {
-                      "id": "form.field.workspace.alerts",
-                      "label": "Field workspace.alerts",
+                      "id": "form.field.form-field-e24c15650916650c",
+                      "label": "Form field",
                       "payload": {
-                        "id": "workspace.alerts",
-                        "path": "workspace.alerts",
+                        "semantic_id": "field",
                         "value": {
                           "kind": "redacted"
                         },
@@ -5626,17 +5607,16 @@
                           "touched": false,
                           "visited": false,
                           "validating": false,
-                          "errors": []
+                          "error_count": 0
                         }
                       },
                       "children": []
                     },
                     {
-                      "id": "form.field.workspace.region",
-                      "label": "Field workspace.region",
+                      "id": "form.field.form-field-1c0fdb0213c3b0bb",
+                      "label": "Form field",
                       "payload": {
-                        "id": "workspace.region",
-                        "path": "workspace.region",
+                        "semantic_id": "field",
                         "value": {
                           "kind": "redacted"
                         },
@@ -5645,17 +5625,16 @@
                           "touched": false,
                           "visited": false,
                           "validating": false,
-                          "errors": []
+                          "error_count": 0
                         }
                       },
                       "children": []
                     },
                     {
-                      "id": "form.field.workspace.seats",
-                      "label": "Field workspace.seats",
+                      "id": "form.field.form-field-0ed1c78ad0908cdb",
+                      "label": "Form field",
                       "payload": {
-                        "id": "workspace.seats",
-                        "path": "workspace.seats",
+                        "semantic_id": "field",
                         "value": {
                           "kind": "redacted"
                         },
@@ -5664,7 +5643,7 @@
                           "touched": false,
                           "visited": false,
                           "validating": false,
-                          "errors": []
+                          "error_count": 0
                         }
                       },
                       "children": []
@@ -5674,13 +5653,14 @@
               ]
             },
             "redaction": {
-              "redacted_values": 5,
+              "redacted_values": 6,
               "notes": [
-                "form field account.email",
-                "form field profile.notes",
-                "form field workspace.alerts",
-                "form field workspace.region",
-                "form field workspace.seats"
+                "form error",
+                "form field value",
+                "form field value",
+                "form field value",
+                "form field value",
+                "form field value"
               ]
             }
           },
@@ -8152,7 +8132,7 @@
             "kind": "Domain",
             "identity": "domain.form.form",
             "label": "form",
-            "status": "Unchanged",
+            "status": "Changed",
             "previous": {
               "id": "domain.form.form",
               "target_id": "probe.form",
@@ -8162,7 +8142,7 @@
                 "probe_id": "form",
                 "snapshot_kind": "form",
                 "root_nodes": 1,
-                "redacted_values": 5
+                "redacted_values": 6
               },
               "snapshot": {
                 "probe_id": "form",
@@ -8173,20 +8153,20 @@
                       "id": "form",
                       "label": "Form",
                       "payload": {
-                        "status": "SubmitFailed",
+                        "status": "Idle",
                         "field_count": 5,
-                        "errors": [
-                          "submit rejected token=[redacted]"
-                        ],
-                        "submit_count": 1
+                        "validating_field_count": 0,
+                        "invalid_field_count": 1,
+                        "error_count": 0,
+                        "can_submit": false,
+                        "submit_count": 0
                       },
                       "children": [
                         {
-                          "id": "form.field.account.email",
-                          "label": "Field account.email",
+                          "id": "form.field.form-field-1346cf17c6aeac1f",
+                          "label": "Form field",
                           "payload": {
-                            "id": "account.email",
-                            "path": "account.email",
+                            "semantic_id": "field",
                             "value": {
                               "kind": "redacted"
                             },
@@ -8195,38 +8175,16 @@
                               "touched": false,
                               "visited": false,
                               "validating": false,
-                              "errors": [
-                                "Enter a valid work email."
-                              ]
+                              "error_count": 1
                             }
                           },
                           "children": []
                         },
                         {
-                          "id": "form.field.profile.notes",
-                          "label": "Field profile.notes",
+                          "id": "form.field.form-field-7fa74215b38f489c",
+                          "label": "Form field",
                           "payload": {
-                            "id": "profile.notes",
-                            "path": "profile.notes",
-                            "value": {
-                              "kind": "redacted"
-                            },
-                            "meta": {
-                              "dirty": true,
-                              "touched": false,
-                              "visited": false,
-                              "validating": false,
-                              "errors": []
-                            }
-                          },
-                          "children": []
-                        },
-                        {
-                          "id": "form.field.workspace.alerts",
-                          "label": "Field workspace.alerts",
-                          "payload": {
-                            "id": "workspace.alerts",
-                            "path": "workspace.alerts",
+                            "semantic_id": "field",
                             "value": {
                               "kind": "redacted"
                             },
@@ -8235,17 +8193,16 @@
                               "touched": false,
                               "visited": false,
                               "validating": false,
-                              "errors": []
+                              "error_count": 0
                             }
                           },
                           "children": []
                         },
                         {
-                          "id": "form.field.workspace.region",
-                          "label": "Field workspace.region",
+                          "id": "form.field.form-field-e24c15650916650c",
+                          "label": "Form field",
                           "payload": {
-                            "id": "workspace.region",
-                            "path": "workspace.region",
+                            "semantic_id": "field",
                             "value": {
                               "kind": "redacted"
                             },
@@ -8254,17 +8211,16 @@
                               "touched": false,
                               "visited": false,
                               "validating": false,
-                              "errors": []
+                              "error_count": 0
                             }
                           },
                           "children": []
                         },
                         {
-                          "id": "form.field.workspace.seats",
-                          "label": "Field workspace.seats",
+                          "id": "form.field.form-field-1c0fdb0213c3b0bb",
+                          "label": "Form field",
                           "payload": {
-                            "id": "workspace.seats",
-                            "path": "workspace.seats",
+                            "semantic_id": "field",
                             "value": {
                               "kind": "redacted"
                             },
@@ -8273,7 +8229,25 @@
                               "touched": false,
                               "visited": false,
                               "validating": false,
-                              "errors": []
+                              "error_count": 0
+                            }
+                          },
+                          "children": []
+                        },
+                        {
+                          "id": "form.field.form-field-0ed1c78ad0908cdb",
+                          "label": "Form field",
+                          "payload": {
+                            "semantic_id": "field",
+                            "value": {
+                              "kind": "redacted"
+                            },
+                            "meta": {
+                              "dirty": false,
+                              "touched": false,
+                              "visited": false,
+                              "validating": false,
+                              "error_count": 0
                             }
                           },
                           "children": []
@@ -8283,13 +8257,14 @@
                   ]
                 },
                 "redaction": {
-                  "redacted_values": 5,
+                  "redacted_values": 6,
                   "notes": [
-                    "form field account.email",
-                    "form field profile.notes",
-                    "form field workspace.alerts",
-                    "form field workspace.region",
-                    "form field workspace.seats"
+                    "form field value",
+                    "form field error",
+                    "form field value",
+                    "form field value",
+                    "form field value",
+                    "form field value"
                   ]
                 }
               },
@@ -8304,7 +8279,7 @@
                 "probe_id": "form",
                 "snapshot_kind": "form",
                 "root_nodes": 1,
-                "redacted_values": 5
+                "redacted_values": 6
               },
               "snapshot": {
                 "probe_id": "form",
@@ -8317,18 +8292,18 @@
                       "payload": {
                         "status": "SubmitFailed",
                         "field_count": 5,
-                        "errors": [
-                          "submit rejected token=[redacted]"
-                        ],
+                        "validating_field_count": 0,
+                        "invalid_field_count": 0,
+                        "error_count": 1,
+                        "can_submit": true,
                         "submit_count": 1
                       },
                       "children": [
                         {
-                          "id": "form.field.account.email",
-                          "label": "Field account.email",
+                          "id": "form.field.form-field-1346cf17c6aeac1f",
+                          "label": "Form field",
                           "payload": {
-                            "id": "account.email",
-                            "path": "account.email",
+                            "semantic_id": "field",
                             "value": {
                               "kind": "redacted"
                             },
@@ -8337,19 +8312,16 @@
                               "touched": false,
                               "visited": false,
                               "validating": false,
-                              "errors": [
-                                "Enter a valid work email."
-                              ]
+                              "error_count": 0
                             }
                           },
                           "children": []
                         },
                         {
-                          "id": "form.field.profile.notes",
-                          "label": "Field profile.notes",
+                          "id": "form.field.form-field-7fa74215b38f489c",
+                          "label": "Form field",
                           "payload": {
-                            "id": "profile.notes",
-                            "path": "profile.notes",
+                            "semantic_id": "field",
                             "value": {
                               "kind": "redacted"
                             },
@@ -8358,17 +8330,16 @@
                               "touched": false,
                               "visited": false,
                               "validating": false,
-                              "errors": []
+                              "error_count": 0
                             }
                           },
                           "children": []
                         },
                         {
-                          "id": "form.field.workspace.alerts",
-                          "label": "Field workspace.alerts",
+                          "id": "form.field.form-field-e24c15650916650c",
+                          "label": "Form field",
                           "payload": {
-                            "id": "workspace.alerts",
-                            "path": "workspace.alerts",
+                            "semantic_id": "field",
                             "value": {
                               "kind": "redacted"
                             },
@@ -8377,17 +8348,16 @@
                               "touched": false,
                               "visited": false,
                               "validating": false,
-                              "errors": []
+                              "error_count": 0
                             }
                           },
                           "children": []
                         },
                         {
-                          "id": "form.field.workspace.region",
-                          "label": "Field workspace.region",
+                          "id": "form.field.form-field-1c0fdb0213c3b0bb",
+                          "label": "Form field",
                           "payload": {
-                            "id": "workspace.region",
-                            "path": "workspace.region",
+                            "semantic_id": "field",
                             "value": {
                               "kind": "redacted"
                             },
@@ -8396,17 +8366,16 @@
                               "touched": false,
                               "visited": false,
                               "validating": false,
-                              "errors": []
+                              "error_count": 0
                             }
                           },
                           "children": []
                         },
                         {
-                          "id": "form.field.workspace.seats",
-                          "label": "Field workspace.seats",
+                          "id": "form.field.form-field-0ed1c78ad0908cdb",
+                          "label": "Form field",
                           "payload": {
-                            "id": "workspace.seats",
-                            "path": "workspace.seats",
+                            "semantic_id": "field",
                             "value": {
                               "kind": "redacted"
                             },
@@ -8415,7 +8384,7 @@
                               "touched": false,
                               "visited": false,
                               "validating": false,
-                              "errors": []
+                              "error_count": 0
                             }
                           },
                           "children": []
@@ -8425,13 +8394,14 @@
                   ]
                 },
                 "redaction": {
-                  "redacted_values": 5,
+                  "redacted_values": 6,
                   "notes": [
-                    "form field account.email",
-                    "form field profile.notes",
-                    "form field workspace.alerts",
-                    "form field workspace.region",
-                    "form field workspace.seats"
+                    "form error",
+                    "form field value",
+                    "form field value",
+                    "form field value",
+                    "form field value",
+                    "form field value"
                   ]
                 }
               },
@@ -11324,7 +11294,7 @@
             "kind": "Snapshot",
             "identity": "form:form",
             "label": "form",
-            "status": "Unchanged",
+            "status": "Changed",
             "previous": {
               "probe_id": "form",
               "kind": "Form",
@@ -11334,20 +11304,20 @@
                     "id": "form",
                     "label": "Form",
                     "payload": {
-                      "status": "SubmitFailed",
+                      "status": "Idle",
                       "field_count": 5,
-                      "errors": [
-                        "submit rejected token=[redacted]"
-                      ],
-                      "submit_count": 1
+                      "validating_field_count": 0,
+                      "invalid_field_count": 1,
+                      "error_count": 0,
+                      "can_submit": false,
+                      "submit_count": 0
                     },
                     "children": [
                       {
-                        "id": "form.field.account.email",
-                        "label": "Field account.email",
+                        "id": "form.field.form-field-1346cf17c6aeac1f",
+                        "label": "Form field",
                         "payload": {
-                          "id": "account.email",
-                          "path": "account.email",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -11356,38 +11326,16 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": [
-                              "Enter a valid work email."
-                            ]
+                            "error_count": 1
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "form.field.profile.notes",
-                        "label": "Field profile.notes",
+                        "id": "form.field.form-field-7fa74215b38f489c",
+                        "label": "Form field",
                         "payload": {
-                          "id": "profile.notes",
-                          "path": "profile.notes",
-                          "value": {
-                            "kind": "redacted"
-                          },
-                          "meta": {
-                            "dirty": true,
-                            "touched": false,
-                            "visited": false,
-                            "validating": false,
-                            "errors": []
-                          }
-                        },
-                        "children": []
-                      },
-                      {
-                        "id": "form.field.workspace.alerts",
-                        "label": "Field workspace.alerts",
-                        "payload": {
-                          "id": "workspace.alerts",
-                          "path": "workspace.alerts",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -11396,17 +11344,16 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": []
+                            "error_count": 0
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "form.field.workspace.region",
-                        "label": "Field workspace.region",
+                        "id": "form.field.form-field-e24c15650916650c",
+                        "label": "Form field",
                         "payload": {
-                          "id": "workspace.region",
-                          "path": "workspace.region",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -11415,17 +11362,16 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": []
+                            "error_count": 0
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "form.field.workspace.seats",
-                        "label": "Field workspace.seats",
+                        "id": "form.field.form-field-1c0fdb0213c3b0bb",
+                        "label": "Form field",
                         "payload": {
-                          "id": "workspace.seats",
-                          "path": "workspace.seats",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -11434,7 +11380,25 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": []
+                            "error_count": 0
+                          }
+                        },
+                        "children": []
+                      },
+                      {
+                        "id": "form.field.form-field-0ed1c78ad0908cdb",
+                        "label": "Form field",
+                        "payload": {
+                          "semantic_id": "field",
+                          "value": {
+                            "kind": "redacted"
+                          },
+                          "meta": {
+                            "dirty": false,
+                            "touched": false,
+                            "visited": false,
+                            "validating": false,
+                            "error_count": 0
                           }
                         },
                         "children": []
@@ -11444,13 +11408,14 @@
                 ]
               },
               "redaction": {
-                "redacted_values": 5,
+                "redacted_values": 6,
                 "notes": [
-                  "form field account.email",
-                  "form field profile.notes",
-                  "form field workspace.alerts",
-                  "form field workspace.region",
-                  "form field workspace.seats"
+                  "form field value",
+                  "form field error",
+                  "form field value",
+                  "form field value",
+                  "form field value",
+                  "form field value"
                 ]
               }
             },
@@ -11465,18 +11430,18 @@
                     "payload": {
                       "status": "SubmitFailed",
                       "field_count": 5,
-                      "errors": [
-                        "submit rejected token=[redacted]"
-                      ],
+                      "validating_field_count": 0,
+                      "invalid_field_count": 0,
+                      "error_count": 1,
+                      "can_submit": true,
                       "submit_count": 1
                     },
                     "children": [
                       {
-                        "id": "form.field.account.email",
-                        "label": "Field account.email",
+                        "id": "form.field.form-field-1346cf17c6aeac1f",
+                        "label": "Form field",
                         "payload": {
-                          "id": "account.email",
-                          "path": "account.email",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -11485,19 +11450,16 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": [
-                              "Enter a valid work email."
-                            ]
+                            "error_count": 0
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "form.field.profile.notes",
-                        "label": "Field profile.notes",
+                        "id": "form.field.form-field-7fa74215b38f489c",
+                        "label": "Form field",
                         "payload": {
-                          "id": "profile.notes",
-                          "path": "profile.notes",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -11506,17 +11468,16 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": []
+                            "error_count": 0
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "form.field.workspace.alerts",
-                        "label": "Field workspace.alerts",
+                        "id": "form.field.form-field-e24c15650916650c",
+                        "label": "Form field",
                         "payload": {
-                          "id": "workspace.alerts",
-                          "path": "workspace.alerts",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -11525,17 +11486,16 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": []
+                            "error_count": 0
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "form.field.workspace.region",
-                        "label": "Field workspace.region",
+                        "id": "form.field.form-field-1c0fdb0213c3b0bb",
+                        "label": "Form field",
                         "payload": {
-                          "id": "workspace.region",
-                          "path": "workspace.region",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -11544,17 +11504,16 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": []
+                            "error_count": 0
                           }
                         },
                         "children": []
                       },
                       {
-                        "id": "form.field.workspace.seats",
-                        "label": "Field workspace.seats",
+                        "id": "form.field.form-field-0ed1c78ad0908cdb",
+                        "label": "Form field",
                         "payload": {
-                          "id": "workspace.seats",
-                          "path": "workspace.seats",
+                          "semantic_id": "field",
                           "value": {
                             "kind": "redacted"
                           },
@@ -11563,7 +11522,7 @@
                             "touched": false,
                             "visited": false,
                             "validating": false,
-                            "errors": []
+                            "error_count": 0
                           }
                         },
                         "children": []
@@ -11573,13 +11532,14 @@
                 ]
               },
               "redaction": {
-                "redacted_values": 5,
+                "redacted_values": 6,
                 "notes": [
-                  "form field account.email",
-                  "form field profile.notes",
-                  "form field workspace.alerts",
-                  "form field workspace.region",
-                  "form field workspace.seats"
+                  "form error",
+                  "form field value",
+                  "form field value",
+                  "form field value",
+                  "form field value",
+                  "form field value"
                 ]
               }
             },
@@ -12860,8 +12820,8 @@
         "summary": {
           "added": 0,
           "removed": 0,
-          "changed": 9,
-          "unchanged": 34,
+          "changed": 11,
+          "unchanged": 32,
           "collisions": 0
         }
       }

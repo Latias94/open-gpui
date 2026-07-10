@@ -10,11 +10,13 @@ mod redaction;
 mod snapshot;
 mod validation;
 
-pub use error::FormError;
+pub use error::{FormError, SubmitBlockReason};
 pub use field::FieldState;
-pub use form::FormStore;
+pub use form::{FormStore, SubmitCompletion, SubmitTicket};
 pub use lens::FieldLens;
 pub use path::{FieldId, FieldPath};
 pub use redaction::{RedactedValue, RedactionPolicy};
 pub use snapshot::{FieldMetaSnapshot, FieldSnapshot, FormSnapshot, FormStatus};
-pub use validation::{DebouncedValidationQueue, FieldValidationOutcome, ValidationTicket};
+pub use validation::{
+    DebouncedValidationQueue, FieldValidationOutcome, ValidationCompletion, ValidationTicket,
+};

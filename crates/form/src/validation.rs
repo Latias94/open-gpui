@@ -1,6 +1,6 @@
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
-use crate::{FieldPath, FormError, FormStore};
+use crate::{FieldPath, FormError, FormStore, form::FormAuthority};
 
 /// Result of a synchronous field validation pass.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -16,14 +16,73 @@ impl FieldValidationOutcome {
     }
 }
 
-/// Ticket identifying one async validation generation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ValidationTicket {
-    /// Field path being validated.
-    pub path: FieldPath,
-    /// Monotonic generation assigned by the form store.
-    pub generation: u64,
+/// Result of attempting to complete asynchronous validation work.
+#[must_use = "validation completion reports whether the result was applied"]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ValidationCompletion {
+    /// The ticket was current and its result was applied.
+    Applied,
+    /// A newer validation generation now owns the field.
+    Stale,
+    /// The ticket was cancelled by an edit, reset, synchronous validation, or completion.
+    Cancelled,
 }
+
+/// Opaque ticket identifying one async validation generation for one field value.
+#[must_use = "validation tickets must be completed or explicitly cancelled by a form mutation"]
+#[derive(Clone, Debug)]
+pub struct ValidationTicket {
+    authority: Arc<FormAuthority>,
+    path: FieldPath,
+    value_revision: u64,
+    generation: u64,
+}
+
+impl ValidationTicket {
+    pub(crate) fn new(
+        authority: Arc<FormAuthority>,
+        path: FieldPath,
+        value_revision: u64,
+        generation: u64,
+    ) -> Self {
+        Self {
+            authority,
+            path,
+            value_revision,
+            generation,
+        }
+    }
+
+    /// Returns the field path being validated.
+    pub fn path(&self) -> &FieldPath {
+        &self.path
+    }
+
+    /// Returns the field value revision captured when validation began.
+    pub fn value_revision(&self) -> u64 {
+        self.value_revision
+    }
+
+    /// Returns the monotonic validation generation.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn belongs_to(&self, authority: &Arc<FormAuthority>) -> bool {
+        Arc::ptr_eq(&self.authority, authority)
+    }
+}
+
+impl PartialEq for ValidationTicket {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.authority, &other.authority)
+            && self.path == other.path
+            && self.value_revision == other.value_revision
+            && self.generation == other.generation
+    }
+}
+
+impl Eq for ValidationTicket {}
 
 /// Deterministic debounce queue for async validation requests.
 #[derive(Clone, Debug)]

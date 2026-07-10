@@ -131,6 +131,12 @@ impl FieldState {
         }
     }
 
+    /// Returns this state with asynchronous activity updated.
+    pub const fn with_busy(mut self, busy: bool) -> Self {
+        self.control = self.control.with_busy(busy);
+        self
+    }
+
     /// Returns the visible label text.
     pub fn label(&self) -> &str {
         &self.label
@@ -209,6 +215,11 @@ impl FieldState {
     /// Returns whether the field is invalid.
     pub const fn invalid(&self) -> bool {
         self.control.invalid()
+    }
+
+    /// Returns whether asynchronous work is pending for this field.
+    pub const fn busy(&self) -> bool {
+        self.control.busy()
     }
 
     /// Returns resolved metrics.
@@ -294,6 +305,12 @@ impl Field {
         self
     }
 
+    /// Marks the field as having pending asynchronous work.
+    pub fn busy(mut self, busy: bool) -> Self {
+        self.control_state = self.control_state.with_busy(busy);
+        self
+    }
+
     /// Applies a token bundle.
     pub fn tokens(mut self, tokens: ThemeTokens) -> Self {
         self.tokens = tokens;
@@ -319,6 +336,7 @@ impl Field {
             self.control_state.invalid(),
             self.tokens,
         )
+        .with_busy(self.control_state.busy())
     }
 }
 

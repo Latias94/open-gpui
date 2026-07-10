@@ -47,7 +47,9 @@ mutation and live property editing are intentionally out of scope for the initia
   labels.
 - `form` and `resource` expose feature-gated first-party adapters that consume public headless
   snapshots without making source crates depend on devtools. They also expose data-domain capture
-  helpers.
+  helpers. The form adapter is an allowlist boundary: it emits lifecycle facts, counts, redaction
+  markers, and opaque field ids, but never field values, field paths, validation errors, or submit
+  errors, even when the source snapshot used an exposing value policy.
 - `command` exposes feature-gated adapters for command registries, keybinding projections,
   projection diagnostics, shortcut conflicts, and keymap resolution. It also exposes command-domain
   capture helpers.
@@ -388,10 +390,12 @@ assert_eq!(envelope.redaction.redacted_values, 0);
 
 Devtools should inspect framework facts, not retain secrets. Adapter helpers sanitize probe ids,
 node ids, labels, payload strings, redaction notes, diagnostics, and custom snapshot-kind labels by
-default. Form and resource adapters derive `SnapshotRedactionSummary` from
-`RedactedValue::Redacted` and `RedactedResourceValue::Redacted` values instead of trusting callers
-to count manually. Values marked as JSON by the source snapshot are the only values eligible for
-exposure in payloads.
+default. The form adapter applies a stricter allowlist: every field value and free-form error is
+suppressed and counted regardless of its `RedactedValue` variant, and field identities are replaced
+with deterministic opaque ids before a DevTools DTO exists. The resource adapter derives its
+summary from `RedactedResourceValue::Redacted`; only resource values explicitly represented as JSON
+by the source snapshot are eligible for resource payload exposure. Generic sanitization remains a
+defense-in-depth layer for both adapters.
 
 ## Verification
 
@@ -421,6 +425,11 @@ cargo nextest run -p xtask --test devtools_cli_contracts --no-fail-fast --locked
 cargo run -p xtask -- devtools --help
 cargo run -p xtask -- scan-public-api --check
 ```
+
+Form snapshots remain rich enough for application rendering, so free-form errors can still exist
+in the source value. `form_probe_snapshot`, `form_snapshot_envelope`, and `form_capture` minimize
+that data before creating any DevTools DTO. Later sanitization remains defense in depth rather than
+the mechanism that enforces form privacy.
 
 When changing the gallery inspector surface, also run:
 

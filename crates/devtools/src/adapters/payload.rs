@@ -72,6 +72,21 @@ where
     }
 }
 
+/// Builds a deterministic identifier that does not retain the source text.
+///
+/// This is intended for diagnostic identities derived from application-owned values. It is not a
+/// cryptographic commitment and must not be used for authentication or secret storage.
+pub fn opaque_stable_id(namespace: &str, value: &str) -> String {
+    let namespace = stable_segment(namespace);
+    let namespace = if namespace.is_empty() {
+        "opaque"
+    } else {
+        namespace.as_str()
+    };
+    let hash_input = format!("{namespace}\0{value}");
+    format!("{namespace}-{:016x}", stable_hash(&hash_input))
+}
+
 /// Removes sensitive fragments from diagnostic text, labels, ids, and payload strings.
 pub fn sanitize_sensitive_text(value: &str) -> String {
     let redacted = redact_email_like(value);

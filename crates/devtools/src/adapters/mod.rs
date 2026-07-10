@@ -6,7 +6,9 @@ use serde::Serialize;
 
 use crate::SnapshotNode;
 
-pub use payload::{sanitize_json_value, sanitize_sensitive_text, stable_node_id, summary_payload};
+pub use payload::{
+    opaque_stable_id, sanitize_json_value, sanitize_sensitive_text, stable_node_id, summary_payload,
+};
 
 /// Builds a snapshot node with a deterministic, sanitized id.
 pub fn snapshot_node<I, S>(id_parts: I, label: impl AsRef<str>) -> SnapshotNode

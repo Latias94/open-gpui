@@ -1,6 +1,11 @@
+use std::sync::Arc;
+
 use serde_json::Value;
 
-use crate::{FieldId, FieldMetaSnapshot, FieldPath};
+use crate::{
+    FieldId, FieldMetaSnapshot, FieldPath, ValidationCompletion, ValidationTicket,
+    form::FormAuthority,
+};
 
 /// Internal renderer-neutral field state owned by a [`crate::FormStore`].
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -10,7 +15,8 @@ pub struct FieldState {
     initial_value: Value,
     value: Value,
     meta: FieldMetaSnapshot,
-    validation_generation: u64,
+    value_revision: u64,
+    active_validation_generation: Option<u64>,
 }
 
 impl FieldState {
@@ -23,7 +29,8 @@ impl FieldState {
             initial_value: initial_value.clone(),
             value: initial_value,
             meta: FieldMetaSnapshot::default(),
-            validation_generation: 0,
+            value_revision: 0,
+            active_validation_generation: None,
         }
     }
 
@@ -47,9 +54,17 @@ impl FieldState {
         &self.meta
     }
 
-    pub(crate) fn set_value(&mut self, value: Value) {
+    pub(crate) fn set_value(&mut self, value: Value) -> bool {
+        if self.value == value {
+            return false;
+        }
+
         self.value = value;
+        self.value_revision = self.value_revision.saturating_add(1);
         self.meta.dirty = self.value != self.initial_value;
+        self.meta.errors.clear();
+        self.cancel_validation();
+        true
     }
 
     pub(crate) fn touch(&mut self) {
@@ -61,26 +76,54 @@ impl FieldState {
     }
 
     pub(crate) fn set_errors(&mut self, errors: Vec<String>) {
+        self.cancel_validation();
         self.meta.errors = errors;
     }
 
-    pub(crate) fn begin_validation(&mut self, generation: u64) {
-        self.validation_generation = generation;
+    pub(crate) fn begin_validation(
+        &mut self,
+        authority: Arc<FormAuthority>,
+        generation: u64,
+    ) -> ValidationTicket {
+        self.active_validation_generation = Some(generation);
         self.meta.validating = true;
+        ValidationTicket::new(
+            authority,
+            self.path.clone(),
+            self.value_revision,
+            generation,
+        )
     }
 
-    pub(crate) fn complete_validation(&mut self, generation: u64, errors: Vec<String>) -> bool {
-        if self.validation_generation != generation {
-            return false;
+    pub(crate) fn complete_validation(
+        &mut self,
+        ticket: &ValidationTicket,
+        errors: Vec<String>,
+    ) -> ValidationCompletion {
+        match self.active_validation_generation {
+            Some(generation) if generation == ticket.generation() => {}
+            Some(_) => return ValidationCompletion::Stale,
+            None => return ValidationCompletion::Cancelled,
         }
+        if ticket.value_revision() != self.value_revision {
+            return ValidationCompletion::Cancelled;
+        }
+
+        self.active_validation_generation = None;
         self.meta.validating = false;
         self.meta.errors = errors;
-        true
+        ValidationCompletion::Applied
+    }
+
+    pub(crate) fn cancel_validation(&mut self) {
+        self.active_validation_generation = None;
+        self.meta.validating = false;
     }
 
     pub(crate) fn reset(&mut self) {
         self.value = self.initial_value.clone();
+        self.value_revision = self.value_revision.saturating_add(1);
         self.meta = FieldMetaSnapshot::default();
-        self.validation_generation = 0;
+        self.active_validation_generation = None;
     }
 }

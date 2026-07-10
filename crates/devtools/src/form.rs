@@ -1,13 +1,13 @@
 //! DevTools adapters for `open-gpui-form` snapshots.
 
-use open_gpui_form::{FieldSnapshot, FormSnapshot, RedactedValue};
+use open_gpui_form::{FieldSnapshot, FormSnapshot};
 
 use crate::{
     DevtoolsCapture, DevtoolsDomainId, DevtoolsDomainKind, DevtoolsDomainSnapshot,
     DevtoolsTargetId, DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsTargetTree, ProbeId,
     ProbeSnapshotError, SnapshotEnvelope, SnapshotKind, SnapshotNode, SnapshotProbe,
     SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
-    adapters::{sanitize_sensitive_text, snapshot_node_with_payload, summary_payload},
+    adapters::{opaque_stable_id, snapshot_node_with_payload},
 };
 
 /// Converts a form snapshot into a DevTools snapshot tree and redaction summary.
@@ -75,20 +75,20 @@ pub fn field_snapshot_node(
     field: &FieldSnapshot,
     redaction: &mut SnapshotRedactionSummary,
 ) -> SnapshotNode {
-    let value = field_value_payload(field, redaction);
+    record_field_redaction(field, redaction);
+    let opaque_id = opaque_stable_id("form-field", field.id.as_str());
     snapshot_node_with_payload(
-        ["form", "field", field.path.as_str()],
-        format!("Field {}", sanitize_sensitive_text(field.path.as_str())),
+        ["form", "field", opaque_id.as_str()],
+        "Form field",
         serde_json::json!({
-            "id": sanitize_sensitive_text(field.id.as_str()),
-            "path": sanitize_sensitive_text(field.path.as_str()),
-            "value": value,
+            "semantic_id": "field",
+            "value": { "kind": "redacted" },
             "meta": {
                 "dirty": field.meta.dirty,
                 "touched": field.meta.touched,
                 "visited": field.meta.visited,
                 "validating": field.meta.validating,
-                "errors": &field.meta.errors,
+                "error_count": field.meta.errors.len(),
             },
         }),
     )
@@ -98,7 +98,10 @@ pub fn field_snapshot_node(
 pub fn form_redaction_summary(snapshot: &FormSnapshot) -> SnapshotRedactionSummary {
     let mut redaction = SnapshotRedactionSummary::default();
     for field in &snapshot.fields {
-        record_field_value_redaction(field, &mut redaction);
+        record_field_redaction(field, &mut redaction);
+    }
+    for _ in &snapshot.errors {
+        redaction.record_redacted("form error");
     }
     redaction
 }
@@ -111,10 +114,17 @@ fn form_tree_and_redaction(snapshot: &FormSnapshot) -> (SnapshotTree, SnapshotRe
         serde_json::json!({
             "status": &snapshot.status,
             "field_count": snapshot.fields.len(),
-            "errors": &snapshot.errors,
+            "validating_field_count": snapshot.validating_field_count(),
+            "invalid_field_count": snapshot.invalid_field_count(),
+            "error_count": snapshot.errors.len(),
+            "can_submit": snapshot.can_submit(),
             "submit_count": snapshot.submit_count,
         }),
     );
+
+    for _ in &snapshot.errors {
+        redaction.record_redacted("form error");
+    }
 
     for field in &snapshot.fields {
         root = root.with_child(field_snapshot_node(field, &mut redaction));
@@ -123,28 +133,9 @@ fn form_tree_and_redaction(snapshot: &FormSnapshot) -> (SnapshotTree, SnapshotRe
     (SnapshotTree::new([root]), redaction)
 }
 
-fn field_value_payload(
-    field: &FieldSnapshot,
-    redaction: &mut SnapshotRedactionSummary,
-) -> serde_json::Value {
-    match &field.value {
-        RedactedValue::Redacted => {
-            record_field_value_redaction(field, redaction);
-            serde_json::json!({ "kind": "redacted" })
-        }
-        RedactedValue::Summary(summary) => summary_payload(serde_json::json!({
-            "kind": "summary",
-            "summary": summary,
-        })),
-        RedactedValue::Json(value) => serde_json::json!({
-            "kind": "json",
-            "value": value,
-        }),
-    }
-}
-
-fn record_field_value_redaction(field: &FieldSnapshot, redaction: &mut SnapshotRedactionSummary) {
-    if matches!(field.value, RedactedValue::Redacted) {
-        redaction.record_redacted(format!("form field {}", field.path.as_str()));
+fn record_field_redaction(field: &FieldSnapshot, redaction: &mut SnapshotRedactionSummary) {
+    redaction.record_redacted("form field value");
+    for _ in &field.meta.errors {
+        redaction.record_redacted("form field error");
     }
 }

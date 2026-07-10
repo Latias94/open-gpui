@@ -188,6 +188,12 @@ impl TextareaState {
         }
     }
 
+    /// Returns this state with asynchronous activity updated.
+    pub const fn with_busy(mut self, busy: bool) -> Self {
+        self.control = self.control.with_busy(busy);
+        self
+    }
+
     /// Returns the current value.
     pub fn value(&self) -> &str {
         &self.value
@@ -250,6 +256,11 @@ impl TextareaState {
     /// Returns whether the textarea is read-only.
     pub const fn read_only(&self) -> bool {
         self.control.read_only()
+    }
+
+    /// Returns whether asynchronous work is pending for this textarea.
+    pub const fn busy(&self) -> bool {
+        self.control.busy()
     }
 
     /// Returns whether the textarea is invalid.
@@ -771,6 +782,12 @@ impl Textarea {
         self
     }
 
+    /// Marks the textarea as having pending asynchronous work.
+    pub fn busy(mut self, busy: bool) -> Self {
+        self.control = self.control.with_busy(busy);
+        self
+    }
+
     /// Applies a token bundle.
     pub fn tokens(mut self, tokens: ThemeTokens) -> Self {
         self.tokens = tokens;
@@ -791,6 +808,7 @@ impl Textarea {
             self.on_change.is_some(),
             self.tokens,
         )
+        .with_busy(self.control.busy())
     }
 }
 

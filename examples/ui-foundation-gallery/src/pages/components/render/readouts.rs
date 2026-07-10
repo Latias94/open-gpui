@@ -148,10 +148,11 @@ pub(crate) fn component_number_input_state_row(state: &NumberInputState) -> impl
             state.input_enabled()
         ))
         .child(format!(
-            "read-only {} / invalid {} / required {}",
+            "read-only {} / invalid {} / required {} / busy {}",
             state.read_only(),
             state.invalid(),
-            state.required()
+            state.required(),
+            state.busy()
         ))
 }
 

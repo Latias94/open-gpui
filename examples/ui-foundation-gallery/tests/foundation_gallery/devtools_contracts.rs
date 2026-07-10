@@ -3,6 +3,15 @@ use open_gpui_devtools::{
     DevtoolsArtifactJsonlSink, DevtoolsArtifactSink, DevtoolsDiffKind, DevtoolsDiffStatus,
 };
 
+fn assert_form_canaries_absent(serialized: &str) {
+    for &canary in pages::components::FORM_DEVTOOLS_DOGFOOD_CANARIES {
+        assert!(
+            !serialized.contains(canary),
+            "form DevTools canary leaked: {canary}"
+        );
+    }
+}
+
 #[test]
 fn devtools_gallery_collects_registry_backed_snapshots() {
     let collection = pages::devtools::devtools_gallery_collection();
@@ -28,6 +37,14 @@ fn devtools_gallery_collects_registry_backed_snapshots() {
             "gpui.runtime.gallery"
         ]
     );
+    let form_snapshot = pages::components::form_devtools_dogfood_snapshot();
+    let expected_form_redactions = form_snapshot.fields.len()
+        + form_snapshot.errors.len()
+        + form_snapshot
+            .fields
+            .iter()
+            .map(|field| field.meta.errors.len())
+            .sum::<usize>();
     assert_eq!(
         collection
             .snapshots
@@ -44,8 +61,9 @@ fn devtools_gallery_collects_registry_backed_snapshots() {
             .unwrap()
             .redaction
             .redacted_values,
-        5
+        expected_form_redactions
     );
+    assert_form_canaries_absent(&serde_json::to_string(&collection).unwrap());
     assert_eq!(
         collection
             .snapshots
@@ -115,6 +133,7 @@ fn devtools_gallery_capture_projects_targets_domains_and_events() {
             .any(|diagnostic| diagnostic.code.starts_with("capture.duplicate_"))
     );
     assert_eq!(capture.snapshot_collection().snapshots.len(), 11);
+    assert_form_canaries_absent(&serde_json::to_string(&capture).unwrap());
 }
 
 #[test]
@@ -148,11 +167,17 @@ fn devtools_gallery_session_frame_exposes_history_and_diff() {
             && row.status == DevtoolsDiffStatus::Changed
             && row.identity.contains("gpui.runtime.gallery")
     }));
+    assert!(diff.rows.iter().any(|row| {
+        row.kind == DevtoolsDiffKind::Snapshot
+            && row.status == DevtoolsDiffStatus::Changed
+            && row.identity == "form:form"
+    }));
 
     let export_json = serde_json::to_string(&export).unwrap();
     assert!(export_json.contains("open-gpui-devtools-session/v1"));
     assert!(!export_json.contains("raw_text"));
     assert!(!export_json.contains("clipboard_contents"));
+    assert_form_canaries_absent(&export_json);
 }
 
 #[test]
@@ -183,20 +208,23 @@ fn devtools_gallery_headless_artifacts_use_artifact_records() {
     assert_eq!(lines.len(), 2);
     assert!(lines[0].contains("\"artifact_kind\":\"session-export\""));
     assert!(lines[1].contains("\"artifact_kind\":\"report\""));
+    let session_json = serde_json::to_string(&artifacts.session_export).unwrap();
+    let report_json = serde_json::to_string(&artifacts.report).unwrap();
+    assert_form_canaries_absent(&jsonl);
+    assert_form_canaries_absent(&session_json);
+    assert_form_canaries_absent(&report_json);
 }
 
 #[test]
 fn devtools_gallery_headless_fixtures_match_producer_output() {
     let artifacts = pages::devtools::devtools_gallery_headless_artifacts();
+    let session_json = serde_json::to_string_pretty(&artifacts.session_export).unwrap();
+    let report_json = serde_json::to_string_pretty(&artifacts.report).unwrap();
 
-    assert_fixture_matches(
-        "gallery-session.json",
-        &serde_json::to_string_pretty(&artifacts.session_export).unwrap(),
-    );
-    assert_fixture_matches(
-        "gallery-report.json",
-        &serde_json::to_string_pretty(&artifacts.report).unwrap(),
-    );
+    assert_form_canaries_absent(&session_json);
+    assert_form_canaries_absent(&report_json);
+    assert_fixture_matches("gallery-session.json", &session_json);
+    assert_fixture_matches("gallery-report.json", &report_json);
 }
 
 #[test]

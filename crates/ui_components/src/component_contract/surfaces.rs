@@ -35,6 +35,11 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
         home: "gpui_adapter",
     },
     PublicSurfaceOwnerEntry {
+        name: "FormProjection",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "form_adapter.rs",
+    },
+    PublicSurfaceOwnerEntry {
         name: "FormFieldConfig",
         owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
         home: "form_adapter.rs",

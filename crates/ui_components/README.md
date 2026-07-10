@@ -24,9 +24,12 @@ elements.
 Form and resource adapters connect the new headless ecosystem crates to existing concrete
 components. They are adapter helpers, not standalone widgets:
 
-- `FormFieldConfig` and `FormFieldProjection` translate an `open_gpui_form::FieldSnapshot` plus a
+- `FormProjection` translates form-level lifecycle state into busy/validating/submitting and submit
+  eligibility facts. `FormFieldConfig` and `FormFieldProjection` translate a field snapshot plus
   `FormStatus` into `FieldState`, `TextInputState`, `TextareaState`, `NumberInputState`, and
-  `CheckboxState` inputs.
+  `CheckboxState` inputs. Validation projects as busy while preserving editability; submission may
+  disable controls according to the form policy. The corresponding concrete builders accept
+  `busy(bool)` and preserve that fact when they rematerialize resolved state.
 - `form_text_value`, `form_number_value`, `form_checkbox_value`, and `form_select_value` normalize
   dynamic JSON form values for text, number, checkbox, and select controls.
 - `ResourceAdapterLabels`, `ResourceCollectionProjection`, and `ResourceMutationProjection`

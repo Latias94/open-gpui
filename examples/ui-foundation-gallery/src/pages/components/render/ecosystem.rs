@@ -74,7 +74,7 @@ fn render_form_adapter_sample(
     let notes_textarea = sample.notes_textarea.clone();
     let seats_input = sample.seats_input.clone();
     let alerts_checkbox = sample.alerts_checkbox;
-    let status = form_status_label(&sample.status);
+    let status = form_status_label(sample.form.status());
 
     component_gallery_card_shell(
         format!("component-form-adapter-sample:{sample_id}"),
@@ -155,6 +155,7 @@ fn render_form_adapter_sample(
                         .read_only(seats_input.read_only())
                         .invalid(seats_input.invalid())
                         .required(seats_input.required())
+                        .busy(seats_input.busy())
                         .with_size(seats_input.size())
                         .tokens(tokens),
                     )
@@ -284,11 +285,19 @@ fn form_adapter_state_row(sample: &pages::components::FormAdapterSample) -> impl
         .text_xs()
         .text_color(rgb(0x5a6472))
         .child(format!(
-            "{} fields / {} invalid / {} dirty / {} redacted",
+            "{} fields / {} validating / {} invalid / {} dirty / {} redacted",
             sample.field_count,
+            sample.validating_field_count,
             sample.invalid_field_count,
             sample.dirty_field_count,
             sample.redacted_field_count
+        ))
+        .child(format!(
+            "form busy {} / validating {} / submitting {} / submit enabled {}",
+            sample.form.busy(),
+            sample.form.validating(),
+            sample.form.submitting(),
+            sample.form.submit_enabled()
         ))
         .child(format!("select workspace.region = {}", sample.region_value))
 }
@@ -326,6 +335,11 @@ fn resource_adapter_state_row(
 fn render_ecosystem_runtime_readout() -> impl IntoElement {
     let form_log = pages::components::form_sample_runtime_log();
     let resource_log = pages::components::resource_sample_runtime_log();
+    let form_status = form_log
+        .entries()
+        .last()
+        .map(|event| form_status_label(&event.status))
+        .unwrap_or("empty");
 
     div()
         .rounded_sm()
@@ -338,7 +352,10 @@ fn render_ecosystem_runtime_readout() -> impl IntoElement {
         .gap_1()
         .text_xs()
         .text_color(rgb(0x5a6472))
-        .child(format!("form runtime {} actions", form_log.len()))
+        .child(format!(
+            "form runtime {} events / final {form_status}",
+            form_log.len()
+        ))
         .child(format!("resource runtime {} events", resource_log.len()))
 }
 

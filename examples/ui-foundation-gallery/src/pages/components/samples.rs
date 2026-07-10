@@ -78,7 +78,10 @@ pub use choice::{
     select_samples, switch_samples, toggle_samples,
 };
 pub use feedback::{EmptyStateSample, StatusCueSample, empty_state_samples, status_cue_samples};
-pub use form::{FormAdapterSample, form_adapter_samples, form_devtools_dogfood_snapshot};
+pub use form::{
+    FORM_DEVTOOLS_DOGFOOD_CANARIES, FormAdapterSample, form_adapter_samples,
+    form_devtools_dogfood_snapshot, form_devtools_validation_dogfood_snapshot,
+};
 pub use foundation::{
     AccordionSample, AvatarGroupSample, AvatarSample, BadgeSample, BreadcrumbSample, ButtonSample,
     CollapsibleSample, FoundationComponentSamples, IconButtonSample, KbdSample, LinkSample,

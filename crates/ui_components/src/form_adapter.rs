@@ -1,12 +1,62 @@
 //! Form-state projection helpers for concrete UI components.
 
-use open_gpui_form::{FieldSnapshot, FormStatus};
+use open_gpui_form::{FieldSnapshot, FormSnapshot, FormStatus};
 use open_gpui_ui_core::{Size, ThemeTokens};
 
 use crate::{
     checkbox::CheckboxState, field::FieldState, number_input::NumberInputState,
     text_input::TextInputState, textarea::TextareaState,
 };
+
+/// Projection of form-level lifecycle facts into concrete UI decisions.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FormProjection {
+    status: FormStatus,
+    busy: bool,
+    validating: bool,
+    submitting: bool,
+    submit_enabled: bool,
+}
+
+impl FormProjection {
+    /// Resolves form-level UI state from one diagnostic snapshot.
+    pub fn resolve(snapshot: &FormSnapshot, disabled: bool) -> Self {
+        let validating = matches!(snapshot.status, FormStatus::Validating);
+        let submitting = matches!(snapshot.status, FormStatus::Submitting);
+        Self {
+            status: snapshot.status,
+            busy: validating || submitting,
+            validating,
+            submitting,
+            submit_enabled: !disabled && snapshot.can_submit(),
+        }
+    }
+
+    /// Returns the effective form status.
+    pub fn status(&self) -> &FormStatus {
+        &self.status
+    }
+
+    /// Returns whether validation or submission work is active.
+    pub const fn busy(&self) -> bool {
+        self.busy
+    }
+
+    /// Returns whether validation work is active.
+    pub const fn validating(&self) -> bool {
+        self.validating
+    }
+
+    /// Returns whether submission work is active.
+    pub const fn submitting(&self) -> bool {
+        self.submitting
+    }
+
+    /// Returns whether the submit command should be enabled.
+    pub const fn submit_enabled(&self) -> bool {
+        self.submit_enabled
+    }
+}
 
 /// Configuration supplied by the application for one form field.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -82,6 +132,8 @@ pub struct FormFieldProjection {
     disabled: bool,
     read_only: bool,
     invalid: bool,
+    validating: bool,
+    busy: bool,
     size: Size,
 }
 
@@ -89,6 +141,8 @@ impl FormFieldProjection {
     /// Resolves projection state for one field snapshot.
     pub fn resolve(status: FormStatus, field: &FieldSnapshot, config: FormFieldConfig) -> Self {
         let invalid = !field.meta.errors.is_empty();
+        let validating = field.meta.validating;
+        let submitting = matches!(status, FormStatus::Submitting);
         Self {
             label: config.label,
             control_id: config
@@ -97,9 +151,11 @@ impl FormFieldProjection {
             help: config.help,
             error: field.meta.errors.first().cloned(),
             required: config.required,
-            disabled: config.disabled || matches!(status, FormStatus::Submitting),
+            disabled: config.disabled || submitting,
             read_only: config.read_only,
             invalid,
+            validating,
+            busy: validating || submitting,
             size: config.size,
         }
     }
@@ -122,6 +178,16 @@ impl FormFieldProjection {
     /// Returns whether the field is invalid.
     pub const fn invalid(&self) -> bool {
         self.invalid
+    }
+
+    /// Returns whether this field has pending validation work.
+    pub const fn validating(&self) -> bool {
+        self.validating
+    }
+
+    /// Returns whether validation or submission work affects this field.
+    pub const fn busy(&self) -> bool {
+        self.busy
     }
 
     /// Returns whether the field is disabled.
@@ -152,6 +218,7 @@ impl FormFieldProjection {
             self.invalid,
             tokens,
         )
+        .with_busy(self.busy)
     }
 
     /// Resolves text input state for this field.
@@ -172,6 +239,7 @@ impl FormFieldProjection {
             false,
             tokens,
         )
+        .with_busy(self.busy)
     }
 
     /// Resolves textarea state for this field.
@@ -194,6 +262,7 @@ impl FormFieldProjection {
             false,
             tokens,
         )
+        .with_busy(self.busy)
     }
 
     /// Resolves number input state for this field.
@@ -218,6 +287,7 @@ impl FormFieldProjection {
             self.size,
             tokens,
         )
+        .with_busy(self.busy)
     }
 
     /// Resolves checkbox state for this field.
@@ -231,6 +301,7 @@ impl FormFieldProjection {
             self.invalid,
             tokens,
         )
+        .with_busy(self.busy)
     }
 }
 

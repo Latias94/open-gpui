@@ -1057,6 +1057,17 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         source_home: "gpui_adapter",
     },
     ComponentContractEntry {
+        name: "FormProjection",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        family: Some("form-adapter"),
+        gallery_status: SurfaceGalleryStatus::AdapterOnly,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("FormProjection"),
+        default_export: true,
+        source_inputs: &["form_adapter.rs"],
+        source_home: "form_adapter.rs",
+    },
+    ComponentContractEntry {
         name: "FormFieldConfig",
         owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
         family: Some("form-adapter"),

@@ -24,18 +24,18 @@ fn form_resource_adapters_count_redacted_form_fields() {
                 meta: FieldMetaSnapshot {
                     dirty: true,
                     touched: true,
-                    errors: vec!["email already used by alice@example.com".to_owned()],
+                    errors: vec!["violet meadow 744".to_owned()],
                     ..FieldMetaSnapshot::default()
                 },
             },
             FieldSnapshot {
-                id: FieldId::new("account.role").unwrap(),
-                path: FieldPath::new("account.role").unwrap(),
-                value: RedactedValue::Json(serde_json::json!("admin")),
+                id: FieldId::new("azure ridge 581").unwrap(),
+                path: FieldPath::new("azure ridge 581").unwrap(),
+                value: RedactedValue::Json(serde_json::json!("silver harbor 319")),
                 meta: FieldMetaSnapshot::default(),
             },
         ],
-        errors: vec!["submit token=raw-secret failed".to_owned()],
+        errors: vec!["amber canyon 882".to_owned()],
         submit_count: 2,
     };
 
@@ -43,17 +43,27 @@ fn form_resource_adapters_count_redacted_form_fields() {
     let envelope = form::form_snapshot_envelope(ProbeId::new("form").unwrap(), &snapshot);
     let capture = form::form_capture(ProbeId::new("form.capture").unwrap(), &snapshot);
     let serialized = serde_json::to_string(&envelope).unwrap();
+    let serialized_capture = serde_json::to_string(&capture).unwrap();
 
-    assert_eq!(probe_snapshot.redaction().redacted_values, 1);
+    assert_eq!(probe_snapshot.redaction().redacted_values, 4);
     assert_eq!(envelope.kind, SnapshotKind::Form);
     assert_eq!(capture.targets.targets[0].kind, DevtoolsTargetKind::Runtime);
     assert_eq!(capture.domains[0].kind, DevtoolsDomainKind::Data);
     assert_eq!(capture.snapshots[0].kind, SnapshotKind::Form);
     assert!(serialized.contains("SubmitFailed"));
     assert!(serialized.contains("submit_count"));
-    assert!(serialized.contains("admin"));
-    assert!(!serialized.contains("alice@example.com"));
-    assert!(!serialized.contains("raw-secret"));
+    for canary in [
+        "violet meadow 744",
+        "silver harbor 319",
+        "amber canyon 882",
+        "azure ridge 581",
+        "account.email",
+    ] {
+        assert!(!serialized.contains(canary));
+        assert!(!serialized_capture.contains(canary));
+    }
+    assert!(serialized.contains("error_count"));
+    assert!(serialized.contains("redacted"));
 }
 
 #[test]

@@ -61,12 +61,16 @@ existing component state. These helpers are public because applications need sta
 but they are not standalone official components and should not move cache, form, or async task
 ownership into the component crate.
 
-The form adapter surface is `FormFieldConfig`, `FormFieldProjection`, `form_text_value`,
-`form_number_value`, `form_checkbox_value`, and `form_select_value`. It consumes
-`open_gpui_form::FieldSnapshot` and `open_gpui_form::FormStatus`, then resolves existing
+The form adapter surface is `FormProjection`, `FormFieldConfig`, `FormFieldProjection`,
+`form_text_value`, `form_number_value`, `form_checkbox_value`, and `form_select_value`.
+`FormProjection` resolves form-level busy state and submit eligibility. The field projection
+consumes `open_gpui_form::FieldSnapshot` and `open_gpui_form::FormStatus`, then resolves existing
 `FieldState`, `TextInputState`, `TextareaState`, `NumberInputState`, and `CheckboxState` inputs.
-The owning form store, validation lifecycle, submit lifecycle, and redacted `FormSnapshot` stay in
-`open-gpui-form`.
+Validation activity is busy but remains editable; submission is a separate disabling policy. The
+Field, TextInput, Textarea, NumberInput, and Checkbox builders must preserve projected busy state
+when they rematerialize their resolved state. The
+owning form store, ticket generations, derived lifecycle, submission eligibility, and
+redaction-aware `FormSnapshot` stay in `open-gpui-form`.
 
 The resource adapter surface is `ResourceAdapterLabels`, `ResourceCollectionProjection`,
 `ResourceMutationProjection`, and `resource_query_key_label`. It consumes
@@ -75,8 +79,9 @@ existing feedback, command, table/tree children-load, and virtualized-list statu
 retry timers, cancellation, mutations, cache invalidation, pagination, and redacted
 `ResourceSnapshot` values stay in `open-gpui-resource`.
 
-The Components gallery shows `FormFieldProjection`, `ResourceCollectionProjection`, and
-`ResourceMutationProjection` as adapter-only rows in the `ecosystem-adapters` section. That keeps
+The Components gallery shows `FormProjection`, `FormFieldProjection`,
+`ResourceCollectionProjection`, and `ResourceMutationProjection` as adapter-only rows in the
+`ecosystem-adapters` section. That keeps
 adoption visible while preserving the component catalog distinction between official rendered
 components, renderer-neutral state contracts, adapter helpers, and internal anatomy.
 

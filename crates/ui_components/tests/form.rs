@@ -1,6 +1,8 @@
 mod support;
 
-use open_gpui_ui_components::{Field, FormControlState, NumberInput, TextInput, Textarea};
+use open_gpui_ui_components::{
+    Checkbox, Field, FormControlState, NumberInput, TextInput, Textarea,
+};
 use open_gpui_ui_core::{Size, semantic};
 
 use support::tokens::custom_tokens;
@@ -104,4 +106,25 @@ fn field_and_inputs_expose_shared_form_control_state() {
     assert!(!textarea.control_state().tab_stop_enabled());
     assert!(number_input.control_state().required());
     assert!(number_input.control_state().input_enabled());
+}
+
+#[test]
+fn concrete_form_builders_preserve_busy_without_disabling_input() {
+    let field = Field::new("email-field", "email", "Email")
+        .busy(true)
+        .state();
+    let text_input = TextInput::new("email", "Email").busy(true).state();
+    let textarea = Textarea::new("notes", "Notes").busy(true).state();
+    let number_input = NumberInput::new("quantity", "Quantity").busy(true).state();
+    let checkbox = Checkbox::new("alerts").busy(true).state();
+
+    assert!(field.busy());
+    assert!(text_input.busy());
+    assert!(text_input.control_state().input_enabled());
+    assert!(textarea.busy());
+    assert!(textarea.control_state().input_enabled());
+    assert!(number_input.busy());
+    assert!(number_input.control_state().input_enabled());
+    assert!(checkbox.busy());
+    assert!(checkbox.activation_enabled());
 }

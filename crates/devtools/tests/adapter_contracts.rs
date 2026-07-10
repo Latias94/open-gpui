@@ -1,5 +1,6 @@
 use open_gpui_devtools::adapters::{
-    sanitize_sensitive_text, snapshot_node_with_payload, stable_node_id, summary_payload,
+    opaque_stable_id, sanitize_sensitive_text, snapshot_node_with_payload, stable_node_id,
+    summary_payload,
 };
 use open_gpui_devtools::{
     DevtoolsInspectorState, DevtoolsRegistry, DevtoolsRegistryError, ProbeId, SnapshotCollection,
@@ -249,6 +250,19 @@ fn duplicate_snapshot_probe_ids_still_fail() {
 #[test]
 fn stable_node_id_uses_fallback_for_empty_segments() {
     assert_eq!(stable_node_id(["", "  "]), "node");
+}
+
+#[test]
+fn opaque_stable_id_is_deterministic_without_retaining_source_text() {
+    let first = opaque_stable_id("form-field", "violet meadow 744");
+    let second = opaque_stable_id("form-field", "violet meadow 744");
+    let other = opaque_stable_id("form-field", "silver harbor 319");
+
+    assert_eq!(first, second);
+    assert_ne!(first, other);
+    assert!(first.starts_with("form-field-"));
+    assert!(!first.contains("violet"));
+    assert!(!first.contains("meadow"));
 }
 
 #[test]

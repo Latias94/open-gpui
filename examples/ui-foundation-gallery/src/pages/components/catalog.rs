@@ -748,6 +748,11 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "gpui_adapter export / controller tests",
     ),
     ComponentCatalogEntry::adapter_only(
+        "FormProjection",
+        "form-adapter",
+        "form lifecycle projection / gallery samples / state tests",
+    ),
+    ComponentCatalogEntry::adapter_only(
         "FormFieldProjection",
         "form-adapter",
         "form adapter projection / gallery samples / state tests",

@@ -1,11 +1,24 @@
 use super::*;
-use open_gpui_form::{
-    FieldPath, FormSnapshot, FormStatus, FormStore, RedactedValue, RedactionPolicy,
-};
+use open_gpui_form::{FieldPath, FormSnapshot, FormStore, RedactedValue, RedactionPolicy};
 use open_gpui_ui_components::{
-    FormFieldConfig, FormFieldProjection, form_checkbox_value, form_number_value,
+    FormFieldConfig, FormFieldProjection, FormProjection, form_checkbox_value, form_number_value,
     form_select_value, form_text_value,
 };
+
+const SUBMIT_ERROR_CANARY: &str = "violet meadow 744";
+const SUBMIT_VALUE_CANARY: &str = "silver harbor 319";
+const SUBMIT_NOTES_CANARY: &str = "indigo summit 638";
+const VALIDATION_VALUE_CANARY: &str = "azure ridge 581";
+const VALIDATION_ERROR_CANARY: &str = "amber canyon 882";
+
+/// Unique source strings that must never survive the Gallery DevTools adapter boundary.
+pub const FORM_DEVTOOLS_DOGFOOD_CANARIES: &[&str] = &[
+    SUBMIT_ERROR_CANARY,
+    SUBMIT_VALUE_CANARY,
+    SUBMIT_NOTES_CANARY,
+    VALIDATION_VALUE_CANARY,
+    VALIDATION_ERROR_CANARY,
+];
 
 /// One form-adapter integration sample in the gallery.
 #[derive(Debug, Clone, PartialEq)]
@@ -16,8 +29,8 @@ pub struct FormAdapterSample {
     pub title: &'static str,
     /// Short explanation of the adapter slice.
     pub summary: &'static str,
-    /// Current form lifecycle status.
-    pub status: FormStatus,
+    /// Form-level lifecycle and submit projection.
+    pub form: FormProjection,
     /// Resolved email field wrapper state.
     pub email_field: FieldState,
     /// Resolved email text input state.
@@ -36,6 +49,8 @@ pub struct FormAdapterSample {
     pub field_count: usize,
     /// Number of fields with validation errors.
     pub invalid_field_count: usize,
+    /// Number of fields with pending validation work.
+    pub validating_field_count: usize,
     /// Number of fields marked dirty.
     pub dirty_field_count: usize,
     /// Number of fields redacted by the default diagnostic snapshot.
@@ -48,6 +63,7 @@ pub struct FormAdapterSample {
 pub fn form_adapter_samples(tokens: ThemeTokens) -> Vec<FormAdapterSample> {
     vec![
         invalid_form_sample(tokens),
+        validating_form_sample(tokens),
         submitting_form_sample(tokens),
         reset_form_sample(tokens),
     ]
@@ -59,17 +75,28 @@ pub fn form_devtools_dogfood_snapshot() -> FormSnapshot {
     let email = path("account.email");
     let notes = path("profile.notes");
     store
-        .set_value(&email, serde_json::json!("not-an-email"))
+        .set_value(&email, serde_json::json!(SUBMIT_VALUE_CANARY))
         .unwrap();
     store
-        .set_value(&notes, serde_json::json!("Submit via DevTools dogfood."))
+        .set_value(&notes, serde_json::json!(SUBMIT_NOTES_CANARY))
         .unwrap();
-    store.begin_submit().unwrap();
-    store.finish_submit_error("submit rejected token=gallery-secret");
+    store.validate_field(&email, |_| Vec::new()).unwrap();
+    let submit = store.begin_submit().unwrap();
+    let _completion = store.finish_submit_error(submit, SUBMIT_ERROR_CANARY);
+    store.snapshot(RedactionPolicy::Expose)
+}
+
+/// Returns the first-frame validation snapshot used by the DevTools dogfood session.
+pub fn form_devtools_validation_dogfood_snapshot() -> FormSnapshot {
+    let mut store = base_form_store();
+    let email = path("account.email");
     store
-        .validate_field(&email, |_| vec!["Enter a valid work email.".to_owned()])
+        .set_value(&email, serde_json::json!(VALIDATION_VALUE_CANARY))
         .unwrap();
-    store.snapshot(RedactionPolicy::RedactAll)
+    store
+        .validate_field(&email, |_| vec![VALIDATION_ERROR_CANARY.to_owned()])
+        .unwrap();
+    store.snapshot(RedactionPolicy::Expose)
 }
 
 fn invalid_form_sample(tokens: ThemeTokens) -> FormAdapterSample {
@@ -99,12 +126,29 @@ fn submitting_form_sample(tokens: ThemeTokens) -> FormAdapterSample {
     store
         .set_value(&notes, serde_json::json!("Ship adapter samples."))
         .unwrap();
-    store.begin_submit().unwrap();
+    let _submit = store.begin_submit().unwrap();
 
     build_form_adapter_sample(
         "submitting",
         "Submitting profile",
         "Submitting status disables projected controls while app-owned values stay outside components.",
+        store,
+        tokens,
+    )
+}
+
+fn validating_form_sample(tokens: ThemeTokens) -> FormAdapterSample {
+    let mut store = base_form_store();
+    let email = path("account.email");
+    store
+        .set_value(&email, serde_json::json!("pending@example.com"))
+        .unwrap();
+    let _validation = store.begin_async_validation(&email).unwrap();
+
+    build_form_adapter_sample(
+        "validating",
+        "Validating profile",
+        "A real pending validation projects busy state while fields remain editable.",
         store,
         tokens,
     )
@@ -134,7 +178,7 @@ fn build_form_adapter_sample(
 ) -> FormAdapterSample {
     let exposed = store.snapshot(RedactionPolicy::Expose);
     let redacted = store.snapshot(RedactionPolicy::RedactAll);
-    let status = exposed.status.clone();
+    let form = FormProjection::resolve(&exposed, false);
     let email = path("account.email");
     let notes = path("profile.notes");
     let seats = path("workspace.seats");
@@ -174,7 +218,7 @@ fn build_form_adapter_sample(
         id,
         title,
         summary,
-        status,
+        form,
         email_field: email_projection.field_state(tokens),
         email_input: email_projection.text_input_state(
             email_value,
@@ -197,6 +241,7 @@ fn build_form_adapter_sample(
             .iter()
             .filter(|field| !field.meta.errors.is_empty())
             .count(),
+        validating_field_count: exposed.validating_field_count(),
         dirty_field_count: exposed
             .fields
             .iter()
@@ -216,11 +261,7 @@ fn projection(
     path: &FieldPath,
     config: FormFieldConfig,
 ) -> FormFieldProjection {
-    FormFieldProjection::resolve(
-        snapshot.status.clone(),
-        snapshot.field(path).unwrap(),
-        config,
-    )
+    FormFieldProjection::resolve(snapshot.status, snapshot.field(path).unwrap(), config)
 }
 
 fn base_form_store() -> FormStore {
@@ -250,6 +291,7 @@ fn path(value: &str) -> FieldPath {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use open_gpui_form::FormStatus;
 
     #[test]
     fn form_adapter_samples_cover_validation_submit_and_reset() {
@@ -262,18 +304,29 @@ mod tests {
             .iter()
             .find(|sample| sample.id == "submitting")
             .unwrap();
+        let validating = samples
+            .iter()
+            .find(|sample| sample.id == "validating")
+            .unwrap();
         let reset = samples.iter().find(|sample| sample.id == "reset").unwrap();
 
-        assert_eq!(validation.status, FormStatus::Idle);
+        assert_eq!(validation.form.status(), &FormStatus::Idle);
         assert!(validation.email_field.invalid());
         assert!(validation.email_input.invalid());
         assert_eq!(validation.invalid_field_count, 1);
         assert_eq!(validation.redacted_field_count, validation.field_count);
         assert_eq!(validation.region_value, "us-east");
 
-        assert_eq!(submitting.status, FormStatus::Submitting);
+        assert_eq!(submitting.form.status(), &FormStatus::Submitting);
         assert!(submitting.email_input.disabled());
         assert!(submitting.alerts_checkbox.disabled());
+
+        assert_eq!(validating.form.status(), &FormStatus::Validating);
+        assert_eq!(validating.validating_field_count, 1);
+        assert!(validating.email_field.busy());
+        assert!(validating.email_input.busy());
+        assert!(!validating.email_input.disabled());
+        assert!(validating.email_input.control_state().input_enabled());
 
         assert_eq!(reset.dirty_field_count, 0);
         assert_eq!(reset.seats_input.value(), 8.0);

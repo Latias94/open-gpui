@@ -236,6 +236,7 @@ pub(crate) fn component_checkbox(
         .disabled(state.disabled())
         .required(state.required())
         .invalid(state.invalid())
+        .busy(state.busy())
         .with_size(state.size())
         .tokens(tokens)
 }
@@ -258,13 +259,14 @@ pub(crate) fn component_checkbox_state_row(state: CheckboxState) -> impl IntoEle
             }
         ))
         .child(format!(
-            "{} / {}",
+            "{} / {} / busy {}",
             if state.required() {
                 "required"
             } else {
                 "optional"
             },
-            if state.invalid() { "invalid" } else { "valid" }
+            if state.invalid() { "invalid" } else { "valid" },
+            state.busy()
         ))
         .child(format!(
             "box {} indicator {}",
@@ -333,6 +335,7 @@ pub(crate) fn component_text_input(
         .read_only(state.read_only())
         .required(state.required())
         .invalid(state.invalid())
+        .busy(state.busy())
         .tokens(tokens);
 
     let input = if let Some(controller) = controller {
@@ -362,6 +365,7 @@ pub(crate) fn component_field(
         .required(state.required())
         .disabled(state.disabled())
         .invalid(state.invalid())
+        .busy(state.busy())
         .tokens(tokens)
         .control(control);
 
@@ -429,6 +433,7 @@ pub(crate) fn component_textarea(
         .read_only(state.read_only())
         .required(state.required())
         .invalid(state.invalid())
+        .busy(state.busy())
         .tokens(tokens);
 
     if let Some(placeholder) = state.placeholder() {
@@ -485,14 +490,15 @@ pub(crate) fn component_field_state_row(
         .text_xs()
         .text_color(rgb(0x5a6472))
         .child(format!(
-            "{} / {} / {}",
+            "{} / {} / {} / busy {}",
             field.size().as_str(),
             if field.required() {
                 "required"
             } else {
                 "optional"
             },
-            if field.invalid() { "invalid" } else { "valid" }
+            if field.invalid() { "invalid" } else { "valid" },
+            field.busy() || input.busy()
         ))
         .child(format!(
             "{} / {}",
@@ -524,14 +530,15 @@ pub(crate) fn component_field_textarea_state_row(
         .text_xs()
         .text_color(rgb(0x5a6472))
         .child(format!(
-            "{} / {} / {}",
+            "{} / {} / {} / busy {}",
             field.size().as_str(),
             if field.required() {
                 "required"
             } else {
                 "optional"
             },
-            if field.invalid() { "invalid" } else { "valid" }
+            if field.invalid() { "invalid" } else { "valid" },
+            field.busy() || textarea.busy()
         ))
         .child(format!(
             "{} / {}",

@@ -15,6 +15,7 @@ pub struct FormControlState {
     invalid: bool,
     required: bool,
     controller_driven: bool,
+    busy: bool,
 }
 
 impl Default for FormControlState {
@@ -33,6 +34,7 @@ impl FormControlState {
             invalid: false,
             required: false,
             controller_driven: false,
+            busy: false,
         }
     }
 
@@ -52,6 +54,7 @@ impl FormControlState {
             invalid,
             required,
             controller_driven,
+            busy: false,
         }
     }
 
@@ -91,6 +94,12 @@ impl FormControlState {
         self
     }
 
+    /// Returns a copy with asynchronous activity state updated.
+    pub const fn with_busy(mut self, busy: bool) -> Self {
+        self.busy = busy;
+        self
+    }
+
     /// Returns the foundation size.
     pub const fn size(self) -> Size {
         self.size
@@ -119,6 +128,11 @@ impl FormControlState {
     /// Returns whether this state is backed by an editable adapter controller.
     pub const fn controller_driven(self) -> bool {
         self.controller_driven
+    }
+
+    /// Returns whether asynchronous work is pending for this control.
+    pub const fn busy(self) -> bool {
+        self.busy
     }
 
     /// Returns whether value editing should be accepted.

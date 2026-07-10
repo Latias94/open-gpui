@@ -1310,6 +1310,10 @@ fn component_form_samples_expose_redacted_devtools_snapshots() {
         .iter()
         .find(|sample| sample.id == "validation")
         .expect("validation form sample");
+    let validating = samples
+        .iter()
+        .find(|sample| sample.id == "validating")
+        .expect("validating form sample");
 
     assert_eq!(
         validation.redacted_field_count,
@@ -1322,6 +1326,13 @@ fn component_form_samples_expose_redacted_devtools_snapshots() {
             .iter()
             .all(|field| matches!(field.value, RedactedValue::Redacted))
     );
+    assert_eq!(validating.form.status(), &FormStatus::Validating);
+    assert_eq!(validating.validating_field_count, 1);
+    assert!(validating.form.busy());
+    assert!(validating.form.validating());
+    assert!(!validating.form.submit_enabled());
+    assert!(validating.email_field.busy());
+    assert!(!validating.email_input.disabled());
 
     let dogfood = pages::components::form_devtools_dogfood_snapshot();
     assert_eq!(dogfood.status, FormStatus::SubmitFailed);
@@ -1330,7 +1341,73 @@ fn component_form_samples_expose_redacted_devtools_snapshots() {
         dogfood.fields.len(),
         validation.redacted_snapshot.fields.len()
     );
-    assert!(dogfood.errors.iter().any(|error| error.contains("token=")));
+    assert_eq!(dogfood.errors, ["violet meadow 744"]);
+    assert!(dogfood.fields.iter().any(|field| {
+        matches!(
+            &field.value,
+            RedactedValue::Json(serde_json::Value::String(value)) if value == "silver harbor 319"
+        )
+    }));
+
+    let validation_dogfood = pages::components::form_devtools_validation_dogfood_snapshot();
+    assert!(validation_dogfood.fields.iter().any(|field| {
+        field.meta.errors == ["amber canyon 882"]
+            && matches!(
+                &field.value,
+                RedactedValue::Json(serde_json::Value::String(value)) if value == "azure ridge 581"
+            )
+    }));
+    let source_json = serde_json::to_string(&[&dogfood, &validation_dogfood]).unwrap();
+    for &canary in pages::components::FORM_DEVTOOLS_DOGFOOD_CANARIES {
+        assert!(
+            source_json.contains(canary),
+            "source-side form canary is missing: {canary}"
+        );
+    }
+}
+
+#[test]
+fn component_form_runtime_log_is_derived_from_real_lifecycle_transitions() {
+    use open_gpui_form::{FormStatus, SubmitCompletion, ValidationCompletion};
+
+    let log = pages::components::form_sample_runtime_log();
+    let events = log.entries();
+
+    assert_eq!(
+        events.first().unwrap().action,
+        pages::components::FormSampleRuntimeAction::BeginValidation
+    );
+    assert_eq!(events.first().unwrap().status, FormStatus::Validating);
+    assert_eq!(events.first().unwrap().validating_field_count, 1);
+    assert_eq!(
+        events.last().unwrap().action,
+        pages::components::FormSampleRuntimeAction::Reset
+    );
+    assert_eq!(events.last().unwrap().status, FormStatus::Idle);
+    assert!(events.iter().any(|event| {
+        event.action == pages::components::FormSampleRuntimeAction::FailSubmission
+            && event.status == FormStatus::SubmitFailed
+    }));
+    assert!(events.iter().any(|event| {
+        event.action == pages::components::FormSampleRuntimeAction::EditAfterFailure
+            && event.status == FormStatus::Idle
+            && event.can_submit
+    }));
+    assert!(events.iter().any(|event| {
+        event.action == pages::components::FormSampleRuntimeAction::CompleteSubmission
+            && event.status == FormStatus::Submitted
+            && event.completion
+                == Some(pages::components::FormSampleRuntimeCompletion::Submission(
+                    SubmitCompletion::Applied,
+                ))
+    }));
+    assert!(events.iter().any(|event| {
+        event.action == pages::components::FormSampleRuntimeAction::CompleteValidation
+            && event.completion
+                == Some(pages::components::FormSampleRuntimeCompletion::Validation(
+                    ValidationCompletion::Applied,
+                ))
+    }));
 }
 
 #[test]
