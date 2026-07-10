@@ -1,0 +1,1003 @@
+---
+title: "refactor: Converge Open GPUI UI framework authorities"
+date: 2026-07-10
+type: refactor
+artifact_contract: ce-unified-plan/v1
+artifact_readiness: implementation-ready
+product_contract_source: ce-plan-bootstrap
+execution: code
+deepened: 2026-07-10
+---
+
+# refactor: Converge Open GPUI UI framework authorities
+
+## Goal Capsule
+
+Open GPUI should leave this work as a credible general-purpose desktop UI framework foundation, not only a large component catalog. The framework must have one authoritative path for form lifecycle, focus and overlay arbitration, accessibility semantics, activation, theme resolution, collection typeahead, and component conformance.
+
+The refactor is intentionally breaking. New authorities replace old forwarding layers, duplicated metadata, source-string scanners, and public callbacks in the same implementation unit. No compatibility aliases or parallel runtimes remain after a migration unit lands.
+
+Success is observable when:
+
+- asynchronous form validation cannot publish stale results and `FormStatus::Validating` is observable from store through UI and DevTools;
+- nested overlays in one window share deterministic dismiss, modal, focus-loop, and focus-restore behavior while different windows remain isolated;
+- representative components are verified against the final AccessKit tree and AccessKit actions, not only hand-authored claims;
+- pointer, keyboard, accessibility, and programmatic activation enter one semantic callback path with role-specific key policy and exactly-once behavior;
+- theme v2 owns stable design scales and resolves app, window, and subtree context without app-global selection leakage;
+- collection typeahead has one deterministic, fake-clock-testable session implementation;
+- federated typed authorities project their own facts and are cross-checked structurally across component metadata, gallery, DevTools, docs, public surfaces, and executable scenarios;
+- the existing GPUI substrate, table engine, virtualizer, motion engine, text editing, choice models, and `FormStore` architecture remain deep modules rather than being rewritten for symmetry.
+
+## Product Contract
+
+### Summary
+
+The current codebase is a strong 0.2 desktop UI foundation with substantial behavior and test coverage. The baseline audit passed 861 tests with one skipped test across `open-gpui-ui-core`, `open-gpui-ui-components`, `open-gpui-form`, `open-gpui-motion`, and the foundation gallery. The remaining gaps are not primarily missing widgets. They are split ownership and unverified lifecycle behavior at framework boundaries.
+
+This plan converges those boundaries in dependency order. It adopts the window ownership and focus-scope lessons visible in `repo-ref/gpui-component` and `repo-ref/fret`, while retaining Open GPUI's existing crate direction and GPUI-native component model.
+
+### Problem Frame
+
+The framework currently has several models that look complete in isolation but are not production authorities:
+
+- `ui_core::overlay` can resolve topmost Escape, outside press, and focus restore, but production overlays do not share a per-window stack that consumes those resolvers.
+- Modal surfaces use tab grouping but do not provide a nested focus trap or reliable target/fallback resolution.
+- Accessibility component state, renderer attributes, static evidence, DevTools output, and the final AccessKit tree can disagree because the final tree is not test-observable on `TestPlatform`.
+- `FormStatus::Validating` is effectively unreachable, field projection drops validation activity, and a completion for an old field value can overwrite newer state.
+- Theme selection is app-global, revisions are caller-controlled rather than effective-content authority, and the schema only models a small color vocabulary.
+- Public callbacks expose `ClickEvent` even where consumers only need semantic activation or value change.
+- Tree and VirtualizedList duplicate typeahead buffer and timeout behavior.
+- Component contract rows, API inventory, public owner tables, gallery catalog, accessibility evidence, and source parsers repeat product facts that can drift while all string checks remain green.
+
+The failure mode is authority drift: each layer is locally plausible, but no single module owns the end-to-end invariant.
+
+### Requirements
+
+R1. Preserve the dependency direction `open-gpui -> ui_core -> ui_components -> applications/examples`. `ui_core` remains renderer-neutral and cannot depend on GPUI lifecycle types.
+
+R2. Preserve existing deep modules unless a failing characterization proves an ownership defect: GPUI element/entity/context primitives, table engine, virtualizer, motion, text editing, choice state, `FormStore`, theme registry/snapshot, and command/action presentation.
+
+R3. Derive effective form status from validation activity and submission phase. Value changes, reset, and newer generations must invalidate older validation tickets. Stale completion must be a typed no-op result.
+
+R4. Provide a test-only/diagnostic path from `TestAppContext` to activate accessibility, inspect final AccessKit tree updates, and dispatch AccessKit actions against actual nodes.
+
+R5. Provide nested focus scopes with stable target identity, initial-focus policies, forward and reverse loops, stale-target filtering, and deterministic restoration.
+
+R6. Make one per-window overlay runtime the sole authority for registration order, parentage, topmost event arbitration, controlled close requests, closing presence, modal underlay blocking, focus claims, and restoration.
+
+R7. Derive one accessibility semantic projection from each component's existing resolved state. GPUI accessibility output and redacted DevTools inspection must consume that projection; no independently stored descriptor or static evidence may become a second semantic tree.
+
+R8. Replace public physical-click callbacks on official semantic controls with semantic activation or value-change callbacks. Activation source and domain payload must be typed; raw pointer detail remains available only through an explicitly named escape hatch where a real consumer needs it.
+
+R9. Theme v2 must retain a complete color scale. Typography, spacing, radius, elevation, density, and motion-policy are candidate public scales; each token enters schema/snapshot public contract only when at least two real recipes consume it. Unproven categories remain local and are recorded as intentionally deferred rather than padded to satisfy the plan.
+
+R10. Resolve theme context with precedence `subtree override > window selection/override > app selection > built-in fallback`. Runtime-owned effective revisions must be monotonic for effective changes; invalid loads must be atomic.
+
+R11. Deferred overlays opened from a themed subtree must retain the effective opening theme, including density and motion policy.
+
+R12. Extract one private collection typeahead session used by at least Tree and VirtualizedList, with an injected clock and stable-key behavior. Search inputs such as Combobox and Command must remain separate.
+
+R13. Establish federated typed authorities with narrow ownership: component contract rows own product metadata, Gallery owns selectors/probes, native tests own executable scenario IDs, and xtask cross-checks them structurally. Delete source parsing and parallel hand-authored facts without recreating a central registry.
+
+R14. Keep Table's engine, row identity, state pipeline, and virtualization architecture intact. Diagnostic snapshots may leave the common prelude/root surface, but no engine rewrite or 2D virtualization project is part of this plan.
+
+R15. Breaking migrations must update official components, gallery, DevTools, docs, examples, contracts, and tests in the same unit. Old aliases, forwarding facades, and stale evidence are deleted immediately.
+
+### Acceptance Examples
+
+1. A user opens a Popover, opens a Menu from it, then opens a modal Dialog. Escape is offered only to the Dialog. If its policy ignores Escape, lower layers do not close. Closing the Dialog restores focus inside the Menu; closing the Menu restores its trigger; closing the Popover restores the original application target.
+2. A controlled Dialog requests close, but its owner keeps `open = true`. It remains registered, modal, and focused until the controlled value actually closes. A close callback that opens another overlay cannot be followed by an old focus restoration that steals focus.
+3. Two windows use different themes. A compact high-contrast subtree in one window opens a deferred Select menu, and the menu retains that subtree's tokens without affecting its sibling or the other window.
+4. A field starts asynchronous validation, changes value, and starts another validation. Completion of the first ticket is reported stale and cannot change errors, activity, status, submission eligibility, UI busy state, or DevTools state.
+5. Button activation by pointer, Enter, Space, and AccessKit Click reaches the same semantic callback exactly once. Link activates on Enter but not Space. A disabled control advertises no activation and ignores every entry path.
+6. A rendered Checkbox changes from unchecked to checked. The same stable AccessKit node is observed on the next frame, with its state updated. DevTools reports the same semantic facts and does not reconstruct them from an evidence string.
+7. Tree and VirtualizedList accumulate typeahead within the configured interval, reset after fake-clock advancement, skip structural or disabled targets, preserve stable-key identity across reorder, and never share a buffer across instances or windows.
+8. Removing a component's executable scenario binding causes the conformance gate to fail with its component/scenario ID and owner path. Editing a comment or brace count cannot make the gate pass.
+
+### Scope Boundaries
+
+In scope:
+
+- form lifecycle correctness and projections;
+- GPUI accessibility test support;
+- focus scopes and the window overlay runtime;
+- accessibility migration for every official component that emits semantics, with deep final-tree/action parity for representative families;
+- semantic activation breaking APIs;
+- theme v2, effective revisions, window/subtree resolution, and deferred inheritance;
+- shared collection typeahead;
+- typed conformance projections and deletion of duplicate/source-string authorities;
+- common public-surface cleanup, gallery, DevTools, ADRs, migration notes, and verification.
+
+Explicitly out of scope:
+
+- a new standalone headless component crate or a second UI runtime;
+- copying the all-purpose `Root` implementation from `gpui-component` or Fret's runtime architecture;
+- rewriting GPUI `Element`, `Entity`, `Context`, `Window::use_keyed_state`, or the render pipeline;
+- rewriting Table, Virtualizer, Motion, Choice, text editing, or `FormStore` from scratch;
+- moving command execution into the UI activation module or deleting `ActionDescriptor`/`ResolvedActionState` without new evidence;
+- replacing the neutral accessibility vocabulary merely to mirror AccessKit types;
+- tokenizing every pixel literal; structural component metrics remain local;
+- cross-window overlays, portal routing across native windows, or a generalized dependency-injection container;
+- platform-specific screenshot baselines that cannot be generated and verified on the active platform. Gallery runtime and structural smoke coverage remains required.
+
+## Planning Contract
+
+### Key Technical Decisions
+
+KTD1. **Replace, do not layer.** A new runtime or derived projection becomes the sole path for its facts in the owning unit. The old forwarding facade, duplicate state, callback, or evidence path is deleted before the unit completes.
+
+KTD2. **Keep renderer-neutral policy separate from GPUI lifecycle.** Pure stack/status/typeahead resolution belongs in `ui_core` or the owning domain crate. Focus handles, keyed state, AccessKit node updates, event subscriptions, frame scheduling, and deferred rendering remain GPUI adapter responsibilities.
+
+KTD3. **Window ownership is real ownership.** Overlay/focus and active theme selection cannot be modeled as app-global maps keyed by element IDs. Window state uses GPUI window-owned state; subtree context is frame-scoped and stack-balanced.
+
+KTD4. **Callbacks observe the correct ownership state.** Uncontrolled framework state commits before its semantic callback, followed by end-of-turn focus arbitration. Controlled paths emit intent against the owner's currently committed state and do not perform state-dependent cleanup or focus restoration until the owner commits the new state/presence. A newer focus claim wins over an older restore claim.
+
+KTD5. **Controlled components emit intent only.** A close or value-change request does not mutate caller-owned state. Runtime registration and focus restoration follow actual controlled state/presence.
+
+KTD6. **The final accessibility tree is a required test surface.** Model-level tests remain valuable, but claims of role, relation, action, focus, and stale-node cleanup require final `TreeUpdate` assertions.
+
+KTD7. **Semantic activation is not a second command system.** It normalizes UI entry paths and payloads. `ActionDescriptor` continues to own reusable presentation facts; command registry/dispatch continues to own command execution.
+
+KTD8. **Theme context is immutable at render time.** App registry and built-in definitions may be global, but active selection and overrides resolve to immutable snapshots with runtime-owned effective revisions.
+
+KTD9. **Typed context is narrow, not a service locator.** Scoped theme resolution begins with a prototype comparing a theme-specific provider with a GPUI inherited-context primitive. A public generic GPUI primitive is accepted only if the theme-specific path cannot satisfy nested/deferred behavior and a current non-theme domain independently requires the same immutable stack semantics. Deferred theme capture is not counted as a second consumer. The primitive cannot hold arbitrary mutable services.
+
+KTD10. **Conformance is federated and native tests remain native.** Component rows, Gallery probes, exports, and native test scenarios keep narrow ownership; xtask cross-checks their structured IDs without generating all surfaces from one registry. Conformance does not replace the test suite with function pointers or a mega-test runner.
+
+KTD11. **Public API cleanup is evidence-led.** Table's engine and `ActionDescriptor` are preservation gates. Diagnostic table snapshots can move out of common exports after a workspace consumer census, but deeper removal requires a superseding ADR and separate evidence.
+
+KTD12. **Breaking means clean migration.** No deprecated aliases are retained for old semantic callbacks, theme v1 in-memory models, overlay forwarding helpers, or evidence tables. A runtime theme v1 loader is added only if Phase 0 identifies a named external consumer or real v1 artifact; otherwise v1 is removed and documented as a clean v2 break.
+
+### High-Level Technical Design
+
+Authority flow after the refactor:
+
+```text
+domain state / component resolved state
+             |
+             +--> semantic descriptor ------> GPUI element projection
+             |              |                         |
+             |              +--> DevTools             +--> final AccessKit TreeUpdate
+             |                                        +--> semantic AccessKit action
+             |
+             +--> semantic activation transaction <--- pointer / key / a11y / programmatic
+```
+
+Overlay and focus ownership:
+
+```text
+Window
+  `-- WindowOverlayRuntime
+        |-- ordered layer registry (stable instance + parent)
+        |-- topmost dismiss arbitration
+        |-- modal underlay policy
+        |-- FocusScopeRuntime
+        |     |-- live target registry
+        |     |-- initial-focus claim
+        |     |-- Tab / Shift-Tab loop
+        |     `-- LIFO restore claim
+        `-- presence lifecycle (open -> closing -> unmounted)
+```
+
+Theme resolution:
+
+```text
+built-in fallback
+       -> app selection
+             -> window selection/override
+                   -> nested subtree override
+                         -> immutable effective ThemeSnapshot
+                               -> component recipes / deferred overlay capture
+```
+
+Form lifecycle:
+
+```text
+field value revision + validation generations ---> validation activity
+submit begin/finish ------------------------------> submission phase
+validation activity + submission phase ----------> derived FormStatus / eligibility
+                                                    |
+                                                    +-> snapshot -> UI / a11y / DevTools
+```
+
+Dependency order:
+
+```text
+U1 Form Lifecycle ----------------------------------------------+
+                                                                 |
+U2 Final AccessKit Harness ------+                               |
+                                 +-> U5 A11y Semantic Authority  |
+U3 Focus Scope (preparatory) -> U4 Window Overlay Runtime -------+-> U6 Activation
+                                                                 |
+U7 Scoped Theme Resolution -> U8 Theme V2 -----------------------+
+U9 Collection Typeahead -----------------------------------------+
+                                                                 |
+U1 + U5 + U6 + U8 + U9 -> U10 Federated Conformance Cleanup -> U11 Final Audit
+```
+
+U2 and U3 have no logical dependency and may be developed independently, although shared-worktree execution may serialize their Cargo gates. U3 and U4 share one authority-completion gate: U3 may commit pure policy and private preparation, but Focus Scope is not declared the production authority until U4 has migrated official overlay consumers and removed their duplicate focus bookkeeping.
+
+### Assumptions
+
+- The active branch starts from a clean `main` at or after commit `67f0048d`; user work appearing later must be preserved and reconciled.
+- Open GPUI remains pre-1.0, so concentrated breaking changes are acceptable when documented and migrated atomically.
+- `cargo nextest` is the primary test runner; broad Windows builds may need `CARGO_BUILD_JOBS=1` to avoid linker/page-file failures.
+- `TestPlatform` can retain final accessibility updates without requiring a real OS accessibility bridge.
+- Theme schema v1 distribution outside the workspace is unknown. Phase 0 must inventory named consumers and artifacts before choosing a temporary v1 loader or a clean v2-only break.
+- Existing ADRs remain binding unless explicitly superseded or amended by this work.
+
+### Phased Delivery
+
+Phase 0: Commit this plan, create the breaking-change inventory, lock characterization tests, and record a consumer census. The census covers workspace and known out-of-tree consumers, public issues/roadmap evidence available to the repository, real example workflows, migration friction, and actual theme v1 artifacts. P0 correctness work may proceed immediately; broad API fleet migrations and compatibility code use the census to set their exact break surface.
+
+Phase 1: Land correctness/proof foundations: U1 Form lifecycle and U2 final AccessKit harness.
+
+Phase 2: Build U3 Focus Scope as a preparatory slice, then use U4's pilot and fleet migration to make Focus Scope and Window Overlay Runtime production authorities under one completion gate.
+
+Phase 3: Land semantic convergence: U5 Accessibility and U6 Activation.
+
+Phase 4: Land design-context depth: U7 scoped theme resolution using the existing immutable snapshot, U8 Theme v2 on the proven scope channel, and U9 typeahead.
+
+Phase 5: Delete duplicate authorities and align product surfaces through U10 and U11.
+
+Each unit receives a focused commit after its tests and local review pass. Wide mechanical migrations are serialized even where model work could theoretically run in parallel.
+
+### System-Wide Impact
+
+- `crates/gpui`: test accessibility capture/action support; narrowly scoped inherited render context only if U7's prototype and independent-consumer proof hold; possibly focus/tab-stop support needed by U3.
+- `crates/form`: validation generation/activity and derived status authority.
+- `crates/ui_core`: pure focus/overlay policies, semantic descriptors, tokens, and public contract boundaries.
+- `crates/ui_components`: window runtime adapters, component migrations, recipes, typeahead session, federated contract/probe bindings, and public callback breaks.
+- `crates/open-gpui-command`: call-site migration only unless a concrete command bridge defect is exposed; command ownership remains unchanged.
+- `crates/devtools`: projection from real semantic/runtime authorities with redaction.
+- `examples/ui-foundation-gallery`: real lifecycle scenarios and contract-derived catalog.
+- `xtask`, CI, docs, and ADRs: structured conformance, new gates, migrations, and architecture decisions.
+
+### Risks & Mitigations
+
+**Overlay dual authority.** A runtime stack can drift from adapter `open` state or re-enter during callbacks. Mitigation: controlled intent semantics, committed-state callback ordering, end-of-turn focus claims, and deletion of component-owned close tails.
+
+**Half-built focus trap.** A model-only focus scope can claim success without trapping real tab traversal. Mitigation: `TestAppContext` keyboard tests are a merge gate for U3/U4.
+
+**A fourth accessibility fact table.** A new descriptor can coexist with static evidence and render attributes. Mitigation: migrate by family and delete that family's hand-written evidence/projection in the same commit; final-tree tests are mandatory.
+
+**Theme abstraction outruns consumers.** Generic context or tokens can become broader than their use. Mitigation: two-consumer rule, immutable values, no service lookup, semantic metrics only, and explicit stop conditions in U7/U8.
+
+**Activation loses legitimate pointer detail.** Mitigation: inventory consumers before migration and provide an explicitly named raw path only for proven modifiers/position use cases.
+
+**Conformance becomes a mega-test framework.** Mitigation: retain isolated native tests and map typed scenario IDs to them; measure deleted duplicate code against new infrastructure.
+
+**Public churn without depth.** Mitigation: preserve Table/Virtualizer/Action/a11y vocabulary; common-export cleanup needs a consumer census and cannot alter engine behavior.
+
+**Windows resource exhaustion.** Mitigation: focused package gates per unit, serialized final DevTools/all-feature builds, and one final workspace gate rather than competing full builds.
+
+### Sources & Research
+
+Repository evidence:
+
+- `crates/ui_core/src/overlay.rs`
+- `crates/ui_components/src/overlay/`
+- `crates/ui_core/src/focus.rs`
+- `crates/ui_components/src/focus.rs`
+- `crates/ui_core/src/a11y.rs`
+- `crates/ui_components/src/a11y.rs`
+- `crates/gpui/src/window/a11y.rs`
+- `crates/gpui/src/platform/test/`
+- `crates/form/src/form.rs`
+- `crates/ui_components/src/form_adapter.rs`
+- `crates/ui_components/src/theme/`
+- `crates/ui_components/src/component_contract/`
+- `crates/ui_components/src/tree/runtime.rs`
+- `crates/ui_components/src/virtualized_list/runtime.rs`
+- `crates/ui_core/src/table/`
+- `crates/ui_components/src/table/`
+
+Durable decisions and verification:
+
+- `docs/knowledge/engineering/decisions/open-gpui-ui-foundation-first.md`
+- `docs/knowledge/engineering/decisions/open-gpui-ui-productization-roadmap.md`
+- `docs/knowledge/engineering/decisions/open-gpui-native-ui-framework-distribution-strategy.md`
+- `docs/knowledge/engineering/verification/2026-07-02-ui-framework-deep-modules.md`
+- `docs/knowledge/engineering/verification/menu-runtime-focus-regression-20260620.md`
+- `docs/knowledge/engineering/verification/docking-runtime-capability-alignment-20260701.md`
+- `docs/knowledge/engineering/verification/open-gpui-devtools-form-resource-ecosystem-20260708.md`
+- `docs/plans/2026-07-04-002-refactor-ui-framework-non-overlay-depth-plan.md`
+- `docs/plans/2026-07-05-001-refactor-ui-framework-layer-motion-conformance-plan.md`
+
+Reference implementations:
+
+- `repo-ref/gpui-component/crates/ui/src/root.rs`
+- `repo-ref/gpui-component/crates/ui/src/`
+- `repo-ref/fret/`
+
+The references inform behavior and ownership only. Their package layouts and runtimes are not copied wholesale.
+
+## Implementation Units
+
+### U1. Repair Form Validation And Submission Authority
+
+**Outcome**
+
+`FormStore` derives effective form status and submission eligibility from validation activity plus submission phase. Old validation work cannot mutate a newer value, reset form, or newer generation. UI, accessibility, gallery, and DevTools observe the same lifecycle.
+
+**Primary files**
+
+- `crates/form/src/form.rs`
+- `crates/form/src/field.rs`
+- `crates/form/src/validation.rs`
+- `crates/form/src/snapshot.rs`
+- `crates/form/tests/form_lifecycle.rs`
+- `crates/ui_components/src/form_adapter.rs`
+- `crates/ui_components/src/form_control.rs`
+- `crates/ui_components/tests/form.rs`
+- `crates/ui_components/tests/form_adapter.rs`
+- `crates/devtools/src/form.rs`
+- `crates/devtools/tests/form_resource_adapters.rs`
+- `examples/ui-foundation-gallery/src/pages/components/runtime/form.rs`
+- `docs/ui/migration-v0.3.md`
+
+**Behavioral work**
+
+- Track field value revision as part of validation ticket identity.
+- Invalidate pending work on value change, reset, and a newer validation generation.
+- Derive `Validating` while any current field validation is pending and submission is not active.
+- Keep fields editable while validating, but mark field/form busy and make submit unavailable.
+- Reject validation starts during submission, duplicate submit begin, invalid finish, and submit while validating or invalid with typed outcomes.
+- Treat edits as a new form revision: they invalidate stale validation and submit tickets, clear terminal submit outcome, and derive the next effective status from remaining current validation activity.
+- Enforce DevTools data minimization before capture construction. Adapters may emit structured state, counts, roles, actions, relations, and opaque stable IDs; form values and free-form validation errors become typed redacted/summary markers rather than caller-policy-dependent strings.
+- Update the real Gallery form flow, DevTools projection, and form lifecycle migration notes in this unit.
+
+**Normative lifecycle table**
+
+| Event | Allowed source | Result | Error/result retention | UI and projection contract |
+| --- | --- | --- | --- | --- |
+| edit/value change | any state | bump form/field revision; cancel affected validation; cancel an active submit as stale; derive `Validating` if other current validations remain, else `Idle` | clear terminal submit result; retain unrelated current field errors | field remains editable except while the UI intentionally disables during active submit; DevTools emits no raw value |
+| begin validation | `Idle`, `Validating`, `Submitted`, `SubmitFailed` | clear terminal submit outcome and derive `Validating` | retain errors until the current result replaces them | expose busy on affected field/form; submit unavailable |
+| complete validation | current ticket only | remain `Validating` while any current ticket exists, otherwise `Idle` | replace only the ticket's field errors | stale/cancelled completion has no UI, a11y, callback, or DevTools side effect |
+| begin submit/retry | valid state with no pending validation and no active submit | allocate submit ticket and enter `Submitting` | clear prior submit result; retain field errors | form controls follow submitting policy and submit is unavailable |
+| submit success | active ticket only | `Submitted` | retain success summary without sensitive payload | status is observable consistently; a later edit returns to derived non-terminal state |
+| submit failure | active ticket only | `SubmitFailed` | retain typed/redacted form-level failure until retry, edit, or reset | retry is available when fields remain valid; no raw server/user text enters DevTools |
+| reset | any state | cancel all tickets and enter `Idle` | clear field/form errors, dirty state, and terminal outcome | all projections update in one revision |
+
+**Test scenarios**
+
+- One and multiple concurrent validations enter and leave `Validating` only when the last current ticket completes.
+- Old-value, post-reset, and older-generation completions are typed stale/cancelled no-ops.
+- Validation errors survive the transition back to idle without corrupting status.
+- Submit is blocked while validating/invalid/submitting; counters and callbacks do not advance on rejection.
+- Submit success, failure, retry, edit-after-terminal, reset, and stale submit completion follow the normative table.
+- UI projection exposes validating/busy separately from disabled/submitting and gallery reaches the state through real async lifecycle.
+- DevTools root and field activity match the store snapshot without leaking field values or free-form validation/submit errors through capture, history, diff, export, artifact, report, or Gallery fixtures.
+
+**Deletion/replacement**
+
+- Remove the unreachable stored-status path that treats `FormStatus::Validating` as caller-assigned state.
+- Remove projection logic that derives disablement only from `Submitting` and drops validation activity.
+
+**Unit gate**
+
+- Focused nextest passes for form, UI form tests, DevTools form/resource features, and gallery form scenarios.
+
+### U2. Make Final AccessKit Updates Test-Observable
+
+**Outcome**
+
+GPUI tests can activate accessibility, inspect a normalized final `TreeUpdate`, deactivate accessibility, and dispatch actions to real node IDs. This is test/diagnostic infrastructure, not a second accessibility renderer.
+
+**Primary files**
+
+- `crates/gpui/src/platform/test/platform.rs`
+- `crates/gpui/src/platform/test/window.rs`
+- `crates/gpui/src/app/test_context.rs`
+- `crates/gpui/src/window/a11y.rs`
+- GPUI accessibility tests near the owning modules
+
+**Behavioral work**
+
+- Retain accessibility callbacks and ordered tree updates in the test window.
+- Expose test-context operations for activation, latest normalized tree, update history where needed, deactivation, and action requests.
+- Keep inaccessible windows inert.
+- Normalize updates sufficiently for deterministic assertions without discarding node identity or relations.
+- Remove the obsolete warning that reports no accessible UI when a real tree exists.
+
+**Test scenarios**
+
+- Activation produces root plus rendered nodes; deactivation stops updates.
+- Equivalent rerender preserves logical node IDs while state changes.
+- Unmount removes stale nodes and no child/control/label relation dangles.
+- Focus references a node in the tree.
+- An AccessKit action reaches the intended handler and a subsequent frame reflects its result.
+- Two test windows retain isolated trees and action routing.
+
+**Deletion/replacement**
+
+- Remove tests that can pass solely by rebuilding expected metadata without inspecting the final tree where final-tree behavior is the claim.
+
+**Unit gate**
+
+- GPUI accessibility-focused nextest passes on `TestPlatform` without a native accessibility bridge.
+
+### U3. Introduce Nested Focus Scope Runtime
+
+**Outcome**
+
+Focus scope policy is renderer-neutral; GPUI owns live handles and traversal. Nested modal scopes loop Tab/Shift-Tab, resolve declared targets to real descendants, ignore stale targets, and restore deterministically.
+
+**Primary files**
+
+- `crates/ui_core/src/focus.rs`
+- `crates/ui_components/src/focus.rs`
+- new focused runtime module under `crates/ui_components/src/overlay/` or `primitives/`
+- `crates/gpui/src/tab_stop.rs` only where the existing traversal API cannot express a scoped loop
+- `crates/ui_components/tests/focus_scope.rs`
+- `docs/knowledge/engineering/decisions/` for the joint Focus Scope/Window Overlay Runtime ADR
+
+**Behavioral work**
+
+- Model scope identity, nesting, initial intent, live target ordering, restore target, and fallback.
+- Resolve explicit target, first focusable, target-or-first, and surface fallback against registered descendants.
+- Keep non-modal focus behavior unchanged.
+- Ensure only the innermost active modal scope traps traversal.
+- Arbitration uses stable logical targets and ignores disabled, hidden, unmounted, or stale registrations.
+- Resolve restoration in this order: a newer focus claim; the live saved target; the nearest active ancestor scope's last live target; an explicitly registered window application fallback. If none exists, do not focus arbitrary content or synthesize activation; preserve a still-live current focus or safely leave the window without an element focus.
+- Create the joint Focus Scope/Window Overlay Runtime ADR with the preparatory ownership and completion-gate decision; U4 finalizes it against production migration evidence.
+
+**Test scenarios**
+
+- Empty, one-target, and multi-target scopes loop in both directions.
+- Missing explicit target follows declared fallback rather than always focusing the surface.
+- Nested child close restores within the parent; parent close restores outside.
+- Rerender/unmount and a missing trigger do not panic or steal focus.
+- Two windows have isolated scope registries.
+- Real key events prove that focus cannot escape the active modal underlay.
+
+**Deletion/replacement**
+
+- Remove component-specific focus target bookkeeping once its component migrates.
+- Remove target-intent branches that return `None` without consulting the live registry.
+
+**Unit gate**
+
+- ui_core policy tests, GPUI traversal tests, and `TestAppContext` focus-scope integration tests pass as a preparatory gate.
+- U3 is not declared a production authority independently. Its completion is shared with U4 and requires official overlay migration plus deletion of component-owned focus bookkeeping.
+
+### U4. Replace Per-Component Overlay Tails With A Window Runtime
+
+**Outcome**
+
+All official overlays register with one window-owned stack. It is the sole authority for topmost Escape/outside press, parent-child inside regions, modal blocking, controlled close intent, closing presence, callback ordering, focus claims, and restoration.
+
+**Primary files**
+
+- `crates/ui_core/src/overlay.rs`
+- `crates/ui_components/src/overlay.rs`
+- `crates/ui_components/src/overlay/runtime.rs`
+- `crates/ui_components/src/overlay/adapter.rs`
+- `crates/ui_components/src/overlay/host.rs`
+- overlay components including Dialog, AlertDialog, Sheet, Popover, HoverCard, Tooltip, Menu, ContextMenu, Select, Combobox, and Command
+- `crates/ui_components/tests/window_overlay_runtime.rs`
+- `crates/ui_components/tests/overlay.rs`
+- `crates/ui_components/tests/choice.rs`
+- `docs/ui/migration-v0.3.md`
+- `docs/knowledge/engineering/decisions/` for finalizing the joint Focus Scope/Window Overlay Runtime ADR
+
+**Behavioral work**
+
+- Register stable layer ID, parent ID, modality, dismiss policy, inside regions, presence, focus scope, and controlled-state callbacks.
+- Consume the existing pure stack resolvers in production.
+- Offer Escape/outside press once to the topmost eligible layer; an explicit Ignore stops cascade.
+- Treat child surfaces as inside every ancestor layer.
+- Separate close intent, owner commit, and exit-animation presence according to the lifecycle table below.
+- Restore after the owner commits semantic close, not after a mere controlled request and not after exit paint finishes. Exit presence may keep its pointer barrier but cannot retain keyboard, focus-scope, or accessibility authority.
+- Resolve competing focus claims at end of turn so newly opened overlays win.
+- Update each migrated family's Gallery scenario, DevTools/runtime inspection where applicable, and overlay migration notes in the same fleet slice.
+- Finalize the joint ADR with the window ownership mechanism, lifecycle matrix, pilot result, and deletion evidence.
+
+**Normative lifecycle table**
+
+| State | Paint | Surface hit/actions | Escape/outside | Accessibility | Modal pointer barrier | Focus trap/restore |
+| --- | --- | --- | --- | --- | --- | --- |
+| open | yes | enabled | topmost policy | layer present; modal underlay non-navigable | active for modal | top modal traps; no restore |
+| close requested, controlled owner still open | yes | enabled | still topmost; duplicate intent suppressed | unchanged from open | unchanged from open | unchanged from open; callback emits intent only |
+| closing after owner commits closed | exit paint only | disabled | ineligible | layer removed/inert; underlay restored | retained until presence unmount to prevent click-through | trap removed; end-of-turn restore claim runs once |
+| reopened during exit | yes, same logical identity | re-enabled | eligible again | layer restored with stable identity | active according to modality | cancel pending restore; newest initial-focus claim wins |
+| unmounted | no | no | absent | nodes removed | absent | no pending claim or registration |
+
+**Overlay family migration matrix**
+
+| Family | Trigger/ownership | Modality | Dismiss policy | Initial focus and Tab | Restore/presence |
+| --- | --- | --- | --- | --- | --- |
+| Dialog, Sheet | programmatic/trigger; controlled or uncontrolled | modal | Escape and outside follow explicit policy; default consumes and requests close | explicit target, then first focusable, then surface fallback; trap both directions | restore live trigger/ancestor fallback; exit presence uses lifecycle table |
+| AlertDialog | programmatic/trigger; controlled or uncontrolled | strict modal | Escape only when explicitly allowed; outside consumes without close by default | least-destructive/explicit target, then first focusable; trap | restore as modal; exit presence uses lifecycle table |
+| Popover | click/programmatic; controlled or uncontrolled | non-modal | Escape/outside request close; child overlays count as inside | preserve trigger unless explicit autofocus; no trap | restore only when focus moved into surface; exit presence noninteractive |
+| Tooltip, HoverCard | hover/focus/pointer dwell; controlled delay state | passive non-modal | Escape may dismiss active surface; outside press is not an ownership event | never claim or trap focus | no focus restore; delayed open/close and exit identity remain component policy |
+| Menu, ContextMenu | trigger/right-click/keyboard; controlled or runtime-owned | active non-modal | Escape/outside close top branch; submenu is inside ancestors | first/selected item; roving focus within branch; Tab closes rather than traps | child restores parent item, root restores trigger/source; exit noninteractive |
+| Select | trigger; controlled value/open intent | active non-modal | Escape/outside request close | selected option then first enabled option; no modal trap | restore trigger when listbox owned focus; exit noninteractive |
+| Combobox, Command overlay mode | text input/programmatic; controlled query/open intent | non-modal unless wrapped by a modal component | Escape/outside request close according to wrapper | keep editor focus with active-descendant semantics; no independent trap | preserve/restore editor; inline mode does not register an overlay |
+
+Each row receives a characterization test before migration. Any intentional deviation from current behavior is recorded in the unit's migration notes rather than hidden in shared runtime defaults.
+
+**Test scenarios**
+
+- Popover -> Menu -> Dialog nested ordering for Escape and outside press.
+- Top Ignore, modal Consume, and explicit pass-through policies behave once and do not leak to underlay.
+- Controlled close refusal keeps registration, modality, and focus.
+- Uncontrolled close callback sees committed framework state. Controlled callback observes the owner's current committed state and only emits intent; cleanup and restore wait for the owner's later close commit.
+- Child, parent, trigger-unmounted, exit/reopen, and window-close restoration paths are deterministic.
+- Duplicate layer IDs fail clearly in debug/tests.
+- Two windows never share layers, IDs, events, or restore claims.
+
+**Deletion/replacement**
+
+- Delete the shallow `OverlayLayerHost` forwarding facade after callers use the real runtime.
+- Delete scattered close helpers and per-component Escape/outside/barrier/focus-restore tails.
+- Preserve the placement solver, live measurement, `anchored`, and `deferred` mechanisms.
+
+**Unit gate**
+
+- Pure overlay policy, real GPUI input, choice overlay, and gallery overlay smoke tests pass.
+- U4A first migrates Dialog, Popover, and Menu. It must pass controlled/reentrant/focus tests without family-specific runtime branches and delete those three families' old tails before U4B migrates the remaining fleet.
+- Every migrated family has exactly one authority throughout the pilot/fleet sequence; no adapter is left half-migrated.
+- U3/U4 do not complete if nested modal/menu topmost dismiss, focus trap, LIFO restore, and old-bookkeeping deletion are not proven through `TestAppContext`.
+
+### U5. Converge Accessibility On Semantic Descriptors And Final Trees
+
+**Outcome**
+
+Every official component that emits accessibility semantics derives one ephemeral semantic projection from its existing resolved state. GPUI element attributes, the final AccessKit tree, AccessKit actions, and redacted DevTools summaries consume that projection. The projection cannot become independently stored component state, and manual evidence is no longer a runtime authority.
+
+**Primary files**
+
+- `crates/ui_core/src/a11y.rs`
+- `crates/ui_components/src/a11y.rs`
+- official action, form, choice, overlay, navigation, collection, and table component modules
+- `crates/gpui/src/window/a11y.rs`
+- `crates/devtools/src/ui_components.rs`
+- `crates/ui_components/tests/a11y.rs`
+- `crates/ui_components/tests/public_surface/adapter.rs`
+- `crates/devtools/tests/framework_adapters.rs`
+- `docs/ui/migration-v0.3.md`
+- `docs/knowledge/engineering/decisions/` for the semantic accessibility/final-tree ADR
+
+**Behavioral work**
+
+- Inventory every official component that currently emits accessibility semantics and track its migration/deletion status in this unit.
+- Derive required, invalid, busy, values, relations, actions, collection position/count, and modal/hidden facts from existing resolved state rather than duplicating those fields in a stored descriptor.
+- Pilot the design on Button and one multi-node family from Tabs/Table. The projection must delete more family-local assembly/evidence than it adds. If it fails that deletion test, resolved state remains the semantic authority and only a shared projection helper is introduced.
+- After the pilot gate, migrate every inventoried official producer and centralize GPUI/AccessKit projection; eliminate family-local hand assembly where the projection owns the fact.
+- Correct semantic downgrade such as Separator mapping to Group.
+- Keep stable node identity across equivalent rerenders and remove nodes/relations on unmount or virtualization recycle.
+- While a modal is active, remove its underlay from the navigable accessibility surface, reject underlay focus/value/activation actions, keep accessibility focus within the modal, and restore the prior tree when the modal is semantically closed.
+- Project DevTools from the resolved semantic authority, not `COMPONENT_A11Y_EVIDENCE`. Its adapter accepts only allowlisted structural facts and opaque IDs; accessible name, description, value text, labels, user input, and clipboard-derived text become typed redacted/summary markers before capture construction.
+- Update each family's Gallery/a11y scenario and migration notes in the same migration slice.
+- Create the semantic accessibility/final-tree ADR, including the resolved-state projection rule and final `TreeUpdate` evidence boundary.
+
+**Test scenarios**
+
+- Button, Checkbox, form field, Dialog, Tabs, Slider, Table, and VirtualizedList final nodes match resolved semantics.
+- Checked, expanded, invalid, busy, disabled, values, relations, row/column metadata, and available actions update on the same logical node.
+- AccessKit Focus/Click/value actions target the correct node and are no-ops when disabled or under a modal.
+- Modal open/close TreeUpdates prove the underlay is non-navigable while active and restored afterward, not merely action-blocked.
+- Virtualized identities cannot be accidentally reused for a different stable item.
+- Unmount and relation repair produce no dangling references.
+- DevTools and final tree agree on allowlisted public semantic facts, while unique canaries in accessible free text never reach capture/history/diff/export/artifact/report fixtures.
+
+**Deletion/replacement**
+
+- Delete every inventoried component's duplicated aria assembly and static evidence claims as it migrates.
+- Delete fallback mappings that silently change role semantics.
+- Preserve the neutral vocabulary unless a concrete type has no domain value; do not force `ui_core` to depend on GPUI.
+
+**Unit gate**
+
+- GPUI accessibility tests, UI final-tree tests, public-surface tests, DevTools adapter tests, and gallery Focus/A11y tests pass.
+- The unit cannot claim completion if `TreeUpdate` is not directly observed.
+- U5 cannot complete while any inventoried official component retains a parallel semantic assembly/evidence authority. Representative action, form, choice, overlay, navigation, collection, and table families require deep final-tree/action tests; the remaining producers require unified projection coverage and a structured absence check for old authority.
+
+### U6. Break Public Click Callbacks Into Semantic Activation
+
+**Outcome**
+
+Official controls expose semantic activation/value intent rather than physical pointer events. Pointer, keyboard, accessibility, and programmatic entry paths share one disabled gate, one state transaction, one callback, and role-specific key policy.
+
+**Primary files**
+
+- new private activation primitive under `crates/ui_components/src/`
+- Button, IconButton, Link, Switch, Toggle, Checkbox, Radio, Tabs, Accordion, Tag, Breadcrumb, Toast, choice rows, and Table row activation
+- component contract/public API files
+- gallery/examples and downstream workspace call sites
+- `crates/ui_components/tests/semantic_activation.rs`
+- `docs/ui/migration-v0.3.md`
+- `docs/knowledge/engineering/decisions/` for the semantic activation ADR
+
+**Behavioral work**
+
+- Define typed activation source and the minimal domain payload callers need.
+- Inventory every public callback signature that exposes `ClickEvent` and classify it as semantic intent/value change or a proven raw pointer escape hatch. The inventory is a migration checklist, not a permanent parallel API authority.
+- Apply the normative role matrix below instead of inheriting GPUI's generic Enter/Space click behavior.
+- Ensure controlled controls emit intent without changing caller-owned state.
+- Route AccessKit action directly to semantic activation for official components rather than relying on coordinate-synthesized click fallback.
+- Retain an explicitly named raw-click path only where the consumer census proves modifier or position semantics are required.
+- Update Gallery/examples, component contracts, and callback migration notes in the same family slice that deletes the old callback.
+- Create the semantic activation ADR and supersede ADR 0005's proposed callback shape where the new matrix intentionally breaks it.
+
+**Normative activation matrix**
+
+| Semantic role/family | Keyboard policy | Timing/repeat/default | Focus/propagation |
+| --- | --- | --- | --- |
+| Button, IconButton, button-like Tag/Toast action | Enter and Space | activate on unmodified key-up to preserve current GPUI timing; ignore auto-repeat; prevent Space scrolling from key-down through key-up | keep focus unless activation closes its owning surface; stop only the consumed activation path |
+| Link and link-like Breadcrumb | Enter only | activate on unmodified key-up; Space is not consumed; ignore repeat | preserve normal focus; raw pointer modifiers/position use the explicit raw path when required |
+| Checkbox, Switch, Toggle, Radio | Space only | activate/change on unmodified key-up; prevent Space scrolling; ignore repeat | emit one value intent; read-only/disabled paths neither consume nor change |
+| Tabs and Accordion triggers | Enter and Space | activate on unmodified key-up; Arrow/Home/End navigation remains in the roving-focus owner | focus remains on trigger; automatic tab selection, if configured, remains a navigation policy rather than duplicate activation |
+| Menu/Listbox/choice rows | Enter; Space only where the owning model defines selection/toggle | key-up, no repeat; editable search input never enters this path | structural/disabled rows are skipped; activation may close through overlay policy |
+| Table/tree/collection rows | Enter by default; Space only for an explicit selection/toggle contract | key-up, no repeat; nested editor/action origin suppresses row activation | reveal/focus/selection remain separate model transactions |
+| AccessKit/programmatic | semantic action, no synthetic key or coordinates | immediate transaction with typed source; exactly once | same disabled/read-only/nested ownership gates as keyboard/pointer |
+
+All keyboard paths reject modified keystrokes unless a component explicitly documents a modifier contract. Pointer capture and nested-interactive suppression are decided before semantic activation so one physical gesture cannot reach both child and parent callbacks.
+
+**Test scenarios**
+
+- Pointer, allowed key, AccessKit Click, and programmatic activation produce equivalent payloads exactly once.
+- Disallowed keys, disabled/read-only/structural targets, and a controlled owner that does not commit state have no hidden state change.
+- Uncontrolled state transition precedes callback observation; controlled callbacks observe current owner state, emit one intent, and wait for the owner's later commit before projections change.
+- Nested editor/cell actions do not bubble into a parent row activation.
+- Button, Link, Checkbox/Toggle, choice row, and Table row provide representative end-to-end coverage.
+
+**Deletion/replacement**
+
+- Delete old public `on_click` callback paths for semantic controls with no compatibility alias.
+- Delete ClickEvent-based contract inventory entries and gallery call-site workarounds.
+- Preserve `ActionDescriptor` and command execution ownership; activation may consume presentation facts but does not replace them.
+
+**Unit gate**
+
+- Semantic activation, primitives, navigation, choice, table interaction, a11y action, and gallery tests pass.
+- Real key-event tests cover every distinct row in the activation matrix, including Space default prevention, key-up timing, repeat rejection, and nested-interactive suppression.
+- Every inventoried semantic callback is migrated. A structured public-surface absence gate rejects remaining public `ClickEvent` parameters except explicitly named raw APIs with documented consumers.
+
+### U7. Prove Scoped Theme Resolution Before Generalizing Context
+
+**Outcome**
+
+Using the existing immutable color `ThemeSnapshot`, Open GPUI gains app fallback, window-local selection/override, explicit subtree override, and deferred overlay inheritance. A prototype gate decides whether this remains a theme-specific UI mechanism or earns a narrow generic GPUI inherited-context primitive.
+
+**Primary files**
+
+- `crates/ui_components/src/theme/runtime.rs`
+- `crates/ui_components/src/theme/resolver.rs`
+- a theme provider/environment element under `crates/ui_components/src/theme/`
+- `crates/gpui/src/window.rs` and the GPUI element/deferred frame modules only if the prototype gate proves a substrate gap
+- production `ThemeResolver::current` call sites
+- `crates/ui_components/tests/theme_scope.rs`
+- gallery shell/token pages
+- theme-context migration documentation
+- `docs/ui/migration-v0.3.md`
+- `docs/knowledge/engineering/decisions/` for the Theme Scope ADR and prototype decision
+
+**Behavioral work**
+
+- Prototype a theme-specific provider against the actual GPUI render timing, nesting, rerender, unwind, and deferred-element lifecycle.
+- Prefer the theme-specific path unless it cannot preserve nearest-provider semantics through normal and deferred rendering.
+- A public generic GPUI context primitive additionally requires one current independent non-theme consumer with the same immutable stack behavior. U3 focus-scope association is a candidate only if its implementation cannot use existing focus hierarchy/window registration; direct and deferred ThemeContext reads are one consumer, not two.
+- Resolve precedence as `subtree override > window selection/override > app selection > built-in fallback`. App selection remains the global fallback for windows without an override.
+- Capture the effective opening snapshot for deferred overlays without leaking it to siblings, other windows, or later frames.
+- Invalidate only affected windows/scopes when selection changes and drop all window-local state on close.
+- Keep any generic primitive private until both proof conditions pass, immutable/clonable only, and unsuitable for arbitrary mutable services.
+- Update Gallery scoped-theme behavior and theme-context migration notes in this unit.
+
+**Test scenarios**
+
+- Two windows select independent themes while a third inherits app selection.
+- Nested providers choose the nearest value; siblings and post-scope rendering recover parent context.
+- Rerender, early return, and panic/unwind cannot leave scoped state imbalanced.
+- Deferred children and overlay surfaces retain the opening subtree's existing color snapshot.
+- Unknown IDs or failed overrides leave effective context unchanged.
+- Window close clears local selection and provider state.
+
+**Deletion/replacement**
+
+- Delete `ThemeRuntime: Global` as the sole active-ID authority and replace the app-only resolver seam with explicit app fallback plus optional window/subtree context.
+- Retain the app-global definition registry and built-in fallback.
+- Do not add a public generic context API if the proof gate yields only ThemeContext as a consumer; ship a theme-specific scope instead.
+
+**Unit gate**
+
+- Theme-scope/deferred tests and Gallery scoped-theme tests pass on the existing snapshot before Theme v2 begins.
+- Record the prototype evidence and selected implementation in the Theme Scope ADR. Stop any generic GPUI API if it requires a hidden app-global subtree map, changes arbitrary service lookup, or lacks an independent non-theme consumer.
+
+### U8. Introduce Theme V2 Design Scales And Effective Revisions
+
+**Outcome**
+
+Theme v2 replaces the proven U7 scope payload with an immutable, schema-backed design contract for stable semantic scales. Runtime effective revision changes monotonically when effective content or selection changes; source-file revision remains metadata.
+
+**Primary files**
+
+- `crates/ui_core/src/tokens.rs`
+- `crates/ui_core/src/sizing.rs`
+- `crates/ui_components/src/theme.rs`
+- `crates/ui_components/src/theme/snapshot.rs`
+- `crates/ui_components/src/theme/registry.rs`
+- `crates/ui_components/src/theme/schema.rs`
+- `crates/ui_components/src/theme/recipes/`
+- `crates/ui_components/tests/theme.rs`
+- `docs/schemas/open-gpui-theme-v1.schema.json`
+- a v2 schema and breaking migration documentation
+- existing theme xtask scanners
+- `docs/ui/migration-v0.3.md`
+- `docs/knowledge/engineering/decisions/` for amending the Theme Scope ADR with v2/revision/compatibility decisions
+
+**Behavioral work**
+
+- Inventory actual v1 theme files and named out-of-tree consumers before choosing compatibility behavior.
+- Add typed typography, spacing, radius, elevation, density, and motion-policy scales beside color only where each public token has at least two real recipe consumers.
+- Keep structural sizes local to component metrics and motion execution in `open-gpui-motion`.
+- Allocate monotonic effective revisions for changed registration, replacement, selection, and overrides; identical effective reloads do not bump.
+- Parse invalid or unknown content atomically with structured diagnostics and no active-state mutation.
+- If the census finds a real v1 artifact/consumer, provide one explicit v1-to-v2 loader with migration fixtures and no dual mutable model. Otherwise remove v1 runtime/schema support and publish a clean v2 breaking migration.
+- Migrate U7's app/window/subtree/deferred channel to the v2 payload without changing scope precedence.
+- Update Gallery token examples, DevTools theme projection, schema docs, and migration notes in this unit.
+- Amend the U7 Theme Scope ADR with the v2 payload, effective revision authority, and evidence-selected v1 compatibility branch.
+
+**Test scenarios**
+
+- Built-in themes are complete and schema round-trip.
+- The selected compatibility branch is tested: real v1 migration fixtures preserve color behavior, or v1 input is explicitly rejected after a documented clean break.
+- Invalid types, missing required facts, duplicate/unknown tokens, and failed replacement leave registry/selection unchanged.
+- Same source revision with changed content bumps effective revision; identical effective content does not.
+- Compact density and reduced-motion policy reach at least two representative recipes without changing semantic output.
+- Every U7 window/subtree/deferred scope test passes unchanged with the v2 payload.
+
+**Deletion/replacement**
+
+- Delete color-only in-memory authority and production-only fallback paths superseded by v2.
+- Remove stable cross-family magic metrics only when recipes consume the replacement token.
+- Delete unused v1 compatibility code/schema when the census finds no real consumer.
+- Do not move motion execution out of `open-gpui-motion`.
+
+**Unit gate**
+
+- Theme unit/integration/scope tests and theme drift/schema scanners pass for the evidence-selected compatibility branch.
+- No token category is padded solely to satisfy the plan; absent two consumers, keep the metric local and record the category as intentionally not public.
+
+### U9. Extract A Deterministic Collection Typeahead Session
+
+**Outcome**
+
+Tree and VirtualizedList share one private typeahead session for buffer lifetime and key acceptance. Other collection components adopt it only where they have the same runtime behavior; editable search remains separate.
+
+**Primary files**
+
+- new private module under `crates/ui_components/src/`
+- `crates/ui_components/src/tree/runtime.rs`
+- `crates/ui_components/src/virtualized_list/runtime.rs`
+- Menu/Listbox/Select runtime only after behavior equivalence is proven
+- `crates/ui_components/tests/typeahead_runtime.rs`
+- `crates/ui_components/tests/layout.rs`
+- `crates/ui_components/tests/choice.rs`
+- `crates/ui_components/tests/overlay.rs`
+
+**Behavioral work**
+
+- Own printable-key filtering, buffer append/reset, timeout, repeated-character cycling signal, and instance lifecycle.
+- Inject time for deterministic tests; production adapts GPUI time/events at the component boundary.
+- Preserve model-specific matching, visibility, disabled/structural filtering, reveal, focus, and selection semantics in their owning model.
+- Preserve stable-key identity across reorder/remove.
+
+**Test scenarios**
+
+- Fake-clock accumulation/reset with no sleeps.
+- Repeated-character cycling, wrap, normalization, empty query, and non-printable/modifier/IME filtering.
+- Disabled, separator, group, and status rows never become targets.
+- Reorder/remove resolves by stable key or clears safely.
+- Instances and windows never share buffers.
+- Virtualized reveal does not imply selection; editable Combobox/Command query is not intercepted.
+
+**Deletion/replacement**
+
+- Delete Tree and VirtualizedList duplicate buffer, timestamp, timeout constant, and key parser.
+- Keep the new session private until a public consumer requirement exists.
+
+**Unit gate**
+
+- Typeahead, layout, choice, overlay, and gallery collection tests pass deterministically.
+
+### U10. Federate Typed Conformance And Public-Surface Authorities
+
+**Outcome**
+
+Narrow typed authorities own facts at their natural lifecycle: `COMPONENT_CONTRACT_ROWS` owns component product metadata, Gallery owns selectors/probes, public API modules own exports, and native tests own executable scenario IDs. Xtask cross-checks these structured sources. Source text is no longer parsed to infer Rust structure or behavior, and ADR 0014's centralized registry is not recreated.
+
+**Primary files**
+
+- `crates/ui_components/src/component_contract/`
+- `crates/ui_components/src/public_api/`
+- `crates/ui_components/src/lib.rs`
+- `crates/ui_components/src/prelude.rs`
+- `crates/ui_components/tests/public_surface/`
+- `crates/ui_components/tests/support/public_surface/`
+- `xtask/src/ui_contract.rs`
+- xtask public API scanners and tests
+- gallery component catalog/conformance modules
+- component contract documentation
+- `docs/ui/migration-v0.3.md`
+- `docs/knowledge/engineering/decisions/` for the ADR 0014 amendment/reaffirmation
+
+**Behavioral work**
+
+- Keep `COMPONENT_CONTRACT_ROWS` small and limited to product metadata already justified by ADR 0014; remove unrelated method inventories, test execution, and Gallery implementation facts from it.
+- Keep Gallery selector/render probes in Gallery and bind them one-to-one to contract IDs through a typed local adapter.
+- Let native isolated tests declare scenario IDs through a structured test-side registration/artifact, without function-pointer aggregation.
+- Cross-check contract IDs, Gallery probes, public owner/export facts, docs projections, and required scenario IDs in xtask while preserving their narrow owners.
+- Produce repo-relative diagnostics for missing/duplicate IDs, owner drift, and projection drift.
+- Derive only shared product metadata in Gallery/DevTools from contract rows; their runtime selectors, probes, and inspection data remain locally owned.
+- Split common public exports from explicit extended/diagnostic modules.
+- Characterize Table consumers; keep `Table`, core state/resolved state, engine, and adapter public. Move diagnostic-only behavior snapshots out of root/common prelude only when the census confirms no intended common API use.
+- Update conformance migration notes and the relevant ADR 0014 amendment/reaffirmation in this unit.
+
+**Test scenarios**
+
+- Add/remove/duplicate a contract row, Gallery binding, export owner, or scenario binding and receive a precise failing diagnostic naming both narrow authorities.
+- A final-tree role or activation matrix mismatch fails an executable probe; changing evidence text cannot repair it.
+- Comments, aliases, grouped exports, formatting, and braces cannot affect structured checks.
+- Gallery and DevTools receive the same contract ID/revision/family metadata without moving their runtime-specific facts into the component contract.
+- Table filter/sort/group/paginate/pin/virtualize/edit outputs remain behaviorally identical through export cleanup.
+
+**Deletion/replacement**
+
+- Delete `COMPONENT_API_INVENTORY` method-name baselines that mirror Rust source.
+- Delete manual `COMPONENT_A11Y_EVIDENCE`/gate claims as product authorities.
+- Delete shallow source mapping/owner tables and source-string parsers once structured owner/export facts can be queried directly.
+- Delete duplicate default/common re-export lists where one public API owner can generate or structurally validate them.
+- Do not recreate ADR 0014's deleted JSON registry/scaffold product.
+- Preserve native nextest isolation, Table engine, neutral a11y vocabulary, and Action presentation authority.
+
+**Unit gate**
+
+- UI public-surface tests, xtask CLI fixture tests, structured scanners, Table characterization, and gallery catalog tests pass.
+- New conformance infrastructure must delete more duplicate authority than it adds, must not collapse failures into one mega-test, and must not make component rows the owner of Gallery/test/runtime facts.
+
+### U11. Audit Gallery, DevTools, ADRs, Migration Docs, And Release Gates
+
+**Outcome**
+
+The product surfaces already updated by U1-U10 are audited together, architecture decisions and migration notes are cross-linked, obsolete code is absent, and final gates cover the newly added GPUI/accessibility paths. U11 does not first implement a domain authority, Gallery scenario, DevTools projection, or migration guide.
+
+**Primary files**
+
+- `examples/ui-foundation-gallery/`
+- `crates/devtools/`
+- `docs/knowledge/engineering/decisions/`
+- `docs/ui/`
+- `docs/verification.md`
+- `docs/knowledge/engineering/`
+- CI and xtask verification configuration
+- `.config/nextest.toml` if repository-wide timeout/test-group policy is introduced
+
+**Behavioral work**
+
+- Compose cross-domain Gallery smoke from the real per-unit flows already added for nested overlay/focus, final accessibility state, async form validation, scoped themes, semantic activation, and collection typeahead.
+- Audit runtime inspection against an allowlist contract: structured status/count/role/action/relation and opaque IDs only. Free-form form errors, accessible names/descriptions/value text, clipboard, input, and labels must already be typed redacted/summary markers before `DevtoolsCapture` construction.
+- Cross-link the ADRs created with U3/U4, U5, U6, U7/U8, and U10; reaffirm ADR 0014's federated ownership rather than introducing a central manifest.
+- Explicitly retain ADR 0009's Table engine shape and existing motion ownership.
+- Consolidate and release-audit the callback, theme, overlay, accessibility, and conformance migration guidance already committed with their owning units.
+- Extend `xtask verify` so GPUI accessibility/focus tests and required DevTools features cannot be skipped by the main gate.
+
+**Test scenarios**
+
+- Gallery smoke opens nested overlays and verifies topmost dismiss/focus restoration.
+- Gallery displays two theme scopes and a real validating form without manually constructing unreachable states.
+- DevTools reads theme/form/overlay/focus/a11y/table authorities and preserves redaction across live capture, session frames/history, diff, Inspector detail/copy, session export, headless artifact, report, and Gallery fixture paths.
+- Unique canaries injected into form values/errors, accessible name/description/value text, clipboard, and user input appear nowhere in those outputs; only typed redacted markers and counts remain.
+- Release/doc scanners reject stale callback names, old theme authority, forwarding overlay helpers, manual evidence, and source scanners.
+
+**Deletion/replacement**
+
+- Treat any obsolete example, alias, doc, ADR claim, or feature flag from U1-U10 as an audit failure and reopen its owning migration unit; U11 does not perform delayed domain cleanup.
+- Delete temporary characterization helpers that are not durable regression tests.
+
+**Unit gate**
+
+- Focused gallery, DevTools, docs, xtask, and release gates pass before the final workspace verification.
+
+## Verification Contract
+
+Verification is layered. A lower layer cannot substitute for a higher authority claim.
+
+1. **Pure/domain tests:** form generations/status, overlay stack policy, focus ordering, token/schema, typeahead session, table characterization.
+2. **GPUI runtime tests:** real input dispatch, focus traversal, per-window isolation, controlled lifecycle, final accessibility updates/actions, deferred theme capture.
+3. **Projection tests:** UI state, final AccessKit tree, allowlisted DevTools summaries, federated contract/Gallery/scenario/public-API bindings, and redaction agree.
+4. **Gallery flows:** representative user journeys run through actual component adapters rather than hand-built state.
+5. **Workspace/release gates:** formatting, checks, nextest, docs, xtask scanners, dependency/import boundaries, and release verification.
+
+Focused commands are run per unit using the packages and test targets named above. The final gate is:
+
+```powershell
+cargo fmt --all --check
+cargo check --workspace --all-targets --locked
+cargo nextest run --workspace --no-fail-fast --locked
+
+$env:CARGO_BUILD_JOBS = '1'
+cargo nextest run -p open-gpui-devtools --all-features --no-fail-fast --locked
+
+cargo test -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-form -p open-gpui-devtools --doc --locked
+cargo run -p xtask -- scan-theme-drift
+cargo run -p xtask -- scan-theme-schema
+cargo run -p xtask -- scan-ui-contract
+cargo run -p xtask -- scan-public-api --check
+cargo run -p xtask -- scan-import-boundary
+cargo run -p xtask -- scan-doc-links
+cargo run -p xtask -- verify-release-docs
+cargo run -p xtask -- dependency-health
+cargo run -p xtask -- verify
+git diff --check
+```
+
+Test execution rules:
+
+- Use fake clocks for typeahead, motion-final-state, debounce, and validation timing; correctness tests cannot use sleeps.
+- Do not run competing full-workspace Cargo gates from multiple agents against the shared target directory.
+- Use package-focused nextest during implementation and one final workspace run.
+- On Windows, serialize resource-heavy all-feature DevTools/link steps with `CARGO_BUILD_JOBS=1`.
+- Correctness tests use no retries. Any introduced nextest timeout/group configuration must preserve fast unit-test parallelism and isolate only native/GPU/singleton tests.
+- Platform-specific visual baselines are not a completion claim for this plan; structural/gallery/runtime assertions must pass on the active platform.
+- Redaction tests use unique canary strings and assert their absence from live capture, history, diff, Inspector detail/copy, session export, artifact, report, and Gallery fixtures. Post-hoc generic string sanitization does not satisfy this contract.
+
+## Definition of Done
+
+- U1-U11 are implemented in dependency order, and every unit's focused tests pass before its commit.
+- `FormStatus::Validating` is reachable from real store activity, stale validation cannot mutate newer state, and UI/DevTools projections agree.
+- Every official overlay family uses the per-window runtime; old component-specific Escape/outside/focus tails and shallow host forwarding are gone. U3/U4 share this completion gate.
+- Nested modal focus trap, controlled close, exit/reopen, callback reentrancy, trigger loss, LIFO restore, and multi-window isolation are proven with real GPUI tests.
+- Every official component that emits accessibility semantics derives the unified projection from resolved state and has no parallel evidence/assembly authority. Representative action, form, choice, overlay, navigation, collection, and table families are asserted in final AccessKit trees with real action dispatch and stable node identity; all remaining producers have projection/absence coverage.
+- Official semantic controls no longer expose legacy ClickEvent callbacks; semantic entry paths are role-correct, disabled-safe, and exactly once.
+- Theme scope is proven on the existing snapshot before Theme v2. Theme v2's required color scale and every consumer-proven candidate scale, evidence-selected v1 compatibility or clean rejection, effective revision, window/subtree scope, deferred inheritance, and recipe consumption pass focused tests and scanners; unproven categories are explicitly deferred rather than stubbed.
+- Tree and VirtualizedList no longer own duplicate typeahead buffer/timing implementations.
+- Federated typed component rows, Gallery probes, native scenario IDs, and public owners replace manual API inventory, a11y evidence, duplicate catalogs/maps, and source parsing wherever covered by U10 without recreating a central registry.
+- Table engine/virtualizer behavior is unchanged; any common-export narrowing is documented as a break and covered by characterization.
+- Action presentation and command execution remain separate, with no speculative replacement runtime.
+- ADRs and breaking migration documentation match the shipped architecture; stale helpers, aliases, evidence, and docs are deleted.
+- DevTools allowlist and canary tests prove that sensitive free text cannot enter or persist through capture, inspection, export, artifact, report, or Gallery paths.
+- The complete Verification Contract passes, `git diff --check` is clean, review findings are resolved, and no user-authored unrelated change is reverted.
+
+## Appendix
+
+### Requirement Trace
+
+| Requirement | Owning unit(s) | Completion evidence |
+| --- | --- | --- |
+| R1-R2 | all units; preservation gates in U10/U11 | import/dependency scans and preserved-module focused tests |
+| R3 | U1 | lifecycle table tests from store through UI/DevTools |
+| R4 | U2 | final `TreeUpdate` capture and real action dispatch |
+| R5 | U3, completed with U4 | real nested Tab/Shift-Tab and restore tests |
+| R6 | U4 | pilot/fleet migration, runtime tests, old-tail absence |
+| R7 | U5 | all-producer migration inventory plus representative final-tree tests |
+| R8 | U6 | callback inventory, activation matrix tests, public `ClickEvent` absence gate |
+| R9-R11 | U7-U8 | scope tests on old/new payload, schema/recipe scanners, deferred capture |
+| R12 | U9 | fake-clock cross-collection tests and duplicate implementation deletion |
+| R13-R14 | U10 | federated binding fixtures, source-scanner deletion, Table characterization |
+| R15 | each breaking unit; U11 audits | same-unit migration docs/Gallery/DevTools updates and final residual scan |
+
+### Priority Rationale
+
+- **P0 correctness:** U1 and U2. They fix data corruption risk and make a critical user-facing authority observable.
+- **P1 interaction/runtime:** U3-U6. They resolve modal, focus, accessibility, and activation correctness with the largest user impact.
+- **P2 framework depth:** U7-U9. Scoped resolution is proven before Theme v2 broadens its payload; typeahead improves interaction consistency independently.
+- **P3 convergence/release:** U10-U11. They delete drift-prone scaffolding only after executable authorities can replace it.
+
+### Explicit Preservation Gates
+
+- Table engine, `RowWindow`, stable identities, row pipeline, and virtualization stay.
+- `ActionDescriptor`/`ResolvedActionState` stay unless implementation uncovers a separate proven deletion case; they are not the semantic activation runtime.
+- The renderer-neutral accessibility vocabulary stays unless an individual type demonstrably adds no domain value; only duplicate mappings/evidence are deleted.
+- `open-gpui-motion` retains execution ownership; theme supplies policy/defaults only.
+- Cargo/typed contracts remain the distribution seam; no registry/scaffold system returns.
+
+### Required Review Checkpoints
+
+- After U2: verify the AccessKit harness reflects platform output rather than a test-only reconstruction.
+- After U4: adversarial review for dual overlay authority and callback/focus reentrancy.
+- After U5/U6: final-tree/action parity and API migration review across representative families.
+- During U7 prototype: require an independent non-theme consumer before exposing generic inherited context; audit for hidden global state.
+- After U10: compare deleted duplicated authority and new federated conformance code; reject a net-shallower design or any central-registry revival.
+- Before completion: simplify-code pass, structured code review, full Verification Contract, and release-doc audit.
