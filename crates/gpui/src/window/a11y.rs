@@ -169,21 +169,7 @@ impl A11y {
 
     /// Finalize the tree and produce a [`TreeUpdate`] for the platform adapter.
     pub(crate) fn end_frame(&mut self) -> TreeUpdate {
-        let tree_update = self.nodes.finalize();
-
-        // Open GPUI currently doesn't set any a11y APIs on *any* UI elements, so a
-        // tree with nodes other than the root indicates a bug in the
-        // `TreeUpdate`-producing logic.
-        //
-        // Remove this when adding aria attributes.
-        if tree_update.nodes.len() > 1 {
-            log::warn!(
-                "expected an empty a11y tree update (only the root node), but got {} nodes; Open GPUI has no accessible UI elements yet",
-                tree_update.nodes.len()
-            );
-        }
-
-        tree_update
+        self.nodes.finalize()
     }
 }
 

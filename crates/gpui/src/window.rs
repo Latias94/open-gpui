@@ -65,8 +65,6 @@ mod invalidator;
 mod prompts;
 
 use self::a11y::A11y;
-#[cfg(not(target_family = "wasm"))]
-use self::a11y::ROOT_NODE_ID;
 pub(crate) use self::frame_journal::{
     DeferredDraw, Frame, PaintIndex, PrepaintStateIndex, TooltipRequest,
 };
@@ -1122,12 +1120,6 @@ impl Window {
 
         #[cfg(not(target_family = "wasm"))]
         if !accessibility_force_disabled {
-            let initial_tree = accesskit::TreeUpdate {
-                nodes: vec![(ROOT_NODE_ID, accesskit::Node::new(accesskit::Role::Window))],
-                tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
-                tree_id: accesskit::TreeId::ROOT,
-                focus: ROOT_NODE_ID,
-            };
             let (activation_sender, activation_receiver) = async_channel::unbounded::<()>();
             let (deactivation_sender, deactivation_receiver) = async_channel::unbounded::<()>();
             let (action_sender, action_receiver) =
@@ -1140,7 +1132,7 @@ impl Window {
                         log::info!("Accessibility activated");
                         active_flag.store(true, SeqCst);
                         activation_sender.send_blocking(()).log_err();
-                        Some(initial_tree.clone())
+                        None
                     })
                 },
                 action: Box::new(move |request| {
@@ -1156,11 +1148,9 @@ impl Window {
                 },
             });
 
-            // A11y can be activated at any time, and so we cannot compute a
-            // correct `TreeUpdate` on-demand. When this happens, we return a
-            // default empty `TreeUpdate`.
-            //
-            // So we force a new frame, which will then send a correct `TreeUpdate`.
+            // Accessibility can be activated at any time, so a complete tree cannot be
+            // produced synchronously here. Returning `None` lets the platform adapter own
+            // any temporary placeholder while this refresh produces the real full tree.
             let mut async_cx = cx.to_async();
             cx.foreground_executor()
                 .spawn(async move {

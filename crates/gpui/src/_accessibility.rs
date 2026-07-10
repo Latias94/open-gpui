@@ -219,6 +219,38 @@
 //! [`.on_click()`][StatefulInteractiveElement::on_click] adds an
 //! [`AccessibleAction::Click`] handler that calls the click handler.
 //!
+//! ## Testing final accessibility output
+//!
+//! Tests built with the `test-support` feature can activate accessibility on a
+//! `TestAppContext`, inspect the final [`accesskit::TreeUpdate`] delivered to
+//! the platform, and dispatch requests through the same callback used by a
+//! native AccessKit adapter:
+//!
+//! ```rust,ignore
+//! assert!(cx.activate_accessibility(window));
+//! let tree = cx.latest_accessibility_tree_update(window).unwrap();
+//! let button_id = tree
+//!     .nodes
+//!     .iter()
+//!     .find(|(_, node)| node.role() == Role::Button)
+//!     .map(|(id, _)| *id)
+//!     .unwrap();
+//!
+//! cx.dispatch_accessibility_action(
+//!     window,
+//!     accesskit::ActionRequest {
+//!         action: AccessibleAction::Click,
+//!         target_tree: accesskit::TreeId::ROOT,
+//!         target_node: button_id,
+//!         data: None,
+//!     },
+//! );
+//! ```
+//!
+//! Prefer this final-tree surface when asserting roles, relationships, focus,
+//! node removal, or action behavior. Component metadata and intermediate node
+//! builders do not prove what the platform adapter actually received.
+//!
 //! ## Further reading
 //!
 //! Designing high-quality accessible interfaces can be challenging, in the same

@@ -1,9 +1,9 @@
 use crate::{
-    AnyWindowHandle, AtlasAccess, AtlasAccessDiagnostic, AtlasAccessOutcome, AtlasKey,
-    AtlasRemoveDiagnostic, AtlasRemoveOutcome, AtlasTextureId, AtlasTile, Bounds, CursorStyle,
-    DevicePixels, DispatchEventResult, GpuSpecs, Pixels, Platform, PlatformAtlas, PlatformDisplay,
-    PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
+    A11yCallbacks, AnyWindowHandle, AtlasAccess, AtlasAccessDiagnostic, AtlasAccessOutcome,
+    AtlasKey, AtlasRemoveDiagnostic, AtlasRemoveOutcome, AtlasTextureId, AtlasTile, Bounds,
+    CursorStyle, DevicePixels, DispatchEventResult, GpuSpecs, Pixels, Platform, PlatformAtlas,
+    PlatformDisplay, PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams,
 };
 use image::RgbaImage;
@@ -39,6 +39,37 @@ pub(crate) struct TestWindowState {
     is_fullscreen: bool,
     accepts_pointer_input: bool,
     pub(crate) cursor_style: CursorStyle,
+    accessibility: TestAccessibilityState,
+}
+
+#[derive(Default)]
+struct TestAccessibilityState {
+    callbacks: Option<Rc<A11yCallbacks>>,
+    active: bool,
+    updates: Vec<accesskit::TreeUpdate>,
+}
+
+impl TestAccessibilityState {
+    fn record_platform_delivery(&mut self, update: accesskit::TreeUpdate) {
+        self.updates.push(update);
+    }
+
+    fn retain_activation_result(
+        &mut self,
+        callbacks: &Rc<A11yCallbacks>,
+        update: Option<accesskit::TreeUpdate>,
+    ) {
+        let is_current_adapter = self
+            .callbacks
+            .as_ref()
+            .is_some_and(|current| Rc::ptr_eq(current, callbacks));
+        if self.active
+            && is_current_adapter
+            && let Some(update) = update
+        {
+            self.record_platform_delivery(update);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -95,7 +126,80 @@ impl TestWindow {
             is_fullscreen: false,
             accepts_pointer_input: params.accepts_pointer_input,
             cursor_style: CursorStyle::Arrow,
+            accessibility: TestAccessibilityState::default(),
         })))
+    }
+
+    pub(crate) fn activate_accessibility(&self) -> bool {
+        let callbacks = {
+            let mut state = self.0.lock();
+            let Some(callbacks) = state.accessibility.callbacks.clone() else {
+                return false;
+            };
+            state.accessibility.active = true;
+            callbacks
+        };
+
+        let initial_update = (callbacks.activation)();
+        self.0
+            .lock()
+            .accessibility
+            .retain_activation_result(&callbacks, initial_update);
+        true
+    }
+
+    pub(crate) fn deactivate_accessibility(&self) -> bool {
+        let callbacks = {
+            let mut state = self.0.lock();
+            if !state.accessibility.active {
+                return false;
+            }
+            let Some(callbacks) = state.accessibility.callbacks.clone() else {
+                return false;
+            };
+            state.accessibility.active = false;
+            callbacks
+        };
+
+        (callbacks.deactivation)();
+        true
+    }
+
+    pub(crate) fn dispatch_accessibility_action(&self, request: accesskit::ActionRequest) -> bool {
+        let callbacks = {
+            let state = self.0.lock();
+            if !state.accessibility.active {
+                return false;
+            }
+            let Some(callbacks) = state.accessibility.callbacks.clone() else {
+                return false;
+            };
+            callbacks
+        };
+
+        (callbacks.action)(request);
+        true
+    }
+
+    pub(crate) fn latest_accessibility_tree_update(&self) -> Option<accesskit::TreeUpdate> {
+        self.0
+            .lock()
+            .accessibility
+            .updates
+            .last()
+            .cloned()
+            .map(normalize_accessibility_tree_update)
+    }
+
+    pub(crate) fn accessibility_tree_update_history(&self) -> Vec<accesskit::TreeUpdate> {
+        self.0
+            .lock()
+            .accessibility
+            .updates
+            .iter()
+            .cloned()
+            .map(normalize_accessibility_tree_update)
+            .collect()
     }
 
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
@@ -396,6 +500,122 @@ impl PlatformWindow for TestWindow {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         None
+    }
+
+    fn a11y_init(&self, callbacks: A11yCallbacks) {
+        let mut state = self.0.lock();
+        debug_assert!(
+            state.accessibility.callbacks.is_none(),
+            "accessibility callbacks initialized more than once for a test window"
+        );
+        state.accessibility.callbacks = Some(Rc::new(callbacks));
+        state.accessibility.active = false;
+        state.accessibility.updates.clear();
+    }
+
+    fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
+        self.0
+            .lock()
+            .accessibility
+            .record_platform_delivery(tree_update);
+    }
+}
+
+fn normalize_accessibility_tree_update(mut update: accesskit::TreeUpdate) -> accesskit::TreeUpdate {
+    update.nodes.sort_unstable_by_key(|(id, _)| *id);
+    update
+}
+
+#[cfg(test)]
+mod accessibility_tests {
+    use super::*;
+    use accesskit::{Node, NodeId, Role, Tree, TreeId, TreeUpdate};
+
+    fn tree_update(nodes: Vec<(NodeId, Node)>) -> TreeUpdate {
+        TreeUpdate {
+            nodes,
+            tree: Some(Tree::new(NodeId(0))),
+            tree_id: TreeId::ROOT,
+            focus: NodeId(0),
+        }
+    }
+
+    fn callbacks() -> Rc<A11yCallbacks> {
+        Rc::new(A11yCallbacks {
+            activation: Box::new(|| None),
+            action: Box::new(|_| {}),
+            deactivation: Box::new(|| {}),
+        })
+    }
+
+    #[test]
+    fn accessibility_state_retains_only_current_active_activation_result() {
+        let current = callbacks();
+        let replacement = callbacks();
+        let first = tree_update(vec![(NodeId(0), Node::new(Role::Window))]);
+        let second = tree_update(vec![
+            (NodeId(0), Node::new(Role::Window)),
+            (NodeId(1), Node::new(Role::Button)),
+        ]);
+        let mut state = TestAccessibilityState {
+            callbacks: Some(current.clone()),
+            active: true,
+            updates: Vec::new(),
+        };
+
+        state.retain_activation_result(&current, None);
+        assert!(state.updates.is_empty());
+        state.retain_activation_result(&current, Some(first.clone()));
+        assert_eq!(state.updates, [first.clone()]);
+
+        state.active = false;
+        state.retain_activation_result(&current, Some(second.clone()));
+        assert_eq!(state.updates, [first.clone()]);
+
+        state.active = true;
+        state.callbacks = Some(replacement);
+        state.retain_activation_result(&current, Some(second));
+        assert_eq!(state.updates, [first]);
+    }
+
+    #[test]
+    fn accessibility_state_preserves_platform_delivery_order() {
+        let first = tree_update(vec![(NodeId(0), Node::new(Role::Window))]);
+        let second = tree_update(vec![
+            (NodeId(0), Node::new(Role::Window)),
+            (NodeId(1), Node::new(Role::Button)),
+        ]);
+        let mut state = TestAccessibilityState::default();
+
+        state.record_platform_delivery(first.clone());
+        state.record_platform_delivery(second.clone());
+        assert_eq!(state.updates, [first.clone(), second.clone()]);
+
+        state.active = true;
+        state.record_platform_delivery(first.clone());
+        assert_eq!(state.updates, [first.clone(), second, first]);
+    }
+
+    #[test]
+    fn accessibility_normalization_preserves_relationship_order() {
+        let mut root = Node::new(Role::Window);
+        root.set_children([NodeId(2), NodeId(1)]);
+        let update = tree_update(vec![
+            (NodeId(2), Node::new(Role::Label)),
+            (NodeId(0), root),
+            (NodeId(1), Node::new(Role::Button)),
+        ]);
+
+        let normalized = normalize_accessibility_tree_update(update);
+        assert_eq!(
+            normalized
+                .nodes
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>(),
+            [NodeId(0), NodeId(1), NodeId(2)]
+        );
+        assert_eq!(normalized.nodes[0].1.children(), &[NodeId(2), NodeId(1)]);
     }
 }
 

@@ -445,6 +445,62 @@ impl TestAppContext {
         self.test_window(window_handle).simulate_resize(size);
     }
 
+    /// Activates accessibility for a test window and drains the resulting frame work.
+    ///
+    /// Returns `false` when the application was created with accessibility disabled.
+    /// Repeated calls request another full tree, matching AccessKit activation semantics.
+    pub fn activate_accessibility(&self, window: AnyWindowHandle) -> bool {
+        let activated = self.test_window(window).activate_accessibility();
+        self.run_until_parked();
+        activated
+    }
+
+    /// Deactivates accessibility for a test window and drains the resulting frame work.
+    ///
+    /// Returns `false` when accessibility was not active for the window.
+    pub fn deactivate_accessibility(&self, window: AnyWindowHandle) -> bool {
+        let deactivated = self.test_window(window).deactivate_accessibility();
+        self.run_until_parked();
+        deactivated
+    }
+
+    /// Returns the latest final accessibility update delivered by the window to the platform.
+    ///
+    /// Nodes are sorted by ID for deterministic assertions. Node identity, focus, bounds, and
+    /// relationship ordering are preserved exactly as emitted by GPUI.
+    pub fn latest_accessibility_tree_update(
+        &self,
+        window: AnyWindowHandle,
+    ) -> Option<accesskit::TreeUpdate> {
+        self.test_window(window).latest_accessibility_tree_update()
+    }
+
+    /// Returns all final accessibility updates delivered to the platform in arrival order.
+    ///
+    /// Each update is normalized by node ID without changing semantic relationship ordering.
+    /// Unexpected deliveries after deactivation remain visible so tests can detect lifecycle bugs.
+    pub fn accessibility_tree_update_history(
+        &self,
+        window: AnyWindowHandle,
+    ) -> Vec<accesskit::TreeUpdate> {
+        self.test_window(window).accessibility_tree_update_history()
+    }
+
+    /// Dispatches an AccessKit request through the platform callback for a test window.
+    ///
+    /// Returns `false` when accessibility is inactive or unavailable for the window.
+    pub fn dispatch_accessibility_action(
+        &self,
+        window: AnyWindowHandle,
+        request: accesskit::ActionRequest,
+    ) -> bool {
+        let dispatched = self
+            .test_window(window)
+            .dispatch_accessibility_action(request);
+        self.run_until_parked();
+        dispatched
+    }
+
     /// Returns true if there's an alert dialog open.
     pub fn expect_restart(&self) -> oneshot::Receiver<Option<PathBuf>> {
         let (tx, rx) = futures::channel::oneshot::channel();
@@ -1001,6 +1057,31 @@ impl VisualTestContext {
         handled
     }
 
+    /// Activates accessibility for this test window.
+    pub fn activate_accessibility(&self) -> bool {
+        self.cx.activate_accessibility(self.window)
+    }
+
+    /// Deactivates accessibility for this test window.
+    pub fn deactivate_accessibility(&self) -> bool {
+        self.cx.deactivate_accessibility(self.window)
+    }
+
+    /// Returns the latest normalized final accessibility update for this test window.
+    pub fn latest_accessibility_tree_update(&self) -> Option<accesskit::TreeUpdate> {
+        self.cx.latest_accessibility_tree_update(self.window)
+    }
+
+    /// Returns the normalized final accessibility update history for this test window.
+    pub fn accessibility_tree_update_history(&self) -> Vec<accesskit::TreeUpdate> {
+        self.cx.accessibility_tree_update_history(self.window)
+    }
+
+    /// Dispatches an AccessKit request through this test window's platform callback.
+    pub fn dispatch_accessibility_action(&self, request: accesskit::ActionRequest) -> bool {
+        self.cx.dispatch_accessibility_action(self.window, request)
+    }
+
     /// Dispatch the action to the currently focused node.
     pub fn dispatch_action<A>(&mut self, action: A)
     where
@@ -1444,6 +1525,9 @@ impl AnyWindowHandle {
             .unwrap()
     }
 }
+
+#[cfg(test)]
+mod accessibility_tests;
 
 #[cfg(test)]
 mod tests {
