@@ -59,6 +59,16 @@ impl OverlayLayerKind {
         }
     }
 
+    /// Returns whether this overlay kind participates in outside-press arbitration by default.
+    pub const fn default_outside_press_participation(self) -> OutsidePressParticipation {
+        match self {
+            Self::Tooltip => OutsidePressParticipation::Transparent,
+            Self::NonModalDismissible | Self::Modal | Self::Menu => {
+                OutsidePressParticipation::Participating
+            }
+        }
+    }
+
     /// Returns the default Escape-key policy for this overlay kind.
     pub const fn default_escape_key_policy(self) -> EscapeKeyPolicy {
         match self {
@@ -222,6 +232,26 @@ impl OutsidePressPolicy {
     }
 }
 
+/// Whether an interactive overlay participates in outside-press stack arbitration.
+///
+/// This is independent from [`OutsidePressPolicy`]: a participating layer may explicitly ignore
+/// an offered press and thereby stop overlay cascade, while a transparent layer is never offered
+/// the press and cannot block a participating layer below it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutsidePressParticipation {
+    /// Offer outside presses to this layer when it is interactive.
+    Participating,
+    /// Skip this layer during outside-press stack arbitration.
+    Transparent,
+}
+
+impl OutsidePressParticipation {
+    /// Returns whether the layer may own outside-press arbitration.
+    pub const fn participates(self) -> bool {
+        matches!(self, Self::Participating)
+    }
+}
+
 /// Resolved outside-press behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutsidePressOutcome {
@@ -277,6 +307,7 @@ impl EscapeKeyPolicy {
 pub struct OverlayLayerPolicy {
     kind: OverlayLayerKind,
     presence: OverlayPresence,
+    outside_press_participation: OutsidePressParticipation,
     outside_press: OutsidePressPolicy,
     escape_key: EscapeKeyPolicy,
     focus_restore: FocusRestoreIntent,
@@ -289,6 +320,7 @@ impl OverlayLayerPolicy {
         Self {
             kind,
             presence,
+            outside_press_participation: kind.default_outside_press_participation(),
             outside_press: kind.default_outside_press_policy(),
             escape_key: kind.default_escape_key_policy(),
             focus_restore: kind.default_focus_restore_intent(),
@@ -309,6 +341,11 @@ impl OverlayLayerPolicy {
     /// Returns the outside-press policy.
     pub const fn outside_press_policy(&self) -> OutsidePressPolicy {
         self.outside_press
+    }
+
+    /// Returns whether this layer participates in outside-press stack arbitration.
+    pub const fn outside_press_participation(&self) -> OutsidePressParticipation {
+        self.outside_press_participation
     }
 
     /// Returns the Escape-key policy.
@@ -335,6 +372,15 @@ impl OverlayLayerPolicy {
     /// Applies a custom outside-press policy.
     pub fn with_outside_press_policy(mut self, policy: OutsidePressPolicy) -> Self {
         self.outside_press = policy;
+        self
+    }
+
+    /// Applies custom outside-press stack participation.
+    pub fn with_outside_press_participation(
+        mut self,
+        participation: OutsidePressParticipation,
+    ) -> Self {
+        self.outside_press_participation = participation;
         self
     }
 
@@ -425,6 +471,7 @@ impl OverlayLayerState {
         let blocks_underlay_input =
             matches!(policy.kind(), OverlayLayerKind::Modal) && presence.present();
         let wants_outside_press = presence.interactive()
+            && policy.outside_press_participation().participates()
             && !matches!(policy.outside_press_policy(), OutsidePressPolicy::Ignore);
 
         Self {
@@ -481,6 +528,12 @@ impl OverlayLayer {
     pub const fn policy(&self) -> &OverlayLayerPolicy {
         &self.policy
     }
+
+    /// Returns whether this layer is currently eligible for outside-press arbitration.
+    pub const fn is_outside_press_eligible(&self) -> bool {
+        self.policy.presence().interactive()
+            && self.policy.outside_press_participation().participates()
+    }
 }
 
 /// Resolved Escape-key handling for an overlay stack.
@@ -526,14 +579,14 @@ pub fn resolve_escape_key(layers: &[OverlayLayer]) -> EscapeKeyResolution {
 /// Resolved outside-press handling for an overlay stack.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutsidePressResolution {
-    /// The topmost interactive layer resolved the press.
+    /// The topmost eligible layer resolved the press.
     Handled {
         /// Layer that received the outside press offer.
         layer_id: OverlayLayerId,
         /// Resolved outside-press outcome for the layer.
         outcome: OutsidePressOutcome,
     },
-    /// No interactive overlay layer can receive an outside press.
+    /// No eligible overlay layer can receive an outside press.
     NoOutsidePressLayer,
 }
 
@@ -542,7 +595,7 @@ pub fn resolve_outside_press(layers: &[OverlayLayer]) -> OutsidePressResolution 
     let Some(layer) = layers
         .iter()
         .rev()
-        .find(|layer| layer.policy().presence().interactive())
+        .find(|layer| layer.is_outside_press_eligible())
     else {
         return OutsidePressResolution::NoOutsidePressLayer;
     };
@@ -1433,6 +1486,10 @@ mod tests {
         let menu = OverlayLayerPolicy::new(OverlayLayerKind::Menu, OverlayPresence::open());
 
         assert_eq!(tooltip.outside_press_policy(), OutsidePressPolicy::Ignore);
+        assert_eq!(
+            tooltip.outside_press_participation(),
+            OutsidePressParticipation::Transparent
+        );
         assert_eq!(tooltip.escape_key_policy(), EscapeKeyPolicy::Ignore);
         assert_eq!(tooltip.focus_restore_intent(), &FocusRestoreIntent::None);
         assert_eq!(tooltip.initial_focus_intent(), &InitialFocusIntent::None);
@@ -1450,11 +1507,19 @@ mod tests {
             popover.outside_press_policy(),
             OutsidePressPolicy::DismissAndPassThrough
         );
+        assert_eq!(
+            popover.outside_press_participation(),
+            OutsidePressParticipation::Participating
+        );
         assert_eq!(popover.escape_key_policy(), EscapeKeyPolicy::Dismiss);
         assert_eq!(popover.focus_restore_intent(), &FocusRestoreIntent::Trigger);
         assert_eq!(popover.initial_focus_intent(), &InitialFocusIntent::None);
 
         assert_eq!(dialog.outside_press_policy(), OutsidePressPolicy::Consume);
+        assert_eq!(
+            dialog.outside_press_participation(),
+            OutsidePressParticipation::Participating
+        );
         assert_eq!(dialog.escape_key_policy(), EscapeKeyPolicy::Dismiss);
         assert_eq!(
             dialog.initial_focus_intent(),
@@ -1473,6 +1538,10 @@ mod tests {
         assert_eq!(
             menu.outside_press_policy(),
             OutsidePressPolicy::DismissAndConsume
+        );
+        assert_eq!(
+            menu.outside_press_participation(),
+            OutsidePressParticipation::Participating
         );
         assert_eq!(
             menu.initial_focus_intent(),
@@ -1581,7 +1650,7 @@ mod tests {
     }
 
     #[test]
-    fn outside_press_resolution_uses_topmost_interactive_dismissible_layer() {
+    fn outside_press_resolution_uses_topmost_eligible_layer() {
         let lower = OverlayLayer::new(
             "lower-popover",
             OverlayLayerPolicy::new(
@@ -1632,9 +1701,57 @@ mod tests {
         );
         assert_eq!(
             resolve_outside_press(&[tooltip]),
+            OutsidePressResolution::NoOutsidePressLayer
+        );
+    }
+
+    #[test]
+    fn transparent_tooltip_does_not_block_participating_layer_below() {
+        let lower = OverlayLayer::new(
+            "lower-popover",
+            OverlayLayerPolicy::new(
+                OverlayLayerKind::NonModalDismissible,
+                OverlayPresence::open(),
+            ),
+        );
+        let tooltip = OverlayLayer::new(
+            "tooltip",
+            OverlayLayerPolicy::new(OverlayLayerKind::Tooltip, OverlayPresence::open()),
+        );
+
+        assert!(!tooltip.is_outside_press_eligible());
+        assert_eq!(
+            resolve_outside_press(&[lower, tooltip]),
             OutsidePressResolution::Handled {
-                layer_id: OverlayLayerId::new("tooltip"),
-                outcome: OutsidePressPolicy::Ignore.resolve(),
+                layer_id: OverlayLayerId::new("lower-popover"),
+                outcome: OutsidePressPolicy::DismissAndPassThrough.resolve(),
+            }
+        );
+    }
+
+    #[test]
+    fn explicitly_transparent_interactive_layer_does_not_block_participating_layer_below() {
+        let lower = OverlayLayer::new(
+            "lower-menu",
+            OverlayLayerPolicy::new(OverlayLayerKind::Menu, OverlayPresence::open()),
+        );
+        let passive = OverlayLayer::new(
+            "passive-surface",
+            OverlayLayerPolicy::new(
+                OverlayLayerKind::NonModalDismissible,
+                OverlayPresence::open(),
+            )
+            .with_outside_press_policy(OutsidePressPolicy::DismissAndConsume)
+            .with_outside_press_participation(OutsidePressParticipation::Transparent),
+        );
+
+        assert!(!passive.is_outside_press_eligible());
+        assert!(!passive.policy().layer_state().wants_outside_press());
+        assert_eq!(
+            resolve_outside_press(&[lower, passive]),
+            OutsidePressResolution::Handled {
+                layer_id: OverlayLayerId::new("lower-menu"),
+                outcome: OutsidePressPolicy::DismissAndConsume.resolve(),
             }
         );
     }
@@ -1655,6 +1772,8 @@ mod tests {
             .with_outside_press_policy(OutsidePressPolicy::Ignore),
         );
 
+        assert!(top.is_outside_press_eligible());
+        assert!(!top.policy().layer_state().wants_outside_press());
         assert_eq!(
             resolve_outside_press(&[lower, top]),
             OutsidePressResolution::Handled {
