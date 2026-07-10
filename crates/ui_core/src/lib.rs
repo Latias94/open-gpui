@@ -41,14 +41,13 @@ pub use geometry::{
 };
 pub use grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d};
 pub use overlay::{
-    DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreResolution,
-    OutsidePressOutcome, OutsidePressPolicy, OutsidePressResolution, OverlayAnchorInput,
-    OverlayEdges, OverlayLayer, OverlayLayerId, OverlayLayerKind, OverlayLayerPolicy,
-    OverlayLayerState, OverlayPlacementAlignment, OverlayPlacementFit, OverlayPlacementInput,
-    OverlayPlacementResolution, OverlayPlacementSide, OverlayPlacementTrace,
-    OverlayPlacementTraceStep, OverlayPresence, OverlayResolvedState, OverlaySize, Rect,
-    anchor_rect_from_point, inset_rect, outer_bounds_with_window_margin, prefer_visual_bounds,
-    rect, resolve_escape_key, resolve_focus_restore, resolve_outside_press,
+    DismissReason, EscapeKeyPolicy, EscapeKeyResolution, OutsidePressOutcome, OutsidePressPolicy,
+    OutsidePressResolution, OverlayAnchorInput, OverlayEdges, OverlayLayer, OverlayLayerId,
+    OverlayLayerKind, OverlayLayerPolicy, OverlayLayerState, OverlayPlacementAlignment,
+    OverlayPlacementFit, OverlayPlacementInput, OverlayPlacementResolution, OverlayPlacementSide,
+    OverlayPlacementTrace, OverlayPlacementTraceStep, OverlayPresence, OverlayResolvedState,
+    OverlaySize, Rect, anchor_rect_from_point, inset_rect, outer_bounds_with_window_margin,
+    prefer_visual_bounds, rect, resolve_escape_key, resolve_outside_press,
     resolve_overlay_placement,
 };
 pub use sizing::{Density, Sizable, Size};

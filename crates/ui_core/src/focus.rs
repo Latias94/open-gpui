@@ -131,16 +131,6 @@ impl FocusRestoreIntent {
             Self::TriggerOrFallback(_) => "trigger or fallback",
         }
     }
-
-    /// Resolves the preferred logical target from the target saved when the scope opened.
-    pub fn resolve_target(&self, saved: Option<&FocusTargetId>) -> Option<FocusTargetId> {
-        match self {
-            Self::None => None,
-            Self::Trigger => saved.cloned(),
-            Self::Fallback(target) => Some(target.clone()),
-            Self::TriggerOrFallback(target) => saved.cloned().or_else(|| Some(target.clone())),
-        }
-    }
 }
 
 /// Renderer-neutral policy for one focus scope.

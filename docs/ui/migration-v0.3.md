@@ -111,3 +111,8 @@ pending in the same turn, the newest valid initial-focus claim wins so reopening
 an older close. Initial and restoration targets are resolved after the state transition reaches a
 completed rendered frame, so a target hidden in the same transaction is treated as unmounted even
 when another owner still holds its handle.
+
+The old stack-only `FocusRestoreResolution`, `resolve_focus_restore`, and per-layer trigger target
+were removed. They could select an unmounted trigger without consulting live registrations. Use the
+focus-scope restoration resolver and let the GPUI adapter validate current-frame handles instead of
+resolving a focus target from an `OverlayLayer` snapshot.
