@@ -1533,12 +1533,15 @@ mod accessibility_tests;
 mod tests {
     use crate::{
         AnyDrag, AppContext as _, Context, CursorStyle, Empty, FocusHandle, InteractiveElement,
-        IntoElement, Modifiers, MouseButton, MouseDownEvent, ParentElement, PathPromptOptions,
-        PlatformHoveredWindow, QuitMode, Render, ScrollDelta, ScrollWheelEvent,
-        StatefulInteractiveElement, Styled, TestAppContext, TestInputDispatchSnapshot, TouchPhase,
-        VisualContext, VisualTestContext, Window, canvas, div, point, px, size,
+        IntoElement, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
+        ParentElement, PathPromptOptions, PlatformHoveredWindow, QuitMode, Render, ScrollDelta,
+        ScrollWheelEvent, StatefulInteractiveElement, Styled, Subscription, TestAppContext,
+        TestInputDispatchSnapshot, TouchPhase, VisualContext, VisualTestContext, Window, canvas,
+        div, point, px, size,
     };
+    use std::cell::{Cell, RefCell};
     use std::path::PathBuf;
+    use std::rc::Rc;
     use std::sync::Arc;
 
     struct FocusDebugView {
@@ -1604,6 +1607,17 @@ mod tests {
 
     struct InputDispatchProbe;
 
+    #[derive(Default)]
+    struct WindowLocalProbe;
+
+    struct WindowMouseInterceptorProbe {
+        consume: Rc<Cell<bool>>,
+        events: Rc<RefCell<Vec<&'static str>>>,
+        focus: FocusHandle,
+        mouse_subscription: Option<Subscription>,
+        key_subscription: Option<Subscription>,
+    }
+
     impl Render for InputDispatchProbe {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             div()
@@ -1613,6 +1627,178 @@ mod tests {
                     crate::ScrollWheelIntent::handled().stop_propagation()
                 })
         }
+    }
+
+    impl Render for WindowMouseInterceptorProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let events = self.events.clone();
+            div()
+                .id("window-mouse-interceptor-probe")
+                .size_full()
+                .focusable()
+                .track_focus(&self.focus)
+                .tab_stop(false)
+                .capture_key_down({
+                    let events = self.events.clone();
+                    move |_, _, _| events.borrow_mut().push("node-capture")
+                })
+                .on_key_down({
+                    let events = self.events.clone();
+                    move |_, _, _| events.borrow_mut().push("node-bubble")
+                })
+                .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                    events.borrow_mut().push("node");
+                })
+        }
+    }
+
+    #[open_gpui::test]
+    fn window_state_is_unique_per_type_and_isolated_between_windows(cx: &mut TestAppContext) {
+        let first = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let second = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+
+        let first_state = cx
+            .update_window(first, |_, window, cx| {
+                window.use_window_state(cx, |_, _| WindowLocalProbe)
+            })
+            .expect("first window should remain open");
+        let same_first_state = cx
+            .update_window(first, |_, window, cx| {
+                window.use_window_state(cx, |_, _| WindowLocalProbe)
+            })
+            .expect("first window should remain open");
+        let second_state = cx
+            .update_window(second, |_, window, cx| {
+                window.use_window_state(cx, |_, _| WindowLocalProbe)
+            })
+            .expect("second window should remain open");
+
+        assert_eq!(first_state.entity_id(), same_first_state.entity_id());
+        assert_ne!(first_state.entity_id(), second_state.entity_id());
+
+        let first_state_weak = first_state.downgrade();
+        drop(first_state);
+        drop(same_first_state);
+        assert!(first_state_weak.upgrade().is_some());
+        assert!(cx.simulate_window_close(first));
+        cx.update(|_| {});
+        cx.run_until_parked();
+        assert!(first_state_weak.upgrade().is_none());
+        assert!(second_state.downgrade().upgrade().is_some());
+    }
+
+    #[open_gpui::test]
+    fn window_mouse_interceptor_precedes_nodes_and_preserves_single_pass_through(
+        cx: &mut TestAppContext,
+    ) {
+        let consume = Rc::new(Cell::new(false));
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let (view, cx) = cx.add_window_view({
+            let consume = consume.clone();
+            let events = events.clone();
+            move |_, cx| WindowMouseInterceptorProbe {
+                consume,
+                events,
+                focus: cx.focus_handle(),
+                mouse_subscription: None,
+                key_subscription: None,
+            }
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update_window_entity(&view, |view, window, _cx| {
+            let consume = view.consume.clone();
+            let events = view.events.clone();
+            view.mouse_subscription = Some(window.intercept_mouse_down(
+                move |_: &MouseDownEvent, window, cx| {
+                    events.borrow_mut().push("interceptor");
+                    if consume.get() {
+                        cx.stop_propagation();
+                        window.prevent_default();
+                    }
+                },
+            ));
+        });
+
+        let pass_through = cx.simulate_event_with_dispatch_snapshot(MouseDownEvent {
+            button: MouseButton::Left,
+            position: point(px(10.0), px(10.0)),
+            modifiers: Modifiers::none(),
+            click_count: 1,
+            first_mouse: false,
+        });
+        assert_eq!(&*events.borrow(), &["interceptor", "node"]);
+        assert!(pass_through.propagated());
+
+        events.borrow_mut().clear();
+        consume.set(true);
+        let consumed = cx.simulate_event_with_dispatch_snapshot(MouseDownEvent {
+            button: MouseButton::Left,
+            position: point(px(10.0), px(10.0)),
+            modifiers: Modifiers::none(),
+            click_count: 1,
+            first_mouse: false,
+        });
+        assert_eq!(&*events.borrow(), &["interceptor"]);
+        assert!(consumed.propagation_stopped());
+        assert!(consumed.default_prevented());
+    }
+
+    #[open_gpui::test]
+    fn window_key_interceptor_precedes_node_dispatch_and_can_consume(cx: &mut TestAppContext) {
+        let consume = Rc::new(Cell::new(false));
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let (view, cx) = cx.add_window_view({
+            let consume = consume.clone();
+            let events = events.clone();
+            move |_, cx| WindowMouseInterceptorProbe {
+                consume,
+                events,
+                focus: cx.focus_handle(),
+                mouse_subscription: None,
+                key_subscription: None,
+            }
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update_window_entity(&view, |view, window, cx| {
+            view.focus.focus(window, cx);
+            let consume = view.consume.clone();
+            let events = view.events.clone();
+            view.key_subscription = Some(window.intercept_key_down(
+                move |_: &KeyDownEvent, window, cx| {
+                    events.borrow_mut().push("interceptor");
+                    if consume.get() {
+                        cx.stop_propagation();
+                        window.prevent_default();
+                    }
+                },
+            ));
+        });
+
+        let pass_through = cx.simulate_event_with_dispatch_snapshot(KeyDownEvent {
+            keystroke: Keystroke::parse("escape").expect("escape should parse"),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        assert_eq!(
+            &*events.borrow(),
+            &["interceptor", "node-capture", "node-bubble"]
+        );
+        assert!(pass_through.propagated());
+
+        events.borrow_mut().clear();
+        consume.set(true);
+        let consumed = cx.simulate_event_with_dispatch_snapshot(KeyDownEvent {
+            keystroke: Keystroke::parse("escape").expect("escape should parse"),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        assert_eq!(&*events.borrow(), &["interceptor"]);
+        assert!(consumed.propagation_stopped());
+        assert!(consumed.default_prevented());
     }
 
     #[open_gpui::test]

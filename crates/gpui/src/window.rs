@@ -5,23 +5,23 @@ use crate::MouseButton;
 #[cfg(target_os = "macos")]
 use crate::PlatformPixelBuffer;
 use crate::{
-    Action, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
-    AsyncWindowContext, AtlasAccessDiagnostic, AtlasRemoveDiagnostic, AvailableSpace, Background,
-    BorderStyle, Bounds, BoxShadow, Capslock, Context, Corners, CursorHideMode, CursorStyle,
-    Decorations, DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId,
-    Edges, Entity, EntityId, EventEmitter, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ScaledPixels, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
-    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine,
-    Task, TextRenderingMode, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
-    UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
-    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, profiler,
-    px, rems, size, transparent_black,
+    Action, AnyElement, AnyEntity, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena,
+    Asset, AsyncWindowContext, AtlasAccessDiagnostic, AtlasRemoveDiagnostic, AvailableSpace,
+    Background, BorderStyle, Bounds, BoxShadow, Capslock, Context, Corners, CursorHideMode,
+    CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree,
+    DisplayId, Edges, Entity, EntityId, EventEmitter, FontId, Global, GlobalElementId, GlyphId,
+    GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
+    Keystroke, KeystrokeEvent, LayoutId, Modifiers, ModifiersChangedEvent, MonochromeSprite,
+    MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority,
+    PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
+    SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController,
+    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    point, prelude::*, profiler, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use derive_more::{Deref, DerefMut};
@@ -29,7 +29,7 @@ use futures::FutureExt;
 use futures::channel::oneshot;
 #[cfg(feature = "input-latency-histogram")]
 use hdrhistogram::Histogram;
-use open_gpui_collections::FxHashSet;
+use open_gpui_collections::{FxHashSet, TypeIdHashMap};
 use open_gpui_core_util::post_inc;
 use open_gpui_core_util::{ResultExt, measure};
 use open_gpui_refineable::Refineable;
@@ -118,6 +118,12 @@ impl DispatchPhase {
 }
 
 type AnyObserver = Box<dyn FnMut(&mut Window, &mut App) -> bool + 'static>;
+
+type AnyWindowKeyDownInterceptor =
+    Box<dyn FnMut(&KeyDownEvent, &mut Window, &mut App) -> bool + 'static>;
+
+type AnyWindowMouseDownInterceptor =
+    Box<dyn FnMut(&crate::MouseDownEvent, &mut Window, &mut App) -> bool + 'static>;
 
 pub(crate) type AnyWindowFocusListener =
     Box<dyn FnMut(&WindowFocusEvent, &mut Window, &mut App) -> bool + 'static>;
@@ -772,6 +778,9 @@ pub struct Window {
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
+    key_down_interceptors: SubscriberSet<(), AnyWindowKeyDownInterceptor>,
+    mouse_down_interceptors: SubscriberSet<(), AnyWindowMouseDownInterceptor>,
+    window_states: TypeIdHashMap<WindowStateSlot>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
     last_dispatch_event_result: Option<DispatchEventResult>,
@@ -810,6 +819,11 @@ pub struct Window {
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
     pub(crate) a11y: A11y,
+}
+
+enum WindowStateSlot {
+    Initializing(&'static str),
+    Ready(AnyEntity),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1464,6 +1478,9 @@ impl Window {
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
             focus_listeners: SubscriberSet::new(),
+            key_down_interceptors: SubscriberSet::new(),
+            mouse_down_interceptors: SubscriberSet::new(),
+            window_states: TypeIdHashMap::default(),
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
             last_dispatch_event_result: None,
@@ -1626,6 +1643,39 @@ impl Window {
     /// Obtain a handle to the window that belongs to this context.
     pub fn window_handle(&self) -> AnyWindowHandle {
         self.handle
+    }
+
+    /// Returns the state entity uniquely owned by this window for its concrete type.
+    ///
+    /// The initializer runs at most once per type and window. The state is independent from
+    /// element identity and remains alive across frames until the window is dropped.
+    pub fn use_window_state<S: 'static>(
+        &mut self,
+        cx: &mut App,
+        initialize: impl FnOnce(&mut Window, &mut Context<S>) -> S,
+    ) -> Entity<S> {
+        let state_type = TypeId::of::<S>();
+        match self.window_states.get(&state_type) {
+            Some(WindowStateSlot::Ready(state)) => {
+                return state
+                    .clone()
+                    .downcast::<S>()
+                    .unwrap_or_else(|_| panic!("window state type id did not match its entity"));
+            }
+            Some(WindowStateSlot::Initializing(type_name)) => {
+                panic!("window state `{type_name}` recursively requested itself while initializing")
+            }
+            None => {}
+        }
+
+        self.window_states.insert(
+            state_type,
+            WindowStateSlot::Initializing(std::any::type_name::<S>()),
+        );
+        let state = cx.new(|cx| initialize(self, cx));
+        self.window_states
+            .insert(state_type, WindowStateSlot::Ready(state.clone().into()));
+        state
     }
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
@@ -4359,6 +4409,25 @@ impl Window {
         )));
     }
 
+    /// Registers a persistent mouse-down interceptor owned by this window.
+    ///
+    /// Interceptors run before frame-scoped capture and bubble listeners. Stop propagation to keep
+    /// the event from reaching those listeners; otherwise the original event continues once.
+    pub fn intercept_mouse_down(
+        &mut self,
+        mut listener: impl FnMut(&crate::MouseDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.mouse_down_interceptors.insert(
+            (),
+            Box::new(move |event, window, cx| {
+                listener(event, window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
     /// Register a key event listener on this node for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
@@ -4380,6 +4449,24 @@ impl Window {
                 }
             },
         ));
+    }
+
+    /// Registers a persistent key-down interceptor owned by this window.
+    ///
+    /// Interceptors run before application interceptors, key bindings, actions, and node listeners.
+    pub fn intercept_key_down(
+        &mut self,
+        mut listener: impl FnMut(&KeyDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.key_down_interceptors.insert(
+            (),
+            Box::new(move |event, window, cx| {
+                listener(event, window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
     }
 
     /// Register a modifiers changed event listener on the window for the next frame.
@@ -4551,15 +4638,29 @@ impl Window {
             return;
         }
 
+        if let Some(event) = event.downcast_ref::<crate::MouseDownEvent>() {
+            self.mouse_down_interceptors
+                .clone()
+                .retain(&(), |interceptor| {
+                    if cx.propagate_event {
+                        interceptor(event, self, cx)
+                    } else {
+                        true
+                    }
+                });
+        }
+
         let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
 
         // Capture phase, events bubble from back to front. Handlers for this phase are used for
         // special purposes, such as detecting events outside of a given Bounds.
-        for listener in &mut mouse_listeners {
-            let listener = listener.as_mut().unwrap();
-            listener(event, DispatchPhase::Capture, self, cx);
-            if !cx.propagate_event {
-                break;
+        if cx.propagate_event {
+            for listener in &mut mouse_listeners {
+                let listener = listener.as_mut().unwrap();
+                listener(event, DispatchPhase::Capture, self, cx);
+                if !cx.propagate_event {
+                    break;
+                }
             }
         }
 
@@ -4652,6 +4753,22 @@ impl Window {
         };
 
         cx.propagate_event = true;
+        if let Some(event) = event.downcast_ref::<KeyDownEvent>() {
+            self.key_down_interceptors
+                .clone()
+                .retain(&(), |interceptor| {
+                    if cx.propagate_event {
+                        interceptor(event, self, cx)
+                    } else {
+                        true
+                    }
+                });
+        }
+        if !cx.propagate_event {
+            self.pending_input.take();
+            self.pending_input_changed(cx);
+            return;
+        }
         self.dispatch_keystroke_interceptors(event, self.context_stack(), cx);
         if !cx.propagate_event {
             self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
