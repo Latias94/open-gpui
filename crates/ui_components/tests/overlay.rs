@@ -84,7 +84,7 @@ fn overlay_adapter_config_can_override_focus_and_dismiss_policy() {
     .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
     .escape_key_policy(EscapeKeyPolicy::Dismiss)
     .focus_restore_intent(open_gpui_ui_core::FocusRestoreIntent::TriggerOrFallback(
-        open_gpui_ui_core::OverlayFocusTarget::new("fallback"),
+        open_gpui_ui_core::FocusTargetId::new("fallback"),
     ))
     .initial_focus_intent(InitialFocusIntent::FirstFocusable)
     .deferred_priority(9)
@@ -196,7 +196,7 @@ fn overlay_label_helpers_are_stable() {
     assert_eq!(EscapeKeyPolicy::Ignore.as_str(), "ignore");
     assert_eq!(FocusRestoreIntent::None.as_str(), "none");
     assert_eq!(
-        InitialFocusIntent::TargetOrFirstFocusable(open_gpui_ui_core::OverlayFocusTarget::new("x"))
+        InitialFocusIntent::TargetOrFirstFocusable(open_gpui_ui_core::FocusTargetId::new("x"))
             .as_str(),
         "target or first focusable"
     );

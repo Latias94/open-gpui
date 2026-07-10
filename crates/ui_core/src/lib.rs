@@ -31,17 +31,20 @@ pub use adaptive::{
 };
 pub use collection::CollectionPosition;
 pub use controllable_state::ControllableState;
-pub use focus::FocusTargetId;
+pub use focus::{
+    FocusResolution, FocusRestoreInput, FocusRestoreIntent, FocusScopeId, FocusScopeMode,
+    FocusScopePolicy, FocusTargetAvailability, FocusTargetCandidate, FocusTargetId,
+    InitialFocusIntent, resolve_focus_restore as resolve_focus_scope_restore,
+};
 pub use geometry::{
     UiEdges, UiPoint, UiPx, UiRect, UiSize, ui_edges, ui_point, ui_px, ui_rect, ui_size,
 };
 pub use grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d};
 pub use overlay::{
-    DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
-    FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,
-    OutsidePressResolution, OverlayAnchorInput, OverlayEdges, OverlayFocusTarget, OverlayLayer,
-    OverlayLayerId, OverlayLayerKind, OverlayLayerPolicy, OverlayLayerState,
-    OverlayPlacementAlignment, OverlayPlacementFit, OverlayPlacementInput,
+    DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreResolution,
+    OutsidePressOutcome, OutsidePressPolicy, OutsidePressResolution, OverlayAnchorInput,
+    OverlayEdges, OverlayLayer, OverlayLayerId, OverlayLayerKind, OverlayLayerPolicy,
+    OverlayLayerState, OverlayPlacementAlignment, OverlayPlacementFit, OverlayPlacementInput,
     OverlayPlacementResolution, OverlayPlacementSide, OverlayPlacementTrace,
     OverlayPlacementTraceStep, OverlayPresence, OverlayResolvedState, OverlaySize, Rect,
     anchor_rect_from_point, inset_rect, outer_bounds_with_window_margin, prefer_visual_bounds,

@@ -648,8 +648,17 @@ pub trait InteractiveElement: Sized {
     /// If the focus handle is focused by the application, this element will
     /// apply its focused styles.
     fn track_focus(mut self, focus_handle: &FocusHandle) -> Self {
-        self.interactivity().focusable = true;
-        self.interactivity().tracked_focus_handle = Some(focus_handle.clone());
+        let interactivity = self.interactivity();
+        interactivity.focusable = true;
+
+        let mut focus_handle = focus_handle.clone();
+        if let Some(tab_stop) = interactivity.tab_stop {
+            focus_handle = focus_handle.tab_stop(tab_stop);
+        }
+        if let Some(tab_index) = interactivity.tab_index {
+            focus_handle = focus_handle.tab_index(tab_index);
+        }
+        interactivity.tracked_focus_handle = Some(focus_handle);
         self
     }
 
@@ -660,7 +669,11 @@ pub trait InteractiveElement: Sized {
     /// the first tab stop inside it while having the container element itself be unreachable via the keyboard.
     /// Should only be used with `tab_index`.
     fn tab_stop(mut self, tab_stop: bool) -> Self {
-        self.interactivity().tab_stop = tab_stop;
+        let interactivity = self.interactivity();
+        interactivity.tab_stop = Some(tab_stop);
+        if let Some(focus_handle) = interactivity.tracked_focus_handle.take() {
+            interactivity.tracked_focus_handle = Some(focus_handle.tab_stop(tab_stop));
+        }
         self
     }
 
@@ -669,9 +682,13 @@ pub trait InteractiveElement: Sized {
     /// This should only be used in conjunction with `tab_group`
     /// in order to not interfere with the tab index of other elements.
     fn tab_index(mut self, index: isize) -> Self {
-        self.interactivity().focusable = true;
-        self.interactivity().tab_index = Some(index);
-        self.interactivity().tab_stop = true;
+        let interactivity = self.interactivity();
+        interactivity.focusable = true;
+        interactivity.tab_index = Some(index);
+        interactivity.tab_stop = Some(true);
+        if let Some(focus_handle) = interactivity.tracked_focus_handle.take() {
+            interactivity.tracked_focus_handle = Some(focus_handle.tab_index(index).tab_stop(true));
+        }
         self
     }
 
@@ -2176,7 +2193,7 @@ pub struct Interactivity {
     pub(crate) hitbox_behavior: HitboxBehavior,
     pub(crate) tab_index: Option<isize>,
     pub(crate) tab_group: bool,
-    pub(crate) tab_stop: bool,
+    pub(crate) tab_stop: Option<bool>,
 
     pub(crate) a11y_action_listeners:
         Vec<(accesskit::Action, crate::window::a11y::A11yActionListener)>,
@@ -2264,7 +2281,7 @@ impl Interactivity {
                         .focus_handle
                         .get_or_insert_with(|| cx.focus_handle())
                         .clone()
-                        .tab_stop(self.tab_stop);
+                        .tab_stop(self.tab_stop.unwrap_or(false));
 
                     if let Some(index) = self.tab_index {
                         handle = handle.tab_index(index);
@@ -4374,9 +4391,222 @@ mod tests {
     use super::*;
     use crate::{
         AppContext as _, Context, InputEvent, MouseMoveEvent, ScrollDelta, TestAppContext,
-        util::FluentBuilder as _,
+        VisualContext as _, util::FluentBuilder as _,
     };
     use std::rc::Weak;
+
+    struct ExplicitTabStopProbe {
+        first: FocusHandle,
+        second: FocusHandle,
+        preconfigured: FocusHandle,
+        disabled_before: FocusHandle,
+        disabled_after: FocusHandle,
+    }
+
+    impl Render for ExplicitTabStopProbe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .child(
+                    div()
+                        .id("explicit-tab-stop-first")
+                        .debug_selector(|| "explicit-tab-stop:first".to_owned())
+                        .track_focus(&self.first)
+                        .tab_index(0),
+                )
+                .child(
+                    div()
+                        .id("explicit-tab-stop-second")
+                        .debug_selector(|| "explicit-tab-stop:second".to_owned())
+                        .tab_index(1)
+                        .track_focus(&self.second),
+                )
+                .child(
+                    div()
+                        .id("explicit-tab-stop-preconfigured")
+                        .debug_selector(|| "explicit-tab-stop:preconfigured".to_owned())
+                        .track_focus(&self.preconfigured),
+                )
+                .child(
+                    div()
+                        .id("explicit-tab-stop-disabled-before")
+                        .debug_selector(|| "explicit-tab-stop:disabled-before".to_owned())
+                        .track_focus(&self.disabled_before)
+                        .tab_index(3)
+                        .tab_stop(false),
+                )
+                .child(
+                    div()
+                        .id("explicit-tab-stop-disabled-after")
+                        .debug_selector(|| "explicit-tab-stop:disabled-after".to_owned())
+                        .tab_index(4)
+                        .tab_stop(false)
+                        .track_focus(&self.disabled_after),
+                )
+        }
+    }
+
+    #[test]
+    fn explicit_tracked_focus_handles_use_element_tab_order() {
+        let mut test_app = TestAppContext::single();
+        let (_view, cx) = test_app.add_window_view(|_, cx| ExplicitTabStopProbe {
+            first: cx.focus_handle(),
+            second: cx.focus_handle(),
+            preconfigured: cx.focus_handle().tab_index(2).tab_stop(true),
+            disabled_before: cx.focus_handle(),
+            disabled_after: cx.focus_handle().tab_stop(true),
+        });
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+            window.focus_next(cx);
+        });
+        assert!(cx.debug_selector_is_focused("explicit-tab-stop:first"));
+
+        cx.update(|window, cx| window.focus_next(cx));
+        assert!(cx.debug_selector_is_focused("explicit-tab-stop:second"));
+
+        cx.update(|window, cx| window.focus_next(cx));
+        assert!(cx.debug_selector_is_focused("explicit-tab-stop:preconfigured"));
+
+        cx.update(|window, cx| window.focus_next(cx));
+        assert!(cx.debug_selector_is_focused("explicit-tab-stop:first"));
+        assert!(!cx.debug_selector_is_focused("explicit-tab-stop:disabled-before"));
+        assert!(!cx.debug_selector_is_focused("explicit-tab-stop:disabled-after"));
+
+        cx.update(|window, cx| window.focus_prev(cx));
+        assert!(cx.debug_selector_is_focused("explicit-tab-stop:preconfigured"));
+    }
+
+    #[test]
+    fn explicit_focus_requests_advance_the_claim_revision_even_when_value_is_unchanged() {
+        let mut test_app = TestAppContext::single();
+        let (view, cx) = test_app.add_window_view(|_, cx| ExplicitTabStopProbe {
+            first: cx.focus_handle(),
+            second: cx.focus_handle(),
+            preconfigured: cx.focus_handle().tab_index(2).tab_stop(true),
+            disabled_before: cx.focus_handle(),
+            disabled_after: cx.focus_handle().tab_stop(true),
+        });
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+            let first = view.read(cx).first.clone();
+            first.focus(window, cx);
+            let first_claim = window.focus_claim_revision();
+            first.focus(window, cx);
+            assert!(window.focus_claim_revision() > first_claim);
+
+            window.blur();
+            let first_blur = window.focus_claim_revision();
+            window.blur();
+            assert!(window.focus_claim_revision() > first_blur);
+        });
+    }
+
+    struct ScopedTabStopProbe {
+        outside: FocusHandle,
+        scope: FocusHandle,
+        first: FocusHandle,
+        skipped: FocusHandle,
+        last: FocusHandle,
+        show_last: bool,
+    }
+
+    impl Render for ScopedTabStopProbe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .child(
+                    div()
+                        .id("scoped-tab-outside")
+                        .debug_selector(|| "scoped-tab:outside".to_owned())
+                        .track_focus(&self.outside)
+                        .tab_index(0),
+                )
+                .child(
+                    div()
+                        .id("scoped-tab-scope")
+                        .debug_selector(|| "scoped-tab:scope".to_owned())
+                        .track_focus(&self.scope)
+                        .tab_group()
+                        .tab_stop(false)
+                        .child(
+                            div()
+                                .id("scoped-tab-first")
+                                .debug_selector(|| "scoped-tab:first".to_owned())
+                                .track_focus(&self.first)
+                                .tab_index(0),
+                        )
+                        .child(
+                            div()
+                                .id("scoped-tab-skipped")
+                                .debug_selector(|| "scoped-tab:skipped".to_owned())
+                                .track_focus(&self.skipped)
+                                .tab_index(1)
+                                .tab_stop(false),
+                        )
+                        .when(self.show_last, |scope| {
+                            scope.child(
+                                div()
+                                    .id("scoped-tab-last")
+                                    .debug_selector(|| "scoped-tab:last".to_owned())
+                                    .track_focus(&self.last)
+                                    .tab_index(2),
+                            )
+                        }),
+                )
+        }
+    }
+
+    #[test]
+    fn scoped_tab_traversal_uses_live_descendant_tab_stops() {
+        let mut test_app = TestAppContext::single();
+        let (view, cx) = test_app.add_window_view(|_, cx| ScopedTabStopProbe {
+            outside: cx.focus_handle(),
+            scope: cx.focus_handle(),
+            first: cx.focus_handle(),
+            skipped: cx.focus_handle(),
+            last: cx.focus_handle(),
+            show_last: true,
+        });
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+            let scope = view.read(cx).scope.clone();
+            assert!(window.focus_next_within(&scope, cx));
+        });
+        assert!(cx.debug_selector_is_focused("scoped-tab:first"));
+
+        cx.update_window_entity(&view, |view, window, cx| view.last.focus(window, cx));
+        cx.update(|window, cx| {
+            let scope = view.read(cx).scope.clone();
+            assert!(window.focus_next_within(&scope, cx));
+        });
+        assert!(cx.debug_selector_is_focused("scoped-tab:first"));
+
+        cx.update(|window, cx| {
+            let scope = view.read(cx).scope.clone();
+            assert!(window.focus_prev_within(&scope, cx));
+        });
+        assert!(cx.debug_selector_is_focused("scoped-tab:last"));
+        assert!(!cx.debug_selector_is_focused("scoped-tab:skipped"));
+        assert!(!cx.debug_selector_is_focused("scoped-tab:outside"));
+
+        cx.update_window_entity(&view, |view, _, cx| {
+            view.show_last = false;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update_window_entity(&view, |view, window, cx| view.first.focus(window, cx));
+        cx.update(|window, cx| {
+            let (scope, last) = {
+                let view = view.read(cx);
+                (view.scope.clone(), view.last.clone())
+            };
+            assert!(!window.is_focus_handle_rendered(&last));
+            assert!(window.focus_prev_within(&scope, cx));
+        });
+        assert!(cx.debug_selector_is_focused("scoped-tab:first"));
+    }
 
     struct TestTooltipView;
 

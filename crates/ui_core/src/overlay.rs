@@ -1,5 +1,6 @@
 //! Overlay geometry helpers for the Open GPUI component ecosystem.
 
+use crate::focus::{FocusRestoreIntent, FocusTargetId, InitialFocusIntent};
 use crate::geometry::{UiEdges, UiPoint, UiPx, UiRect, UiSize, ui_point, ui_px, ui_size};
 
 /// A renderer-neutral overlay rectangle.
@@ -14,22 +15,6 @@ pub struct OverlayLayerId(String);
 
 impl OverlayLayerId {
     /// Creates an overlay layer identity from a stable string.
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
-    /// Returns the stable string value.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// Stable renderer-neutral identity for an overlay focus target.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct OverlayFocusTarget(String);
-
-impl OverlayFocusTarget {
-    /// Creates a focus target identity from a stable string.
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
@@ -287,69 +272,6 @@ impl EscapeKeyPolicy {
     }
 }
 
-/// Focus restoration behavior after an overlay closes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FocusRestoreIntent {
-    /// Do not restore focus.
-    None,
-    /// Restore focus to the trigger when it is still available.
-    Trigger,
-    /// Restore focus to a fallback target.
-    Fallback(OverlayFocusTarget),
-    /// Prefer the trigger and fall back to a named target.
-    TriggerOrFallback(OverlayFocusTarget),
-}
-
-impl FocusRestoreIntent {
-    /// Returns a stable label.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Trigger => "trigger",
-            Self::Fallback(_) => "fallback",
-            Self::TriggerOrFallback(_) => "trigger or fallback",
-        }
-    }
-
-    /// Resolves the preferred focus target from the current live trigger identity.
-    pub fn resolve_target(
-        &self,
-        trigger: Option<&OverlayFocusTarget>,
-    ) -> Option<OverlayFocusTarget> {
-        match self {
-            Self::None => None,
-            Self::Trigger => trigger.cloned(),
-            Self::Fallback(target) => Some(target.clone()),
-            Self::TriggerOrFallback(target) => trigger.cloned().or_else(|| Some(target.clone())),
-        }
-    }
-}
-
-/// Initial focus behavior when an overlay opens.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InitialFocusIntent {
-    /// Do not move focus automatically.
-    None,
-    /// Focus the first focusable descendant.
-    FirstFocusable,
-    /// Focus a specific target.
-    Target(OverlayFocusTarget),
-    /// Prefer a specific target and fall back to the first focusable descendant.
-    TargetOrFirstFocusable(OverlayFocusTarget),
-}
-
-impl InitialFocusIntent {
-    /// Returns a stable label.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::FirstFocusable => "first focusable",
-            Self::Target(_) => "target",
-            Self::TargetOrFirstFocusable(_) => "target or first focusable",
-        }
-    }
-}
-
 /// Renderer-neutral behavior policy for one overlay layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OverlayLayerPolicy {
@@ -539,7 +461,7 @@ impl OverlayLayerState {
 pub struct OverlayLayer {
     id: OverlayLayerId,
     policy: OverlayLayerPolicy,
-    trigger_focus_target: Option<OverlayFocusTarget>,
+    trigger_focus_target: Option<FocusTargetId>,
 }
 
 impl OverlayLayer {
@@ -553,7 +475,7 @@ impl OverlayLayer {
     }
 
     /// Applies the focus target associated with this layer's trigger.
-    pub fn with_trigger_focus_target(mut self, target: OverlayFocusTarget) -> Self {
+    pub fn with_trigger_focus_target(mut self, target: FocusTargetId) -> Self {
         self.trigger_focus_target = Some(target);
         self
     }
@@ -569,7 +491,7 @@ impl OverlayLayer {
     }
 
     /// Returns the focus target associated with this layer's trigger.
-    pub fn trigger_focus_target(&self) -> Option<&OverlayFocusTarget> {
+    pub fn trigger_focus_target(&self) -> Option<&FocusTargetId> {
         self.trigger_focus_target.as_ref()
     }
 }
@@ -652,7 +574,7 @@ pub enum FocusRestoreResolution {
         /// Layer that owns the focus restoration request.
         layer_id: OverlayLayerId,
         /// Target that should receive focus.
-        target: OverlayFocusTarget,
+        target: FocusTargetId,
     },
     /// The topmost restorable layer requested restoration but has no live target.
     NoTarget {
@@ -1639,7 +1561,7 @@ mod tests {
         assert_eq!(EscapeKeyPolicy::Dismiss.as_str(), "dismiss");
         assert_eq!(FocusRestoreIntent::Trigger.as_str(), "trigger");
         assert_eq!(
-            FocusRestoreIntent::TriggerOrFallback(OverlayFocusTarget::new("fallback")).as_str(),
+            FocusRestoreIntent::TriggerOrFallback(FocusTargetId::new("fallback")).as_str(),
             "trigger or fallback"
         );
         assert_eq!(
@@ -1780,8 +1702,8 @@ mod tests {
 
     #[test]
     fn focus_restore_prefers_trigger_but_can_fallback_or_skip() {
-        let trigger = OverlayFocusTarget::new("trigger");
-        let fallback = OverlayFocusTarget::new("fallback");
+        let trigger = FocusTargetId::new("trigger");
+        let fallback = FocusTargetId::new("fallback");
 
         assert_eq!(
             FocusRestoreIntent::None.resolve_target(Some(&trigger)),
@@ -1808,9 +1730,9 @@ mod tests {
 
     #[test]
     fn focus_restore_resolution_uses_topmost_present_restorable_layer() {
-        let lower_trigger = OverlayFocusTarget::new("lower-trigger");
-        let upper_trigger = OverlayFocusTarget::new("upper-trigger");
-        let fallback = OverlayFocusTarget::new("fallback-target");
+        let lower_trigger = FocusTargetId::new("lower-trigger");
+        let upper_trigger = FocusTargetId::new("upper-trigger");
+        let fallback = FocusTargetId::new("fallback-target");
         let lower = OverlayLayer::new(
             "lower-popover",
             OverlayLayerPolicy::new(

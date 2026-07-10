@@ -10,8 +10,8 @@ use open_gpui::{
     div, px,
 };
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    OverlayFocusTarget, OverlayLayerKind, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
+    EscapeKeyPolicy, FocusRestoreIntent, FocusTargetId, InitialFocusIntent, OutsidePressPolicy,
+    OverlayLayerKind, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -697,9 +697,9 @@ impl AlertDialog {
             default_open: false,
             outside_press_policy: OutsidePressPolicy::Consume,
             escape_key_policy: EscapeKeyPolicy::Dismiss,
-            initial_focus_intent: InitialFocusIntent::TargetOrFirstFocusable(
-                OverlayFocusTarget::new(CANCEL_FOCUS_TARGET),
-            ),
+            initial_focus_intent: InitialFocusIntent::TargetOrFirstFocusable(FocusTargetId::new(
+                CANCEL_FOCUS_TARGET,
+            )),
             focus_restore_intent: FocusRestoreIntent::Trigger,
             tokens: ThemeTokens::default(),
             on_cancel: None,
@@ -1372,7 +1372,7 @@ fn alert_dialog_default_focus_kind(
             None
         }
     };
-    let target_focus = |target: &OverlayFocusTarget| match target.as_str() {
+    let target_focus = |target: &FocusTargetId| match target.as_str() {
         CANCEL_FOCUS_TARGET if cancel_enabled => Some(AlertDialogActionKind::Cancel),
         ACTION_FOCUS_TARGET if action_enabled => Some(AlertDialogActionKind::Action),
         _ => None,
@@ -1476,7 +1476,7 @@ mod tests {
             false,
             OutsidePressPolicy::Consume,
             EscapeKeyPolicy::Dismiss,
-            InitialFocusIntent::Target(OverlayFocusTarget::new(CANCEL_FOCUS_TARGET)),
+            InitialFocusIntent::Target(FocusTargetId::new(CANCEL_FOCUS_TARGET)),
             FocusRestoreIntent::Trigger,
             ThemeTokens::default(),
         );

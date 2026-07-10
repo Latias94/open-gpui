@@ -132,6 +132,22 @@ impl TabStopMap {
         }
     }
 
+    pub fn next_where(
+        &self,
+        focused_id: Option<&FocusId>,
+        predicate: impl Fn(&FocusHandle) -> bool,
+    ) -> Option<FocusHandle> {
+        let mut current = focused_id.copied();
+        for _ in 0..self.insertion_history.len() {
+            let candidate = self.next(current.as_ref())?;
+            if predicate(&candidate) {
+                return Some(candidate);
+            }
+            current = Some(candidate.id);
+        }
+        None
+    }
+
     fn next_inner(&self, node: &TabStopNode) -> Option<&TabStopNode> {
         let mut cursor = self.order.cursor::<TabStopNode>(());
         cursor.seek(&node, Bias::Left);
@@ -167,6 +183,22 @@ impl TabStopMap {
         } else {
             self.prev(None)
         }
+    }
+
+    pub fn prev_where(
+        &self,
+        focused_id: Option<&FocusId>,
+        predicate: impl Fn(&FocusHandle) -> bool,
+    ) -> Option<FocusHandle> {
+        let mut current = focused_id.copied();
+        for _ in 0..self.insertion_history.len() {
+            let candidate = self.prev(current.as_ref())?;
+            if predicate(&candidate) {
+                return Some(candidate);
+            }
+            current = Some(candidate.id);
+        }
+        None
     }
 
     fn prev_inner(&self, node: &TabStopNode) -> Option<&TabStopNode> {

@@ -71,3 +71,43 @@ The first-party form adapter no longer forwards caller-selected values, field pa
 free-form errors. It emits typed redaction markers, counts, lifecycle facts, and deterministic
 opaque field identities before a `DevtoolsCapture` is constructed. Do not parse DevTools payloads
 for application form data; application and rendering code should consume `FormSnapshot` directly.
+
+## Focus Scope Preparation
+
+Focus target identity is now owned by `FocusTargetId`. The duplicate `OverlayFocusTarget` type was
+deleted without an alias. Update explicit overlay focus policies directly:
+
+```rust
+use open_gpui_ui_core::{FocusTargetId, InitialFocusIntent};
+
+let initial_focus = InitialFocusIntent::TargetOrFirstFocusable(
+    FocusTargetId::new("dialog.primary-action"),
+);
+```
+
+GPUI elements that combine `track_focus` with `tab_stop` or `tab_index` now apply the element's
+declared tab configuration to the explicit handle in either builder order. Code no longer needs to
+preconfigure a separate cloned handle merely to enter the rendered tab order.
+
+`gpui_adapter::FocusScopeRuntime` is the low-level adapter seam used to prove nested scope behavior.
+Do not create one runtime per Dialog, Popover, Menu, or other component. U3 is preparatory; U4 will
+install one window-owned overlay runtime, internalize this temporary constructor, and remove the
+official components' existing local focus tails. Until that fleet migration lands, applications
+should continue using the official component adapters rather than layering the preparatory runtime
+over them.
+
+The adapter validates both logical ownership and the current GPUI render tree. A named target that
+is outside its declared scope, unavailable, stale, unmounted, or owned by an inactive nested scope
+is ignored. Initial focus requested before conditional content mounts is retried after the next
+completed frame. Window owners must use `rebind_scope` / `rebind_target` when stable identities gain
+new handles and `unregister_scope` / `unregister_target` when identities leave the runtime; creating
+another runtime is not a lifecycle operation.
+
+Target IDs are canonical within one window. Component instances must qualify their IDs so two live
+instances do not collide, and one live handle cannot be registered under multiple aliases. Modal
+containment intercepts only plain Tab and Shift-Tab; Tab chords with Control, Alt, platform, or
+function modifiers continue through normal dispatch. If initial-focus and restoration work become
+pending in the same turn, the newest valid initial-focus claim wins so reopening cannot be undone by
+an older close. Initial and restoration targets are resolved after the state transition reaches a
+completed rendered frame, so a target hidden in the same transaction is treated as unmounted even
+when another owner still holds its handle.

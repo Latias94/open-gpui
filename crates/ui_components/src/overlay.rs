@@ -1,6 +1,7 @@
 //! GPUI adapter helpers for shared overlay behavior.
 
 mod adapter;
+mod focus_scope;
 mod host;
 mod placement;
 mod runtime;
@@ -8,6 +9,9 @@ mod runtime;
 pub use adapter::{
     DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayState,
     default_deferred_priority, gpui_overlay_state,
+};
+pub use focus_scope::{
+    FocusScopeRegistration, FocusScopeRuntime, FocusScopeRuntimeError, FocusTargetRegistration,
 };
 pub(crate) use host::OverlayLayerHost;
 pub use open_gpui_ui_core::OverlayResolvedState;

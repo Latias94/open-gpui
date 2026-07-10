@@ -10,8 +10,8 @@ use open_gpui::{
     Styled, Window, div, px,
 };
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    OverlayFocusTarget, OverlayLayerKind, Role, Sizable, Size, ThemeTokens, UiPx, UiSize, ui_px,
+    EscapeKeyPolicy, FocusRestoreIntent, FocusTargetId, InitialFocusIntent, OutsidePressPolicy,
+    OverlayLayerKind, Role, Sizable, Size, ThemeTokens, UiPx, UiSize, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -1385,7 +1385,7 @@ fn sheet_close_is_initial_focus_target(state: &SheetState, intent: &InitialFocus
         return false;
     }
 
-    let close_target = |target: &OverlayFocusTarget| target.as_str() == CLOSE_FOCUS_TARGET;
+    let close_target = |target: &FocusTargetId| target.as_str() == CLOSE_FOCUS_TARGET;
 
     match intent {
         InitialFocusIntent::None => false,
@@ -1472,7 +1472,7 @@ mod tests {
             None,
             OutsidePressPolicy::DismissAndConsume,
             EscapeKeyPolicy::Dismiss,
-            InitialFocusIntent::Target(OverlayFocusTarget::new("sheet.content")),
+            InitialFocusIntent::Target(FocusTargetId::new("sheet.content")),
             FocusRestoreIntent::Trigger,
             ThemeTokens::default(),
         );
@@ -1483,11 +1483,11 @@ mod tests {
         ));
         assert!(sheet_close_is_initial_focus_target(
             &state,
-            &InitialFocusIntent::TargetOrFirstFocusable(OverlayFocusTarget::new("sheet.content"))
+            &InitialFocusIntent::TargetOrFirstFocusable(FocusTargetId::new("sheet.content"))
         ));
         assert!(sheet_close_is_initial_focus_target(
             &state,
-            &InitialFocusIntent::Target(OverlayFocusTarget::new(CLOSE_FOCUS_TARGET))
+            &InitialFocusIntent::Target(FocusTargetId::new(CLOSE_FOCUS_TARGET))
         ));
     }
 }

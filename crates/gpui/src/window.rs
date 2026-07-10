@@ -797,6 +797,7 @@ pub struct Window {
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
+    focus_claim_revision: u64,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
@@ -1486,6 +1487,7 @@ impl Window {
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
+            focus_claim_revision: 0,
             focus_enabled: true,
             pending_input: None,
             pending_modifier: ModifierState::default(),
@@ -1645,9 +1647,82 @@ impl Window {
             .and_then(|id| FocusHandle::for_id(id, &cx.focus_handles))
     }
 
+    /// Returns an opaque revision that changes whenever element focus is explicitly claimed.
+    ///
+    /// Reasserting the currently focused handle and explicitly clearing an already-empty focus
+    /// both advance this revision. Deferred focus arbitration can therefore observe newer intent,
+    /// not only a different final focus value.
+    pub const fn focus_claim_revision(&self) -> u64 {
+        self.focus_claim_revision
+    }
+
+    /// Returns an opaque revision for the most recently completed rendered frame.
+    pub const fn rendered_frame_revision(&self) -> u64 {
+        self.rendered_frame.generation
+    }
+
+    /// Returns whether a focus handle belongs to the most recently rendered dispatch tree.
+    pub fn is_focus_handle_rendered(&self, handle: &FocusHandle) -> bool {
+        self.rendered_frame
+            .dispatch_tree
+            .focusable_node_id(handle.id)
+            .is_some()
+    }
+
+    /// Returns the first live tab stop contained by a rendered focus scope root.
+    pub fn first_tab_stop_within(&self, scope: &FocusHandle) -> Option<FocusHandle> {
+        self.first_tab_stop_where_within(scope, |_| true)
+    }
+
+    /// Returns the current rendered tab stops contained by a focus scope in traversal order.
+    pub fn tab_stops_within(&self, scope: &FocusHandle) -> Vec<FocusHandle> {
+        if !self.is_focus_handle_rendered(scope) {
+            return Vec::new();
+        }
+
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        let predicate =
+            |candidate: &FocusHandle| dispatch_tree.focus_contains(scope.id, candidate.id);
+        let mut result = Vec::new();
+        let mut current = None;
+        while let Some(candidate) = self
+            .rendered_frame
+            .tab_stops
+            .next_where(current.as_ref(), predicate)
+        {
+            if result.contains(&candidate) {
+                break;
+            }
+            current = Some(candidate.id);
+            result.push(candidate);
+        }
+        result
+    }
+
+    /// Returns the first live tab stop contained by a rendered focus scope root that matches a
+    /// renderer-adapter predicate.
+    pub fn first_tab_stop_where_within(
+        &self,
+        scope: &FocusHandle,
+        predicate: impl Fn(&FocusHandle) -> bool,
+    ) -> Option<FocusHandle> {
+        if !self.is_focus_handle_rendered(scope) {
+            return None;
+        }
+
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        self.rendered_frame.tab_stops.next_where(None, |candidate| {
+            dispatch_tree.focus_contains(scope.id, candidate.id) && predicate(candidate)
+        })
+    }
+
     /// Move focus to the element associated with the given [`FocusHandle`].
     pub fn focus(&mut self, handle: &FocusHandle, cx: &mut App) {
-        if !self.focus_enabled || self.focus == Some(handle.id) {
+        if !self.focus_enabled {
+            return;
+        }
+        self.focus_claim_revision = self.focus_claim_revision.wrapping_add(1);
+        if self.focus == Some(handle.id) {
             return;
         }
 
@@ -1674,6 +1749,7 @@ impl Window {
             return;
         }
 
+        self.focus_claim_revision = self.focus_claim_revision.wrapping_add(1);
         self.focus = None;
         self.refresh();
     }
@@ -1695,6 +1771,28 @@ impl Window {
         }
     }
 
+    /// Moves focus to the next live tab stop contained by a rendered focus scope root.
+    ///
+    /// Returns `true` when a target was focused. The search wraps within the scope and never
+    /// focuses a tab stop outside it.
+    pub fn focus_next_within(&mut self, scope: &FocusHandle, cx: &mut App) -> bool {
+        self.focus_next_where_within(scope, |_| true, cx)
+    }
+
+    /// Moves focus to the next matching live tab stop contained by a rendered focus scope root.
+    pub fn focus_next_where_within(
+        &mut self,
+        scope: &FocusHandle,
+        predicate: impl Fn(&FocusHandle) -> bool,
+        cx: &mut App,
+    ) -> bool {
+        let Some(handle) = self.next_tab_stop_where_within(scope, false, predicate) else {
+            return false;
+        };
+        self.focus(&handle, cx);
+        true
+    }
+
     /// Move focus to previous tab stop.
     pub fn focus_prev(&mut self, cx: &mut App) {
         if !self.focus_enabled {
@@ -1703,6 +1801,58 @@ impl Window {
 
         if let Some(handle) = self.rendered_frame.tab_stops.prev(self.focus.as_ref()) {
             self.focus(&handle, cx)
+        }
+    }
+
+    /// Moves focus to the previous live tab stop contained by a rendered focus scope root.
+    ///
+    /// Returns `true` when a target was focused. The search wraps within the scope and never
+    /// focuses a tab stop outside it.
+    pub fn focus_prev_within(&mut self, scope: &FocusHandle, cx: &mut App) -> bool {
+        self.focus_prev_where_within(scope, |_| true, cx)
+    }
+
+    /// Moves focus to the previous matching live tab stop contained by a rendered focus scope
+    /// root.
+    pub fn focus_prev_where_within(
+        &mut self,
+        scope: &FocusHandle,
+        predicate: impl Fn(&FocusHandle) -> bool,
+        cx: &mut App,
+    ) -> bool {
+        let Some(handle) = self.next_tab_stop_where_within(scope, true, predicate) else {
+            return false;
+        };
+        self.focus(&handle, cx);
+        true
+    }
+
+    fn next_tab_stop_where_within(
+        &self,
+        scope: &FocusHandle,
+        reverse: bool,
+        predicate: impl Fn(&FocusHandle) -> bool,
+    ) -> Option<FocusHandle> {
+        if !self.is_focus_handle_rendered(scope) {
+            return None;
+        }
+
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        let focused_within = self
+            .focus
+            .filter(|focused| dispatch_tree.focus_contains(scope.id, *focused));
+        let predicate = |candidate: &FocusHandle| {
+            dispatch_tree.focus_contains(scope.id, candidate.id) && predicate(candidate)
+        };
+
+        if reverse {
+            self.rendered_frame
+                .tab_stops
+                .prev_where(focused_within.as_ref(), predicate)
+        } else {
+            self.rendered_frame
+                .tab_stops
+                .next_where(focused_within.as_ref(), predicate)
         }
     }
 
