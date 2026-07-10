@@ -122,8 +122,52 @@ type AnyObserver = Box<dyn FnMut(&mut Window, &mut App) -> bool + 'static>;
 type AnyWindowKeyDownInterceptor =
     Box<dyn FnMut(&KeyDownEvent, &mut Window, &mut App) -> bool + 'static>;
 
-type AnyWindowMouseDownInterceptor =
-    Box<dyn FnMut(&crate::MouseDownEvent, &mut Window, &mut App) -> bool + 'static>;
+type AnyWindowMouseInterceptor =
+    Box<dyn for<'a> FnMut(WindowMouseEvent<'a>, &mut Window, &mut App) -> bool + 'static>;
+
+/// A typed view of a mouse or pointer event before it reaches frame-scoped listeners.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub enum WindowMouseEvent<'a> {
+    /// A mouse button was pressed.
+    Down(&'a crate::MouseDownEvent),
+    /// A mouse button was released.
+    Up(&'a MouseUpEvent),
+    /// The pointer moved within the window.
+    Move(&'a MouseMoveEvent),
+    /// The pointer left the window.
+    Exit(&'a crate::MouseExitEvent),
+    /// Mouse pressure changed.
+    Pressure(&'a crate::MousePressureEvent),
+    /// The scroll wheel was used.
+    Scroll(&'a crate::ScrollWheelEvent),
+    /// A pinch gesture was performed.
+    Pinch(&'a crate::PinchEvent),
+    /// A platform file drag event occurred.
+    FileDrop(&'a crate::FileDropEvent),
+}
+
+impl<'a> WindowMouseEvent<'a> {
+    fn from_any(event: &'a dyn Any) -> Option<Self> {
+        if let Some(event) = event.downcast_ref() {
+            Some(Self::Down(event))
+        } else if let Some(event) = event.downcast_ref() {
+            Some(Self::Up(event))
+        } else if let Some(event) = event.downcast_ref() {
+            Some(Self::Move(event))
+        } else if let Some(event) = event.downcast_ref() {
+            Some(Self::Exit(event))
+        } else if let Some(event) = event.downcast_ref() {
+            Some(Self::Pressure(event))
+        } else if let Some(event) = event.downcast_ref() {
+            Some(Self::Scroll(event))
+        } else if let Some(event) = event.downcast_ref() {
+            Some(Self::Pinch(event))
+        } else {
+            event.downcast_ref().map(Self::FileDrop)
+        }
+    }
+}
 
 pub(crate) type AnyWindowFocusListener =
     Box<dyn FnMut(&WindowFocusEvent, &mut Window, &mut App) -> bool + 'static>;
@@ -495,7 +539,7 @@ pub enum WindowControlArea {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct HitboxId(u64);
 
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 impl HitboxId {
     /// A placeholder HitboxId exclusively for integration testing API's that
     /// need a hitbox but where the value of the hitbox does not matter. The
@@ -779,8 +823,9 @@ pub struct Window {
     pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     key_down_interceptors: SubscriberSet<(), AnyWindowKeyDownInterceptor>,
-    mouse_down_interceptors: SubscriberSet<(), AnyWindowMouseDownInterceptor>,
-    window_states: TypeIdHashMap<WindowStateSlot>,
+    mouse_interceptors: SubscriberSet<(), AnyWindowMouseInterceptor>,
+    window_states: Rc<RefCell<TypeIdHashMap<WindowStateSlot>>>,
+    input_dispatch_active: Rc<Cell<bool>>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
     last_dispatch_event_result: Option<DispatchEventResult>,
@@ -822,8 +867,50 @@ pub struct Window {
 }
 
 enum WindowStateSlot {
-    Initializing(&'static str),
+    Initializing {
+        type_name: &'static str,
+        token: Rc<()>,
+    },
     Ready(AnyEntity),
+}
+
+struct WindowStateInitializationGuard {
+    slots: Rc<RefCell<TypeIdHashMap<WindowStateSlot>>>,
+    state_type: TypeId,
+    token: Rc<()>,
+}
+
+impl Drop for WindowStateInitializationGuard {
+    fn drop(&mut self) {
+        let should_remove = matches!(
+            self.slots.borrow().get(&self.state_type),
+            Some(WindowStateSlot::Initializing { token, .. })
+                if Rc::ptr_eq(token, &self.token)
+        );
+        if should_remove {
+            self.slots.borrow_mut().remove(&self.state_type);
+        }
+    }
+}
+
+struct InputDispatchGuard {
+    dispatch_active: Rc<Cell<bool>>,
+}
+
+impl InputDispatchGuard {
+    fn try_enter(dispatch_active: Rc<Cell<bool>>) -> Option<Self> {
+        if dispatch_active.replace(true) {
+            return None;
+        }
+
+        Some(Self { dispatch_active })
+    }
+}
+
+impl Drop for InputDispatchGuard {
+    fn drop(&mut self) {
+        self.dispatch_active.set(false);
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -971,6 +1058,7 @@ pub(crate) enum DrawPhase {
 struct PendingInput {
     keystrokes: SmallVec<[Keystroke; 1]>,
     focus: Option<FocusId>,
+    context_stack: Option<Vec<KeyContext>>,
     timer: Option<Task<()>>,
     needs_timeout: bool,
 }
@@ -1479,8 +1567,9 @@ impl Window {
             dirty_views: FxHashSet::default(),
             focus_listeners: SubscriberSet::new(),
             key_down_interceptors: SubscriberSet::new(),
-            mouse_down_interceptors: SubscriberSet::new(),
-            window_states: TypeIdHashMap::default(),
+            mouse_interceptors: SubscriberSet::new(),
+            window_states: Rc::new(RefCell::new(TypeIdHashMap::default())),
+            input_dispatch_active: Rc::new(Cell::new(false)),
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
             last_dispatch_event_result: None,
@@ -1655,26 +1744,41 @@ impl Window {
         initialize: impl FnOnce(&mut Window, &mut Context<S>) -> S,
     ) -> Entity<S> {
         let state_type = TypeId::of::<S>();
-        match self.window_states.get(&state_type) {
-            Some(WindowStateSlot::Ready(state)) => {
-                return state
-                    .clone()
-                    .downcast::<S>()
-                    .unwrap_or_else(|_| panic!("window state type id did not match its entity"));
+        {
+            let states = self.window_states.borrow();
+            match states.get(&state_type) {
+                Some(WindowStateSlot::Ready(state)) => {
+                    return state.clone().downcast::<S>().unwrap_or_else(|_| {
+                        panic!("window state type id did not match its entity")
+                    });
+                }
+                Some(WindowStateSlot::Initializing { type_name, .. }) => {
+                    panic!(
+                        "window state `{type_name}` recursively requested itself while initializing"
+                    )
+                }
+                None => {}
             }
-            Some(WindowStateSlot::Initializing(type_name)) => {
-                panic!("window state `{type_name}` recursively requested itself while initializing")
-            }
-            None => {}
         }
 
-        self.window_states.insert(
+        let token = Rc::new(());
+        self.window_states.borrow_mut().insert(
             state_type,
-            WindowStateSlot::Initializing(std::any::type_name::<S>()),
+            WindowStateSlot::Initializing {
+                type_name: std::any::type_name::<S>(),
+                token: token.clone(),
+            },
         );
+        let initialization = WindowStateInitializationGuard {
+            slots: self.window_states.clone(),
+            state_type,
+            token,
+        };
         let state = cx.new(|cx| initialize(self, cx));
         self.window_states
+            .borrow_mut()
             .insert(state_type, WindowStateSlot::Ready(state.clone().into()));
+        drop(initialization);
         state
     }
 
@@ -4409,15 +4513,17 @@ impl Window {
         )));
     }
 
-    /// Registers a persistent mouse-down interceptor owned by this window.
+    /// Registers a persistent mouse and pointer interceptor owned by this window.
     ///
-    /// Interceptors run before frame-scoped capture and bubble listeners. Stop propagation to keep
-    /// the event from reaching those listeners; otherwise the original event continues once.
-    pub fn intercept_mouse_down(
+    /// Interceptors run after platform input normalization and before frame-scoped capture and
+    /// bubble listeners. Stop propagation to keep the event from reaching those listeners;
+    /// otherwise the original event continues once. Mouse-up cleanup, including active drag and
+    /// captured-pointer release, still runs when an interceptor consumes the event.
+    pub fn intercept_mouse_events(
         &mut self,
-        mut listener: impl FnMut(&crate::MouseDownEvent, &mut Window, &mut App) + 'static,
+        mut listener: impl for<'a> FnMut(WindowMouseEvent<'a>, &mut Window, &mut App) + 'static,
     ) -> Subscription {
-        let (subscription, activate) = self.mouse_down_interceptors.insert(
+        let (subscription, activate) = self.mouse_interceptors.insert(
             (),
             Box::new(move |event, window, cx| {
                 listener(event, window, cx);
@@ -4426,6 +4532,20 @@ impl Window {
         );
         activate();
         subscription
+    }
+
+    /// Registers a persistent mouse-down interceptor owned by this window.
+    ///
+    /// This compatibility helper delegates to [`Self::intercept_mouse_events`].
+    pub fn intercept_mouse_down(
+        &mut self,
+        mut listener: impl FnMut(&crate::MouseDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        self.intercept_mouse_events(move |event, window, cx| {
+            if let WindowMouseEvent::Down(event) = event {
+                listener(event, window, cx);
+            }
+        })
     }
 
     /// Register a key event listener on this node for the next frame. The type of event
@@ -4588,8 +4708,20 @@ impl Window {
     }
 
     /// Dispatch a mouse or keyboard event on the window.
+    ///
+    /// Synchronous reentrant dispatch is rejected as consumed. This keeps nested calls from
+    /// bypassing persistent interceptors or overwriting the outer event's shared dispatch state.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
+        let Some(_dispatch_guard) =
+            InputDispatchGuard::try_enter(self.input_dispatch_active.clone())
+        else {
+            return DispatchEventResult {
+                propagate: false,
+                default_prevented: true,
+            };
+        };
+
         #[cfg(feature = "input-latency-histogram")]
         let dispatch_time = Instant::now();
         let update_count_before = self.invalidator.update_count();
@@ -4638,16 +4770,14 @@ impl Window {
             return;
         }
 
-        if let Some(event) = event.downcast_ref::<crate::MouseDownEvent>() {
-            self.mouse_down_interceptors
-                .clone()
-                .retain(&(), |interceptor| {
-                    if cx.propagate_event {
-                        interceptor(event, self, cx)
-                    } else {
-                        true
-                    }
-                });
+        if let Some(event) = WindowMouseEvent::from_any(event) {
+            self.mouse_interceptors.clone().retain(&(), |interceptor| {
+                if cx.propagate_event {
+                    interceptor(event, self, cx)
+                } else {
+                    true
+                }
+            });
         }
 
         let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
@@ -4765,8 +4895,21 @@ impl Window {
                 });
         }
         if !cx.propagate_event {
-            self.pending_input.take();
+            let current_context_stack = self.context_stack();
+            let to_replay = self.pending_input.take().and_then(|pending| {
+                (pending.focus == self.focus
+                    && pending.context_stack.as_ref() == Some(&current_context_stack))
+                .then(|| {
+                    self.rendered_frame
+                        .dispatch_tree
+                        .flush_dispatch(pending.keystrokes, &dispatch_path)
+                })
+            });
             self.pending_input_changed(cx);
+            if let Some(to_replay) = to_replay {
+                self.replay_pending_input(to_replay, cx);
+            }
+            cx.stop_propagation();
             return;
         }
         self.dispatch_keystroke_interceptors(event, self.context_stack(), cx);
@@ -4776,7 +4919,14 @@ impl Window {
         }
 
         let mut currently_pending = self.pending_input.take().unwrap_or_default();
-        if currently_pending.focus.is_some() && currently_pending.focus != self.focus {
+        let current_context_stack = self.context_stack();
+        if currently_pending.context_stack.is_some()
+            && (currently_pending.focus != self.focus
+                || currently_pending
+                    .context_stack
+                    .as_ref()
+                    .is_some_and(|pending_context| pending_context != &current_context_stack))
+        {
             currently_pending = PendingInput::default();
         }
 
@@ -4795,6 +4945,7 @@ impl Window {
             currently_pending.timer.take();
             currently_pending.keystrokes = match_result.pending;
             currently_pending.focus = self.focus;
+            currently_pending.context_stack = Some(current_context_stack);
 
             let text_input_requires_timeout = event
                 .downcast_ref::<KeyDownEvent>()
@@ -4813,13 +4964,17 @@ impl Window {
                 currently_pending.timer = Some(self.spawn(cx, async move |cx| {
                     cx.background_executor.timer(Duration::from_secs(1)).await;
                     cx.update(move |window, cx| {
-                        let Some(currently_pending) = window
-                            .pending_input
-                            .take()
-                            .filter(|pending| pending.focus == window.focus)
-                        else {
+                        let current_context_stack = window.context_stack();
+                        let Some(currently_pending) = window.pending_input.take() else {
                             return;
                         };
+                        if currently_pending.focus != window.focus
+                            || currently_pending.context_stack.as_ref()
+                                != Some(&current_context_stack)
+                        {
+                            window.pending_input_changed(cx);
+                            return;
+                        }
 
                         let node_id = window.focus_node_id_in_rendered_frame(window.focus);
                         let dispatch_path =

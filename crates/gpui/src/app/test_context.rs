@@ -1532,17 +1532,21 @@ mod accessibility_tests;
 #[cfg(test)]
 mod tests {
     use crate::{
-        AnyDrag, AppContext as _, Context, CursorStyle, Empty, FocusHandle, InteractiveElement,
-        IntoElement, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
-        ParentElement, PathPromptOptions, PlatformHoveredWindow, QuitMode, Render, ScrollDelta,
+        AnyDrag, AppContext as _, Context, CursorStyle, Empty, FocusHandle, HitboxId,
+        InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, Keystroke, Modifiers,
+        MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+        PathPromptOptions, PlatformHoveredWindow, PlatformInput, QuitMode, Render, ScrollDelta,
         ScrollWheelEvent, StatefulInteractiveElement, Styled, Subscription, TestAppContext,
-        TestInputDispatchSnapshot, TouchPhase, VisualContext, VisualTestContext, Window, canvas,
-        div, point, px, size,
+        TestInputDispatchSnapshot, TouchPhase, VisualContext, VisualTestContext, Window,
+        WindowMouseEvent, canvas, div, point, px, size,
     };
     use std::cell::{Cell, RefCell};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::path::PathBuf;
     use std::rc::Rc;
     use std::sync::Arc;
+
+    crate::actions!(window_interceptor_tests, [PendingChordAction]);
 
     struct FocusDebugView {
         first: FocusHandle,
@@ -1649,6 +1653,21 @@ mod tests {
                 .on_mouse_down(MouseButton::Left, move |_, _, _| {
                     events.borrow_mut().push("node");
                 })
+                .on_mouse_up(MouseButton::Left, {
+                    let events = self.events.clone();
+                    move |_, _, _| events.borrow_mut().push("node-up")
+                })
+                .on_mouse_move({
+                    let events = self.events.clone();
+                    move |_, _, _| events.borrow_mut().push("node-move")
+                })
+                .on_scroll_wheel({
+                    let events = self.events.clone();
+                    move |_, _, _| {
+                        events.borrow_mut().push("node-scroll");
+                        crate::ScrollWheelIntent::allow_default()
+                    }
+                })
         }
     }
 
@@ -1689,6 +1708,57 @@ mod tests {
         cx.run_until_parked();
         assert!(first_state_weak.upgrade().is_none());
         assert!(second_state.downgrade().upgrade().is_some());
+    }
+
+    #[open_gpui::test]
+    fn window_state_can_retry_after_direct_recursive_initialization_panics(
+        cx: &mut TestAppContext,
+    ) {
+        struct DirectState;
+        let (_view, cx) = cx.add_window_view(|_, _| Empty);
+
+        let result = cx.update(|window, cx| {
+            catch_unwind(AssertUnwindSafe(|| {
+                window.use_window_state::<DirectState>(cx, |window, cx| {
+                    let _ = window.use_window_state::<DirectState>(cx, |_, _| DirectState);
+                    DirectState
+                })
+            }))
+        });
+        assert!(result.is_err(), "direct recursion must panic");
+
+        let retry =
+            cx.update(|window, cx| window.use_window_state::<DirectState>(cx, |_, _| DirectState));
+        let same = cx.update(|window, cx| {
+            window.use_window_state::<DirectState>(cx, |_, _| {
+                panic!("the successful retry must remain authoritative")
+            })
+        });
+        assert_eq!(retry.entity_id(), same.entity_id());
+    }
+
+    #[open_gpui::test]
+    fn window_state_can_retry_all_slots_after_indirect_recursion_panics(cx: &mut TestAppContext) {
+        struct StateA;
+        struct StateB;
+        let (_view, cx) = cx.add_window_view(|_, _| Empty);
+
+        let result = cx.update(|window, cx| {
+            catch_unwind(AssertUnwindSafe(|| {
+                window.use_window_state::<StateA>(cx, |window, cx| {
+                    let _ = window.use_window_state::<StateB>(cx, |window, cx| {
+                        let _ = window.use_window_state::<StateA>(cx, |_, _| StateA);
+                        StateB
+                    });
+                    StateA
+                })
+            }))
+        });
+        assert!(result.is_err(), "indirect recursion must panic");
+
+        let state_a = cx.update(|window, cx| window.use_window_state::<StateA>(cx, |_, _| StateA));
+        let state_b = cx.update(|window, cx| window.use_window_state::<StateB>(cx, |_, _| StateB));
+        assert_ne!(state_a.entity_id(), state_b.entity_id());
     }
 
     #[open_gpui::test]
@@ -1748,6 +1818,226 @@ mod tests {
     }
 
     #[open_gpui::test]
+    fn window_mouse_interceptor_gates_pointer_events_and_preserves_mouse_up_cleanup(
+        cx: &mut TestAppContext,
+    ) {
+        fn inputs() -> Vec<(&'static str, &'static str, PlatformInput)> {
+            let position = point(px(10.0), px(10.0));
+            vec![
+                (
+                    "interceptor-down",
+                    "node",
+                    PlatformInput::MouseDown(MouseDownEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers: Modifiers::none(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }),
+                ),
+                (
+                    "interceptor-up",
+                    "node-up",
+                    PlatformInput::MouseUp(MouseUpEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers: Modifiers::none(),
+                        click_count: 1,
+                    }),
+                ),
+                (
+                    "interceptor-move",
+                    "node-move",
+                    PlatformInput::MouseMove(MouseMoveEvent {
+                        position,
+                        pressed_button: None,
+                        modifiers: Modifiers::none(),
+                    }),
+                ),
+                (
+                    "interceptor-scroll",
+                    "node-scroll",
+                    PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        position,
+                        delta: ScrollDelta::Pixels(point(px(0.0), px(1.0))),
+                        modifiers: Modifiers::none(),
+                        touch_phase: TouchPhase::Moved,
+                    }),
+                ),
+            ]
+        }
+
+        let consume = Rc::new(Cell::new(false));
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let (view, cx) = cx.add_window_view({
+            let consume = consume.clone();
+            let events = events.clone();
+            move |_, cx| WindowMouseInterceptorProbe {
+                consume,
+                events,
+                focus: cx.focus_handle(),
+                mouse_subscription: None,
+                key_subscription: None,
+            }
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update_window_entity(&view, |view, window, _cx| {
+            let consume = view.consume.clone();
+            let events = view.events.clone();
+            view.mouse_subscription =
+                Some(window.intercept_mouse_events(move |event, window, cx| {
+                    let label = match event {
+                        WindowMouseEvent::Down(_) => "interceptor-down",
+                        WindowMouseEvent::Up(_) => "interceptor-up",
+                        WindowMouseEvent::Move(_) => "interceptor-move",
+                        WindowMouseEvent::Exit(_) => "interceptor-exit",
+                        WindowMouseEvent::Pressure(_) => "interceptor-pressure",
+                        WindowMouseEvent::Scroll(_) => "interceptor-scroll",
+                        WindowMouseEvent::Pinch(_) => "interceptor-pinch",
+                        WindowMouseEvent::FileDrop(_) => "interceptor-file-drop",
+                    };
+                    events.borrow_mut().push(label);
+                    if consume.get() {
+                        cx.stop_propagation();
+                        window.prevent_default();
+                    }
+                }));
+        });
+
+        for (interceptor, node, input) in inputs() {
+            events.borrow_mut().clear();
+            let result = cx.update(|window, cx| window.dispatch_event(input, cx));
+            assert_eq!(&*events.borrow(), &[interceptor, node]);
+            assert!(result.propagate);
+        }
+
+        consume.set(true);
+        for (interceptor, _, input) in inputs() {
+            events.borrow_mut().clear();
+            if matches!(&input, PlatformInput::MouseUp(_)) {
+                cx.update(|window, cx| {
+                    let drag_view = cx.new(|_| Empty).into();
+                    cx.active_drag = Some(AnyDrag {
+                        value: Arc::new("drag"),
+                        view: drag_view,
+                        cursor_offset: point(px(0.0), px(0.0)),
+                        cursor_style: None,
+                    });
+                    window.capture_pointer(HitboxId::placeholder());
+                });
+            }
+
+            let result = cx.update(|window, cx| window.dispatch_event(input, cx));
+            assert_eq!(&*events.borrow(), &[interceptor]);
+            assert!(!result.propagate);
+            assert!(result.default_prevented);
+
+            if interceptor == "interceptor-up" {
+                cx.update(|window, cx| {
+                    assert!(cx.active_drag.is_none());
+                    assert!(window.captured_hitbox().is_none());
+                });
+            }
+        }
+    }
+
+    #[open_gpui::test]
+    fn synchronous_mouse_reentrancy_is_rejected_before_interceptors(cx: &mut TestAppContext) {
+        let consume = Rc::new(Cell::new(false));
+        let reentered = Rc::new(Cell::new(false));
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let (view, cx) = cx.add_window_view({
+            let consume = consume.clone();
+            let events = events.clone();
+            move |_, cx| WindowMouseInterceptorProbe {
+                consume,
+                events,
+                focus: cx.focus_handle(),
+                mouse_subscription: None,
+                key_subscription: None,
+            }
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update_window_entity(&view, |view, window, _cx| {
+            let events = view.events.clone();
+            let reentered = reentered.clone();
+            view.mouse_subscription =
+                Some(window.intercept_mouse_down(move |event, window, cx| {
+                    events.borrow_mut().push("interceptor");
+                    if !reentered.replace(true) {
+                        let nested =
+                            window.dispatch_event(PlatformInput::MouseDown(event.clone()), cx);
+                        assert!(!nested.propagate);
+                        assert!(nested.default_prevented);
+                        events.borrow_mut().push("nested-rejected");
+                    }
+                }));
+        });
+
+        let result = cx.simulate_event_with_dispatch_snapshot(MouseDownEvent {
+            button: MouseButton::Left,
+            position: point(px(10.0), px(10.0)),
+            modifiers: Modifiers::none(),
+            click_count: 1,
+            first_mouse: false,
+        });
+        assert_eq!(
+            &*events.borrow(),
+            &["interceptor", "nested-rejected", "node"]
+        );
+        assert!(result.propagated());
+    }
+
+    #[open_gpui::test]
+    fn synchronous_mouse_to_key_reentrancy_preserves_outer_dispatch_state(cx: &mut TestAppContext) {
+        let consume = Rc::new(Cell::new(false));
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let (view, cx) = cx.add_window_view({
+            let consume = consume.clone();
+            let events = events.clone();
+            move |_, cx| WindowMouseInterceptorProbe {
+                consume,
+                events,
+                focus: cx.focus_handle(),
+                mouse_subscription: None,
+                key_subscription: None,
+            }
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update_window_entity(&view, |view, window, _cx| {
+            let events = view.events.clone();
+            view.mouse_subscription =
+                Some(window.intercept_mouse_events(move |event, window, cx| {
+                    assert!(matches!(event, WindowMouseEvent::Move(_)));
+                    events.borrow_mut().push("mouse-interceptor");
+                    let nested = window.dispatch_event(
+                        PlatformInput::KeyDown(KeyDownEvent {
+                            keystroke: Keystroke::parse("escape").expect("escape should parse"),
+                            is_held: false,
+                            prefer_character_input: false,
+                        }),
+                        cx,
+                    );
+                    assert!(!nested.propagate);
+                    assert!(nested.default_prevented);
+                    events.borrow_mut().push("nested-rejected");
+                }));
+        });
+
+        let result = cx.simulate_event_with_dispatch_snapshot(MouseMoveEvent {
+            position: point(px(10.0), px(10.0)),
+            pressed_button: None,
+            modifiers: Modifiers::none(),
+        });
+        assert_eq!(
+            &*events.borrow(),
+            &["mouse-interceptor", "nested-rejected", "node-move"]
+        );
+        assert!(result.propagated());
+        assert!(!result.default_prevented());
+    }
+
+    #[open_gpui::test]
     fn window_key_interceptor_precedes_node_dispatch_and_can_consume(cx: &mut TestAppContext) {
         let consume = Rc::new(Cell::new(false));
         let events = Rc::new(RefCell::new(Vec::new()));
@@ -1799,6 +2089,169 @@ mod tests {
         assert_eq!(&*events.borrow(), &["interceptor"]);
         assert!(consumed.propagation_stopped());
         assert!(consumed.default_prevented());
+    }
+
+    #[open_gpui::test]
+    fn window_key_interceptor_replays_pending_printable_prefix_when_it_consumes_next_key(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new("a b", PendingChordAction, None)]);
+        });
+
+        let consume = Rc::new(Cell::new(false));
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let (view, cx) = cx.add_window_view({
+            let consume = consume.clone();
+            let events = events.clone();
+            move |_, cx| WindowMouseInterceptorProbe {
+                consume,
+                events,
+                focus: cx.focus_handle(),
+                mouse_subscription: None,
+                key_subscription: None,
+            }
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update_window_entity(&view, |view, window, cx| {
+            view.focus.focus(window, cx);
+            let events = view.events.clone();
+            view.key_subscription = Some(window.intercept_key_down(move |event, window, cx| {
+                if event.keystroke.key == "escape" {
+                    events.borrow_mut().push("interceptor-escape");
+                    cx.stop_propagation();
+                    window.prevent_default();
+                } else {
+                    events.borrow_mut().push("interceptor-prefix");
+                }
+            }));
+        });
+
+        let prefix = cx.simulate_event_with_dispatch_snapshot(KeyDownEvent {
+            keystroke: Keystroke::parse("a").expect("printable prefix should parse"),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        assert!(prefix.propagation_stopped());
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+
+        events.borrow_mut().clear();
+        let consumed = cx.simulate_event_with_dispatch_snapshot(KeyDownEvent {
+            keystroke: Keystroke::parse("escape").expect("escape should parse"),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        assert_eq!(
+            &*events.borrow(),
+            &["interceptor-escape", "node-capture", "node-bubble"]
+        );
+        assert!(consumed.propagation_stopped());
+        assert!(consumed.default_prevented());
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+    }
+
+    #[open_gpui::test]
+    fn synchronous_key_reentrancy_is_rejected_before_interceptors(cx: &mut TestAppContext) {
+        let consume = Rc::new(Cell::new(false));
+        let reentered = Rc::new(Cell::new(false));
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let (view, cx) = cx.add_window_view({
+            let consume = consume.clone();
+            let events = events.clone();
+            move |_, cx| WindowMouseInterceptorProbe {
+                consume,
+                events,
+                focus: cx.focus_handle(),
+                mouse_subscription: None,
+                key_subscription: None,
+            }
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update_window_entity(&view, |view, window, cx| {
+            view.focus.focus(window, cx);
+            let events = view.events.clone();
+            let reentered = reentered.clone();
+            view.key_subscription = Some(window.intercept_key_down(move |event, window, cx| {
+                events.borrow_mut().push("interceptor");
+                if !reentered.replace(true) {
+                    let nested = window.dispatch_event(PlatformInput::KeyDown(event.clone()), cx);
+                    assert!(!nested.propagate);
+                    assert!(nested.default_prevented);
+                    events.borrow_mut().push("nested-rejected");
+                }
+            }));
+        });
+
+        let result = cx.simulate_event_with_dispatch_snapshot(KeyDownEvent {
+            keystroke: Keystroke::parse("escape").expect("escape should parse"),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        assert_eq!(
+            &*events.borrow(),
+            &[
+                "interceptor",
+                "nested-rejected",
+                "node-capture",
+                "node-bubble",
+            ]
+        );
+        assert!(result.propagated());
+    }
+
+    #[open_gpui::test]
+    fn synchronous_key_to_mouse_reentrancy_preserves_outer_dispatch_state(cx: &mut TestAppContext) {
+        let consume = Rc::new(Cell::new(false));
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let (view, cx) = cx.add_window_view({
+            let consume = consume.clone();
+            let events = events.clone();
+            move |_, cx| WindowMouseInterceptorProbe {
+                consume,
+                events,
+                focus: cx.focus_handle(),
+                mouse_subscription: None,
+                key_subscription: None,
+            }
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update_window_entity(&view, |view, window, cx| {
+            view.focus.focus(window, cx);
+            let events = view.events.clone();
+            view.key_subscription = Some(window.intercept_key_down(move |_, window, cx| {
+                events.borrow_mut().push("key-interceptor");
+                let nested = window.dispatch_event(
+                    PlatformInput::MouseDown(MouseDownEvent {
+                        button: MouseButton::Left,
+                        position: point(px(10.0), px(10.0)),
+                        modifiers: Modifiers::none(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }),
+                    cx,
+                );
+                assert!(!nested.propagate);
+                assert!(nested.default_prevented);
+                events.borrow_mut().push("nested-rejected");
+            }));
+        });
+
+        let result = cx.simulate_event_with_dispatch_snapshot(KeyDownEvent {
+            keystroke: Keystroke::parse("escape").expect("escape should parse"),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        assert_eq!(
+            &*events.borrow(),
+            &[
+                "key-interceptor",
+                "nested-rejected",
+                "node-capture",
+                "node-bubble",
+            ]
+        );
+        assert!(result.propagated());
+        assert!(!result.default_prevented());
     }
 
     #[open_gpui::test]
