@@ -679,7 +679,7 @@ pub(crate) fn cache_known_viewport_preview_for_test(
 }
 
 pub(crate) fn close_window_quietly_for_test(window: AnyWindowHandle, cx: &mut TestAppContext) {
-    let _ = window.update(cx, |_, window, _| window.remove_window());
+    let _ = window.update(cx, |_, window, cx| window.remove_window(cx));
 }
 
 pub(crate) fn focus_backend_window_for_test(window: AnyWindowHandle, cx: &mut TestAppContext) {

@@ -1,12 +1,15 @@
 use crate::display::WebDisplay;
-use crate::events::{ClickState, WebEventListeners, is_mac_platform};
 use crate::platform::set_body_cursor;
+use crate::{
+    events::{WebEventListeners, is_mac_platform},
+    pointer_session::{ClickState, WebPointerCaptureState},
+};
 use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 
 use open_gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, DispatchEventResult,
-    GpuSpecs, Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
@@ -26,6 +29,15 @@ pub(crate) struct WebWindowCallbacks {
     pub(crate) close: Option<Box<dyn FnOnce()>>,
     pub(crate) appearance_changed: Option<Box<dyn FnMut()>>,
     pub(crate) hit_test_window_control: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
+}
+
+impl WebWindowCallbacks {
+    pub(crate) fn set_input(
+        &mut self,
+        callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>,
+    ) {
+        self.input = Some(callback);
+    }
 }
 
 pub(crate) struct WebWindowMutableState {
@@ -52,7 +64,7 @@ pub(crate) struct WebWindowInner {
     pub(crate) state: RefCell<WebWindowMutableState>,
     pub(crate) callbacks: RefCell<WebWindowCallbacks>,
     pub(crate) click_state: RefCell<ClickState>,
-    pub(crate) pressed_button: Cell<Option<MouseButton>>,
+    pub(crate) pointer_capture: Cell<WebPointerCaptureState>,
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
     pub(crate) is_composing: Cell<bool>,
@@ -183,7 +195,7 @@ impl WebWindow {
             state: RefCell::new(mutable_state),
             callbacks: RefCell::new(WebWindowCallbacks::default()),
             click_state: RefCell::new(ClickState::default()),
-            pressed_button: Cell::new(None),
+            pointer_capture: Cell::new(WebPointerCaptureState::default()),
             last_physical_size: Cell::new((0, 0)),
             notify_scale: Cell::new(false),
             is_composing: Cell::new(false),
@@ -496,6 +508,9 @@ impl WebWindowInner {
                 })
                 .unwrap_or(true);
 
+            if !is_visible {
+                this.cleanup_pointer_capture();
+            }
             {
                 let mut state = this.state.borrow_mut();
                 state.is_active = is_visible;
@@ -761,7 +776,7 @@ impl PlatformWindow for WebWindow {
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {
-        self.inner.callbacks.borrow_mut().input = Some(callback);
+        self.inner.callbacks.borrow_mut().set_input(callback);
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {

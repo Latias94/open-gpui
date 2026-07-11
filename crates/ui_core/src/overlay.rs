@@ -94,40 +94,31 @@ impl OverlayLayerKind {
     }
 }
 
-/// Mount, paint, and interaction state for an overlay layer.
+/// Canonical mount, paint, and interaction state for an overlay layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OverlayPresence {
-    open: bool,
-    present: bool,
-    interactive: bool,
+pub enum OverlayPresence {
+    /// The layer is absent from paint and interaction.
+    Hidden,
+    /// The layer is mounted and fully interactive.
+    Open,
+    /// The layer remains mounted for exit paint but is not interactive.
+    Closing,
 }
 
 impl OverlayPresence {
     /// Returns a hidden overlay state.
     pub const fn hidden() -> Self {
-        Self {
-            open: false,
-            present: false,
-            interactive: false,
-        }
+        Self::Hidden
     }
 
     /// Returns an open overlay state that is mounted and interactive.
     pub const fn open() -> Self {
-        Self {
-            open: true,
-            present: true,
-            interactive: true,
-        }
+        Self::Open
     }
 
     /// Returns a closing overlay state that remains painted but no longer interactive.
     pub const fn closing() -> Self {
-        Self {
-            open: false,
-            present: true,
-            interactive: false,
-        }
+        Self::Closing
     }
 
     /// Returns an instant open/closed presence state.
@@ -135,28 +126,29 @@ impl OverlayPresence {
         if open { Self::open() } else { Self::hidden() }
     }
 
-    /// Returns a custom presence state for transition-aware adapters.
-    pub const fn from_parts(open: bool, present: bool, interactive: bool) -> Self {
-        Self {
-            open,
-            present,
-            interactive,
+    /// Converts canonical lifecycle flags into a presence state.
+    pub const fn from_parts(open: bool, present: bool, interactive: bool) -> Option<Self> {
+        match (open, present, interactive) {
+            (false, false, false) => Some(Self::Hidden),
+            (true, true, true) => Some(Self::Open),
+            (false, true, false) => Some(Self::Closing),
+            _ => None,
         }
     }
 
     /// Returns whether the overlay is semantically open.
     pub const fn is_open(self) -> bool {
-        self.open
+        matches!(self, Self::Open)
     }
 
     /// Returns whether the overlay should remain mounted or painted.
     pub const fn present(self) -> bool {
-        self.present
+        matches!(self, Self::Open | Self::Closing)
     }
 
     /// Returns whether the overlay should accept interaction and dismissal events.
     pub const fn interactive(self) -> bool {
-        self.interactive
+        matches!(self, Self::Open)
     }
 }
 
@@ -1473,6 +1465,31 @@ mod tests {
         assert!(!closing.is_open());
         assert!(closing.present());
         assert!(!closing.interactive());
+
+        assert_eq!(
+            OverlayPresence::from_parts(false, false, false),
+            Some(OverlayPresence::hidden())
+        );
+        assert_eq!(
+            OverlayPresence::from_parts(true, true, true),
+            Some(OverlayPresence::open())
+        );
+        assert_eq!(
+            OverlayPresence::from_parts(false, true, false),
+            Some(OverlayPresence::closing())
+        );
+        for invalid in [
+            (true, false, false),
+            (true, false, true),
+            (true, true, false),
+            (false, false, true),
+            (false, true, true),
+        ] {
+            assert_eq!(
+                OverlayPresence::from_parts(invalid.0, invalid.1, invalid.2),
+                None
+            );
+        }
     }
 
     #[test]

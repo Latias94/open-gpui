@@ -22,9 +22,9 @@ use crate::{
     HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
     KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
     MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, Overflow,
-    ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
-    size,
+    ParentElement, Pixels, Point, PointerCancelEvent, PointerCaptureHandle, Render,
+    ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId,
+    Visibility, Window, WindowControlArea, point, px, size,
 };
 use open_gpui_collections::HashMap;
 use open_gpui_core_util::ResultExt;
@@ -131,7 +131,7 @@ impl Interactivity {
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
-                    && hitbox.is_hovered(window)
+                    && hitbox.is_mouse_event_target(window)
                 {
                     (listener)(event, window, cx)
                 }
@@ -148,7 +148,7 @@ impl Interactivity {
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
+                if phase == DispatchPhase::Capture && hitbox.is_mouse_event_target(window) {
                     (listener)(event, window, cx)
                 }
             }));
@@ -164,7 +164,7 @@ impl Interactivity {
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                if phase == DispatchPhase::Bubble && hitbox.is_mouse_event_target(window) {
                     (listener)(event, window, cx)
                 }
             }));
@@ -180,7 +180,7 @@ impl Interactivity {
     ) {
         self.mouse_pressure_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                if phase == DispatchPhase::Bubble && hitbox.is_mouse_event_target(window) {
                     (listener)(event, window, cx)
                 }
             }));
@@ -196,7 +196,7 @@ impl Interactivity {
     ) {
         self.mouse_pressure_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
+                if phase == DispatchPhase::Capture && hitbox.is_mouse_event_target(window) {
                     (listener)(event, window, cx)
                 }
             }));
@@ -215,7 +215,7 @@ impl Interactivity {
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
-                    && hitbox.is_hovered(window)
+                    && hitbox.is_mouse_event_target(window)
                 {
                     (listener)(event, window, cx)
                 }
@@ -232,7 +232,7 @@ impl Interactivity {
     ) {
         self.mouse_up_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
+                if phase == DispatchPhase::Capture && hitbox.is_mouse_event_target(window) {
                     (listener)(event, window, cx)
                 }
             }));
@@ -248,7 +248,7 @@ impl Interactivity {
     ) {
         self.mouse_up_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                if phase == DispatchPhase::Bubble && hitbox.is_mouse_event_target(window) {
                     (listener)(event, window, cx)
                 }
             }));
@@ -265,7 +265,10 @@ impl Interactivity {
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Capture && !hitbox.contains(&window.mouse_position()) {
+                if phase == DispatchPhase::Capture
+                    && !window.has_pointer_capture()
+                    && !hitbox.contains(&window.mouse_position())
+                {
                     (listener)(event, window, cx)
                 }
             }));
@@ -285,6 +288,7 @@ impl Interactivity {
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Capture
                     && event.button == button
+                    && !window.has_pointer_capture()
                     && !hitbox.is_hovered(window)
                 {
                     (listener)(event, window, cx);
@@ -302,7 +306,7 @@ impl Interactivity {
     ) {
         self.mouse_move_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                if phase == DispatchPhase::Bubble && hitbox.is_mouse_event_target(window) {
                     (listener)(event, window, cx);
                 }
             }));
@@ -659,6 +663,15 @@ pub trait InteractiveElement: Sized {
             focus_handle = focus_handle.tab_index(tab_index);
         }
         interactivity.tracked_focus_handle = Some(focus_handle);
+        self
+    }
+
+    /// Bind this element's hitbox to a stable pointer capture handle in every rendered frame.
+    ///
+    /// The handle must have been created by the window rendering this element. A handle may be
+    /// tracked by only one element in a frame.
+    fn track_pointer_capture(mut self, handle: &PointerCaptureHandle) -> Self {
+        self.interactivity().tracked_pointer_capture_handle = Some(*handle);
         self
     }
 
@@ -2151,6 +2164,7 @@ pub struct Interactivity {
     pub(crate) key_context: Option<KeyContext>,
     pub(crate) focusable: bool,
     pub(crate) tracked_focus_handle: Option<FocusHandle>,
+    pub(crate) tracked_pointer_capture_handle: Option<PointerCaptureHandle>,
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
     pub(crate) scroll_anchor: Option<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
@@ -2386,6 +2400,17 @@ impl Interactivity {
                                 None
                             };
 
+                            if let Some(handle) = self.tracked_pointer_capture_handle.as_ref() {
+                                let hitbox = hitbox
+                                    .as_ref()
+                                    .expect("pointer capture tracking must create a hitbox");
+                                window
+                                    .bind_pointer_capture(handle, hitbox.id)
+                                    .unwrap_or_else(|error| {
+                                        panic!("failed to bind pointer capture handle: {error}")
+                                    });
+                            }
+
                             let scroll_offset =
                                 self.clamp_scroll_position(bounds, &style, window, cx);
                             self.dispatch_scroll_viewport_changed(content_size, window, cx);
@@ -2405,6 +2430,7 @@ impl Interactivity {
             || self.group.is_some()
             || self.scroll_offset.is_some()
             || self.tracked_focus_handle.is_some()
+            || self.tracked_pointer_capture_handle.is_some()
             || self.hover_style.is_some()
             || self.group_hover_style.is_some()
             || self.hover_listener.is_some()
@@ -2719,7 +2745,7 @@ impl Interactivity {
                             move |e: &crate::MouseDownEvent, phase, window, cx| {
                                 if text_bounds.contains(&e.position)
                                     && phase.capture()
-                                    && hitbox.is_hovered(window)
+                                    && hitbox.is_mouse_event_target(window)
                                 {
                                     cx.stop_propagation();
                                     let Ok(dir) = std::env::current_dir() else {
@@ -2783,7 +2809,7 @@ impl Interactivity {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble
-                    && hitbox.is_hovered(window)
+                    && hitbox.is_mouse_event_target(window)
                     && !window.default_prevented()
                 {
                     window.focus(&focus_handle, cx);
@@ -2950,7 +2976,7 @@ impl Interactivity {
                     move |event: &MouseDownEvent, phase, window, _cx| {
                         if phase == DispatchPhase::Bubble
                             && (event.button == MouseButton::Left || has_aux_click_listeners)
-                            && hitbox.is_hovered(window)
+                            && hitbox.is_mouse_event_target(window)
                         {
                             *pending_mouse_down.borrow_mut() = Some(event.clone());
                             window.refresh();
@@ -2983,10 +3009,12 @@ impl Interactivity {
                                 cx,
                             );
                             cx.active_drag = Some(AnyDrag {
+                                window_id: window.window_handle().window_id(),
                                 view: drag,
                                 value: drag_value,
                                 cursor_offset,
                                 cursor_style: drag_cursor_style,
+                                button: mouse_down.button,
                             });
                             pending_mouse_down.take();
                             window.refresh();
@@ -3037,7 +3065,8 @@ impl Interactivity {
                         // propagation.
                         DispatchPhase::Capture => {
                             let mut pending_mouse_down = pending_mouse_down.borrow_mut();
-                            if pending_mouse_down.is_some() && hitbox.is_hovered(window) {
+                            if pending_mouse_down.is_some() && hitbox.is_mouse_event_target(window)
+                            {
                                 captured_mouse_down = pending_mouse_down.take();
                                 window.refresh();
                             } else if pending_mouse_down.is_some() {
@@ -3166,6 +3195,26 @@ impl Interactivity {
             }
 
             {
+                let active_state = active_state.clone();
+                let pending_mouse_down = element_state.pending_mouse_down.clone();
+                window.on_pointer_cancel(move |_: &PointerCancelEvent, phase, window, _cx| {
+                    if phase != DispatchPhase::Capture {
+                        return;
+                    }
+                    let cleared_pending = pending_mouse_down
+                        .as_ref()
+                        .is_some_and(|pending| pending.borrow_mut().take().is_some());
+                    let cleared_active = active_state.borrow().is_clicked();
+                    if cleared_active {
+                        *active_state.borrow_mut() = ElementClickedState::default();
+                    }
+                    if cleared_pending || cleared_active {
+                        window.refresh();
+                    }
+                });
+            }
+
+            {
                 let active_group_hitbox = self
                     .group_active_style
                     .as_ref()
@@ -3173,9 +3222,10 @@ impl Interactivity {
                 let hitbox = hitbox.clone();
                 window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _cx| {
                     if phase == DispatchPhase::Bubble && !window.default_prevented() {
-                        let group_hovered = active_group_hitbox
-                            .is_some_and(|group_hitbox_id| group_hitbox_id.is_hovered(window));
-                        let element_hovered = hitbox.is_hovered(window);
+                        let group_hovered = active_group_hitbox.is_some_and(|group_hitbox_id| {
+                            group_hitbox_id.is_mouse_event_target(window)
+                        });
+                        let element_hovered = hitbox.is_mouse_event_target(window);
                         if group_hovered || element_hovered {
                             *active_state.borrow_mut() = ElementClickedState {
                                 group: group_hovered,
@@ -5268,8 +5318,8 @@ mod tests {
         ));
 
         test_app
-            .update_window(any_window, |_, window, _| {
-                window.remove_window();
+            .update_window(any_window, |_, window, cx| {
+                window.remove_window(cx);
             })
             .unwrap();
         test_app.run_until_parked();
@@ -5325,8 +5375,8 @@ mod tests {
         ));
 
         test_app
-            .update_window(any_window, |_, window, _| {
-                window.remove_window();
+            .update_window(any_window, |_, window, cx| {
+                window.remove_window(cx);
             })
             .unwrap();
         test_app.run_until_parked();

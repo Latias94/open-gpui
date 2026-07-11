@@ -22,8 +22,10 @@ multithreaded = ["dep:wasm_thread"]
 [lib]
 path = "src/gpui_web.rs"
 
-[target.'cfg(target_family = "wasm")'.dependencies]
+[dependencies]
 open_gpui.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
 parking_lot = { workspace = true, features = ["nightly"] }
 open_gpui_wgpu.workspace = true
 open_gpui_http_client.workspace = true

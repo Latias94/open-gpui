@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::atomic::Ordering};
+use std::{cell::Cell, rc::Rc, sync::atomic::Ordering};
 
 use ::open_gpui_util::ResultExt;
 use anyhow::Context as _;
@@ -30,7 +30,314 @@ pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
+fn mouse_button_mask(button: MouseButton) -> u8 {
+    match button {
+        MouseButton::Left => 1 << 0,
+        MouseButton::Right => 1 << 1,
+        MouseButton::Middle => 1 << 2,
+        MouseButton::Navigate(NavigationDirection::Back) => 1 << 3,
+        MouseButton::Navigate(NavigationDirection::Forward) => 1 << 4,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct WindowsPointerCaptureState {
+    pressed_buttons: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WindowsPointerCaptureInput {
+    ButtonDown(MouseButton),
+    ButtonUp(MouseButton),
+    Cancel(PointerCancelReason),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WindowsPointerCaptureEffect {
+    None,
+    Acquire,
+    Release,
+    Cancel(PointerCancelReason),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WindowsClientMouseButtonMessage {
+    Down(MouseButton),
+    Up(MouseButton),
+}
+
+impl WindowsClientMouseButtonMessage {
+    fn button(self) -> MouseButton {
+        match self {
+            Self::Down(button) | Self::Up(button) => button,
+        }
+    }
+
+    fn capture_input(self) -> WindowsPointerCaptureInput {
+        match self {
+            Self::Down(button) => WindowsPointerCaptureInput::ButtonDown(button),
+            Self::Up(button) => WindowsPointerCaptureInput::ButtonUp(button),
+        }
+    }
+
+    fn platform_input(
+        self,
+        position: Point<Pixels>,
+        modifiers: Modifiers,
+        click_count: usize,
+    ) -> PlatformInput {
+        match self {
+            Self::Down(button) => PlatformInput::MouseDown(MouseDownEvent {
+                button,
+                position,
+                modifiers,
+                click_count,
+                first_mouse: false,
+            }),
+            Self::Up(button) => PlatformInput::MouseUp(MouseUpEvent {
+                button,
+                position,
+                modifiers,
+                click_count,
+            }),
+        }
+    }
+}
+
+fn decode_client_mouse_button_message(
+    message: u32,
+    wparam: WPARAM,
+) -> Option<WindowsClientMouseButtonMessage> {
+    let xbutton = || match wparam.hiword() {
+        XBUTTON1 => Some(MouseButton::Navigate(NavigationDirection::Back)),
+        XBUTTON2 => Some(MouseButton::Navigate(NavigationDirection::Forward)),
+        _ => None,
+    };
+
+    match message {
+        WM_LBUTTONDOWN => Some(WindowsClientMouseButtonMessage::Down(MouseButton::Left)),
+        WM_RBUTTONDOWN => Some(WindowsClientMouseButtonMessage::Down(MouseButton::Right)),
+        WM_MBUTTONDOWN => Some(WindowsClientMouseButtonMessage::Down(MouseButton::Middle)),
+        WM_XBUTTONDOWN => xbutton().map(WindowsClientMouseButtonMessage::Down),
+        WM_LBUTTONUP => Some(WindowsClientMouseButtonMessage::Up(MouseButton::Left)),
+        WM_RBUTTONUP => Some(WindowsClientMouseButtonMessage::Up(MouseButton::Right)),
+        WM_MBUTTONUP => Some(WindowsClientMouseButtonMessage::Up(MouseButton::Middle)),
+        WM_XBUTTONUP => xbutton().map(WindowsClientMouseButtonMessage::Up),
+        _ => None,
+    }
+}
+
+impl WindowsPointerCaptureState {
+    fn transition(self, input: WindowsPointerCaptureInput) -> (Self, WindowsPointerCaptureEffect) {
+        match input {
+            WindowsPointerCaptureInput::ButtonDown(button) => {
+                let pressed_buttons = self.pressed_buttons | mouse_button_mask(button);
+                let effect = if self.pressed_buttons == 0 {
+                    WindowsPointerCaptureEffect::Acquire
+                } else {
+                    WindowsPointerCaptureEffect::None
+                };
+                (Self { pressed_buttons }, effect)
+            }
+            WindowsPointerCaptureInput::ButtonUp(button) => {
+                let pressed_buttons = self.pressed_buttons & !mouse_button_mask(button);
+                let effect = if self.pressed_buttons != 0 && pressed_buttons == 0 {
+                    WindowsPointerCaptureEffect::Release
+                } else {
+                    WindowsPointerCaptureEffect::None
+                };
+                (Self { pressed_buttons }, effect)
+            }
+            WindowsPointerCaptureInput::Cancel(reason) if self.pressed_buttons != 0 => {
+                (Self::default(), WindowsPointerCaptureEffect::Cancel(reason))
+            }
+            WindowsPointerCaptureInput::Cancel(_) => {
+                (Self::default(), WindowsPointerCaptureEffect::None)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum WindowsInputDispatchState {
+    #[default]
+    Idle,
+    Dispatching {
+        pending_terminal_cancel: Option<PointerCancelReason>,
+    },
+}
+
+impl WindowsInputDispatchState {
+    fn defer_terminal_cancel(self, reason: PointerCancelReason) -> Self {
+        match self {
+            Self::Idle => Self::Idle,
+            Self::Dispatching {
+                pending_terminal_cancel: None,
+            } => Self::Dispatching {
+                pending_terminal_cancel: Some(reason),
+            },
+            Self::Dispatching {
+                pending_terminal_cancel: Some(_),
+            } => self,
+        }
+    }
+
+    fn take_pending_terminal_cancel(self) -> (Self, Option<PointerCancelReason>) {
+        match self {
+            Self::Dispatching {
+                pending_terminal_cancel: Some(reason),
+            } => (
+                Self::Dispatching {
+                    pending_terminal_cancel: None,
+                },
+                Some(reason),
+            ),
+            state => (state, None),
+        }
+    }
+}
+
+fn dispatch_windows_input(
+    callbacks: &Callbacks,
+    dispatch_state: &Cell<WindowsInputDispatchState>,
+    input: PlatformInput,
+) -> Option<DispatchEventResult> {
+    if dispatch_state.get() != WindowsInputDispatchState::Idle {
+        return None;
+    }
+
+    let mut callback = callbacks.input.take()?;
+    dispatch_state.set(WindowsInputDispatchState::Dispatching {
+        pending_terminal_cancel: None,
+    });
+
+    let result = callback(input);
+    // Capture notifications can re-enter while the callback is owned here. Deliver their
+    // terminal event only after the outer core dispatch returns.
+    loop {
+        let (next_dispatch_state, pending_terminal_cancel) =
+            dispatch_state.get().take_pending_terminal_cancel();
+        dispatch_state.set(next_dispatch_state);
+        let Some(reason) = pending_terminal_cancel else {
+            break;
+        };
+        callback(PlatformInput::PointerCanceled(PointerCancelEvent {
+            reason,
+        }));
+    }
+
+    dispatch_state.set(WindowsInputDispatchState::Idle);
+    callbacks.input.set(Some(callback));
+    Some(result)
+}
+
+fn dispatch_windows_pointer_cancel(
+    callbacks: &Callbacks,
+    dispatch_state: &Cell<WindowsInputDispatchState>,
+    reason: PointerCancelReason,
+) {
+    let current_dispatch_state = dispatch_state.get();
+    match current_dispatch_state {
+        WindowsInputDispatchState::Idle => {
+            let _ = dispatch_windows_input(
+                callbacks,
+                dispatch_state,
+                PlatformInput::PointerCanceled(PointerCancelEvent { reason }),
+            );
+        }
+        WindowsInputDispatchState::Dispatching { .. } => {
+            dispatch_state.set(current_dispatch_state.defer_terminal_cancel(reason))
+        }
+    }
+}
+
+struct WindowsClientPointerBoundary<'a> {
+    pointer_capture: &'a Cell<WindowsPointerCaptureState>,
+    callbacks: &'a Callbacks,
+    dispatch_state: &'a Cell<WindowsInputDispatchState>,
+}
+
+impl WindowsClientPointerBoundary<'_> {
+    fn handle_button_message(
+        &self,
+        message: WindowsClientMouseButtonMessage,
+        position: Point<Pixels>,
+        modifiers: Modifiers,
+        click_count: usize,
+        mut apply_capture_effect: impl FnMut(WindowsPointerCaptureEffect),
+    ) -> Option<isize> {
+        let (next_capture, capture_effect) = self
+            .pointer_capture
+            .get()
+            .transition(message.capture_input());
+        self.pointer_capture.set(next_capture);
+        if capture_effect == WindowsPointerCaptureEffect::Acquire {
+            apply_capture_effect(capture_effect);
+        }
+
+        let result = dispatch_windows_input(
+            self.callbacks,
+            self.dispatch_state,
+            message.platform_input(position, modifiers, click_count),
+        )
+        .map_or(
+            Some(1),
+            |result| {
+                if result.propagate { Some(1) } else { Some(0) }
+            },
+        );
+
+        if capture_effect == WindowsPointerCaptureEffect::Release {
+            apply_capture_effect(capture_effect);
+        }
+        result
+    }
+
+    fn handle_pointer_cancel(&self, reason: PointerCancelReason) -> bool {
+        let (next_capture, effect) = self
+            .pointer_capture
+            .get()
+            .transition(WindowsPointerCaptureInput::Cancel(reason));
+        self.pointer_capture.set(next_capture);
+        let WindowsPointerCaptureEffect::Cancel(reason) = effect else {
+            return false;
+        };
+        dispatch_windows_pointer_cancel(self.callbacks, self.dispatch_state, reason);
+        true
+    }
+}
+
 impl WindowsWindowInner {
+    pub(crate) fn dispatch_input(&self, input: PlatformInput) -> Option<DispatchEventResult> {
+        dispatch_windows_input(&self.state.callbacks, &self.state.input_dispatch, input)
+    }
+
+    fn client_pointer_boundary(&self) -> WindowsClientPointerBoundary<'_> {
+        WindowsClientPointerBoundary {
+            pointer_capture: &self.state.pointer_capture,
+            callbacks: &self.state.callbacks,
+            dispatch_state: &self.state.input_dispatch,
+        }
+    }
+
+    fn apply_native_pointer_capture_effect(
+        &self,
+        handle: HWND,
+        effect: WindowsPointerCaptureEffect,
+    ) {
+        match effect {
+            WindowsPointerCaptureEffect::Acquire => unsafe {
+                SetCapture(handle);
+            },
+            WindowsPointerCaptureEffect::Release if unsafe { GetCapture() } == handle => {
+                unsafe { ReleaseCapture().log_err() };
+            }
+            WindowsPointerCaptureEffect::None
+            | WindowsPointerCaptureEffect::Release
+            | WindowsPointerCaptureEffect::Cancel(_) => {}
+        }
+    }
+
     pub(crate) fn handle_msg(
         self: &Rc<Self>,
         handle: HWND,
@@ -61,6 +368,8 @@ impl WindowsWindowInner {
             WM_DESTROY => self.handle_destroy_msg(handle),
             WM_MOUSEMOVE => self.handle_mouse_move_msg(handle, lparam, wparam),
             WM_MOUSELEAVE | WM_NCMOUSELEAVE => self.handle_mouse_leave_msg(),
+            WM_CAPTURECHANGED => self.handle_pointer_capture_lost_msg(),
+            WM_CANCELMODE => self.handle_cancel_mode_msg(handle),
             WM_NCMOUSEMOVE => self.handle_nc_mouse_move_msg(handle, lparam),
             // Treat double click as a second single click, since we track the double clicks ourselves.
             // If you don't interact with any elements, this will fall through to the windows default
@@ -83,17 +392,8 @@ impl WindowsWindowInner {
             WM_NCMBUTTONUP => {
                 self.handle_nc_mouse_up_msg(handle, MouseButton::Middle, wparam, lparam)
             }
-            WM_LBUTTONDOWN => self.handle_mouse_down_msg(handle, MouseButton::Left, lparam),
-            WM_RBUTTONDOWN => self.handle_mouse_down_msg(handle, MouseButton::Right, lparam),
-            WM_MBUTTONDOWN => self.handle_mouse_down_msg(handle, MouseButton::Middle, lparam),
-            WM_XBUTTONDOWN => {
-                self.handle_xbutton_msg(handle, wparam, lparam, Self::handle_mouse_down_msg)
-            }
-            WM_LBUTTONUP => self.handle_mouse_up_msg(handle, MouseButton::Left, lparam),
-            WM_RBUTTONUP => self.handle_mouse_up_msg(handle, MouseButton::Right, lparam),
-            WM_MBUTTONUP => self.handle_mouse_up_msg(handle, MouseButton::Middle, lparam),
-            WM_XBUTTONUP => {
-                self.handle_xbutton_msg(handle, wparam, lparam, Self::handle_mouse_up_msg)
+            _ if let Some(message) = decode_client_mouse_button_message(msg, wparam) => {
+                self.handle_client_mouse_button_msg(handle, message, lparam)
             }
             WM_MOUSEWHEEL => self.handle_mouse_wheel_msg(handle, wparam, lparam),
             WM_MOUSEHWHEEL => self.handle_mouse_horizontal_wheel_msg(handle, wparam, lparam),
@@ -298,9 +598,6 @@ impl WindowsWindowInner {
         self.start_tracking_mouse(handle, TME_LEAVE);
         self.restore_cursor_after_hide();
 
-        let Some(mut func) = self.state.callbacks.input.take() else {
-            return Some(1);
-        };
         let scale_factor = self.state.scale_factor.get();
 
         let pressed_button = match MODIFIERKEYS_FLAGS(wparam.loword() as u32) {
@@ -322,8 +619,10 @@ impl WindowsWindowInner {
             pressed_button,
             modifiers: current_modifiers(),
         });
-        let handled = !func(input).propagate;
-        self.state.callbacks.input.set(Some(func));
+        let Some(result) = self.dispatch_input(input) else {
+            return Some(1);
+        };
+        let handled = !result.propagate;
 
         if handled { Some(0) } else { Some(1) }
     }
@@ -348,10 +647,7 @@ impl WindowsWindowInner {
         let input = handle_key_event(wparam, lparam, &self.state, |keystroke, _| {
             PlatformInput::KeyUp(KeyUpEvent { keystroke })
         })?;
-        let mut func = self.state.callbacks.input.take()?;
-
-        func(input);
-        self.state.callbacks.input.set(Some(func));
+        self.dispatch_input(input)?;
 
         // Always return 0 to indicate that the message was handled, so we could properly handle `ModifiersChanged` event.
         Some(0)
@@ -375,13 +671,10 @@ impl WindowsWindowInner {
             return Some(1);
         };
 
-        let Some(mut func) = self.state.callbacks.input.take() else {
+        let Some(result) = self.dispatch_input(input) else {
             return Some(1);
         };
-
-        let handled = !func(input).propagate;
-
-        self.state.callbacks.input.set(Some(func));
+        let handled = !result.propagate;
 
         if handled { Some(0) } else { Some(1) }
     }
@@ -393,12 +686,10 @@ impl WindowsWindowInner {
             return Some(1);
         };
 
-        let Some(mut func) = self.state.callbacks.input.take() else {
+        let Some(result) = self.dispatch_input(input) else {
             return Some(1);
         };
-
-        let handled = !func(input).propagate;
-        self.state.callbacks.input.set(Some(func));
+        let handled = !result.propagate;
 
         if handled { Some(0) } else { Some(1) }
     }
@@ -412,77 +703,45 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_mouse_down_msg(
+    fn handle_client_mouse_button_msg(
         &self,
         handle: HWND,
-        button: MouseButton,
+        message: WindowsClientMouseButtonMessage,
         lparam: LPARAM,
     ) -> Option<isize> {
-        unsafe { SetCapture(handle) };
-
-        let Some(mut func) = self.state.callbacks.input.take() else {
-            return Some(1);
-        };
         let x = lparam.signed_loword();
         let y = lparam.signed_hiword();
-        let physical_point = point(DevicePixels(x as i32), DevicePixels(y as i32));
-        let click_count = self.state.click_state.update(button, physical_point);
+        let button = message.button();
+        let click_count = match message {
+            WindowsClientMouseButtonMessage::Down(_) => {
+                let physical_point = point(DevicePixels(x as i32), DevicePixels(y as i32));
+                self.state.click_state.update(button, physical_point)
+            }
+            WindowsClientMouseButtonMessage::Up(_) => self.state.click_state.current_count.get(),
+        };
         let scale_factor = self.state.scale_factor.get();
-
-        let input = PlatformInput::MouseDown(MouseDownEvent {
-            button,
-            position: logical_point(x as f32, y as f32, scale_factor),
-            modifiers: current_modifiers(),
+        self.client_pointer_boundary().handle_button_message(
+            message,
+            logical_point(x as f32, y as f32, scale_factor),
+            current_modifiers(),
             click_count,
-            first_mouse: false,
-        });
-        let handled = !func(input).propagate;
-        self.state.callbacks.input.set(Some(func));
-
-        if handled { Some(0) } else { Some(1) }
+            |effect| self.apply_native_pointer_capture_effect(handle, effect),
+        )
     }
 
-    fn handle_mouse_up_msg(
-        &self,
-        _handle: HWND,
-        button: MouseButton,
-        lparam: LPARAM,
-    ) -> Option<isize> {
-        unsafe { ReleaseCapture().log_err() };
-
-        let Some(mut func) = self.state.callbacks.input.take() else {
-            return Some(1);
-        };
-        let x = lparam.signed_loword() as f32;
-        let y = lparam.signed_hiword() as f32;
-        let click_count = self.state.click_state.current_count.get();
-        let scale_factor = self.state.scale_factor.get();
-
-        let input = PlatformInput::MouseUp(MouseUpEvent {
-            button,
-            position: logical_point(x, y, scale_factor),
-            modifiers: current_modifiers(),
-            click_count,
-        });
-        let handled = !func(input).propagate;
-        self.state.callbacks.input.set(Some(func));
-
-        if handled { Some(0) } else { Some(1) }
+    fn handle_pointer_capture_lost_msg(&self) -> Option<isize> {
+        self.client_pointer_boundary()
+            .handle_pointer_cancel(PointerCancelReason::PlatformCaptureLost)
+            .then_some(0)
     }
 
-    fn handle_xbutton_msg(
-        &self,
-        handle: HWND,
-        wparam: WPARAM,
-        lparam: LPARAM,
-        handler: impl Fn(&Self, HWND, MouseButton, LPARAM) -> Option<isize>,
-    ) -> Option<isize> {
-        let nav_dir = match wparam.hiword() {
-            XBUTTON1 => NavigationDirection::Back,
-            XBUTTON2 => NavigationDirection::Forward,
-            _ => return Some(1),
-        };
-        handler(self, handle, MouseButton::Navigate(nav_dir), lparam)
+    fn handle_cancel_mode_msg(&self, handle: HWND) -> Option<isize> {
+        self.client_pointer_boundary()
+            .handle_pointer_cancel(PointerCancelReason::PlatformCaptureLost);
+        if unsafe { GetCapture() } == handle {
+            unsafe { ReleaseCapture().log_err() };
+        }
+        None
     }
 
     fn handle_mouse_wheel_msg(
@@ -493,9 +752,6 @@ impl WindowsWindowInner {
     ) -> Option<isize> {
         let modifiers = current_modifiers();
 
-        let Some(mut func) = self.state.callbacks.input.take() else {
-            return Some(1);
-        };
         let scale_factor = self.state.scale_factor.get();
         let wheel_scroll_amount = match modifiers.shift {
             true => self
@@ -532,8 +788,10 @@ impl WindowsWindowInner {
             modifiers,
             touch_phase: TouchPhase::Moved,
         });
-        let handled = !func(input).propagate;
-        self.state.callbacks.input.set(Some(func));
+        let Some(result) = self.dispatch_input(input) else {
+            return Some(1);
+        };
+        let handled = !result.propagate;
 
         if handled { Some(0) } else { Some(1) }
     }
@@ -544,9 +802,6 @@ impl WindowsWindowInner {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> Option<isize> {
-        let Some(mut func) = self.state.callbacks.input.take() else {
-            return Some(1);
-        };
         let scale_factor = self.state.scale_factor.get();
         let wheel_scroll_chars = self
             .system_settings()
@@ -570,8 +825,10 @@ impl WindowsWindowInner {
             modifiers: current_modifiers(),
             touch_phase: TouchPhase::Moved,
         });
-        let handled = !func(event).propagate;
-        self.state.callbacks.input.set(Some(func));
+        let Some(result) = self.dispatch_input(event) else {
+            return Some(1);
+        };
+        let handled = !result.propagate;
 
         if handled { Some(0) } else { Some(1) }
     }
@@ -742,6 +999,12 @@ impl WindowsWindowInner {
 
         if !activated {
             this.state.cursor_visible.store(true, Ordering::Relaxed);
+            this.state
+                .pointer_capture
+                .set(WindowsPointerCaptureState::default());
+            if unsafe { GetCapture() } == this.platform_window_handle {
+                unsafe { ReleaseCapture().log_err() };
+            }
         }
 
         // When the window is activated (gains focus), reset the modifier tracking state.
@@ -752,14 +1015,10 @@ impl WindowsWindowInner {
             this.state.last_reported_modifiers.set(None);
             this.state.last_reported_capslock.set(None);
 
-            if let Some(mut func) = this.state.callbacks.input.take() {
-                let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
-                    modifiers: current_modifiers(),
-                    capslock: current_capslock(),
-                });
-                func(input);
-                this.state.callbacks.input.set(Some(func));
-            }
+            let _ = this.dispatch_input(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                modifiers: current_modifiers(),
+                capslock: current_capslock(),
+            }));
         }
 
         self.executor
@@ -947,7 +1206,6 @@ impl WindowsWindowInner {
         self.start_tracking_mouse(handle, TME_LEAVE | TME_NONCLIENT);
         self.restore_cursor_after_hide();
 
-        let mut func = self.state.callbacks.input.take()?;
         let scale_factor = self.state.scale_factor.get();
 
         let mut cursor_point = POINT {
@@ -960,8 +1218,7 @@ impl WindowsWindowInner {
             pressed_button: None,
             modifiers: current_modifiers(),
         });
-        let handled = !func(input).propagate;
-        self.state.callbacks.input.set(Some(func));
+        let handled = !self.dispatch_input(input)?.propagate;
 
         if handled { Some(0) } else { None }
     }
@@ -973,31 +1230,28 @@ impl WindowsWindowInner {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> Option<isize> {
-        if let Some(mut func) = self.state.callbacks.input.take() {
-            let scale_factor = self.state.scale_factor.get();
-            let mut cursor_point = POINT {
-                x: lparam.signed_loword().into(),
-                y: lparam.signed_hiword().into(),
-            };
-            unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-            let physical_point = point(DevicePixels(cursor_point.x), DevicePixels(cursor_point.y));
-            let click_count = self.state.click_state.update(button, physical_point);
-
-            let input = PlatformInput::MouseDown(MouseDownEvent {
-                button,
-                position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-                modifiers: current_modifiers(),
-                click_count,
-                first_mouse: false,
-            });
-            let handled = !func(input).propagate;
-            self.state.callbacks.input.set(Some(func));
-
-            if handled {
-                return Some(0);
-            }
-        } else {
+        let scale_factor = self.state.scale_factor.get();
+        let mut cursor_point = POINT {
+            x: lparam.signed_loword().into(),
+            y: lparam.signed_hiword().into(),
         };
+        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+        let physical_point = point(DevicePixels(cursor_point.x), DevicePixels(cursor_point.y));
+        let click_count = self.state.click_state.update(button, physical_point);
+
+        let input = PlatformInput::MouseDown(MouseDownEvent {
+            button,
+            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+            modifiers: current_modifiers(),
+            click_count,
+            first_mouse: false,
+        });
+        if self
+            .dispatch_input(input)
+            .is_some_and(|result| !result.propagate)
+        {
+            return Some(0);
+        }
 
         // Since these are handled in handle_nc_mouse_up_msg we must prevent the default window proc
         if button == MouseButton::Left {
@@ -1020,27 +1274,24 @@ impl WindowsWindowInner {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> Option<isize> {
-        if let Some(mut func) = self.state.callbacks.input.take() {
-            let scale_factor = self.state.scale_factor.get();
+        let scale_factor = self.state.scale_factor.get();
 
-            let mut cursor_point = POINT {
-                x: lparam.signed_loword().into(),
-                y: lparam.signed_hiword().into(),
-            };
-            unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-            let input = PlatformInput::MouseUp(MouseUpEvent {
-                button,
-                position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-                modifiers: current_modifiers(),
-                click_count: 1,
-            });
-            let handled = !func(input).propagate;
-            self.state.callbacks.input.set(Some(func));
-
-            if handled {
-                return Some(0);
-            }
-        } else {
+        let mut cursor_point = POINT {
+            x: lparam.signed_loword().into(),
+            y: lparam.signed_hiword().into(),
+        };
+        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+        let input = PlatformInput::MouseUp(MouseUpEvent {
+            button,
+            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+            modifiers: current_modifiers(),
+            click_count: 1,
+        });
+        if self
+            .dispatch_input(input)
+            .is_some_and(|result| !result.propagate)
+        {
+            return Some(0);
         }
 
         let last_pressed = self.state.nc_button_pressed.take();
@@ -1202,13 +1453,8 @@ impl WindowsWindowInner {
         self.state.direct_manipulation.update();
 
         let events = self.state.direct_manipulation.drain_events();
-        if !events.is_empty() {
-            if let Some(mut func) = self.state.callbacks.input.take() {
-                for event in events {
-                    func(event);
-                }
-                self.state.callbacks.input.set(Some(func));
-            }
+        for event in events {
+            let _ = self.dispatch_input(event);
         }
 
         let force_render = force_render || self.state.force_render_after_recovery.take();
@@ -1673,10 +1919,199 @@ fn notify_frame_changed(handle: HWND) {
 
 #[cfg(test)]
 mod tests {
-    use open_gpui::WindowControlArea;
-    use windows::Win32::UI::WindowsAndMessaging::{HTCAPTION, HTCLOSE, HTMAXBUTTON, HTMINBUTTON};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
 
-    use super::hit_test_window_control_area;
+    use open_gpui::{
+        DispatchEventResult, Modifiers, MouseButton, PlatformInput, Point, PointerCancelReason,
+        WindowControlArea,
+    };
+    use windows::Win32::{
+        Foundation::WPARAM,
+        UI::WindowsAndMessaging::{
+            HTCAPTION, HTCLOSE, HTMAXBUTTON, HTMINBUTTON, WM_LBUTTONDOWN, WM_LBUTTONUP,
+            WM_RBUTTONDOWN, WM_RBUTTONUP,
+        },
+    };
+
+    use super::{
+        WindowsClientPointerBoundary, WindowsInputDispatchState, WindowsPointerCaptureEffect,
+        WindowsPointerCaptureInput, WindowsPointerCaptureState, decode_client_mouse_button_message,
+        hit_test_window_control_area,
+    };
+    use crate::Callbacks;
+
+    #[test]
+    fn pointer_capture_tracks_first_companion_and_final_buttons() {
+        let (state, effect) = WindowsPointerCaptureState::default()
+            .transition(WindowsPointerCaptureInput::ButtonDown(MouseButton::Left));
+        assert_eq!(effect, WindowsPointerCaptureEffect::Acquire);
+
+        let (state, effect) =
+            state.transition(WindowsPointerCaptureInput::ButtonDown(MouseButton::Right));
+        assert_eq!(effect, WindowsPointerCaptureEffect::None);
+
+        let (state, effect) =
+            state.transition(WindowsPointerCaptureInput::ButtonUp(MouseButton::Left));
+        assert_eq!(effect, WindowsPointerCaptureEffect::None);
+
+        let (state, effect) =
+            state.transition(WindowsPointerCaptureInput::ButtonUp(MouseButton::Right));
+        assert_eq!(state, WindowsPointerCaptureState::default());
+        assert_eq!(effect, WindowsPointerCaptureEffect::Release);
+    }
+
+    #[test]
+    fn native_button_message_boundary_dispatches_companion_buttons_through_registered_callback() {
+        #[derive(Debug, Eq, PartialEq)]
+        enum ObservedInput {
+            Down(MouseButton),
+            Up(MouseButton),
+        }
+
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let callbacks = Callbacks::default();
+        callbacks.set_input(Box::new({
+            let observed = observed.clone();
+            move |input| {
+                match input {
+                    PlatformInput::MouseDown(event) => {
+                        observed
+                            .borrow_mut()
+                            .push(ObservedInput::Down(event.button));
+                    }
+                    PlatformInput::MouseUp(event) => {
+                        observed.borrow_mut().push(ObservedInput::Up(event.button));
+                    }
+                    _ => {}
+                }
+                DispatchEventResult::default()
+            }
+        }));
+        let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
+        let dispatch_state = Cell::new(WindowsInputDispatchState::default());
+        let boundary = WindowsClientPointerBoundary {
+            pointer_capture: &pointer_capture,
+            callbacks: &callbacks,
+            dispatch_state: &dispatch_state,
+        };
+        let mut capture_effects = Vec::new();
+
+        for message in [WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_RBUTTONUP] {
+            boundary.handle_button_message(
+                decode_client_mouse_button_message(message, WPARAM::default()).unwrap(),
+                Point::default(),
+                Modifiers::default(),
+                1,
+                |effect| capture_effects.push(effect),
+            );
+        }
+        assert_ne!(pointer_capture.get(), WindowsPointerCaptureState::default());
+        assert_eq!(capture_effects, vec![WindowsPointerCaptureEffect::Acquire]);
+
+        boundary.handle_button_message(
+            decode_client_mouse_button_message(WM_LBUTTONUP, WPARAM::default()).unwrap(),
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |effect| capture_effects.push(effect),
+        );
+
+        assert_eq!(
+            *observed.borrow(),
+            vec![
+                ObservedInput::Down(MouseButton::Left),
+                ObservedInput::Down(MouseButton::Right),
+                ObservedInput::Up(MouseButton::Right),
+                ObservedInput::Up(MouseButton::Left),
+            ]
+        );
+        assert_eq!(
+            capture_effects,
+            vec![
+                WindowsPointerCaptureEffect::Acquire,
+                WindowsPointerCaptureEffect::Release,
+            ]
+        );
+        assert_eq!(pointer_capture.get(), WindowsPointerCaptureState::default());
+        assert_eq!(dispatch_state.get(), WindowsInputDispatchState::Idle);
+    }
+
+    #[test]
+    fn native_capture_loss_boundary_dispatches_one_terminal_cancel() {
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let callbacks = Callbacks::default();
+        callbacks.set_input(Box::new({
+            let observed = observed.clone();
+            move |input| {
+                if let PlatformInput::PointerCanceled(event) = input {
+                    observed.borrow_mut().push(event.reason);
+                }
+                DispatchEventResult::default()
+            }
+        }));
+        let (active_capture, _) = WindowsPointerCaptureState::default()
+            .transition(WindowsPointerCaptureInput::ButtonDown(MouseButton::Left));
+        let pointer_capture = Cell::new(active_capture);
+        let dispatch_state = Cell::new(WindowsInputDispatchState::default());
+        let boundary = WindowsClientPointerBoundary {
+            pointer_capture: &pointer_capture,
+            callbacks: &callbacks,
+            dispatch_state: &dispatch_state,
+        };
+
+        assert!(boundary.handle_pointer_cancel(PointerCancelReason::PlatformCaptureLost));
+        assert!(!boundary.handle_pointer_cancel(PointerCancelReason::PlatformCaptureLost));
+
+        assert_eq!(
+            observed.borrow().as_slice(),
+            &[PointerCancelReason::PlatformCaptureLost]
+        );
+        assert_eq!(pointer_capture.get(), WindowsPointerCaptureState::default());
+        assert_eq!(dispatch_state.get(), WindowsInputDispatchState::Idle);
+    }
+
+    #[test]
+    fn pointer_capture_cancel_is_terminal_and_deduplicated() {
+        let (state, _) = WindowsPointerCaptureState::default()
+            .transition(WindowsPointerCaptureInput::ButtonDown(MouseButton::Left));
+        let (state, effect) = state.transition(WindowsPointerCaptureInput::Cancel(
+            PointerCancelReason::PlatformCaptureLost,
+        ));
+        assert_eq!(state, WindowsPointerCaptureState::default());
+        assert_eq!(
+            effect,
+            WindowsPointerCaptureEffect::Cancel(PointerCancelReason::PlatformCaptureLost)
+        );
+
+        let (_, duplicate_effect) = state.transition(WindowsPointerCaptureInput::Cancel(
+            PointerCancelReason::PlatformCaptureLost,
+        ));
+        assert_eq!(duplicate_effect, WindowsPointerCaptureEffect::None);
+    }
+
+    #[test]
+    fn input_dispatch_retains_only_the_first_pending_terminal_cancel() {
+        let state = WindowsInputDispatchState::Dispatching {
+            pending_terminal_cancel: None,
+        }
+        .defer_terminal_cancel(PointerCancelReason::PlatformCaptureLost)
+        .defer_terminal_cancel(PointerCancelReason::WindowDeactivated);
+
+        assert_eq!(
+            state,
+            WindowsInputDispatchState::Dispatching {
+                pending_terminal_cancel: Some(PointerCancelReason::PlatformCaptureLost),
+            }
+        );
+
+        let (state, pending) = state.take_pending_terminal_cancel();
+        assert_eq!(pending, Some(PointerCancelReason::PlatformCaptureLost));
+        let (_, duplicate) = state.take_pending_terminal_cancel();
+        assert_eq!(duplicate, None);
+    }
 
     #[test]
     fn immovable_windows_still_hit_test_caption_buttons() {

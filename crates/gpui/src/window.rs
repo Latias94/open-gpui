@@ -13,15 +13,16 @@ use crate::{
     GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
     Keystroke, KeystrokeEvent, LayoutId, Modifiers, ModifiersChangedEvent, MonochromeSprite,
     MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority,
-    PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
-    RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
-    SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController,
-    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, profiler, px, rems, size, transparent_black,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PointerCancelEvent,
+    PointerCancelReason, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode,
+    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, profiler, px, rems, size,
+    transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use derive_more::{Deref, DerefMut};
@@ -62,6 +63,7 @@ mod frame_journal;
 mod frame_pump;
 mod input_dispatch;
 mod invalidator;
+mod pointer_session;
 mod prompts;
 
 use self::a11y::A11y;
@@ -70,6 +72,10 @@ pub(crate) use self::frame_journal::{
 };
 use self::frame_pump::{FrameThrottleFacts, PresentFacts, frame_should_wait};
 pub(crate) use self::invalidator::WindowInvalidator;
+use self::pointer_session::{InputDispatchGuard, MouseEventTargetGuard, PressedMouseButtons};
+pub use self::pointer_session::{
+    PointerCapture, PointerCaptureError, PointerCaptureHandle, PointerCaptureId,
+};
 use crate::util::{
     atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
     round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
@@ -137,6 +143,8 @@ pub enum WindowMouseEvent<'a> {
     Move(&'a MouseMoveEvent),
     /// The pointer left the window.
     Exit(&'a crate::MouseExitEvent),
+    /// The active pointer gesture was canceled without a matching mouse-up event.
+    Cancel(&'a PointerCancelEvent),
     /// Mouse pressure changed.
     Pressure(&'a crate::MousePressureEvent),
     /// The scroll wheel was used.
@@ -157,6 +165,8 @@ impl<'a> WindowMouseEvent<'a> {
             Some(Self::Move(event))
         } else if let Some(event) = event.downcast_ref() {
             Some(Self::Exit(event))
+        } else if let Some(event) = event.downcast_ref() {
+            Some(Self::Cancel(event))
         } else if let Some(event) = event.downcast_ref() {
             Some(Self::Pressure(event))
         } else if let Some(event) = event.downcast_ref() {
@@ -510,6 +520,9 @@ type FrameCallback = Box<dyn FnOnce(&mut Window, &mut App)>;
 pub(crate) type AnyMouseListener =
     Box<dyn FnMut(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>;
 
+pub(crate) type AnyPointerCancelListener =
+    Box<dyn FnMut(&PointerCancelEvent, DispatchPhase, &mut Window, &mut App) + 'static>;
+
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
     pub(crate) hitbox_id: Option<HitboxId>,
@@ -551,21 +564,28 @@ impl HitboxId {
 }
 
 impl HitboxId {
-    /// Checks if the hitbox with this ID is currently hovered. Returns `false` during keyboard
-    /// input modality so that keyboard navigation suppresses hover highlights. Except when handling
-    /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
-    /// events or paint hover styles.
+    /// Checks if the hitbox with this ID is physically hovered. Returns `false` during keyboard
+    /// input modality so that keyboard navigation suppresses hover highlights. Use this for visual
+    /// hover, cursors, tooltips, and drag-over state; mouse-button handlers should use
+    /// [`Self::is_mouse_event_target`] so pointer capture is respected.
     ///
     /// See [`Hitbox::is_hovered`] for details.
     pub fn is_hovered(self, window: &Window) -> bool {
-        // If this hitbox has captured the pointer, it's always considered hovered
-        if window.captured_hitbox == Some(self) {
-            return true;
-        }
         if window.last_input_was_keyboard() {
             return false;
         }
         self.hit_test(window)
+    }
+
+    /// Checks whether this hitbox is the routed target for the current mouse-button event.
+    ///
+    /// Pointer capture makes its bound hitbox the exclusive event target without changing
+    /// physical hover, cursor, tooltip, or drag-over state.
+    pub fn is_mouse_event_target(self, window: &Window) -> bool {
+        window
+            .mouse_event_target
+            .get()
+            .map_or_else(|| self.hit_test(window), |target| target == self)
     }
 
     /// Checks if the hitbox with this ID is currently hovered, regardless of the last
@@ -573,10 +593,6 @@ impl HitboxId {
     ///
     /// See [`HitboxId::is_hovered`] for more details.
     pub(crate) fn is_hovered_ignoring_last_input(self, window: &Window) -> bool {
-        // If this hitbox has captured the pointer, it's always considered hovered
-        if window.captured_hitbox == Some(self) {
-            return true;
-        }
         self.hit_test(window)
     }
 
@@ -591,9 +607,7 @@ impl HitboxId {
     }
 
     /// Checks if the hitbox with this ID contains the mouse and should handle scroll events.
-    /// Typically this should only be used when handling `ScrollWheelEvent`, and otherwise
-    /// `is_hovered` should be used. See the documentation of `Hitbox::is_hovered` for details about
-    /// this distinction.
+    /// See the documentation of [`Hitbox::is_hovered`] for the physical-hover distinction.
     pub fn should_handle_scroll(self, window: &Window) -> bool {
         window.mouse_hit_test.ids.contains(&self)
     }
@@ -619,10 +633,10 @@ pub struct Hitbox {
 }
 
 impl Hitbox {
-    /// Checks if the hitbox is currently hovered. Returns `false` during keyboard input modality
-    /// so that keyboard navigation suppresses hover highlights. Except when handling
-    /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
-    /// events or paint hover styles.
+    /// Checks if the hitbox is physically hovered. Returns `false` during keyboard input modality
+    /// so that keyboard navigation suppresses hover highlights. Use this for visual hover, cursors,
+    /// tooltips, and drag-over state; mouse-button handlers should use
+    /// [`Self::is_mouse_event_target`] so pointer capture is respected.
     ///
     /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
     /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`) or
@@ -632,16 +646,19 @@ impl Hitbox {
     /// Handling of `ScrollWheelEvent` should typically use `should_handle_scroll` instead.
     /// Concretely, this is due to use-cases like overlays that cause the elements under to be
     /// non-interactive while still allowing scrolling. More abstractly, this is because
-    /// `is_hovered` is about element interactions directly under the mouse - mouse moves, clicks,
-    /// hover styling, etc. In contrast, scrolling is about finding the current outer scrollable
-    /// container.
+    /// `is_hovered` is about physical state directly under the mouse, while scrolling is about
+    /// finding the current outer scrollable container.
     pub fn is_hovered(&self, window: &Window) -> bool {
         self.id.is_hovered(window)
     }
 
-    /// Checks if the hitbox contains the mouse and should handle scroll events. Typically this
-    /// should only be used when handling `ScrollWheelEvent`, and otherwise `is_hovered` should be
-    /// used. See the documentation of `Hitbox::is_hovered` for details about this distinction.
+    /// Checks whether this hitbox is the routed target for the current mouse-button event.
+    pub fn is_mouse_event_target(&self, window: &Window) -> bool {
+        self.id.is_mouse_event_target(window)
+    }
+
+    /// Checks if the hitbox contains the mouse and should handle scroll events. See the
+    /// documentation of [`Hitbox::is_hovered`] for the physical-hover distinction.
     ///
     /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
     /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`).
@@ -667,7 +684,7 @@ pub enum HitboxBehavior {
     ///
     /// ```ignore
     /// window.on_mouse_event(move |_: &EveryMouseEventTypeHere, phase, window, cx| {
-    ///     if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
+    ///     if phase == DispatchPhase::Capture && hitbox.is_mouse_event_target(window) {
     ///         cx.stop_propagation();
     ///     }
     /// })
@@ -817,6 +834,7 @@ pub struct Window {
     capture_generation: Cell<u64>,
     atlas_remove_diagnostics: Vec<AtlasRemoveDiagnostic>,
     next_hitbox_id: HitboxId,
+    next_pointer_capture_id: PointerCaptureId,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
@@ -826,6 +844,7 @@ pub struct Window {
     mouse_interceptors: SubscriberSet<(), AnyWindowMouseInterceptor>,
     window_states: Rc<RefCell<TypeIdHashMap<WindowStateSlot>>>,
     input_dispatch_active: Rc<Cell<bool>>,
+    mouse_event_target: Rc<Cell<Option<HitboxId>>>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
     last_dispatch_event_result: Option<DispatchEventResult>,
@@ -858,9 +877,9 @@ pub struct Window {
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
     pub(crate) client_inset: Option<Pixels>,
-    /// The hitbox that has captured the pointer, if any.
-    /// While captured, mouse events route to this hitbox regardless of hit testing.
-    captured_hitbox: Option<HitboxId>,
+    pressed_mouse_buttons: PressedMouseButtons,
+    /// The stable owner that has captured the pointer, if any.
+    captured_pointer: Option<PointerCapture>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
     pub(crate) a11y: A11y,
@@ -890,26 +909,6 @@ impl Drop for WindowStateInitializationGuard {
         if should_remove {
             self.slots.borrow_mut().remove(&self.state_type);
         }
-    }
-}
-
-struct InputDispatchGuard {
-    dispatch_active: Rc<Cell<bool>>,
-}
-
-impl InputDispatchGuard {
-    fn try_enter(dispatch_active: Rc<Cell<bool>>) -> Option<Self> {
-        if dispatch_active.replace(true) {
-            return None;
-        }
-
-        Some(Self { dispatch_active })
-    }
-}
-
-impl Drop for InputDispatchGuard {
-    fn drop(&mut self) {
-        self.dispatch_active.set(false);
     }
 }
 
@@ -1294,7 +1293,7 @@ impl Window {
             let window_id = handle.window_id();
             let mut cx = cx.to_async();
             move || {
-                let _ = handle.update(&mut cx, |_, window, _| window.remove_window());
+                let _ = handle.update(&mut cx, |_, window, cx| window.remove_window(cx));
                 let _ = cx.update(|cx| {
                     SystemWindowTabController::remove_tab(cx, window_id);
                 });
@@ -1421,6 +1420,10 @@ impl Window {
                 handle
                     .update(&mut cx, |_, window, cx| {
                         window.active.set(active);
+                        if !active {
+                            window
+                                .cancel_pointer_session(PointerCancelReason::WindowDeactivated, cx);
+                        }
                         window.modifiers = window.platform_window.modifiers();
                         window.capslock = window.platform_window.capslock();
                         window
@@ -1562,6 +1565,7 @@ impl Window {
             atlas_remove_diagnostics: Vec::new(),
             next_frame_callbacks,
             next_hitbox_id: HitboxId(0),
+            next_pointer_capture_id: PointerCaptureId(0),
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
@@ -1570,6 +1574,7 @@ impl Window {
             mouse_interceptors: SubscriberSet::new(),
             window_states: Rc::new(RefCell::new(TypeIdHashMap::default())),
             input_dispatch_active: Rc::new(Cell::new(false)),
+            mouse_event_target: Rc::new(Cell::new(None)),
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
             last_dispatch_event_result: None,
@@ -1601,7 +1606,8 @@ impl Window {
             prompt: None,
             client_inset: None,
             image_cache_stack: Vec::new(),
-            captured_hitbox: None,
+            pressed_mouse_buttons: PressedMouseButtons::default(),
+            captured_pointer: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
             a11y: A11y::new(a11y_active_flag, accessibility_force_disabled),
@@ -1791,7 +1797,8 @@ impl Window {
     }
 
     /// Close this window.
-    pub fn remove_window(&mut self) {
+    pub fn remove_window(&mut self, cx: &mut App) {
+        self.cancel_pointer_session(PointerCancelReason::WindowClosed, cx);
         self.removed = true;
     }
 
@@ -2715,26 +2722,6 @@ impl Window {
         self.mouse_in_window
     }
 
-    /// Captures the pointer for the given hitbox. While captured, all mouse move and mouse up
-    /// events will be routed to listeners that check this hitbox's `is_hovered` status,
-    /// regardless of actual hit testing. This enables drag operations that continue
-    /// even when the pointer moves outside the element's bounds.
-    ///
-    /// The capture is automatically released on mouse up.
-    pub fn capture_pointer(&mut self, hitbox_id: HitboxId) {
-        self.captured_hitbox = Some(hitbox_id);
-    }
-
-    /// Releases any active pointer capture.
-    pub fn release_pointer(&mut self) {
-        self.captured_hitbox = None;
-    }
-
-    /// Returns the hitbox that has captured the pointer, if any.
-    pub fn captured_hitbox(&self) -> Option<HitboxId> {
-        self.captured_hitbox
-    }
-
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.modifiers
@@ -2810,6 +2797,7 @@ impl Window {
 
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
+        self.commit_prepaint(cx);
         self.next_frame.finish(&mut self.rendered_frame);
 
         self.invalidator.set_phase(DrawPhase::Focus);
@@ -2817,6 +2805,9 @@ impl Window {
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
+        if self.captured_pointer.is_some() && self.captured_pointer_hitbox().is_none() {
+            self.captured_pointer = None;
+        }
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
 
@@ -2987,6 +2978,14 @@ impl Window {
                 );
                 self.platform_window.a11y_tree_update(tree_update);
             }
+        }
+    }
+
+    fn commit_prepaint(&mut self, cx: &mut App) {
+        let target_revision = self.next_frame.generation;
+        let commits = self.next_frame.prepaint_commits.clone();
+        for commit in commits {
+            commit(target_revision, cx);
         }
     }
 
@@ -3169,6 +3168,8 @@ impl Window {
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
         PrepaintStateIndex {
             hitboxes_index: self.next_frame.hitboxes.len(),
+            pointer_capture_bindings_index: self.next_frame.pointer_capture_bindings.len(),
+            prepaint_commits_index: self.next_frame.prepaint_commits.len(),
             tooltips_index: self.next_frame.tooltip_requests.len(),
             deferred_draws_index: self.next_frame.deferred_draws.len(),
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
@@ -3180,6 +3181,27 @@ impl Window {
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
+                .iter()
+                .cloned(),
+        );
+        let reused_pointer_capture_bindings = self.rendered_frame.pointer_capture_bindings
+            [range.start.pointer_capture_bindings_index..range.end.pointer_capture_bindings_index]
+            .iter()
+            .copied();
+        for binding in reused_pointer_capture_bindings {
+            assert!(
+                !self
+                    .next_frame
+                    .pointer_capture_bindings
+                    .iter()
+                    .any(|(id, hitbox)| *id == binding.0 || *hitbox == binding.1),
+                "a pointer capture handle or hitbox was bound more than once in one frame"
+            );
+            self.next_frame.pointer_capture_bindings.push(binding);
+        }
+        self.next_frame.prepaint_commits.extend(
+            self.rendered_frame.prepaint_commits
+                [range.start.prepaint_commits_index..range.end.prepaint_commits_index]
                 .iter()
                 .cloned(),
         );
@@ -3234,6 +3256,7 @@ impl Window {
             atlas_access_diagnostics_index: self.next_frame.atlas_access_diagnostics.len(),
             image_paint_diagnostics_index: self.next_frame.image_paint_diagnostics.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
+            pointer_cancel_listeners_index: self.next_frame.pointer_cancel_listeners.len(),
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
@@ -3258,6 +3281,12 @@ impl Window {
         self.next_frame.mouse_listeners.extend(
             self.rendered_frame.mouse_listeners
                 [range.start.mouse_listeners_index..range.end.mouse_listeners_index]
+                .iter_mut()
+                .map(|listener| listener.take()),
+        );
+        self.next_frame.pointer_cancel_listeners.extend(
+            self.rendered_frame.pointer_cancel_listeners[range.start.pointer_cancel_listeners_index
+                ..range.end.pointer_cancel_listeners_index]
                 .iter_mut()
                 .map(|listener| listener.take()),
         );
@@ -3430,6 +3459,12 @@ impl Window {
         let result = f(self);
         if result.is_err() {
             self.next_frame.hitboxes.truncate(index.hitboxes_index);
+            self.next_frame
+                .pointer_capture_bindings
+                .truncate(index.pointer_capture_bindings_index);
+            self.next_frame
+                .prepaint_commits
+                .truncate(index.prepaint_commits_index);
             self.next_frame
                 .tooltip_requests
                 .truncate(index.tooltips_index);
@@ -4289,6 +4324,15 @@ impl Window {
         Ok(())
     }
 
+    /// Records a side effect to commit after the current frame finishes prepainting and painting.
+    ///
+    /// Cached subtrees retain the record and enqueue it again when their prepaint journal is reused.
+    /// Records created inside a failed [`Self::transact`] attempt are discarded before commit.
+    pub fn record_prepaint_commit(&mut self, commit: impl Fn(u64, &mut App) + 'static) {
+        self.invalidator.debug_assert_prepaint();
+        self.next_frame.prepaint_commits.push(Rc::new(commit));
+    }
+
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
     /// layout is being requested, along with the layout ids of any children. This method is called during
     /// calls to the [`Element::request_layout`] trait method and enables any element to participate in layout.
@@ -4511,6 +4555,20 @@ impl Window {
                 }
             },
         )));
+    }
+
+    /// Register a pointer-cancellation listener on the window for the next frame.
+    ///
+    /// Cancellation listeners run in both dispatch phases and cannot stop later cancellation
+    /// listeners. This method should only be called as part of the paint phase of element drawing.
+    pub fn on_pointer_cancel(
+        &mut self,
+        listener: impl FnMut(&PointerCancelEvent, DispatchPhase, &mut Window, &mut App) + 'static,
+    ) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame
+            .pointer_cancel_listeners
+            .push(Some(Box::new(listener)));
     }
 
     /// Registers a persistent mouse and pointer interceptor owned by this window.
@@ -4752,6 +4810,10 @@ impl Window {
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
+        if let Some(event) = event.downcast_ref::<crate::MouseDownEvent>() {
+            self.pressed_mouse_buttons.insert(event.button);
+        }
+        let is_pointer_cancel = event.is::<PointerCancelEvent>();
         let exited_window = event.is::<crate::MouseExitEvent>();
         let hit_test = if exited_window {
             HitTest::default()
@@ -4763,16 +4825,27 @@ impl Window {
             self.reset_cursor_style(cx);
         }
 
+        let routes_to_captured_target = event.is::<crate::MouseDownEvent>()
+            || event.is::<MouseUpEvent>()
+            || event.is::<MouseMoveEvent>()
+            || event.is::<crate::MousePressureEvent>()
+            || is_pointer_cancel;
+        let _captured_target = routes_to_captured_target
+            .then(|| self.captured_pointer_hitbox())
+            .flatten()
+            .map(|hitbox| MouseEventTargetGuard::enter(self.mouse_event_target.clone(), hitbox));
+
         #[cfg(any(feature = "inspector", debug_assertions))]
-        if self.is_inspector_picking(cx) {
+        if !is_pointer_cancel && self.is_inspector_picking(cx) {
             self.handle_inspector_mouse_event(event, cx);
             // When inspector is picking, all other mouse handling is skipped.
+            self.finish_mouse_session_event(event, cx);
             return;
         }
 
         if let Some(event) = WindowMouseEvent::from_any(event) {
             self.mouse_interceptors.clone().retain(&(), |interceptor| {
-                if cx.propagate_event {
+                if is_pointer_cancel || cx.propagate_event {
                     interceptor(event, self, cx)
                 } else {
                     true
@@ -4780,50 +4853,43 @@ impl Window {
             });
         }
 
-        let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
+        if let Some(event) = event.downcast_ref::<PointerCancelEvent>() {
+            let mut listeners = mem::take(&mut self.rendered_frame.pointer_cancel_listeners);
+            for listener in &mut listeners {
+                listener.as_mut().unwrap()(event, DispatchPhase::Capture, self, cx);
+            }
+            for listener in listeners.iter_mut().rev() {
+                listener.as_mut().unwrap()(event, DispatchPhase::Bubble, self, cx);
+            }
+            self.rendered_frame.pointer_cancel_listeners = listeners;
+        } else {
+            let mut listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
 
-        // Capture phase, events bubble from back to front. Handlers for this phase are used for
-        // special purposes, such as detecting events outside of a given Bounds.
-        if cx.propagate_event {
-            for listener in &mut mouse_listeners {
-                let listener = listener.as_mut().unwrap();
-                listener(event, DispatchPhase::Capture, self, cx);
-                if !cx.propagate_event {
-                    break;
+            // Capture phase, events bubble from back to front. Handlers for this phase are used for
+            // special purposes, such as detecting events outside of a given Bounds.
+            if cx.propagate_event {
+                for listener in &mut listeners {
+                    listener.as_mut().unwrap()(event, DispatchPhase::Capture, self, cx);
+                    if !cx.propagate_event {
+                        break;
+                    }
                 }
             }
-        }
 
-        // Bubble phase, where most normal handlers do their work.
-        if cx.propagate_event {
-            for listener in mouse_listeners.iter_mut().rev() {
-                let listener = listener.as_mut().unwrap();
-                listener(event, DispatchPhase::Bubble, self, cx);
-                if !cx.propagate_event {
-                    break;
+            // Bubble phase, where most normal handlers do their work.
+            if cx.propagate_event {
+                for listener in listeners.iter_mut().rev() {
+                    listener.as_mut().unwrap()(event, DispatchPhase::Bubble, self, cx);
+                    if !cx.propagate_event {
+                        break;
+                    }
                 }
             }
+
+            self.rendered_frame.mouse_listeners = listeners;
         }
 
-        self.rendered_frame.mouse_listeners = mouse_listeners;
-
-        if cx.has_active_drag() {
-            if event.is::<MouseMoveEvent>() {
-                // If this was a mouse move event, redraw the window so that the
-                // active drag can follow the mouse cursor.
-                self.refresh();
-            } else if event.is::<MouseUpEvent>() {
-                // If this was a mouse up event, cancel the active drag and redraw
-                // the window.
-                cx.active_drag = None;
-                self.refresh();
-            }
-        }
-
-        // Auto-release pointer capture on mouse up
-        if event.is::<MouseUpEvent>() && self.captured_hitbox.is_some() {
-            self.captured_hitbox = None;
-        }
+        self.finish_mouse_session_event(event, cx);
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {

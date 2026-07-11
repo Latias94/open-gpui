@@ -84,11 +84,15 @@ pub mod gpui_adapter {
     pub use crate::focus::focus_ring_shadow_with_theme;
     pub use crate::geometry::{gpui_point_from_ui, gpui_px_from_ui, gpui_size_from_ui};
     pub use crate::overlay::{
-        DEFAULT_OVERLAY_SAFE_MARGIN, FocusScopeRegistration, FocusScopeRuntime,
-        FocusScopeRuntimeError, FocusTargetRegistration, GpuiOverlayAdapterConfig,
-        GpuiOverlayPlacement, GpuiOverlayState, OverlayOpenChange, default_deferred_priority,
-        escape_open_change, gpui_anchor, gpui_overlay_state, outside_press_open_change,
-        point_anchor_placement,
+        DEFAULT_OVERLAY_SAFE_MARGIN, FocusScopeRuntimeError, FocusTargetRegistration,
+        GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState, OverlayFocusMode,
+        OverlayFocusRestoreCondition, OverlayFocusTargetLease, OverlayInsideRegionId,
+        OverlayLayerBinding, OverlayLayerGeneration, OverlayLayerLease, OverlayLayerPhase,
+        OverlayLayerRegistration, OverlayLayerSnapshot, OverlayOpenChange,
+        OverlayOpenIntentRevision, OverlayOwnership, OverlaySurface, OverlayTabBehavior,
+        WindowFocusFallbackLease, WindowOverlayRuntime, WindowOverlayRuntimeError,
+        WindowOverlaySnapshot, default_deferred_priority, escape_open_change, gpui_anchor,
+        gpui_overlay_state, outside_press_open_change, point_anchor_placement,
     };
     pub use crate::text_input::adapter::{TextInputController, init as init_text_input};
     pub use crate::virtualized_list::runtime::VirtualizedListGpuiExt;

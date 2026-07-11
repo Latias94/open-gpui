@@ -357,7 +357,7 @@ mod tests {
         assert_eq!(adapter.route_unavailable_reason(&main), None);
 
         window
-            .update(cx, |_, window, _| window.remove_window())
+            .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("test window should still be live");
         cx.run_until_parked();
 

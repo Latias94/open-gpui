@@ -178,7 +178,7 @@ pub(crate) fn refresh_runtime_update<C: open_gpui::AppContext>(
 }
 
 pub(crate) fn close_window_quietly(window: AnyWindowHandle, cx: &mut App) {
-    let _ = window.update(cx, |_, window, _| window.remove_window());
+    let _ = window.update(cx, |_, window, cx| window.remove_window(cx));
 }
 
 fn close_windows_quietly(windows: Vec<AnyWindowHandle>, cx: &mut App) {

@@ -1,23 +1,20 @@
 #[cfg(any(test, feature = "test-support"))]
 use crate::Bounds;
-#[cfg(any(feature = "inspector", debug_assertions))]
-use crate::HitboxId;
 use crate::{
-    AnyElement, AnyTooltip, AtlasAccessDiagnostic, CursorStyle, DispatchNodeId, DispatchTree,
-    ElementId, EntityId, GlobalElementId, Hitbox, HitboxBehavior, LineLayoutIndex, Pixels,
-    PlatformInputHandler, Point, Scene, TabStopMap, TextStyleRefinement, Window, WindowControlArea,
+    AnyElement, AnyTooltip, App, AtlasAccessDiagnostic, CursorStyle, DispatchNodeId, DispatchTree,
+    ElementId, EntityId, GlobalElementId, Hitbox, HitboxBehavior, HitboxId, LineLayoutIndex,
+    Pixels, PlatformInputHandler, Point, PointerCaptureId, Scene, TabStopMap, TextStyleRefinement,
+    Window, WindowControlArea,
 };
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use open_gpui_collections::FxHashMap;
 use smallvec::SmallVec;
-#[cfg(any(feature = "inspector", debug_assertions))]
-use std::rc::Rc;
-use std::{any::TypeId, ops::Range};
+use std::{any::TypeId, ops::Range, rc::Rc};
 
 use super::{
-    AnyMouseListener, ContentMask, CursorStyleRequest, ElementStateBox, FocusId, HitTest,
-    ImagePaintDiagnostic, TooltipId,
+    AnyMouseListener, AnyPointerCancelListener, ContentMask, CursorStyleRequest, ElementStateBox,
+    FocusId, HitTest, ImagePaintDiagnostic, TooltipId,
 };
 
 #[derive(Clone)]
@@ -47,11 +44,14 @@ pub(crate) struct Frame {
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
     pub(super) accessed_element_states: Vec<(GlobalElementId, TypeId)>,
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
+    pub(crate) pointer_cancel_listeners: Vec<Option<AnyPointerCancelListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) atlas_access_diagnostics: Vec<AtlasAccessDiagnostic>,
     pub(crate) image_paint_diagnostics: Vec<ImagePaintDiagnostic>,
     pub(crate) hitboxes: Vec<Hitbox>,
+    pub(crate) pointer_capture_bindings: Vec<(PointerCaptureId, HitboxId)>,
+    pub(crate) prepaint_commits: Vec<Rc<dyn Fn(u64, &mut App)>>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
@@ -71,6 +71,8 @@ pub(crate) struct Frame {
 #[derive(Clone, Default)]
 pub(crate) struct PrepaintStateIndex {
     pub(super) hitboxes_index: usize,
+    pub(super) pointer_capture_bindings_index: usize,
+    pub(super) prepaint_commits_index: usize,
     pub(super) tooltips_index: usize,
     pub(super) deferred_draws_index: usize,
     pub(super) dispatch_tree_index: usize,
@@ -84,6 +86,7 @@ pub(crate) struct PaintIndex {
     pub(super) atlas_access_diagnostics_index: usize,
     pub(super) image_paint_diagnostics_index: usize,
     pub(super) mouse_listeners_index: usize,
+    pub(super) pointer_cancel_listeners_index: usize,
     pub(super) input_handlers_index: usize,
     pub(super) cursor_styles_index: usize,
     pub(super) accessed_element_states_index: usize,
@@ -100,11 +103,14 @@ impl Frame {
             element_states: FxHashMap::default(),
             accessed_element_states: Vec::new(),
             mouse_listeners: Vec::new(),
+            pointer_cancel_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
             atlas_access_diagnostics: Vec::new(),
             image_paint_diagnostics: Vec::new(),
             hitboxes: Vec::new(),
+            pointer_capture_bindings: Vec::new(),
+            prepaint_commits: Vec::new(),
             window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
             input_handlers: Vec::new(),
@@ -129,6 +135,7 @@ impl Frame {
         self.element_states.clear();
         self.accessed_element_states.clear();
         self.mouse_listeners.clear();
+        self.pointer_cancel_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
         self.generation = 0;
@@ -138,6 +145,8 @@ impl Frame {
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
         self.hitboxes.clear();
+        self.pointer_capture_bindings.clear();
+        self.prepaint_commits.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
         self.tab_stops.clear();

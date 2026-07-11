@@ -560,7 +560,7 @@ impl TestAppContext {
         };
 
         if should_close {
-            self.update_window(window, |_, window, _| window.remove_window())
+            self.update_window(window, |_, window, cx| window.remove_window(cx))
                 .unwrap();
             self.background_executor.run_until_parked();
         }
@@ -1530,15 +1530,18 @@ impl AnyWindowHandle {
 mod accessibility_tests;
 
 #[cfg(test)]
+mod pointer_session_tests;
+
+#[cfg(test)]
 mod tests {
     use crate::{
-        AnyDrag, AppContext as _, Context, CursorStyle, Empty, FocusHandle, HitboxId,
+        AnyDrag, AnyView, AppContext as _, Context, CursorStyle, Empty, Entity, FocusHandle,
         InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, Keystroke, Modifiers,
         MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-        PathPromptOptions, PlatformHoveredWindow, PlatformInput, QuitMode, Render, ScrollDelta,
-        ScrollWheelEvent, StatefulInteractiveElement, Styled, Subscription, TestAppContext,
-        TestInputDispatchSnapshot, TouchPhase, VisualContext, VisualTestContext, Window,
-        WindowMouseEvent, canvas, div, point, px, size,
+        PathPromptOptions, PlatformHoveredWindow, PlatformInput, PointerCaptureHandle, QuitMode,
+        Render, ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, StyleRefinement, Styled,
+        Subscription, TestAppContext, TestInputDispatchSnapshot, TouchPhase, VisualContext,
+        VisualTestContext, Window, WindowMouseEvent, canvas, deferred, div, point, px, size,
     };
     use std::cell::{Cell, RefCell};
     use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -1618,8 +1621,56 @@ mod tests {
         consume: Rc<Cell<bool>>,
         events: Rc<RefCell<Vec<&'static str>>>,
         focus: FocusHandle,
+        pointer_capture: PointerCaptureHandle,
         mouse_subscription: Option<Subscription>,
         key_subscription: Option<Subscription>,
+    }
+
+    struct PrepaintCommitRoot {
+        child: Entity<PrepaintCommitProbe>,
+    }
+
+    struct PrepaintCommitProbe {
+        renders: Rc<Cell<usize>>,
+        prepaints: Rc<Cell<usize>>,
+        commits: Rc<RefCell<Vec<u64>>>,
+        discarded_commits: Rc<Cell<usize>>,
+    }
+
+    impl Render for PrepaintCommitRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(deferred(
+                AnyView::from(self.child.clone()).cached(StyleRefinement::default().size_full()),
+            ))
+        }
+    }
+
+    impl Render for PrepaintCommitProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let prepaints = self.prepaints.clone();
+            let commits = self.commits.clone();
+            let discarded_commits = self.discarded_commits.clone();
+            canvas(
+                move |_, window, _| {
+                    prepaints.set(prepaints.get() + 1);
+                    let discarded_commits = discarded_commits.clone();
+                    let rejected: std::result::Result<(), ()> = window.transact(|window| {
+                        window.record_prepaint_commit(move |_, _| {
+                            discarded_commits.set(discarded_commits.get() + 1);
+                        });
+                        Err(())
+                    });
+                    debug_assert!(rejected.is_err());
+                    let commits = commits.clone();
+                    window.record_prepaint_commit(move |revision, _| {
+                        commits.borrow_mut().push(revision);
+                    });
+                },
+                |_, _, _, _| {},
+            )
+            .size_full()
+        }
     }
 
     impl Render for InputDispatchProbe {
@@ -1641,6 +1692,7 @@ mod tests {
                 .size_full()
                 .focusable()
                 .track_focus(&self.focus)
+                .track_pointer_capture(&self.pointer_capture)
                 .tab_stop(false)
                 .capture_key_down({
                     let events = self.events.clone();
@@ -1669,6 +1721,56 @@ mod tests {
                     }
                 })
         }
+    }
+
+    #[open_gpui::test]
+    fn cached_deferred_prepaint_commits_once_per_frame_and_rolls_back_transactions(
+        cx: &mut TestAppContext,
+    ) {
+        let renders = Rc::new(Cell::new(0));
+        let prepaints = Rc::new(Cell::new(0));
+        let commits = Rc::new(RefCell::new(Vec::new()));
+        let discarded_commits = Rc::new(Cell::new(0));
+        let (_view, cx) = cx.add_window_view({
+            let renders = renders.clone();
+            let prepaints = prepaints.clone();
+            let commits = commits.clone();
+            let discarded_commits = discarded_commits.clone();
+            move |_, cx| PrepaintCommitRoot {
+                child: cx.new(|_| PrepaintCommitProbe {
+                    renders,
+                    prepaints,
+                    commits,
+                    discarded_commits,
+                }),
+            }
+        });
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        commits.borrow_mut().clear();
+        let fresh_renders = renders.get();
+        let fresh_prepaints = prepaints.get();
+
+        let second_revision = cx.update(|window, cx| {
+            window.draw(cx).clear();
+            window.rendered_frame_revision()
+        });
+        assert_eq!(renders.get(), fresh_renders);
+        assert_eq!(prepaints.get(), fresh_prepaints);
+        assert_eq!(commits.borrow().as_slice(), &[second_revision]);
+        assert_eq!(discarded_commits.get(), 0);
+
+        let third_revision = cx.update(|window, cx| {
+            window.draw(cx).clear();
+            window.rendered_frame_revision()
+        });
+        assert_eq!(renders.get(), fresh_renders);
+        assert_eq!(prepaints.get(), fresh_prepaints);
+        assert_eq!(
+            commits.borrow().as_slice(),
+            &[second_revision, third_revision]
+        );
+        assert_eq!(discarded_commits.get(), 0);
     }
 
     #[open_gpui::test]
@@ -1770,10 +1872,11 @@ mod tests {
         let (view, cx) = cx.add_window_view({
             let consume = consume.clone();
             let events = events.clone();
-            move |_, cx| WindowMouseInterceptorProbe {
+            move |window, cx| WindowMouseInterceptorProbe {
                 consume,
                 events,
                 focus: cx.focus_handle(),
+                pointer_capture: window.new_pointer_capture_handle(),
                 mouse_subscription: None,
                 key_subscription: None,
             }
@@ -1872,14 +1975,17 @@ mod tests {
         let (view, cx) = cx.add_window_view({
             let consume = consume.clone();
             let events = events.clone();
-            move |_, cx| WindowMouseInterceptorProbe {
+            move |window, cx| WindowMouseInterceptorProbe {
                 consume,
                 events,
                 focus: cx.focus_handle(),
+                pointer_capture: window.new_pointer_capture_handle(),
                 mouse_subscription: None,
                 key_subscription: None,
             }
         });
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear());
         cx.update_window_entity(&view, |view, window, _cx| {
             let consume = view.consume.clone();
@@ -1891,6 +1997,7 @@ mod tests {
                         WindowMouseEvent::Up(_) => "interceptor-up",
                         WindowMouseEvent::Move(_) => "interceptor-move",
                         WindowMouseEvent::Exit(_) => "interceptor-exit",
+                        WindowMouseEvent::Cancel(_) => "interceptor-cancel",
                         WindowMouseEvent::Pressure(_) => "interceptor-pressure",
                         WindowMouseEvent::Scroll(_) => "interceptor-scroll",
                         WindowMouseEvent::Pinch(_) => "interceptor-pinch",
@@ -1918,12 +2025,17 @@ mod tests {
                 cx.update(|window, cx| {
                     let drag_view = cx.new(|_| Empty).into();
                     cx.active_drag = Some(AnyDrag {
+                        window_id: window.window_handle().window_id(),
                         value: Arc::new("drag"),
                         view: drag_view,
                         cursor_offset: point(px(0.0), px(0.0)),
                         cursor_style: None,
+                        button: MouseButton::Left,
                     });
-                    window.capture_pointer(HitboxId::placeholder());
+                    let pointer_capture = view.read(cx).pointer_capture;
+                    window
+                        .capture_pointer(&pointer_capture, MouseButton::Left)
+                        .expect("the interceptor probe should bind its pointer capture handle");
                 });
             }
 
@@ -1935,7 +2047,7 @@ mod tests {
             if interceptor == "interceptor-up" {
                 cx.update(|window, cx| {
                     assert!(cx.active_drag.is_none());
-                    assert!(window.captured_hitbox().is_none());
+                    assert!(window.captured_pointer().is_none());
                 });
             }
         }
@@ -1949,10 +2061,11 @@ mod tests {
         let (view, cx) = cx.add_window_view({
             let consume = consume.clone();
             let events = events.clone();
-            move |_, cx| WindowMouseInterceptorProbe {
+            move |window, cx| WindowMouseInterceptorProbe {
                 consume,
                 events,
                 focus: cx.focus_handle(),
+                pointer_capture: window.new_pointer_capture_handle(),
                 mouse_subscription: None,
                 key_subscription: None,
             }
@@ -1995,10 +2108,11 @@ mod tests {
         let (view, cx) = cx.add_window_view({
             let consume = consume.clone();
             let events = events.clone();
-            move |_, cx| WindowMouseInterceptorProbe {
+            move |window, cx| WindowMouseInterceptorProbe {
                 consume,
                 events,
                 focus: cx.focus_handle(),
+                pointer_capture: window.new_pointer_capture_handle(),
                 mouse_subscription: None,
                 key_subscription: None,
             }
@@ -2044,10 +2158,11 @@ mod tests {
         let (view, cx) = cx.add_window_view({
             let consume = consume.clone();
             let events = events.clone();
-            move |_, cx| WindowMouseInterceptorProbe {
+            move |window, cx| WindowMouseInterceptorProbe {
                 consume,
                 events,
                 focus: cx.focus_handle(),
+                pointer_capture: window.new_pointer_capture_handle(),
                 mouse_subscription: None,
                 key_subscription: None,
             }
@@ -2104,10 +2219,11 @@ mod tests {
         let (view, cx) = cx.add_window_view({
             let consume = consume.clone();
             let events = events.clone();
-            move |_, cx| WindowMouseInterceptorProbe {
+            move |window, cx| WindowMouseInterceptorProbe {
                 consume,
                 events,
                 focus: cx.focus_handle(),
+                pointer_capture: window.new_pointer_capture_handle(),
                 mouse_subscription: None,
                 key_subscription: None,
             }
@@ -2158,10 +2274,11 @@ mod tests {
         let (view, cx) = cx.add_window_view({
             let consume = consume.clone();
             let events = events.clone();
-            move |_, cx| WindowMouseInterceptorProbe {
+            move |window, cx| WindowMouseInterceptorProbe {
                 consume,
                 events,
                 focus: cx.focus_handle(),
+                pointer_capture: window.new_pointer_capture_handle(),
                 mouse_subscription: None,
                 key_subscription: None,
             }
@@ -2206,10 +2323,11 @@ mod tests {
         let (view, cx) = cx.add_window_view({
             let consume = consume.clone();
             let events = events.clone();
-            move |_, cx| WindowMouseInterceptorProbe {
+            move |window, cx| WindowMouseInterceptorProbe {
                 consume,
                 events,
                 focus: cx.focus_handle(),
+                pointer_capture: window.new_pointer_capture_handle(),
                 mouse_subscription: None,
                 key_subscription: None,
             }
@@ -2477,10 +2595,12 @@ mod tests {
         visual.simulate_mouse_move(point(px(16.0), px(16.0)), None, Modifiers::none());
         cx.update(|app| {
             app.active_drag = Some(AnyDrag {
+                window_id: hovered.window_id(),
                 value: Arc::new("drag"),
                 view: app.new(|_| Empty).into(),
                 cursor_offset: point(px(0.0), px(0.0)),
                 cursor_style: Some(CursorStyle::ClosedHand),
+                button: MouseButton::Left,
             });
         });
 

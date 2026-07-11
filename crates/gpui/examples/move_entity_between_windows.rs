@@ -75,7 +75,7 @@ impl HelloWorld {
                     )
                     .expect("failed to open new window");
                     old_window
-                        .update(cx, |_, window, _| window.remove_window())
+                        .update(cx, |_, window, cx| window.remove_window(cx))
                         .ok();
                 });
             },

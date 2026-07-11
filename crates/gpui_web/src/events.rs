@@ -1,53 +1,28 @@
-use std::rc::Rc;
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use open_gpui::{
     Capslock, DispatchEventResult, ExternalPaths, FileDropEvent, KeyDownEvent, KeyUpEvent,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent,
-    MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformInput, Point, ScrollDelta,
-    ScrollWheelEvent, TouchPhase, point, px,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformInput, Point, PointerCancelEvent, PointerCancelReason,
+    ScrollDelta, ScrollWheelEvent, TouchPhase, point, px,
 };
 use smallvec::smallvec;
 use wasm_bindgen::prelude::*;
 
-use crate::window::WebWindowInner;
+use crate::{
+    pointer_session::{
+        ClickState, WebPointerButtonChange, WebPointerCaptureCommand, WebPointerCaptureState,
+        WebPointerTransition, dom_buttons_to_pressed_button, dom_mouse_button_to_gpui,
+    },
+    window::{WebWindowCallbacks, WebWindowInner},
+};
 
 pub struct WebEventListeners {
     #[allow(dead_code)]
     closures: Vec<Closure<dyn FnMut(JsValue)>>,
-}
-
-pub(crate) struct ClickState {
-    last_position: Point<Pixels>,
-    last_time: f64,
-    current_count: usize,
-}
-
-impl Default for ClickState {
-    fn default() -> Self {
-        Self {
-            last_position: Point::default(),
-            last_time: 0.0,
-            current_count: 0,
-        }
-    }
-}
-
-impl ClickState {
-    fn register_click(&mut self, position: Point<Pixels>, time: f64) -> usize {
-        let distance = ((f32::from(position.x) - f32::from(self.last_position.x)).powi(2)
-            + (f32::from(position.y) - f32::from(self.last_position.y)).powi(2))
-        .sqrt();
-
-        if (time - self.last_time) < 400.0 && distance < 5.0 {
-            self.current_count += 1;
-        } else {
-            self.current_count = 1;
-        }
-
-        self.last_position = position;
-        self.last_time = time;
-        self.current_count
-    }
 }
 
 impl WebWindowInner {
@@ -55,6 +30,8 @@ impl WebWindowInner {
         let mut closures = vec![
             self.register_pointer_down(),
             self.register_pointer_up(),
+            self.register_pointer_cancel(),
+            self.register_lost_pointer_capture(),
             self.register_pointer_move(),
             self.register_pointer_leave(),
             self.register_wheel(),
@@ -125,18 +102,43 @@ impl WebWindowInner {
     }
 
     fn dispatch_input(&self, input: PlatformInput) -> Option<DispatchEventResult> {
-        let mut callback = {
-            let mut callbacks = self.callbacks.borrow_mut();
-            callbacks.input.take()
-        };
+        dispatch_web_input(&self.callbacks, input)
+    }
 
-        let result = callback.as_mut().map(|callback| callback(input));
-
-        if let Some(callback) = callback {
-            self.callbacks.borrow_mut().input = Some(callback);
+    fn pointer_input_boundary(&self) -> WebPointerInputBoundary<'_> {
+        WebPointerInputBoundary {
+            pointer_capture: &self.pointer_capture,
+            click_state: &self.click_state,
+            callbacks: &self.callbacks,
         }
+    }
 
-        result
+    fn apply_pointer_capture_command(&self, command: WebPointerCaptureCommand) {
+        match command {
+            WebPointerCaptureCommand::None => {}
+            WebPointerCaptureCommand::Set(pointer_id) => {
+                self.canvas.set_pointer_capture(pointer_id).ok();
+            }
+            WebPointerCaptureCommand::Release(pointer_id) => {
+                self.canvas.release_pointer_capture(pointer_id).ok();
+            }
+        }
+    }
+
+    fn apply_pointer_transition(
+        &self,
+        next_state: WebPointerCaptureState,
+        transition: WebPointerTransition,
+    ) {
+        self.pointer_input_boundary()
+            .apply_pointer_transition(next_state, transition, |command| {
+                self.apply_pointer_capture_command(command)
+            });
+    }
+
+    pub(crate) fn cleanup_pointer_capture(&self) {
+        let (next_state, transition) = self.pointer_capture.get().cleanup();
+        self.apply_pointer_transition(next_state, transition);
     }
 
     fn register_pointer_down(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
@@ -146,27 +148,23 @@ impl WebWindowInner {
             event.prevent_default();
             this.input_element.focus().ok();
 
-            let button = dom_mouse_button_to_gpui(event.button());
-            let position = pointer_position_in_element(&event);
-            let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
-            let time = js_sys::Date::now();
-
-            this.pressed_button.set(Some(button));
-            let click_count = this.click_state.borrow_mut().register_click(position, time);
-
-            {
-                let mut current_state = this.state.borrow_mut();
-                current_state.mouse_position = position;
-                current_state.modifiers = modifiers;
-            }
-
-            this.dispatch_input(PlatformInput::MouseDown(MouseDownEvent {
-                button,
-                position,
-                modifiers,
-                click_count,
-                first_mouse: false,
-            }));
+            let event = WebPointerEventData {
+                pointer_id: event.pointer_id(),
+                button: event.button(),
+                buttons: event.buttons(),
+                position: pointer_position_in_element(&event),
+                modifiers: modifiers_from_mouse_event(&event, this.is_mac),
+                click_time: js_sys::Date::now(),
+            };
+            this.pointer_input_boundary().handle_pointer_down(
+                event,
+                |command| this.apply_pointer_capture_command(command),
+                |position, modifiers| {
+                    let mut current_state = this.state.borrow_mut();
+                    current_state.mouse_position = position;
+                    current_state.modifiers = modifiers;
+                },
+            );
         })
     }
 
@@ -176,25 +174,48 @@ impl WebWindowInner {
             let event: web_sys::PointerEvent = event.unchecked_into();
             event.prevent_default();
 
-            let button = dom_mouse_button_to_gpui(event.button());
-            let position = pointer_position_in_element(&event);
-            let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
+            let event = WebPointerEventData {
+                pointer_id: event.pointer_id(),
+                button: event.button(),
+                buttons: event.buttons(),
+                position: pointer_position_in_element(&event),
+                modifiers: modifiers_from_mouse_event(&event, this.is_mac),
+                click_time: js_sys::Date::now(),
+            };
+            this.pointer_input_boundary().handle_pointer_up(
+                event,
+                |command| this.apply_pointer_capture_command(command),
+                |position, modifiers| {
+                    let mut current_state = this.state.borrow_mut();
+                    current_state.mouse_position = position;
+                    current_state.modifiers = modifiers;
+                },
+            );
+        })
+    }
 
-            this.pressed_button.set(None);
-            let click_count = this.click_state.borrow().current_count;
+    fn register_pointer_cancel(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
+        self.listen("pointercancel", move |event: JsValue| {
+            let event: web_sys::PointerEvent = event.unchecked_into();
+            event.prevent_default();
+            let (next_state, transition) = this
+                .pointer_capture
+                .get()
+                .pointer_cancel(event.pointer_id());
+            this.apply_pointer_transition(next_state, transition);
+        })
+    }
 
-            {
-                let mut current_state = this.state.borrow_mut();
-                current_state.mouse_position = position;
-                current_state.modifiers = modifiers;
-            }
-
-            this.dispatch_input(PlatformInput::MouseUp(MouseUpEvent {
-                button,
-                position,
-                modifiers,
-                click_count,
-            }));
+    fn register_lost_pointer_capture(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
+        self.listen("lostpointercapture", move |event: JsValue| {
+            let event: web_sys::PointerEvent = event.unchecked_into();
+            let (next_state, transition) = this
+                .pointer_capture
+                .get()
+                .pointer_capture_lost(event.pointer_id());
+            this.apply_pointer_transition(next_state, transition);
         })
     }
 
@@ -204,21 +225,24 @@ impl WebWindowInner {
             let event: web_sys::PointerEvent = event.unchecked_into();
             event.prevent_default();
 
-            let position = pointer_position_in_element(&event);
-            let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
-            let current_pressed = this.pressed_button.get();
-
-            {
-                let mut current_state = this.state.borrow_mut();
-                current_state.mouse_position = position;
-                current_state.modifiers = modifiers;
-            }
-
-            this.dispatch_input(PlatformInput::MouseMove(MouseMoveEvent {
-                position,
-                pressed_button: current_pressed,
-                modifiers,
-            }));
+            let event = WebPointerEventData {
+                pointer_id: event.pointer_id(),
+                button: event.button(),
+                buttons: event.buttons(),
+                position: pointer_position_in_element(&event),
+                modifiers: modifiers_from_mouse_event(&event, this.is_mac),
+                click_time: js_sys::Date::now(),
+            };
+            this.pointer_input_boundary().handle_pointer_motion(
+                event,
+                WebPointerMotionKind::Moved,
+                |command| this.apply_pointer_capture_command(command),
+                |position, modifiers| {
+                    let mut current_state = this.state.borrow_mut();
+                    current_state.mouse_position = position;
+                    current_state.modifiers = modifiers;
+                },
+            );
         })
     }
 
@@ -227,21 +251,24 @@ impl WebWindowInner {
         self.listen("pointerleave", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
 
-            let position = pointer_position_in_element(&event);
-            let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
-            let current_pressed = this.pressed_button.get();
-
-            {
-                let mut current_state = this.state.borrow_mut();
-                current_state.mouse_position = position;
-                current_state.modifiers = modifiers;
-            }
-
-            this.dispatch_input(PlatformInput::MouseExited(MouseExitEvent {
-                position,
-                pressed_button: current_pressed,
-                modifiers,
-            }));
+            let event = WebPointerEventData {
+                pointer_id: event.pointer_id(),
+                button: event.button(),
+                buttons: event.buttons(),
+                position: pointer_position_in_element(&event),
+                modifiers: modifiers_from_mouse_event(&event, this.is_mac),
+                click_time: js_sys::Date::now(),
+            };
+            this.pointer_input_boundary().handle_pointer_motion(
+                event,
+                WebPointerMotionKind::Exited,
+                |command| this.apply_pointer_capture_command(command),
+                |position, modifiers| {
+                    let mut current_state = this.state.borrow_mut();
+                    current_state.mouse_position = position;
+                    current_state.modifiers = modifiers;
+                },
+            );
         })
     }
 
@@ -484,6 +511,7 @@ impl WebWindowInner {
     fn register_blur(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
         let this = Rc::clone(self);
         self.listen_input("blur", move |_event: JsValue| {
+            this.cleanup_pointer_capture();
             {
                 let mut state = this.state.borrow_mut();
                 state.is_active = false;
@@ -551,14 +579,188 @@ fn dom_key_to_gpui_key(event: &web_sys::KeyboardEvent) -> String {
     }
 }
 
-fn dom_mouse_button_to_gpui(button: i16) -> MouseButton {
-    match button {
-        0 => MouseButton::Left,
-        1 => MouseButton::Middle,
-        2 => MouseButton::Right,
-        3 => MouseButton::Navigate(NavigationDirection::Back),
-        4 => MouseButton::Navigate(NavigationDirection::Forward),
-        _ => MouseButton::Left,
+fn pointer_button_change_to_platform_input(
+    change: WebPointerButtonChange,
+    position: Point<Pixels>,
+    modifiers: Modifiers,
+    click_count: usize,
+) -> PlatformInput {
+    match change {
+        WebPointerButtonChange::Down(button) => PlatformInput::MouseDown(MouseDownEvent {
+            button,
+            position,
+            modifiers,
+            click_count,
+            first_mouse: false,
+        }),
+        WebPointerButtonChange::Up(button) => PlatformInput::MouseUp(MouseUpEvent {
+            button,
+            position,
+            modifiers,
+            click_count,
+        }),
+    }
+}
+
+fn dispatch_web_input(
+    callbacks: &RefCell<WebWindowCallbacks>,
+    input: PlatformInput,
+) -> Option<DispatchEventResult> {
+    let mut callback = callbacks.borrow_mut().input.take();
+    let result = callback.as_mut().map(|callback| callback(input));
+
+    if let Some(callback) = callback {
+        callbacks.borrow_mut().input = Some(callback);
+    }
+
+    result
+}
+
+#[derive(Clone, Copy)]
+struct WebPointerEventData {
+    pointer_id: i32,
+    button: i16,
+    buttons: u16,
+    position: Point<Pixels>,
+    modifiers: Modifiers,
+    click_time: f64,
+}
+
+#[derive(Clone, Copy)]
+enum WebPointerMotionKind {
+    Moved,
+    Exited,
+}
+
+struct WebPointerInputBoundary<'a> {
+    pointer_capture: &'a Cell<WebPointerCaptureState>,
+    click_state: &'a RefCell<ClickState>,
+    callbacks: &'a RefCell<WebWindowCallbacks>,
+}
+
+impl WebPointerInputBoundary<'_> {
+    fn apply_pointer_transition(
+        &self,
+        next_state: WebPointerCaptureState,
+        transition: WebPointerTransition,
+        mut apply_capture_command: impl FnMut(WebPointerCaptureCommand),
+    ) {
+        self.pointer_capture.set(next_state);
+        apply_capture_command(transition.capture_command);
+        if transition.emit_cancel {
+            let _ = dispatch_web_input(
+                self.callbacks,
+                PlatformInput::PointerCanceled(PointerCancelEvent {
+                    reason: PointerCancelReason::PlatformCaptureLost,
+                }),
+            );
+        }
+    }
+
+    fn dispatch_pointer_button_change(
+        &self,
+        change: WebPointerButtonChange,
+        event: WebPointerEventData,
+    ) {
+        let click_count = match change {
+            WebPointerButtonChange::Down(button) => self.click_state.borrow_mut().register_click(
+                button,
+                event.position,
+                event.click_time,
+            ),
+            WebPointerButtonChange::Up(_) => self.click_state.borrow().current_count(),
+        };
+        let _ = dispatch_web_input(
+            self.callbacks,
+            pointer_button_change_to_platform_input(
+                change,
+                event.position,
+                event.modifiers,
+                click_count,
+            ),
+        );
+    }
+
+    fn handle_pointer_down(
+        &self,
+        event: WebPointerEventData,
+        apply_capture_command: impl FnMut(WebPointerCaptureCommand),
+        update_pointer_state: impl FnOnce(Point<Pixels>, Modifiers),
+    ) {
+        let (next_state, transition) =
+            self.pointer_capture
+                .get()
+                .pointer_down(event.pointer_id, event.button, event.buttons);
+        self.apply_pointer_transition(next_state, transition, apply_capture_command);
+        if !transition.accept_event {
+            return;
+        }
+
+        update_pointer_state(event.position, event.modifiers);
+        self.dispatch_pointer_button_change(
+            WebPointerButtonChange::Down(dom_mouse_button_to_gpui(event.button)),
+            event,
+        );
+    }
+
+    fn handle_pointer_up(
+        &self,
+        event: WebPointerEventData,
+        apply_capture_command: impl FnMut(WebPointerCaptureCommand),
+        update_pointer_state: impl FnOnce(Point<Pixels>, Modifiers),
+    ) {
+        let (next_state, transition) =
+            self.pointer_capture
+                .get()
+                .pointer_up(event.pointer_id, event.button, event.buttons);
+        self.apply_pointer_transition(next_state, transition, apply_capture_command);
+        if !transition.accept_event {
+            return;
+        }
+
+        update_pointer_state(event.position, event.modifiers);
+        self.dispatch_pointer_button_change(
+            WebPointerButtonChange::Up(dom_mouse_button_to_gpui(event.button)),
+            event,
+        );
+    }
+
+    fn handle_pointer_motion(
+        &self,
+        event: WebPointerEventData,
+        motion_kind: WebPointerMotionKind,
+        apply_capture_command: impl FnMut(WebPointerCaptureCommand),
+        update_pointer_state: impl FnOnce(Point<Pixels>, Modifiers),
+    ) {
+        let current_pressed = dom_buttons_to_pressed_button(event.buttons);
+        let (next_state, transition) = self.pointer_capture.get().pointer_motion(
+            event.pointer_id,
+            event.button,
+            event.buttons,
+        );
+        self.apply_pointer_transition(next_state, transition, apply_capture_command);
+        if !transition.accept_event {
+            return;
+        }
+
+        update_pointer_state(event.position, event.modifiers);
+        if let Some(change) = transition.button_change {
+            self.dispatch_pointer_button_change(change, event);
+        }
+
+        let input = match motion_kind {
+            WebPointerMotionKind::Moved => PlatformInput::MouseMove(MouseMoveEvent {
+                position: event.position,
+                pressed_button: current_pressed,
+                modifiers: event.modifiers,
+            }),
+            WebPointerMotionKind::Exited => PlatformInput::MouseExited(MouseExitEvent {
+                position: event.position,
+                pressed_button: current_pressed,
+                modifiers: event.modifiers,
+            }),
+        };
+        let _ = dispatch_web_input(self.callbacks, input);
     }
 }
 
@@ -677,4 +879,278 @@ fn extract_file_paths_from_drag(
         }
     }
     paths
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
+
+    use open_gpui::{
+        DispatchEventResult, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput,
+        Point,
+    };
+
+    use super::{
+        ClickState, WebPointerButtonChange, WebPointerCaptureCommand, WebPointerCaptureState,
+        WebPointerEventData, WebPointerInputBoundary, WebPointerMotionKind,
+        pointer_button_change_to_platform_input,
+    };
+    use crate::window::WebWindowCallbacks;
+
+    #[test]
+    fn click_count_is_scoped_to_the_changed_button() {
+        let mut click_state = ClickState::default();
+        let position = Point::default();
+
+        assert_eq!(
+            click_state.register_click(MouseButton::Left, position, 100.0),
+            1
+        );
+        assert_eq!(
+            click_state.register_click(MouseButton::Left, position, 200.0),
+            2
+        );
+        assert_eq!(
+            click_state.register_click(MouseButton::Right, position, 250.0),
+            1
+        );
+    }
+
+    #[test]
+    fn pointer_capture_tracks_first_companion_and_final_buttons() {
+        let (state, transition) = WebPointerCaptureState::default().pointer_down(7, 0, 1);
+        assert_eq!(transition.capture_command, WebPointerCaptureCommand::Set(7));
+        assert!(transition.accept_event);
+
+        let (state, unchanged) = state.pointer_motion(7, -1, 1);
+        assert!(unchanged.button_change.is_none());
+
+        let (state, transition) = state.pointer_motion(7, 2, 3);
+        assert_eq!(transition.capture_command, WebPointerCaptureCommand::None);
+        assert!(transition.accept_event);
+        assert_eq!(
+            transition.button_change,
+            Some(WebPointerButtonChange::Down(MouseButton::Right))
+        );
+
+        let (state, unchanged) = state.pointer_motion(7, -1, 3);
+        assert!(unchanged.button_change.is_none());
+
+        let (state, transition) = state.pointer_motion(7, 2, 1);
+        assert_eq!(transition.capture_command, WebPointerCaptureCommand::None);
+        assert!(transition.accept_event);
+        assert_eq!(
+            transition.button_change,
+            Some(WebPointerButtonChange::Up(MouseButton::Right))
+        );
+
+        let (state, transition) = state.pointer_up(7, 0, 0);
+        assert_eq!(state, WebPointerCaptureState::default());
+        assert_eq!(
+            transition.capture_command,
+            WebPointerCaptureCommand::Release(7)
+        );
+        assert!(transition.accept_event);
+        assert!(!transition.emit_cancel);
+
+        let (_, unchanged) = state.pointer_motion(7, -1, 0);
+        assert!(unchanged.button_change.is_none());
+    }
+
+    #[test]
+    fn lost_capture_with_held_buttons_cancels_once() {
+        let (state, _) = WebPointerCaptureState::default().pointer_down(7, 0, 1);
+        let (state, transition) = state.pointer_capture_lost(7);
+        assert_eq!(state, WebPointerCaptureState::default());
+        assert!(transition.emit_cancel);
+
+        let (_, duplicate) = state.pointer_capture_lost(7);
+        assert!(!duplicate.emit_cancel);
+    }
+
+    #[test]
+    fn pointer_cancel_then_lost_capture_does_not_duplicate_cancel() {
+        let (state, _) = WebPointerCaptureState::default().pointer_down(7, 0, 1);
+        let (state, transition) = state.pointer_cancel(7);
+        assert_eq!(state, WebPointerCaptureState::default());
+        assert_eq!(
+            transition.capture_command,
+            WebPointerCaptureCommand::Release(7)
+        );
+        assert!(transition.emit_cancel);
+
+        let (_, duplicate) = state.pointer_capture_lost(7);
+        assert!(!duplicate.emit_cancel);
+    }
+
+    #[test]
+    fn final_pointer_up_then_lost_capture_does_not_cancel() {
+        let (state, _) = WebPointerCaptureState::default().pointer_down(7, 0, 1);
+        let (state, transition) = state.pointer_up(7, 0, 0);
+        assert!(!transition.emit_cancel);
+
+        let (_, lost) = state.pointer_capture_lost(7);
+        assert!(!lost.emit_cancel);
+    }
+
+    #[test]
+    fn unexpected_held_button_loss_is_terminal() {
+        let (state, _) = WebPointerCaptureState::default().pointer_down(7, 0, 1);
+        let (state, _) = state.pointer_motion(7, 2, 3);
+        let (state, transition) = state.pointer_motion(7, -1, 1);
+
+        assert_eq!(state, WebPointerCaptureState::default());
+        assert_eq!(
+            transition.capture_command,
+            WebPointerCaptureCommand::Release(7)
+        );
+        assert!(!transition.accept_event);
+        assert!(transition.emit_cancel);
+    }
+
+    #[test]
+    fn chorded_button_changes_translate_to_gpui_button_inputs() {
+        let position = Point::default();
+        let modifiers = Modifiers::default();
+        let down = pointer_button_change_to_platform_input(
+            WebPointerButtonChange::Down(MouseButton::Right),
+            position,
+            modifiers,
+            2,
+        );
+        assert!(matches!(
+            down,
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Right,
+                click_count: 2,
+                ..
+            })
+        ));
+
+        let up = pointer_button_change_to_platform_input(
+            WebPointerButtonChange::Up(MouseButton::Right),
+            position,
+            modifiers,
+            2,
+        );
+        assert!(matches!(
+            up,
+            PlatformInput::MouseUp(MouseUpEvent {
+                button: MouseButton::Right,
+                click_count: 2,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn pointer_listener_boundary_dispatches_chorded_buttons_through_registered_callback() {
+        #[derive(Debug, Eq, PartialEq)]
+        enum ObservedInput {
+            Down(MouseButton, usize),
+            Up(MouseButton, usize),
+            Moved(Option<MouseButton>),
+        }
+
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let callbacks = RefCell::new(WebWindowCallbacks::default());
+        callbacks.borrow_mut().set_input(Box::new({
+            let observed = observed.clone();
+            move |input| {
+                match input {
+                    PlatformInput::MouseDown(event) => observed
+                        .borrow_mut()
+                        .push(ObservedInput::Down(event.button, event.click_count)),
+                    PlatformInput::MouseUp(event) => observed
+                        .borrow_mut()
+                        .push(ObservedInput::Up(event.button, event.click_count)),
+                    PlatformInput::MouseMove(event) => observed
+                        .borrow_mut()
+                        .push(ObservedInput::Moved(event.pressed_button)),
+                    _ => {}
+                }
+                DispatchEventResult::default()
+            }
+        }));
+
+        let pointer_capture = Cell::new(WebPointerCaptureState::default());
+        let click_state = RefCell::new(ClickState::default());
+        let boundary = WebPointerInputBoundary {
+            pointer_capture: &pointer_capture,
+            click_state: &click_state,
+            callbacks: &callbacks,
+        };
+        let position = Point::default();
+        let event = |button, buttons, click_time| WebPointerEventData {
+            pointer_id: 7,
+            button,
+            buttons,
+            position,
+            modifiers: Modifiers::default(),
+            click_time,
+        };
+        let mut capture_commands = Vec::new();
+
+        boundary.handle_pointer_down(
+            event(0, 1, 100.0),
+            |command| capture_commands.push(command),
+            |_, _| {},
+        );
+        boundary.handle_pointer_motion(
+            event(2, 3, 150.0),
+            WebPointerMotionKind::Moved,
+            |command| capture_commands.push(command),
+            |_, _| {},
+        );
+        boundary.handle_pointer_motion(
+            event(2, 1, 200.0),
+            WebPointerMotionKind::Moved,
+            |command| capture_commands.push(command),
+            |_, _| {},
+        );
+        boundary.handle_pointer_up(
+            event(0, 0, 250.0),
+            |command| capture_commands.push(command),
+            |_, _| {},
+        );
+
+        assert_eq!(
+            *observed.borrow(),
+            vec![
+                ObservedInput::Down(MouseButton::Left, 1),
+                ObservedInput::Down(MouseButton::Right, 1),
+                ObservedInput::Moved(Some(MouseButton::Left)),
+                ObservedInput::Up(MouseButton::Right, 1),
+                ObservedInput::Moved(Some(MouseButton::Left)),
+                ObservedInput::Up(MouseButton::Left, 1),
+            ]
+        );
+        assert_eq!(
+            capture_commands,
+            vec![
+                WebPointerCaptureCommand::Set(7),
+                WebPointerCaptureCommand::None,
+                WebPointerCaptureCommand::None,
+                WebPointerCaptureCommand::Release(7),
+            ]
+        );
+        assert_eq!(pointer_capture.get(), WebPointerCaptureState::default());
+    }
+
+    #[test]
+    fn repeated_cleanup_cancels_only_the_active_session() {
+        let (state, _) = WebPointerCaptureState::default().pointer_down(7, 0, 1);
+        let (state, cleanup) = state.cleanup();
+        assert_eq!(
+            cleanup.capture_command,
+            WebPointerCaptureCommand::Release(7)
+        );
+        assert!(cleanup.emit_cancel);
+
+        let (_, duplicate_cleanup) = state.cleanup();
+        assert!(!duplicate_cleanup.emit_cancel);
+    }
 }

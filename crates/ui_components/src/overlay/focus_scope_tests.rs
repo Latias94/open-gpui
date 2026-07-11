@@ -1,9 +1,9 @@
+use super::{
+    FocusScopeRegistration, FocusScopeRuntime, FocusScopeRuntimeError, FocusTargetRegistration,
+};
 use open_gpui::{
     AppContext as _, Context, FocusHandle, IntoElement, KeyDownEvent, Keystroke, Modifiers, Render,
     VisualContext as _, Window, div, prelude::*,
-};
-use open_gpui_ui_components::gpui_adapter::{
-    FocusScopeRegistration, FocusScopeRuntime, FocusScopeRuntimeError, FocusTargetRegistration,
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, FocusScopeId, FocusScopeMode, FocusScopePolicy, FocusTargetAvailability,
@@ -24,6 +24,7 @@ struct FocusScopeProbe {
     parent_root: FocusHandle,
     parent_first: FocusHandle,
     parent_last: FocusHandle,
+    child_misplaced: FocusHandle,
     child_root: FocusHandle,
     child_first: FocusHandle,
     child_last: FocusHandle,
@@ -47,6 +48,7 @@ impl FocusScopeProbe {
         let parent_root = cx.focus_handle();
         let parent_first = cx.focus_handle();
         let parent_last = cx.focus_handle();
+        let child_misplaced = cx.focus_handle();
         let child_root = cx.focus_handle();
         let child_first = cx.focus_handle();
         let child_last = cx.focus_handle();
@@ -117,6 +119,8 @@ impl FocusScopeProbe {
             FocusTargetRegistration::new("window-fallback", &fallback),
             FocusTargetRegistration::new("parent.first", &parent_first).within_scope(PARENT_SCOPE),
             FocusTargetRegistration::new("parent.last", &parent_last).within_scope(PARENT_SCOPE),
+            FocusTargetRegistration::new("child.misplaced", &child_misplaced)
+                .within_scope(CHILD_SCOPE),
             FocusTargetRegistration::new("child.first", &child_first).within_scope(CHILD_SCOPE),
             FocusTargetRegistration::new("child.last", &child_last).within_scope(CHILD_SCOPE),
             FocusTargetRegistration::new("empty.surface", &empty_root).within_scope(EMPTY_SCOPE),
@@ -146,6 +150,7 @@ impl FocusScopeProbe {
             parent_root,
             parent_first,
             parent_last,
+            child_misplaced,
             child_root,
             child_first,
             child_last,
@@ -223,6 +228,13 @@ impl Render for FocusScopeProbe {
                             .debug_selector(|| "focus-scope:parent-last".to_owned())
                             .track_focus(&self.parent_last)
                             .tab_index(1),
+                    )
+                    .child(
+                        div()
+                            .id("focus-scope-child-misplaced")
+                            .debug_selector(|| "focus-scope:child-misplaced".to_owned())
+                            .track_focus(&self.child_misplaced)
+                            .tab_index(3),
                     )
                     .child(
                         div()
@@ -714,6 +726,44 @@ fn runtime_rejects_scoped_window_fallbacks_and_handle_aliases(cx: &mut open_gpui
             ))
         );
     });
+}
+
+#[open_gpui::test]
+fn ancestor_initial_focus_rejects_a_descendant_target_outside_its_own_root(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(FocusScopeProbe::new);
+    draw(cx);
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.runtime
+            .activate_scope(FocusScopeId::new(CHILD_SCOPE), window, cx)
+            .expect("child scope should be registered");
+    });
+    settle_focus_claims_after_render(cx);
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.runtime
+            .rebind_scope(
+                FocusScopeRegistration::new(
+                    FocusScopePolicy::new(PARENT_SCOPE, FocusScopeMode::ModalLoop)
+                        .with_initial_focus(InitialFocusIntent::TargetOrFirstFocusable(
+                            FocusTargetId::new("child.misplaced"),
+                        ))
+                        .with_focus_restore(FocusRestoreIntent::Trigger),
+                    &view.parent_root,
+                ),
+                window,
+                cx,
+            )
+            .expect("parent scope should support policy rebinding");
+        view.outside.focus(window, cx);
+        view.runtime
+            .activate_scope(FocusScopeId::new(PARENT_SCOPE), window, cx)
+            .expect("parent scope should be registered");
+    });
+    settle_focus_claims_after_render(cx);
+
+    assert_focused(cx, "focus-scope:parent-first");
 }
 
 #[open_gpui::test]

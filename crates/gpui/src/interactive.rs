@@ -595,6 +595,36 @@ impl Deref for MouseExitEvent {
     }
 }
 
+/// Why an in-progress pointer gesture was canceled without a matching mouse-up event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PointerCancelReason {
+    /// The native platform transferred pointer capture to another owner.
+    PlatformCaptureLost,
+    /// The window became inactive while one or more mouse buttons were pressed.
+    WindowDeactivated,
+    /// A higher-level interaction policy revoked capture before the initiating button was released.
+    CaptureRevoked,
+    /// The owning window closed before the in-progress gesture received a matching mouse up.
+    WindowClosed,
+}
+
+/// A pointer cancellation event for an in-progress mouse gesture.
+///
+/// Cancellation is terminal and cannot be stopped by event propagation. Stateful elements should
+/// clear pressed, drag, and capture bookkeeping when they receive this event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PointerCancelEvent {
+    /// The condition that terminated the gesture.
+    pub reason: PointerCancelReason,
+}
+
+impl Sealed for PointerCancelEvent {}
+impl InputEvent for PointerCancelEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::PointerCanceled(self)
+    }
+}
+
 /// A collection of paths from the platform, such as from a file drop.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct ExternalPaths(pub SmallVec<[PathBuf; 2]>);
@@ -664,6 +694,8 @@ pub enum PlatformInput {
     MouseMove(MouseMoveEvent),
     /// The mouse exited the window.
     MouseExited(MouseExitEvent),
+    /// An in-progress pointer gesture was canceled by the platform or window lifecycle.
+    PointerCanceled(PointerCancelEvent),
     /// The scroll wheel was used.
     ScrollWheel(ScrollWheelEvent),
     /// A pinch gesture was performed.
@@ -683,6 +715,7 @@ impl PlatformInput {
             PlatformInput::MouseMove(event) => Some(event),
             PlatformInput::MousePressure(event) => Some(event),
             PlatformInput::MouseExited(event) => Some(event),
+            PlatformInput::PointerCanceled(event) => Some(event),
             PlatformInput::ScrollWheel(event) => Some(event),
             PlatformInput::Pinch(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
@@ -699,6 +732,7 @@ impl PlatformInput {
             PlatformInput::MouseMove(_) => None,
             PlatformInput::MousePressure(_) => None,
             PlatformInput::MouseExited(_) => None,
+            PlatformInput::PointerCanceled(_) => None,
             PlatformInput::ScrollWheel(_) => None,
             PlatformInput::Pinch(_) => None,
             PlatformInput::FileDrop(_) => None,

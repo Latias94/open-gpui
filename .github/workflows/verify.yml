@@ -88,6 +88,10 @@ jobs:
             libxkbcommon-dev \
             pkg-config
 
+      - name: Run host-testable web pointer sessions
+        if: matrix.name == 'linux'
+        run: cargo nextest run -p open-gpui-web --locked
+
       - name: Run verification gate
         if: matrix.name == 'windows'
         shell: pwsh

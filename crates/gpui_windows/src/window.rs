@@ -77,6 +77,10 @@ pub struct WindowsWindowState {
     pub current_cursor: Cell<Option<HCURSOR>>,
     /// Shared with [`WindowsPlatformState::cursor_visible`].
     pub cursor_visible: Arc<AtomicBool>,
+    /// Client-area pointer session and its native capture ownership.
+    pub pointer_capture: Cell<WindowsPointerCaptureState>,
+    /// Prevents terminal pointer cancellation from re-entering the core input callback.
+    pub input_dispatch: Cell<WindowsInputDispatchState>,
     pub nc_button_pressed: Cell<Option<u32>>,
     accepts_pointer_input: Cell<bool>,
 
@@ -146,6 +150,8 @@ impl WindowsWindowState {
         let last_reported_capslock = None;
         let hovered = false;
         let click_state = ClickState::new();
+        let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
+        let input_dispatch = Cell::new(WindowsInputDispatchState::default());
         let nc_button_pressed = None;
         let fullscreen = None;
         let initial_placement = None;
@@ -175,6 +181,8 @@ impl WindowsWindowState {
             click_state,
             current_cursor: Cell::new(current_cursor),
             cursor_visible,
+            pointer_capture,
+            input_dispatch,
             nc_button_pressed: Cell::new(nc_button_pressed),
             accepts_pointer_input: Cell::new(accepts_pointer_input),
             display: Cell::new(display),
@@ -397,6 +405,12 @@ pub(crate) struct Callbacks {
     pub(crate) close: Cell<Option<Box<dyn FnOnce()>>>,
     pub(crate) hit_test_window_control: Cell<Option<Box<dyn FnMut() -> Option<WindowControlArea>>>>,
     pub(crate) appearance_changed: Cell<Option<Box<dyn FnMut()>>>,
+}
+
+impl Callbacks {
+    pub(crate) fn set_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {
+        self.input.set(Some(callback));
+    }
 }
 
 struct WindowCreateContext {
@@ -976,7 +990,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {
-        self.state.callbacks.input.set(Some(callback));
+        self.state.callbacks.set_input(callback);
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
@@ -1035,7 +1049,7 @@ impl PlatformWindow for WindowsWindow {
             .log_err();
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     fn render_to_image(&self, scene: &Scene) -> Result<image::RgbaImage> {
         self.state
             .renderer
@@ -1140,10 +1154,7 @@ struct WindowsDragDropHandler(pub Rc<WindowsWindowInner>);
 
 impl WindowsDragDropHandler {
     fn handle_drag_drop(&self, input: PlatformInput) {
-        if let Some(mut func) = self.0.state.callbacks.input.take() {
-            func(input);
-            self.0.state.callbacks.input.set(Some(func));
-        }
+        let _ = self.0.dispatch_input(input);
     }
 }
 

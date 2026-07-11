@@ -2419,7 +2419,7 @@ mod handle_suite {
 
         opened
             .window()
-            .update(cx, |_, window, _| window.remove_window())
+            .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("opened viewport should still be live");
         cx.run_until_parked();
 
@@ -2599,7 +2599,7 @@ mod handle_suite {
         );
         opened
             .window()
-            .update(cx, |_, window, _| window.remove_window())
+            .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("opened viewport should still be live");
         cx.run_until_parked();
 
@@ -2755,7 +2755,7 @@ mod handle_suite {
         );
         opened
             .window()
-            .update(cx, |_, window, _| window.remove_window())
+            .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("detached viewport should still be live");
         cx.run_until_parked();
 
@@ -2869,7 +2869,7 @@ mod handle_suite {
 
         detached_opened
             .window()
-            .update(cx, |_, window, _| window.remove_window())
+            .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("detached viewport should still be live");
         cx.run_until_parked();
 
@@ -2949,7 +2949,7 @@ mod handle_suite {
 
         detached_opened
             .window()
-            .update(cx, |_, window, _| window.remove_window())
+            .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("detached viewport should still be live");
         cx.run_until_parked();
 

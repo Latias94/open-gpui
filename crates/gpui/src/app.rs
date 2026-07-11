@@ -2177,6 +2177,19 @@ impl App {
         self.active_drag.is_some()
     }
 
+    pub(crate) fn clear_active_drag_for_window(&mut self, window_id: WindowId) -> bool {
+        if self
+            .active_drag
+            .as_ref()
+            .is_some_and(|drag| drag.window_id == window_id)
+        {
+            self.active_drag = None;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Returns the typed value for the current drag operation, when it matches `T`.
     pub fn active_drag_value<T: 'static>(&self) -> Option<&T> {
         self.active_drag
@@ -2556,6 +2569,9 @@ impl<G: Global> DerefMut for GlobalLease<G> {
 /// Contains state associated with an active drag operation, started by dragging an element
 /// within the window or by dragging into the app from the underlying platform.
 pub struct AnyDrag {
+    /// The window where this drag gesture started.
+    pub window_id: WindowId,
+
     /// The view used to render this drag
     pub view: AnyView,
 
@@ -2568,6 +2584,9 @@ pub struct AnyDrag {
 
     /// The cursor style to use while dragging
     pub cursor_style: Option<CursorStyle>,
+
+    /// The mouse button whose release terminates this drag gesture.
+    pub button: MouseButton,
 }
 
 /// Contains state associated with a tooltip. You'll only need this struct if you're implementing

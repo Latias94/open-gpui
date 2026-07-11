@@ -5,14 +5,13 @@ mod focus_scope;
 mod host;
 mod placement;
 mod runtime;
+mod window_runtime;
 
 pub use adapter::{
     DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayState,
     default_deferred_priority, gpui_overlay_state,
 };
-pub use focus_scope::{
-    FocusScopeRegistration, FocusScopeRuntime, FocusScopeRuntimeError, FocusTargetRegistration,
-};
+pub use focus_scope::{FocusScopeRuntimeError, FocusTargetRegistration};
 pub(crate) use host::OverlayLayerHost;
 pub use open_gpui_ui_core::OverlayResolvedState;
 pub use placement::{GpuiOverlayPlacement, gpui_anchor, point_anchor_placement};
@@ -21,6 +20,13 @@ pub(crate) use runtime::{
     OverlayOpenRuntimeRequest, resolve_overlay_open_state, set_overlay_open,
 };
 pub use runtime::{OverlayOpenChange, escape_open_change, outside_press_open_change};
+pub use window_runtime::{
+    OverlayFocusMode, OverlayFocusRestoreCondition, OverlayFocusTargetLease, OverlayInsideRegionId,
+    OverlayLayerBinding, OverlayLayerGeneration, OverlayLayerLease, OverlayLayerPhase,
+    OverlayLayerRegistration, OverlayLayerSnapshot, OverlayOpenIntentRevision, OverlayOwnership,
+    OverlaySurface, OverlayTabBehavior, WindowFocusFallbackLease, WindowOverlayRuntime,
+    WindowOverlayRuntimeError, WindowOverlaySnapshot,
+};
 
 #[cfg(test)]
 mod tests {

@@ -219,8 +219,8 @@ impl VisualTestAppContext {
     /// Closes the specified visual test window and flushes removal effects.
     #[cfg(any(test, feature = "test-support"))]
     pub fn close_window(&mut self, window: AnyWindowHandle) -> Result<()> {
-        self.update_window(window, |_, window, _| {
-            window.remove_window();
+        self.update_window(window, |_, window, cx| {
+            window.remove_window(cx);
         })?;
         {
             let mut app = self.app.borrow_mut();

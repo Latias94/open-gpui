@@ -74,7 +74,7 @@ impl std::error::Error for FocusScopeRuntimeError {}
 
 /// Registration for one rendered GPUI focus scope root.
 #[derive(Debug, Clone)]
-pub struct FocusScopeRegistration {
+pub(crate) struct FocusScopeRegistration {
     policy: FocusScopePolicy,
     root: WeakFocusHandle,
     surface: Option<FocusTargetId>,
@@ -82,7 +82,7 @@ pub struct FocusScopeRegistration {
 
 impl FocusScopeRegistration {
     /// Creates a scope registration from renderer-neutral policy and a rendered root handle.
-    pub fn new(policy: FocusScopePolicy, root: &FocusHandle) -> Self {
+    pub(crate) fn new(policy: FocusScopePolicy, root: &FocusHandle) -> Self {
         Self {
             policy,
             root: root.downgrade(),
@@ -91,7 +91,7 @@ impl FocusScopeRegistration {
     }
 
     /// Registers a named target as the non-tab surface fallback.
-    pub fn with_surface(mut self, surface: impl Into<FocusTargetId>) -> Self {
+    pub(crate) fn with_surface(mut self, surface: impl Into<FocusTargetId>) -> Self {
         self.surface = Some(surface.into());
         self
     }
@@ -117,8 +117,8 @@ impl FocusTargetRegistration {
         }
     }
 
-    /// Associates this target with a focus scope.
-    pub fn within_scope(mut self, scope: impl Into<FocusScopeId>) -> Self {
+    /// Associates this runtime-owned target with a focus scope.
+    pub(crate) fn within_scope(mut self, scope: impl Into<FocusScopeId>) -> Self {
         self.scope = Some(scope.into());
         self
     }
@@ -128,6 +128,16 @@ impl FocusTargetRegistration {
         self.availability = availability;
         self
     }
+
+    /// Returns the stable target identity.
+    pub const fn id(&self) -> &FocusTargetId {
+        &self.id
+    }
+
+    pub(crate) fn assigned_to_scope(mut self, scope: Option<FocusScopeId>) -> Self {
+        self.scope = scope;
+        self
+    }
 }
 
 /// A focus scope runtime created and owned by one GPUI window.
@@ -135,21 +145,22 @@ impl FocusTargetRegistration {
 /// This is a low-level adapter seam. The window overlay runtime owns its production instance;
 /// component families must not create app-global registries or independent scope runtimes.
 #[derive(Clone)]
-pub struct FocusScopeRuntime {
+pub(crate) struct FocusScopeRuntime {
     state: Entity<FocusScopeRuntimeState>,
     window_id: WindowId,
 }
 
 impl FocusScopeRuntime {
     /// Creates a focus scope runtime bound to the current window.
-    pub fn new(window: &Window, cx: &mut App) -> Self {
+    pub(crate) fn new(window: &Window, cx: &mut App) -> Self {
         let window_id = window.window_handle().window_id();
         let state = cx.new(|_| FocusScopeRuntimeState::default());
         Self { state, window_id }
     }
 
     /// Registers a focus scope.
-    pub fn register_scope(
+    #[cfg(test)]
+    pub(crate) fn register_scope(
         &self,
         registration: FocusScopeRegistration,
         window: &Window,
@@ -160,8 +171,23 @@ impl FocusScopeRuntime {
             .update(cx, |state, _| state.register_scope(registration))
     }
 
+    pub(crate) fn register_scope_bundle(
+        &self,
+        trigger: FocusTargetRegistration,
+        scope: FocusScopeRegistration,
+        surface: FocusTargetRegistration,
+        window: &Window,
+        cx: &mut App,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        self.ensure_window(window)?;
+        self.state.update(cx, |state, _| {
+            state.register_scope_bundle(trigger, scope, surface)
+        })
+    }
+
     /// Rebinds an existing logical scope to its latest policy and live root handle.
-    pub fn rebind_scope(
+    #[cfg(test)]
+    pub(crate) fn rebind_scope(
         &self,
         registration: FocusScopeRegistration,
         window: &Window,
@@ -172,8 +198,35 @@ impl FocusScopeRuntime {
             .update(cx, |state, _| state.rebind_scope(registration))
     }
 
+    pub(crate) fn rebind_scope_bundle(
+        &self,
+        trigger: FocusTargetRegistration,
+        scope: FocusScopeRegistration,
+        surface: FocusTargetRegistration,
+        window: &Window,
+        cx: &mut App,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        self.ensure_window(window)?;
+        self.state.update(cx, |state, _| {
+            state.rebind_scope_bundle(trigger, scope, surface)
+        })
+    }
+
+    pub(crate) fn unregister_scope_bundle(
+        &self,
+        trigger: &FocusTargetId,
+        scope: &FocusScopeId,
+        window: &Window,
+        cx: &mut App,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        self.ensure_window(window)?;
+        self.state
+            .update(cx, |state, _| state.unregister_scope_bundle(trigger, scope))
+    }
+
     /// Removes a logical scope, its descendants, and their registered targets.
-    pub fn unregister_scope(
+    #[cfg(test)]
+    pub(crate) fn unregister_scope(
         &self,
         scope: &FocusScopeId,
         window: &Window,
@@ -185,7 +238,7 @@ impl FocusScopeRuntime {
     }
 
     /// Registers a stable logical target and its live GPUI handle.
-    pub fn register_target(
+    pub(crate) fn register_target(
         &self,
         registration: FocusTargetRegistration,
         window: &Window,
@@ -196,8 +249,10 @@ impl FocusScopeRuntime {
             .update(cx, |state, _| state.register_target(registration))
     }
 
-    /// Rebinds an existing logical target to its latest live handle and scope projection.
-    pub fn rebind_target(
+    /// Rebinds an existing logical target to its latest live handle and availability.
+    ///
+    /// The owning overlay runtime supplies the canonical scope assignment.
+    pub(crate) fn rebind_target(
         &self,
         registration: FocusTargetRegistration,
         window: &Window,
@@ -209,7 +264,7 @@ impl FocusScopeRuntime {
     }
 
     /// Removes a logical target and clears runtime references to it.
-    pub fn unregister_target(
+    pub(crate) fn unregister_target(
         &self,
         target: &FocusTargetId,
         window: &Window,
@@ -221,7 +276,8 @@ impl FocusScopeRuntime {
     }
 
     /// Updates renderer-projected target availability without replacing its stable identity.
-    pub fn set_target_availability(
+    #[cfg(test)]
+    pub(crate) fn set_target_availability(
         &self,
         target: &FocusTargetId,
         availability: FocusTargetAvailability,
@@ -239,29 +295,56 @@ impl FocusScopeRuntime {
     }
 
     /// Registers or clears the application fallback target for this window.
-    pub fn set_window_fallback(
+    #[cfg(test)]
+    pub(crate) fn set_window_fallback(
         &self,
         target: Option<FocusTargetId>,
         window: &Window,
         cx: &mut App,
     ) -> Result<(), FocusScopeRuntimeError> {
         self.ensure_window(window)?;
+        self.state
+            .update(cx, |state, _| state.set_window_fallback(target))
+    }
+
+    pub(crate) fn register_window_fallback_target(
+        &self,
+        registration: FocusTargetRegistration,
+        window: &Window,
+        cx: &mut App,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        self.ensure_window(window)?;
         self.state.update(cx, |state, _| {
-            if let Some(target) = target.as_ref() {
-                let Some(entry) = state.targets.get(target) else {
-                    return Err(FocusScopeRuntimeError::UnknownTarget(target.clone()));
-                };
-                if entry.scope.is_some() {
-                    return Err(FocusScopeRuntimeError::ScopedWindowFallback(target.clone()));
-                }
-            }
-            state.window_fallback = target;
-            Ok(())
+            state.register_window_fallback_target(registration)
+        })
+    }
+
+    pub(crate) fn rebind_window_fallback_target(
+        &self,
+        registration: FocusTargetRegistration,
+        window: &Window,
+        cx: &mut App,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        self.ensure_window(window)?;
+        self.state.update(cx, |state, _| {
+            state.rebind_window_fallback_target(registration)
+        })
+    }
+
+    pub(crate) fn unregister_window_fallback_target(
+        &self,
+        target: &FocusTargetId,
+        window: &Window,
+        cx: &mut App,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        self.ensure_window(window)?;
+        self.state.update(cx, |state, _| {
+            state.unregister_window_fallback_target(target)
         })
     }
 
     /// Activates a scope, captures the current logical target, and queues initial focus.
-    pub fn activate_scope(
+    pub(crate) fn activate_scope(
         &self,
         scope: FocusScopeId,
         window: &mut Window,
@@ -279,16 +362,27 @@ impl FocusScopeRuntime {
     }
 
     /// Deactivates a committed-open scope and queues deterministic restoration.
-    pub fn deactivate_scope(
+    #[cfg(test)]
+    pub(crate) fn deactivate_scope(
         &self,
         scope: FocusScopeId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        self.deactivate_scope_with_restore(scope, true, window, cx)
+    }
+
+    pub(crate) fn deactivate_scope_with_restore(
+        &self,
+        scope: FocusScopeId,
+        restore: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<(), FocusScopeRuntimeError> {
         self.ensure_window(window)?;
         let current = window.focused(cx);
         let claim = self.state.update(cx, |state, _| {
-            state.deactivate_scope(&scope, current.as_ref(), window)
+            state.deactivate_scope(&scope, current.as_ref(), window, restore)
         })?;
         if let Some(claim) = claim {
             self.schedule_claim(claim, window, cx);
@@ -296,10 +390,40 @@ impl FocusScopeRuntime {
         Ok(())
     }
 
+    pub(crate) fn has_pending_claim_for_scope(
+        &self,
+        scope: &FocusScopeId,
+        window: &Window,
+        cx: &App,
+    ) -> Result<bool, FocusScopeRuntimeError> {
+        self.ensure_window(window)?;
+        Ok(self.state.read(cx).has_pending_claim_for_scope(scope))
+    }
+
+    pub(crate) fn cancel_claims_for_scopes(
+        &self,
+        scopes: &[FocusScopeId],
+        window: &Window,
+        cx: &mut App,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        self.ensure_window(window)?;
+        self.state.update(cx, |state, _| {
+            for scope in scopes {
+                state.cancel_claims_for_scope(scope);
+            }
+        });
+        Ok(())
+    }
+
     /// Handles a real Tab or Shift-Tab event for the innermost live modal scope.
     ///
     /// Returns whether a modal scope consumed the event.
-    pub fn handle_key_down(&self, event: &KeyDownEvent, window: &mut Window, cx: &mut App) -> bool {
+    pub(crate) fn handle_key_down(
+        &self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
         let modifiers = event.keystroke.modifiers;
         if self.ensure_window(window).is_err()
             || event.keystroke.key.as_str() != "tab"
@@ -415,7 +539,7 @@ impl FocusScopeRuntime {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct FocusScopeRuntimeState {
     scopes: BTreeMap<FocusScopeId, ScopeEntry>,
     targets: BTreeMap<FocusTargetId, TargetEntry>,
@@ -433,6 +557,57 @@ impl FocusScopeRuntimeState {
         } else {
             self.pending_restore_claim = Some(claim);
         }
+    }
+
+    fn set_window_fallback(
+        &mut self,
+        target: Option<FocusTargetId>,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        if let Some(target) = target.as_ref() {
+            let Some(entry) = self.targets.get(target) else {
+                return Err(FocusScopeRuntimeError::UnknownTarget(target.clone()));
+            };
+            if entry.scope.is_some() {
+                return Err(FocusScopeRuntimeError::ScopedWindowFallback(target.clone()));
+            }
+        }
+        self.window_fallback = target;
+        Ok(())
+    }
+
+    fn register_window_fallback_target(
+        &mut self,
+        registration: FocusTargetRegistration,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        let target_id = registration.id.clone();
+        let mut staged = self.clone();
+        staged.register_target(registration)?;
+        staged.set_window_fallback(Some(target_id))?;
+        *self = staged;
+        Ok(())
+    }
+
+    fn rebind_window_fallback_target(
+        &mut self,
+        registration: FocusTargetRegistration,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        let target_id = registration.id.clone();
+        let mut staged = self.clone();
+        staged.rebind_target(registration)?;
+        staged.set_window_fallback(Some(target_id))?;
+        *self = staged;
+        Ok(())
+    }
+
+    fn unregister_window_fallback_target(
+        &mut self,
+        target: &FocusTargetId,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        let mut staged = self.clone();
+        staged.unregister_target(target)?;
+        staged.set_window_fallback(None)?;
+        *self = staged;
+        Ok(())
     }
 
     fn register_scope(
@@ -456,11 +631,26 @@ impl FocusScopeRuntimeState {
                 surface: registration.surface,
                 active: false,
                 activation_sequence: 0,
+                activation_focus_claim_revision: 0,
                 lifecycle_generation: 0,
                 saved_target: None,
                 last_live_target: None,
             },
         );
+        Ok(())
+    }
+
+    fn register_scope_bundle(
+        &mut self,
+        trigger: FocusTargetRegistration,
+        scope: FocusScopeRegistration,
+        surface: FocusTargetRegistration,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        let mut staged = self.clone();
+        staged.register_target(trigger)?;
+        staged.register_scope(scope)?;
+        staged.register_target(surface)?;
+        *self = staged;
         Ok(())
     }
 
@@ -488,6 +678,32 @@ impl FocusScopeRuntimeState {
         scope.policy = registration.policy;
         scope.root = registration.root;
         scope.surface = registration.surface;
+        Ok(())
+    }
+
+    fn rebind_scope_bundle(
+        &mut self,
+        trigger: FocusTargetRegistration,
+        scope: FocusScopeRegistration,
+        surface: FocusTargetRegistration,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        let mut staged = self.clone();
+        staged.rebind_target(trigger)?;
+        staged.rebind_scope(scope)?;
+        staged.rebind_target(surface)?;
+        *self = staged;
+        Ok(())
+    }
+
+    fn unregister_scope_bundle(
+        &mut self,
+        trigger: &FocusTargetId,
+        scope: &FocusScopeId,
+    ) -> Result<(), FocusScopeRuntimeError> {
+        let mut staged = self.clone();
+        staged.unregister_target(trigger)?;
+        staged.unregister_scope(scope)?;
+        *self = staged;
         Ok(())
     }
 
@@ -661,6 +877,7 @@ impl FocusScopeRuntimeState {
         self.next_activation_sequence = self.next_activation_sequence.wrapping_add(1);
         scope.active = true;
         scope.activation_sequence = self.next_activation_sequence;
+        scope.activation_focus_claim_revision = window.focus_claim_revision();
         scope.lifecycle_generation = scope.lifecycle_generation.wrapping_add(1);
         scope.saved_target = saved_target;
         let lifecycle_generation = scope.lifecycle_generation;
@@ -680,6 +897,7 @@ impl FocusScopeRuntimeState {
         scope_id: &FocusScopeId,
         current: Option<&FocusHandle>,
         window: &Window,
+        restore: bool,
     ) -> Result<Option<PendingFocusClaimKind>, FocusScopeRuntimeError> {
         let Some(existing_scope) = self.scopes.get(scope_id) else {
             return Err(FocusScopeRuntimeError::UnknownScope(scope_id.clone()));
@@ -698,13 +916,23 @@ impl FocusScopeRuntimeState {
         scope.lifecycle_generation = scope.lifecycle_generation.wrapping_add(1);
         let lifecycle_generation = scope.lifecycle_generation;
         Ok(
-            (scope.policy.focus_restore() != &FocusRestoreIntent::None).then(|| {
+            (restore && scope.policy.focus_restore() != &FocusRestoreIntent::None).then(|| {
                 PendingFocusClaimKind::Restore {
                     scope: scope_id.clone(),
                     lifecycle_generation,
                 }
             }),
         )
+    }
+
+    fn has_pending_claim_for_scope(&self, scope_id: &FocusScopeId) -> bool {
+        self.pending_initial_claim
+            .as_ref()
+            .is_some_and(|claim| claim.kind.scope() == scope_id)
+            || self
+                .pending_restore_claim
+                .as_ref()
+                .is_some_and(|claim| claim.kind.scope() == scope_id)
     }
 
     fn cancel_claims_for_scope(&mut self, scope_id: &FocusScopeId) {
@@ -938,9 +1166,22 @@ impl FocusScopeRuntimeState {
         let current_target = current_id
             .as_ref()
             .map(|target| self.candidate(target, window));
+        let has_newer_focus_claim = !current_is_inside
+            && scope.activation_focus_claim_revision != window.focus_claim_revision();
+        let current_is_live =
+            current.is_some_and(|current| window.is_focus_handle_rendered(current));
+        let newer_claim = (has_newer_focus_claim && current_is_live)
+            .then(|| current_target.as_ref())
+            .flatten();
+        if has_newer_focus_claim
+            && (current.is_none() || current_is_live)
+            && !newer_claim.is_some_and(|candidate| candidate.is_available())
+        {
+            return FocusCommit::Preserve;
+        }
 
         let resolution = resolve_focus_scope_restore(FocusRestoreInput {
-            newer_claim: None,
+            newer_claim,
             saved_target: saved.as_ref(),
             ancestor_last_targets: &ancestor_targets,
             window_fallback: window_fallback.as_ref(),
@@ -964,20 +1205,26 @@ impl FocusScopeRuntimeState {
     }
 
     fn record_focus(&mut self, current: Option<&FocusHandle>, window: &Window) {
-        let Some(target_id) =
-            current.and_then(|current| self.target_id_for_handle(current, window))
-        else {
+        let Some(current) = current else {
             return;
         };
-        let Some(scope_id) = self
-            .targets
-            .get(&target_id)
-            .and_then(|target| target.scope.clone())
-        else {
-            return;
-        };
-        if let Some(scope) = self.scopes.get_mut(&scope_id) {
+        if let Some(target_id) = self.target_id_for_handle(current, window)
+            && let Some(scope_id) = self
+                .targets
+                .get(&target_id)
+                .and_then(|target| target.scope.clone())
+            && let Some(scope) = self.scopes.get_mut(&scope_id)
+        {
             scope.last_live_target = Some(target_id);
+        }
+
+        let focus_claim_revision = window.focus_claim_revision();
+        for scope in self.scopes.values_mut().filter(|scope| scope.active) {
+            if scope.root.upgrade().is_some_and(|root| {
+                window.is_focus_handle_rendered(&root) && root.contains(current, window)
+            }) {
+                scope.activation_focus_claim_revision = focus_claim_revision;
+            }
         }
     }
 
@@ -1026,6 +1273,11 @@ impl FocusScopeRuntimeState {
             return None;
         }
         let handle = target_entry.live_handle(window)?;
+        let target_root = self.scopes.get(target_scope)?.root.upgrade()?;
+        if !window.is_focus_handle_rendered(&target_root) || !target_root.contains(&handle, window)
+        {
+            return None;
+        }
         let root = self.scopes.get(scope)?.root.upgrade()?;
         (window.is_focus_handle_rendered(&root) && root.contains(&handle, window)).then_some(handle)
     }
@@ -1103,17 +1355,20 @@ impl FocusScopeRuntimeState {
     }
 }
 
+#[derive(Clone)]
 struct ScopeEntry {
     policy: FocusScopePolicy,
     root: WeakFocusHandle,
     surface: Option<FocusTargetId>,
     active: bool,
     activation_sequence: u64,
+    activation_focus_claim_revision: u64,
     lifecycle_generation: u64,
     saved_target: Option<FocusTargetId>,
     last_live_target: Option<FocusTargetId>,
 }
 
+#[derive(Clone)]
 struct TargetEntry {
     scope: Option<FocusScopeId>,
     handle: WeakFocusHandle,
@@ -1190,3 +1445,7 @@ enum ModalTraversal {
         surface: Option<FocusHandle>,
     },
 }
+
+#[cfg(test)]
+#[path = "focus_scope_tests.rs"]
+mod tests;

@@ -65,6 +65,9 @@ fn normalize_platform_input(
             window.modifiers = mouse_exited.modifiers;
             PlatformInput::MouseExited(mouse_exited)
         }
+        PlatformInput::PointerCanceled(pointer_canceled) => {
+            PlatformInput::PointerCanceled(pointer_canceled)
+        }
         PlatformInput::ModifiersChanged(modifiers_changed) => {
             window.modifiers = modifiers_changed.modifiers;
             window.capslock = modifiers_changed.capslock;
@@ -94,10 +97,12 @@ fn normalize_file_drop(window: &mut Window, cx: &mut App, event: FileDropEvent) 
             window.mouse_in_window = true;
             if cx.active_drag.is_none() {
                 cx.active_drag = Some(AnyDrag {
+                    window_id: window.window_handle().window_id(),
                     value: Arc::new(paths.clone()),
                     view: cx.new(|_| paths).into(),
                     cursor_offset: position,
                     cursor_style: None,
+                    button: MouseButton::Left,
                 });
             }
             PlatformInput::MouseMove(MouseMoveEvent {
@@ -128,7 +133,7 @@ fn normalize_file_drop(window: &mut Window, cx: &mut App, event: FileDropEvent) 
         }
         FileDropEvent::Exited => {
             window.mouse_in_window = false;
-            cx.active_drag.take();
+            cx.clear_active_drag_for_window(window.window_handle().window_id());
             PlatformInput::FileDrop(FileDropEvent::Exited)
         }
     }
