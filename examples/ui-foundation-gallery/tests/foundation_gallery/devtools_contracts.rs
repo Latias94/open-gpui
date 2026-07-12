@@ -1,6 +1,7 @@
 use super::*;
 use open_gpui_devtools::{
     DevtoolsArtifactJsonlSink, DevtoolsArtifactSink, DevtoolsDiffKind, DevtoolsDiffStatus,
+    DevtoolsSessionFrame, SnapshotEnvelope,
 };
 
 fn assert_form_canaries_absent(serialized: &str) {
@@ -9,6 +10,51 @@ fn assert_form_canaries_absent(serialized: &str) {
             !serialized.contains(canary),
             "form DevTools canary leaked: {canary}"
         );
+    }
+}
+
+fn form_snapshot(frame: &DevtoolsSessionFrame) -> &SnapshotEnvelope {
+    frame
+        .capture
+        .snapshots
+        .iter()
+        .find(|snapshot| snapshot.probe_id.as_str() == "form")
+        .expect("form snapshot in DevTools frame")
+}
+
+fn assert_form_validation_projection(
+    snapshot: &SnapshotEnvelope,
+    expected_status: &str,
+    expected_validating_field_count: usize,
+) {
+    let root = snapshot.tree.nodes.first().expect("form projection root");
+    let payload = root.payload.as_ref().expect("form projection payload");
+    let validating_fields = root
+        .children
+        .iter()
+        .filter(|field| {
+            field
+                .payload
+                .as_ref()
+                .and_then(|payload| payload["meta"]["validating"].as_bool())
+                == Some(true)
+        })
+        .count();
+
+    assert_eq!(payload["status"], expected_status);
+    assert_eq!(
+        payload["validating_field_count"].as_u64(),
+        Some(expected_validating_field_count as u64)
+    );
+    assert_eq!(validating_fields, expected_validating_field_count);
+    if expected_validating_field_count == 0 {
+        assert!(root.children.iter().all(|field| {
+            field
+                .payload
+                .as_ref()
+                .and_then(|payload| payload["meta"]["validating"].as_bool())
+                == Some(false)
+        }));
     }
 }
 
@@ -154,6 +200,9 @@ fn devtools_gallery_session_frame_exposes_history_and_diff() {
     assert_eq!(session_frame.diff_row_count, diff.rows.len());
     assert_eq!(export.retained_frames, 2);
     assert_eq!(export.current_generation, Some(2));
+    assert_eq!(export.frames.len(), 2);
+    assert_form_validation_projection(form_snapshot(&export.frames[0]), "Validating", 1);
+    assert_form_validation_projection(form_snapshot(&export.frames[1]), "SubmitFailed", 0);
     assert!(diff.summary.changed > 0);
     assert!(state.diff_rows().iter().any(|row| {
         row.status == DevtoolsDiffStatus::Changed
@@ -178,6 +227,59 @@ fn devtools_gallery_session_frame_exposes_history_and_diff() {
     assert!(!export_json.contains("raw_text"));
     assert!(!export_json.contains("clipboard_contents"));
     assert_form_canaries_absent(&export_json);
+}
+
+#[open_gpui::test]
+fn devtools_gallery_inspector_copies_validating_form_detail(
+    test_cx: &mut open_gpui::TestAppContext,
+) {
+    let (shell, cx) = open_gallery_page_with_shell(test_cx, GalleryPage::Devtools);
+    let inspector = cx.update(|_, app| shell.read(app).devtools_inspector().clone());
+
+    scroll_page_selector_into_view(&shell, cx, "gallery-devtools:refresh");
+    click(cx, "gallery-devtools:refresh");
+    scroll_page_selector_into_view(&shell, cx, "devtools-inspector:row:form");
+    click(cx, "devtools-inspector:row:form");
+
+    let (selected_probe, detail_kind) = cx.update(|_, app| {
+        let inspector = inspector.read(app);
+        (
+            inspector
+                .state()
+                .selected_probe_id()
+                .map(|probe_id| probe_id.as_str().to_owned()),
+            inspector.state().active_detail_kind(),
+        )
+    });
+    assert_eq!(selected_probe.as_deref(), Some("form"));
+    assert_eq!(
+        detail_kind,
+        Some(open_gpui_devtools::DevtoolsInspectorDetailKind::LegacySnapshot)
+    );
+
+    scroll_page_selector_into_view(&shell, cx, "devtools-inspector:copy-detail");
+    click(cx, "devtools-inspector:copy-detail");
+    let clipboard_json = test_cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .expect("copied form detail JSON");
+    let clipboard_snapshot =
+        serde_json::from_str::<SnapshotEnvelope>(&clipboard_json).expect("valid snapshot JSON");
+
+    assert_form_validation_projection(&clipboard_snapshot, "Validating", 1);
+    assert_eq!(clipboard_snapshot.redaction.redacted_values, 6);
+    assert!(
+        clipboard_snapshot.tree.nodes[0]
+            .children
+            .iter()
+            .all(|field| {
+                field
+                    .payload
+                    .as_ref()
+                    .is_some_and(|payload| payload["value"]["kind"] == "redacted")
+            })
+    );
+    assert_form_canaries_absent(&clipboard_json);
 }
 
 #[test]

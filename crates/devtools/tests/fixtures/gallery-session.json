@@ -894,9 +894,9 @@
                     "id": "form",
                     "label": "Form",
                     "payload": {
-                      "status": "Idle",
+                      "status": "Validating",
                       "field_count": 5,
-                      "validating_field_count": 0,
+                      "validating_field_count": 1,
                       "invalid_field_count": 1,
                       "error_count": 0,
                       "can_submit": false,
@@ -915,7 +915,7 @@
                             "dirty": true,
                             "touched": false,
                             "visited": false,
-                            "validating": false,
+                            "validating": true,
                             "error_count": 1
                           }
                         },
@@ -2412,9 +2412,9 @@
                   "id": "form",
                   "label": "Form",
                   "payload": {
-                    "status": "Idle",
+                    "status": "Validating",
                     "field_count": 5,
-                    "validating_field_count": 0,
+                    "validating_field_count": 1,
                     "invalid_field_count": 1,
                     "error_count": 0,
                     "can_submit": false,
@@ -2433,7 +2433,7 @@
                           "dirty": true,
                           "touched": false,
                           "visited": false,
-                          "validating": false,
+                          "validating": true,
                           "error_count": 1
                         }
                       },
@@ -8153,9 +8153,9 @@
                       "id": "form",
                       "label": "Form",
                       "payload": {
-                        "status": "Idle",
+                        "status": "Validating",
                         "field_count": 5,
-                        "validating_field_count": 0,
+                        "validating_field_count": 1,
                         "invalid_field_count": 1,
                         "error_count": 0,
                         "can_submit": false,
@@ -8174,7 +8174,7 @@
                               "dirty": true,
                               "touched": false,
                               "visited": false,
-                              "validating": false,
+                              "validating": true,
                               "error_count": 1
                             }
                           },
@@ -11304,9 +11304,9 @@
                     "id": "form",
                     "label": "Form",
                     "payload": {
-                      "status": "Idle",
+                      "status": "Validating",
                       "field_count": 5,
-                      "validating_field_count": 0,
+                      "validating_field_count": 1,
                       "invalid_field_count": 1,
                       "error_count": 0,
                       "can_submit": false,
@@ -11325,7 +11325,7 @@
                             "dirty": true,
                             "touched": false,
                             "visited": false,
-                            "validating": false,
+                            "validating": true,
                             "error_count": 1
                           }
                         },

@@ -1350,8 +1350,11 @@ fn component_form_samples_expose_redacted_devtools_snapshots() {
     }));
 
     let validation_dogfood = pages::components::form_devtools_validation_dogfood_snapshot();
+    assert_eq!(validation_dogfood.status, FormStatus::Validating);
+    assert_eq!(validation_dogfood.validating_field_count(), 1);
     assert!(validation_dogfood.fields.iter().any(|field| {
-        field.meta.errors == ["amber canyon 882"]
+        field.meta.validating
+            && field.meta.errors == ["amber canyon 882"]
             && matches!(
                 &field.value,
                 RedactedValue::Json(serde_json::Value::String(value)) if value == "azure ridge 581"

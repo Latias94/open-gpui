@@ -4,13 +4,106 @@ use open_gpui_devtools::{
     DevtoolsDomainKind, DevtoolsProbe, DevtoolsTargetKind, ProbeId, SnapshotKind, form, resource,
 };
 use open_gpui_form::{
-    FieldId, FieldMetaSnapshot, FieldPath, FieldSnapshot, FormSnapshot, FormStatus, RedactedValue,
+    FieldId, FieldMetaSnapshot, FieldPath, FieldSnapshot, FormSnapshot, FormStatus, FormStore,
+    RedactedValue, RedactionPolicy, ValidationCompletion,
 };
 use open_gpui_resource::{
     MutationSnapshot, MutationStatus, PaginatedResourceSnapshot, PaginatedResourceSnapshotView,
     QueryKey, RedactedResourceValue, ResourcePage, ResourceRedactionPolicy, ResourceSnapshot,
     ResourceStatus,
 };
+
+fn assert_form_validation_projection(
+    tree: &open_gpui_devtools::SnapshotTree,
+    expected_status: &str,
+    expected_validating_field_count: usize,
+) {
+    let root = tree.nodes.first().expect("form projection root");
+    let payload = root.payload.as_ref().expect("form projection payload");
+    let validating_fields = root
+        .children
+        .iter()
+        .filter(|field| {
+            field
+                .payload
+                .as_ref()
+                .and_then(|payload| payload["meta"]["validating"].as_bool())
+                == Some(true)
+        })
+        .count();
+
+    assert_eq!(payload["status"], expected_status);
+    assert_eq!(
+        payload["validating_field_count"].as_u64(),
+        Some(expected_validating_field_count as u64)
+    );
+    assert_eq!(validating_fields, expected_validating_field_count);
+    if expected_validating_field_count == 0 {
+        assert!(root.children.iter().all(|field| {
+            field
+                .payload
+                .as_ref()
+                .and_then(|payload| payload["meta"]["validating"].as_bool())
+                == Some(false)
+        }));
+    }
+}
+
+#[test]
+fn form_adapter_projects_real_async_validation_lifecycle() {
+    let mut store = FormStore::default();
+    let email = FieldPath::new("account.email").unwrap();
+    store
+        .register_field(email.clone(), serde_json::json!("team@example.com"))
+        .unwrap();
+
+    let ticket = store.begin_async_validation(&email).unwrap();
+    let validating = store.snapshot(RedactionPolicy::RedactAll);
+    let probe_snapshot = form::form_probe_snapshot(&validating);
+    let envelope = form::form_snapshot_envelope(ProbeId::new("form").unwrap(), &validating);
+    let capture = form::form_capture(ProbeId::new("form.capture").unwrap(), &validating);
+
+    assert_eq!(validating.status, FormStatus::Validating);
+    assert_eq!(validating.validating_field_count(), 1);
+    assert!(validating.field(&email).unwrap().meta.validating);
+    assert_form_validation_projection(probe_snapshot.tree(), "Validating", 1);
+    assert_form_validation_projection(&envelope.tree, "Validating", 1);
+    assert_form_validation_projection(&capture.snapshots[0].tree, "Validating", 1);
+    assert_form_validation_projection(
+        &capture.domains[0]
+            .snapshot
+            .as_ref()
+            .expect("form capture domain snapshot")
+            .tree,
+        "Validating",
+        1,
+    );
+
+    assert_eq!(
+        store.complete_async_validation(ticket, Vec::new()),
+        ValidationCompletion::Applied
+    );
+    let completed = store.snapshot(RedactionPolicy::RedactAll);
+    let probe_snapshot = form::form_probe_snapshot(&completed);
+    let envelope = form::form_snapshot_envelope(ProbeId::new("form").unwrap(), &completed);
+    let capture = form::form_capture(ProbeId::new("form.capture").unwrap(), &completed);
+
+    assert_eq!(completed.status, FormStatus::Idle);
+    assert_eq!(completed.validating_field_count(), 0);
+    assert!(!completed.field(&email).unwrap().meta.validating);
+    assert_form_validation_projection(probe_snapshot.tree(), "Idle", 0);
+    assert_form_validation_projection(&envelope.tree, "Idle", 0);
+    assert_form_validation_projection(&capture.snapshots[0].tree, "Idle", 0);
+    assert_form_validation_projection(
+        &capture.domains[0]
+            .snapshot
+            .as_ref()
+            .expect("form capture domain snapshot")
+            .tree,
+        "Idle",
+        0,
+    );
+}
 
 #[test]
 fn form_resource_adapters_count_redacted_form_fields() {

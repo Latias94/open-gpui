@@ -86,7 +86,7 @@ pub fn form_devtools_dogfood_snapshot() -> FormSnapshot {
     store.snapshot(RedactionPolicy::Expose)
 }
 
-/// Returns the first-frame validation snapshot used by the DevTools dogfood session.
+/// Returns the first-frame pending validation snapshot used by the DevTools dogfood session.
 pub fn form_devtools_validation_dogfood_snapshot() -> FormSnapshot {
     let mut store = base_form_store();
     let email = path("account.email");
@@ -96,6 +96,7 @@ pub fn form_devtools_validation_dogfood_snapshot() -> FormSnapshot {
     store
         .validate_field(&email, |_| vec![VALIDATION_ERROR_CANARY.to_owned()])
         .unwrap();
+    let _validation = store.begin_async_validation(&email).unwrap();
     store.snapshot(RedactionPolicy::Expose)
 }
 
