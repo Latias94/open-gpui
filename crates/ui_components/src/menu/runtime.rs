@@ -5,17 +5,71 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
-use open_gpui::{App, Entity, FocusHandle, Pixels, Point, ScrollHandle, Task, Window};
+use open_gpui::{App, Entity, Pixels, Point, ScrollHandle, Task, Window};
 use open_gpui_ui_core::Rect;
+
+use crate::overlay::OverlayLayerBinding;
 
 pub(crate) const MENU_SUBMENU_OPEN_DELAY: Duration = Duration::from_millis(120);
 pub(crate) const MENU_SUBMENU_CLOSE_DELAY: Duration = Duration::from_millis(180);
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+pub(crate) struct MenuBranchBinding {
+    pub(crate) path: Vec<String>,
+    pub(crate) binding: OverlayLayerBinding,
+    pub(crate) stale_since_epoch: Option<u64>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct MenuBranchLayers {
+    bindings: HashMap<String, MenuBranchBinding>,
+    sync_epoch: u64,
+    cleanup_frame_scheduled: bool,
+}
+
+impl MenuBranchLayers {
+    pub(crate) fn bindings(&self) -> &HashMap<String, MenuBranchBinding> {
+        &self.bindings
+    }
+
+    pub(crate) fn replace_bindings(&mut self, bindings: HashMap<String, MenuBranchBinding>) {
+        self.bindings = bindings;
+    }
+
+    pub(crate) fn advance_sync_epoch(&mut self) -> u64 {
+        self.sync_epoch = self.sync_epoch.wrapping_add(1);
+        self.sync_epoch
+    }
+
+    pub(crate) fn schedule_cleanup_frame(&mut self) -> bool {
+        if self.cleanup_frame_scheduled {
+            false
+        } else {
+            self.cleanup_frame_scheduled = true;
+            true
+        }
+    }
+
+    pub(crate) fn finish_cleanup_frame(&mut self) {
+        self.cleanup_frame_scheduled = false;
+    }
+}
+
+pub(crate) trait MenuBranchRuntime: 'static {
+    fn branch_layers(&self) -> &MenuBranchLayers;
+
+    fn branch_layers_mut(&mut self) -> &mut MenuBranchLayers;
+
+    fn sync_resolved_open_path(&mut self, open_path: &[String]);
+
+    fn commit_branch_closed(&mut self, path: &[String], focused_value: String);
+}
+
+#[derive(Clone)]
 pub(crate) struct MenuRuntime {
     pub(crate) open: bool,
-    pub(crate) did_initial_focus: bool,
-    pub(crate) trigger_focus: FocusHandle,
+    pub(crate) overlay_binding: Option<OverlayLayerBinding>,
+    pub(crate) branch_layers: MenuBranchLayers,
     pub(crate) focused_value: Option<String>,
     pub(crate) focused_path: Option<Vec<String>>,
     pub(crate) open_path: Vec<String>,
@@ -26,21 +80,14 @@ pub(crate) struct MenuRuntime {
     pub(crate) scroll_handle: ScrollHandle,
     pub(crate) submenu_scroll_handles: HashMap<String, ScrollHandle>,
     pub(crate) submenu_trigger_bounds: HashMap<String, Rect>,
-    pub(crate) content_focus: FocusHandle,
 }
 
 impl MenuRuntime {
-    pub(crate) fn new(
-        open: bool,
-        trigger_focus: FocusHandle,
-        content_focus: FocusHandle,
-        focused_value: Option<String>,
-    ) -> Self {
+    pub(crate) fn new(open: bool, focused_value: Option<String>) -> Self {
         Self {
             open,
-            did_initial_focus: false,
-            trigger_focus,
-            content_focus,
+            overlay_binding: None,
+            branch_layers: MenuBranchLayers::default(),
             focused_value,
             focused_path: None,
             open_path: Vec::new(),
@@ -69,7 +116,6 @@ impl MenuRuntime {
     }
 
     pub(crate) fn reset_closed_state(&mut self) {
-        self.did_initial_focus = false;
         self.focused_value = None;
         self.focused_path = None;
         self.open_path.clear();
@@ -85,6 +131,20 @@ impl MenuRuntime {
         self.open_path = target.open_path().to_vec();
         self.focused_path = Some(target.focused_path().to_vec());
         self.focused_value = Some(target.focused_value().to_owned());
+    }
+
+    pub(crate) fn commit_branch_closed(&mut self, path: &[String], focused_value: String) {
+        if !self.open {
+            self.open_path.clear();
+            return;
+        }
+        if path.is_empty() || !self.open_path.starts_with(path) {
+            return;
+        }
+
+        self.open_path = path[..path.len() - 1].to_vec();
+        self.focused_path = Some(path.to_vec());
+        self.focused_value = Some(focused_value);
     }
 
     pub(crate) fn submenu_scroll_handle(&mut self, branch_key: &str) -> ScrollHandle {
@@ -109,39 +169,53 @@ impl MenuRuntime {
     }
 }
 
-#[derive(Debug, Clone)]
+impl MenuBranchRuntime for MenuRuntime {
+    fn branch_layers(&self) -> &MenuBranchLayers {
+        &self.branch_layers
+    }
+
+    fn branch_layers_mut(&mut self) -> &mut MenuBranchLayers {
+        &mut self.branch_layers
+    }
+
+    fn sync_resolved_open_path(&mut self, open_path: &[String]) {
+        self.open_path = open_path.to_vec();
+    }
+
+    fn commit_branch_closed(&mut self, path: &[String], focused_value: String) {
+        Self::commit_branch_closed(self, path, focused_value);
+    }
+}
+
+#[derive(Clone)]
 pub(crate) struct ContextMenuRuntime {
     pub(crate) open: bool,
     pub(crate) anchor_point: Point<Pixels>,
-    pub(crate) did_initial_focus: bool,
+    pub(crate) overlay_binding: Option<OverlayLayerBinding>,
+    pub(crate) branch_layers: MenuBranchLayers,
     pub(crate) seeded_focused_value: bool,
     pub(crate) focused_value: Option<String>,
     pub(crate) focused_path: Option<Vec<String>>,
     pub(crate) open_path: Vec<String>,
     pub(crate) scroll_handle: ScrollHandle,
-    pub(crate) content_focus: FocusHandle,
-    pub(crate) trigger_focus: FocusHandle,
 }
 
 impl ContextMenuRuntime {
     pub(crate) fn new(
         open: bool,
         anchor_point: Point<Pixels>,
-        content_focus: FocusHandle,
-        trigger_focus: FocusHandle,
         focused_value: Option<String>,
     ) -> Self {
         Self {
             open,
             anchor_point,
-            did_initial_focus: false,
+            overlay_binding: None,
+            branch_layers: MenuBranchLayers::default(),
             seeded_focused_value: false,
             focused_value,
             focused_path: None,
             open_path: Vec::new(),
             scroll_handle: ScrollHandle::new(),
-            content_focus,
-            trigger_focus,
         }
     }
 
@@ -164,15 +238,13 @@ impl ContextMenuRuntime {
     }
 
     pub(crate) fn reset_closed_state(&mut self) {
-        self.did_initial_focus = false;
         self.seeded_focused_value = false;
         self.focused_value = None;
         self.focused_path = None;
         self.open_path.clear();
     }
 
-    pub(crate) fn open_at(&mut self, anchor_point: Point<Pixels>) {
-        self.open = true;
+    pub(crate) fn prepare_open_at(&mut self, anchor_point: Point<Pixels>) {
         self.anchor_point = anchor_point;
         self.focused_path = None;
         self.open_path.clear();
@@ -189,6 +261,39 @@ impl ContextMenuRuntime {
         self.open_path = target.open_path().to_vec();
         self.focused_path = Some(target.focused_path().to_vec());
         self.focused_value = Some(target.focused_value().to_owned());
+    }
+
+    pub(crate) fn commit_branch_closed(&mut self, path: &[String], focused_value: String) {
+        if !self.open {
+            self.open_path.clear();
+            return;
+        }
+        if path.is_empty() || !self.open_path.starts_with(path) {
+            return;
+        }
+
+        self.seeded_focused_value = true;
+        self.open_path = path[..path.len() - 1].to_vec();
+        self.focused_path = Some(path.to_vec());
+        self.focused_value = Some(focused_value);
+    }
+}
+
+impl MenuBranchRuntime for ContextMenuRuntime {
+    fn branch_layers(&self) -> &MenuBranchLayers {
+        &self.branch_layers
+    }
+
+    fn branch_layers_mut(&mut self) -> &mut MenuBranchLayers {
+        &mut self.branch_layers
+    }
+
+    fn sync_resolved_open_path(&mut self, open_path: &[String]) {
+        self.open_path = open_path.to_vec();
+    }
+
+    fn commit_branch_closed(&mut self, path: &[String], focused_value: String) {
+        Self::commit_branch_closed(self, path, focused_value);
     }
 }
 

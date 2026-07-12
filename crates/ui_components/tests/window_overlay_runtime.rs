@@ -490,8 +490,8 @@ fn controlled_registration(
     events: Rc<RefCell<Vec<bool>>>,
 ) -> OverlayLayerRegistration {
     OverlayLayerRegistration::new(id, policy, OverlayOwnership::Controlled).on_open_change(
-        move |open, _, _| {
-            events.borrow_mut().push(open);
+        move |intent, _, _| {
+            events.borrow_mut().push(intent.desired_open());
         },
     )
 }

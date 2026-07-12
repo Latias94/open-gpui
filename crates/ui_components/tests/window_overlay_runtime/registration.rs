@@ -386,7 +386,7 @@ fn same_phase_rebind_invalidates_callbacks_captured_by_an_older_dispatch(
         })
         .on_open_change({
             let observers = old_target_observers.clone();
-            move |open, _, _| observers.borrow_mut().push(open)
+            move |intent, _, _| observers.borrow_mut().push(intent.desired_open())
         }),
     );
     target_slot.replace(Some(target));
@@ -439,7 +439,7 @@ fn same_phase_rebind_invalidates_callbacks_captured_by_an_older_dispatch(
                         })
                         .on_open_change({
                             let observers = new_target_observers.clone();
-                            move |open, _, _| observers.borrow_mut().push(open)
+                            move |intent, _, _| observers.borrow_mut().push(intent.desired_open())
                         }),
                         window,
                         cx,
@@ -516,7 +516,11 @@ fn stale_subtree_dispatch_cannot_cross_an_identical_id_remount(cx: &mut open_gpu
         })
         .on_open_change({
             let old_target_observers = old_target_observers.clone();
-            move |open, _, _| old_target_observers.borrow_mut().push(open)
+            move |intent, _, _| {
+                old_target_observers
+                    .borrow_mut()
+                    .push(intent.desired_open())
+            }
         }),
     );
     target_slot.replace(Some(old_target.clone()));
@@ -580,7 +584,11 @@ fn stale_subtree_dispatch_cannot_cross_an_identical_id_remount(cx: &mut open_gpu
                         })
                         .on_open_change({
                             let replacement_observers = replacement_observers.clone();
-                            move |open, _, _| replacement_observers.borrow_mut().push(open)
+                            move |intent, _, _| {
+                                replacement_observers
+                                    .borrow_mut()
+                                    .push(intent.desired_open())
+                            }
                         }),
                         window,
                         cx,

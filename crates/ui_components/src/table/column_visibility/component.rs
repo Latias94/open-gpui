@@ -282,8 +282,8 @@ impl RenderOnce for TableColumnVisibility {
         }
 
         if let Some(on_open_change) = on_open_change {
-            popover = popover.on_open_change(move |open, window, cx| {
-                on_open_change(open, window, cx);
+            popover = popover.on_open_change(move |intent, window, cx| {
+                on_open_change(intent.desired_open(), window, cx);
             });
         }
 

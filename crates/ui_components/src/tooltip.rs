@@ -19,7 +19,9 @@ use open_gpui_ui_core::{
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayLayerHost, OverlayResolvedState,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayInsideRegionId, OverlayLayerBinding,
+    OverlayLayerRegistration, OverlayOwnership, OverlayResolvedState, WindowOverlayRuntime,
+    gpui_overlay_state, gpui_relative_overlay_layer,
 };
 use crate::theme::{ThemeContext, ThemeResolver};
 
@@ -333,11 +335,16 @@ pub struct Tooltip {
     placement_alignment: OverlayPlacementAlignment,
     delay: TooltipDelayPolicy,
     tokens: ThemeTokens,
+    active_tooltip_surface: bool,
 }
 
 enum TooltipContent {
     Text(SharedString),
     Element(AnyElement),
+}
+
+struct TooltipRuntime {
+    overlay_binding: Option<OverlayLayerBinding>,
 }
 
 impl Tooltip {
@@ -354,6 +361,7 @@ impl Tooltip {
             placement_alignment: OverlayPlacementAlignment::Center,
             delay: TooltipDelayPolicy::default(),
             tokens: ThemeTokens::default(),
+            active_tooltip_surface: false,
         }
     }
 
@@ -370,6 +378,7 @@ impl Tooltip {
             placement_alignment: OverlayPlacementAlignment::Center,
             delay: TooltipDelayPolicy::default(),
             tokens: ThemeTokens::default(),
+            active_tooltip_surface: false,
         }
     }
 
@@ -440,6 +449,11 @@ impl Tooltip {
     /// Applies a token bundle.
     pub fn tokens(mut self, tokens: ThemeTokens) -> Self {
         self.tokens = tokens;
+        self
+    }
+
+    fn active_tooltip_surface(mut self) -> Self {
+        self.active_tooltip_surface = true;
         self
     }
 
@@ -514,6 +528,8 @@ struct TextTooltipView {
 impl Render for TextTooltipView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Tooltip::new("tooltip", self.text.clone())
+            .open(true)
+            .active_tooltip_surface()
     }
 }
 
@@ -535,6 +551,8 @@ impl Render for ActionTooltipView {
                     this.child(Kbd::new("tooltip-keybinding", key_binding).xsmall())
                 }),
         )
+        .open(true)
+        .active_tooltip_surface()
     }
 }
 
@@ -546,16 +564,41 @@ impl Sizable for Tooltip {
 }
 
 impl RenderOnce for Tooltip {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| TooltipRuntime {
+            overlay_binding: None,
+        });
         let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
+        let active_tooltip_surface = self.active_tooltip_surface;
         let id = self.id;
         let debug_id = id.to_string();
         let accessible_label = accessible_label_for_content(&self.content);
         let children = children_from_content(self.content);
         let content_id: ElementId = (id.clone(), "content").into();
-        let overlay_host = OverlayLayerHost::resolve(state.overlay());
+        let window_overlay_runtime = WindowOverlayRuntime::for_window(window, cx);
+        let registration = OverlayLayerRegistration::new(
+            format!("tooltip:{debug_id}"),
+            state.overlay().policy().clone(),
+            OverlayOwnership::Controlled,
+        );
+        let existing_binding = runtime.read(cx).overlay_binding.clone();
+        let overlay_binding = window_overlay_runtime
+            .bind_component_layer(
+                &runtime,
+                existing_binding.as_ref(),
+                registration,
+                window,
+                cx,
+            )
+            .expect("tooltip overlay registration should remain valid");
+        if existing_binding.is_none() {
+            runtime.update(cx, |runtime, _| {
+                runtime.overlay_binding = Some(overlay_binding.clone());
+            });
+        }
+        let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 OverlayAnchorInput::from_layout_bounds(rect(
@@ -570,8 +613,28 @@ impl RenderOnce for Tooltip {
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
             .with_offset(ui_px(4.0)),
-            overlay_host.adapter().snap_margin(),
+            overlay_adapter.snap_margin(),
         );
+        let surface = window_overlay_runtime
+            .surface(
+                &overlay_binding,
+                OverlayInsideRegionId::new("surface"),
+                format!("tooltip:{debug_id}:surface-runtime"),
+                tooltip_surface_element(
+                    content_id,
+                    debug_id.clone(),
+                    state,
+                    accessible_label,
+                    children,
+                    &theme,
+                ),
+            )
+            .into_any_element();
+        let layer = if active_tooltip_surface {
+            surface
+        } else {
+            gpui_relative_overlay_layer(&overlay_adapter, &placement, surface)
+        };
 
         div()
             .id(id)
@@ -580,22 +643,9 @@ impl RenderOnce for Tooltip {
                 move || format!("tooltip:{debug_id}:root")
             })
             .relative()
-            .when(
-                overlay_host.adapter().should_render_deferred_layer(),
-                |this| {
-                    this.child(overlay_host.relative_layer(
-                        &placement,
-                        tooltip_surface_element(
-                            content_id,
-                            debug_id,
-                            state,
-                            accessible_label,
-                            children,
-                            &theme,
-                        ),
-                    ))
-                },
-            )
+            .when(overlay_adapter.should_render_deferred_layer(), |this| {
+                this.child(layer)
+            })
     }
 }
 

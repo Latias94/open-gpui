@@ -11,17 +11,17 @@ use open_gpui_ui_components::{
     SheetSide, SheetState, Tooltip, TooltipDelayPolicy, TooltipOpenIntent, TooltipState,
 };
 use open_gpui_ui_core::{
-    OutsidePressPolicy, OverlayLayerKind, OverlayLayerPolicy, OverlayPlacementAlignment,
-    OverlayPlacementSide, OverlayPresence, Rect, Sizable, Size, ThemeTokens,
-    anchor_rect_from_point, outer_bounds_with_window_margin, prefer_visual_bounds, rect, ui_point,
-    ui_px, ui_size,
+    EscapeKeyPolicy, OutsidePressPolicy, OverlayLayerKind, OverlayLayerPolicy,
+    OverlayPlacementAlignment, OverlayPlacementSide, OverlayPresence, Rect, Sizable, Size,
+    ThemeTokens, anchor_rect_from_point, outer_bounds_with_window_margin, prefer_visual_bounds,
+    rect, ui_point, ui_px, ui_size,
 };
 
 /// Page title.
 pub const TITLE: &str = "Overlay";
 /// Page summary.
 pub const SUMMARY: &str =
-    "Anchor geometry plus renderer-neutral overlay presence, dismissal, and focus policy.";
+    "Anchor geometry, renderer-neutral policy, and per-window overlay runtime behavior.";
 /// Foundation signals rendered by this page.
 pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_foundation_gallery::pages::overlay::OVERLAY_CATALOG",
@@ -46,6 +46,8 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::SheetState",
     "open_gpui_ui_components::Menu",
     "open_gpui_ui_components::MenuState",
+    "open_gpui_ui_components::gpui_adapter::WindowOverlayRuntime",
+    "open_gpui_ui_components::gpui_adapter::WindowOverlaySnapshot",
     "open_gpui_ui_components::ContextMenu",
     "open_gpui_ui_components::ContextMenuState",
     "anchor_rect_from_point()",
@@ -164,7 +166,7 @@ pub const OVERLAY_CATALOG: &[OverlayCatalogEntry] = &[
         "overlay-catalog:HoverCard",
         &[
             "overlay_page_hover_card_samples_expose_interactive_hover_contracts",
-            "overlay_gallery_smoke_opens_hover_card_from_real_trigger_and_dismisses",
+            "overlay_gallery_smoke_keeps_hover_card_open_on_outside_press_and_dismisses_on_escape",
             "overlay_gallery_smoke_toggles_hover_card_from_control_surface",
         ],
     ),
@@ -172,7 +174,7 @@ pub const OVERLAY_CATALOG: &[OverlayCatalogEntry] = &[
         "Popover",
         "non-modal",
         "PopoverState",
-        "state samples / outside-press smoke / focus restore",
+        "state samples / runtime layer / outside press / focus restore",
         "gallery:overlay-popover-sample:default-open",
         "overlay-catalog:Popover",
         &[
@@ -184,12 +186,13 @@ pub const OVERLAY_CATALOG: &[OverlayCatalogEntry] = &[
         "Dialog",
         "modal",
         "DialogState",
-        "state samples / barrier smoke / escape smoke",
+        "state samples / modal runtime / controlled refusal / focus restore",
         "gallery:overlay-dialog-sample:controlled-modal",
         "overlay-catalog:Dialog",
         &[
             "overlay_page_dialog_samples_expose_modal_and_close_contracts",
             "overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape",
+            "overlay_gallery_smoke_controlled_dialog_refusal_keeps_modal_authority",
         ],
     ),
     OverlayCatalogEntry::official(
@@ -220,12 +223,14 @@ pub const OVERLAY_CATALOG: &[OverlayCatalogEntry] = &[
         "Menu",
         "menu",
         "MenuState",
-        "state samples / roving-focus smoke / outside-press smoke",
+        "state samples / runtime layer / submenu parentage / focus restore",
         "gallery:overlay-menu-sample:default-open",
         "overlay-catalog:Menu",
         &[
             "overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts",
             "overlay_gallery_smoke_closes_menu_from_escape_and_outside_press",
+            "overlay_gallery_smoke_opens_menu_submenu_from_hover",
+            "overlay_gallery_smoke_nested_popover_menu_dialog_restores_focus_lifo",
         ],
     ),
     OverlayCatalogEntry::official(
@@ -366,7 +371,7 @@ pub fn overlay_story_contracts() -> Vec<StoryContract> {
                 entry.state,
                 entry.catalog_selector(),
                 entry.sample_selector,
-                Some("gallery:overlay-menu-control:controlled"),
+                Some("menu:overlay-menu-demo:controlled:trigger"),
                 Some("menu:overlay-menu-demo:controlled:content"),
                 Some("gallery:overlay-menu-control:controlled"),
                 OVERLAY_CONTROL_OPEN_DISMISS_PROBES,
@@ -387,7 +392,7 @@ pub fn overlay_story_contracts() -> Vec<StoryContract> {
         .collect()
 }
 
-const OVERLAY_CONTROLLED_SAMPLE_COUNT: usize = 7;
+const OVERLAY_CONTROLLED_SAMPLE_COUNT: usize = 8;
 
 #[repr(usize)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -399,6 +404,7 @@ pub(crate) enum OverlayControlledSample {
     Sheet,
     Menu,
     ContextMenu,
+    NestedDialog,
 }
 
 /// Mutable shell state for the overlay page.
@@ -407,6 +413,7 @@ pub(crate) struct OverlayPageState {
     open: bool,
     hovered_tooltip_sample: Option<&'static str>,
     overlay_controlled_open: OverlayControlledOpenState,
+    refuse_dialog_close: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -424,6 +431,7 @@ impl OverlayControlledOpenState {
         OverlayControlledSample::Sheet,
         OverlayControlledSample::Menu,
         OverlayControlledSample::ContextMenu,
+        OverlayControlledSample::NestedDialog,
     ];
 
     const fn is_open(self, sample: OverlayControlledSample) -> bool {
@@ -467,6 +475,11 @@ impl OverlayPageState {
         self.overlay_controlled_open.is_open(sample)
     }
 
+    /// Returns whether the controlled Dialog sample refuses semantic close requests.
+    pub(crate) fn refuses_dialog_close(self) -> bool {
+        self.refuse_dialog_close
+    }
+
     /// Opens or closes the demo overlay and returns whether the state changed.
     pub(crate) fn set_overlay_open(&mut self, open: bool) -> bool {
         if self.open == open {
@@ -496,9 +509,14 @@ impl OverlayPageState {
         self.overlay_controlled_open.set_open(sample, open)
     }
 
-    /// Clears the controlled sample open flags and returns whether the state changed.
-    pub(crate) fn close_controlled_overlays(&mut self) -> bool {
-        self.overlay_controlled_open.reset()
+    /// Updates whether the controlled Dialog sample refuses close requests.
+    pub(crate) fn set_refuse_dialog_close(&mut self, refuse: bool) -> bool {
+        if self.refuse_dialog_close == refuse {
+            return false;
+        }
+
+        self.refuse_dialog_close = refuse;
+        true
     }
 
     /// Clears page-local state when navigating away.
@@ -508,6 +526,10 @@ impl OverlayPageState {
             changed = true;
         }
         changed |= self.overlay_controlled_open.reset();
+        if self.refuse_dialog_close {
+            self.refuse_dialog_close = false;
+            changed = true;
+        }
         changed
     }
 }
@@ -758,7 +780,6 @@ pub fn hover_card_samples(tokens: ThemeTokens) -> [HoverCardSample; 3] {
                 Duration::from_millis(80),
                 Duration::from_millis(20),
             ))
-            .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
             .placement_side(OverlayPlacementSide::Top)
             .tokens(tokens)
             .state(),
@@ -967,6 +988,7 @@ pub fn alert_dialog_samples(tokens: ThemeTokens) -> [AlertDialogSample; 2] {
             )
             .cancel_label("Keep project")
             .intent(AlertDialogIntent::Destructive)
+            .escape_key_policy(EscapeKeyPolicy::Dismiss)
             .open(false)
             .tokens(tokens)
             .state(),
@@ -1261,6 +1283,7 @@ mod tests {
 
         assert!(!state.overlay_open());
         assert_eq!(state.hovered_tooltip_sample(), None);
+        assert!(!state.refuses_dialog_close());
         assert!(!state.is_controlled_open(OverlayControlledSample::HoverCard));
         for sample in OverlayControlledOpenState::ALL {
             assert!(!state.is_controlled_open(sample));
@@ -1274,13 +1297,18 @@ mod tests {
         assert!(state.is_controlled_open(OverlayControlledSample::HoverCard));
         assert!(!state.is_controlled_open(OverlayControlledSample::Popover));
         assert!(!state.set_controlled_open(OverlayControlledSample::HoverCard, true));
-        assert!(state.close_controlled_overlays());
-        assert!(!state.is_controlled_open(OverlayControlledSample::HoverCard));
+        assert!(state.set_controlled_open(OverlayControlledSample::NestedDialog, true));
+        assert!(state.is_controlled_open(OverlayControlledSample::NestedDialog));
+        assert!(state.set_refuse_dialog_close(true));
+        assert!(state.refuses_dialog_close());
+        assert!(!state.set_refuse_dialog_close(true));
         assert!(state.set_overlay_open(false));
         assert!(state.reset_on_page_change());
         assert!(!state.overlay_open());
         assert_eq!(state.hovered_tooltip_sample(), None);
-        assert!(!state.close_controlled_overlays());
+        assert!(!state.refuses_dialog_close());
+        assert!(!state.is_controlled_open(OverlayControlledSample::HoverCard));
+        assert!(!state.is_controlled_open(OverlayControlledSample::NestedDialog));
         assert!(!state.reset_on_page_change());
     }
 }

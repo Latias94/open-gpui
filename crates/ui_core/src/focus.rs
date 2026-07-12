@@ -283,8 +283,8 @@ pub struct FocusRestoreInput<'a> {
     pub newer_claim: Option<&'a FocusTargetCandidate>,
     /// The target saved when the closing scope opened.
     pub saved_target: Option<&'a FocusTargetCandidate>,
-    /// Last-live targets from active ancestors, nearest ancestor first.
-    pub ancestor_last_targets: &'a [FocusTargetCandidate],
+    /// Ordered restore candidates from active ancestors, nearest ancestor first.
+    pub ancestor_targets: &'a [FocusTargetCandidate],
     /// Explicitly registered application fallback for this window.
     pub window_fallback: Option<&'a FocusTargetCandidate>,
     /// Focus observed when the restoration is committed.
@@ -295,7 +295,7 @@ pub struct FocusRestoreInput<'a> {
 pub fn resolve_focus_restore(input: FocusRestoreInput<'_>) -> FocusResolution {
     available(input.newer_claim)
         .or_else(|| available(input.saved_target))
-        .or_else(|| first_available(input.ancestor_last_targets))
+        .or_else(|| first_available(input.ancestor_targets))
         .or_else(|| available(input.window_fallback))
         .map(target_resolution)
         .unwrap_or_else(|| {
@@ -365,11 +365,11 @@ mod tests {
         let current = available("current");
         let ancestors = [stale_ancestor, live_ancestor];
 
-        let resolve = |newer_claim, saved_target, ancestor_last_targets, window_fallback| {
+        let resolve = |newer_claim, saved_target, ancestor_targets, window_fallback| {
             resolve_focus_restore(FocusRestoreInput {
                 newer_claim,
                 saved_target,
-                ancestor_last_targets,
+                ancestor_targets,
                 window_fallback,
                 current_target: Some(&current),
             })

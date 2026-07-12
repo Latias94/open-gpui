@@ -1,6 +1,70 @@
 use super::*;
 
 #[open_gpui::test]
+fn declared_focus_target_ids_are_isolated_per_layer(cx: &mut open_gpui::TestAppContext) {
+    let (view, cx) = cx.add_window_view(RuntimeProbe::new);
+    draw(cx);
+    let first = register_layer(
+        cx,
+        &view,
+        uncontrolled_registration(
+            "focus-target-namespace-a",
+            OverlayLayerPolicy::new(OverlayLayerKind::Modal, OverlayPresence::hidden()),
+        ),
+    );
+    let second = register_layer(
+        cx,
+        &view,
+        uncontrolled_registration(
+            "focus-target-namespace-b",
+            OverlayLayerPolicy::new(OverlayLayerKind::Modal, OverlayPresence::hidden()),
+        ),
+    );
+
+    let (first_target, second_target) = cx.update_window_entity(&view, |probe, window, cx| {
+        let first_target = probe
+            .runtime
+            .register_focus_target(
+                &first,
+                FocusTargetRegistration::new("shared-action", &probe.first_extra_focus),
+                window,
+                cx,
+            )
+            .expect("the first layer-local target should register");
+        let second_target = probe
+            .runtime
+            .register_focus_target(
+                &second,
+                FocusTargetRegistration::new("shared-action", &probe.second_extra_focus),
+                window,
+                cx,
+            )
+            .expect("the second layer may reuse the same declared target id");
+        (first_target, second_target)
+    });
+
+    assert_eq!(
+        first_target.declared_target_id(),
+        &FocusTargetId::new("shared-action")
+    );
+    assert_eq!(
+        second_target.declared_target_id(),
+        &FocusTargetId::new("shared-action")
+    );
+
+    cx.update_window_entity(&view, |probe, window, cx| {
+        probe
+            .runtime
+            .unregister_focus_target(&first, &first_target, window, cx)
+            .expect("the first layer should release only its canonical target");
+        probe
+            .runtime
+            .unregister_focus_target(&second, &second_target, window, cx)
+            .expect("the second layer should release only its canonical target");
+    });
+}
+
+#[open_gpui::test]
 fn top_escape_ignore_blocks_lower_overlay_and_application_key_dispatch(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -347,9 +411,10 @@ fn delayed_controlled_close_restore_cannot_steal_focus_from_callback_opened_laye
             OverlayOwnership::Controlled,
         )
         .focus_mode(OverlayFocusMode::Modal)
-        .on_open_change(move |open, window, cx| {
-            events_for_callback.borrow_mut().push(open);
-            if open {
+        .on_open_change(move |intent, window, cx| {
+            let desired_open = intent.desired_open();
+            events_for_callback.borrow_mut().push(desired_open);
+            if desired_open {
                 return;
             }
             runtime_for_callback
@@ -417,7 +482,7 @@ fn delayed_controlled_close_restore_cannot_steal_focus_from_callback_opened_laye
 }
 
 #[open_gpui::test]
-fn nested_focus_scopes_restore_parent_then_window_fallback_in_lifo_order(
+fn nested_focus_scopes_restore_parent_then_root_trigger_in_lifo_order(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let (view, cx) = cx.add_window_view(RuntimeProbe::new);
@@ -481,7 +546,112 @@ fn nested_focus_scopes_restore_parent_then_window_fallback_in_lifo_order(
             .expect("parent should close");
     });
     settle_focus_claims(cx);
-    assert!(cx.debug_selector_is_focused("window-overlay-runtime:fallback"));
+    assert!(cx.debug_selector_is_focused("window-overlay-runtime:focus-parent:trigger"));
+}
+
+#[open_gpui::test]
+fn missing_opening_focus_restores_the_registered_trigger_fallback(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(RuntimeProbe::new);
+    draw(cx);
+    let binding = register_layer(
+        cx,
+        &view,
+        uncontrolled_registration(
+            "missing-opening-focus",
+            OverlayLayerPolicy::new(
+                OverlayLayerKind::NonModalDismissible,
+                OverlayPresence::hidden(),
+            ),
+        )
+        .focus_mode(OverlayFocusMode::Passive)
+        .focus_restore_condition(OverlayFocusRestoreCondition::Always),
+    );
+    draw(cx);
+
+    cx.update_window_entity(&view, |probe, window, cx| {
+        probe
+            .runtime
+            .request_open_change(&binding, true, DismissReason::Programmatic, window, cx)
+            .expect("hidden layer should open without a current focus target");
+    });
+    settle_focus_claims(cx);
+    cx.update_window_entity(&view, |_, window, cx| {
+        binding.surface_focus().focus(window, cx);
+    });
+    draw(cx);
+    assert!(cx.debug_selector_is_focused("window-overlay-runtime:missing-opening-focus:surface"));
+
+    cx.update_window_entity(&view, |probe, window, cx| {
+        probe
+            .runtime
+            .request_open_change(&binding, false, DismissReason::Programmatic, window, cx)
+            .expect("layer should close through its runtime authority");
+    });
+    settle_focus_claims(cx);
+
+    assert!(
+        cx.debug_selector_is_focused("window-overlay-runtime:missing-opening-focus:trigger"),
+        "the registered trigger is the deterministic fallback when opening captured no target"
+    );
+}
+
+#[open_gpui::test]
+fn child_surface_focus_marks_a_passive_parent_as_entered(cx: &mut open_gpui::TestAppContext) {
+    let (view, cx) = cx.add_window_view(RuntimeProbe::new);
+    draw(cx);
+    let parent = register_layer(
+        cx,
+        &view,
+        uncontrolled_registration(
+            "focus-entered-parent",
+            OverlayLayerPolicy::new(
+                OverlayLayerKind::NonModalDismissible,
+                OverlayPresence::hidden(),
+            ),
+        )
+        .focus_mode(OverlayFocusMode::Passive),
+    );
+    draw(cx);
+    cx.update_window_entity(&view, |probe, window, cx| {
+        probe
+            .runtime
+            .request_open_change(&parent, true, DismissReason::Programmatic, window, cx)
+            .expect("parent layer should open without a current focus target");
+    });
+    settle_focus_claims(cx);
+
+    let child = register_layer(
+        cx,
+        &view,
+        uncontrolled_registration(
+            "focus-entered-child",
+            OverlayLayerPolicy::new(OverlayLayerKind::Menu, OverlayPresence::open()),
+        )
+        .parent("focus-entered-parent"),
+    );
+    settle_focus_claims(cx);
+    assert!(cx.debug_selector_is_focused("window-overlay-runtime:focus-entered-child:surface"));
+    cx.update_window_entity(&view, |probe, window, cx| {
+        probe.underlay_focus.focus(window, cx);
+        child.surface_focus().focus(window, cx);
+    });
+    draw(cx);
+
+    cx.update_window_entity(&view, |probe, window, cx| {
+        probe
+            .runtime
+            .request_open_change(&parent, false, DismissReason::Programmatic, window, cx)
+            .expect("parent close should close its active child subtree");
+    });
+    settle_focus_claims(cx);
+
+    assert_eq!(
+        cx.focused_debug_selector().as_deref(),
+        Some("window-overlay-runtime:focus-entered-parent:trigger"),
+        "focus entering a child layer must make the passive parent eligible for restoration",
+    );
 }
 
 #[open_gpui::test]
@@ -544,7 +714,7 @@ fn unmounted_trigger_restores_live_window_fallback(cx: &mut open_gpui::TestAppCo
 }
 
 #[open_gpui::test]
-fn unmounted_initial_focus_surface_restores_without_a_newer_focus_claim(
+fn unmounted_initial_focus_surface_restores_declared_trigger_without_a_newer_focus_claim(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let (view, cx) = cx.add_window_view(RuntimeProbe::new);
@@ -587,7 +757,7 @@ fn unmounted_initial_focus_surface_restores_without_a_newer_focus_claim(
             .expect("modal should restore after its initial surface unmounts");
     });
     settle_focus_claims(cx);
-    assert!(cx.debug_selector_is_focused("window-overlay-runtime:fallback"));
+    assert!(cx.debug_selector_is_focused("window-overlay-runtime:initial-unmount-modal:trigger"));
 }
 
 #[open_gpui::test]

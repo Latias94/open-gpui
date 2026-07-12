@@ -8,25 +8,26 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent, MouseButton, ParentElement,
+    AnyElement, App, ClickEvent, ElementId, IntoElement, KeyDownEvent, MouseButton, ParentElement,
     Pixels, Point, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
     Window, div, px,
 };
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, Role, Sizable,
-    Size, ThemeTokens,
+    DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+    Role, Sizable, Size, ThemeTokens,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::{gpui_point_from_ui, ui_point_from_gpui};
 use crate::menu::{
-    MenuItem, MenuItemKind, MenuKeyboardIntent, MenuSelection, MenuSubmenuNavigation,
-    visible_menu_items,
+    MenuBranchBindings, MenuItem, MenuItemKind, MenuItemState, MenuKeyboardIntent, MenuSelection,
+    MenuSubmenuNavigation, menu_path_key, sync_menu_branch_bindings, visible_menu_items,
 };
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayCloseRuntimeRequest, OverlayLayerHost, OverlayOpenRuntimeRequest,
-    resolve_overlay_open_state, set_overlay_open,
+    GpuiOverlayPlacement, OverlayInsideRegionId, OverlayLayerBinding, OverlayLayerRegistration,
+    OverlayOpenIntent, OverlayOwnership, WindowOverlayRuntime, gpui_overlay_state,
+    gpui_positioned_overlay_layer, resolve_overlay_open_state,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::{ThemeContext, ThemeResolver};
@@ -49,7 +50,7 @@ pub struct ContextMenu {
     initial_focus_intent: InitialFocusIntent,
     focus_restore_intent: FocusRestoreIntent,
     tokens: ThemeTokens,
-    on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
+    on_open_change: Option<Rc<dyn Fn(OverlayOpenIntent, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
 }
 
@@ -141,10 +142,10 @@ impl ContextMenu {
         self
     }
 
-    /// Registers an open-change handler with the next open value.
+    /// Registers an open-change handler with the runtime-issued intent.
     pub fn on_open_change(
         mut self,
-        handler: impl Fn(bool, &mut Window, &mut App) + 'static,
+        handler: impl Fn(OverlayOpenIntent, &mut Window, &mut App) + 'static,
     ) -> Self {
         let handler = Rc::new(handler);
         self.on_open_change = Some(handler);
@@ -188,14 +189,10 @@ impl Sizable for ContextMenu {
 impl RenderOnce for ContextMenu {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = ThemeResolver::current(cx);
-        let content_focus = cx.focus_handle();
-        let trigger_focus = cx.focus_handle();
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| {
             ContextMenuRuntime::new(
                 self.default_open,
                 self.anchor_point,
-                content_focus.clone(),
-                trigger_focus.clone(),
                 self.focused_value.clone(),
             )
         });
@@ -238,32 +235,69 @@ impl RenderOnce for ContextMenu {
         let label = self.label;
         let on_open_change = self.on_open_change;
         let on_select = self.on_select;
-        let focus_restore = state.menu().focus_restore_intent().clone();
-        let initial_focus = state.menu().initial_focus_intent().clone();
-        let runtime_state = runtime.read(cx).clone();
-        let trigger_focus = runtime_state.trigger_focus.clone();
-        let content_focus = runtime_state.content_focus.clone();
-        let scroll_handle = runtime_state.scroll_handle.clone();
-        let overlay_host = OverlayLayerHost::resolve(state.overlay());
-        let placement = GpuiOverlayPlacement::resolve(
-            state.placement_input(),
-            overlay_host.adapter().snap_margin(),
+        let window_overlay_runtime = WindowOverlayRuntime::for_window(window, cx);
+        let ownership = if open_state.controlled() {
+            OverlayOwnership::Controlled
+        } else {
+            OverlayOwnership::Uncontrolled
+        };
+        let mut registration = OverlayLayerRegistration::new(
+            format!("context-menu:{debug_id}"),
+            state.overlay().policy().clone(),
+            ownership,
         );
+        if let Some(on_open_change) = on_open_change.clone() {
+            registration = registration.on_open_change(move |intent, window, cx| {
+                on_open_change(intent, window, cx);
+            });
+        }
+        if ownership == OverlayOwnership::Uncontrolled {
+            let runtime = runtime.downgrade();
+            registration = registration.uncontrolled_commit(move |open, _, cx| {
+                let _ = runtime.update(cx, |runtime, _| {
+                    runtime.open = open;
+                    if !open {
+                        runtime.reset_closed_state();
+                    }
+                });
+            });
+        }
+        let existing_binding = runtime.read(cx).overlay_binding.clone();
+        let root_binding = window_overlay_runtime
+            .bind_component_layer(
+                &runtime,
+                existing_binding.as_ref(),
+                registration,
+                window,
+                cx,
+            )
+            .expect("context menu root overlay registration should remain valid");
+        if existing_binding.is_none() {
+            runtime.update(cx, |runtime, _| {
+                runtime.overlay_binding = Some(root_binding.clone());
+            });
+        }
+        let branch_bindings = sync_menu_branch_bindings(
+            "context-menu",
+            &debug_id,
+            state.menu(),
+            &runtime,
+            &window_overlay_runtime,
+            &root_binding,
+            window,
+            cx,
+        );
+        let runtime_state = runtime.read(cx).clone();
+        let scroll_handle = runtime_state.scroll_handle.clone();
+        let overlay_adapter = gpui_overlay_state(state.overlay());
+        let placement =
+            GpuiOverlayPlacement::resolve(state.placement_input(), overlay_adapter.snap_margin());
         let open_runtime = runtime.clone();
-        let open_change = on_open_change.clone();
-        let open_overlay_host = overlay_host.clone();
+        let open_window_overlay_runtime = window_overlay_runtime.clone();
+        let open_root_binding = root_binding.clone();
         let hotspot_focus_shadow = focus_ring_shadow_with_theme(state.menu().focus_ring(), &theme);
 
-        if state.open() && !runtime_state.did_initial_focus {
-            runtime.update(cx, |runtime, _| {
-                runtime.did_initial_focus = true;
-            });
-            if let Some(focus) = context_menu_initial_focus_handle(&runtime, &initial_focus, cx) {
-                window.defer(cx, move |window, cx| focus.focus(window, cx));
-            }
-        }
-
-        div()
+        let source = div()
             .id(id.clone())
             .debug_selector({
                 let debug_id = debug_id.clone();
@@ -279,21 +313,22 @@ impl RenderOnce for ContextMenu {
             .p_3()
             .cursor_context_menu()
             .on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                open_overlay_host.consume_event(window, cx);
+                cx.stop_propagation();
+                window.prevent_default();
                 let anchor_point = event.position;
-                open_overlay_host.apply_open_change(
-                    OverlayOpenRuntimeRequest::new(
-                        open_runtime.clone(),
+                open_runtime.update(cx, |runtime, cx| {
+                    runtime.prepare_open_at(anchor_point);
+                    cx.notify();
+                });
+                open_window_overlay_runtime
+                    .request_open_change(
+                        &open_root_binding,
                         true,
-                        open_change.as_deref(),
-                    ),
-                    window,
-                    cx,
-                    move |runtime| {
-                        runtime.open_at(anchor_point);
-                        set_overlay_open(&mut runtime.open, true);
-                    },
-                );
+                        DismissReason::Trigger,
+                        window,
+                        cx,
+                    )
+                    .expect("context menu source should own its root overlay registration");
             })
             .child(
                 div()
@@ -305,14 +340,14 @@ impl RenderOnce for ContextMenu {
                     .ui_role(Role::Button)
                     .aria_label(label.clone())
                     .focusable()
-                    .track_focus(&trigger_focus)
+                    .track_focus(root_binding.trigger_focus())
                     .tab_stop(true)
                     .focus_visible(move |style| style.shadow(hotspot_focus_shadow.clone()))
                     .child(label),
             )
             .when(state.open(), |this| {
-                let overlay_host = overlay_host.clone();
-                this.child(overlay_host.positioned_layer(
+                this.child(gpui_positioned_overlay_layer(
+                    &overlay_adapter,
                     &placement,
                     gpui_point_from_ui(state.anchor_point()),
                     context_menu_surface(
@@ -321,17 +356,23 @@ impl RenderOnce for ContextMenu {
                         debug_id.clone(),
                         state.clone(),
                         runtime.clone(),
-                        trigger_focus.clone(),
-                        content_focus.clone(),
+                        window_overlay_runtime.clone(),
+                        root_binding.clone(),
+                        branch_bindings.clone(),
                         scroll_handle.clone(),
-                        overlay_host.clone(),
-                        focus_restore.clone(),
-                        on_open_change.clone(),
                         on_select.clone(),
                         &theme,
                     ),
                 ))
-            })
+            });
+
+        window_overlay_runtime.inside_region_for_button(
+            &root_binding,
+            OverlayInsideRegionId::new("source"),
+            MouseButton::Right,
+            format!("context-menu:{debug_id}:source-region"),
+            source,
+        )
     }
 }
 
@@ -341,23 +382,20 @@ fn context_menu_surface(
     debug_id: String,
     state: ContextMenuState,
     runtime: open_gpui::Entity<ContextMenuRuntime>,
-    trigger_focus: FocusHandle,
-    content_focus: FocusHandle,
+    window_overlay_runtime: WindowOverlayRuntime,
+    root_binding: OverlayLayerBinding,
+    branch_bindings: MenuBranchBindings,
     scroll_handle: ScrollHandle,
-    overlay_host: OverlayLayerHost,
-    focus_restore: FocusRestoreIntent,
-    on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
     theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
-    let outside_change = overlay_host.outside_press_open_change();
     let key_state = state.menu().clone();
     let key_runtime = runtime.clone();
-    let key_open_change = on_open_change.clone();
     let key_select = on_select.clone();
-    let key_overlay_host = overlay_host.clone();
+    let key_window_overlay_runtime = window_overlay_runtime.clone();
+    let key_root_binding = root_binding.clone();
     let surface_debug_id = debug_id.clone();
     let scroll_viewport_id = format!("context-menu:{debug_id}:surface-scroll");
     let scrollable_content = state.menu().scrollable_content();
@@ -366,20 +404,20 @@ fn context_menu_surface(
         .flex()
         .flex_col()
         .gap_1()
-        .children(context_menu_item_elements(
-            items,
-            state.clone(),
+        .children(context_menu_branch_elements(
+            &items,
+            state.menu().items(),
+            &state,
             debug_id.clone(),
             runtime.clone(),
-            trigger_focus.clone(),
-            focus_restore.clone(),
-            overlay_host.clone(),
-            on_open_change.clone(),
+            window_overlay_runtime.clone(),
+            root_binding.clone(),
+            branch_bindings.clone(),
             on_select.clone(),
             theme,
         ));
 
-    div()
+    let surface = div()
         .id(surface_id)
         .debug_selector(move || format!("context-menu:{surface_debug_id}:surface"))
         .min_w(gpui_px_from_ui(metrics.min_width()))
@@ -405,11 +443,9 @@ fn context_menu_surface(
         .occlude()
         .tab_group()
         .focusable()
-        .track_focus(&content_focus)
+        .track_focus(root_binding.surface_focus())
         .ui_role(state.content_role())
         .on_key_down({
-            let trigger_focus = trigger_focus.clone();
-            let focus_restore = focus_restore.clone();
             move |event: &KeyDownEvent, window, cx| {
                 let Some(intent) = key_state.keyboard_intent_for_key(event.keystroke.key.as_str())
                 else {
@@ -417,24 +453,6 @@ fn context_menu_surface(
                 };
 
                 match intent {
-                    MenuKeyboardIntent::DismissSubmenu(target) => {
-                        key_overlay_host.consume_event(window, cx);
-                        key_runtime.update(cx, |runtime, _| {
-                            runtime.apply_submenu_target(&target);
-                        });
-                    }
-                    MenuKeyboardIntent::DismissRoot => {
-                        key_overlay_host.consume_event(window, cx);
-                        close_context_menu(
-                            key_overlay_host.clone(),
-                            key_runtime.clone(),
-                            trigger_focus.clone(),
-                            focus_restore.clone(),
-                            key_open_change.clone(),
-                            window,
-                            cx,
-                        );
-                    }
                     MenuKeyboardIntent::NavigateSubmenu(target) => {
                         cx.stop_propagation();
                         window.prevent_default();
@@ -455,48 +473,36 @@ fn context_menu_surface(
                     MenuKeyboardIntent::Activate(selection) => {
                         cx.stop_propagation();
                         window.prevent_default();
-                        if let Some(item_handler) = key_items
-                            .iter()
-                            .zip(key_state.visible_items())
-                            .find(|(_, item_state)| item_state.path() == selection.path())
-                            .and_then(|(item, _)| item.select_handler())
-                            .as_ref()
-                        {
-                            item_handler(selection.clone(), window, cx);
-                        }
-                        if let Some(on_select) = key_select.as_ref() {
-                            on_select(selection, window, cx);
-                        }
-                        close_context_menu(
-                            key_overlay_host.clone(),
-                            key_runtime.clone(),
-                            trigger_focus.clone(),
-                            focus_restore.clone(),
-                            key_open_change.clone(),
-                            window,
-                            cx,
-                        );
+                        key_window_overlay_runtime
+                            .request_open_change_with_effect(
+                                &key_root_binding,
+                                false,
+                                DismissReason::Selection,
+                                window,
+                                cx,
+                                |window, cx| {
+                                    if let Some(item_handler) = key_items
+                                        .iter()
+                                        .zip(key_state.visible_items())
+                                        .find(|(_, item_state)| {
+                                            item_state.path() == selection.path()
+                                        })
+                                        .and_then(|(item, _)| item.select_handler())
+                                        .as_ref()
+                                    {
+                                        item_handler(selection.clone(), window, cx);
+                                    }
+                                    if let Some(on_select) = key_select.as_ref() {
+                                        on_select(selection, window, cx);
+                                    }
+                                },
+                            )
+                            .expect(
+                                "context menu keyboard selection should own the root registration",
+                            );
                     }
                 }
             }
-        })
-        .when(outside_change.is_some(), |this| {
-            let runtime = runtime.clone();
-            let on_open_change = on_open_change.clone();
-            let trigger_focus = trigger_focus.clone();
-            let focus_restore = focus_restore.clone();
-            let overlay_host = overlay_host.clone();
-            this.on_mouse_down_out(move |_, window, cx| {
-                close_context_menu(
-                    overlay_host.clone(),
-                    runtime.clone(),
-                    trigger_focus.clone(),
-                    focus_restore.clone(),
-                    on_open_change.clone(),
-                    window,
-                    cx,
-                );
-            })
         })
         .overflow_hidden()
         .child(
@@ -505,30 +511,38 @@ fn context_menu_surface(
                 .preserve_scroll()
                 .scroll_handle(&scroll_handle)
                 .with_size(state.size()),
-        )
+        );
+
+    window_overlay_runtime.surface(
+        &root_binding,
+        OverlayInsideRegionId::new("root-surface"),
+        format!("context-menu:{debug_id}:root-surface-region"),
+        surface,
+    )
 }
 
-fn context_menu_item_elements(
-    items: Vec<MenuItem>,
-    state: ContextMenuState,
+fn context_menu_branch_elements(
+    items: &[MenuItem],
+    states: &[MenuItemState],
+    state: &ContextMenuState,
     debug_id: String,
     runtime: open_gpui::Entity<ContextMenuRuntime>,
-    trigger_focus: FocusHandle,
-    focus_restore: FocusRestoreIntent,
-    overlay_host: OverlayLayerHost,
-    on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
+    window_overlay_runtime: WindowOverlayRuntime,
+    root_binding: OverlayLayerBinding,
+    branch_bindings: MenuBranchBindings,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
     theme: &ThemeContext,
-) -> Vec<open_gpui::AnyElement> {
+) -> Vec<AnyElement> {
     let metrics = state.metrics();
     let colors = state.colors();
-    let states = state.menu().visible_items().to_vec();
-    let items = visible_menu_items(&items, state.menu().open_path());
+    let mut elements = Vec::new();
 
-    items
-        .into_iter()
-        .zip(states)
-        .map(|(item, item_state)| match item_state.kind() {
+    for (item, item_state) in items.iter().cloned().zip(states.iter().cloned()) {
+        let child_branch_open = item_state.has_submenu() && item_state.submenu_open();
+        let child_branch_path = item_state.path().to_vec();
+        let child_items = item.child_items().to_vec();
+        let child_states = item_state.children().to_vec();
+        let element = match item_state.kind() {
             MenuItemKind::Header => div()
                 .id(format!("context-menu-header:{}", item_state.value()))
                 .debug_selector({
@@ -572,21 +586,23 @@ fn context_menu_item_elements(
                 let selection = MenuSelection::from_item(&item_state);
                 let item_handler = item.select_handler();
                 let global_handler = on_select.clone();
-                let runtime = runtime.clone();
-                let on_open_change = on_open_change.clone();
-                let trigger_focus = trigger_focus.clone();
-                let focus_restore = focus_restore.clone();
-                let overlay_host = overlay_host.clone();
+                let click_runtime = runtime.clone();
+                let click_window_overlay_runtime = window_overlay_runtime.clone();
+                let click_root_binding = root_binding.clone();
                 let item_value = item_state.value().to_owned();
+                let item_path = item_state.path().to_vec();
                 let item_label = item_state.label().to_owned();
                 let shortcut = item_state.shortcut().map(str::to_owned);
                 let item_path_key = item_state.path_key();
+                let child_binding = branch_bindings.get(&item_path_key).cloned();
                 let left_padding =
                     metrics.item_padding_x() + metrics.submenu_indent() * item_state.depth() as f32;
                 let focused = item_state.focused();
                 let disabled = item_state.disabled();
+                let focusable = item_state.focusable();
                 let toggled = item_state.toggled();
                 let has_submenu = item_state.has_submenu();
+                let submenu_open = item_state.submenu_open();
                 let item_background = theme.resolve(if focused {
                     colors.item_focus_background()
                 } else {
@@ -613,10 +629,11 @@ fn context_menu_item_elements(
                 } else {
                     None
                 };
-                div()
+                let element = div()
                     .id(format!("context-menu-item:{item_path_key}"))
                     .debug_selector({
                         let item_debug_id = debug_id.clone();
+                        let item_path_key = item_path_key.clone();
                         move || format!("context-menu:{item_debug_id}:item:{item_path_key}")
                     })
                     .min_h(gpui_px_from_ui(metrics.item_height()))
@@ -632,10 +649,16 @@ fn context_menu_item_elements(
                     .ui_role(Role::MenuItem)
                     .aria_label(item_label.clone())
                     .aria_disabled(disabled)
+                    .when_some(
+                        child_binding.clone().filter(|_| focusable),
+                        |this, binding| {
+                            this.focusable()
+                                .tab_stop(false)
+                                .track_focus(binding.trigger_focus())
+                        },
+                    )
                     .when_some(toggled, |this, toggled| this.ui_aria_toggled(toggled))
-                    .when(has_submenu, |this| {
-                        this.aria_expanded(item_state.submenu_open())
-                    })
+                    .when(has_submenu, |this| this.aria_expanded(submenu_open))
                     .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                     .when(!disabled, |this| {
                         this.cursor_pointer()
@@ -643,7 +666,7 @@ fn context_menu_item_elements(
                             .on_click(move |_event: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 if let Some(submenu_navigation) = submenu_navigation.clone() {
-                                    runtime.update(cx, |runtime, _| {
+                                    click_runtime.update(cx, |runtime, _| {
                                         runtime.apply_submenu_target(&submenu_navigation);
                                     });
                                     return;
@@ -651,25 +674,28 @@ fn context_menu_item_elements(
                                 let Some(selection) = selection.clone() else {
                                     return;
                                 };
-                                if let Some(item_handler) = item_handler.as_ref() {
-                                    item_handler(selection.clone(), window, cx);
-                                }
-                                if let Some(global_handler) = global_handler.as_ref() {
-                                    global_handler(selection, window, cx);
-                                }
-                                runtime.update(cx, |runtime, _| {
-                                    runtime
-                                        .focus_item(item_state.path().to_vec(), item_value.clone());
+                                click_runtime.update(cx, |runtime, _| {
+                                    runtime.focus_item(item_path.clone(), item_value.clone());
                                 });
-                                close_context_menu(
-                                    overlay_host.clone(),
-                                    runtime.clone(),
-                                    trigger_focus.clone(),
-                                    focus_restore.clone(),
-                                    on_open_change.clone(),
-                                    window,
-                                    cx,
-                                );
+                                click_window_overlay_runtime
+                                    .request_open_change_with_effect(
+                                        &click_root_binding,
+                                        false,
+                                        DismissReason::Selection,
+                                        window,
+                                        cx,
+                                        |window, cx| {
+                                            if let Some(item_handler) = item_handler.as_ref() {
+                                                item_handler(selection.clone(), window, cx);
+                                            }
+                                            if let Some(global_handler) = global_handler.as_ref() {
+                                                global_handler(selection, window, cx);
+                                            }
+                                        },
+                                    )
+                                    .expect(
+                                        "context menu selection should own the root registration",
+                                    );
                             })
                     })
                     .child(div().flex_1().child(item_label))
@@ -691,49 +717,75 @@ fn context_menu_item_elements(
                         this.child(div().ml_2().child(marker))
                     })
                     .when(has_submenu, |this| this.child(div().ml_2().child(">")))
-                    .into_any_element()
+                    .into_any_element();
+
+                if let Some(child_binding) = child_binding {
+                    window_overlay_runtime
+                        .inside_region(
+                            &child_binding,
+                            OverlayInsideRegionId::new("trigger"),
+                            format!(
+                                "context-menu:{debug_id}:branch:{item_path_key}:trigger-region"
+                            ),
+                            element,
+                        )
+                        .into_any_element()
+                } else {
+                    element
+                }
             }
-        })
-        .collect()
-}
+        };
+        elements.push(element);
 
-fn close_context_menu(
-    overlay_host: OverlayLayerHost,
-    runtime: open_gpui::Entity<ContextMenuRuntime>,
-    trigger_focus: FocusHandle,
-    focus_restore: FocusRestoreIntent,
-    on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    overlay_host.close_runtime(
-        OverlayCloseRuntimeRequest::new(
-            runtime,
-            &focus_restore,
-            trigger_focus,
-            on_open_change.as_deref(),
-        )
-        .defer_focus_restore(true),
-        window,
-        cx,
-        |runtime| {
-            set_overlay_open(&mut runtime.open, false);
-            runtime.reset_closed_state();
-        },
-    );
-}
-
-fn context_menu_initial_focus_handle(
-    runtime: &open_gpui::Entity<ContextMenuRuntime>,
-    intent: &InitialFocusIntent,
-    cx: &App,
-) -> Option<FocusHandle> {
-    match intent {
-        InitialFocusIntent::None => None,
-        InitialFocusIntent::FirstFocusable => Some(runtime.read(cx).content_focus.clone()),
-        InitialFocusIntent::Target(_) => None,
-        InitialFocusIntent::TargetOrFirstFocusable(_) => {
-            Some(runtime.read(cx).content_focus.clone())
+        if child_branch_open
+            && let Some(branch_binding) = branch_bindings
+                .get(&menu_path_key(&child_branch_path))
+                .cloned()
+        {
+            let branch_key = menu_path_key(&child_branch_path);
+            let branch_rows =
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .children(context_menu_branch_elements(
+                        &child_items,
+                        &child_states,
+                        state,
+                        debug_id.clone(),
+                        runtime.clone(),
+                        window_overlay_runtime.clone(),
+                        root_binding.clone(),
+                        branch_bindings.clone(),
+                        on_select.clone(),
+                        theme,
+                    ));
+            let panel = div()
+                .id(format!("context-menu-panel:{branch_key}"))
+                .debug_selector({
+                    let branch_debug_id = debug_id.clone();
+                    let branch_key = branch_key.clone();
+                    move || format!("context-menu:{branch_debug_id}:panel:{branch_key}")
+                })
+                .w_full()
+                .focusable()
+                .tab_stop(false)
+                .track_focus(branch_binding.surface_focus())
+                .ui_role(state.content_role())
+                .child(branch_rows);
+            elements.push(
+                window_overlay_runtime
+                    .surface(
+                        &branch_binding,
+                        OverlayInsideRegionId::new("surface"),
+                        format!("context-menu:{debug_id}:branch:{branch_key}:surface-region"),
+                        panel,
+                    )
+                    .into_any_element(),
+            );
         }
     }
+
+    elements
 }

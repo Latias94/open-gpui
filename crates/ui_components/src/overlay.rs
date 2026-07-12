@@ -2,7 +2,6 @@
 
 mod adapter;
 mod focus_scope;
-mod host;
 mod placement;
 mod runtime;
 mod window_runtime;
@@ -11,28 +10,29 @@ pub use adapter::{
     DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayState,
     default_deferred_priority, gpui_overlay_state,
 };
+pub(crate) use adapter::{
+    gpui_full_window_overlay_layer, gpui_positioned_overlay_layer, gpui_relative_overlay_layer,
+};
 pub use focus_scope::{FocusScopeRuntimeError, FocusTargetRegistration};
-pub(crate) use host::OverlayLayerHost;
 pub use open_gpui_ui_core::OverlayResolvedState;
 pub use placement::{GpuiOverlayPlacement, gpui_anchor, point_anchor_placement};
 pub(crate) use runtime::{
-    OverlayCloseRuntimeRequest, OverlayDisclosureConfig, OverlayDisclosureOpenMode,
-    OverlayOpenRuntimeRequest, resolve_overlay_open_state, set_overlay_open,
+    OverlayDisclosureConfig, OverlayDisclosureOpenMode, resolve_overlay_open_state,
 };
-pub use runtime::{OverlayOpenChange, escape_open_change, outside_press_open_change};
 pub use window_runtime::{
     OverlayFocusMode, OverlayFocusRestoreCondition, OverlayFocusTargetLease, OverlayInsideRegionId,
     OverlayLayerBinding, OverlayLayerGeneration, OverlayLayerLease, OverlayLayerPhase,
-    OverlayLayerRegistration, OverlayLayerSnapshot, OverlayOpenIntentRevision, OverlayOwnership,
-    OverlaySurface, OverlayTabBehavior, WindowFocusFallbackLease, WindowOverlayRuntime,
-    WindowOverlayRuntimeError, WindowOverlaySnapshot,
+    OverlayLayerRegistration, OverlayLayerSnapshot, OverlayOpenIntent, OverlayOpenIntentRevision,
+    OverlayOwnership, OverlaySurface, OverlayTabBehavior, WindowFocusFallbackLease,
+    WindowOverlayRuntime, WindowOverlayRuntimeError, WindowOverlaySnapshot,
 };
+pub(crate) use window_runtime::{OverlayFocusTargetSet, OverlayLayerLeaseStatus};
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use open_gpui_ui_core::{
-        DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+        EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
         OverlayLayerKind,
     };
 
@@ -107,33 +107,5 @@ mod tests {
         assert!(!unopenable.open());
         assert_eq!(unopenable.overlay().policy().kind(), OverlayLayerKind::Menu);
         assert!(!unopenable.overlay().policy().presence().interactive());
-    }
-
-    #[test]
-    fn overlay_layer_host_facade_preserves_resolved_adapter_policy() {
-        let overlay = GpuiOverlayAdapterConfig::new(
-            OverlayLayerKind::NonModalDismissible,
-            open_gpui_ui_core::OverlayPresence::open(),
-        )
-        .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
-        .escape_key_policy(EscapeKeyPolicy::Dismiss)
-        .resolved_state();
-        let host = OverlayLayerHost::resolve(&overlay);
-
-        assert_eq!(host.policy().kind(), OverlayLayerKind::NonModalDismissible);
-        assert_eq!(host.adapter().layer_state(), overlay.layer_state());
-        assert_eq!(
-            host.outside_press_open_change()
-                .expect("dismissible host should resolve outside press")
-                .reason(),
-            DismissReason::OutsidePress
-        );
-        assert_eq!(
-            host.escape_open_change()
-                .expect("dismissible host should resolve escape")
-                .reason(),
-            DismissReason::EscapeKey
-        );
-        assert!(host.adapter().should_render_deferred_layer());
     }
 }

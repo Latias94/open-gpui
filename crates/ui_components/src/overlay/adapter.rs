@@ -1,7 +1,8 @@
 //! GPUI adapter state and layer builders for overlays.
 
 use open_gpui::{
-    AnyElement, Edges, IntoElement, ParentElement, Pixels, Point, anchored, deferred, point, px,
+    AnchoredPositionMode, AnyElement, Edges, IntoElement, ParentElement, Pixels, Point, anchored,
+    deferred, point, px,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -201,15 +202,18 @@ pub(crate) fn gpui_relative_overlay_layer(
     placement: &GpuiOverlayPlacement,
     child: impl IntoElement,
 ) -> AnyElement {
-    deferred(
-        anchored()
-            .anchor(placement.anchor())
-            .offset(placement.offset())
-            .snap_to_window_with_margin(placement.snap_edges())
-            .child(child),
-    )
-    .priority(adapter.deferred_priority())
-    .into_any_element()
+    let mut layer = anchored()
+        .anchor(placement.anchor())
+        .offset(placement.offset())
+        .snap_to_window_with_margin(placement.snap_edges());
+    if let Some(position) = placement.position() {
+        layer = layer
+            .position(position)
+            .position_mode(AnchoredPositionMode::Local);
+    }
+    deferred(layer.child(child))
+        .priority(adapter.deferred_priority())
+        .into_any_element()
 }
 
 /// Builds a deferred GPUI anchored overlay at the resolved window position.

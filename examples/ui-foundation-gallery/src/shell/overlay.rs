@@ -336,10 +336,9 @@ pub(super) fn alert_dialog_state_row(
             state.intent().as_str()
         ))
         .child(format!(
-            "actions: cancel {} / action {} / cancel focus {}",
+            "actions: cancel {} / action {}",
             state.cancel().label(),
-            state.action().label(),
-            bool_label(state.cancel().default_focus())
+            state.action().label()
         ))
         .child(format!(
             "outside: {} / dismiss {} / consume {} / underlay {}",

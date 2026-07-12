@@ -88,11 +88,11 @@ pub mod gpui_adapter {
         GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState, OverlayFocusMode,
         OverlayFocusRestoreCondition, OverlayFocusTargetLease, OverlayInsideRegionId,
         OverlayLayerBinding, OverlayLayerGeneration, OverlayLayerLease, OverlayLayerPhase,
-        OverlayLayerRegistration, OverlayLayerSnapshot, OverlayOpenChange,
+        OverlayLayerRegistration, OverlayLayerSnapshot, OverlayOpenIntent,
         OverlayOpenIntentRevision, OverlayOwnership, OverlaySurface, OverlayTabBehavior,
         WindowFocusFallbackLease, WindowOverlayRuntime, WindowOverlayRuntimeError,
-        WindowOverlaySnapshot, default_deferred_priority, escape_open_change, gpui_anchor,
-        gpui_overlay_state, outside_press_open_change, point_anchor_placement,
+        WindowOverlaySnapshot, default_deferred_priority, gpui_anchor, gpui_overlay_state,
+        point_anchor_placement,
     };
     pub use crate::text_input::adapter::{TextInputController, init as init_text_input};
     pub use crate::virtualized_list::runtime::VirtualizedListGpuiExt;

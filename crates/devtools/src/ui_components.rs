@@ -1,7 +1,10 @@
 //! DevTools adapters for `open-gpui-ui-components` public facts.
 
+use std::collections::HashMap;
+
 use open_gpui_ui_components::{
     A11yValueMetadata, ComponentA11yContract, ComponentA11yEvidence, ThemeSnapshot,
+    gpui_adapter::WindowOverlaySnapshot,
 };
 
 use crate::{
@@ -29,6 +32,54 @@ pub fn theme_probe_snapshot(snapshot: ThemeSnapshot<'_>) -> SnapshotProbeSnapsho
                 "token": color.token().as_str(),
                 "state": color.state().as_str(),
                 "rgb": format!("#{rgb:06x}", rgb = color.rgb()),
+            }),
+        ));
+    }
+
+    SnapshotProbeSnapshot::new(SnapshotTree::new([root]))
+        .with_redaction(SnapshotRedactionSummary::default())
+}
+
+/// Converts a window overlay runtime snapshot into an allowlisted DevTools tree.
+///
+/// Layer identities and parent references are projected as snapshot-local ordinals. Raw runtime
+/// layer identities and the owning window identity never cross this adapter boundary.
+pub fn window_overlay_probe_snapshot(snapshot: &WindowOverlaySnapshot) -> SnapshotProbeSnapshot {
+    let ordinal_by_id = snapshot
+        .layers()
+        .iter()
+        .enumerate()
+        .map(|(index, layer)| (layer.id(), overlay_layer_ordinal(index)))
+        .collect::<HashMap<_, _>>();
+    let mut root = snapshot_node_with_payload(
+        ["window-overlay"],
+        "Window overlay runtime",
+        serde_json::json!({
+            "layer_count": snapshot.layers().len(),
+        }),
+    );
+
+    for (index, layer) in snapshot.layers().iter().enumerate() {
+        let id = overlay_layer_ordinal(index);
+        let parent = layer
+            .parent()
+            .and_then(|parent| ordinal_by_id.get(parent))
+            .cloned();
+        root = root.with_child(snapshot_node_with_payload(
+            ["window-overlay", id.as_str()],
+            format!("Overlay layer {}", index + 1),
+            serde_json::json!({
+                "id": id,
+                "parent": parent,
+                "kind": debug_variant_label(layer.kind()),
+                "phase": debug_variant_label(layer.phase()),
+                "presence": debug_variant_label(layer.presence()),
+                "pending_open": layer.pending_open(),
+                "pending_reason": layer.pending_intent().map(debug_variant_label),
+                "keyboard_eligible": layer.keyboard_eligible(),
+                "modal_pointer_barrier": layer.modal_pointer_barrier(),
+                "focus_active": layer.focus_active(),
+                "focus_entered": layer.focus_entered(),
             }),
         ));
     }
@@ -114,6 +165,10 @@ fn value_metadata_payload(value: A11yValueMetadata) -> serde_json::Value {
         "kind": debug_variant_label(value.kind()),
         "present": value.is_present(),
     })
+}
+
+fn overlay_layer_ordinal(index: usize) -> String {
+    format!("overlay-layer-{}", index + 1)
 }
 
 fn debug_variant_label(value: impl std::fmt::Debug) -> String {

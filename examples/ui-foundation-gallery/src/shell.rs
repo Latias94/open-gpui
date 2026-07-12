@@ -4,9 +4,9 @@ use open_gpui::prelude::*;
 
 use open_gpui::{
     Anchor, App, AppContext, BorrowAppContext, Bounds, Context, FocusHandle, InteractiveElement,
-    IntoElement, KeyDownEvent, ListAlignment, ListState, ParentElement, Pixels, Render,
-    ScrollHandle, StatefulInteractiveElement, Styled, Window, WindowBounds, WindowOptions,
-    anchored, deferred, div, px, rgb, size,
+    IntoElement, ListAlignment, ListState, ParentElement, Pixels, Render, ScrollHandle,
+    StatefulInteractiveElement, Styled, Window, WindowBounds, WindowOptions, anchored, deferred,
+    div, px, rgb, size,
 };
 use open_gpui_devtools::DevtoolsInspectorController;
 
@@ -30,7 +30,8 @@ use open_gpui_ui_components::{
 
 use open_gpui_ui_core::{
     AccessibleAction, Density, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
-    Orientation, Rect, Role, Sizable, Size, ThemeTokens, Toggled, UiPx,
+    Orientation, OverlayPlacementAlignment, OverlayPlacementSide, Rect, Role, Sizable, Size,
+    ThemeTokens, Toggled, UiPx,
 };
 
 use crate::pages::{
@@ -371,20 +372,6 @@ impl Render for GalleryShell {
             .bg(rgb(0xf6f7f2))
             .text_color(rgb(0x18202a))
             .track_focus(&self.root_focus)
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                if event.keystroke.key.as_str() == "escape" {
-                    this.mutate_overlay(
-                        |state| {
-                            let mut changed = false;
-                            changed |= state.set_overlay_open(false);
-                            changed |= state.set_hovered_tooltip_sample(None);
-                            changed |= state.close_controlled_overlays();
-                            changed
-                        },
-                        cx,
-                    );
-                }
-            }))
             .child(self.render_navigation(snapshot, page, cx))
             .child(self.render_content(snapshot, window, cx))
     }
@@ -1589,7 +1576,11 @@ impl GalleryShell {
                     ),
 
             )
-
+            .child(self.render_nested_overlay_runtime_card(
+                self.overlay
+                    .is_controlled_open(pages::overlay::OverlayControlledSample::NestedDialog),
+                cx,
+            ))
             .child(
 
                 div()
@@ -2001,6 +1992,91 @@ impl GalleryShell {
             .child(self.render_signal_list(snapshot.selected_page))
     }
 
+    fn render_nested_overlay_runtime_card(
+        &self,
+        dialog_open: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let update_dialog = cx.entity().downgrade();
+
+        let nested_dialog = Dialog::new(
+            "overlay-runtime-nested-dialog",
+            "Review dialog",
+            "Review changes",
+            "Review the pending workspace changes before continuing.",
+        )
+        .open(dialog_open)
+        .on_open_change(move |intent, _, cx| {
+            let open = intent.desired_open();
+            update_dialog
+                .update(cx, |this, cx| {
+                    this.mutate_overlay(
+                        |state| {
+                            state.set_controlled_open(
+                                pages::overlay::OverlayControlledSample::NestedDialog,
+                                open,
+                            )
+                        },
+                        cx,
+                    )
+                })
+                .ok();
+        });
+
+        let nested_content = div()
+            .w(px(272.0))
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap_3()
+            .child(
+                Menu::new("overlay-runtime-nested-menu", "Review options")
+                    .item(MenuItem::action("inspect", "Inspect changes"))
+                    .placement(
+                        OverlayPlacementSide::Right,
+                        OverlayPlacementAlignment::Start,
+                    )
+                    .overlay_child(nested_dialog),
+            );
+
+        div()
+            .id("overlay-runtime-nested-card")
+            .debug_selector(|| "gallery:overlay-runtime-nested-card".to_owned())
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(open_gpui::FontWeight::BOLD)
+                    .child("Workspace review"),
+            )
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap_3()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(rgb(0xd6d8ce))
+                    .bg(rgb(0xffffff))
+                    .p_3()
+                    .text_xs()
+                    .text_color(rgb(0x3f4a57))
+                    .child(
+                        Popover::element(
+                            "overlay-runtime-nested-popover",
+                            "Workspace actions",
+                            nested_content,
+                        )
+                        .placement_side(OverlayPlacementSide::Bottom)
+                        .placement_alignment(OverlayPlacementAlignment::Start),
+                    ),
+            )
+    }
+
     fn render_tooltip_sample_card(
         &self,
 
@@ -2118,7 +2194,6 @@ impl GalleryShell {
             .open(controlled_open)
             .open_intent(sample.state.open_intent())
             .delay(sample.state.delay())
-            .outside_press_policy(sample.state.outside_press_policy())
             .placement_side(sample.state.placement_side())
             .placement_alignment(sample.state.placement_alignment())
             .state()
@@ -2147,14 +2222,14 @@ impl GalleryShell {
         )
         .open_intent(state.open_intent())
         .delay(state.delay())
-        .outside_press_policy(state.outside_press_policy())
         .placement_side(state.placement_side())
         .placement_alignment(state.placement_alignment())
         .with_size(state.size());
         let hover_card = match state.open_mode() {
             open_gpui_ui_components::HoverCardOpenMode::Controlled => hover_card
                 .open(state.open())
-                .on_open_change(move |open, _, cx| {
+                .on_open_change(move |intent, _, cx| {
+                    let open = intent.desired_open();
                     shell
                         .update(cx, |this, cx| {
                             this.mutate_overlay(
@@ -2266,7 +2341,8 @@ impl GalleryShell {
         let popover = match state.open_mode() {
             open_gpui_ui_components::PopoverOpenMode::Controlled => popover
                 .open(state.open())
-                .on_open_change(move |open, _, cx| {
+                .on_open_change(move |intent, _, cx| {
+                    let open = intent.desired_open();
                     shell
                         .update(cx, |this, cx| {
                             this.mutate_overlay(
@@ -2373,14 +2449,65 @@ impl GalleryShell {
 
         let content_text = sample.content_text;
 
-        let shell = cx.entity().downgrade();
+        let refuse_dialog_close = self.overlay.refuses_dialog_close();
 
-        let dialog = Dialog::new(
-            format!("overlay-dialog-demo:{}", sample_id),
-            label,
-            sample.state.title(),
-            content_text,
-        )
+        let shell = cx.entity().downgrade();
+        let toggle_dialog_refusal = cx.entity().downgrade();
+
+        let dialog = if sample_id == "controlled-modal" && refuse_dialog_close {
+            let commit_dialog = cx.entity().downgrade();
+            Dialog::element(
+                format!("overlay-dialog-demo:{}", sample_id),
+                label,
+                sample.state.title(),
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap_3()
+                    .child(content_text)
+                    .child(
+                        div()
+                            .id("overlay-dialog-owner-commit-close-probe")
+                            .debug_selector(|| {
+                                "gallery:overlay-dialog-owner-commit-close:controlled-modal"
+                                    .to_owned()
+                            })
+                            .flex()
+                            .child(
+                                Button::new(
+                                    "overlay-dialog-owner-commit-close",
+                                    "Confirm close",
+                                )
+                                .on_click(move |_, _, cx| {
+                                    commit_dialog
+                                        .update(cx, |this, cx| {
+                                            this.mutate_overlay(
+                                                |state| {
+                                                    let mut changed = false;
+                                                    changed |= state.set_refuse_dialog_close(false);
+                                                    changed |= state.set_controlled_open(
+                                                        pages::overlay::OverlayControlledSample::Dialog,
+                                                        false,
+                                                    );
+                                                    changed
+                                                },
+                                                cx,
+                                            )
+                                        })
+                                        .ok();
+                                }),
+                            ),
+                    ),
+            )
+        } else {
+            Dialog::new(
+                format!("overlay-dialog-demo:{}", sample_id),
+                label,
+                sample.state.title(),
+                content_text,
+            )
+        }
         .disabled(state.disabled())
         .outside_press_policy(state.outside_press_policy())
         .escape_key_policy(state.escape_key_policy());
@@ -2393,20 +2520,31 @@ impl GalleryShell {
                         .description()
                         .expect("controlled dialog sample should define a description"),
                 )
-                .on_open_change(move |open, _, cx| {
-                    shell
+                .on_open_change(move |intent, window, cx| {
+                    let open = intent.desired_open();
+                    let should_reject = shell
                         .update(cx, |this, cx| {
-                            this.mutate_overlay(
-                                |state| {
-                                    state.set_controlled_open(
-                                        pages::overlay::OverlayControlledSample::Dialog,
-                                        open,
-                                    )
-                                },
-                                cx,
-                            )
+                            if !open && this.overlay.refuses_dialog_close() {
+                                true
+                            } else {
+                                this.mutate_overlay(
+                                    |state| {
+                                        state.set_controlled_open(
+                                            pages::overlay::OverlayControlledSample::Dialog,
+                                            open,
+                                        )
+                                    },
+                                    cx,
+                                );
+                                false
+                            }
                         })
-                        .ok();
+                        .unwrap_or(false);
+                    if should_reject {
+                        intent.reject(window, cx).expect(
+                            "controlled Gallery dialog must reject its current close intent",
+                        );
+                    }
                 }),
 
             open_gpui_ui_components::DialogOpenMode::Uncontrolled => dialog,
@@ -2456,6 +2594,35 @@ impl GalleryShell {
                 )
             },
         )
+        .when(sample_id == "controlled-modal", |card| {
+            card.child(
+                div()
+                    .id("overlay-dialog-refuse-close-toggle")
+                    .debug_selector(|| {
+                        "gallery:overlay-dialog-refuse-close:controlled-modal".to_owned()
+                    })
+                    .flex()
+                    .child(
+                        Checkbox::new("overlay-dialog-refuse-close:controlled-modal")
+                            .label("Require close confirmation")
+                            .checked(refuse_dialog_close)
+                            .on_toggle(move |toggled, _, _, cx| {
+                                toggle_dialog_refusal
+                                    .update(cx, |this, cx| {
+                                        this.mutate_overlay(
+                                            |state| {
+                                                state.set_refuse_dialog_close(
+                                                    toggled == Toggled::True,
+                                                )
+                                            },
+                                            cx,
+                                        )
+                                    })
+                                    .ok();
+                            }),
+                    ),
+            )
+        })
         .child(dialog_state_row(&state))
     }
 
@@ -2511,7 +2678,8 @@ impl GalleryShell {
         let alert_dialog = match state.open_mode() {
             open_gpui_ui_components::AlertDialogOpenMode::Controlled => alert_dialog
                 .open(state.open())
-                .on_open_change(move |open, _, cx| {
+                .on_open_change(move |intent, _, cx| {
+                    let open = intent.desired_open();
                     shell
                         .update(cx, |this, cx| {
                             this.mutate_overlay(
@@ -2637,8 +2805,10 @@ impl GalleryShell {
         };
 
         let sheet = match state.open_mode() {
-            open_gpui_ui_components::SheetOpenMode::Controlled => {
-                sheet.open(state.open()).on_open_change(move |open, _, cx| {
+            open_gpui_ui_components::SheetOpenMode::Controlled => sheet
+                .open(state.open())
+                .on_open_change(move |intent, _, cx| {
+                    let open = intent.desired_open();
                     shell
                         .update(cx, |this, cx| {
                             this.mutate_overlay(
@@ -2652,8 +2822,7 @@ impl GalleryShell {
                             )
                         })
                         .ok();
-                })
-            }
+                }),
 
             open_gpui_ui_components::SheetOpenMode::Uncontrolled => sheet,
         };
@@ -2765,8 +2934,10 @@ impl GalleryShell {
         });
 
         let menu = match state.open_mode() {
-            open_gpui_ui_components::MenuOpenMode::Controlled => {
-                menu.open(state.open()).on_open_change(move |open, _, cx| {
+            open_gpui_ui_components::MenuOpenMode::Controlled => menu
+                .open(state.open())
+                .on_open_change(move |intent, _, cx| {
+                    let open = intent.desired_open();
                     shell
                         .update(cx, |this, cx| {
                             this.mutate_overlay(
@@ -2780,8 +2951,7 @@ impl GalleryShell {
                             )
                         })
                         .ok();
-                })
-            }
+                }),
 
             open_gpui_ui_components::MenuOpenMode::Uncontrolled => menu,
         };
@@ -2903,7 +3073,8 @@ impl GalleryShell {
         let context_menu = match state.open_mode() {
             open_gpui_ui_components::MenuOpenMode::Controlled => context_menu
                 .open(state.open())
-                .on_open_change(move |open, _, cx| {
+                .on_open_change(move |intent, _, cx| {
+                    let open = intent.desired_open();
                     shell
                         .update(cx, |this, cx| {
                             this.mutate_overlay(

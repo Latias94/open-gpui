@@ -46,6 +46,9 @@ fn overlay_gallery_smoke_dismisses_popover_from_outside_press(cx: &mut open_gpui
     probe.settle();
     probe.assert_rendered(content, "opened Popover content");
     probe.assert_focused(trigger, "opened Popover trigger");
+    let popover_layer = probe.overlay_layer("popover:overlay-popover-demo:controlled");
+    assert_eq!(popover_layer.kind(), OverlayLayerKind::NonModalDismissible);
+    assert_eq!(popover_layer.phase(), OverlayLayerPhase::Open);
 
     let popover_content = probe.render_bounds(content);
     let outside_target = point(
@@ -121,7 +124,7 @@ fn overlay_gallery_smoke_renders_manual_tooltip_from_state(cx: &mut open_gpui::T
 }
 
 #[open_gpui::test]
-fn overlay_gallery_smoke_opens_hover_card_from_real_trigger_and_dismisses(
+fn overlay_gallery_smoke_keeps_hover_card_open_on_outside_press_and_dismisses_on_escape(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
@@ -151,7 +154,10 @@ fn overlay_gallery_smoke_opens_hover_card_from_real_trigger_and_dismisses(
     probe.click_point(outside_target);
     probe.settle();
 
-    probe.assert_not_rendered(content, "outside-dismissed HoverCard content");
+    probe.assert_rendered(content, "outside-transparent HoverCard content");
+
+    probe.press_escape();
+    probe.assert_not_rendered(content, "escape-dismissed HoverCard content");
 }
 
 #[open_gpui::test]
@@ -207,6 +213,9 @@ fn overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape(
     let dialog_layer = probe.render_bounds(layer);
     probe.assert_rendered(surface, "opened Dialog surface");
     probe.assert_focused(surface, "opened Dialog surface");
+    let dialog_runtime_layer = probe.overlay_layer("dialog:overlay-dialog-demo:controlled-modal");
+    assert_eq!(dialog_runtime_layer.kind(), OverlayLayerKind::Modal);
+    assert_eq!(dialog_runtime_layer.phase(), OverlayLayerPhase::Open);
 
     probe.click_point(outside_top_left(dialog_layer));
     probe.settle();
@@ -219,6 +228,54 @@ fn overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape(
     probe.press_escape();
     probe.assert_not_rendered(surface, "escape-dismissed Dialog surface");
     probe.assert_focused(trigger, "escape-dismissed Dialog trigger");
+}
+
+#[open_gpui::test]
+fn overlay_gallery_smoke_controlled_dialog_refusal_keeps_modal_authority(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_overlay_gallery(cx);
+    let refusal_control = "gallery:overlay-dialog-refuse-close:controlled-modal";
+    let trigger = "dialog:overlay-dialog-demo:controlled-modal:trigger";
+    let surface = "dialog:overlay-dialog-demo:controlled-modal:surface";
+    let layer_id = "dialog:overlay-dialog-demo:controlled-modal";
+
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.scroll_page_to(refusal_control);
+    probe.click(refusal_control);
+    probe.click(trigger);
+    probe.settle();
+    probe.assert_rendered(surface, "controlled Dialog surface before refusal");
+
+    probe.press_escape();
+    probe.assert_rendered(surface, "refused controlled Dialog surface");
+    let refused = probe.overlay_layer(layer_id);
+    assert_eq!(refused.kind(), OverlayLayerKind::Modal);
+    assert_eq!(refused.phase(), OverlayLayerPhase::Open);
+    assert_eq!(refused.pending_open(), None);
+    assert_eq!(refused.pending_intent(), None);
+    assert_eq!(refused.pending_intent_revision(), None);
+    assert!(refused.keyboard_eligible());
+    assert!(refused.modal_pointer_barrier());
+    assert!(refused.focus_active());
+    assert!(refused.focus_entered());
+
+    probe.press_escape();
+    probe.assert_rendered(surface, "repeated-Escape controlled Dialog surface");
+    let repeated = probe.overlay_layer(layer_id);
+    assert_eq!(repeated.phase(), OverlayLayerPhase::Open);
+    assert_eq!(repeated.pending_open(), None);
+    assert_eq!(repeated.pending_intent(), None);
+    assert_eq!(repeated.pending_intent_revision(), None);
+    assert!(repeated.keyboard_eligible());
+    assert!(repeated.modal_pointer_barrier());
+    assert!(repeated.focus_active());
+
+    probe.click("gallery:overlay-dialog-owner-commit-close:controlled-modal");
+    probe.settle();
+    probe.settle();
+    probe.assert_not_rendered(surface, "owner-closed controlled Dialog surface");
+    probe.assert_focused(trigger, "owner-closed controlled Dialog trigger");
 }
 
 #[open_gpui::test]
@@ -310,7 +367,11 @@ fn overlay_gallery_smoke_closes_menu_from_escape_and_outside_press(
     probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
     probe.scroll_page_to(trigger);
     probe.click(trigger);
+    probe.settle();
     probe.assert_rendered(content, "opened Menu content");
+    let menu_layer = probe.overlay_layer("menu:overlay-menu-demo:controlled");
+    assert_eq!(menu_layer.kind(), OverlayLayerKind::Menu);
+    assert_eq!(menu_layer.phase(), OverlayLayerPhase::Open);
     probe.press_escape();
     probe.assert_not_rendered(content, "escape-dismissed Menu content");
 
@@ -354,6 +415,19 @@ fn overlay_gallery_smoke_opens_menu_submenu_from_hover(cx: &mut open_gpui::TestA
             .is_some(),
         "expected the rich menu submenu child to render after the hover delay"
     );
+    {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        let root = probe.overlay_layer("menu:overlay-menu-demo:rich-items");
+        let branch = probe.overlay_layer("menu:overlay-menu-demo:rich-items:branch:3:sort");
+        assert_eq!(root.kind(), OverlayLayerKind::Menu);
+        assert_eq!(root.phase(), OverlayLayerPhase::Open);
+        assert_eq!(branch.kind(), OverlayLayerKind::Menu);
+        assert_eq!(branch.phase(), OverlayLayerPhase::Open);
+        assert_eq!(
+            branch.parent().map(|parent| parent.as_str()),
+            Some("menu:overlay-menu-demo:rich-items")
+        );
+    }
 
     let child = bounds(cx, "menu:overlay-menu-demo:rich-items:item:3:sort/0:name").center();
     cx.simulate_mouse_move(child, None, Default::default());
@@ -408,6 +482,76 @@ fn overlay_gallery_smoke_opens_menu_submenu_from_hover(cx: &mut open_gpui::TestA
 }
 
 #[open_gpui::test]
+fn overlay_gallery_smoke_nested_popover_menu_dialog_restores_focus_lifo(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_overlay_gallery(cx);
+    let popover_trigger = "popover:overlay-runtime-nested-popover:trigger";
+    let popover_content = "popover:overlay-runtime-nested-popover:content";
+    let menu_trigger = "menu:overlay-runtime-nested-menu:trigger";
+    let menu_content = "menu:overlay-runtime-nested-menu:content";
+    let dialog_control = "dialog:overlay-runtime-nested-dialog:trigger";
+    let dialog_surface = "dialog:overlay-runtime-nested-dialog:surface";
+
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.scroll_page_to(popover_trigger);
+    probe.click(popover_trigger);
+    probe.settle();
+    probe.assert_rendered(popover_content, "nested Popover content");
+    probe.assert_focused(popover_trigger, "nested Popover trigger");
+
+    probe.click(menu_trigger);
+    probe.settle();
+    probe.assert_rendered(menu_content, "nested Menu content");
+    probe.assert_focused(menu_content, "nested Menu content");
+
+    probe.click(dialog_control);
+    probe.settle();
+    probe.assert_rendered(dialog_surface, "nested Dialog surface");
+    probe.assert_focused(dialog_surface, "nested Dialog surface");
+
+    let popover = probe.overlay_layer("popover:overlay-runtime-nested-popover");
+    let menu = probe.overlay_layer("menu:overlay-runtime-nested-menu");
+    let dialog = probe.overlay_layer("dialog:overlay-runtime-nested-dialog");
+    assert_eq!(popover.kind(), OverlayLayerKind::NonModalDismissible);
+    assert_eq!(popover.phase(), OverlayLayerPhase::Open);
+    assert_eq!(popover.parent(), None);
+    assert!(popover.focus_entered());
+    assert_eq!(menu.kind(), OverlayLayerKind::Menu);
+    assert_eq!(menu.phase(), OverlayLayerPhase::Open);
+    assert_eq!(
+        menu.parent().map(|parent| parent.as_str()),
+        Some("popover:overlay-runtime-nested-popover")
+    );
+    assert_eq!(dialog.kind(), OverlayLayerKind::Modal);
+    assert_eq!(dialog.phase(), OverlayLayerPhase::Open);
+    assert_eq!(
+        dialog.parent().map(|parent| parent.as_str()),
+        Some("menu:overlay-runtime-nested-menu")
+    );
+
+    probe.press_escape();
+    probe.assert_not_rendered(dialog_surface, "dismissed nested Dialog surface");
+    probe.assert_rendered(menu_content, "Menu retained after Dialog dismissal");
+    probe.assert_focused(menu_content, "Menu restored after Dialog dismissal");
+
+    probe.press_escape();
+    probe.assert_not_rendered(menu_content, "dismissed nested Menu content");
+    probe.assert_rendered(popover_content, "Popover retained after Menu dismissal");
+    probe.assert_focused(menu_trigger, "Menu trigger restored after Menu dismissal");
+
+    probe.press_escape();
+    probe.drain_next_frame();
+    probe.drain_next_frame();
+    probe.settle();
+    probe.assert_not_rendered(popover_content, "dismissed nested Popover content");
+    probe.assert_focused(
+        popover_trigger,
+        "Popover trigger restored after Popover dismissal",
+    );
+}
+
+#[open_gpui::test]
 fn overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -428,10 +572,14 @@ fn overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses(
     probe.scroll_page_to(hotspot);
     probe.right_click(hotspot);
     probe.assert_rendered(surface, "right-click opened ContextMenu surface");
+    let layer = probe.overlay_layer("context-menu:overlay-context-menu-demo:controlled");
+    assert_eq!(layer.kind(), OverlayLayerKind::Menu);
+    assert_eq!(layer.phase(), OverlayLayerPhase::Open);
 
     probe.press_escape();
 
     probe.assert_not_rendered(surface, "escape-dismissed ContextMenu surface");
+    probe.assert_focused(hotspot, "escape-dismissed ContextMenu hotspot");
 
     probe.right_click(hotspot);
     let surface_bounds = probe.render_bounds(surface);
@@ -440,4 +588,5 @@ fn overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses(
     probe.click_point(outside_target);
 
     probe.assert_not_rendered(surface, "outside-dismissed ContextMenu surface");
+    probe.assert_focused(hotspot, "outside-dismissed ContextMenu hotspot");
 }

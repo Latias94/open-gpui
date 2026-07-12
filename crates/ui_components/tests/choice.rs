@@ -2,7 +2,8 @@ mod support;
 
 use open_gpui::{
     Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Render, ScrollDelta,
-    ScrollWheelEvent, Styled, Window, actions, div, point, px,
+    ScrollWheelEvent, StatefulInteractiveElement, Styled, VisualContext, Window, actions, div,
+    point, px,
 };
 use open_gpui_ui_components::{
     Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command,
@@ -15,15 +16,16 @@ use open_gpui_ui_components::{
     CommandSelectionChange, CommandSelectionMode, CommandShortcutInspectorState,
     CommandStatusIntent, CommandStatusItem, Listbox, ListboxGroup, ListboxGroupDescriptor,
     ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem,
-    ScrollArea, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection,
-    gpui_adapter::init_text_input, listbox::ListboxOption,
+    Popover, ScrollArea, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection,
+    gpui_adapter::{OverlayLayerPhase, OverlayOpenIntent, WindowOverlayRuntime, init_text_input},
+    listbox::ListboxOption,
 };
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
-    OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable, Size, ThemeTokens,
-    VirtualizerRange, ui_px,
+    DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+    OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable, Size,
+    ThemeTokens, VirtualizerRange, ui_px,
 };
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use support::tokens::custom_tokens;
 
@@ -662,10 +664,10 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
                             .option(ListboxOption::new("charlie", "Charlie"))
                             .option(ListboxOption::new("delta", "Delta")),
                     )
-                    .on_open_change(move |open, _, _| {
+                    .on_open_change(move |intent, _, _| {
                         open_events
                             .borrow_mut()
-                            .push(SelectRuntimeEvent::Open(open));
+                            .push(SelectRuntimeEvent::Open(intent.desired_open()));
                     })
                     .on_select(move |selection, _, _| {
                         select_events
@@ -683,6 +685,18 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
+
+    let hidden = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("closed Select snapshot should resolve")
+    });
+    let hidden = hidden
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "select:runtime-select")
+        .expect("closed Select should retain a reusable window registration");
+    assert_eq!(hidden.phase(), OverlayLayerPhase::Hidden);
 
     assert!(
         cx.debug_bounds("select:runtime-select:root").is_some(),
@@ -704,6 +718,21 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
         cx.debug_bounds("select:Runtime select:select-content-scroll:content")
             .is_some(),
         "select content should open from the real trigger"
+    );
+    let opened = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("open Select snapshot should resolve")
+    });
+    let opened = opened
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "select:runtime-select")
+        .expect("open Select should own one window registration");
+    assert_eq!(opened.phase(), OverlayLayerPhase::Open);
+    assert!(
+        cx.debug_selector_is_focused("listbox:runtime-select-listbox:option:alpha"),
+        "opening Select should focus its first enabled active option"
     );
 
     let disabled_bravo = cx
@@ -743,6 +772,17 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
         cx.debug_selector_is_focused("select:runtime-select:trigger"),
         "select selection should restore focus to the trigger"
     );
+    let selected = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("selected Select snapshot should resolve")
+    });
+    let selected = selected
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "select:runtime-select")
+        .expect("selected Select registration should remain reusable");
+    assert_eq!(selected.phase(), OverlayLayerPhase::Hidden);
 
     let trigger = cx
         .debug_bounds("select:runtime-select:trigger")
@@ -824,6 +864,227 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
             .is_none(),
         "keyboard popup selection should close the content"
     );
+}
+
+#[open_gpui::test]
+fn controlled_select_escape_refusal_keeps_runtime_authority_until_owner_commit(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        open: bool,
+        open_intents: Rc<RefCell<Vec<OverlayOpenIntent>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let open_intents = self.open_intents.clone();
+            Select::new("controlled-select", "Controlled select")
+                .open(self.open)
+                .option(ListboxOption::new("alpha", "Alpha"))
+                .option(ListboxOption::new("bravo", "Bravo"))
+                .on_open_change(move |intent, _, _| {
+                    open_intents.borrow_mut().push(intent);
+                })
+        }
+    }
+
+    let open_intents = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        open: true,
+        open_intents: open_intents.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert!(
+        cx.debug_selector_is_focused("listbox:controlled-select-listbox:option:alpha"),
+        "controlled Select should focus its first enabled option while open"
+    );
+    cx.simulate_keystrokes("escape escape");
+
+    let refused = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("controlled Select snapshot should resolve")
+    });
+    let refused = refused
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "select:controlled-select")
+        .expect("controlled Select should remain registered after refusing close");
+    let first_intent = open_intents
+        .borrow()
+        .first()
+        .cloned()
+        .expect("Escape should emit one controlled close intent");
+    assert_eq!(open_intents.borrow().len(), 1);
+    assert!(!first_intent.desired_open());
+    assert_eq!(first_intent.reason(), DismissReason::EscapeKey);
+    let first_revision = first_intent
+        .revision()
+        .expect("controlled close intent should carry a revision");
+    assert_eq!(refused.phase(), OverlayLayerPhase::CloseRequested);
+    assert_eq!(refused.pending_intent(), Some(DismissReason::EscapeKey));
+    assert!(refused.keyboard_eligible());
+    assert!(refused.focus_active());
+    assert!(
+        cx.debug_bounds("select:Controlled select:select-content-scroll:content")
+            .is_some(),
+        "controlled refusal should keep the Select surface mounted"
+    );
+    assert!(
+        cx.debug_selector_is_focused("listbox:controlled-select-listbox:option:alpha"),
+        "controlled refusal should preserve popup focus authority"
+    );
+
+    cx.update(|window, cx| {
+        first_intent
+            .reject(window, cx)
+            .expect("the owner should be able to reject its exact close intent");
+    });
+    let reopened = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("rejected Select snapshot should resolve")
+    });
+    let reopened = reopened
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "select:controlled-select")
+        .expect("rejected Select should remain registered");
+    assert_eq!(reopened.phase(), OverlayLayerPhase::Open);
+    assert_eq!(reopened.pending_intent(), None);
+
+    cx.simulate_keystrokes("escape");
+    let second_intent = open_intents
+        .borrow()
+        .get(1)
+        .cloned()
+        .expect("a later Escape should emit a new controlled close intent");
+    assert_eq!(open_intents.borrow().len(), 2);
+    assert!(!second_intent.desired_open());
+    assert_eq!(second_intent.reason(), DismissReason::EscapeKey);
+    assert_ne!(
+        second_intent.revision(),
+        Some(first_revision),
+        "a new request after rejection must carry a new revision"
+    );
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.open = false;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let committed = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("committed Select snapshot should resolve")
+    });
+    let committed = committed
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "select:controlled-select")
+        .expect("hidden Select registration should remain reusable");
+    assert_eq!(committed.phase(), OverlayLayerPhase::Hidden);
+    assert!(cx.debug_selector_is_focused("select:controlled-select:trigger"));
+}
+
+#[open_gpui::test]
+fn controlled_select_selection_refusal_preserves_surface_focus_and_callback_order(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        open: bool,
+        events: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let select_events = self.events.clone();
+            let open_events = self.events.clone();
+            Select::new("controlled-selection-select", "Controlled selection select")
+                .open(self.open)
+                .option(ListboxOption::new("alpha", "Alpha"))
+                .option(ListboxOption::new("bravo", "Bravo"))
+                .on_select(move |selection, _, _| {
+                    select_events
+                        .borrow_mut()
+                        .push(format!("select:{}", selection.value()));
+                })
+                .on_open_change(move |intent, _, _| {
+                    open_events
+                        .borrow_mut()
+                        .push(format!("open:{}", intent.desired_open()));
+                })
+        }
+    }
+
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        open: true,
+        events: events.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let alpha = cx
+        .debug_bounds("listbox:controlled-selection-select-listbox:option:alpha")
+        .expect("controlled Select option should render");
+    cx.simulate_click(alpha.center(), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        ["select:alpha", "open:false"],
+        "selection effects must run before registered close observers"
+    );
+    let snapshot = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("controlled Select snapshot should resolve")
+    });
+    let refused = snapshot
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "select:controlled-selection-select")
+        .expect("controlled Select should retain its registration");
+    assert_eq!(refused.phase(), OverlayLayerPhase::CloseRequested);
+    assert_eq!(refused.pending_intent(), Some(DismissReason::Selection));
+    assert!(refused.keyboard_eligible());
+    assert!(refused.focus_active());
+    assert!(
+        cx.debug_bounds("select:Controlled selection select:select-content-scroll:content")
+            .is_some()
+    );
+    assert!(
+        cx.debug_selector_is_focused("listbox:controlled-selection-select-listbox:option:alpha")
+    );
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.open = false;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let snapshot = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("committed Select snapshot should resolve")
+    });
+    let committed = snapshot
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "select:controlled-selection-select")
+        .expect("hidden Select registration should remain reusable");
+    assert_eq!(committed.phase(), OverlayLayerPhase::Hidden);
+    assert!(cx.debug_selector_is_focused("select:controlled-selection-select:trigger"));
 }
 
 #[test]
@@ -1020,10 +1281,10 @@ fn combobox_runtime_filters_input_and_selects_filtered_option(cx: &mut open_gpui
                             .option(ComboboxOption::new("remix", "Remix").keyword("react"))
                             .option(ComboboxOption::new("relay", "Relay").keyword("graphql")),
                     )
-                    .on_open_change(move |open, _, _| {
+                    .on_open_change(move |intent, _, _| {
                         open_events
                             .borrow_mut()
-                            .push(ComboboxRuntimeEvent::Open(open));
+                            .push(ComboboxRuntimeEvent::Open(intent.desired_open()));
                     })
                     .on_select(move |selection, _, _| {
                         select_events
@@ -1042,6 +1303,18 @@ fn combobox_runtime_filters_input_and_selects_filtered_option(cx: &mut open_gpui
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
+
+    let hidden = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("closed Combobox snapshot should resolve")
+    });
+    let hidden = hidden
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "combobox:runtime-combobox")
+        .expect("closed Combobox should retain a reusable window registration");
+    assert_eq!(hidden.phase(), OverlayLayerPhase::Hidden);
 
     let input = cx
         .debug_bounds("text-input:runtime-combobox-input:root")
@@ -1074,6 +1347,21 @@ fn combobox_runtime_filters_input_and_selects_filtered_option(cx: &mut open_gpui
         cx.debug_bounds("combobox:runtime-combobox:content")
             .is_some(),
         "toggle click should open filtered popup content"
+    );
+    let opened = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("open Combobox snapshot should resolve")
+    });
+    let opened = opened
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "combobox:runtime-combobox")
+        .expect("open Combobox should own one window registration");
+    assert_eq!(opened.phase(), OverlayLayerPhase::Open);
+    assert!(
+        cx.debug_selector_is_focused("text-input:runtime-combobox-input:root"),
+        "toggle activation should preserve the real editor focus"
     );
     assert!(
         cx.debug_bounds("listbox:runtime-combobox-listbox:option:react")
@@ -1118,9 +1406,20 @@ fn combobox_runtime_filters_input_and_selects_filtered_option(cx: &mut open_gpui
         "combobox selection should close popup content"
     );
     assert!(
-        cx.debug_selector_is_focused("combobox:runtime-combobox:input-row"),
-        "combobox selection should restore focus to the input row"
+        cx.debug_selector_is_focused("text-input:runtime-combobox-input:root"),
+        "combobox selection should preserve focus on the real editor"
     );
+    let selected = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("selected Combobox snapshot should resolve")
+    });
+    let selected = selected
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "combobox:runtime-combobox")
+        .expect("selected Combobox registration should remain reusable");
+    assert_eq!(selected.phase(), OverlayLayerPhase::Hidden);
 }
 
 #[open_gpui::test]
@@ -1150,10 +1449,10 @@ fn combobox_runtime_keyboard_selects_filtered_option(cx: &mut open_gpui::TestApp
                             .option(ComboboxOption::new("remix", "Remix").keyword("react"))
                             .option(ComboboxOption::new("relay", "Relay").keyword("graphql")),
                     )
-                    .on_open_change(move |open, _, _| {
+                    .on_open_change(move |intent, _, _| {
                         open_events
                             .borrow_mut()
-                            .push(ComboboxRuntimeEvent::Open(open));
+                            .push(ComboboxRuntimeEvent::Open(intent.desired_open()));
                     })
                     .on_select(move |selection, _, _| {
                         select_events
@@ -1196,6 +1495,10 @@ fn combobox_runtime_keyboard_selects_filtered_option(cx: &mut open_gpui::TestApp
             .is_some(),
         "down arrow should open filtered combobox content from the input row"
     );
+    assert!(
+        cx.debug_selector_is_focused("text-input:keyboard-combobox-input:root"),
+        "active-option navigation should not move physical focus out of the editor"
+    );
 
     cx.simulate_keystrokes("enter");
     cx.update(|window, cx| {
@@ -1215,6 +1518,385 @@ fn combobox_runtime_keyboard_selects_filtered_option(cx: &mut open_gpui::TestApp
             .is_none(),
         "keyboard selection should close filtered combobox content"
     );
+    assert!(
+        cx.debug_selector_is_focused("text-input:keyboard-combobox-input:root"),
+        "keyboard selection should preserve editor focus"
+    );
+}
+
+#[open_gpui::test]
+fn controlled_combobox_escape_refusal_keeps_editor_and_runtime_authority(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        open: bool,
+        open_events: Rc<RefCell<Vec<bool>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let open_events = self.open_events.clone();
+            Combobox::new("controlled-combobox", "Controlled combobox")
+                .open(self.open)
+                .option(ComboboxOption::new("alpha", "Alpha"))
+                .option(ComboboxOption::new("bravo", "Bravo"))
+                .on_open_change(move |intent, _, _| {
+                    open_events.borrow_mut().push(intent.desired_open());
+                })
+        }
+    }
+
+    cx.update(init_text_input);
+    let open_events = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        open: true,
+        open_events: open_events.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let editor = cx
+        .debug_bounds("text-input:controlled-combobox-input:root")
+        .expect("controlled Combobox editor should render");
+    cx.simulate_click(editor.center(), Default::default());
+    assert!(cx.debug_selector_is_focused("text-input:controlled-combobox-input:root"));
+
+    cx.simulate_keystrokes("escape escape");
+    let refused = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("controlled Combobox snapshot should resolve")
+    });
+    let refused = refused
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "combobox:controlled-combobox")
+        .expect("controlled Combobox should remain registered after refusing close");
+    assert_eq!(open_events.borrow().as_slice(), &[false]);
+    assert_eq!(refused.phase(), OverlayLayerPhase::CloseRequested);
+    assert_eq!(refused.pending_intent(), Some(DismissReason::EscapeKey));
+    assert!(refused.keyboard_eligible());
+    assert!(
+        cx.debug_bounds("combobox:controlled-combobox:content")
+            .is_some(),
+        "controlled refusal should keep the popup mounted"
+    );
+    assert!(
+        cx.debug_selector_is_focused("text-input:controlled-combobox-input:root"),
+        "controlled refusal should keep physical focus on the editor"
+    );
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.open = false;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let committed = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("committed Combobox snapshot should resolve")
+    });
+    let committed = committed
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "combobox:controlled-combobox")
+        .expect("hidden Combobox registration should remain reusable");
+    assert_eq!(committed.phase(), OverlayLayerPhase::Hidden);
+    assert!(cx.debug_selector_is_focused("text-input:controlled-combobox-input:root"));
+}
+
+#[open_gpui::test]
+fn controlled_combobox_selection_refusal_preserves_editor_and_callback_order(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        open: bool,
+        events: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let select_events = self.events.clone();
+            let open_events = self.events.clone();
+            Combobox::new(
+                "controlled-selection-combobox",
+                "Controlled selection combobox",
+            )
+            .open(self.open)
+            .option(ComboboxOption::new("alpha", "Alpha"))
+            .option(ComboboxOption::new("bravo", "Bravo"))
+            .on_select(move |selection, _, _| {
+                select_events
+                    .borrow_mut()
+                    .push(format!("select:{}", selection.value()));
+            })
+            .on_open_change(move |intent, _, _| {
+                open_events
+                    .borrow_mut()
+                    .push(format!("open:{}", intent.desired_open()));
+            })
+        }
+    }
+
+    cx.update(init_text_input);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        open: true,
+        events: events.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let editor = cx
+        .debug_bounds("text-input:controlled-selection-combobox-input:root")
+        .expect("controlled Combobox editor should render");
+    cx.simulate_click(editor.center(), Default::default());
+    let alpha = cx
+        .debug_bounds("listbox:controlled-selection-combobox-listbox:option:alpha")
+        .expect("controlled Combobox option should render");
+    cx.simulate_click(alpha.center(), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        ["select:alpha", "open:false"],
+        "selection effects must run before registered close observers"
+    );
+    let snapshot = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("controlled Combobox snapshot should resolve")
+    });
+    let refused = snapshot
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "combobox:controlled-selection-combobox")
+        .expect("controlled Combobox should retain its registration");
+    assert_eq!(refused.phase(), OverlayLayerPhase::CloseRequested);
+    assert_eq!(refused.pending_intent(), Some(DismissReason::Selection));
+    assert!(refused.keyboard_eligible());
+    assert!(
+        cx.debug_bounds("combobox:controlled-selection-combobox:content")
+            .is_some()
+    );
+    assert!(cx.debug_selector_is_focused("text-input:controlled-selection-combobox-input:root"));
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.open = false;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let snapshot = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("committed Combobox snapshot should resolve")
+    });
+    let committed = snapshot
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "combobox:controlled-selection-combobox")
+        .expect("hidden Combobox registration should remain reusable");
+    assert_eq!(committed.phase(), OverlayLayerPhase::Hidden);
+    assert!(cx.debug_selector_is_focused("text-input:controlled-selection-combobox-input:root"));
+}
+
+#[open_gpui::test]
+fn select_and_combobox_outside_press_close_through_window_runtime(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        events: Rc<RefCell<Vec<String>>>,
+        outside_clicks: Rc<Cell<usize>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let outside_clicks = self.outside_clicks.clone();
+            let select_events = self.events.clone();
+            let combobox_events = self.events.clone();
+            div()
+                .relative()
+                .size_full()
+                .child(
+                    div()
+                        .id("choice-outside-target")
+                        .debug_selector(|| "choice-test:outside".to_owned())
+                        .absolute()
+                        .left(px(520.0))
+                        .top(px(320.0))
+                        .w(px(120.0))
+                        .h(px(40.0))
+                        .on_click(move |_, _, _| {
+                            outside_clicks.set(outside_clicks.get() + 1);
+                        })
+                        .child("Outside"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_4()
+                        .child(
+                            Select::new("outside-select", "Outside select")
+                                .option(ListboxOption::new("alpha", "Alpha"))
+                                .on_open_change(move |intent, _, _| {
+                                    select_events
+                                        .borrow_mut()
+                                        .push(format!("select:{}", intent.desired_open()));
+                                }),
+                        )
+                        .child(
+                            Combobox::new("outside-combobox", "Outside combobox")
+                                .option(ComboboxOption::new("alpha", "Alpha"))
+                                .on_open_change(move |intent, _, _| {
+                                    combobox_events
+                                        .borrow_mut()
+                                        .push(format!("combobox:{}", intent.desired_open()));
+                                }),
+                        ),
+                )
+        }
+    }
+
+    cx.update(init_text_input);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let outside_clicks = Rc::new(Cell::new(0));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        events: events.clone(),
+        outside_clicks: outside_clicks.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let outside = cx
+        .debug_bounds("choice-test:outside")
+        .expect("outside target should render");
+    let select_trigger = cx
+        .debug_bounds("select:outside-select:trigger")
+        .expect("Select trigger should render");
+    cx.simulate_click(select_trigger.center(), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.simulate_click(outside.center(), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert_eq!(events.borrow().as_slice(), ["select:true", "select:false"]);
+    assert_eq!(
+        outside_clicks.get(),
+        0,
+        "dismiss-and-consume must block the underlay click"
+    );
+    assert!(
+        cx.debug_bounds("select:Outside select:select-content-scroll:content")
+            .is_none()
+    );
+
+    let editor = cx
+        .debug_bounds("text-input:outside-combobox-input:root")
+        .expect("Combobox editor should render");
+    cx.simulate_click(editor.center(), Default::default());
+    let toggle = cx
+        .debug_bounds("combobox:outside-combobox:toggle")
+        .expect("Combobox toggle should render");
+    cx.simulate_click(toggle.center(), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.simulate_click(outside.center(), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            "select:true",
+            "select:false",
+            "combobox:true",
+            "combobox:false",
+        ]
+    );
+    assert_eq!(
+        outside_clicks.get(),
+        0,
+        "dismiss-and-consume must block the underlay click"
+    );
+    assert!(
+        cx.debug_bounds("combobox:outside-combobox:content")
+            .is_none()
+    );
+    assert!(cx.debug_selector_is_focused("text-input:outside-combobox-input:root"));
+
+    let snapshot = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("choice family snapshot should resolve")
+    });
+    for layer_id in ["select:outside-select", "combobox:outside-combobox"] {
+        let layer = snapshot
+            .layers()
+            .iter()
+            .find(|layer| layer.id().as_str() == layer_id)
+            .expect("choice layer should retain a reusable registration");
+        assert_eq!(layer.phase(), OverlayLayerPhase::Hidden);
+    }
+}
+
+#[open_gpui::test]
+fn select_and_combobox_inherit_their_rendered_overlay_parent(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            Popover::element(
+                "choice-parent",
+                "Open choice parent",
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(
+                        Select::new("nested-select", "Nested select")
+                            .default_open(true)
+                            .option(ListboxOption::new("alpha", "Alpha")),
+                    )
+                    .child(
+                        Combobox::new("nested-combobox", "Nested combobox")
+                            .default_open(true)
+                            .option(ComboboxOption::new("alpha", "Alpha")),
+                    ),
+            )
+            .default_open(true)
+        }
+    }
+
+    cx.update(init_text_input);
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let snapshot = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("nested choice snapshot should resolve")
+    });
+    let parent_id = "popover:choice-parent";
+    let parent = snapshot
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == parent_id)
+        .expect("parent Popover should register");
+    assert!(parent.parent().is_none());
+    for layer_id in ["select:nested-select", "combobox:nested-combobox"] {
+        let child = snapshot
+            .layers()
+            .iter()
+            .find(|layer| layer.id().as_str() == layer_id)
+            .expect("nested choice layer should register");
+        assert_eq!(
+            child.parent().map(|parent| parent.as_str()),
+            Some(parent_id)
+        );
+    }
 }
 
 #[test]
@@ -2857,6 +3539,18 @@ fn command_runtime_filters_input_and_selects_with_keyboard(cx: &mut open_gpui::T
         window.draw(cx).clear();
     });
 
+    let snapshot = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("inline Command snapshot should resolve")
+    });
+    assert!(
+        snapshot
+            .layers()
+            .iter()
+            .all(|layer| !layer.id().as_str().starts_with("command:")),
+        "inline Command must not register an overlay layer"
+    );
     assert!(
         cx.debug_bounds("command:runtime-command:content").is_some(),
         "inline command content should render immediately"
@@ -3012,10 +3706,10 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
                     .group(CommandGroup::new("view", "View").item(
                         CommandItem::new("toggle-sidebar", "Toggle Sidebar").keyword("layout"),
                     ))
-                    .on_open_change(move |open, _, _| {
+                    .on_open_change(move |intent, _, _| {
                         open_events
                             .borrow_mut()
-                            .push(CommandDialogRuntimeEvent::Open(open));
+                            .push(CommandDialogRuntimeEvent::Open(intent.desired_open()));
                     })
                     .on_select(move |selection, _, _| {
                         select_events
@@ -3034,6 +3728,18 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
+
+    let hidden = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("closed Command snapshot should resolve")
+    });
+    let hidden = hidden
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "command:dialog-runtime-command")
+        .expect("closed dialog Command should retain a reusable registration");
+    assert_eq!(hidden.phase(), OverlayLayerPhase::Hidden);
 
     assert!(
         cx.debug_bounds("command:dialog-runtime-command:content")
@@ -3058,6 +3764,19 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
             .is_some(),
         "trigger click should open dialog command content"
     );
+    let opened = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("open Command snapshot should resolve")
+    });
+    let opened = opened
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "command:dialog-runtime-command")
+        .expect("open dialog Command should own one window registration");
+    assert_eq!(opened.phase(), OverlayLayerPhase::Open);
+    assert!(opened.modal_pointer_barrier());
+    assert!(opened.focus_active());
 
     let input = cx
         .debug_bounds("text-input:dialog-runtime-command-input:root")
@@ -3121,6 +3840,17 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
         cx.debug_selector_is_focused("command:dialog-runtime-command:trigger"),
         "dialog command selection should restore focus to the trigger"
     );
+    let selected = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("selected Command snapshot should resolve")
+    });
+    let selected = selected
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "command:dialog-runtime-command")
+        .expect("selected dialog Command registration should remain reusable");
+    assert_eq!(selected.phase(), OverlayLayerPhase::Hidden);
 
     let trigger = cx
         .debug_bounds("command:dialog-runtime-command:trigger")
@@ -3203,6 +3933,171 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
         cx.debug_selector_is_focused("command:dialog-runtime-command:trigger"),
         "outside press should restore focus to the dialog command trigger"
     );
+}
+
+#[open_gpui::test]
+fn command_runtime_dialog_to_inline_unregisters_the_window_layer(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        dialog: bool,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            Command::new("mode-switch-command", "Mode switch command")
+                .dialog("Command palette")
+                .dialog_enabled(self.dialog)
+                .open(true)
+                .item(CommandItem::new("open-file", "Open File"))
+        }
+    }
+
+    cx.update(init_text_input);
+    let (view, cx) = cx.add_window_view(|_, _| TestView { dialog: true });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let dialog = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("dialog Command snapshot should resolve")
+    });
+    let dialog = dialog
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "command:mode-switch-command")
+        .expect("dialog Command should register");
+    assert_eq!(dialog.phase(), OverlayLayerPhase::Open);
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.dialog = false;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let inline = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("inline Command snapshot should resolve")
+    });
+    assert!(
+        inline
+            .layers()
+            .iter()
+            .all(|layer| layer.id().as_str() != "command:mode-switch-command"),
+        "switching to inline mode must explicitly unregister the dialog layer"
+    );
+    assert!(
+        cx.debug_bounds("command:mode-switch-command:content")
+            .is_some(),
+        "inline Command content should replace the dialog presentation"
+    );
+    assert!(
+        cx.debug_bounds("command:mode-switch-command:trigger")
+            .is_none(),
+        "inline Command must not retain the dialog trigger"
+    );
+}
+
+#[open_gpui::test]
+fn controlled_command_selection_refusal_preserves_modal_editor_and_callback_order(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        open: bool,
+        events: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let select_events = self.events.clone();
+            let open_events = self.events.clone();
+            Command::new("controlled-command", "Controlled command")
+                .dialog("Command palette")
+                .open(self.open)
+                .item(CommandItem::new("open-file", "Open File"))
+                .item(CommandItem::new("close-window", "Close Window"))
+                .on_select(move |selection, _, _| {
+                    select_events
+                        .borrow_mut()
+                        .push(format!("select:{}", selection.value()));
+                })
+                .on_open_change(move |intent, _, _| {
+                    open_events
+                        .borrow_mut()
+                        .push(format!("open:{}", intent.desired_open()));
+                })
+        }
+    }
+
+    cx.update(init_text_input);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        open: true,
+        events: events.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let input = cx
+        .debug_bounds("text-input:controlled-command-input:root")
+        .expect("controlled Command editor should render");
+    cx.simulate_click(input.center(), Default::default());
+    let open_file = cx
+        .debug_bounds("listbox:controlled-command-listbox:option:open-file")
+        .expect("controlled Command option should render");
+    cx.simulate_click(open_file.center(), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        ["select:open-file", "open:false"],
+        "selection effects must run before registered close observers"
+    );
+    let snapshot = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("controlled Command snapshot should resolve")
+    });
+    let refused = snapshot
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "command:controlled-command")
+        .expect("controlled Command should retain its registration");
+    assert_eq!(refused.phase(), OverlayLayerPhase::CloseRequested);
+    assert_eq!(refused.pending_intent(), Some(DismissReason::Selection));
+    assert!(refused.keyboard_eligible());
+    assert!(refused.modal_pointer_barrier());
+    assert!(refused.focus_active());
+    assert!(
+        cx.debug_bounds("command:controlled-command:content")
+            .is_some()
+    );
+    assert!(cx.debug_selector_is_focused("text-input:controlled-command-input:root"));
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.open = false;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let snapshot = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("committed Command snapshot should resolve")
+    });
+    let committed = snapshot
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "command:controlled-command")
+        .expect("hidden Command registration should remain reusable");
+    assert_eq!(committed.phase(), OverlayLayerPhase::Hidden);
+    assert!(cx.debug_selector_is_focused("command:controlled-command:trigger"));
 }
 
 #[open_gpui::test]

@@ -20,7 +20,8 @@ use open_gpui_ui_components::{
     TextInputDisplayMode, ThemeMode, ToggleVariant, TooltipOpenIntent, TreeKeyboardAction,
     VirtualizedListRowMeasureMode, VirtualizedListScrollStrategy,
     gpui_adapter::{
-        DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state, init_text_input,
+        DEFAULT_OVERLAY_SAFE_MARGIN, OverlayLayerPhase, OverlayLayerSnapshot, WindowOverlayRuntime,
+        WindowOverlaySnapshot, default_deferred_priority, gpui_overlay_state, init_text_input,
     },
 };
 use open_gpui_ui_core::{
@@ -151,6 +152,23 @@ impl<'a> StoryRuntimeProbe<'a> {
         Self { cx }
     }
 
+    fn overlay_snapshot(&mut self) -> WindowOverlaySnapshot {
+        self.cx.update(|window, cx| {
+            WindowOverlayRuntime::for_window(window, cx)
+                .snapshot(window, cx)
+                .expect("gallery overlay runtime snapshot should resolve")
+        })
+    }
+
+    fn overlay_layer(&mut self, id: &str) -> OverlayLayerSnapshot {
+        self.overlay_snapshot()
+            .layers()
+            .iter()
+            .find(|layer| layer.id().as_str() == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("expected gallery overlay runtime layer `{id}`"))
+    }
+
     fn render_bounds(&mut self, selector: &str) -> Bounds<Pixels> {
         bounds(self.cx, selector)
     }
@@ -189,6 +207,14 @@ impl<'a> StoryRuntimeProbe<'a> {
 
     fn settle(&mut self) {
         settle(self.cx);
+    }
+
+    fn drain_next_frame(&mut self) {
+        self.cx.update(|window, cx| {
+            window.drain_next_frame_callbacks_for_test(cx);
+            window.draw(cx).clear();
+        });
+        self.cx.run_until_parked();
     }
 
     fn redraw(&mut self) {

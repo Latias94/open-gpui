@@ -104,7 +104,7 @@ fn identical_layer_ids_and_input_are_isolated_between_windows(cx: &mut open_gpui
     let first_events = Rc::new(RefCell::new(Vec::new()));
     let second_events = Rc::new(RefCell::new(Vec::new()));
 
-    let first_runtime_id = first_window
+    first_window
         .update(cx, |probe, window, cx| {
             let binding = probe
                 .runtime
@@ -119,10 +119,9 @@ fn identical_layer_ids_and_input_are_isolated_between_windows(cx: &mut open_gpui
                 )
                 .expect("first window layer should register");
             probe.add_layer(binding);
-            probe.runtime.entity_id()
         })
         .expect("first window should remain open");
-    let second_runtime_id = second_window
+    second_window
         .update(cx, |probe, window, cx| {
             let binding = probe
                 .runtime
@@ -137,10 +136,8 @@ fn identical_layer_ids_and_input_are_isolated_between_windows(cx: &mut open_gpui
                 )
                 .expect("second window layer should register");
             probe.add_layer(binding);
-            probe.runtime.entity_id()
         })
         .expect("second window should remain open");
-    assert_ne!(first_runtime_id, second_runtime_id);
 
     cx.update_window(first_any, |_, window, cx| window.draw(cx).clear())
         .expect("first window should remain open");
@@ -422,7 +419,7 @@ fn owner_release_forces_registered_subtree_teardown_leaf_to_root(
 }
 
 #[open_gpui::test]
-fn owner_release_uses_focused_descendant_scope_when_root_has_no_scope(
+fn owner_release_uses_focused_descendant_scope_and_restores_its_live_trigger(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let (view, cx) = cx.add_window_view(RuntimeProbe::new);
@@ -492,7 +489,7 @@ fn owner_release_uses_focused_descendant_scope_when_root_has_no_scope(
 
     drop(owner);
     settle_focus_claims(cx);
-    assert!(cx.debug_selector_is_focused("window-overlay-runtime:fallback"));
+    assert!(cx.debug_selector_is_focused("window-overlay-runtime:release-focus-child:trigger"));
     let remaining = cx.update_window_entity(&view, |probe, window, cx| {
         probe
             .runtime

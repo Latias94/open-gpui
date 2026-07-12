@@ -108,6 +108,7 @@ const SMOKE_STATE_EXPRESSION: &str = r#"
                 width: rect.width,
                 height: rect.height,
             } : null,
+            mousePointerCaptured: canvas.hasPointerCapture(1),
         } : null,
         input: input ? {
             count: document.querySelectorAll("input").length,
@@ -275,13 +276,185 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
     )?;
 
     cdp.key_press("s", "KeyS", 83)?;
-    let final_state = wait_for_state(cdp, "keyboard delivery", |state| {
+    let keyboard_state = wait_for_state(cdp, "keyboard delivery", |state| {
         state.pointer("/probe/keyEvents").and_then(Value::as_u64) == Some(1)
             && state.pointer("/input/focused").and_then(Value::as_bool) == Some(true)
             && state
                 .pointer("/probe/shellInteractions")
                 .and_then(Value::as_u64)
                 .is_some_and(|count| count >= 2)
+    })?;
+
+    let pointer_moves_before_capture = keyboard_state
+        .pointer("/probe/pointerMoveEvents")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "web smoke probe did not expose pointer move events".to_string())?;
+    cdp.mouse_down(center_x, center_y)?;
+    wait_for_state(cdp, "DOM and GPUI pointer capture", |state| {
+        state
+            .pointer("/canvas/mousePointerCaptured")
+            .and_then(Value::as_bool)
+            == Some(true)
+            && state
+                .pointer("/probe/pointerCaptureRequests")
+                .and_then(Value::as_u64)
+                == Some(2)
+    })?;
+
+    let outside_x = number_field(rect, "left")? + number_field(rect, "width")? + 20.0;
+    let outside_y = center_y;
+    cdp.mouse_move(outside_x, outside_y, 1)?;
+    wait_for_state(cdp, "captured pointer move outside canvas", |state| {
+        state
+            .pointer("/probe/pointerMoveEvents")
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count > pointer_moves_before_capture)
+            && state
+                .pointer("/canvas/mousePointerCaptured")
+                .and_then(Value::as_bool)
+                == Some(true)
+    })?;
+
+    cdp.evaluate(
+        r#"(() => {
+            const canvas = document.querySelector("canvas");
+            if (!canvas || !canvas.hasPointerCapture(1)) {
+                throw new Error("web smoke canvas does not own pointer 1");
+            }
+            canvas.releasePointerCapture(1);
+            return true;
+        })()"#,
+    )?;
+    cdp.mouse_move(outside_x, outside_y, 1)?;
+    wait_for_state(cdp, "lost pointer capture cancellation", |state| {
+        state
+            .pointer("/canvas/mousePointerCaptured")
+            .and_then(Value::as_bool)
+            == Some(false)
+            && state
+                .pointer("/probe/pointerCancelEvents")
+                .and_then(Value::as_u64)
+                == Some(1)
+            && state
+                .pointer("/probe/platformCaptureLostEvents")
+                .and_then(Value::as_u64)
+                == Some(1)
+    })?;
+
+    cdp.mouse_up(outside_x, outside_y)?;
+    wait_for_state(
+        cdp,
+        "terminal pointer cancellation remains unique",
+        |state| {
+            state
+                .pointer("/probe/pointerCancelEvents")
+                .and_then(Value::as_u64)
+                == Some(1)
+                && state
+                    .pointer("/probe/platformCaptureLostEvents")
+                    .and_then(Value::as_u64)
+                    == Some(1)
+                && state.pointer("/probe/clickEvents").and_then(Value::as_u64) == Some(1)
+        },
+    )?;
+
+    cdp.mouse_down(center_x, center_y)?;
+    wait_for_state(cdp, "pointer capture before input blur", |state| {
+        state
+            .pointer("/canvas/mousePointerCaptured")
+            .and_then(Value::as_bool)
+            == Some(true)
+            && state
+                .pointer("/probe/pointerCaptureRequests")
+                .and_then(Value::as_u64)
+                == Some(3)
+            && state.pointer("/input/focused").and_then(Value::as_bool) == Some(true)
+    })?;
+    cdp.evaluate(
+        r#"(() => {
+            const input = document.querySelector("input");
+            if (!input) {
+                throw new Error("web smoke input is missing");
+            }
+            input.blur();
+            return true;
+        })()"#,
+    )?;
+    wait_for_state(cdp, "input blur pointer cancellation", |state| {
+        state
+            .pointer("/canvas/mousePointerCaptured")
+            .and_then(Value::as_bool)
+            == Some(false)
+            && state
+                .pointer("/probe/pointerCancelEvents")
+                .and_then(Value::as_u64)
+                == Some(2)
+            && state
+                .pointer("/probe/platformCaptureLostEvents")
+                .and_then(Value::as_u64)
+                == Some(1)
+            && state
+                .pointer("/probe/windowDeactivatedEvents")
+                .and_then(Value::as_u64)
+                == Some(1)
+    })?;
+    cdp.mouse_up(outside_x, outside_y)?;
+
+    cdp.mouse_down(center_x, center_y)?;
+    wait_for_state(cdp, "pointer capture before document hide", |state| {
+        state
+            .pointer("/canvas/mousePointerCaptured")
+            .and_then(Value::as_bool)
+            == Some(true)
+            && state
+                .pointer("/probe/pointerCaptureRequests")
+                .and_then(Value::as_u64)
+                == Some(4)
+    })?;
+    cdp.evaluate(
+        r#"(() => {
+            Object.defineProperty(document, "visibilityState", {
+                configurable: true,
+                get: () => "hidden",
+            });
+            try {
+                document.dispatchEvent(new Event("visibilitychange"));
+                document.dispatchEvent(new Event("visibilitychange"));
+            } finally {
+                delete document.visibilityState;
+            }
+            return true;
+        })()"#,
+    )?;
+    wait_for_state(cdp, "document hide pointer cancellation", |state| {
+        state
+            .pointer("/canvas/mousePointerCaptured")
+            .and_then(Value::as_bool)
+            == Some(false)
+            && state
+                .pointer("/probe/pointerCancelEvents")
+                .and_then(Value::as_u64)
+                == Some(3)
+            && state
+                .pointer("/probe/platformCaptureLostEvents")
+                .and_then(Value::as_u64)
+                == Some(1)
+            && state
+                .pointer("/probe/windowDeactivatedEvents")
+                .and_then(Value::as_u64)
+                == Some(2)
+    })?;
+    cdp.mouse_up(outside_x, outside_y)?;
+    let final_state = wait_for_state(cdp, "deactivation cancellation remains unique", |state| {
+        state
+            .pointer("/probe/pointerCancelEvents")
+            .and_then(Value::as_u64)
+            == Some(3)
+            && state
+                .pointer("/probe/windowDeactivatedEvents")
+                .and_then(Value::as_u64)
+                == Some(2)
+            && state.pointer("/probe/clickEvents").and_then(Value::as_u64) == Some(1)
     })?;
 
     if final_state
@@ -337,7 +510,7 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
     }
 
     println!(
-        "web smoke passed: app ready, canvas initialized, input delivered, shell interaction observed, platform viewports unsupported, DockSurface viewport gate typed unsupported"
+        "web smoke passed: app ready, canvas initialized, keyboard/click delivered, capture loss/blur/visibility cancellation wired exactly once, platform viewports unsupported, DockSurface viewport gate typed unsupported"
     );
     Ok(())
 }
@@ -967,16 +1140,27 @@ impl CdpClient {
     }
 
     fn mouse_click(&mut self, x: f64, y: f64) -> Result<(), String> {
+        self.mouse_move(x, y, 0)?;
+        self.mouse_down(x, y)?;
+        self.mouse_up(x, y)
+    }
+
+    fn mouse_move(&mut self, x: f64, y: f64, buttons: u8) -> Result<(), String> {
+        let button = if buttons & 1 == 1 { "left" } else { "none" };
         self.call(
             "Input.dispatchMouseEvent",
             json!({
                 "type": "mouseMoved",
                 "x": x,
                 "y": y,
-                "button": "none",
-                "buttons": 0,
+                "button": button,
+                "buttons": buttons,
             }),
         )?;
+        Ok(())
+    }
+
+    fn mouse_down(&mut self, x: f64, y: f64) -> Result<(), String> {
         self.call(
             "Input.dispatchMouseEvent",
             json!({
@@ -988,6 +1172,10 @@ impl CdpClient {
                 "clickCount": 1,
             }),
         )?;
+        Ok(())
+    }
+
+    fn mouse_up(&mut self, x: f64, y: f64) -> Result<(), String> {
         self.call(
             "Input.dispatchMouseEvent",
             json!({

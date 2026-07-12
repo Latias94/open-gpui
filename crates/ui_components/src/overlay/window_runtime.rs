@@ -2,21 +2,21 @@
 
 use std::cell::RefCell;
 use std::cmp::Reverse;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 
 use open_gpui::{
-    AnyElement, App, Bounds, Element, ElementId, Entity, EntityId, FocusHandle, GlobalElementId,
-    InspectorElementId, IntoElement, KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, Pixels,
-    Point, PointerCancelReason, PointerCapture, PointerCaptureHandle, Subscription, Window,
-    WindowId, WindowMouseEvent,
+    AnyElement, AnyWeakEntity, App, Bounds, Element, ElementId, Entity, EntityId, FocusHandle,
+    GlobalElementId, InspectorElementId, IntoElement, KeyDownEvent, LayoutId, MouseButton,
+    MouseDownEvent, Pixels, Point, PointerCancelReason, PointerCapture, PointerCaptureHandle,
+    Subscription, Window, WindowId, WindowMouseEvent,
 };
 use open_gpui_ui_core::{
-    DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent, FocusScopeId,
-    FocusScopeMode, FocusScopePolicy, FocusTargetId, InitialFocusIntent, OutsidePressParticipation,
-    OutsidePressPolicy, OutsidePressResolution, OverlayLayer, OverlayLayerId, OverlayLayerKind,
-    OverlayLayerPolicy, OverlayPresence, resolve_escape_key, resolve_outside_press,
+    DismissReason, EscapeKeyResolution, FocusScopeId, FocusScopeMode, FocusScopePolicy,
+    FocusTargetId, InitialFocusIntent, OutsidePressParticipation, OutsidePressPolicy,
+    OutsidePressResolution, OverlayLayer, OverlayLayerId, OverlayLayerKind, OverlayLayerPolicy,
+    OverlayPresence, resolve_escape_key, resolve_outside_press,
 };
 
 use super::focus_scope::{
@@ -25,6 +25,8 @@ use super::focus_scope::{
 
 mod api;
 mod focus;
+#[cfg(test)]
+mod focus_tests;
 mod input;
 mod lifecycle;
 mod surface;
@@ -33,7 +35,8 @@ mod surface_tests;
 
 pub use surface::OverlaySurface;
 
-type OpenChangeCallback = Rc<dyn Fn(bool, &mut Window, &mut App)>;
+type OpenChangeCallback = Rc<dyn Fn(OverlayOpenIntent, &mut Window, &mut App)>;
+type UncontrolledCommitCallback = Rc<dyn Fn(bool, &mut Window, &mut App)>;
 
 /// Stable identity for one registered inside region.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -106,6 +109,17 @@ pub enum OverlayLayerPhase {
     Hidden,
 }
 
+/// Runtime-owned status for one exact component layer lease.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OverlayLayerLeaseStatus {
+    /// The lease still owns a mutable registration in its canonical lifecycle phase.
+    Registered { phase: OverlayLayerPhase },
+    /// Unregistration is terminal, but deferred focus cleanup still retains the entry.
+    PendingUnregister,
+    /// The lease no longer owns an entry in this window runtime.
+    Released,
+}
+
 /// Opaque generation for one layer lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OverlayLayerGeneration(u64);
@@ -125,6 +139,80 @@ impl OverlayOpenIntentRevision {
     /// Returns the opaque numeric value for diagnostics and tests.
     pub const fn get(self) -> u64 {
         self.0
+    }
+}
+
+/// One runtime-issued request to change a registered overlay's open state.
+///
+/// Controlled owners may explicitly reject a close request through [`Self::reject`]. The intent
+/// retains the exact window-local lease and revision that produced it, so rejection cannot resolve
+/// a newer request or another incarnation of the same logical layer.
+#[derive(Clone)]
+pub struct OverlayOpenIntent {
+    desired_open: bool,
+    reason: DismissReason,
+    revision: Option<OverlayOpenIntentRevision>,
+    runtime: WindowOverlayRuntime,
+    lease: OverlayLayerLease,
+}
+
+impl OverlayOpenIntent {
+    fn new(
+        desired_open: bool,
+        reason: DismissReason,
+        revision: Option<OverlayOpenIntentRevision>,
+        runtime: WindowOverlayRuntime,
+        lease: OverlayLayerLease,
+    ) -> Self {
+        Self {
+            desired_open,
+            reason,
+            revision,
+            runtime,
+            lease,
+        }
+    }
+
+    /// Returns the open state requested from the owner.
+    pub const fn desired_open(&self) -> bool {
+        self.desired_open
+    }
+
+    /// Returns the source of this open-state request.
+    pub const fn reason(&self) -> DismissReason {
+        self.reason
+    }
+
+    /// Returns the revision owned by a controlled request.
+    pub const fn revision(&self) -> Option<OverlayOpenIntentRevision> {
+        self.revision
+    }
+
+    /// Rejects this exact controlled close request and restores the layer to `Open`.
+    pub fn reject(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), WindowOverlayRuntimeError> {
+        let Some(revision) = self.revision else {
+            return Err(WindowOverlayRuntimeError::NotControlled(
+                self.lease.layer_id.clone(),
+            ));
+        };
+        self.runtime
+            .reject_controlled_intent_by_lease(&self.lease, revision, window, cx)
+    }
+}
+
+impl fmt::Debug for OverlayOpenIntent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OverlayOpenIntent")
+            .field("desired_open", &self.desired_open)
+            .field("reason", &self.reason)
+            .field("revision", &self.revision)
+            .field("layer_id", &self.lease.layer_id)
+            .finish_non_exhaustive()
     }
 }
 
@@ -149,8 +237,6 @@ pub enum WindowOverlayRuntimeError {
     UnknownLayer(OverlayLayerId),
     /// The binding lease does not own the requested layer registration.
     ForeignLease(OverlayLayerId),
-    /// A rebind attempted to change open-state ownership for an existing lease.
-    OwnershipChanged(OverlayLayerId),
     /// A controlled-intent operation targeted an uncontrolled layer.
     NotControlled(OverlayLayerId),
     /// A controlled-intent resolution no longer matches the pending request.
@@ -240,11 +326,6 @@ impl fmt::Display for WindowOverlayRuntimeError {
             Self::ForeignLease(layer) => write!(
                 formatter,
                 "foreign lease for overlay layer `{}`",
-                layer.as_str()
-            ),
-            Self::OwnershipChanged(layer) => write!(
-                formatter,
-                "overlay layer `{}` changed open-state ownership",
                 layer.as_str()
             ),
             Self::NotControlled(layer) => write!(
@@ -346,7 +427,7 @@ pub struct OverlayLayerRegistration {
     focus_restore_condition: OverlayFocusRestoreCondition,
     tab_behavior: OverlayTabBehavior,
     on_open_change: Option<OpenChangeCallback>,
-    uncontrolled_commit: Option<OpenChangeCallback>,
+    uncontrolled_commit: Option<UncontrolledCommitCallback>,
 }
 
 impl OverlayLayerRegistration {
@@ -365,10 +446,10 @@ impl OverlayLayerRegistration {
             OverlayLayerKind::Modal => OverlayFocusMode::Modal,
         };
         let focus_restore_condition = match kind {
-            OverlayLayerKind::Modal => OverlayFocusRestoreCondition::Always,
-            OverlayLayerKind::NonModalDismissible | OverlayLayerKind::Menu => {
-                OverlayFocusRestoreCondition::IfFocusEntered
+            OverlayLayerKind::Modal | OverlayLayerKind::Menu => {
+                OverlayFocusRestoreCondition::Always
             }
+            OverlayLayerKind::NonModalDismissible => OverlayFocusRestoreCondition::IfFocusEntered,
             OverlayLayerKind::Tooltip => OverlayFocusRestoreCondition::Never,
         };
         let tab_behavior = match kind {
@@ -426,7 +507,7 @@ impl OverlayLayerRegistration {
     /// Registers the observable open-change callback.
     pub fn on_open_change(
         mut self,
-        callback: impl Fn(bool, &mut Window, &mut App) + 'static,
+        callback: impl Fn(OverlayOpenIntent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_open_change = Some(Rc::new(callback));
         self
@@ -474,6 +555,7 @@ pub struct OverlayFocusTargetLease {
     layer_id: OverlayLayerId,
     layer_token: u64,
     scope_id: FocusScopeId,
+    declared_target_id: FocusTargetId,
     target_id: FocusTargetId,
     target_token: u64,
 }
@@ -484,9 +566,44 @@ impl OverlayFocusTargetLease {
         &self.layer_id
     }
 
-    /// Returns the canonical target identity.
-    pub const fn target_id(&self) -> &FocusTargetId {
-        &self.target_id
+    /// Returns the caller-declared target identity.
+    pub const fn declared_target_id(&self) -> &FocusTargetId {
+        &self.declared_target_id
+    }
+}
+
+/// Component-local capability cache for focus targets registered with one overlay layer.
+///
+/// The window runtime remains the sole owner of live target registration and availability.
+#[derive(Clone, Default)]
+pub(crate) struct OverlayFocusTargetSet {
+    leases: Vec<OverlayFocusTargetLease>,
+}
+
+impl OverlayFocusTargetSet {
+    /// Reconciles caller-declared targets with the layer-owned live target registry.
+    pub(crate) fn sync(
+        &mut self,
+        runtime: &WindowOverlayRuntime,
+        binding: &OverlayLayerBinding,
+        registrations: impl IntoIterator<Item = FocusTargetRegistration>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), WindowOverlayRuntimeError> {
+        let registrations = registrations.into_iter().collect::<Vec<_>>();
+        let mut declared_ids = HashSet::with_capacity(registrations.len());
+        for registration in &registrations {
+            let declared_id = registration.id().clone();
+            if !declared_ids.insert(declared_id.clone()) {
+                return Err(WindowOverlayRuntimeError::Focus(
+                    FocusScopeRuntimeError::DuplicateTarget(declared_id),
+                ));
+            }
+        }
+
+        self.leases =
+            runtime.sync_focus_target_set(binding, &self.leases, registrations, window, cx)?;
+        Ok(())
     }
 }
 
@@ -563,6 +680,7 @@ pub struct OverlayLayerSnapshot {
     keyboard_eligible: bool,
     modal_pointer_barrier: bool,
     focus_active: bool,
+    focus_entered: bool,
     generation: OverlayLayerGeneration,
 }
 
@@ -611,6 +729,10 @@ impl OverlayLayerSnapshot {
     pub const fn focus_active(&self) -> bool {
         self.focus_active
     }
+    /// Returns whether focus entered this layer or one of its registered descendants.
+    pub const fn focus_entered(&self) -> bool {
+        self.focus_entered
+    }
     /// Returns the current lifecycle generation.
     pub const fn generation(&self) -> OverlayLayerGeneration {
         self.generation
@@ -639,38 +761,6 @@ struct WindowOverlayRuntimeState {
     activation_subscription: Option<Subscription>,
     mouse_routes: HashMap<MouseButton, MouseGestureRoute>,
     mouse_authority_revision: u64,
-}
-
-#[derive(Clone)]
-struct LayerPolicy {
-    kind: OverlayLayerKind,
-    outside_press_participation: OutsidePressParticipation,
-    outside_press: OutsidePressPolicy,
-    escape_key: EscapeKeyPolicy,
-    focus_restore: FocusRestoreIntent,
-    initial_focus: InitialFocusIntent,
-}
-
-impl LayerPolicy {
-    fn from_overlay_policy(policy: &OverlayLayerPolicy) -> Self {
-        Self {
-            kind: policy.kind(),
-            outside_press_participation: policy.outside_press_participation(),
-            outside_press: policy.outside_press_policy(),
-            escape_key: policy.escape_key_policy(),
-            focus_restore: policy.focus_restore_intent().clone(),
-            initial_focus: policy.initial_focus_intent().clone(),
-        }
-    }
-
-    fn project(&self, presence: OverlayPresence) -> OverlayLayerPolicy {
-        OverlayLayerPolicy::new(self.kind, presence)
-            .with_outside_press_participation(self.outside_press_participation)
-            .with_outside_press_policy(self.outside_press)
-            .with_escape_key_policy(self.escape_key)
-            .with_focus_restore_intent(self.focus_restore.clone())
-            .with_initial_focus_intent(self.initial_focus.clone())
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -760,6 +850,12 @@ impl LayerLifecycle {
         };
     }
 
+    fn rebind_ownership(&mut self, presence: OverlayPresence) {
+        let next_intent_revision = self.next_intent_revision;
+        *self = Self::from_presence(presence);
+        self.next_intent_revision = next_intent_revision;
+    }
+
     fn request_controlled(
         &mut self,
         open: bool,
@@ -841,13 +937,13 @@ impl LayerLifecycle {
 struct LayerEntry {
     id: OverlayLayerId,
     parent: Option<OverlayLayerId>,
-    policy: LayerPolicy,
+    policy: OverlayLayerPolicy,
     ownership: OverlayOwnership,
     focus_mode: OverlayFocusMode,
     focus_restore_condition: OverlayFocusRestoreCondition,
     tab_behavior: OverlayTabBehavior,
     on_open_change: Option<OpenChangeCallback>,
-    uncontrolled_commit: Option<OpenChangeCallback>,
+    uncontrolled_commit: Option<UncontrolledCommitCallback>,
     lease_token: u64,
     lifecycle: LayerLifecycle,
     generation: OverlayLayerGeneration,
@@ -861,6 +957,8 @@ struct LayerEntry {
     inside_regions: HashMap<OverlayInsideRegionId, LiveInsideRegion>,
     focus_subscription: Option<Subscription>,
     release_subscription: Option<Subscription>,
+    owner_entity: Option<AnyWeakEntity>,
+    component_bind_revision: Option<u64>,
     pending_unregister: bool,
     forced_by_ancestor: bool,
 }
@@ -874,7 +972,7 @@ impl LayerEntry {
     }
 
     fn projected_policy(&self) -> OverlayLayerPolicy {
-        self.policy.project(self.lifecycle.presence())
+        self.policy.clone().with_presence(self.lifecycle.presence())
     }
 
     fn should_restore_focus(&self) -> bool {
@@ -890,16 +988,17 @@ impl LayerEntry {
         OverlayLayerSnapshot {
             id: self.id.clone(),
             parent: self.parent.clone(),
-            kind: self.policy.kind,
+            kind: self.policy.kind(),
             phase: self.lifecycle.phase(),
             presence: self.lifecycle.presence(),
             pending_open: pending.map(|pending| pending.open),
             pending_intent: pending.map(|pending| pending.reason),
             pending_intent_revision: pending.map(|pending| pending.revision),
             keyboard_eligible: self.keyboard_eligible(),
-            modal_pointer_barrier: self.policy.kind == OverlayLayerKind::Modal
+            modal_pointer_barrier: self.policy.kind() == OverlayLayerKind::Modal
                 && self.lifecycle.presence().present(),
             focus_active: self.focus_active,
+            focus_entered: self.focus_entered,
             generation: self.generation,
         }
     }
@@ -907,6 +1006,7 @@ impl LayerEntry {
 
 struct LiveInsideRegion {
     bounds: Bounds<Pixels>,
+    button: Option<MouseButton>,
     valid_through: u64,
 }
 
@@ -916,6 +1016,7 @@ struct WindowFallbackEntry {
 }
 
 struct LayerFocusConfig {
+    layer_id: OverlayLayerId,
     mode: OverlayFocusMode,
     policy: OverlayLayerPolicy,
     scope_id: Option<FocusScopeId>,
@@ -962,9 +1063,17 @@ struct OpenChangeDispatch {
     generation: OverlayLayerGeneration,
     registration_revision: u64,
     focus_transition: FocusTransition,
-    uncontrolled_commit: Option<OpenChangeCallback>,
+    uncontrolled_commit: Option<UncontrolledCommitCallback>,
     on_open_change: Option<OpenChangeCallback>,
+    intent: Option<OpenIntentDispatch>,
     changed: bool,
+}
+
+#[derive(Clone, Copy)]
+struct OpenIntentDispatch {
+    desired_open: bool,
+    reason: DismissReason,
+    revision: Option<OverlayOpenIntentRevision>,
 }
 
 impl OpenChangeDispatch {
@@ -982,6 +1091,7 @@ impl OpenChangeDispatch {
             focus_transition: FocusTransition::None,
             uncontrolled_commit: None,
             on_open_change: None,
+            intent: None,
             changed: false,
         }
     }
@@ -990,6 +1100,17 @@ impl OpenChangeDispatch {
 struct FocusCleanup {
     scope_id: Option<FocusScopeId>,
     trigger_id: FocusTargetId,
+}
+
+struct PointerHitTest {
+    modal_barrier: Option<usize>,
+    inside_layers: HashSet<OverlayLayerId>,
+}
+
+impl PointerHitTest {
+    fn is_inside(&self, layer_id: &OverlayLayerId) -> bool {
+        self.inside_layers.contains(layer_id)
+    }
 }
 
 enum MouseDecision {
@@ -1081,6 +1202,46 @@ impl MouseGestureRoute {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MouseAuthorityStamp(u64);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MouseAuthorityProfile {
+    surface_owner: bool,
+    outside_press: Option<OutsidePressPolicy>,
+    modal_pointer_barrier: bool,
+}
+
+impl MouseAuthorityProfile {
+    fn from_policy(policy: &OverlayLayerPolicy, phase: OverlayLayerPhase) -> Self {
+        Self::new(
+            policy.kind(),
+            policy.outside_press_participation(),
+            policy.outside_press_policy(),
+            phase,
+        )
+    }
+
+    fn new(
+        kind: OverlayLayerKind,
+        participation: OutsidePressParticipation,
+        outside_press: OutsidePressPolicy,
+        phase: OverlayLayerPhase,
+    ) -> Self {
+        let surface_owner = matches!(
+            phase,
+            OverlayLayerPhase::Open | OverlayLayerPhase::CloseRequested
+        );
+        Self {
+            surface_owner,
+            outside_press: (surface_owner && participation.participates()).then_some(outside_press),
+            modal_pointer_barrier: kind == OverlayLayerKind::Modal
+                && phase != OverlayLayerPhase::Hidden,
+        }
+    }
+
+    const fn affects_routing(self) -> bool {
+        self.surface_owner || self.modal_pointer_barrier
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MouseGestureOwner {

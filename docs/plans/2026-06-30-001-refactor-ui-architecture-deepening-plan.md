@@ -282,7 +282,7 @@ The implementation must keep behavior tests stronger than compatibility tests so
   - `examples/ui-foundation-gallery/tests/foundation_gallery.rs`
 - **Approach:** Create an overlay runtime boundary for controlled/uncontrolled open state, policy-to-open-change conversion, escape and outside-press dispatch, focus restore, initial focus, branch ownership, deferred priority, and placement handoff. Keep `ui_core::overlay` focused on neutral policy and resolved state; keep GPUI `Window`, `Entity`, focus handles, and deferred rendering in `ui_components`.
 - **Execution note:** Characterize one simple overlay, one modal overlay, one nested menu branch, and one choice overlay before moving shared runtime logic.
-- **Patterns to follow:** Existing `GpuiOverlayAdapterConfig`, `OverlayResolvedState`, `outside_press_open_change`, `escape_open_change`, and `MenuRuntime` are the local starting points; Fret's `window_overlays` is a reference for diagnostics and stack ownership.
+- **Patterns to follow:** Existing `GpuiOverlayAdapterConfig`, `OverlayResolvedState`, `WindowOverlayRuntime`, and `MenuRuntime` are the local starting points; Fret's `window_overlays` is a reference for diagnostics and stack ownership.
 - **Test scenarios:**
   - Controlled overlays synchronize runtime open state without double-emitting open-change callbacks.
   - Escape closes only the active layer or submenu branch according to overlay policy.

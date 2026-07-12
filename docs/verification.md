@@ -11,6 +11,7 @@ The gate runs:
 - `cargo fmt --all --check`
 - `cargo check --workspace` (including workspace examples such as `open-gpui-docking-minimal`)
 - `cargo check -p open-gpui-smoke-native`
+- `cargo nextest run -p open-gpui`
 - `cargo nextest run -p open-gpui-motion`
 - `cargo test -p open-gpui-motion --doc`
 - `cargo nextest run -p open-gpui-form -p open-gpui-resource -p open-gpui-devtools`
@@ -24,6 +25,10 @@ The gate runs:
 - `cargo run -p xtask -- scan-import-boundary`
 - `cargo run -p xtask -- scan-public-api --check`
 - `cargo run -p xtask -- scan-ui-contract`
+
+The full `open-gpui` nextest target is the unified gate for pointer-session, focus, input-dispatch,
+and window-lifecycle regressions. Focused filters documented below provide faster implementation
+feedback but do not replace that package-wide gate in `xtask verify` or CI.
 
 The GitHub Actions `Verify` workflow also runs stable wasm surface checks on the Linux matrix:
 
@@ -1026,6 +1031,74 @@ restores focus to the trigger. The Overlay gallery intentionally keeps default-o
 samples visually closed at page load so modal barriers and floating layers do not block page
 scrolling; the metadata rows still report each sample's resolved default-open contract.
 
+The U3/U4 window overlay fleet has a joint completion gate. It covers renderer-neutral focus and
+overlay policy, GPUI pointer-session and focus-claim lifecycle, the window focus-scope runtime,
+every official overlay adapter, Gallery runtime snapshots, and the redacted DevTools projection:
+
+```powershell
+cargo nextest run --locked -p open-gpui-ui-core -E 'test(/^(focus|overlay)::tests::/)' --no-fail-fast
+cargo nextest run --locked -p open-gpui -E 'test(/app::test_context::pointer_session_tests::/)' --no-fail-fast
+cargo nextest run --locked -p open-gpui dropping_the_focused_handle_does_not_advance_the_explicit_claim_revision --no-fail-fast
+cargo check --locked -p open-gpui-ui-components --tests
+cargo nextest run --locked -p open-gpui-ui-components -E 'test(/overlay::focus_scope::tests::/)' --no-fail-fast
+cargo nextest run --locked -p open-gpui-ui-components --test window_overlay_runtime --no-fail-fast
+cargo nextest run --locked -p open-gpui-ui-components --test overlay --no-fail-fast
+cargo nextest run --locked -p open-gpui-ui-components --test choice --no-fail-fast
+cargo check --locked -p open-gpui-ui-foundation-gallery --tests
+$overlayGalleryTests = @(
+    'overlay_gallery_smoke_renders_catalog_entries_and_official_samples'
+    'overlay_gallery_smoke_dismisses_popover_from_outside_press'
+    'overlay_gallery_smoke_opens_tooltip_from_hover_focus_and_ignores_disabled'
+    'overlay_gallery_smoke_renders_manual_tooltip_from_state'
+    'overlay_gallery_smoke_keeps_hover_card_open_on_outside_press_and_dismisses_on_escape'
+    'overlay_gallery_smoke_toggles_hover_card_from_control_surface'
+    'overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape'
+    'overlay_gallery_smoke_controlled_dialog_refusal_keeps_modal_authority'
+    'overlay_gallery_smoke_closes_alert_dialog_from_action_and_escape'
+    'overlay_gallery_smoke_closes_non_modal_sheet_from_outside_press'
+    'overlay_gallery_smoke_closes_menu_from_escape_and_outside_press'
+    'overlay_gallery_smoke_opens_menu_submenu_from_hover'
+    'overlay_gallery_smoke_nested_popover_menu_dialog_restores_focus_lifo'
+    'overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses'
+)
+cargo nextest run --locked -p open-gpui-ui-foundation-gallery --test foundation_gallery @overlayGalleryTests --no-fail-fast
+cargo check --locked -p open-gpui-devtools --features ui-components
+cargo nextest run --locked -p open-gpui-devtools --features ui-components --test framework_adapters framework_adapters_project_window_overlay_runtime_without_raw_layer_ids --no-fail-fast
+git diff --check
+```
+
+The `open-gpui` lifecycle gates prove stable pointer capture across redraws, routed event-target
+versus physical-hover semantics, explicit and automatic release, cancellation on deactivation or
+window removal, cross-window isolation, and focus-claim stability when a focused handle is dropped.
+The `open-gpui-ui-core` gate owns the canonical focus resolver and overlay policy states, while
+the `open-gpui-ui-components` `focus_scope_tests.rs` module (registered as
+`overlay::focus_scope::tests`) proves that the GPUI runtime applies those policies to live handles.
+
+`window_overlay_runtime` proves the four runtime phases, parent topology, topmost input arbitration,
+modal barriers, controlled refusal, callback reentrancy, exit/reopen, owner release/remount, focus
+loops and restoration, and window isolation. The `overlay` and `choice` targets prove the same
+authority through all official families, including Popover -> Menu -> controlled Dialog LIFO Escape
+and focus restoration, choice/search editor preservation, and passive Tooltip/HoverCard layers.
+Gallery must obtain `WindowOverlayRuntime::snapshot()` from the window that rendered the actual
+component adapters; a hand-built layer registration is not Gallery evidence. Its nested smoke
+checks kind, phase, parent topology, and each restore target, while the refusal smoke keeps Dialog
+in `CloseRequested` with modal, keyboard, and focus authority intact.
+
+DevTools consumes `WindowOverlaySnapshot` through the allowlist entry point
+`open_gpui_devtools::ui_components::window_overlay_probe_snapshot`. Layer and parent relationships
+are snapshot-local opaque ordinals. The projection includes only layer count, kind, phase, presence,
+pending open/reason, keyboard eligibility, modal pointer barrier, and focus active/entered facts;
+window identity, lifecycle generations, and intent revisions are omitted. Raw `OverlayLayerId`
+strings must never enter a DevTools node, property, JSON payload, or serialized capture. The adapter
+test uses unique parent and child canary IDs and must fail if either appears anywhere in the
+projection or serialization.
+
+The fleet gate requires a visible runtime registration path for Dialog, Sheet, AlertDialog,
+Popover, Menu, ContextMenu, Select, Combobox, Command overlay mode, HoverCard, and Tooltip. It also
+requires an absence scan for `OverlayLayerHost`, the removed request forwarding helpers, and
+component-owned Escape/outside/focus tails. Component state tests alone do not demonstrate window
+runtime ownership.
+
 The focused Overlay catalog gates are:
 
 ```powershell
@@ -1033,15 +1106,19 @@ cargo nextest run -p open-gpui-ui-foundation-gallery overlay_page_catalog_entrie
 cargo nextest run -p open-gpui-ui-foundation-gallery overlay_gallery_smoke_renders_catalog_entries_and_official_samples
 ```
 
-The `open-gpui-ui-core` overlay tests are the renderer-neutral gate for shared overlay behavior.
-They should cover layer kind, presence, outside-press policy, Escape policy, focus restore intent,
-initial focus intent, and `resolve_overlay_placement` side/alignment/fit/trace behavior for
-explicit neutral placement inputs without opening a GPUI window.
-The `open-gpui-ui-components` overlay helper tests should cover the GPUI adapter mapping for
-deferred priority, snap margin, anchor conversion, placement resolution, outside-press open-change,
-and Escape open-change without introducing a global overlay runtime. Trigger-anchored components
-that do not provide measured trigger/content bounds should not be documented as owning
-safe-bounds flip/shift at render time until a measured overlay runtime exists.
+The `open-gpui-ui-core` overlay tests are the renderer-neutral policy gate for layer kind, presence,
+outside-press policy, Escape policy, focus restore intent, initial focus intent, and
+`resolve_overlay_placement` side/alignment/fit/trace behavior. The per-window production runtime
+consumes those resolvers; the window-free tests are not themselves proof of live registration,
+input interception, or focus ownership.
+The `open-gpui-ui-components` overlay helper tests cover GPUI mapping for deferred priority, snap
+margin, anchor conversion, and placement resolution. Escape and outside-press decisions are
+verified through the `ui_core` resolvers and the real per-window runtime rather than request
+forwarding helpers.
+The U3/U4 `window_overlay_runtime`, `overlay`, and `choice` integration targets above are the
+production-authority proof for migrated families. Trigger-anchored components that do not provide measured
+trigger/content bounds should not be documented as owning safe-bounds flip/shift at render time
+until live placement measurement is wired into that placement path.
 For GPUI runtime focus assertions, `VisualTestContext::debug_selector_is_focused` and
 `VisualTestContext::focused_debug_selector` are the preferred test hooks. They use test-only
 debug-selector-to-focus-handle data and keep focus checks independent from component internals.
@@ -1081,10 +1158,10 @@ default surface, `MotionValue` stays private behind consumed motion controller A
 Listbox/Select/Combobox/Command gallery stories expose state readout selectors for public-payload
 assertions.
 
-The overlay runtime request-object pass and choice focus-restore hardening should keep the
-`scroll_surface`, `choice`, `overlay`, `layout`, and `table` focused gates green. The `choice` gate
-is the runtime proof that Select, Combobox, and dialog Command restore focus after selection,
-Escape dismissal, and outside-press dismissal while preserving open-change callback order.
+The window-runtime and choice focus tests should keep the `scroll_surface`, `choice`, `overlay`,
+`layout`, and `table` focused gates green. The `choice` gate proves Select, Combobox, and dialog
+Command register with the per-window authority and preserve focus plus open-change callback order
+after selection, Escape dismissal, outside-press dismissal, and controlled refusal.
 
 For the deep UI framework module refactor, run the focused ownership gates below before the full
 workspace gate. They cover runtime theme context, typed a11y evidence, removed registry history,

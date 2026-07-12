@@ -1,9 +1,10 @@
 //! Overlay surface projection and frame-scoped inside geometry.
 
 use super::{
-    AnyElement, App, Bounds, Element, ElementId, Entity, GlobalElementId, InspectorElementId,
-    IntoElement, LayoutId, LiveInsideRegion, OverlayInsideRegionId, OverlayLayerBinding,
-    OverlayLayerId, OverlayLayerLease, OverlayLayerRegistration, Pixels, Rc, RefCell, Window,
+    AnyElement, App, Bounds, Element, ElementId, Entity, FocusHandle, GlobalElementId,
+    InspectorElementId, IntoElement, LayoutId, LiveInsideRegion, MouseButton,
+    OverlayInsideRegionId, OverlayLayerBinding, OverlayLayerId, OverlayLayerLease,
+    OverlayLayerLeaseStatus, OverlayLayerRegistration, Pixels, Rc, RefCell, Window,
     WindowOverlayRuntime, WindowOverlayRuntimeError, WindowOverlayRuntimeState,
 };
 
@@ -20,13 +21,31 @@ impl WindowOverlayRuntime {
         window: &mut Window,
         cx: &App,
     ) -> Result<(), WindowOverlayRuntimeError> {
+        self.set_inside_region_for_button(binding, region, bounds, None, window, cx)
+    }
+
+    fn set_inside_region_for_button(
+        &self,
+        binding: &OverlayLayerBinding,
+        region: OverlayInsideRegionId,
+        bounds: Bounds<Pixels>,
+        button: Option<MouseButton>,
+        window: &mut Window,
+        cx: &App,
+    ) -> Result<(), WindowOverlayRuntimeError> {
         self.ensure_binding(binding, window)?;
         self.state.read(cx).validate_mutable_lease(&binding.lease)?;
         let weak_state = self.state.downgrade();
         let lease = binding.lease.clone();
         window.record_prepaint_commit(move |valid_through, cx| {
             let _ = weak_state.update(cx, |state, _| {
-                let _ = state.refresh_inside_region(&lease, region.clone(), bounds, valid_through);
+                let _ = state.refresh_inside_region(
+                    &lease,
+                    region.clone(),
+                    bounds,
+                    button,
+                    valid_through,
+                );
             });
         });
         Ok(())
@@ -40,10 +59,49 @@ impl WindowOverlayRuntime {
         &self,
         owner: &Entity<T>,
         binding: Option<&OverlayLayerBinding>,
-        mut registration: OverlayLayerRegistration,
+        registration: OverlayLayerRegistration,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<OverlayLayerBinding, WindowOverlayRuntimeError> {
+        self.bind_component_layer_with_optional_trigger(
+            owner,
+            binding,
+            registration,
+            None,
+            window,
+            cx,
+        )
+    }
+
+    pub(crate) fn bind_component_layer_with_trigger_focus<T: 'static>(
+        &self,
+        owner: &Entity<T>,
+        binding: Option<&OverlayLayerBinding>,
+        registration: OverlayLayerRegistration,
+        trigger_focus: FocusHandle,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<OverlayLayerBinding, WindowOverlayRuntimeError> {
+        self.bind_component_layer_with_optional_trigger(
+            owner,
+            binding,
+            registration,
+            Some(trigger_focus),
+            window,
+            cx,
+        )
+    }
+
+    fn bind_component_layer_with_optional_trigger<T: 'static>(
+        &self,
+        owner: &Entity<T>,
+        binding: Option<&OverlayLayerBinding>,
+        mut registration: OverlayLayerRegistration,
+        trigger_focus: Option<FocusHandle>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<OverlayLayerBinding, WindowOverlayRuntimeError> {
+        let frame_revision = window.rendered_frame_revision();
         if registration.parent.is_none()
             && let Some(parent) = self.current_parent_layer()
         {
@@ -51,10 +109,56 @@ impl WindowOverlayRuntime {
         }
         if let Some(binding) = binding {
             self.rebind_layer(binding, registration, window, cx)?;
+            self.state.update(cx, |state, _| {
+                state.record_component_bind(&binding.lease, frame_revision)
+            })?;
             return Ok(binding.clone());
         }
 
-        self.register_layer_for_entity(registration, owner, window, cx)
+        let layer_id = registration.id.clone();
+        self.replace_stale_component_subtree(
+            &layer_id,
+            frame_revision,
+            owner.entity_id(),
+            window,
+            cx,
+        )?;
+
+        let binding = if let Some(trigger_focus) = trigger_focus {
+            self.register_layer_for_entity_with_trigger_focus(
+                registration,
+                trigger_focus,
+                owner,
+                window,
+                cx,
+            )?
+        } else {
+            self.register_layer_for_entity(registration, owner, window, cx)?
+        };
+        self.state.update(cx, |state, _| {
+            state.record_component_bind(&binding.lease, frame_revision)
+        })?;
+        Ok(binding)
+    }
+
+    pub(crate) fn unregister_component_subtree(
+        &self,
+        binding: &OverlayLayerBinding,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), WindowOverlayRuntimeError> {
+        self.ensure_binding(binding, window)?;
+        self.unregister_released_subtree_by_lease(binding.lease.clone(), window, cx)
+    }
+
+    pub(crate) fn component_binding_status(
+        &self,
+        binding: &OverlayLayerBinding,
+        window: &Window,
+        cx: &App,
+    ) -> Result<OverlayLayerLeaseStatus, WindowOverlayRuntimeError> {
+        self.ensure_binding(binding, window)?;
+        Ok(self.state.read(cx).lease_status(&binding.lease))
     }
 
     /// Wraps a rendered overlay surface with live bounds and nested-parent projection.
@@ -69,7 +173,83 @@ impl WindowOverlayRuntime {
             id: id.into(),
             runtime: self.clone(),
             binding: binding.clone(),
-            region,
+            region: Some(region),
+            region_button: None,
+            projects_parent: true,
+            child: Some(child.into_any_element()),
+        }
+    }
+
+    /// Wraps trigger geometry as an inside region without making trigger children overlay-owned.
+    pub(crate) fn inside_region(
+        &self,
+        binding: &OverlayLayerBinding,
+        region: OverlayInsideRegionId,
+        id: impl Into<ElementId>,
+        child: impl IntoElement,
+    ) -> OverlaySurface {
+        OverlaySurface {
+            id: id.into(),
+            runtime: self.clone(),
+            binding: binding.clone(),
+            region: Some(region),
+            region_button: None,
+            projects_parent: false,
+            child: Some(child.into_any_element()),
+        }
+    }
+
+    /// Wraps source geometry that is inside only for one mouse button.
+    pub(crate) fn inside_region_for_button(
+        &self,
+        binding: &OverlayLayerBinding,
+        region: OverlayInsideRegionId,
+        button: MouseButton,
+        id: impl Into<ElementId>,
+        child: impl IntoElement,
+    ) -> OverlaySurface {
+        OverlaySurface {
+            id: id.into(),
+            runtime: self.clone(),
+            binding: binding.clone(),
+            region: Some(region),
+            region_button: Some(button),
+            projects_parent: false,
+            child: Some(child.into_any_element()),
+        }
+    }
+
+    /// Wraps a trigger focus target without contributing pointer-inside geometry.
+    pub(crate) fn focus_target(
+        &self,
+        binding: &OverlayLayerBinding,
+        id: impl Into<ElementId>,
+        child: impl IntoElement,
+    ) -> OverlaySurface {
+        OverlaySurface {
+            id: id.into(),
+            runtime: self.clone(),
+            binding: binding.clone(),
+            region: None,
+            region_button: None,
+            projects_parent: false,
+            child: Some(child.into_any_element()),
+        }
+    }
+
+    pub(crate) fn parent_scope(
+        &self,
+        binding: &OverlayLayerBinding,
+        id: impl Into<ElementId>,
+        child: impl IntoElement,
+    ) -> OverlaySurface {
+        OverlaySurface {
+            id: id.into(),
+            runtime: self.clone(),
+            binding: binding.clone(),
+            region: None,
+            region_button: None,
+            projects_parent: true,
             child: Some(child.into_any_element()),
         }
     }
@@ -117,7 +297,9 @@ pub struct OverlaySurface {
     id: ElementId,
     runtime: WindowOverlayRuntime,
     binding: OverlayLayerBinding,
-    region: OverlayInsideRegionId,
+    region: Option<OverlayInsideRegionId>,
+    region_button: Option<MouseButton>,
+    projects_parent: bool,
     child: Option<AnyElement>,
 }
 
@@ -149,11 +331,11 @@ impl Element for OverlaySurface {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut child = self.child.take().expect("overlay surface child missing");
-        let layout_id = if self
+        let binding_is_valid = self
             .runtime
             .validate_surface_binding(&self.binding, window, cx)
-            .is_ok()
-        {
+            .is_ok();
+        let layout_id = if binding_is_valid && self.projects_parent {
             self.runtime
                 .with_parent_layer(&self.binding, || child.request_layout(window, cx))
         } else {
@@ -171,13 +353,30 @@ impl Element for OverlaySurface {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if self
+        let binding_is_valid = self
             .runtime
-            .set_inside_region(&self.binding, self.region.clone(), bounds, window, cx)
-            .is_ok()
-        {
-            self.runtime
-                .with_parent_layer(&self.binding, || child.prepaint(window, cx));
+            .validate_surface_binding(&self.binding, window, cx)
+            .is_ok();
+        if binding_is_valid {
+            if let Some(region) = self.region.as_ref() {
+                let _ = self.runtime.set_inside_region_for_button(
+                    &self.binding,
+                    region.clone(),
+                    bounds,
+                    self.region_button,
+                    window,
+                    cx,
+                );
+            }
+            if self.projects_parent {
+                self.runtime
+                    .with_parent_layer(&self.binding, || child.prepaint(window, cx));
+            } else {
+                child.prepaint(window, cx);
+            }
+            let _ =
+                self.runtime
+                    .retry_focus_claim_after_surface_prepaint(&self.binding, window, cx);
         } else {
             child.prepaint(window, cx);
         }
@@ -193,11 +392,11 @@ impl Element for OverlaySurface {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if self
+        let binding_is_valid = self
             .runtime
             .validate_surface_binding(&self.binding, window, cx)
-            .is_ok()
-        {
+            .is_ok();
+        if binding_is_valid && self.projects_parent {
             self.runtime
                 .with_parent_layer(&self.binding, || child.paint(window, cx));
         } else {
@@ -212,13 +411,18 @@ impl WindowOverlayRuntimeState {
         lease: &OverlayLayerLease,
         region: OverlayInsideRegionId,
         bounds: Bounds<Pixels>,
+        button: Option<MouseButton>,
         valid_through: u64,
     ) -> Result<(), WindowOverlayRuntimeError> {
         let entry = self.entry_for_lease_mut(lease)?;
+        entry
+            .inside_regions
+            .retain(|_, current| current.valid_through >= valid_through);
         entry.inside_regions.insert(
             region,
             LiveInsideRegion {
                 bounds,
+                button,
                 valid_through,
             },
         );

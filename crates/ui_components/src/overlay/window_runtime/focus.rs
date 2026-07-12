@@ -12,12 +12,14 @@ impl WindowOverlayRuntime {
         cx: &mut App,
     ) -> Result<OverlayFocusTargetLease, WindowOverlayRuntimeError> {
         self.ensure_binding(binding, window)?;
-        let target_id = registration.id().clone();
+        let declared_target_id = registration.id().clone();
         let lease = self.state.update(cx, |state, _| {
-            state.reserve_focus_target(&binding.lease, target_id, self.window_id)
+            state.reserve_focus_target(&binding.lease, declared_target_id, self.window_id)
         })?;
         let focus_runtime = self.state.read(cx).focus_runtime.clone();
-        let scoped_registration = registration.assigned_to_scope(Some(lease.scope_id.clone()));
+        let scoped_registration = registration
+            .assigned_id(lease.target_id.clone())
+            .assigned_to_scope(Some(lease.scope_id.clone()));
         if let Err(error) = focus_runtime.register_target(scoped_registration, window, cx) {
             self.state.update(cx, |state, _| {
                 state.rollback_focus_target(&lease);
@@ -42,15 +44,117 @@ impl WindowOverlayRuntime {
             target,
             self.window_id,
         )?;
-        if registration.id() != target.target_id() {
+        if registration.id() != target.declared_target_id() {
             return Err(WindowOverlayRuntimeError::FocusTargetIdChanged {
-                expected: target.target_id.clone(),
+                expected: target.declared_target_id.clone(),
                 actual: registration.id().clone(),
             });
         }
         let focus_runtime = self.state.read(cx).focus_runtime.clone();
-        focus_runtime.rebind_target(registration.assigned_to_scope(Some(scope)), window, cx)?;
+        focus_runtime.rebind_target(
+            registration
+                .assigned_id(target.target_id.clone())
+                .assigned_to_scope(Some(scope)),
+            window,
+            cx,
+        )?;
         Ok(())
+    }
+
+    pub(super) fn sync_focus_target_set(
+        &self,
+        binding: &OverlayLayerBinding,
+        current_targets: &[OverlayFocusTargetLease],
+        registrations: Vec<FocusTargetRegistration>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<Vec<OverlayFocusTargetLease>, WindowOverlayRuntimeError> {
+        self.ensure_binding(binding, window)?;
+        let scope = self
+            .state
+            .read(cx)
+            .entries
+            .get(&binding.lease.layer_id)
+            .and_then(|entry| entry.scope_id.clone())
+            .ok_or_else(|| {
+                WindowOverlayRuntimeError::MissingFocusScope(binding.lease.layer_id.clone())
+            })?;
+        let mut current_by_declared_id = HashMap::with_capacity(current_targets.len());
+        for target in current_targets {
+            let target_scope = self.state.read(cx).validate_focus_target_lease(
+                &binding.lease,
+                target,
+                self.window_id,
+            )?;
+            if target_scope != scope {
+                return Err(WindowOverlayRuntimeError::ForeignFocusTargetLease(
+                    target.declared_target_id.clone(),
+                ));
+            }
+            if current_by_declared_id
+                .insert(target.declared_target_id.clone(), target.clone())
+                .is_some()
+            {
+                return Err(WindowOverlayRuntimeError::Focus(
+                    FocusScopeRuntimeError::DuplicateTarget(target.declared_target_id.clone()),
+                ));
+            }
+        }
+
+        let mut desired_targets = Vec::with_capacity(registrations.len());
+        let mut scoped_registrations = Vec::with_capacity(registrations.len());
+        let mut newly_reserved = Vec::new();
+        for registration in registrations {
+            let declared_target_id = registration.id().clone();
+            let target = if let Some(target) = current_by_declared_id.remove(&declared_target_id) {
+                target
+            } else {
+                match self.state.update(cx, |state, _| {
+                    state.reserve_focus_target(&binding.lease, declared_target_id, self.window_id)
+                }) {
+                    Ok(target) => {
+                        newly_reserved.push(target.clone());
+                        target
+                    }
+                    Err(error) => {
+                        self.state.update(cx, |state, _| {
+                            state.release_focus_target_reservations(&newly_reserved);
+                        });
+                        return Err(error);
+                    }
+                }
+            };
+            scoped_registrations.push(
+                registration
+                    .assigned_id(target.target_id.clone())
+                    .assigned_to_scope(Some(scope.clone())),
+            );
+            desired_targets.push(target);
+        }
+
+        let stale_targets = current_by_declared_id.into_values().collect::<Vec<_>>();
+        let previous_target_ids = current_targets
+            .iter()
+            .map(|target| target.target_id.clone())
+            .collect::<Vec<_>>();
+        let focus_runtime = self.state.read(cx).focus_runtime.clone();
+        if let Err(error) = focus_runtime.sync_targets(
+            &scope,
+            &previous_target_ids,
+            scoped_registrations,
+            window,
+            cx,
+        ) {
+            self.state.update(cx, |state, _| {
+                state.release_focus_target_reservations(&newly_reserved);
+            });
+            return Err(error.into());
+        }
+
+        self.state.update(cx, |state, _| {
+            state.release_focus_target_reservations(&stale_targets);
+        });
+        Ok(desired_targets)
     }
 
     /// Unregisters one additional logical focus target owned by this layer lease.
@@ -66,7 +170,7 @@ impl WindowOverlayRuntime {
             .read(cx)
             .validate_focus_target_lease(&binding.lease, target, self.window_id)?;
         let focus_runtime = self.state.read(cx).focus_runtime.clone();
-        focus_runtime.unregister_target(target.target_id(), window, cx)?;
+        focus_runtime.unregister_target(&target.target_id, window, cx)?;
         self.state.update(cx, |state, _| {
             state.remove_focus_target(&binding.lease, target)
         })
@@ -153,24 +257,12 @@ impl WindowOverlayRuntime {
             return Ok(());
         };
         let focus_runtime = self.state.read(cx).focus_runtime.clone();
-        let trigger_registration = target_registration(
-            config.trigger_id.clone(),
-            &config.trigger_focus,
-            config.parent_scope.as_ref(),
-        );
-        let mut scope_policy =
-            FocusScopePolicy::new(scope_id.clone(), config.mode.into_scope_mode())
-                .with_initial_focus(config.policy.initial_focus_intent().clone())
-                .with_focus_restore(config.policy.focus_restore_intent().clone());
-        if let Some(parent_scope) = config.parent_scope.as_ref() {
-            scope_policy = scope_policy.with_parent(parent_scope.clone());
-        }
+        let (trigger_registration, scope_registration, surface_registration) =
+            focus_bundle(config, scope_id);
         focus_runtime.register_scope_bundle(
             trigger_registration,
-            FocusScopeRegistration::new(scope_policy, &config.surface_focus)
-                .with_surface(config.surface_id.clone()),
-            FocusTargetRegistration::new(config.surface_id.clone(), &config.surface_focus)
-                .within_scope(scope_id.clone()),
+            scope_registration,
+            surface_registration,
             window,
             cx,
         )?;
@@ -195,23 +287,12 @@ impl WindowOverlayRuntime {
             return Ok(());
         };
         let focus_runtime = self.state.read(cx).focus_runtime.clone();
-        let mut scope_policy =
-            FocusScopePolicy::new(scope_id.clone(), config.mode.into_scope_mode())
-                .with_initial_focus(config.policy.initial_focus_intent().clone())
-                .with_focus_restore(config.policy.focus_restore_intent().clone());
-        if let Some(parent_scope) = config.parent_scope.as_ref() {
-            scope_policy = scope_policy.with_parent(parent_scope.clone());
-        }
+        let (trigger_registration, scope_registration, surface_registration) =
+            focus_bundle(config, scope_id);
         focus_runtime.rebind_scope_bundle(
-            target_registration(
-                config.trigger_id.clone(),
-                &config.trigger_focus,
-                config.parent_scope.as_ref(),
-            ),
-            FocusScopeRegistration::new(scope_policy, &config.surface_focus)
-                .with_surface(config.surface_id.clone()),
-            FocusTargetRegistration::new(config.surface_id.clone(), &config.surface_focus)
-                .within_scope(scope_id.clone()),
+            trigger_registration,
+            scope_registration,
+            surface_registration,
             window,
             cx,
         )?;
@@ -252,6 +333,51 @@ impl WindowOverlayRuntime {
         Ok(())
     }
 
+    pub(super) fn retry_focus_claim_after_surface_prepaint(
+        &self,
+        binding: &OverlayLayerBinding,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), WindowOverlayRuntimeError> {
+        self.ensure_binding(binding, window)?;
+        let scope = {
+            let state = self.state.read(cx);
+            state.validate_lease(&binding.lease)?;
+            state.entries[&binding.lease.layer_id].scope_id.clone()
+        };
+        let Some(scope) = scope else {
+            return Ok(());
+        };
+        let focus_runtime = self.state.read(cx).focus_runtime.clone();
+        let retry = focus_runtime.retry_pending_claim_for_scope(&scope, window, cx)?;
+        if retry.was_scheduled() {
+            let weak_state = self.state.downgrade();
+            let layer_id = binding.lease.layer_id.clone();
+            let lease_token = binding.lease.token;
+            let surface_focus = binding.surface_focus.clone();
+            window.defer(cx, move |window, cx| {
+                let Some(current) = window.focused(cx) else {
+                    return;
+                };
+                if !surface_focus.contains(&current, window) {
+                    return;
+                }
+                let _ = weak_state.update(cx, |state, _| {
+                    state.record_surface_focus_entered(&layer_id, lease_token);
+                });
+            });
+        } else if !retry.is_pending()
+            && window
+                .focused(cx)
+                .is_some_and(|current| binding.surface_focus.contains(&current, window))
+        {
+            self.state.update(cx, |state, _| {
+                state.record_surface_focus_entered(&binding.lease.layer_id, binding.lease.token);
+            });
+        }
+        Ok(())
+    }
+
     pub(super) fn poll_unregister(
         &self,
         lease: OverlayLayerLease,
@@ -286,6 +412,7 @@ impl WindowOverlayRuntime {
                 .unregister_scope_bundle(&cleanup.trigger_id, scope_id, window, cx)
                 .expect("overlay focus bundle must remain registered until layer cleanup");
         }
+        let pending_parent = self.state.read(cx).pending_unregister_parent_lease(&lease);
         let removed = self
             .state
             .update(cx, |state, _| state.take_unregistered(&lease));
@@ -293,17 +420,102 @@ impl WindowOverlayRuntime {
             removed.is_some(),
             "pending overlay cleanup must remain owned"
         );
+        if let Some(parent) = pending_parent {
+            self.poll_unregister(parent, window, cx);
+        }
     }
 }
 
+fn focus_bundle(
+    config: &LayerFocusConfig,
+    scope_id: &FocusScopeId,
+) -> (
+    FocusTargetRegistration,
+    FocusScopeRegistration,
+    FocusTargetRegistration,
+) {
+    let initial_focus =
+        canonical_initial_focus_intent(&config.layer_id, config.policy.initial_focus_intent());
+    let mut scope_policy = FocusScopePolicy::new(scope_id.clone(), config.mode.into_scope_mode())
+        .with_initial_focus(initial_focus)
+        .with_focus_restore(config.policy.focus_restore_intent().clone());
+    if let Some(parent_scope) = config.parent_scope.as_ref() {
+        scope_policy = scope_policy.with_parent(parent_scope.clone());
+    }
+    (
+        target_registration(
+            config.trigger_id.clone(),
+            &config.trigger_focus,
+            config.parent_scope.as_ref(),
+        ),
+        FocusScopeRegistration::new(scope_policy, &config.surface_focus)
+            .with_trigger(config.trigger_id.clone())
+            .with_surface(config.surface_id.clone()),
+        FocusTargetRegistration::new(config.surface_id.clone(), &config.surface_focus)
+            .within_scope(scope_id.clone()),
+    )
+}
+
+fn canonical_initial_focus_intent(
+    layer: &OverlayLayerId,
+    intent: &InitialFocusIntent,
+) -> InitialFocusIntent {
+    match intent {
+        InitialFocusIntent::None => InitialFocusIntent::None,
+        InitialFocusIntent::FirstFocusable => InitialFocusIntent::FirstFocusable,
+        InitialFocusIntent::Target(target) => {
+            InitialFocusIntent::Target(canonical_focus_target_id(layer, target))
+        }
+        InitialFocusIntent::TargetOrFirstFocusable(target) => {
+            InitialFocusIntent::TargetOrFirstFocusable(canonical_focus_target_id(layer, target))
+        }
+    }
+}
+
+fn canonical_focus_target_id(layer: &OverlayLayerId, declared: &FocusTargetId) -> FocusTargetId {
+    let layer = layer.as_str();
+    let declared = declared.as_str();
+    FocusTargetId::new(format!(
+        "overlay-focus-target:{}:{}:{}:{}",
+        layer.len(),
+        layer,
+        declared.len(),
+        declared,
+    ))
+}
+
 impl WindowOverlayRuntimeState {
+    pub(super) fn record_surface_focus_entered(
+        &mut self,
+        layer_id: &OverlayLayerId,
+        lease_token: u64,
+    ) {
+        if !self
+            .entries
+            .get(layer_id)
+            .is_some_and(|entry| entry.lease_token == lease_token)
+        {
+            return;
+        }
+
+        let mut current = Some(layer_id.clone());
+        while let Some(current_id) = current {
+            let Some(entry) = self.entries.get_mut(&current_id) else {
+                break;
+            };
+            entry.focus_entered = true;
+            current = entry.parent.clone();
+        }
+    }
+
     pub(super) fn reserve_focus_target(
         &mut self,
         layer: &OverlayLayerLease,
-        target_id: FocusTargetId,
+        declared_target_id: FocusTargetId,
         window_id: WindowId,
     ) -> Result<OverlayFocusTargetLease, WindowOverlayRuntimeError> {
         self.validate_lease(layer)?;
+        let target_id = canonical_focus_target_id(&layer.layer_id, &declared_target_id);
         let entry = self
             .entries
             .get(&layer.layer_id)
@@ -343,6 +555,7 @@ impl WindowOverlayRuntimeState {
             layer_id: layer.layer_id.clone(),
             layer_token: layer.token,
             scope_id,
+            declared_target_id,
             target_id,
             target_token,
         })
@@ -354,6 +567,15 @@ impl WindowOverlayRuntimeState {
             && entry.focus_targets.get(&target.target_id) == Some(&target.target_token)
         {
             entry.focus_targets.remove(&target.target_id);
+        }
+    }
+
+    pub(super) fn release_focus_target_reservations(
+        &mut self,
+        targets: &[OverlayFocusTargetLease],
+    ) {
+        for target in targets {
+            self.rollback_focus_target(target);
         }
     }
 
@@ -369,7 +591,7 @@ impl WindowOverlayRuntimeState {
             || target.layer_token != layer.token
         {
             return Err(WindowOverlayRuntimeError::ForeignFocusTargetLease(
-                target.target_id.clone(),
+                target.declared_target_id.clone(),
             ));
         }
         let entry = self
@@ -380,7 +602,7 @@ impl WindowOverlayRuntimeState {
             || entry.focus_targets.get(&target.target_id) != Some(&target.target_token)
         {
             return Err(WindowOverlayRuntimeError::ForeignFocusTargetLease(
-                target.target_id.clone(),
+                target.declared_target_id.clone(),
             ));
         }
         Ok(target.scope_id.clone())
@@ -468,6 +690,7 @@ impl WindowOverlayRuntimeState {
             .get(id)
             .ok_or_else(|| WindowOverlayRuntimeError::UnknownLayer(id.clone()))?;
         Ok(LayerFocusConfig {
+            layer_id: entry.id.clone(),
             mode: entry.focus_mode,
             policy: entry.projected_policy(),
             scope_id: entry.scope_id.clone(),
@@ -597,7 +820,7 @@ impl WindowOverlayRuntimeState {
             let Some(parent_entry) = self.entries.get(parent) else {
                 return None;
             };
-            if parent_entry.policy.kind != OverlayLayerKind::Menu {
+            if parent_entry.policy.kind() != OverlayLayerKind::Menu {
                 return Some(root);
             }
             root = parent.clone();

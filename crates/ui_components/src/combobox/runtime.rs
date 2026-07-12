@@ -2,11 +2,11 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
+    App, ClickEvent, ElementId, Entity, Focusable, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
-    FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayAnchorInput,
+    DismissReason, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayAnchorInput,
     OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, Role, Sizable, Size,
     ThemeTokens, rect, ui_point, ui_px, ui_size,
 };
@@ -14,14 +14,15 @@ use open_gpui_ui_core::{
 use crate::a11y::UiA11yElementExt;
 use crate::choice;
 use crate::choice_overlay_runtime::{
-    ChoiceOverlayRuntimeState, close_choice_overlay, commit_choice_overlay_single_value,
+    ChoiceOverlayRuntimeState, commit_registered_choice_overlay_single_value,
 };
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::gpui_px_from_ui;
 use crate::listbox::Listbox;
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayLayerHost, OverlayOpenRuntimeRequest, resolve_overlay_open_state,
-    set_overlay_open,
+    GpuiOverlayPlacement, OverlayInsideRegionId, OverlayLayerBinding, OverlayLayerRegistration,
+    OverlayOpenIntent, OverlayOwnership, WindowOverlayRuntime, gpui_overlay_state,
+    gpui_relative_overlay_layer, resolve_overlay_open_state,
 };
 use crate::scroll_area::ScrollArea;
 use crate::text_editing::TextEditingPolicy;
@@ -36,26 +37,18 @@ use super::model::{
 };
 use super::render_plan::ComboboxRenderPlan;
 
-type ComboboxOpenChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
+type ComboboxOpenChangeHandler = Rc<dyn Fn(OverlayOpenIntent, &mut Window, &mut App)>;
 type ComboboxSelectionHandler = Rc<dyn Fn(ComboboxSelection, &mut Window, &mut App)>;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct ComboboxRuntime {
     open: bool,
     active_value: Option<String>,
     selected_value: Option<String>,
-    trigger_focus: FocusHandle,
+    overlay_binding: Option<OverlayLayerBinding>,
 }
 
 impl ChoiceOverlayRuntimeState for ComboboxRuntime {
-    fn open_mut(&mut self) -> &mut bool {
-        &mut self.open
-    }
-
-    fn trigger_focus(&self) -> FocusHandle {
-        self.trigger_focus.clone()
-    }
-
     fn commit_single_value(&mut self, value: String) {
         self.selected_value = Some(value.clone());
         self.active_value = Some(value);
@@ -220,10 +213,10 @@ impl Combobox {
         self
     }
 
-    /// Registers an open-change handler with the next open value.
+    /// Registers an open-change handler with the runtime-issued intent.
     pub fn on_open_change(
         mut self,
-        handler: impl Fn(bool, &mut Window, &mut App) + 'static,
+        handler: impl Fn(OverlayOpenIntent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_open_change = Some(Rc::new(handler));
         self
@@ -278,11 +271,11 @@ impl Sizable for Combobox {
 impl RenderOnce for Combobox {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = ThemeResolver::current(cx);
-        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, cx| ComboboxRuntime {
+        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| ComboboxRuntime {
             open: self.default_open,
             active_value: self.active_value.clone(),
             selected_value: self.selected_value.clone(),
-            trigger_focus: cx.focus_handle(),
+            overlay_binding: None,
         });
         let input_state_key: ElementId = (self.id.clone(), "input-state").into();
         let input_controller = window.use_keyed_state(input_state_key, cx, |_, cx| {
@@ -342,11 +335,51 @@ impl RenderOnce for Combobox {
         });
 
         let plan = ComboboxRenderPlan::from_state(self.id, &state);
+        let window_overlay_runtime = WindowOverlayRuntime::for_window(window, cx);
+        let ownership = if open_state.controlled() {
+            OverlayOwnership::Controlled
+        } else {
+            OverlayOwnership::Uncontrolled
+        };
+        let mut registration = OverlayLayerRegistration::new(
+            format!("combobox:{}", plan.debug_id),
+            state.overlay().policy().clone(),
+            ownership,
+        );
+        if let Some(on_open_change) = self.on_open_change.clone() {
+            registration = registration.on_open_change(move |intent, window, cx| {
+                on_open_change(intent, window, cx);
+            });
+        }
+        if ownership == OverlayOwnership::Uncontrolled {
+            let runtime = runtime.downgrade();
+            registration = registration.uncontrolled_commit(move |open, _, cx| {
+                let _ = runtime.update(cx, |runtime, _| {
+                    runtime.open = open;
+                });
+            });
+        }
+        let existing_binding = runtime.read(cx).overlay_binding.clone();
+        let editor_focus = input_controller.focus_handle(cx);
+        let overlay_binding = window_overlay_runtime
+            .bind_component_layer_with_trigger_focus(
+                &runtime,
+                existing_binding.as_ref(),
+                registration,
+                editor_focus,
+                window,
+                cx,
+            )
+            .expect("Combobox overlay registration should remain valid");
+        if existing_binding.is_none() {
+            runtime.update(cx, |runtime, _| {
+                runtime.overlay_binding = Some(overlay_binding.clone());
+            });
+        }
         let open = plan.open;
         let disabled = plan.disabled;
         let toggle_focus_shadow = focus_ring_shadow_with_theme(plan.focus_ring, &theme);
-        let trigger_focus = runtime_state.trigger_focus.clone();
-        let overlay_host = OverlayLayerHost::resolve(state.overlay());
+        let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 OverlayAnchorInput::from_layout_bounds(rect(
@@ -358,7 +391,7 @@ impl RenderOnce for Combobox {
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
             .with_offset(ui_px(4.0)),
-            overlay_host.adapter().snap_margin(),
+            overlay_adapter.snap_margin(),
         );
 
         div()
@@ -372,197 +405,178 @@ impl RenderOnce for Combobox {
             .flex_col()
             .items_start()
             .child(
-                div()
-                    .id(plan.input_row_id.clone())
-                    .debug_selector({
-                        let debug_id = plan.debug_id.clone();
-                        move || format!("combobox:{debug_id}:input-row")
-                    })
-                    .min_w(gpui_px_from_ui(plan.metrics.popup_min_width()))
-                    .max_w(gpui_px_from_ui(plan.metrics.popup_max_width()))
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .focusable()
-                    .track_focus(&trigger_focus)
-                    .ui_role(plan.input_role)
-                    .aria_label(plan.label.clone())
-                    .aria_expanded(open)
-                    .aria_disabled(disabled)
-                    .on_key_down({
-                        let runtime = runtime.clone();
-                        let input_controller = input_controller.clone();
-                        let on_open_change = self.on_open_change.clone();
-                        let on_select = self.on_select.clone();
-                        let focus_restore = state.focus_restore_intent().clone();
-                        let key_state = state.clone();
-                        let overlay_host = overlay_host.clone();
-                        move |event: &KeyDownEvent, window, cx| match combobox_keyboard_action(
-                            &key_state,
-                            event.keystroke.key.as_str(),
-                        ) {
-                            ComboboxKeyboardAction::Navigate(value) => {
-                                overlay_host.consume_event(window, cx);
-                                if !key_state.open() {
-                                    overlay_host.apply_open_change(
-                                        OverlayOpenRuntimeRequest::new(
-                                            runtime.clone(),
-                                            true,
-                                            on_open_change.as_deref(),
-                                        ),
-                                        window,
-                                        cx,
-                                        move |runtime| {
-                                            set_overlay_open(&mut runtime.open, true);
-                                            runtime.active_value = Some(value);
-                                        },
-                                    );
-                                } else {
-                                    runtime.update(cx, |runtime, _| {
-                                        set_overlay_open(&mut runtime.open, true);
-                                        runtime.active_value = Some(value);
-                                    });
-                                }
-                            }
-                            ComboboxKeyboardAction::Select(selection) => {
-                                overlay_host.consume_event(window, cx);
-                                let selected_value = selection.value().to_owned();
-                                let selected_label = selection.label().to_owned();
-                                let input_controller = input_controller.clone();
-                                let on_select = on_select.clone();
-                                commit_choice_overlay_single_value(
-                                    &overlay_host,
-                                    runtime.clone(),
-                                    focus_restore.clone(),
-                                    on_open_change.clone(),
-                                    selected_value,
-                                    window,
-                                    cx,
-                                    move |window, cx| {
-                                        input_controller.update(cx, |controller, cx| {
-                                            controller.set_value(selected_label, cx);
-                                        });
-                                        if let Some(on_select) = on_select.as_ref() {
-                                            on_select(selection, window, cx);
-                                        }
-                                    },
-                                );
-                            }
-                            ComboboxKeyboardAction::Open => {
-                                overlay_host.consume_event(window, cx);
-                                if !key_state.open() {
-                                    overlay_host.apply_open_change(
-                                        OverlayOpenRuntimeRequest::new(
-                                            runtime.clone(),
-                                            true,
-                                            on_open_change.as_deref(),
-                                        ),
-                                        window,
-                                        cx,
-                                        |runtime| {
-                                            set_overlay_open(&mut runtime.open, true);
-                                        },
-                                    );
-                                }
-                            }
-                            ComboboxKeyboardAction::Close => {
-                                overlay_host.consume_event(window, cx);
-                                close_combobox(
-                                    overlay_host.clone(),
-                                    runtime.clone(),
-                                    focus_restore.clone(),
-                                    on_open_change.clone(),
-                                    window,
-                                    cx,
-                                );
-                            }
-                            ComboboxKeyboardAction::Ignore => {}
-                        }
-                    })
-                    .child(
-                        TextInput::new(plan.input_id.clone(), plan.label.clone())
-                            .controller(input_controller.clone())
-                            .placeholder(plan.placeholder.clone())
-                            .value(query)
-                            .disabled(state.disabled())
-                            .required(state.required())
-                            .tokens(self.tokens)
-                            .with_size(state.size()),
-                    )
-                    .child(
-                        div()
-                            .id(plan.toggle_id.clone())
-                            .debug_selector({
-                                let debug_id = plan.debug_id.clone();
-                                move || format!("combobox:{debug_id}:toggle")
-                            })
-                            .px_2()
-                            .py_1()
-                            .rounded(gpui_px_from_ui(plan.input_radius))
-                            .border_1()
-                            .border_color(theme.resolve(plan.colors.popup_border()))
-                            .text_color(theme.resolve(plan.colors.popup_foreground()))
-                            .ui_role(Role::Button)
-                            .focus_visible(move |style| style.shadow(toggle_focus_shadow))
-                            .focusable()
-                            .tab_stop(!disabled)
-                            .aria_label("Toggle combobox popup")
-                            .aria_expanded(open)
-                            .aria_disabled(disabled)
-                            .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
-                            .when(!disabled, |this| {
-                                let runtime = runtime.clone();
-                                let on_open_change = self.on_open_change.clone();
-                                let focus_restore = state.focus_restore_intent().clone();
-                                let overlay_host = overlay_host.clone();
-                                this.cursor_pointer().on_click(
-                                    move |_event: &ClickEvent, window, cx| {
-                                        cx.stop_propagation();
-                                        let next_open = !open;
-                                        if next_open {
-                                            overlay_host.apply_open_change(
-                                                OverlayOpenRuntimeRequest::new(
-                                                    runtime.clone(),
-                                                    true,
-                                                    on_open_change.as_deref(),
-                                                ),
+                window_overlay_runtime.inside_region(
+                    &overlay_binding,
+                    OverlayInsideRegionId::new("trigger"),
+                    format!("combobox:{}:trigger-region", plan.debug_id),
+                    div()
+                        .id(plan.input_row_id.clone())
+                        .debug_selector({
+                            let debug_id = plan.debug_id.clone();
+                            move || format!("combobox:{debug_id}:input-row")
+                        })
+                        .min_w(gpui_px_from_ui(plan.metrics.popup_min_width()))
+                        .max_w(gpui_px_from_ui(plan.metrics.popup_max_width()))
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .ui_role(plan.input_role)
+                        .aria_label(plan.label.clone())
+                        .aria_expanded(open)
+                        .aria_disabled(disabled)
+                        .on_key_down({
+                            let runtime = runtime.clone();
+                            let input_controller = input_controller.clone();
+                            let on_select = self.on_select.clone();
+                            let key_state = state.clone();
+                            let window_overlay_runtime = window_overlay_runtime.clone();
+                            let overlay_binding = overlay_binding.clone();
+                            move |event: &KeyDownEvent, window, cx| match combobox_keyboard_action(
+                                &key_state,
+                                event.keystroke.key.as_str(),
+                            ) {
+                                ComboboxKeyboardAction::Navigate(value) => {
+                                    cx.stop_propagation();
+                                    window.prevent_default();
+                                    if !key_state.open() {
+                                        let effect_runtime = runtime.clone();
+                                        window_overlay_runtime
+                                            .request_open_change_with_effect(
+                                                &overlay_binding,
+                                                true,
+                                                DismissReason::Trigger,
                                                 window,
                                                 cx,
-                                                |runtime| {
-                                                    set_overlay_open(&mut runtime.open, true);
+                                                move |_, cx| {
+                                                    effect_runtime.update(cx, |runtime, _| {
+                                                        runtime.active_value = Some(value);
+                                                    });
                                                 },
+                                            )
+                                            .expect(
+                                                "Combobox navigation should own its registration",
                                             );
-                                        } else {
-                                            close_combobox(
-                                                overlay_host.clone(),
-                                                runtime.clone(),
-                                                focus_restore.clone(),
-                                                on_open_change.clone(),
+                                    } else {
+                                        runtime.update(cx, |runtime, _| {
+                                            runtime.active_value = Some(value);
+                                        });
+                                    }
+                                }
+                                ComboboxKeyboardAction::Select(selection) => {
+                                    cx.stop_propagation();
+                                    window.prevent_default();
+                                    let selected_value = selection.value().to_owned();
+                                    let selected_label = selection.label().to_owned();
+                                    let input_controller = input_controller.clone();
+                                    let on_select = on_select.clone();
+                                    commit_registered_choice_overlay_single_value(
+                                        &window_overlay_runtime,
+                                        &overlay_binding,
+                                        runtime.clone(),
+                                        selected_value,
+                                        window,
+                                        cx,
+                                        move |window, cx| {
+                                            input_controller.update(cx, |controller, cx| {
+                                                controller.set_value(selected_label, cx);
+                                            });
+                                            if let Some(on_select) = on_select.as_ref() {
+                                                on_select(selection, window, cx);
+                                            }
+                                        },
+                                    );
+                                }
+                                ComboboxKeyboardAction::Open => {
+                                    cx.stop_propagation();
+                                    window.prevent_default();
+                                    if !key_state.open() {
+                                        window_overlay_runtime
+                                            .request_open_change(
+                                                &overlay_binding,
+                                                true,
+                                                DismissReason::Trigger,
                                                 window,
                                                 cx,
-                                            );
-                                        }
-                                    },
-                                )
-                            })
-                            .child(if open { "^" } else { "v" }),
-                    ),
+                                            )
+                                            .expect("Combobox open should own its registration");
+                                    }
+                                }
+                                ComboboxKeyboardAction::Ignore => {}
+                            }
+                        })
+                        .child(
+                            TextInput::new(plan.input_id.clone(), plan.label.clone())
+                                .controller(input_controller.clone())
+                                .placeholder(plan.placeholder.clone())
+                                .value(query)
+                                .disabled(state.disabled())
+                                .required(state.required())
+                                .tokens(self.tokens)
+                                .with_size(state.size()),
+                        )
+                        .child(
+                            div()
+                                .id(plan.toggle_id.clone())
+                                .debug_selector({
+                                    let debug_id = plan.debug_id.clone();
+                                    move || format!("combobox:{debug_id}:toggle")
+                                })
+                                .px_2()
+                                .py_1()
+                                .rounded(gpui_px_from_ui(plan.input_radius))
+                                .border_1()
+                                .border_color(theme.resolve(plan.colors.popup_border()))
+                                .text_color(theme.resolve(plan.colors.popup_foreground()))
+                                .ui_role(Role::Button)
+                                .focus_visible(move |style| style.shadow(toggle_focus_shadow))
+                                .focusable()
+                                .tab_stop(!disabled)
+                                .aria_label("Toggle combobox popup")
+                                .aria_expanded(open)
+                                .aria_disabled(disabled)
+                                .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
+                                .when(!disabled, |this| {
+                                    let input_controller = input_controller.clone();
+                                    let window_overlay_runtime = window_overlay_runtime.clone();
+                                    let overlay_binding = overlay_binding.clone();
+                                    this.cursor_pointer().on_click(
+                                        move |_event: &ClickEvent, window, cx| {
+                                            cx.stop_propagation();
+                                            window.prevent_default();
+                                            input_controller.focus_handle(cx).focus(window, cx);
+                                            window_overlay_runtime
+                                                .request_open_change(
+                                                    &overlay_binding,
+                                                    !open,
+                                                    DismissReason::Trigger,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .expect(
+                                                    "Combobox toggle should own its registration",
+                                                );
+                                        },
+                                    )
+                                })
+                                .child(if open { "^" } else { "v" }),
+                        ),
+                ),
             )
             .when(open, |this| {
-                let overlay_host = overlay_host.clone();
-                this.child(overlay_host.relative_layer(
+                this.child(gpui_relative_overlay_layer(
+                    &overlay_adapter,
                     &placement,
                     combobox_content_element(
                         plan.content_id.clone(),
                         plan.listbox_id.clone(),
                         plan.debug_id.clone(),
                         state.clone(),
-                        overlay_host.clone(),
+                        window_overlay_runtime.clone(),
+                        overlay_binding.clone(),
                         self.options,
                         self.groups,
                         input_controller.clone(),
                         runtime.clone(),
-                        self.on_open_change.clone(),
                         self.on_select.clone(),
                         self.tokens,
                         &theme,
@@ -578,26 +592,25 @@ fn combobox_content_element(
     listbox_id: ElementId,
     debug_id: String,
     state: ComboboxState,
-    overlay_host: OverlayLayerHost,
+    window_overlay_runtime: WindowOverlayRuntime,
+    overlay_binding: OverlayLayerBinding,
     options: Vec<ComboboxOption>,
     groups: Vec<ComboboxGroup>,
     input_controller: Entity<TextInputController>,
     runtime: Entity<ComboboxRuntime>,
-    on_open_change: Option<ComboboxOpenChangeHandler>,
     on_select: Option<ComboboxSelectionHandler>,
     tokens: ThemeTokens,
     theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
-    let outside_change = overlay_host.outside_press_open_change();
-    let focus_restore = state.focus_restore_intent().clone();
     let selected_value = state.selected_value().map(str::to_owned);
     let active_value = state.active_value().map(str::to_owned);
     let query = state.query().to_owned();
     let normalized_query = choice::normalize_query(query.as_str());
     let label = state.label().to_owned();
-    let listbox_overlay_host = overlay_host.clone();
+    let listbox_window_overlay_runtime = window_overlay_runtime.clone();
+    let listbox_overlay_binding = overlay_binding.clone();
     let listbox = options
         .into_iter()
         .filter(|option| option.matches_normalized_query(normalized_query.as_str()))
@@ -614,13 +627,11 @@ fn combobox_content_element(
         .with_size(state.size())
         .empty_label(state.empty_label().to_owned())
         .embedded(true)
+        .editor_owned_focus()
         .on_select({
             let input_controller = input_controller.clone();
             let runtime = runtime.clone();
             let on_select = on_select.clone();
-            let on_open_change = on_open_change.clone();
-            let focus_restore = focus_restore.clone();
-            let overlay_host = listbox_overlay_host.clone();
             move |selection, window, cx| {
                 let payload = ComboboxSelection::new(
                     selection.value().to_owned(),
@@ -630,11 +641,10 @@ fn combobox_content_element(
                 let payload_label = payload.label().to_owned();
                 let input_controller = input_controller.clone();
                 let on_select = on_select.clone();
-                commit_choice_overlay_single_value(
-                    &overlay_host,
+                commit_registered_choice_overlay_single_value(
+                    &listbox_window_overlay_runtime,
+                    &listbox_overlay_binding,
                     runtime.clone(),
-                    focus_restore.clone(),
-                    on_open_change.clone(),
                     payload_value,
                     window,
                     cx,
@@ -660,80 +670,34 @@ fn combobox_content_element(
         listbox
     };
     let scroll_viewport_id = state.scroll_area().viewport_id().to_owned();
-    let escape_runtime = runtime.clone();
-    let escape_open_change = on_open_change.clone();
-    let escape_focus_restore = focus_restore.clone();
-    let key_overlay_host = overlay_host.clone();
 
-    div()
-        .id(content_id)
-        .debug_selector(move || format!("combobox:{debug_id}:content"))
-        .min_w(gpui_px_from_ui(metrics.popup_min_width()))
-        .max_w(gpui_px_from_ui(metrics.popup_max_width()))
-        .p(gpui_px_from_ui(metrics.popup_padding()))
-        .h(gpui_px_from_ui(metrics.popup_max_height()))
-        .flex()
-        .flex_col()
-        .rounded(gpui_px_from_ui(metrics.popup_radius()))
-        .border_1()
-        .border_color(theme.resolve(colors.popup_border()))
-        .bg(theme.resolve(colors.popup_background()))
-        .text_color(theme.resolve(colors.popup_foreground()))
-        .shadow_lg()
-        .occlude()
-        .ui_role(state.content_role())
-        .aria_label(label)
-        .on_key_down(move |event: &KeyDownEvent, window, cx| {
-            if event.keystroke.key.as_str() == "escape" {
-                key_overlay_host.consume_event(window, cx);
-                close_combobox(
-                    key_overlay_host.clone(),
-                    escape_runtime.clone(),
-                    escape_focus_restore.clone(),
-                    escape_open_change.clone(),
-                    window,
-                    cx,
-                );
-            }
-        })
-        .when(outside_change.is_some(), |this| {
-            let runtime = runtime.clone();
-            let on_open_change = on_open_change.clone();
-            let focus_restore = focus_restore.clone();
-            let overlay_host = overlay_host.clone();
-            this.on_mouse_down_out(move |_, window, cx| {
-                close_combobox(
-                    overlay_host.clone(),
-                    runtime.clone(),
-                    focus_restore.clone(),
-                    on_open_change.clone(),
-                    window,
-                    cx,
-                );
-            })
-        })
-        .child(
-            ScrollArea::new(scroll_viewport_id, listbox)
-                .vertical()
-                .preserve_scroll()
-                .with_size(state.size()),
-        )
-}
-
-fn close_combobox(
-    overlay_host: OverlayLayerHost,
-    runtime: Entity<ComboboxRuntime>,
-    focus_restore: FocusRestoreIntent,
-    on_open_change: Option<ComboboxOpenChangeHandler>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    close_choice_overlay(
-        &overlay_host,
-        runtime,
-        focus_restore,
-        on_open_change,
-        window,
-        cx,
-    );
+    window_overlay_runtime.surface(
+        &overlay_binding,
+        OverlayInsideRegionId::new("surface"),
+        format!("combobox:{debug_id}:surface-region"),
+        div()
+            .id(content_id)
+            .debug_selector(move || format!("combobox:{debug_id}:content"))
+            .min_w(gpui_px_from_ui(metrics.popup_min_width()))
+            .max_w(gpui_px_from_ui(metrics.popup_max_width()))
+            .p(gpui_px_from_ui(metrics.popup_padding()))
+            .h(gpui_px_from_ui(metrics.popup_max_height()))
+            .flex()
+            .flex_col()
+            .rounded(gpui_px_from_ui(metrics.popup_radius()))
+            .border_1()
+            .border_color(theme.resolve(colors.popup_border()))
+            .bg(theme.resolve(colors.popup_background()))
+            .text_color(theme.resolve(colors.popup_foreground()))
+            .shadow_lg()
+            .occlude()
+            .ui_role(state.content_role())
+            .aria_label(label)
+            .child(
+                ScrollArea::new(scroll_viewport_id, listbox)
+                    .vertical()
+                    .preserve_scroll()
+                    .with_size(state.size()),
+            ),
+    )
 }

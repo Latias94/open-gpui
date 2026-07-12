@@ -5,6 +5,8 @@
     feature = "ui-components"
 ))]
 
+#[cfg(feature = "ui-components")]
+use open_gpui::VisualContext as _;
 #[cfg(feature = "docking")]
 use open_gpui_devtools::docking;
 #[cfg(feature = "gpui")]
@@ -13,6 +15,22 @@ use open_gpui_devtools::gpui;
 use open_gpui_devtools::motion;
 #[cfg(feature = "ui-components")]
 use open_gpui_devtools::ui_components;
+
+#[cfg(feature = "ui-components")]
+struct WindowOverlayProjectionProbe {
+    runtime: open_gpui_ui_components::gpui_adapter::WindowOverlayRuntime,
+}
+
+#[cfg(feature = "ui-components")]
+impl open_gpui::Render for WindowOverlayProjectionProbe {
+    fn render(
+        &mut self,
+        _: &mut open_gpui::Window,
+        _: &mut open_gpui::Context<Self>,
+    ) -> impl open_gpui::IntoElement {
+        open_gpui::div()
+    }
+}
 
 #[cfg(feature = "ui-components")]
 #[test]
@@ -42,6 +60,110 @@ fn framework_adapters_convert_accessibility_evidence() {
     assert!(serialized.contains("\"actions\":[\"click\"]"));
     assert!(serialized.contains("\"valid\":true"));
     assert!(!serialized.contains("\"Click\""));
+}
+
+#[cfg(feature = "ui-components")]
+#[open_gpui::test]
+fn framework_adapters_project_window_overlay_runtime_without_raw_layer_ids(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    use open_gpui_ui_components::gpui_adapter::{
+        OverlayLayerRegistration, OverlayOwnership, WindowOverlayRuntime,
+    };
+    use open_gpui_ui_components::{Dialog, Popover};
+
+    const PARENT_CANARY: &str = "u4a-canary-parent-019f4ad7-4d33";
+    const CHILD_CANARY: &str = "u4a-canary-child-ac26-94bc135cc634";
+
+    let (view, cx) = cx.add_window_view(|window, cx| WindowOverlayProjectionProbe {
+        runtime: WindowOverlayRuntime::for_window(window, cx),
+    });
+    cx.update_window_entity(&view, |probe, window, cx| {
+        let parent_state = Popover::new("devtools-parent", "Open", "Parent")
+            .open(true)
+            .state();
+        let _parent = probe
+            .runtime
+            .register_layer(
+                OverlayLayerRegistration::new(
+                    PARENT_CANARY,
+                    parent_state.overlay().policy().clone(),
+                    OverlayOwnership::Controlled,
+                ),
+                window,
+                cx,
+            )
+            .expect("parent overlay should register");
+
+        let child_state = Dialog::new("devtools-child", "Open", "Child", "Body")
+            .open(true)
+            .state();
+        let _child = probe
+            .runtime
+            .register_layer(
+                OverlayLayerRegistration::new(
+                    CHILD_CANARY,
+                    child_state.overlay().policy().clone(),
+                    OverlayOwnership::Controlled,
+                )
+                .parent(PARENT_CANARY),
+                window,
+                cx,
+            )
+            .expect("child overlay should register");
+    });
+    assert!(cx.update(|window, cx| window.dispatch_keystroke(
+        open_gpui::Keystroke::parse("escape").expect("Escape should parse"),
+        cx,
+    )));
+    let runtime_snapshot = cx.update_window_entity(&view, |probe, window, cx| {
+        probe
+            .runtime
+            .snapshot(window, cx)
+            .expect("runtime snapshot should belong to the test window")
+    });
+    assert_eq!(runtime_snapshot.layers()[0].id().as_str(), PARENT_CANARY);
+    assert_eq!(runtime_snapshot.layers()[1].id().as_str(), CHILD_CANARY);
+
+    let projection = ui_components::window_overlay_probe_snapshot(&runtime_snapshot);
+    let root = &projection.tree().nodes[0];
+    let parent = root.children[0]
+        .payload
+        .as_ref()
+        .expect("parent projection payload");
+    let child = root.children[1]
+        .payload
+        .as_ref()
+        .expect("child projection payload");
+    let debug = format!("{projection:?}");
+    let serialized = serde_json::to_string(projection.tree()).unwrap();
+
+    assert_eq!(root.children.len(), 2);
+    assert_eq!(parent["id"], "overlay-layer-1");
+    assert_eq!(parent["parent"], serde_json::Value::Null);
+    assert_eq!(parent["kind"], "non-modal-dismissible");
+    assert_eq!(child["id"], "overlay-layer-2");
+    assert_eq!(child["parent"], "overlay-layer-1");
+    assert_eq!(child["kind"], "modal");
+    assert_eq!(child["phase"], "close-requested");
+    assert_eq!(child["presence"], "open");
+    assert_eq!(child["pending_open"], false);
+    assert_eq!(child["pending_reason"], "escape-key");
+    assert_eq!(child["keyboard_eligible"], true);
+    assert_eq!(child["modal_pointer_barrier"], true);
+    assert_eq!(child["focus_active"], true);
+    assert_eq!(child["focus_entered"], false);
+
+    for canary in [PARENT_CANARY, CHILD_CANARY] {
+        assert!(!debug.contains(canary));
+        assert!(!serialized.contains(canary));
+        assert!(root.children.iter().all(|node| !node.id.contains(canary)));
+        assert!(
+            root.children
+                .iter()
+                .all(|node| !node.label.contains(canary))
+        );
+    }
 }
 
 #[cfg(feature = "motion")]

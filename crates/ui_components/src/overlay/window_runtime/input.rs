@@ -121,10 +121,10 @@ impl WindowOverlayRuntime {
         }
 
         let frame_revision = window.rendered_frame_revision();
-        let decision = self
-            .state
-            .read(cx)
-            .resolve_outside(event.position, frame_revision);
+        let decision =
+            self.state
+                .read(cx)
+                .resolve_outside(event.position, event.button, frame_revision);
         let mut consume = decision.consumes();
         match decision {
             MouseDecision::None => {}
@@ -138,8 +138,10 @@ impl WindowOverlayRuntime {
             }
         }
         self.state.update(cx, |state, _| {
-            consume |= state.modal_barrier_consumes(event.position, frame_revision);
-            let route = state.new_mouse_gesture_route(event.position, frame_revision, consume);
+            let hit_test =
+                state.pointer_hit_test(event.position, Some(event.button), frame_revision);
+            consume |= state.modal_barrier_consumes_hit_test(&hit_test);
+            let route = state.new_mouse_gesture_route(consume, &hit_test);
             state.mouse_routes.insert(event.button, route);
         });
         if consume {
@@ -239,7 +241,7 @@ impl WindowOverlayRuntime {
         if self
             .state
             .read(cx)
-            .modal_barrier_consumes(position, frame_revision)
+            .modal_barrier_consumes(position, None, frame_revision)
         {
             cx.stop_propagation();
             window.prevent_default();
@@ -282,16 +284,15 @@ impl WindowOverlayRuntimeState {
 
     pub(super) fn new_mouse_gesture_route(
         &self,
-        point: Point<Pixels>,
-        frame_revision: u64,
         blocked: bool,
+        hit_test: &PointerHitTest,
     ) -> MouseGestureRoute {
         if blocked {
             return MouseGestureRoute::Blocked;
         }
         MouseGestureRoute::Allowed {
             authority: self.mouse_authority_stamp(),
-            owner: self.mouse_gesture_owner(point, frame_revision),
+            owner: self.mouse_gesture_owner(hit_test),
             capture: None,
         }
     }
@@ -332,18 +333,15 @@ impl WindowOverlayRuntimeState {
 
     pub(super) fn mouse_gesture_owner(
         &self,
-        point: Point<Pixels>,
-        frame_revision: u64,
+        hit_test: &PointerHitTest,
     ) -> Option<MouseGestureOwner> {
         self.stack.iter().rev().find_map(|id| {
             let entry = self.entries.get(id)?;
-            (entry.keyboard_eligible() && self.point_is_inside(id, point, frame_revision)).then(
-                || MouseGestureOwner {
-                    id: id.clone(),
-                    lease_token: entry.lease_token,
-                    generation: entry.generation,
-                },
-            )
+            (entry.keyboard_eligible() && hit_test.is_inside(id)).then(|| MouseGestureOwner {
+                id: id.clone(),
+                lease_token: entry.lease_token,
+                generation: entry.generation,
+            })
         })
     }
 
@@ -359,9 +357,11 @@ impl WindowOverlayRuntimeState {
     pub(super) fn resolve_outside(
         &self,
         point: Point<Pixels>,
+        button: MouseButton,
         frame_revision: u64,
     ) -> MouseDecision {
-        let modal_barrier = self.highest_modal_barrier_index();
+        let hit_test = self.pointer_hit_test(point, Some(button), frame_revision);
+        let modal_barrier = hit_test.modal_barrier;
         let arbitration_floor = modal_barrier.unwrap_or(0);
 
         for (offset, layer_id) in self.stack[arbitration_floor..].iter().enumerate().rev() {
@@ -372,10 +372,10 @@ impl WindowOverlayRuntimeState {
             if !entry.keyboard_eligible() {
                 continue;
             }
-            if !entry.policy.outside_press_participation.participates() {
+            if !entry.policy.outside_press_participation().participates() {
                 continue;
             }
-            if self.point_is_inside(layer_id, point, frame_revision) {
+            if hit_test.is_inside(layer_id) {
                 return MouseDecision::None;
             }
 
@@ -389,16 +389,18 @@ impl WindowOverlayRuntimeState {
                 !self.stack[barrier..stack_index].iter().any(|id| {
                     self.entries.get(id).is_some_and(|entry| {
                         entry.keyboard_eligible()
-                            && entry.policy.outside_press_participation.participates()
-                            && self.point_is_inside(id, point, frame_revision)
+                            && entry.policy.outside_press_participation().participates()
+                            && hit_test.is_inside(id)
                     })
                 })
             });
+            let ancestor_consumes = !outcome.consumes_event()
+                && self.outside_press_ancestor_consumes(&layer_id, &hit_test);
             if let Some(reason) = outcome.dismiss_reason() {
                 return MouseDecision::Dismiss {
                     layer_id,
                     reason,
-                    consume: barrier_consumes || outcome.consumes_event(),
+                    consume: barrier_consumes || ancestor_consumes || outcome.consumes_event(),
                 };
             }
             return if barrier_consumes || outcome.consumes_event() {
@@ -415,10 +417,42 @@ impl WindowOverlayRuntimeState {
         }
     }
 
+    fn outside_press_ancestor_consumes(
+        &self,
+        layer_id: &OverlayLayerId,
+        hit_test: &PointerHitTest,
+    ) -> bool {
+        let mut parent_id = self
+            .entries
+            .get(layer_id)
+            .and_then(|entry| entry.parent.as_ref());
+        while let Some(id) = parent_id {
+            let Some(parent) = self.entries.get(id) else {
+                return false;
+            };
+            if hit_test.is_inside(id) {
+                return false;
+            }
+            if parent.keyboard_eligible()
+                && parent.policy.outside_press_participation().participates()
+            {
+                match parent.policy.outside_press_policy() {
+                    OutsidePressPolicy::Ignore => return false,
+                    OutsidePressPolicy::Consume | OutsidePressPolicy::DismissAndConsume => {
+                        return true;
+                    }
+                    OutsidePressPolicy::DismissAndPassThrough => {}
+                }
+            }
+            parent_id = parent.parent.as_ref();
+        }
+        false
+    }
+
     pub(super) fn highest_modal_barrier_index(&self) -> Option<usize> {
         self.stack.iter().enumerate().rev().find_map(|(index, id)| {
             let entry = self.entries.get(id)?;
-            (entry.policy.kind == OverlayLayerKind::Modal && entry.lifecycle.presence().present())
+            (entry.policy.kind() == OverlayLayerKind::Modal && entry.lifecycle.presence().present())
                 .then_some(index)
         })
     }
@@ -427,15 +461,28 @@ impl WindowOverlayRuntimeState {
         self.highest_modal_barrier_index().is_some()
     }
 
-    pub(super) fn modal_barrier_consumes(&self, point: Point<Pixels>, frame_revision: u64) -> bool {
-        let Some(barrier) = self.highest_modal_barrier_index() else {
+    pub(super) fn modal_barrier_consumes(
+        &self,
+        point: Point<Pixels>,
+        button: Option<MouseButton>,
+        frame_revision: u64,
+    ) -> bool {
+        if self.highest_modal_barrier_index().is_none() {
+            return false;
+        }
+        let hit_test = self.pointer_hit_test(point, button, frame_revision);
+        self.modal_barrier_consumes_hit_test(&hit_test)
+    }
+
+    fn modal_barrier_consumes_hit_test(&self, hit_test: &PointerHitTest) -> bool {
+        let Some(barrier) = hit_test.modal_barrier else {
             return false;
         };
         !self.stack[barrier..].iter().any(|id| {
             self.entries.get(id).is_some_and(|entry| {
                 entry.keyboard_eligible()
-                    && entry.policy.outside_press_participation.participates()
-                    && self.point_is_inside(id, point, frame_revision)
+                    && entry.policy.outside_press_participation().participates()
+                    && hit_test.is_inside(id)
             })
         })
     }
@@ -451,20 +498,49 @@ impl WindowOverlayRuntimeState {
             .collect()
     }
 
-    pub(super) fn point_is_inside(
+    fn pointer_hit_test(
         &self,
-        ancestor: &OverlayLayerId,
         point: Point<Pixels>,
+        button: Option<MouseButton>,
         frame_revision: u64,
-    ) -> bool {
-        self.stack.iter().any(|id| {
-            self.entries.get(id).is_some_and(|entry| {
-                entry.keyboard_eligible()
-                    && self.is_descendant_or_same(ancestor, id)
-                    && entry.inside_regions.values().any(|region| {
-                        frame_revision <= region.valid_through && region.bounds.contains(&point)
-                    })
-            })
-        })
+    ) -> PointerHitTest {
+        let mut modal_barrier = None;
+        let mut inside_layers = HashSet::new();
+        for (index, id) in self.stack.iter().enumerate() {
+            let Some(entry) = self.entries.get(id) else {
+                continue;
+            };
+            if entry.policy.kind() == OverlayLayerKind::Modal
+                && entry.lifecycle.presence().present()
+            {
+                modal_barrier = Some(index);
+            }
+            let directly_inside = entry.keyboard_eligible()
+                && entry.inside_regions.values().any(|region| {
+                    frame_revision <= region.valid_through
+                        && region.button.is_none_or(|inside_button| {
+                            button.is_some_and(|button| button == inside_button)
+                        })
+                        && region.bounds.contains(&point)
+                });
+            if !directly_inside {
+                continue;
+            }
+
+            let mut current = Some(id);
+            while let Some(layer_id) = current {
+                if !inside_layers.insert(layer_id.clone()) {
+                    break;
+                }
+                current = self
+                    .entries
+                    .get(layer_id)
+                    .and_then(|entry| entry.parent.as_ref());
+            }
+        }
+        PointerHitTest {
+            modal_barrier,
+            inside_layers,
+        }
     }
 }

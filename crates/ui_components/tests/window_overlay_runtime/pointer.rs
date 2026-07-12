@@ -135,6 +135,77 @@ fn parent_and_child_inside_regions_resolve_one_layer_without_breaking_modal_pass
 }
 
 #[open_gpui::test]
+fn pass_through_child_inherits_consumption_only_outside_its_nonmodal_ancestor_tree(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(RuntimeProbe::new);
+    draw(cx);
+    let parent_events = Rc::new(RefCell::new(Vec::new()));
+    let child_events = Rc::new(RefCell::new(Vec::new()));
+
+    register_layer(
+        cx,
+        &view,
+        controlled_registration(
+            "ancestor-menu",
+            policy(
+                OverlayLayerKind::Menu,
+                OverlayPresence::open(),
+                OutsidePressPolicy::DismissAndConsume,
+            ),
+            parent_events.clone(),
+        ),
+    );
+    register_layer(
+        cx,
+        &view,
+        controlled_registration(
+            "menu-branch",
+            policy(
+                OverlayLayerKind::Menu,
+                OverlayPresence::open(),
+                OutsidePressPolicy::DismissAndPassThrough,
+            ),
+            child_events.clone(),
+        )
+        .parent("ancestor-menu"),
+    );
+    set_inside_region(
+        cx,
+        &view,
+        "ancestor-menu",
+        "root",
+        rect(660.0, 430.0, 120.0, 120.0),
+    );
+    set_inside_region(
+        cx,
+        &view,
+        "menu-branch",
+        "branch",
+        rect(700.0, 470.0, 40.0, 40.0),
+    );
+
+    let ancestor_only = cx.simulate_event_with_dispatch_snapshot(mouse_down(680.0, 450.0));
+    assert!(!ancestor_only.default_prevented());
+    assert!(!ancestor_only.propagation_stopped());
+    assert_eq!(child_events.borrow().as_slice(), &[false]);
+    assert!(parent_events.borrow().is_empty());
+
+    let outside_tree = cx.simulate_event_with_dispatch_snapshot(mouse_down(820.0, 620.0));
+    assert!(outside_tree.default_prevented());
+    assert!(outside_tree.propagation_stopped());
+    assert_eq!(
+        child_events.borrow().as_slice(),
+        &[false],
+        "controlled close refusal should suppress duplicate child intents"
+    );
+    assert!(
+        parent_events.borrow().is_empty(),
+        "ancestor consumption must not dispatch a second close intent"
+    );
+}
+
+#[open_gpui::test]
 fn allowed_modal_surface_press_keeps_captured_move_and_up_routed_outside_modal(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -326,7 +397,7 @@ fn captured_owner_unmount_seals_the_old_allowed_route_until_mouse_up(
 }
 
 #[open_gpui::test]
-fn hidden_registration_aba_invalidates_an_existing_captured_route(
+fn unrelated_hidden_registration_preserves_an_existing_captured_route(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let (view, cx) = cx.add_window_view(RuntimeProbe::new);
@@ -379,14 +450,76 @@ fn hidden_registration_aba_invalidates_an_existing_captured_route(
         modifiers: Default::default(),
         pressed_button: Some(MouseButton::Left),
     });
-    assert!(dispatch.default_prevented());
-    assert!(dispatch.propagation_stopped());
+    assert!(!dispatch.default_prevented());
+    assert!(!dispatch.propagation_stopped());
+    assert!(cx.update(|window, _| window.captured_pointer().is_some()));
     let surface_events = cx.update_window_entity(&view, |probe, _, _| {
         probe.surface_pointer_events.borrow().clone()
     });
     assert_eq!(
         surface_events,
-        vec![("aba-captured-modal".to_owned(), "cancel")]
+        vec![("aba-captured-modal".to_owned(), "move")]
+    );
+}
+
+#[open_gpui::test]
+fn open_modal_registration_aba_invalidates_an_existing_captured_route(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(RuntimeProbe::new);
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    draw(cx);
+    register_layer(
+        cx,
+        &view,
+        uncontrolled_registration(
+            "open-aba-capture-owner",
+            OverlayLayerPolicy::new(OverlayLayerKind::Modal, OverlayPresence::open()),
+        ),
+    );
+    cx.update_window_entity(&view, |probe, _, cx| {
+        probe.set_pointer_capture("open-aba-capture-owner", true);
+        cx.notify();
+    });
+    draw(cx);
+    let surface = cx
+        .debug_bounds("window-overlay-runtime:open-aba-capture-owner:surface")
+        .expect("capturing modal surface should render");
+    cx.simulate_mouse_down(surface.center(), MouseButton::Left, Default::default());
+    assert!(cx.update(|window, _| window.captured_pointer().is_some()));
+
+    let transient = register_layer(
+        cx,
+        &view,
+        uncontrolled_registration(
+            "open-aba-transient-modal",
+            OverlayLayerPolicy::new(OverlayLayerKind::Modal, OverlayPresence::open()),
+        ),
+    );
+    cx.update_window_entity(&view, |probe, window, cx| {
+        probe
+            .runtime
+            .unregister_layer(&transient, window, cx)
+            .expect("transient modal should unregister");
+        probe.remove_layer("open-aba-transient-modal");
+        probe.surface_pointer_events.borrow_mut().clear();
+        cx.notify();
+    });
+
+    let dispatch = cx.simulate_event_with_dispatch_snapshot(MouseMoveEvent {
+        position: point(px(100.0), px(100.0)),
+        modifiers: Default::default(),
+        pressed_button: Some(MouseButton::Left),
+    });
+    assert!(dispatch.default_prevented());
+    assert!(dispatch.propagation_stopped());
+    assert!(cx.update(|window, _| window.captured_pointer().is_none()));
+    assert_eq!(
+        cx.update_window_entity(&view, |probe, _, _| {
+            probe.surface_pointer_events.borrow().clone()
+        }),
+        vec![("open-aba-capture-owner".to_owned(), "cancel")]
     );
 }
 

@@ -35,6 +35,7 @@ struct FocusScopeProbe {
     show_outside: bool,
     show_empty: bool,
     show_deferred_target: bool,
+    deferred_target_outside: bool,
     show_pending: bool,
 }
 
@@ -161,6 +162,7 @@ impl FocusScopeProbe {
             show_outside: true,
             show_empty: true,
             show_deferred_target: false,
+            deferred_target_outside: false,
             show_pending: false,
         }
     }
@@ -191,7 +193,18 @@ impl Render for FocusScopeProbe {
                                 .debug_selector(|| "focus-scope:misplaced".to_owned())
                                 .track_focus(&self.misplaced)
                                 .tab_index(1),
-                        ),
+                        )
+                        .when(self.deferred_target_outside, |outside| {
+                            outside.child(
+                                div()
+                                    .id("focus-scope-empty-deferred-outside")
+                                    .debug_selector(|| {
+                                        "focus-scope:empty-deferred-outside".to_owned()
+                                    })
+                                    .track_focus(&self.deferred_target)
+                                    .tab_index(2),
+                            )
+                        }),
                 )
             })
             .child(
@@ -284,15 +297,18 @@ impl Render for FocusScopeProbe {
                         .track_focus(&self.empty_root)
                         .tab_group()
                         .tab_stop(false)
-                        .when(self.show_deferred_target, |surface| {
-                            surface.child(
-                                div()
-                                    .id("focus-scope-empty-deferred")
-                                    .debug_selector(|| "focus-scope:empty-deferred".to_owned())
-                                    .track_focus(&self.deferred_target)
-                                    .tab_index(0),
-                            )
-                        }),
+                        .when(
+                            self.show_deferred_target && !self.deferred_target_outside,
+                            |surface| {
+                                surface.child(
+                                    div()
+                                        .id("focus-scope-empty-deferred")
+                                        .debug_selector(|| "focus-scope:empty-deferred".to_owned())
+                                        .track_focus(&self.deferred_target)
+                                        .tab_index(0),
+                                )
+                            },
+                        ),
                 )
             })
     }
@@ -379,6 +395,52 @@ fn nested_scope_close_restores_parent_then_outside(cx: &mut open_gpui::TestAppCo
     });
     settle_focus_claims_after_render(cx);
     assert_focused(cx, "focus-scope:outside");
+}
+
+#[open_gpui::test]
+fn declared_trigger_outranks_a_different_live_activation_target(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(FocusScopeProbe::new);
+    draw(cx);
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.runtime
+            .rebind_scope(
+                FocusScopeRegistration::new(
+                    FocusScopePolicy::new(CHILD_SCOPE, FocusScopeMode::ModalLoop)
+                        .with_parent(PARENT_SCOPE)
+                        .with_initial_focus(InitialFocusIntent::TargetOrFirstFocusable(
+                            FocusTargetId::new("child.missing"),
+                        ))
+                        .with_focus_restore(FocusRestoreIntent::Trigger),
+                    &view.child_root,
+                )
+                .with_trigger("parent.last"),
+                window,
+                cx,
+            )
+            .expect("child scope trigger should rebind");
+        view.outside.focus(window, cx);
+        view.runtime
+            .activate_scope(FocusScopeId::new(PARENT_SCOPE), window, cx)
+            .expect("parent scope should be registered");
+        view.parent_first.focus(window, cx);
+        view.runtime
+            .activate_scope(FocusScopeId::new(CHILD_SCOPE), window, cx)
+            .expect("child scope should be registered");
+    });
+    settle_focus_claims_after_render(cx);
+    assert_focused(cx, "focus-scope:child-first");
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.runtime
+            .deactivate_scope(FocusScopeId::new(CHILD_SCOPE), window, cx)
+            .expect("child scope should be active");
+    });
+    settle_focus_claims_after_render(cx);
+
+    assert_focused(cx, "focus-scope:parent-last");
 }
 
 #[open_gpui::test]
@@ -625,6 +687,166 @@ fn persistent_scope_waits_for_the_new_frame_before_resolving_initial_target(
 }
 
 #[open_gpui::test]
+fn target_sync_validates_a_retained_registration_against_the_completed_frame(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(FocusScopeProbe::new);
+    draw(cx);
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.runtime
+            .rebind_scope(
+                FocusScopeRegistration::new(
+                    FocusScopePolicy::new(EMPTY_SCOPE, FocusScopeMode::ModalLoop)
+                        .with_initial_focus(InitialFocusIntent::TargetOrFirstFocusable(
+                            FocusTargetId::new("empty.deferred"),
+                        )),
+                    &view.empty_root,
+                )
+                .with_surface("empty.surface"),
+                window,
+                cx,
+            )
+            .expect("empty scope should support policy rebinding");
+        view.show_deferred_target = true;
+        view.runtime
+            .activate_scope(FocusScopeId::new(EMPTY_SCOPE), window, cx)
+            .expect("empty scope should be registered");
+        cx.notify();
+    });
+    settle_focus_claims_after_render(cx);
+    assert_focused(cx, "focus-scope:empty-deferred");
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.show_deferred_target = false;
+        view.runtime
+            .sync_targets(
+                &FocusScopeId::new(EMPTY_SCOPE),
+                &[FocusTargetId::new("empty.deferred")],
+                vec![
+                    FocusTargetRegistration::new("empty.deferred", &view.deferred_target)
+                        .within_scope(EMPTY_SCOPE),
+                ],
+                window,
+                cx,
+            )
+            .expect("retained target registration should remain valid");
+        cx.notify();
+    });
+    settle_focus_claims_after_render(cx);
+
+    assert_focused(cx, "focus-scope:empty-surface");
+}
+
+#[open_gpui::test]
+fn target_sync_safely_blurs_an_unmounted_target_when_initial_intent_is_none(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(FocusScopeProbe::new);
+    draw(cx);
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.runtime
+            .rebind_scope(
+                FocusScopeRegistration::new(
+                    FocusScopePolicy::new(EMPTY_SCOPE, FocusScopeMode::ModalLoop)
+                        .with_initial_focus(InitialFocusIntent::None),
+                    &view.empty_root,
+                )
+                .with_surface("empty.surface"),
+                window,
+                cx,
+            )
+            .expect("empty scope should support policy rebinding");
+        view.show_deferred_target = true;
+        view.runtime
+            .activate_scope(FocusScopeId::new(EMPTY_SCOPE), window, cx)
+            .expect("empty scope should be registered");
+        cx.notify();
+    });
+    draw(cx);
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.deferred_target.focus(window, cx);
+    });
+    assert_focused(cx, "focus-scope:empty-deferred");
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.show_deferred_target = false;
+        view.runtime
+            .sync_targets(
+                &FocusScopeId::new(EMPTY_SCOPE),
+                &[FocusTargetId::new("empty.deferred")],
+                vec![
+                    FocusTargetRegistration::new("empty.deferred", &view.deferred_target)
+                        .within_scope(EMPTY_SCOPE),
+                ],
+                window,
+                cx,
+            )
+            .expect("retained target registration should remain valid");
+        cx.notify();
+    });
+    settle_focus_claims_after_render(cx);
+
+    assert!(
+        cx.update(|window, cx| window.focused(cx).is_none()),
+        "None must preserve only a live current target, not an unmounted focus handle"
+    );
+}
+
+#[open_gpui::test]
+fn target_sync_rejects_a_retained_handle_moved_outside_its_scope(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(FocusScopeProbe::new);
+    draw(cx);
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.runtime
+            .rebind_scope(
+                FocusScopeRegistration::new(
+                    FocusScopePolicy::new(EMPTY_SCOPE, FocusScopeMode::ModalLoop)
+                        .with_initial_focus(InitialFocusIntent::TargetOrFirstFocusable(
+                            FocusTargetId::new("empty.deferred"),
+                        )),
+                    &view.empty_root,
+                )
+                .with_surface("empty.surface"),
+                window,
+                cx,
+            )
+            .expect("empty scope should support policy rebinding");
+        view.show_deferred_target = true;
+        view.runtime
+            .activate_scope(FocusScopeId::new(EMPTY_SCOPE), window, cx)
+            .expect("empty scope should be registered");
+        cx.notify();
+    });
+    settle_focus_claims_after_render(cx);
+    assert_focused(cx, "focus-scope:empty-deferred");
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.deferred_target_outside = true;
+        view.runtime
+            .sync_targets(
+                &FocusScopeId::new(EMPTY_SCOPE),
+                &[FocusTargetId::new("empty.deferred")],
+                vec![
+                    FocusTargetRegistration::new("empty.deferred", &view.deferred_target)
+                        .within_scope(EMPTY_SCOPE),
+                ],
+                window,
+                cx,
+            )
+            .expect("retained target registration should remain valid");
+        cx.notify();
+    });
+    settle_focus_claims_after_render(cx);
+
+    assert_focused(cx, "focus-scope:empty-surface");
+}
+
+#[open_gpui::test]
 fn logically_innermost_unrendered_modal_consumes_tab_until_it_mounts(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -726,6 +948,271 @@ fn runtime_rejects_scoped_window_fallbacks_and_handle_aliases(cx: &mut open_gpui
             ))
         );
     });
+}
+
+#[open_gpui::test]
+fn target_sync_failures_preserve_the_previous_registry(cx: &mut open_gpui::TestAppContext) {
+    let (view, cx) = cx.add_window_view(FocusScopeProbe::new);
+    draw(cx);
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        let scope = FocusScopeId::new(PARENT_SCOPE);
+        let previous = [
+            FocusTargetId::new("parent.first"),
+            FocusTargetId::new("parent.last"),
+        ];
+
+        assert_eq!(
+            view.runtime.sync_targets(
+                &scope,
+                &previous,
+                vec![
+                    FocusTargetRegistration::new("parent.first", &view.parent_first)
+                        .within_scope(PARENT_SCOPE),
+                    FocusTargetRegistration::new("parent.first", &view.parent_last)
+                        .within_scope(PARENT_SCOPE),
+                ],
+                window,
+                cx,
+            ),
+            Err(FocusScopeRuntimeError::DuplicateTarget(FocusTargetId::new(
+                "parent.first"
+            )))
+        );
+        assert_eq!(
+            view.runtime.register_target(
+                FocusTargetRegistration::new("probe.after-duplicate-id.first", &view.parent_first)
+                    .within_scope(PARENT_SCOPE),
+                window,
+                cx,
+            ),
+            Err(FocusScopeRuntimeError::DuplicateTargetHandle(
+                FocusTargetId::new("parent.first")
+            ))
+        );
+        assert_eq!(
+            view.runtime.register_target(
+                FocusTargetRegistration::new("probe.after-duplicate-id.last", &view.parent_last)
+                    .within_scope(PARENT_SCOPE),
+                window,
+                cx,
+            ),
+            Err(FocusScopeRuntimeError::DuplicateTargetHandle(
+                FocusTargetId::new("parent.last")
+            ))
+        );
+
+        assert_eq!(
+            view.runtime.sync_targets(
+                &scope,
+                &previous,
+                vec![
+                    FocusTargetRegistration::new("parent.first", &view.parent_first)
+                        .within_scope(PARENT_SCOPE),
+                    FocusTargetRegistration::new("parent.last", &view.parent_first)
+                        .within_scope(PARENT_SCOPE),
+                ],
+                window,
+                cx,
+            ),
+            Err(FocusScopeRuntimeError::DuplicateTargetHandle(
+                FocusTargetId::new("parent.first")
+            ))
+        );
+        assert_eq!(
+            view.runtime.register_target(
+                FocusTargetRegistration::new(
+                    "probe.after-duplicate-handle.first",
+                    &view.parent_first,
+                )
+                .within_scope(PARENT_SCOPE),
+                window,
+                cx,
+            ),
+            Err(FocusScopeRuntimeError::DuplicateTargetHandle(
+                FocusTargetId::new("parent.first")
+            ))
+        );
+        assert_eq!(
+            view.runtime.register_target(
+                FocusTargetRegistration::new(
+                    "probe.after-duplicate-handle.last",
+                    &view.parent_last,
+                )
+                .within_scope(PARENT_SCOPE),
+                window,
+                cx,
+            ),
+            Err(FocusScopeRuntimeError::DuplicateTargetHandle(
+                FocusTargetId::new("parent.last")
+            ))
+        );
+
+        assert_eq!(
+            view.runtime.sync_targets(
+                &scope,
+                &previous,
+                vec![
+                    FocusTargetRegistration::new("parent.first", &view.parent_first)
+                        .within_scope(CHILD_SCOPE),
+                    FocusTargetRegistration::new("parent.last", &view.parent_last)
+                        .within_scope(PARENT_SCOPE),
+                ],
+                window,
+                cx,
+            ),
+            Err(FocusScopeRuntimeError::TargetScopeMismatch {
+                target: FocusTargetId::new("parent.first"),
+                expected: scope,
+                actual: Some(FocusScopeId::new(CHILD_SCOPE)),
+            })
+        );
+        assert_eq!(
+            view.runtime.register_target(
+                FocusTargetRegistration::new("probe.after-wrong-scope.first", &view.parent_first)
+                    .within_scope(PARENT_SCOPE),
+                window,
+                cx,
+            ),
+            Err(FocusScopeRuntimeError::DuplicateTargetHandle(
+                FocusTargetId::new("parent.first")
+            ))
+        );
+        assert_eq!(
+            view.runtime.register_target(
+                FocusTargetRegistration::new("probe.after-wrong-scope.last", &view.parent_last)
+                    .within_scope(PARENT_SCOPE),
+                window,
+                cx,
+            ),
+            Err(FocusScopeRuntimeError::DuplicateTargetHandle(
+                FocusTargetId::new("parent.last")
+            ))
+        );
+    });
+}
+
+#[open_gpui::test]
+fn target_sync_preserves_a_saved_target_when_its_logical_id_remains(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(FocusScopeProbe::new);
+    draw(cx);
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.runtime
+            .rebind_scope(
+                FocusScopeRegistration::new(
+                    FocusScopePolicy::new(EMPTY_SCOPE, FocusScopeMode::ModalLoop)
+                        .with_initial_focus(InitialFocusIntent::FirstFocusable)
+                        .with_focus_restore(FocusRestoreIntent::Trigger),
+                    &view.empty_root,
+                )
+                .with_surface("empty.surface"),
+                window,
+                cx,
+            )
+            .expect("empty scope should support policy rebinding");
+        view.runtime
+            .activate_scope(FocusScopeId::new(PARENT_SCOPE), window, cx)
+            .expect("parent scope should be registered");
+        view.parent_first.focus(window, cx);
+        view.runtime
+            .activate_scope(FocusScopeId::new(EMPTY_SCOPE), window, cx)
+            .expect("empty scope should be registered");
+    });
+    settle_focus_claims_after_render(cx);
+    assert_focused(cx, "focus-scope:empty-surface");
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.runtime
+            .sync_targets(
+                &FocusScopeId::new(PARENT_SCOPE),
+                &[
+                    FocusTargetId::new("parent.first"),
+                    FocusTargetId::new("parent.last"),
+                ],
+                vec![
+                    FocusTargetRegistration::new("parent.first", &view.parent_first)
+                        .within_scope(PARENT_SCOPE),
+                    FocusTargetRegistration::new("parent.last", &view.parent_last)
+                        .within_scope(PARENT_SCOPE),
+                ],
+                window,
+                cx,
+            )
+            .expect("stable parent targets should remain valid");
+        view.runtime
+            .deactivate_scope(FocusScopeId::new(EMPTY_SCOPE), window, cx)
+            .expect("empty scope should be active");
+    });
+    settle_focus_claims_after_render(cx);
+
+    assert_focused(cx, "focus-scope:parent-first");
+}
+
+#[open_gpui::test]
+fn target_sync_preserves_an_active_ancestor_last_live_target(cx: &mut open_gpui::TestAppContext) {
+    let (view, cx) = cx.add_window_view(FocusScopeProbe::new);
+    draw(cx);
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.runtime
+            .rebind_scope(
+                FocusScopeRegistration::new(
+                    FocusScopePolicy::new(EMPTY_SCOPE, FocusScopeMode::ModalLoop)
+                        .with_initial_focus(InitialFocusIntent::None)
+                        .with_focus_restore(FocusRestoreIntent::None),
+                    &view.empty_root,
+                )
+                .with_surface("empty.surface"),
+                window,
+                cx,
+            )
+            .expect("empty scope should support policy rebinding");
+        view.runtime
+            .activate_scope(FocusScopeId::new(PARENT_SCOPE), window, cx)
+            .expect("parent scope should be registered");
+        view.parent_last.focus(window, cx);
+        view.runtime
+            .activate_scope(FocusScopeId::new(EMPTY_SCOPE), window, cx)
+            .expect("empty scope should be registered");
+        view.runtime
+            .deactivate_scope(FocusScopeId::new(EMPTY_SCOPE), window, cx)
+            .expect("empty scope should be active");
+        window.blur();
+        view.runtime
+            .activate_scope(FocusScopeId::new(CHILD_SCOPE), window, cx)
+            .expect("child scope should be registered");
+    });
+    settle_focus_claims_after_render(cx);
+    assert_focused(cx, "focus-scope:child-first");
+
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.runtime
+            .sync_targets(
+                &FocusScopeId::new(PARENT_SCOPE),
+                &[
+                    FocusTargetId::new("parent.first"),
+                    FocusTargetId::new("parent.last"),
+                ],
+                vec![
+                    FocusTargetRegistration::new("parent.first", &view.parent_first)
+                        .within_scope(PARENT_SCOPE),
+                    FocusTargetRegistration::new("parent.last", &view.parent_last)
+                        .within_scope(PARENT_SCOPE),
+                ],
+                window,
+                cx,
+            )
+            .expect("stable parent targets should remain valid");
+        view.runtime
+            .deactivate_scope(FocusScopeId::new(CHILD_SCOPE), window, cx)
+            .expect("child scope should be active");
+    });
+    settle_focus_claims_after_render(cx);
+
+    assert_focused(cx, "focus-scope:parent-last");
 }
 
 #[open_gpui::test]
@@ -1106,6 +1593,36 @@ fn target_rebind_restores_the_same_logical_identity_to_its_new_handle(
     settle_focus_claims_after_render(cx);
 
     assert_focused(cx, "focus-scope:rebound");
+}
+
+#[open_gpui::test]
+fn repeated_surface_retry_schedules_one_pending_claim_per_frame(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(FocusScopeProbe::new);
+    draw(cx);
+
+    let scheduled = cx.update_window_entity(&view, |view, window, cx| {
+        view.runtime
+            .activate_scope(FocusScopeId::new(CHILD_SCOPE), window, cx)
+            .expect("child scope should be registered");
+        let first = view
+            .runtime
+            .retry_pending_claim_for_scope(&FocusScopeId::new(CHILD_SCOPE), window, cx)
+            .expect("pending focus claim should be retryable");
+        let second = view
+            .runtime
+            .retry_pending_claim_for_scope(&FocusScopeId::new(CHILD_SCOPE), window, cx)
+            .expect("duplicate retry should remain valid");
+        (
+            (first.is_pending(), first.was_scheduled()),
+            (second.is_pending(), second.was_scheduled()),
+        )
+    });
+
+    assert_eq!(scheduled, ((true, true), (true, false)));
+    settle_focus_claims_after_render(cx);
+    assert_focused(cx, "focus-scope:child-first");
 }
 
 #[open_gpui::test]

@@ -16,15 +16,16 @@ use open_gpui::{
 };
 use open_gpui_command::CommandDescriptor;
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, Role, Sizable,
-    Size, ThemeTokens, UiPx,
+    DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+    Role, Sizable, Size, ThemeTokens, UiPx,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::action::{ResolvedActionIcon, ResolvedActionState};
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::overlay::{
-    OverlayLayerHost, OverlayOpenRuntimeRequest, resolve_overlay_open_state, set_overlay_open,
+    OverlayLayerRegistration, OverlayOpenIntent, OverlayOwnership, WindowOverlayRuntime,
+    gpui_full_window_overlay_layer, gpui_overlay_state, resolve_overlay_open_state,
 };
 use crate::scroll_surface::{
     scroll_surface_handle, set_vertical_scroll_offset, should_reset_scroll_surface,
@@ -405,7 +406,7 @@ impl Command {
     /// Registers an open-change handler.
     pub fn on_open_change(
         mut self,
-        handler: impl Fn(bool, &mut Window, &mut App) + 'static,
+        handler: impl Fn(OverlayOpenIntent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_open_change = Some(Rc::new(handler));
         self
@@ -562,13 +563,12 @@ impl RenderOnce for Command {
             .selected_values
             .clone()
             .unwrap_or_else(|| self.selected_value.iter().cloned().collect());
-        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, cx| {
+        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| {
             CommandRuntime::new(
                 self.default_open,
                 self.active_value.clone(),
                 self.selected_value.clone(),
                 initial_selected_values.clone(),
-                cx.focus_handle(),
             )
         });
         let input_state_key: ElementId = (self.id.clone(), "input-state").into();
@@ -661,20 +661,66 @@ impl RenderOnce for Command {
         let focus_ring = state.focus_ring();
         let dialog_state = state.dialog().cloned();
         let dialog_open = dialog_state.clone().filter(|_| state.open());
-        let dialog_overlay_host = dialog_state
-            .as_ref()
-            .map(|dialog| OverlayLayerHost::resolve(dialog.overlay()))
-            .unwrap_or_else(|| OverlayLayerHost::resolve(state.overlay()));
+        let window_overlay_runtime = WindowOverlayRuntime::for_window(window, cx);
+        let existing_binding = runtime_state.overlay_binding.clone();
+        let overlay_binding = if let Some(dialog_state) = dialog_state.as_ref() {
+            let ownership = if open_state.controlled() {
+                OverlayOwnership::Controlled
+            } else {
+                OverlayOwnership::Uncontrolled
+            };
+            let mut registration = OverlayLayerRegistration::new(
+                format!("command:{debug_id}"),
+                dialog_state.overlay().policy().clone(),
+                ownership,
+            );
+            if let Some(on_open_change) = self.on_open_change.clone() {
+                registration = registration.on_open_change(move |intent, window, cx| {
+                    on_open_change(intent, window, cx);
+                });
+            }
+            if ownership == OverlayOwnership::Uncontrolled {
+                let runtime = runtime.downgrade();
+                registration = registration.uncontrolled_commit(move |open, _, cx| {
+                    let _ = runtime.update(cx, |runtime, _| {
+                        runtime.open = open;
+                    });
+                });
+            }
+            let binding = window_overlay_runtime
+                .bind_component_layer(
+                    &runtime,
+                    existing_binding.as_ref(),
+                    registration,
+                    window,
+                    cx,
+                )
+                .expect("Command dialog overlay registration should remain valid");
+            if existing_binding.is_none() {
+                runtime.update(cx, |runtime, _| {
+                    runtime.overlay_binding = Some(binding.clone());
+                });
+            }
+            Some(binding)
+        } else {
+            if let Some(existing_binding) = existing_binding.as_ref() {
+                window_overlay_runtime
+                    .unregister_component_subtree(existing_binding, window, cx)
+                    .expect("inline Command should release its dialog overlay registration");
+                runtime.update(cx, |runtime, _| {
+                    runtime.overlay_binding = None;
+                });
+            }
+            None
+        };
         let viewport = window.viewport_size();
-        let dialog_enabled = self.dialog_enabled;
+        let dialog_enabled = dialog_state.is_some();
         let trigger_label = self.trigger_label;
-        let on_open_change = self.on_open_change;
         let on_query_change = query_change_handler;
         let on_select = self.on_select;
         let on_selected_values_change = self.on_selected_values_change;
         let tokens = self.tokens;
         let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
-        let trigger_focus = runtime_state.trigger_focus.clone();
 
         div()
             .id(id)
@@ -687,58 +733,59 @@ impl RenderOnce for Command {
             .flex_col()
             .items_start()
             .gap_2()
-            .when(dialog_state.is_some(), |this| {
-                let runtime = runtime.clone();
-                let on_open_change = on_open_change.clone();
+            .when_some(overlay_binding.clone(), |this, overlay_binding| {
                 let trigger_label = trigger_label.clone();
                 let open = state.open();
-                let overlay_host = dialog_overlay_host.clone();
                 this.child(
-                    div()
-                        .id(trigger_id)
-                        .debug_selector({
-                            let debug_id = debug_id.clone();
-                            move || format!("command:{debug_id}:trigger")
-                        })
-                        .min_h(gpui_px_from_ui(state.size().button_h()))
-                        .px(gpui_px_from_ui(state.size().button_px()))
-                        .py(gpui_px_from_ui(state.size().button_py()))
-                        .rounded(gpui_px_from_ui(metrics.radius()))
-                        .border_1()
-                        .border_color(theme.resolve(colors.border()))
-                        .bg(theme.resolve(colors.surface()))
-                        .text_color(theme.resolve(colors.foreground()))
-                        .focusable()
-                        .track_focus(&trigger_focus)
-                        .tab_stop(!disabled)
-                        .ui_role(Role::Button)
-                        .aria_label(trigger_label.clone())
-                        .aria_expanded(open)
-                        .aria_disabled(disabled)
-                        .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
-                        .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
-                        .when(!disabled, |this| {
-                            this.cursor_pointer().on_click(
-                                move |_event: &ClickEvent, window, cx| {
-                                    cx.stop_propagation();
-                                    if !open {
-                                        overlay_host.apply_open_change(
-                                            OverlayOpenRuntimeRequest::new(
-                                                runtime.clone(),
-                                                true,
-                                                on_open_change.as_deref(),
-                                            ),
-                                            window,
-                                            cx,
-                                            |runtime| {
-                                                set_overlay_open(&mut runtime.open, true);
-                                            },
-                                        );
-                                    }
-                                },
-                            )
-                        })
-                        .child(trigger_label),
+                    window_overlay_runtime.focus_target(
+                        &overlay_binding,
+                        format!("command:{debug_id}:trigger-focus-target"),
+                        div()
+                            .id(trigger_id)
+                            .debug_selector({
+                                let debug_id = debug_id.clone();
+                                move || format!("command:{debug_id}:trigger")
+                            })
+                            .min_h(gpui_px_from_ui(state.size().button_h()))
+                            .px(gpui_px_from_ui(state.size().button_px()))
+                            .py(gpui_px_from_ui(state.size().button_py()))
+                            .rounded(gpui_px_from_ui(metrics.radius()))
+                            .border_1()
+                            .border_color(theme.resolve(colors.border()))
+                            .bg(theme.resolve(colors.surface()))
+                            .text_color(theme.resolve(colors.foreground()))
+                            .focusable()
+                            .track_focus(overlay_binding.trigger_focus())
+                            .tab_stop(!disabled)
+                            .ui_role(Role::Button)
+                            .aria_label(trigger_label.clone())
+                            .aria_expanded(open)
+                            .aria_disabled(disabled)
+                            .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
+                            .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
+                            .when(!disabled, |this| {
+                                let window_overlay_runtime = window_overlay_runtime.clone();
+                                let overlay_binding = overlay_binding.clone();
+                                this.cursor_pointer().on_click(
+                                    move |_event: &ClickEvent, window, cx| {
+                                        cx.stop_propagation();
+                                        window.prevent_default();
+                                        window_overlay_runtime
+                                            .request_open_change(
+                                                &overlay_binding,
+                                                !open,
+                                                DismissReason::Trigger,
+                                                window,
+                                                cx,
+                                            )
+                                            .expect(
+                                                "Command trigger should own its overlay registration",
+                                            );
+                                    },
+                                )
+                            })
+                            .child(trigger_label),
+                    ),
                 )
             })
             .when(!dialog_enabled, |this| {
@@ -753,7 +800,6 @@ impl RenderOnce for Command {
                     scroll_offset,
                     input_controller.clone(),
                     runtime.clone(),
-                    on_open_change.clone(),
                     on_query_change.clone(),
                     on_select.clone(),
                     on_selected_values_change.clone(),
@@ -762,9 +808,13 @@ impl RenderOnce for Command {
                     &theme,
                 ))
             })
-            .when_some(dialog_open, |this, dialog_state| {
-                let overlay_host = dialog_overlay_host.clone();
-                this.child(overlay_host.full_window_layer(command_dialog_layer_element(
+            .when_some(
+                dialog_open.zip(overlay_binding),
+                |this, (dialog_state, overlay_binding)| {
+                    let overlay_adapter = gpui_overlay_state(dialog_state.overlay());
+                    this.child(gpui_full_window_overlay_layer(
+                        &overlay_adapter,
+                        command_dialog_layer_element(
                     content_id,
                     input_id,
                     listbox_id,
@@ -773,19 +823,20 @@ impl RenderOnce for Command {
                     scroll_handle,
                     viewport_extent,
                     scroll_offset,
-                    dialog_state,
-                    overlay_host.clone(),
+                    window_overlay_runtime.clone(),
+                    overlay_binding,
                     viewport,
                     input_controller,
                     runtime,
-                    on_open_change,
                     on_query_change,
                     on_select,
                     on_selected_values_change,
                     tokens,
                     &theme,
-                )))
-            })
+                        ),
+                    ))
+                },
+            )
     }
 }
 

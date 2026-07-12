@@ -1,5 +1,7 @@
 //! Layer lifecycle state machine, hierarchy validation, and stack projection.
 
+use std::collections::HashSet;
+
 use super::*;
 
 impl WindowOverlayRuntimeState {
@@ -34,6 +36,8 @@ impl WindowOverlayRuntimeState {
         self.validate_parent(&registration.id, registration.parent.as_ref())?;
         let lifecycle = LayerLifecycle::from_presence(registration.policy.presence());
         let phase = lifecycle.phase();
+        let mouse_authority_changed =
+            MouseAuthorityProfile::from_policy(&registration.policy, phase).affects_routing();
         self.validate_parent_lifecycle(registration.parent.as_ref(), phase)?;
         self.next_lease_token = self.next_lease_token.wrapping_add(1);
         let lease_token = self.next_lease_token;
@@ -48,7 +52,7 @@ impl WindowOverlayRuntimeState {
         let entry = LayerEntry {
             id: id.clone(),
             parent: registration.parent,
-            policy: LayerPolicy::from_overlay_policy(&registration.policy),
+            policy: registration.policy,
             ownership: registration.ownership,
             focus_mode: registration.focus_mode,
             focus_restore_condition: registration.focus_restore_condition,
@@ -68,6 +72,8 @@ impl WindowOverlayRuntimeState {
             inside_regions: HashMap::new(),
             focus_subscription: None,
             release_subscription: None,
+            owner_entity: None,
+            component_bind_revision: None,
             pending_unregister: false,
             forced_by_ancestor: false,
         };
@@ -76,7 +82,9 @@ impl WindowOverlayRuntimeState {
         if phase != OverlayLayerPhase::Hidden {
             self.stack.push(id.clone());
         }
-        self.bump_mouse_authority();
+        if mouse_authority_changed {
+            self.bump_mouse_authority();
+        }
         let focus_config = self.focus_config(&id, trigger_focus, surface_focus)?;
         Ok((
             OverlayLayerLease {
@@ -96,10 +104,13 @@ impl WindowOverlayRuntimeState {
     ) -> Result<RebindPlan, WindowOverlayRuntimeError> {
         self.validate_rebind(lease, &registration)?;
         let requested_phase = LayerLifecycle::from_presence(registration.policy.presence()).phase();
-        let closes_subtree = matches!(
-            requested_phase,
-            OverlayLayerPhase::Closing | OverlayLayerPhase::Hidden
-        ) && self.has_present_descendants(&registration.id);
+        let current_phase = self.entries[&registration.id].lifecycle.phase();
+        let closes_subtree = current_phase != OverlayLayerPhase::Hidden
+            && matches!(
+                requested_phase,
+                OverlayLayerPhase::Closing | OverlayLayerPhase::Hidden
+            )
+            && self.has_present_descendants(&registration.id);
         if !closes_subtree {
             let transition = self.rebind_layer(lease, registration)?;
             return Ok(RebindPlan {
@@ -163,17 +174,18 @@ impl WindowOverlayRuntimeState {
         self.validate_rebind(lease, &registration)?;
 
         let old_phase = self.entries[&registration.id].lifecycle.phase();
+        let ownership_changed = self.entries[&registration.id].ownership != registration.ownership;
         let mut next_lifecycle = self.entries[&registration.id].lifecycle.clone();
-        next_lifecycle.rebind_presence(registration.policy.presence());
+        if ownership_changed {
+            next_lifecycle.rebind_ownership(registration.policy.presence());
+        } else {
+            next_lifecycle.rebind_presence(registration.policy.presence());
+        }
         let next_phase = next_lifecycle.phase();
         let mouse_authority_changed = {
             let entry = &self.entries[&registration.id];
-            entry.parent != registration.parent
-                || entry.policy.kind != registration.policy.kind()
-                || entry.policy.outside_press_participation
-                    != registration.policy.outside_press_participation()
-                || entry.policy.outside_press != registration.policy.outside_press_policy()
-                || old_phase != next_phase
+            MouseAuthorityProfile::from_policy(&entry.policy, old_phase)
+                != MouseAuthorityProfile::from_policy(&registration.policy, next_phase)
         };
         let focus_transition = self.lifecycle_transition(&registration.id, old_phase, next_phase);
         let entry = self
@@ -188,7 +200,8 @@ impl WindowOverlayRuntimeState {
             entry.generation = OverlayLayerGeneration(entry.generation.0.wrapping_add(1));
         }
         entry.parent = registration.parent;
-        entry.policy = LayerPolicy::from_overlay_policy(&registration.policy);
+        entry.policy = registration.policy;
+        entry.ownership = registration.ownership;
         entry.focus_mode = registration.focus_mode;
         entry.focus_restore_condition = registration.focus_restore_condition;
         entry.tab_behavior = registration.tab_behavior;
@@ -229,6 +242,7 @@ impl WindowOverlayRuntimeState {
             .get(&registration.id)
             .expect("overlay lease was validated before preparing rebind");
         Ok(LayerFocusConfig {
+            layer_id: entry.id.clone(),
             mode: registration.focus_mode,
             policy: registration.policy.clone(),
             scope_id: entry.scope_id.clone(),
@@ -252,11 +266,6 @@ impl WindowOverlayRuntimeState {
             .ok_or_else(|| WindowOverlayRuntimeError::UnknownLayer(registration.id.clone()))?;
         if entry.pending_unregister {
             return Err(WindowOverlayRuntimeError::LayerUnregistering(
-                registration.id.clone(),
-            ));
-        }
-        if entry.ownership != registration.ownership {
-            return Err(WindowOverlayRuntimeError::OwnershipChanged(
                 registration.id.clone(),
             ));
         }
@@ -363,17 +372,8 @@ impl WindowOverlayRuntimeState {
         open: bool,
         reason: DismissReason,
     ) -> Result<OpenChangeDispatch, WindowOverlayRuntimeError> {
-        let Some(entry) = self.entries.get(id) else {
-            return Err(WindowOverlayRuntimeError::UnknownLayer(id.clone()));
-        };
-        if let Some(token) = lease_token
-            && entry.lease_token != token
-        {
-            return Err(WindowOverlayRuntimeError::ForeignLease(id.clone()));
-        }
-        if entry.pending_unregister {
-            return Err(WindowOverlayRuntimeError::LayerUnregistering(id.clone()));
-        }
+        self.validate_request_target(id, lease_token)?;
+        let entry = &self.entries[id];
         if open == entry.lifecycle.committed_open() || entry.lifecycle.pending_open() == Some(open)
         {
             return Ok(OpenChangeDispatch::noop(
@@ -390,7 +390,7 @@ impl WindowOverlayRuntimeState {
                     .entries
                     .get_mut(id)
                     .expect("overlay existence was checked");
-                entry
+                let pending = entry
                     .lifecycle
                     .request_controlled(open, reason)
                     .expect("controlled request was checked for duplication");
@@ -402,10 +402,14 @@ impl WindowOverlayRuntimeState {
                     focus_transition: FocusTransition::None,
                     uncontrolled_commit: None,
                     on_open_change: entry.on_open_change.clone(),
+                    intent: Some(OpenIntentDispatch {
+                        desired_open: open,
+                        reason,
+                        revision: Some(pending.revision),
+                    }),
                     changed: true,
                 }
             };
-            self.bump_mouse_authority();
             return Ok(dispatch);
         }
 
@@ -421,6 +425,11 @@ impl WindowOverlayRuntimeState {
             return Err(WindowOverlayRuntimeError::PresentDescendants(id.clone()));
         }
         let focus_transition = self.lifecycle_transition(id, old_phase, next_phase);
+        let mouse_authority_changed = {
+            let entry = &self.entries[id];
+            MouseAuthorityProfile::from_policy(&entry.policy, old_phase)
+                != MouseAuthorityProfile::from_policy(&entry.policy, next_phase)
+        };
         let entry = self
             .entries
             .get_mut(id)
@@ -448,7 +457,9 @@ impl WindowOverlayRuntimeState {
         let uncontrolled_commit = entry.uncontrolled_commit.clone();
         let on_open_change = entry.on_open_change.clone();
         self.sync_stack(id, old_phase, next_phase, open);
-        self.bump_mouse_authority();
+        if mouse_authority_changed {
+            self.bump_mouse_authority();
+        }
         Ok(OpenChangeDispatch {
             layer_id: id.clone(),
             lease_token,
@@ -457,6 +468,11 @@ impl WindowOverlayRuntimeState {
             focus_transition,
             uncontrolled_commit,
             on_open_change,
+            intent: Some(OpenIntentDispatch {
+                desired_open: open,
+                reason,
+                revision: None,
+            }),
             changed: true,
         })
     }
@@ -500,6 +516,8 @@ impl WindowOverlayRuntimeState {
         let intent_already_pending = entry.lifecycle.pending_open() == Some(false);
         let old_phase = entry.lifecycle.phase();
         let existing_pending = entry.lifecycle.pending();
+        let mouse_authority_changed = MouseAuthorityProfile::from_policy(&entry.policy, old_phase)
+            != MouseAuthorityProfile::from_policy(&entry.policy, next_phase);
         let mut focus_transition = self.lifecycle_transition(id, old_phase, next_phase);
         if !allow_restore && let FocusTransition::Deactivate { restore, .. } = &mut focus_transition
         {
@@ -515,17 +533,24 @@ impl WindowOverlayRuntimeState {
         }
         entry.focus_active = false;
         entry.forced_by_ancestor = forced_by_ancestor;
-        if owner_was_open && ownership == OverlayOwnership::Controlled {
-            entry.lifecycle.force_controlled_close(next_phase, reason);
+        let intent_revision = if owner_was_open && ownership == OverlayOwnership::Controlled {
+            Some(
+                entry
+                    .lifecycle
+                    .force_controlled_close(next_phase, reason)
+                    .revision,
+            )
         } else if ownership == OverlayOwnership::Uncontrolled {
             entry
                 .lifecycle
                 .transition_to_noninteractive(next_phase, None);
+            None
         } else {
             entry
                 .lifecycle
                 .transition_to_noninteractive(next_phase, existing_pending);
-        }
+            existing_pending.map(|pending| pending.revision)
+        };
         let generation = entry.generation;
         let registration_revision = entry.registration_revision;
         let lease_token = entry.lease_token;
@@ -536,7 +561,9 @@ impl WindowOverlayRuntimeState {
             .then(|| entry.on_open_change.clone())
             .flatten();
         self.sync_stack(id, old_phase, next_phase, false);
-        self.bump_mouse_authority();
+        if mouse_authority_changed {
+            self.bump_mouse_authority();
+        }
         Ok(OpenChangeDispatch {
             layer_id: id.clone(),
             lease_token,
@@ -545,6 +572,11 @@ impl WindowOverlayRuntimeState {
             focus_transition,
             uncontrolled_commit,
             on_open_change,
+            intent: Some(OpenIntentDispatch {
+                desired_open: false,
+                reason,
+                revision: intent_revision,
+            }),
             changed: true,
         })
     }
@@ -565,13 +597,20 @@ impl WindowOverlayRuntimeState {
             ));
         }
         self.finalize_forced_descendants(&lease.layer_id)?;
+        let mouse_authority_changed = {
+            let entry = &self.entries[&lease.layer_id];
+            MouseAuthorityProfile::from_policy(&entry.policy, OverlayLayerPhase::Closing)
+                != MouseAuthorityProfile::from_policy(&entry.policy, OverlayLayerPhase::Hidden)
+        };
         let entry = self
             .entries
             .get_mut(&lease.layer_id)
             .expect("overlay lease was validated before finishing exit");
         entry.lifecycle.finish_exit();
         self.stack.retain(|candidate| candidate != &lease.layer_id);
-        self.bump_mouse_authority();
+        if mouse_authority_changed {
+            self.bump_mouse_authority();
+        }
         Ok(())
     }
 
@@ -596,7 +635,6 @@ impl WindowOverlayRuntimeState {
             ));
         }
         entry.registration_revision = entry.registration_revision.wrapping_add(1);
-        self.bump_mouse_authority();
         Ok(())
     }
 
@@ -605,11 +643,7 @@ impl WindowOverlayRuntimeState {
         lease: &OverlayLayerLease,
     ) -> Result<FocusTransition, WindowOverlayRuntimeError> {
         self.validate_mutable_lease(lease)?;
-        if self
-            .entries
-            .values()
-            .any(|entry| entry.parent.as_ref() == Some(&lease.layer_id))
-        {
+        if self.has_registered_children(&lease.layer_id) {
             return Err(WindowOverlayRuntimeError::HasChildren(
                 lease.layer_id.clone(),
             ));
@@ -662,12 +696,83 @@ impl WindowOverlayRuntimeState {
         })
     }
 
+    pub(super) fn record_component_bind(
+        &mut self,
+        lease: &OverlayLayerLease,
+        frame_revision: u64,
+    ) -> Result<(), WindowOverlayRuntimeError> {
+        let entry = self.entry_for_lease_mut(lease)?;
+        entry
+            .inside_regions
+            .retain(|_, region| region.valid_through >= frame_revision);
+        entry.component_bind_revision = Some(frame_revision);
+        Ok(())
+    }
+
+    pub(super) fn begin_stale_component_subtree_replacement(
+        &mut self,
+        root: &OverlayLayerId,
+        window_id: WindowId,
+        frame_revision: u64,
+        owner_id: EntityId,
+    ) -> Option<SubtreeUnregisterPlan> {
+        if !self.entries.get(root).is_some_and(|entry| {
+            entry.owner_entity.as_ref().is_some_and(|owner| {
+                owner.entity_id() != owner_id
+                    && (!owner.is_upgradable()
+                        || (entry
+                            .component_bind_revision
+                            .is_some_and(|revision| revision != frame_revision)
+                            && entry
+                                .inside_regions
+                                .values()
+                                .all(|region| region.valid_through != frame_revision)))
+            })
+        }) {
+            return None;
+        }
+
+        let mut layer_ids = self
+            .registration_order
+            .iter()
+            .filter(|candidate| self.is_descendant_or_same(root, candidate))
+            .cloned()
+            .collect::<Vec<_>>();
+        layer_ids.sort_by(|left, right| {
+            self.teardown_order_key(right)
+                .cmp(&self.teardown_order_key(left))
+        });
+        let cancel_focus_claims = self.subtree_focus_claim_cancellations(&layer_ids, None);
+        let removals = layer_ids
+            .into_iter()
+            .map(|layer_id| {
+                let transition = self.mark_unregistering(&layer_id, false);
+                let entry = self
+                    .entries
+                    .get(&layer_id)
+                    .expect("replacement subtree was collected from registered layers");
+                (
+                    OverlayLayerLease {
+                        layer_id,
+                        token: entry.lease_token,
+                        window_id,
+                    },
+                    transition,
+                )
+            })
+            .collect();
+        Some(SubtreeUnregisterPlan {
+            cancel_focus_claims,
+            removals,
+        })
+    }
+
     pub(super) fn mark_unregistering(
         &mut self,
         layer_id: &OverlayLayerId,
         allow_restore: bool,
     ) -> FocusTransition {
-        let transition = {
+        let (transition, mouse_authority_changed) = {
             let entry = self
                 .entries
                 .get_mut(layer_id)
@@ -675,6 +780,9 @@ impl WindowOverlayRuntimeState {
             if entry.pending_unregister {
                 return FocusTransition::None;
             }
+            let mouse_authority_changed =
+                MouseAuthorityProfile::from_policy(&entry.policy, entry.lifecycle.phase())
+                    != MouseAuthorityProfile::from_policy(&entry.policy, OverlayLayerPhase::Hidden);
             let transition = if entry.focus_active {
                 let restore = allow_restore && entry.should_restore_focus();
                 entry.focus_active = false;
@@ -691,10 +799,12 @@ impl WindowOverlayRuntimeState {
                 .lifecycle
                 .transition_to_noninteractive(OverlayLayerPhase::Hidden, pending);
             entry.pending_unregister = true;
-            transition
+            (transition, mouse_authority_changed)
         };
         self.stack.retain(|candidate| candidate != layer_id);
-        self.bump_mouse_authority();
+        if mouse_authority_changed {
+            self.bump_mouse_authority();
+        }
         transition
     }
 
@@ -703,7 +813,6 @@ impl WindowOverlayRuntimeState {
         let entry = self.entries.remove(&lease.layer_id)?;
         self.registration_order
             .retain(|candidate| candidate != &lease.layer_id);
-        self.bump_mouse_authority();
         Some(FocusCleanup {
             scope_id: entry.scope_id,
             trigger_id: entry.trigger_id,
@@ -724,6 +833,26 @@ impl WindowOverlayRuntimeState {
         })
     }
 
+    pub(super) fn pending_unregister_parent_lease(
+        &self,
+        lease: &OverlayLayerLease,
+    ) -> Option<OverlayLayerLease> {
+        let entry = self
+            .entries
+            .get(&lease.layer_id)
+            .filter(|entry| entry.lease_token == lease.token && entry.pending_unregister)?;
+        let parent_id = entry.parent.as_ref()?;
+        let parent = self
+            .entries
+            .get(parent_id)
+            .filter(|parent| parent.pending_unregister)?;
+        Some(OverlayLayerLease {
+            layer_id: parent_id.clone(),
+            token: parent.lease_token,
+            window_id: lease.window_id,
+        })
+    }
+
     pub(super) fn has_registered_children(&self, layer_id: &OverlayLayerId) -> bool {
         self.entries
             .values()
@@ -731,15 +860,20 @@ impl WindowOverlayRuntimeState {
     }
 
     pub(super) fn remove_layer_without_focus(&mut self, id: &OverlayLayerId, lease_token: u64) {
-        if self
+        if let Some(entry) = self
             .entries
             .get(id)
-            .is_some_and(|entry| entry.lease_token == lease_token)
+            .filter(|entry| entry.lease_token == lease_token)
         {
+            let mouse_authority_changed =
+                MouseAuthorityProfile::from_policy(&entry.policy, entry.lifecycle.phase())
+                    .affects_routing();
             self.entries.remove(id);
             self.registration_order.retain(|candidate| candidate != id);
             self.stack.retain(|candidate| candidate != id);
-            self.bump_mouse_authority();
+            if mouse_authority_changed {
+                self.bump_mouse_authority();
+            }
         }
     }
 
@@ -769,6 +903,23 @@ impl WindowOverlayRuntimeState {
             ));
         }
         Ok(())
+    }
+
+    pub(super) fn lease_status(&self, lease: &OverlayLayerLease) -> OverlayLayerLeaseStatus {
+        let Some(entry) = self
+            .entries
+            .get(&lease.layer_id)
+            .filter(|entry| entry.lease_token == lease.token)
+        else {
+            return OverlayLayerLeaseStatus::Released;
+        };
+        if entry.pending_unregister {
+            OverlayLayerLeaseStatus::PendingUnregister
+        } else {
+            OverlayLayerLeaseStatus::Registered {
+                phase: entry.lifecycle.phase(),
+            }
+        }
     }
 
     pub(super) fn validate_mutable_lease(
@@ -801,15 +952,8 @@ impl WindowOverlayRuntimeState {
                 parent.clone(),
             ));
         }
-        let mut current = Some(parent);
-        while let Some(candidate) = current {
-            if candidate == layer_id {
-                return Err(WindowOverlayRuntimeError::CyclicParent(layer_id.clone()));
-            }
-            current = self
-                .entries
-                .get(candidate)
-                .and_then(|entry| entry.parent.as_ref());
+        if self.is_descendant_or_same(layer_id, parent) {
+            return Err(WindowOverlayRuntimeError::CyclicParent(layer_id.clone()));
         }
         Ok(())
     }
@@ -891,7 +1035,11 @@ impl WindowOverlayRuntimeState {
             self.teardown_order_key(right)
                 .cmp(&self.teardown_order_key(left))
         });
-        let changed = !descendants.is_empty();
+        let mouse_authority_changed = descendants.iter().any(|descendant| {
+            let entry = &self.entries[descendant];
+            MouseAuthorityProfile::from_policy(&entry.policy, entry.lifecycle.phase())
+                != MouseAuthorityProfile::from_policy(&entry.policy, OverlayLayerPhase::Hidden)
+        });
         for descendant in descendants {
             let entry = self
                 .entries
@@ -900,7 +1048,7 @@ impl WindowOverlayRuntimeState {
             entry.lifecycle.finish_exit();
             self.stack.retain(|candidate| candidate != &descendant);
         }
-        if changed {
+        if mouse_authority_changed {
             self.bump_mouse_authority();
         }
         Ok(())
@@ -927,7 +1075,9 @@ impl WindowOverlayRuntimeState {
             if !subtree.contains(id) {
                 subtree.insert(0, id.clone());
             }
-            self.stack.retain(|candidate| !subtree.contains(candidate));
+            let subtree_ids = subtree.iter().collect::<HashSet<_>>();
+            self.stack
+                .retain(|candidate| !subtree_ids.contains(candidate));
             self.stack.extend(subtree);
         }
     }

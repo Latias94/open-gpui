@@ -97,6 +97,7 @@ fn verify(root: &Path) -> Result<(), ()> {
     run(root, "cargo", &["check", "-p", "open-gpui-smoke-native"])?;
     run_motion_tests(root)?;
     run_ecosystem_tests(root)?;
+    run_gpui_tests(root)?;
     run_ui_component_tests(root)?;
     verify_release_docs(root, &[])?;
     scan_doc_links(root)?;
@@ -105,6 +106,11 @@ fn verify(root: &Path) -> Result<(), ()> {
     scan_import_boundary(root)?;
     scan_public_api(root, &["--check".to_string()])?;
     scan_ui_contract(root)?;
+    Ok(())
+}
+
+fn run_gpui_tests(root: &Path) -> Result<(), ()> {
+    run(root, "cargo", &["nextest", "run", "-p", "open-gpui"])?;
     Ok(())
 }
 

@@ -5,13 +5,13 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Pixels, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window,
-    div, px,
+    App, ClickEvent, ElementId, FocusHandle, InteractiveElement, IntoElement, ParentElement,
+    Pixels, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, FocusRestoreIntent, FocusTargetId, InitialFocusIntent, OutsidePressPolicy,
-    OverlayLayerKind, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
+    DismissReason, EscapeKeyPolicy, FocusRestoreIntent, FocusTargetAvailability, FocusTargetId,
+    InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind, Role, Sizable, Size, ThemeTokens,
+    UiPx, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -19,16 +19,17 @@ use crate::button::ButtonVariant;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
-    OverlayCloseRuntimeRequest, OverlayDisclosureConfig, OverlayDisclosureOpenMode,
-    OverlayLayerHost, OverlayOpenRuntimeRequest, OverlayResolvedState, resolve_overlay_open_state,
-    set_overlay_open,
+    FocusTargetRegistration, OverlayDisclosureConfig, OverlayDisclosureOpenMode,
+    OverlayFocusTargetSet, OverlayInsideRegionId, OverlayLayerBinding, OverlayLayerRegistration,
+    OverlayOpenIntent, OverlayOwnership, OverlayResolvedState, WindowOverlayRuntime,
+    gpui_full_window_overlay_layer, gpui_overlay_state, resolve_overlay_open_state,
 };
 use crate::theme::{ThemeContext, ThemeResolver};
 
 const CANCEL_FOCUS_TARGET: &str = "alert-dialog.cancel";
 const ACTION_FOCUS_TARGET: &str = "alert-dialog.action";
 
-type OpenChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
+type OpenChangeHandler = Rc<dyn Fn(OverlayOpenIntent, &mut Window, &mut App)>;
 type ActionHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// Alert dialog open-state ownership.
@@ -104,7 +105,6 @@ pub struct AlertDialogActionState {
     label: SharedString,
     disabled: bool,
     variant: ButtonVariant,
-    default_focus: bool,
 }
 
 impl AlertDialogActionState {
@@ -114,14 +114,12 @@ impl AlertDialogActionState {
         label: impl Into<SharedString>,
         disabled: bool,
         variant: ButtonVariant,
-        default_focus: bool,
     ) -> Self {
         Self {
             kind,
             label: label.into(),
             disabled,
             variant,
-            default_focus,
         }
     }
 
@@ -148,11 +146,6 @@ impl AlertDialogActionState {
     /// Returns the visual button variant.
     pub const fn variant(&self) -> ButtonVariant {
         self.variant
-    }
-
-    /// Returns whether this action is the default initial focus target.
-    pub const fn default_focus(&self) -> bool {
-        self.default_focus
     }
 
     /// Returns the accessibility role.
@@ -486,12 +479,6 @@ impl AlertDialogState {
         let colors = ThemeResolver::alert_dialog_colors(tokens, intent, open);
         let cancel_disabled = cancel_disabled || disabled;
         let action_disabled = action_disabled || disabled;
-        let default_focus = alert_dialog_default_focus_kind(
-            &initial_focus_intent,
-            !cancel_disabled,
-            !action_disabled,
-        );
-
         Self {
             size,
             disabled,
@@ -506,14 +493,12 @@ impl AlertDialogState {
                 cancel_label,
                 cancel_disabled,
                 ButtonVariant::Secondary,
-                default_focus == Some(AlertDialogActionKind::Cancel),
             ),
             action: AlertDialogActionState::new(
                 AlertDialogActionKind::Action,
                 action_label,
                 action_disabled,
                 intent.action_variant(),
-                default_focus == Some(AlertDialogActionKind::Action),
             ),
             outside_press_policy,
             escape_key_policy,
@@ -664,12 +649,13 @@ pub struct AlertDialog {
     on_open_change: Option<OpenChangeHandler>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct AlertDialogRuntime {
     open: bool,
-    trigger_focus: FocusHandle,
     cancel_focus: FocusHandle,
     action_focus: FocusHandle,
+    overlay_binding: Option<OverlayLayerBinding>,
+    focus_targets: OverlayFocusTargetSet,
 }
 
 impl AlertDialog {
@@ -696,7 +682,7 @@ impl AlertDialog {
             open: None,
             default_open: false,
             outside_press_policy: OutsidePressPolicy::Consume,
-            escape_key_policy: EscapeKeyPolicy::Dismiss,
+            escape_key_policy: EscapeKeyPolicy::Ignore,
             initial_focus_intent: InitialFocusIntent::TargetOrFirstFocusable(FocusTargetId::new(
                 CANCEL_FOCUS_TARGET,
             )),
@@ -792,10 +778,10 @@ impl AlertDialog {
         self
     }
 
-    /// Registers an open-change handler with the next open value.
+    /// Registers an open-change handler with the runtime-issued intent.
     pub fn on_open_change(
         mut self,
-        handler: impl Fn(bool, &mut Window, &mut App) + 'static,
+        handler: impl Fn(OverlayOpenIntent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_open_change = Some(Rc::new(handler));
         self
@@ -835,9 +821,10 @@ impl RenderOnce for AlertDialog {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, cx| AlertDialogRuntime {
             open: self.default_open,
-            trigger_focus: cx.focus_handle(),
             cancel_focus: cx.focus_handle(),
             action_focus: cx.focus_handle(),
+            overlay_binding: None,
+            focus_targets: OverlayFocusTargetSet::default(),
         });
         let open_state = resolve_overlay_open_state(self.open, runtime.read(cx).open);
         let resolved_open = open_state.open();
@@ -906,13 +893,76 @@ impl RenderOnce for AlertDialog {
         let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
         let disabled = state.disabled();
         let open = state.open();
-        let overlay_host = OverlayLayerHost::resolve(state.overlay());
-        let trigger_focus = runtime.read(cx).trigger_focus.clone();
         let cancel_focus = runtime.read(cx).cancel_focus.clone();
         let action_focus = runtime.read(cx).action_focus.clone();
         let on_cancel = self.on_cancel;
         let on_action = self.on_action;
         let on_open_change = self.on_open_change;
+        let window_overlay_runtime = WindowOverlayRuntime::for_window(window, cx);
+        let ownership = if open_state.controlled() {
+            OverlayOwnership::Controlled
+        } else {
+            OverlayOwnership::Uncontrolled
+        };
+        let mut registration = OverlayLayerRegistration::new(
+            format!("alert-dialog:{debug_id}"),
+            state.overlay().policy().clone(),
+            ownership,
+        );
+        if let Some(on_open_change) = on_open_change {
+            registration = registration.on_open_change(move |intent, window, cx| {
+                on_open_change(intent, window, cx);
+            });
+        }
+        if ownership == OverlayOwnership::Uncontrolled {
+            let runtime = runtime.downgrade();
+            registration = registration.uncontrolled_commit(move |open, _, cx| {
+                let _ = runtime.update(cx, |runtime, _| {
+                    runtime.open = open;
+                });
+            });
+        }
+        let existing_binding = runtime.read(cx).overlay_binding.clone();
+        let overlay_binding = window_overlay_runtime
+            .bind_component_layer(
+                &runtime,
+                existing_binding.as_ref(),
+                registration,
+                window,
+                cx,
+            )
+            .expect("alert dialog overlay registration should remain valid");
+        if existing_binding.is_none() {
+            runtime.update(cx, |runtime, _| {
+                runtime.overlay_binding = Some(overlay_binding.clone());
+            });
+        }
+        let cancel_registration = FocusTargetRegistration::new(CANCEL_FOCUS_TARGET, &cancel_focus)
+            .with_availability(if state.cancel().activation_enabled() {
+                FocusTargetAvailability::Available
+            } else {
+                FocusTargetAvailability::Disabled
+            });
+        let action_registration = FocusTargetRegistration::new(ACTION_FOCUS_TARGET, &action_focus)
+            .with_availability(if state.action().activation_enabled() {
+                FocusTargetAvailability::Available
+            } else {
+                FocusTargetAvailability::Disabled
+            });
+        let mut registered_focus_targets = runtime.read(cx).focus_targets.clone();
+        registered_focus_targets
+            .sync(
+                &window_overlay_runtime,
+                &overlay_binding,
+                [cancel_registration, action_registration],
+                window,
+                cx,
+            )
+            .expect("alert dialog focus targets should remain valid");
+        runtime.update(cx, |runtime, _| {
+            runtime.focus_targets = registered_focus_targets;
+        });
+        let overlay_adapter = gpui_overlay_state(state.overlay());
 
         div()
             .id(id.clone())
@@ -925,116 +975,78 @@ impl RenderOnce for AlertDialog {
             .flex_col()
             .items_start()
             .child(
-                div()
-                    .id(trigger_id)
-                    .debug_selector({
-                        let debug_id = debug_id.clone();
-                        move || format!("alert-dialog:{debug_id}:trigger")
-                    })
-                    .min_h(gpui_px_from_ui(metrics.trigger_height()))
-                    .px(gpui_px_from_ui(metrics.trigger_padding_x()))
-                    .py(gpui_px_from_ui(metrics.trigger_padding_y()))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(gpui_px_from_ui(metrics.radius()))
-                    .border_1()
-                    .border_color(trigger_border)
-                    .bg(trigger_background)
-                    .text_color(trigger_foreground)
-                    .text_size(gpui_px_from_ui(metrics.text_size()))
-                    .line_height(gpui_px_from_ui(metrics.text_size()))
-                    .focusable()
-                    .track_focus(&trigger_focus)
-                    .tab_stop(!disabled)
-                    .ui_role(state.trigger_role())
-                    .aria_label(trigger_label.clone())
-                    .aria_selected(state.trigger_selected())
-                    .aria_expanded(open)
-                    .aria_disabled(disabled)
-                    .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
-                    .when(open, |this| {
-                        let runtime = runtime.clone();
-                        let on_open_change = on_open_change.clone();
-                        let focus_restore = state.focus_restore_intent().clone();
-                        let overlay_host = overlay_host.clone();
-                        this.on_key_down(move |event: &KeyDownEvent, window, cx| {
-                            if event.keystroke.key.as_str() == "escape"
-                                && overlay_host.escape_open_change().is_some()
-                            {
-                                overlay_host.consume_event(window, cx);
-                                close_alert_dialog(
-                                    overlay_host.clone(),
-                                    runtime.clone(),
-                                    focus_restore.clone(),
-                                    on_open_change.clone(),
-                                    window,
-                                    cx,
-                                );
-                            }
+                window_overlay_runtime.focus_target(
+                    &overlay_binding,
+                    format!("alert-dialog:{debug_id}:trigger-focus-target"),
+                    div()
+                        .id(trigger_id)
+                        .debug_selector({
+                            let debug_id = debug_id.clone();
+                            move || format!("alert-dialog:{debug_id}:trigger")
                         })
-                    })
-                    .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
-                    .when(!disabled, |this| {
-                        let runtime = runtime.clone();
-                        let on_open_change = on_open_change.clone();
-                        let initial_focus = state.initial_focus_intent().clone();
-                        let focus_state = state.clone();
-                        let overlay_host = overlay_host.clone();
-                        this.cursor_pointer()
-                            .hover(move |style| style.bg(trigger_hover_background))
-                            .on_click(move |_event: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                let next_open = !open;
-                                let focus_runtime = runtime.clone();
-                                let focus_state = focus_state.clone();
-                                let initial_focus = initial_focus.clone();
-                                overlay_host.apply_open_change_with_after_update(
-                                    OverlayOpenRuntimeRequest::new(
-                                        runtime.clone(),
-                                        next_open,
-                                        on_open_change.as_deref(),
-                                    ),
-                                    window,
-                                    cx,
-                                    |runtime| {
-                                        set_overlay_open(&mut runtime.open, next_open);
-                                    },
-                                    move |window, cx| {
-                                        if next_open
-                                            && let Some(focus) = alert_dialog_initial_focus_handle(
-                                                &focus_runtime,
-                                                &focus_state,
-                                                &initial_focus,
-                                                cx,
-                                            )
-                                        {
-                                            window.defer(cx, move |window, cx| {
-                                                focus.focus(window, cx)
-                                            });
-                                        }
-                                    },
-                                );
-                            })
-                    })
-                    .child(trigger_label),
+                        .min_h(gpui_px_from_ui(metrics.trigger_height()))
+                        .px(gpui_px_from_ui(metrics.trigger_padding_x()))
+                        .py(gpui_px_from_ui(metrics.trigger_padding_y()))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(gpui_px_from_ui(metrics.radius()))
+                        .border_1()
+                        .border_color(trigger_border)
+                        .bg(trigger_background)
+                        .text_color(trigger_foreground)
+                        .text_size(gpui_px_from_ui(metrics.text_size()))
+                        .line_height(gpui_px_from_ui(metrics.text_size()))
+                        .focusable()
+                        .track_focus(overlay_binding.trigger_focus())
+                        .tab_stop(!disabled)
+                        .ui_role(state.trigger_role())
+                        .aria_label(trigger_label.clone())
+                        .aria_selected(state.trigger_selected())
+                        .aria_expanded(open)
+                        .aria_disabled(disabled)
+                        .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
+                        .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
+                        .when(!disabled, |this| {
+                            let window_overlay_runtime = window_overlay_runtime.clone();
+                            let overlay_binding = overlay_binding.clone();
+                            this.cursor_pointer()
+                                .hover(move |style| style.bg(trigger_hover_background))
+                                .on_click(move |_event: &ClickEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    window_overlay_runtime
+                                        .request_open_change(
+                                            &overlay_binding,
+                                            !open,
+                                            DismissReason::Trigger,
+                                            window,
+                                            cx,
+                                        )
+                                        .expect(
+                                            "alert dialog trigger should own its overlay registration",
+                                        );
+                                })
+                        })
+                        .child(trigger_label),
+                ),
             )
             .when(open, |this| {
-                let overlay_host = overlay_host.clone();
-                this.child(overlay_host.full_window_layer(alert_dialog_layer_element(
-                    content_id.clone(),
-                    debug_id.clone(),
-                    state.clone(),
-                    overlay_host.clone(),
-                    &theme,
-                    viewport,
-                    runtime.clone(),
-                    cancel_focus.clone(),
-                    action_focus.clone(),
-                    on_cancel.clone(),
-                    on_action.clone(),
-                    on_open_change.clone(),
-                )))
+                this.child(gpui_full_window_overlay_layer(
+                    &overlay_adapter,
+                    alert_dialog_layer_element(
+                        content_id.clone(),
+                        debug_id.clone(),
+                        state.clone(),
+                        &theme,
+                        viewport,
+                        window_overlay_runtime.clone(),
+                        overlay_binding.clone(),
+                        cancel_focus.clone(),
+                        action_focus.clone(),
+                        on_cancel.clone(),
+                        on_action.clone(),
+                    ),
+                ))
             })
     }
 }
@@ -1043,21 +1055,17 @@ fn alert_dialog_layer_element(
     content_id: ElementId,
     debug_id: String,
     state: AlertDialogState,
-    overlay_host: OverlayLayerHost,
     theme: &ThemeContext,
     viewport: open_gpui::Size<Pixels>,
-    runtime: Entity<AlertDialogRuntime>,
+    window_overlay_runtime: WindowOverlayRuntime,
+    overlay_binding: OverlayLayerBinding,
     cancel_focus: FocusHandle,
     action_focus: FocusHandle,
     on_cancel: Option<ActionHandler>,
     on_action: Option<ActionHandler>,
-    on_open_change: Option<OpenChangeHandler>,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
-    let outside_change = overlay_host.outside_press_open_change();
-    let escape_change = overlay_host.escape_open_change();
-    let barrier_overlay_host = overlay_host.clone();
     let barrier = theme.resolve(colors.barrier());
     let border = theme.resolve(colors.border());
     let surface = theme.resolve(colors.surface());
@@ -1078,129 +1086,89 @@ fn alert_dialog_layer_element(
         .w(viewport.width)
         .h(viewport.height)
         .bg(barrier)
-        .occlude()
-        .on_any_mouse_down(move |_, window, cx| {
-            barrier_overlay_host.consume_event(window, cx);
-        })
-        .when(outside_change.is_some(), |this| {
-            let runtime = runtime.clone();
-            let on_open_change = on_open_change.clone();
-            let focus_restore = state.focus_restore_intent().clone();
-            let overlay_host = overlay_host.clone();
-            this.on_click(move |_: &ClickEvent, window, cx| {
-                overlay_host.consume_event(window, cx);
-                close_alert_dialog(
-                    overlay_host.clone(),
-                    runtime.clone(),
-                    focus_restore.clone(),
-                    on_open_change.clone(),
-                    window,
-                    cx,
-                );
-            })
-        })
         .child(
-            div()
-                .id("alert-dialog-surface")
-                .debug_selector({
-                    let debug_id = debug_id.clone();
-                    move || format!("alert-dialog:{debug_id}:surface")
-                })
-                .absolute()
-                .left(x)
-                .top(y)
-                .w(gpui_px_from_ui(metrics.width()))
-                .max_w(gpui_px_from_ui(metrics.max_width()))
-                .p(gpui_px_from_ui(metrics.padding()))
-                .flex()
-                .flex_col()
-                .gap_3()
-                .rounded(gpui_px_from_ui(metrics.radius()))
-                .border_1()
-                .border_color(border)
-                .bg(surface)
-                .text_color(foreground)
-                .text_size(gpui_px_from_ui(metrics.text_size()))
-                .line_height(gpui_px_from_ui(metrics.text_size()))
-                .shadow_lg()
-                .occlude()
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .tab_group()
-                .focusable()
-                .ui_role(state.content_role())
-                .aria_label(state.title().to_owned())
-                .on_key_down({
-                    let runtime = runtime.clone();
-                    let on_open_change = on_open_change.clone();
-                    let focus_restore = state.focus_restore_intent().clone();
-                    let overlay_host = overlay_host.clone();
-                    move |event: &KeyDownEvent, window, cx| {
-                        if event.keystroke.key.as_str() == "escape" && escape_change.is_some() {
-                            overlay_host.consume_event(window, cx);
-                            close_alert_dialog(
-                                overlay_host.clone(),
-                                runtime.clone(),
-                                focus_restore.clone(),
-                                on_open_change.clone(),
-                                window,
-                                cx,
-                            );
-                        }
-                    }
-                })
-                .child(
-                    div()
-                        .text_size(gpui_px_from_ui(metrics.title_size()))
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .line_height(px(24.0))
-                        .child(state.title().to_owned()),
-                )
-                .child(
-                    div()
-                        .text_color(muted_foreground)
-                        .child(state.description().to_owned()),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_end()
-                        .gap(gpui_px_from_ui(metrics.action_gap()))
-                        .child(alert_dialog_cancel_button(
-                            &state,
-                            theme,
-                            runtime.clone(),
-                            cancel_focus.clone(),
-                            overlay_host.clone(),
-                            debug_id.clone(),
-                            on_cancel,
-                            on_open_change.clone(),
-                        ))
-                        .child(alert_dialog_action_button(
-                            &state,
-                            theme,
-                            runtime.clone(),
-                            action_focus.clone(),
-                            overlay_host.clone(),
-                            debug_id.clone(),
-                            on_action,
-                            on_open_change,
-                        )),
-                ),
+            window_overlay_runtime.surface(
+                &overlay_binding,
+                OverlayInsideRegionId::new("surface"),
+                format!("alert-dialog:{debug_id}:surface-region"),
+                div()
+                    .id("alert-dialog-surface")
+                    .debug_selector({
+                        let debug_id = debug_id.clone();
+                        move || format!("alert-dialog:{debug_id}:surface")
+                    })
+                    .absolute()
+                    .left(x)
+                    .top(y)
+                    .w(gpui_px_from_ui(metrics.width()))
+                    .max_w(gpui_px_from_ui(metrics.max_width()))
+                    .p(gpui_px_from_ui(metrics.padding()))
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .rounded(gpui_px_from_ui(metrics.radius()))
+                    .border_1()
+                    .border_color(border)
+                    .bg(surface)
+                    .text_color(foreground)
+                    .text_size(gpui_px_from_ui(metrics.text_size()))
+                    .line_height(gpui_px_from_ui(metrics.text_size()))
+                    .shadow_lg()
+                    .occlude()
+                    .tab_group()
+                    .focusable()
+                    .track_focus(overlay_binding.surface_focus())
+                    .ui_role(state.content_role())
+                    .aria_label(state.title().to_owned())
+                    .child(
+                        div()
+                            .text_size(gpui_px_from_ui(metrics.title_size()))
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .line_height(px(24.0))
+                            .child(state.title().to_owned()),
+                    )
+                    .child(
+                        div()
+                            .text_color(muted_foreground)
+                            .child(state.description().to_owned()),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap(gpui_px_from_ui(metrics.action_gap()))
+                            .child(alert_dialog_cancel_button(
+                                &state,
+                                theme,
+                                cancel_focus.clone(),
+                                window_overlay_runtime.clone(),
+                                overlay_binding.clone(),
+                                debug_id.clone(),
+                                on_cancel,
+                            ))
+                            .child(alert_dialog_action_button(
+                                &state,
+                                theme,
+                                action_focus.clone(),
+                                window_overlay_runtime.clone(),
+                                overlay_binding.clone(),
+                                debug_id.clone(),
+                                on_action,
+                            )),
+                    ),
+            ),
         )
 }
 
 fn alert_dialog_cancel_button(
     state: &AlertDialogState,
     theme: &ThemeContext,
-    runtime: Entity<AlertDialogRuntime>,
     cancel_focus: FocusHandle,
-    overlay_host: OverlayLayerHost,
+    window_overlay_runtime: WindowOverlayRuntime,
+    overlay_binding: OverlayLayerBinding,
     debug_id: String,
     on_cancel: Option<ActionHandler>,
-    on_open_change: Option<OpenChangeHandler>,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
@@ -1211,7 +1179,6 @@ fn alert_dialog_cancel_button(
     let cancel_foreground = theme.resolve(colors.cancel_foreground());
     let cancel_hover_background = theme.resolve(colors.cancel_hover_background());
     let cancel = state.cancel().clone();
-    let focus_restore = state.focus_restore_intent().clone();
 
     div()
         .id("alert-dialog-cancel")
@@ -1247,17 +1214,21 @@ fn alert_dialog_cancel_button(
                 .hover(move |style| style.bg(cancel_hover_background))
                 .on_click(move |_event: &ClickEvent, window, cx| {
                     cx.stop_propagation();
-                    if let Some(on_cancel) = on_cancel.as_ref() {
-                        on_cancel(window, cx);
-                    }
-                    close_alert_dialog(
-                        overlay_host.clone(),
-                        runtime.clone(),
-                        focus_restore.clone(),
-                        on_open_change.clone(),
-                        window,
-                        cx,
-                    );
+                    let on_cancel = on_cancel.clone();
+                    window_overlay_runtime
+                        .request_open_change_with_effect(
+                            &overlay_binding,
+                            false,
+                            DismissReason::CloseAction,
+                            window,
+                            cx,
+                            move |window, cx| {
+                                if let Some(on_cancel) = on_cancel.as_ref() {
+                                    on_cancel(window, cx);
+                                }
+                            },
+                        )
+                        .expect("alert dialog cancel should own its overlay registration");
                 })
         })
         .child(cancel.label().to_owned())
@@ -1266,12 +1237,11 @@ fn alert_dialog_cancel_button(
 fn alert_dialog_action_button(
     state: &AlertDialogState,
     theme: &ThemeContext,
-    runtime: Entity<AlertDialogRuntime>,
     action_focus: FocusHandle,
-    overlay_host: OverlayLayerHost,
+    window_overlay_runtime: WindowOverlayRuntime,
+    overlay_binding: OverlayLayerBinding,
     debug_id: String,
     on_action: Option<ActionHandler>,
-    on_open_change: Option<OpenChangeHandler>,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
@@ -1282,7 +1252,6 @@ fn alert_dialog_action_button(
     let action_foreground = theme.resolve(colors.action_foreground());
     let action_hover_background = theme.resolve(colors.action_hover_background());
     let action = state.action().clone();
-    let focus_restore = state.focus_restore_intent().clone();
 
     div()
         .id("alert-dialog-action")
@@ -1318,91 +1287,24 @@ fn alert_dialog_action_button(
                 .hover(move |style| style.bg(action_hover_background))
                 .on_click(move |_event: &ClickEvent, window, cx| {
                     cx.stop_propagation();
-                    if let Some(on_action) = on_action.as_ref() {
-                        on_action(window, cx);
-                    }
-                    close_alert_dialog(
-                        overlay_host.clone(),
-                        runtime.clone(),
-                        focus_restore.clone(),
-                        on_open_change.clone(),
-                        window,
-                        cx,
-                    );
+                    let on_action = on_action.clone();
+                    window_overlay_runtime
+                        .request_open_change_with_effect(
+                            &overlay_binding,
+                            false,
+                            DismissReason::CloseAction,
+                            window,
+                            cx,
+                            move |window, cx| {
+                                if let Some(on_action) = on_action.as_ref() {
+                                    on_action(window, cx);
+                                }
+                            },
+                        )
+                        .expect("alert dialog action should own its overlay registration");
                 })
         })
         .child(action.label().to_owned())
-}
-
-fn close_alert_dialog(
-    overlay_host: OverlayLayerHost,
-    runtime: Entity<AlertDialogRuntime>,
-    focus_restore: FocusRestoreIntent,
-    on_open_change: Option<OpenChangeHandler>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let trigger_focus = runtime.read(cx).trigger_focus.clone();
-    overlay_host.close_runtime(
-        OverlayCloseRuntimeRequest::new(
-            runtime,
-            &focus_restore,
-            trigger_focus,
-            on_open_change.as_deref(),
-        ),
-        window,
-        cx,
-        |runtime| {
-            set_overlay_open(&mut runtime.open, false);
-        },
-    );
-}
-
-fn alert_dialog_default_focus_kind(
-    intent: &InitialFocusIntent,
-    cancel_enabled: bool,
-    action_enabled: bool,
-) -> Option<AlertDialogActionKind> {
-    let first_focusable = || {
-        if cancel_enabled {
-            Some(AlertDialogActionKind::Cancel)
-        } else if action_enabled {
-            Some(AlertDialogActionKind::Action)
-        } else {
-            None
-        }
-    };
-    let target_focus = |target: &FocusTargetId| match target.as_str() {
-        CANCEL_FOCUS_TARGET if cancel_enabled => Some(AlertDialogActionKind::Cancel),
-        ACTION_FOCUS_TARGET if action_enabled => Some(AlertDialogActionKind::Action),
-        _ => None,
-    };
-
-    match intent {
-        InitialFocusIntent::None => None,
-        InitialFocusIntent::FirstFocusable => first_focusable(),
-        InitialFocusIntent::Target(target) => target_focus(target),
-        InitialFocusIntent::TargetOrFirstFocusable(target) => {
-            target_focus(target).or_else(first_focusable)
-        }
-    }
-}
-
-fn alert_dialog_initial_focus_handle(
-    runtime: &Entity<AlertDialogRuntime>,
-    state: &AlertDialogState,
-    intent: &InitialFocusIntent,
-    cx: &App,
-) -> Option<FocusHandle> {
-    match alert_dialog_default_focus_kind(
-        intent,
-        state.cancel().activation_enabled(),
-        state.action().activation_enabled(),
-    ) {
-        Some(AlertDialogActionKind::Cancel) => Some(runtime.read(cx).cancel_focus.clone()),
-        Some(AlertDialogActionKind::Action) => Some(runtime.read(cx).action_focus.clone()),
-        None => None,
-    }
 }
 
 #[cfg(test)]
@@ -1437,7 +1339,7 @@ mod tests {
     }
 
     #[test]
-    fn alert_dialog_initial_focus_skips_disabled_actions() {
+    fn alert_dialog_action_availability_tracks_disabled_actions() {
         let state = AlertDialogState::resolve(
             Size::Medium,
             false,
@@ -1459,29 +1361,5 @@ mod tests {
 
         assert!(!state.cancel().activation_enabled());
         assert!(state.action().activation_enabled());
-        assert!(!state.cancel().default_focus());
-        assert!(state.action().default_focus());
-
-        let exact_cancel_state = AlertDialogState::resolve(
-            Size::Medium,
-            false,
-            Some(true),
-            false,
-            "Confirm".into(),
-            "Runtime opened".into(),
-            AlertDialogIntent::Default,
-            "Cancel".into(),
-            true,
-            "Continue".into(),
-            false,
-            OutsidePressPolicy::Consume,
-            EscapeKeyPolicy::Dismiss,
-            InitialFocusIntent::Target(FocusTargetId::new(CANCEL_FOCUS_TARGET)),
-            FocusRestoreIntent::Trigger,
-            ThemeTokens::default(),
-        );
-
-        assert!(!exact_cancel_state.cancel().default_focus());
-        assert!(!exact_cancel_state.action().default_focus());
     }
 }

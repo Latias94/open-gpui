@@ -105,15 +105,15 @@ reaching GPUI adapters. The shared contract distinguishes:
   `UiSize`, `UiRect`, and `UiEdges`) and do not store `Window`, `Context`, `FocusHandle`,
   `ElementId`, or callback types.
 
-GPUI adapters remain responsible for `deferred` and `anchored` rendering, event subscriptions,
-hitboxes, focus handles, concrete focus restoration, and AccessKit relationship wiring.
-`open_gpui_ui_components::gpui_adapter` provides the narrow GPUI mapping layer: deferred priority,
-snap-to-window margin, GPUI anchor mapping, and open-change decisions derived from the shared
-policy. It does not own global overlay ordering, callback storage, or window subscriptions.
-`open_gpui_ui_core::overlay` owns renderer-neutral stack ordering through
-`resolve_escape_key`, `resolve_outside_press`, and `resolve_focus_restore`, so nested overlay
-behavior can be tested without a GPUI window before an adapter wires concrete events and focus
-handles.
+GPUI placement adapters remain responsible for `deferred` and `anchored` rendering, hitboxes, and
+AccessKit relationship wiring. `WindowOverlayRuntime` is the sole per-window authority for live
+registration order, parentage, input subscriptions, controlled close intent, modal barriers, focus
+handles, focus claims, and restoration. `open_gpui_ui_components::gpui_adapter` also provides the
+narrow placement mapping layer: deferred priority, snap-to-window margin, GPUI anchor mapping, and
+placement resolution. `open_gpui_ui_core::overlay` owns the
+renderer-neutral policy resolvers such as `resolve_escape_key` and `resolve_outside_press`; the
+window runtime consumes them for production arbitration rather than rebuilding stack ownership in
+each component.
 `open_gpui_ui_core::overlay::resolve_overlay_placement` is the shared anchored-placement solver for
 explicit neutral placement inputs. It returns `OverlayPlacementResolution` with fit and trace
 metadata, so point-anchored and render-plan overlays that provide anchor bounds, content size, and
@@ -124,35 +124,43 @@ and `gpui_full_window_overlay_layer` convert neutral placement and layer policy 
 measured trigger/content bounds still delegate final live positioning to GPUI's anchored layer; the
 neutral solver remains the testable policy boundary rather than a measured overlay runtime.
 
-Interactive overlay adapters should bind persistent trigger/content focus handles in keyed runtime
-state instead of allocating them from rebuilt `RenderOnce` values. Resolved state declares
-`InitialFocusIntent` and `FocusRestoreIntent`; the adapter must apply those intents when opening or
-dismissing concrete GPUI layers. Non-modal pass-through dismissal may need deferred trigger focus
-restoration so later underlay mouse events do not overwrite the restored focus.
+Interactive overlay adapters register stable logical layers and focus targets with
+`WindowOverlayRuntime`. Resolved state declares `InitialFocusIntent` and `FocusRestoreIntent`; the
+runtime realizes those intents from current rendered descendants and rejects stale handles.
+Dialog, Sheet, and Popover callers bind an explicit target with
+`focus_target(FocusTargetRegistration::new(id, &handle))`. The declared ID is local to that layer:
+the runtime creates its canonical window identity, rebinds availability on rerender, and removes
+registrations omitted by a later render. Callers and component families must not prefix IDs with a
+layer or maintain a parallel live-target registry.
+Component-local Escape, outside-press, initial-focus, and restoration handlers are not an extension
+point.
 
-`TooltipState` is the first descriptive overlay component contract. It records content kind,
+`TooltipState` is the descriptive overlay component contract. It records content kind,
 disabled/open state, hover/focus/manual open intent, placement preference, delay policy, resolved
-metrics, token intents, and tooltip layer state. The first slice is intentionally non-interactive:
-hover/focus subscriptions, focus handles, timing execution, and anchored/deferred rendering remain
-GPUI adapter responsibilities. Rich hover cards and action-bearing tooltip content should not reuse
-the descriptive tooltip contract as-is.
+metrics, token intents, and tooltip layer state. Hover/focus timing and anchored/deferred rendering
+remain component adapter responsibilities, while every visible Tooltip registers a passive window
+layer. Tooltip never claims or restores focus and does not participate in outside-press ownership.
+Rich hover cards and action-bearing tooltip content should not reuse the descriptive tooltip
+contract as-is.
 
-`PopoverState` is the first interactive non-modal overlay contract. It records controlled versus
+`PopoverState` is the interactive non-modal overlay contract. It records controlled versus
 uncontrolled open mode, default-open state, trigger expanded/selected intent, placement preference,
 outside-press policy, initial focus intent, focus restore intent, resolved metrics, token intents,
-and non-modal dismissible layer state. The GPUI adapter owns the concrete trigger/content elements,
-`deferred`/`anchored` rendering, outside-press subscription, and focus handles. Popover defaults to
-the non-modal overlay initial-focus policy (`InitialFocusIntent::None`); callers must opt in when
-content should receive focus. Nested popovers, modal popover variants, and full focus-scope
-coordination remain follow-up work.
+and non-modal dismissible layer state. The GPUI adapter owns concrete trigger/content elements and
+`deferred`/`anchored` rendering; its runtime binding owns outside/Escape arbitration, live focus
+handles, parentage, and conditional restoration. Popover defaults to the non-modal overlay
+initial-focus policy (`InitialFocusIntent::None`); callers must opt in when content should receive
+focus and register any explicit target handle through `Popover::focus_target`. Nested official
+overlay descendants inherit Popover parentage through the ambient runtime surface. Modal Popover
+variants remain follow-up work.
 
-`DialogState` is the first modal overlay contract. It records controlled versus uncontrolled open
+`DialogState` is the modal overlay contract. It records controlled versus uncontrolled open
 mode, default-open state, title and description metadata, Escape policy, outside-press policy,
 initial focus intent, focus restore intent, resolved metrics, token intents, and modal layer state.
-The GPUI adapter owns the barrier, concrete dialog surface, close callbacks, keyboard events,
-deferred rendering, and focus handles. Alert dialogs, nested modal stacking, and full focus-trap
-derivatives build on this contract; nested modal stacking and full focus-trap coordination remain
-follow-up work.
+The GPUI adapter owns the concrete dialog surface and deferred rendering. Its window runtime binding
+owns the barrier, controlled close intent, keyboard/outside arbitration, nested modal focus loop,
+live focus handles, and restoration. Explicit caller targets use `Dialog::focus_target`. Alert
+dialogs build on the same modal lifecycle rather than installing a second focus or dismissal path.
 
 `AlertDialogState` is the action-critical modal derivative. It records required title and
 description text, cancel and primary action metadata, destructive intent, action disabled state,
@@ -160,8 +168,9 @@ initial focus preference, Escape policy, outside-press policy, focus restore int
 and modal layer state. Alert dialogs default to consuming outside press without dismissing so the
 underlay stays inert and critical decisions require an explicit action. The primary destructive
 action is represented as metadata, while the cancel action remains the default initial focus target.
-The GPUI adapter owns concrete button rendering, callbacks, keyboard handling, deferred rendering,
-and focus handles.
+The GPUI adapter owns concrete button and deferred surface rendering. The window runtime owns
+keyboard/outside arbitration, modal focus, controlled close lifecycle, and restoration; action
+callbacks enter the component owner without bypassing that lifecycle.
 
 `SheetState` is the edge-attached overlay contract. It records controlled versus uncontrolled open
 mode, default-open state, attached side, modal versus non-modal mode, close affordance visibility,
@@ -170,18 +179,19 @@ focus restore intent, resolved metrics, token intents, and layer state. Modal sh
 input and default to dismissing while consuming outside press. Non-modal sheets use the same
 surface anatomy while mapping to the non-modal dismissible layer kind and defaulting to
 dismiss-and-pass-through outside behavior without installing a blocking barrier. The GPUI adapter
-owns the barrier for modal sheets, edge positioning, concrete close control, callbacks, keyboard
-handling, deferred rendering, and focus handles.
+owns edge positioning, concrete close controls, callbacks, and deferred rendering. The window
+runtime owns the modal barrier when applicable, keyboard/outside arbitration, live focus handles,
+and restoration. The built-in close affordance and caller declarations from `Sheet::focus_target`
+share the same runtime-owned target set.
 
 `HoverCardState` is the interactive hover/focus overlay contract. It records controlled versus
 uncontrolled open mode, default-open state, hover/focus/manual open intent, placement preference,
-open and close delay policy, outside-press policy, initial focus intent, focus restoration intent,
-resolved metrics, token intents, and non-modal dismissible layer state. Hover cards are not
-descriptive tooltips: their surfaces may contain interactive content, default to no initial focus
-or focus restoration, and use dismiss-and-pass-through outside behavior so underlay interaction can
-continue after dismissal. The GPUI adapter owns hover timers, focus handles, keyed runtime open
-state, deferred anchored rendering, Escape/outside event wiring, and pointer/focus lifetime
-coordination.
+open and close delay policy, resolved metrics, token intents, and non-modal layer state. Hover cards
+are not descriptive tooltips: their surfaces may contain interactive content, but they never claim
+or restore focus. Outside participation is fixed to transparent with
+`OutsidePressPolicy::Ignore`, so an outside press continues to the underlay without closing the
+card. The keyed component runtime owns delay and pointer/focus epochs; `WindowOverlayRuntime` owns
+Escape dismissal and the visible layer lifecycle.
 
 `MenuState` and `ContextMenuState` are the first menu overlay contracts. `MenuState` records
 controlled versus uncontrolled open mode, action, checkbox, radio, separator, and submenu items,
@@ -194,12 +204,14 @@ reuses the same item, submenu, typeahead, scrollability, action metadata, and ro
 while adding a point anchor and renderer-neutral placement input sized from the visible menu
 surface. Keyboard and pointer activation both invoke item-level selection handlers before
 component-level selection handlers. Hover-open submenu affordance is now implemented for menu
-items, and submenu hover timers / close timing now live in the GPUI adapter runtime.
+items, and submenu hover timers / close timing remain component policy in the GPUI adapter runtime.
 `MenuSubmenuSurface` and
 `MenuSafeHoverCorridor` provide the renderer-neutral placement and pointer-transition contract for
 floating submenu panels, while the GPUI adapter renders those panels as deferred anchored layers
-and keeps the branch content scrollable. Menubars, application menu integration, global command
-dispatch, and native OS menu bridging remain follow-up work.
+and keeps the branch content scrollable. Every root/submenu branch registers explicit parentage with
+the window runtime, which owns topmost dismissal, branch focus targets, and LIFO restoration.
+Menubars, application menu integration, global command dispatch, and native OS menu bridging remain
+follow-up work.
 
 The Overlay page has its own product catalog instead of being merged into the Components page.
 `open_gpui_ui_foundation_gallery::pages::overlay::OVERLAY_CATALOG` lists Tooltip, HoverCard,
@@ -224,8 +236,8 @@ outside-press policy, initial focus intent, focus restoration intent, resolved m
 intents, and the listbox content role. `SelectState::resolve` takes a `SelectStateRequest` so
 callers group overlay policy, selection inputs, descriptors, and theme tokens explicitly. The GPUI
 `Select` adapter owns trigger/content rendering, keyed runtime open/selected/active state,
-callbacks, outside-press and Escape wiring, deferred anchored rendering, and concrete focus
-handles.
+callbacks, and deferred anchored rendering. Its window runtime binding owns outside/Escape
+arbitration, the popup layer, trigger/surface focus handles, controlled refusal, and restoration.
 
 `choice.rs` owns the shared stable-value seam for the choice family. It projects flat item
 identity, normalizes query text, filters disabled or missing selected values, deduplicates
@@ -245,7 +257,8 @@ resolved from the unfiltered descriptors and is not cleared just because the cur
 that option. `ComboboxState::resolve` takes a `ComboboxStateRequest` so query, selection, filtering
 inputs, overlay policy, and theme tokens stay grouped at the module interface. The GPUI adapter
 owns the `TextInputController`, keyed runtime query/open/selection state, callbacks, outside-press
-and Escape wiring, deferred anchored rendering, scroll handles, and concrete focus handles.
+and Escape policy inputs, deferred anchored rendering, and scroll handles. Its window runtime
+binding owns popup arbitration and preserves the editor focus/active-descendant authority.
 
 `CommandState` composes a search text input, ranked grouped command results, optional dialog
 wrapper, loading metadata, selected chips, a virtualized result window, and nested `ListboxState`.
@@ -269,9 +282,10 @@ public contract boundary.
 snapshots with loading metadata, while keeping command discovery, global registries, keybinding
 resolution, dispatch, enablement policy, and async task ownership outside `ui_components`. The GPUI
 adapter owns the `TextInputController`, keyed runtime query/open/selection state, callbacks,
-outside-press and Escape wiring, deferred dialog rendering, concrete focus handles, and scroll
-handles; the renderer-neutral state owns ranking, selection projection, snapshot metadata, and the
-virtualized result render plan.
+deferred dialog rendering, and scroll handles; its window runtime binding owns the dialog layer,
+outside/Escape arbitration, modal focus handles, controlled refusal, and restoration. Inline mode
+does not register an overlay. The renderer-neutral state owns ranking, selection projection,
+snapshot metadata, and the virtualized result render plan.
 The reusable command ecosystem boundary is documented in
 [`docs/ui/command-ecosystem.md`](command-ecosystem.md): `open_gpui` owns action/keymap execution,
 `open_gpui_command` owns command metadata, deterministic registry snapshots, scoped registration,
@@ -357,10 +371,11 @@ Seed-shaped runtime builders must stay explicit in the API inventory. Current ex
 `Listbox::selected`, `Select::selected`, `Combobox::selected`, and `Command::selected` remain
 reserved for caller-owned render-frame inputs. `Switch::on_change`, `Toggle::on_change`, and
 `TextInput::on_change` are scalar value-change callbacks. Bootstrap callback exceptions such as
-`Button::on_click`, `AlertDialog::on_action`, `AlertDialog::on_cancel`, `Sheet::on_close`, and
+`Button::on_click`, `AlertDialog::on_action`, `AlertDialog::on_cancel`, and
 `Table::on_sort_requested` must stay explicit in the API inventory because they represent command
-activation, modal action outcomes, close affordances, or table sort requests rather than scalar
-value changes.
+activation, modal action outcomes, or table sort requests rather than scalar value changes. Sheet
+close requests are not an exception: `Sheet::on_open_change` receives the runtime-issued
+`OverlayOpenIntent` for its close affordance, Escape, outside press, and programmatic requests.
 
 Keep crate-root exports explicit. The crate-root default export surface lives in
 `crates/ui_components/src/public_api/default.rs`; the smaller common application import surface
@@ -472,14 +487,16 @@ Breaking migration notes for the 0.3 UI deepening pass:
 - Replace removed primitive pass-through imports under `open_gpui_ui_components::primitives` with
   their renderer-neutral owners in `open_gpui_ui_core` or with the official component/adapter API
   that owns the GPUI runtime behavior.
-- Runtime overlay adapter helpers are request-object based internally:
-  `OverlayOpenRuntimeRequest` owns open transitions, while `OverlayCloseRuntimeRequest` owns close
-  transitions, callback dispatch, and focus-restore tail behavior. These helpers are crate-private;
-  application code should keep using component builders and renderer-neutral overlay policy types.
-- `Select`, `Combobox`, and dialog `Command` now apply their configured `focus_restore_intent` when
-  selection, Escape dismissal, or outside-press dismissal closes the overlay. Tests that previously
-  assumed focus remained inside an unmounted popup should instead assert focus on the trigger/input
-  row or opt out with `FocusRestoreIntent::None`.
+- Official overlay adapters register stable layers with `WindowOverlayRuntime`; owner commit,
+  controlled intent, closing presence, callback dispatch, and focus arbitration pass through that
+  binding. The former `OverlayOpenRuntimeRequest`, close-tail helpers, and shallow
+  `OverlayLayerHost` were deleted without compatibility aliases. Application code should keep using
+  component builders and renderer-neutral overlay policy types.
+- `Select`, `Combobox`, and dialog `Command` register their popup/dialog layer with the window
+  runtime. Selection, Escape dismissal, and outside-press dismissal restore focus only according to
+  the registered runtime condition. Tests that previously assumed focus remained inside an
+  unmounted popup should instead assert focus on the trigger/input row or opt out through the
+  component's supported focus policy.
 - Keep reference repositories as references only. This pass does not add dependencies on
   `repo-ref/fret` or `repo-ref/gpui-component`, and it does not preserve compatibility shims around
   APIs that were only exposing old implementation structure.
@@ -1093,13 +1110,13 @@ navigation items share label, resolved icon, disabled reason, tooltip, and acces
 `IconButton` reuses Button visual variants and focus-ring color intents, but requires an explicit
 accessible label because the visible icon glyph is not a reliable accessible name. `Tooltip` is
 descriptive-only and currently maps its surface to `Role::Label` until the public GPUI/AccessKit
-role wrapper exposes a tooltip role; trigger
-association and timed hover/focus execution stay in the adapter layer. `Popover` currently covers
-basic non-modal dismissible surfaces with default-open and controlled-open state; nested popover
-coordination, modal popover barriers, and a full reusable focus-scope runtime remain deferred.
+role wrapper exposes a tooltip role; trigger association and timed hover/focus execution stay in
+the adapter layer, while visible-layer ownership belongs to `WindowOverlayRuntime`. `Popover`
+covers non-modal dismissible surfaces with default-open and controlled-open state; nested overlay
+parentage, topmost dismissal, and focus restoration use the shared window runtime.
 `HoverCard` covers interactive hover/focus/manual non-modal surfaces with delayed open/close,
-pass-through dismissal, and trigger/content focus lifetime tracking; safe pointer corridors,
-arrows, text-selection leases, and richer focus-scope traversal remain deferred.
+transparent outside-press participation, and no focus authority; safe pointer corridors, arrows,
+and text-selection leases remain deferred.
 `ScrollArea` covers viewport overflow, axis metadata, scrollbar width metrics, and explicit
 reset-on-key-change semantics. It intentionally does not yet expose custom scrollbar anatomy,
 nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.

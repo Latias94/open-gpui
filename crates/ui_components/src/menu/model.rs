@@ -54,9 +54,11 @@ impl MenuItemState {
         &self.path
     }
 
-    /// Returns the stable tree path as a compact key.
+    /// Returns the stable tree path as a delimiter-safe compact key.
+    ///
+    /// Each segment encodes `%` as `%25` and `/` as `%2F` before segments are joined with `/`.
     pub fn path_key(&self) -> String {
-        self.path.join("/")
+        super::menu_path_key(&self.path)
     }
 
     /// Returns zero-based menu depth.
@@ -219,9 +221,11 @@ impl MenuSelection {
         &self.path
     }
 
-    /// Returns the selected item stable tree path as a compact key.
+    /// Returns the selected item stable tree path as a delimiter-safe compact key.
+    ///
+    /// Each segment encodes `%` as `%25` and `/` as `%2F` before segments are joined with `/`.
     pub fn path_key(&self) -> String {
-        self.path.join("/")
+        super::menu_path_key(&self.path)
     }
 
     /// Returns the selected item value.
@@ -271,9 +275,12 @@ impl MenuSubmenuNavigation {
         &self.open_path
     }
 
-    /// Returns the submenu branch path as a compact key, or `None` when all branches close.
+    /// Returns the submenu branch path as a delimiter-safe compact key.
+    ///
+    /// Each segment encodes `%` as `%25` and `/` as `%2F` before segments are joined with `/`.
+    /// Returns `None` when all branches close.
     pub fn open_path_key(&self) -> Option<String> {
-        (!self.open_path.is_empty()).then(|| self.open_path.join("/"))
+        (!self.open_path.is_empty()).then(|| super::menu_path_key(&self.open_path))
     }
 
     /// Returns the item path that should receive roving focus.
@@ -281,9 +288,11 @@ impl MenuSubmenuNavigation {
         &self.focused_path
     }
 
-    /// Returns the focused item path as a compact key.
+    /// Returns the focused item path as a delimiter-safe compact key.
+    ///
+    /// Each segment encodes `%` as `%25` and `/` as `%2F` before segments are joined with `/`.
     pub fn focused_path_key(&self) -> String {
-        self.focused_path.join("/")
+        super::menu_path_key(&self.focused_path)
     }
 
     /// Returns the focused item value.
@@ -295,10 +304,6 @@ impl MenuSubmenuNavigation {
 /// Renderer-neutral keyboard intent for menu surfaces.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MenuKeyboardIntent {
-    /// Escape should close the active submenu branch.
-    DismissSubmenu(MenuSubmenuNavigation),
-    /// Escape should dismiss the root menu surface.
-    DismissRoot,
     /// Left or Right should move between submenu branches.
     NavigateSubmenu(MenuSubmenuNavigation),
     /// Roving focus should move to a visible menu item.
@@ -683,9 +688,13 @@ impl MenuState {
         self.focused_path.as_deref()
     }
 
-    /// Returns focused item stable path as a compact key.
+    /// Returns the focused item stable path as a delimiter-safe compact key.
+    ///
+    /// Each segment encodes `%` as `%25` and `/` as `%2F` before segments are joined with `/`.
     pub fn focused_path_key(&self) -> Option<String> {
-        self.focused_path.as_ref().map(|path| path.join("/"))
+        self.focused_path
+            .as_ref()
+            .map(|path| super::menu_path_key(path))
     }
 
     /// Returns the deepest open submenu path.
@@ -693,9 +702,11 @@ impl MenuState {
         &self.open_path
     }
 
-    /// Returns the deepest open submenu path as a compact key.
+    /// Returns the deepest open submenu path as a delimiter-safe compact key.
+    ///
+    /// Each segment encodes `%` as `%25` and `/` as `%2F` before segments are joined with `/`.
     pub fn open_path_key(&self) -> Option<String> {
-        (!self.open_path.is_empty()).then(|| self.open_path.join("/"))
+        (!self.open_path.is_empty()).then(|| super::menu_path_key(&self.open_path))
     }
 
     /// Resolves a default floating surface plan for a submenu trigger path.
@@ -781,14 +792,6 @@ impl MenuState {
 
     /// Resolves the renderer-neutral keyboard intent for a menu surface key.
     pub(crate) fn keyboard_intent_for_key(&self, key: &str) -> Option<MenuKeyboardIntent> {
-        if key == "escape" {
-            return Some(
-                self.close_submenu_target()
-                    .map(MenuKeyboardIntent::DismissSubmenu)
-                    .unwrap_or(MenuKeyboardIntent::DismissRoot),
-            );
-        }
-
         if let Some(target) = self.submenu_navigation_target(key) {
             return Some(MenuKeyboardIntent::NavigateSubmenu(target));
         }

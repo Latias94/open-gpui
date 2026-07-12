@@ -1,6 +1,71 @@
 use super::*;
 
 #[open_gpui::test]
+fn rebind_can_change_ownership_and_clears_controlled_intent(cx: &mut open_gpui::TestAppContext) {
+    let (view, cx) = cx.add_window_view(RuntimeProbe::new);
+    draw(cx);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let binding = register_layer(
+        cx,
+        &view,
+        controlled_registration(
+            "ownership-transition",
+            OverlayLayerPolicy::new(OverlayLayerKind::Menu, OverlayPresence::open()),
+            events.clone(),
+        ),
+    );
+
+    cx.update_window_entity(&view, |probe, window, cx| {
+        probe
+            .runtime
+            .request_open_change(&binding, false, DismissReason::EscapeKey, window, cx)
+            .expect("controlled close intent should succeed");
+    });
+    assert_eq!(
+        snapshot_layer(cx, &view, "ownership-transition").phase(),
+        OverlayLayerPhase::CloseRequested,
+    );
+
+    cx.update_window_entity(&view, |probe, window, cx| {
+        probe
+            .runtime
+            .rebind_layer(
+                &binding,
+                uncontrolled_registration(
+                    "ownership-transition",
+                    OverlayLayerPolicy::new(OverlayLayerKind::Menu, OverlayPresence::open()),
+                ),
+                window,
+                cx,
+            )
+            .expect("controlled layer should transition to uncontrolled ownership");
+    });
+    let uncontrolled = snapshot_layer(cx, &view, "ownership-transition");
+    assert_eq!(uncontrolled.phase(), OverlayLayerPhase::Open);
+    assert_eq!(uncontrolled.pending_intent(), None);
+
+    cx.update_window_entity(&view, |probe, window, cx| {
+        probe
+            .runtime
+            .rebind_layer(
+                &binding,
+                controlled_registration(
+                    "ownership-transition",
+                    OverlayLayerPolicy::new(OverlayLayerKind::Menu, OverlayPresence::open()),
+                    events.clone(),
+                ),
+                window,
+                cx,
+            )
+            .expect("uncontrolled layer should transition back to controlled ownership");
+    });
+    assert_eq!(
+        snapshot_layer(cx, &view, "ownership-transition").phase(),
+        OverlayLayerPhase::Open,
+    );
+}
+
+#[open_gpui::test]
 fn uncontrolled_commit_precedes_observer_and_reentrant_open_wins_focus(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -28,7 +93,8 @@ fn uncontrolled_commit_precedes_observer_and_reentrant_open_wins_focus(
             owner_for_commit.set(open);
             commits_for_callback.borrow_mut().push(open);
         })
-        .on_open_change(move |open, window, cx| {
+        .on_open_change(move |intent, window, cx| {
+            let desired_open = intent.desired_open();
             let phase = runtime_for_observer
                 .snapshot(window, cx)
                 .expect("observer should use its window runtime")
@@ -37,10 +103,12 @@ fn uncontrolled_commit_precedes_observer_and_reentrant_open_wins_focus(
                 .find(|layer| layer.id().as_str() == "reentrant")
                 .expect("reentrant layer should remain registered")
                 .phase();
-            observations_for_callback
-                .borrow_mut()
-                .push((open, owner_for_observer.get(), phase));
-            if !open {
+            observations_for_callback.borrow_mut().push((
+                desired_open,
+                owner_for_observer.get(),
+                phase,
+            ));
+            if !desired_open {
                 let binding = slot_for_callback
                     .borrow()
                     .clone()
@@ -113,7 +181,11 @@ fn subtree_close_dispatches_topmost_first_and_skips_reentrantly_stale_commits(
         })
         .on_open_change({
             let trace = trace.clone();
-            move |open, _, _| trace.borrow_mut().push(format!("root-observer:{open}"))
+            move |intent, _, _| {
+                trace
+                    .borrow_mut()
+                    .push(format!("root-observer:{}", intent.desired_open()))
+            }
         }),
     );
     root_slot.replace(Some(root.clone()));
@@ -137,7 +209,11 @@ fn subtree_close_dispatches_topmost_first_and_skips_reentrantly_stale_commits(
         })
         .on_open_change({
             let trace = trace.clone();
-            move |open, _, _| trace.borrow_mut().push(format!("lower-observer:{open}"))
+            move |intent, _, _| {
+                trace
+                    .borrow_mut()
+                    .push(format!("lower-observer:{}", intent.desired_open()))
+            }
         }),
     );
     lower_slot.replace(Some(lower));
@@ -184,7 +260,11 @@ fn subtree_close_dispatches_topmost_first_and_skips_reentrantly_stale_commits(
         })
         .on_open_change({
             let trace = trace.clone();
-            move |open, _, _| trace.borrow_mut().push(format!("top-observer:{open}"))
+            move |intent, _, _| {
+                trace
+                    .borrow_mut()
+                    .push(format!("top-observer:{}", intent.desired_open()))
+            }
         }),
     );
 
@@ -238,7 +318,7 @@ fn closing_modal_is_inert_but_blocks_old_bounds_and_reopen_rejects_stale_finish(
         .uncontrolled_commit(|_, _, _| {})
         .on_open_change({
             let events = events.clone();
-            move |open, _, _| events.borrow_mut().push(open)
+            move |intent, _, _| events.borrow_mut().push(intent.desired_open())
         }),
     );
     set_inside_region(

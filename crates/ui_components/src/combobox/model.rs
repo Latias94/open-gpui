@@ -433,7 +433,6 @@ pub(super) enum ComboboxKeyboardAction {
     Navigate(String),
     Select(ComboboxSelection),
     Open,
-    Close,
     Ignore,
 }
 
@@ -455,10 +454,6 @@ pub(super) fn combobox_keyboard_action(state: &ComboboxState, key: &str) -> Comb
             selection.value().to_owned(),
             selection.label().to_owned(),
         ));
-    }
-
-    if key == "escape" && state.open() {
-        return ComboboxKeyboardAction::Close;
     }
 
     ComboboxKeyboardAction::Ignore
@@ -496,10 +491,6 @@ mod tests {
                 "react".to_string(),
                 "React".to_string(),
             ))
-        );
-        assert_eq!(
-            combobox_keyboard_action(&state, "escape"),
-            ComboboxKeyboardAction::Close
         );
     }
 

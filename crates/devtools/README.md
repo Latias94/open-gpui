@@ -8,7 +8,7 @@ GPUI UI surfaces later:
 
 - `form` for `open-gpui-form` snapshots.
 - `resource` for `open-gpui-resource` snapshots.
-- `ui-components` for theme and accessibility contract snapshots.
+- `ui-components` for theme, accessibility contract, and window overlay runtime snapshots.
 - `motion` for `open-gpui-motion` frame-demand snapshots.
 - `docking` for `open-gpui-docking` runtime diagnostics.
 - `command` for `open-gpui-command` registry, keybinding, and keymap-resolution snapshots.
@@ -68,6 +68,11 @@ mutation and live property editing are intentionally out of scope for the initia
 - `gpui` exposes metadata-only `GpuiRuntimeSnapshot` adapters for app/window/focus/input/frame and
   scroll facts. Raw user input, clipboard payloads, editable text values, unredacted titles, and
   accessibility labels do not belong in runtime metadata.
+- `ui_components::window_overlay_probe_snapshot` projects the real `WindowOverlaySnapshot` through
+  an allowlist. Layers and parents use snapshot-local ordinal ids; raw `OverlayLayerId`, window
+  identity, lifecycle generations, and intent revisions are omitted. This inspection path covers
+  the complete official overlay fleet: Dialog, Sheet, AlertDialog, Popover, Menu, ContextMenu,
+  Select, Combobox, Command overlay mode, HoverCard, and Tooltip.
 - `DevtoolsInspectorState` provides filter, selection, category summaries, row projection,
   session-frame loading, diff rows, target/domain/event navigation, diagnostics, selected-detail
   JSON, and legacy snapshot export without requiring a GPUI window.

@@ -8,19 +8,20 @@ mod style;
 
 use crate::geometry::gpui_px_from_ui;
 use crate::geometry::{ui_point_from_gpui, ui_size_from_gpui_size};
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, AnyView, App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent,
-    ParentElement, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
-    Window, div, px,
+    AnyElement, AnyView, App, ClickEvent, ElementId, IntoElement, KeyDownEvent, ParentElement,
+    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use open_gpui_command::CommandDescriptor;
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    OverlayAnchorInput, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
-    Rect, Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_point, ui_px, ui_size,
+    DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+    OverlayAnchorInput, OverlayLayerId, OverlayPlacementAlignment, OverlayPlacementInput,
+    OverlayPlacementSide, OverlayPresence, Rect, Role, Sizable, Size, ThemeTokens, Toggled, UiPx,
+    ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -28,13 +29,18 @@ use crate::action::{ResolvedActionIcon, ResolvedActionState};
 use crate::focus::focus_ring_shadow_with_theme;
 
 use crate::overlay::{
-    GpuiOverlayPlacement, GpuiOverlayState, OverlayCloseRuntimeRequest, OverlayLayerHost,
-    OverlayOpenRuntimeRequest, resolve_overlay_open_state, set_overlay_open,
+    GpuiOverlayPlacement, GpuiOverlayState, OverlayInsideRegionId, OverlayLayerBinding,
+    OverlayLayerLeaseStatus, OverlayLayerPhase, OverlayLayerRegistration, OverlayOpenIntent,
+    OverlayOwnership, WindowOverlayRuntime, gpui_overlay_state, gpui_positioned_overlay_layer,
+    gpui_relative_overlay_layer, resolve_overlay_open_state,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::{ThemeContext, ThemeResolver};
 use crate::tooltip::Tooltip;
-use runtime::{MenuRuntime, handle_menu_submenu_surface_hover, update_menu_hover_target};
+use runtime::{
+    MenuBranchBinding, MenuBranchRuntime, MenuRuntime, handle_menu_submenu_surface_hover,
+    update_menu_hover_target,
+};
 
 pub(crate) use descriptor::menu_open_mode_from_disclosure;
 pub use descriptor::{MenuItemDescriptor, MenuItemKind, MenuOpenMode};
@@ -48,6 +54,371 @@ pub use style::{MenuColors, MenuMetrics};
 /// Default threshold where menu surfaces become locally scrollable.
 pub const DEFAULT_SCROLLABLE_MENU_ITEM_COUNT_THRESHOLD: usize = 8;
 
+pub(crate) type MenuBranchBindings = Rc<HashMap<String, OverlayLayerBinding>>;
+
+pub(crate) fn menu_path_key(path: &[String]) -> String {
+    path.iter()
+        .map(|segment| segment.replace('%', "%25").replace('/', "%2F"))
+        .collect::<Vec<_>>()
+        .join("/")
+}
+fn menu_branch_layer_id(layer_prefix: &str, debug_id: &str, path: &[String]) -> String {
+    format!("{layer_prefix}:{debug_id}:branch:{}", menu_path_key(path))
+}
+
+fn menu_branch_parent_id(
+    layer_prefix: &str,
+    debug_id: &str,
+    root_binding: &OverlayLayerBinding,
+    path: &[String],
+) -> OverlayLayerId {
+    if path.len() == 1 {
+        root_binding.lease().layer_id().clone()
+    } else {
+        OverlayLayerId::new(menu_branch_layer_id(
+            layer_prefix,
+            debug_id,
+            &path[..path.len() - 1],
+        ))
+    }
+}
+
+fn menu_branch_trigger_value(path: &[String]) -> String {
+    path.last()
+        .and_then(|segment| segment.split_once(':'))
+        .map_or_else(String::new, |(_, value)| value.to_owned())
+}
+
+fn collect_menu_branch_paths(items: &[MenuItemState], paths: &mut Vec<Vec<String>>) {
+    for item in items {
+        if item.has_submenu() {
+            paths.push(item.path().to_vec());
+        }
+        collect_menu_branch_paths(item.children(), paths);
+    }
+}
+
+fn menu_branch_outside_policy(root: OutsidePressPolicy) -> OutsidePressPolicy {
+    match root {
+        OutsidePressPolicy::Consume | OutsidePressPolicy::DismissAndConsume => {
+            OutsidePressPolicy::DismissAndPassThrough
+        }
+        policy => policy,
+    }
+}
+
+fn menu_branch_registration<T: MenuBranchRuntime>(
+    layer_prefix: &str,
+    debug_id: &str,
+    state: &MenuState,
+    path: &[String],
+    presence: OverlayPresence,
+    root_binding: &OverlayLayerBinding,
+    runtime: &open_gpui::Entity<T>,
+) -> OverlayLayerRegistration {
+    let path = path.to_vec();
+    let focused_value = menu_branch_trigger_value(&path);
+    let runtime = runtime.downgrade();
+    let policy = state
+        .overlay()
+        .policy()
+        .clone()
+        .with_presence(presence)
+        .with_outside_press_policy(menu_branch_outside_policy(state.outside_press_policy()));
+
+    OverlayLayerRegistration::new(
+        menu_branch_layer_id(layer_prefix, debug_id, &path),
+        policy,
+        OverlayOwnership::Uncontrolled,
+    )
+    .parent_id(menu_branch_parent_id(
+        layer_prefix,
+        debug_id,
+        root_binding,
+        &path,
+    ))
+    .uncontrolled_commit(move |open, _, cx| {
+        if open {
+            return;
+        }
+        let _ = runtime.update(cx, |runtime, _| {
+            runtime.commit_branch_closed(&path, focused_value.clone());
+        });
+    })
+}
+
+fn schedule_menu_branch_cleanup_frame<T: MenuBranchRuntime>(
+    runtime: &open_gpui::Entity<T>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let should_schedule = runtime.update(cx, |runtime, _| {
+        runtime.branch_layers_mut().schedule_cleanup_frame()
+    });
+    if !should_schedule {
+        return;
+    }
+
+    let runtime = runtime.downgrade();
+    window.on_next_frame(move |_, cx| {
+        let _ = runtime.update(cx, |runtime, cx| {
+            runtime.branch_layers_mut().finish_cleanup_frame();
+            cx.notify();
+        });
+    });
+    window.refresh();
+}
+
+fn menu_branch_lease_status(
+    window_overlay_runtime: &WindowOverlayRuntime,
+    branch: &MenuBranchBinding,
+    window: &Window,
+    cx: &App,
+) -> OverlayLayerLeaseStatus {
+    window_overlay_runtime
+        .component_binding_status(&branch.binding, window, cx)
+        .expect("menu branch binding should belong to its window runtime")
+}
+
+pub(crate) fn sync_menu_branch_bindings<T: MenuBranchRuntime>(
+    layer_prefix: &str,
+    debug_id: &str,
+    state: &MenuState,
+    runtime: &open_gpui::Entity<T>,
+    window_overlay_runtime: &WindowOverlayRuntime,
+    root_binding: &OverlayLayerBinding,
+    window: &mut Window,
+    cx: &mut App,
+) -> MenuBranchBindings {
+    let sync_epoch = runtime.update(cx, |runtime, _| {
+        runtime.sync_resolved_open_path(state.open_path());
+        runtime.branch_layers_mut().advance_sync_epoch()
+    });
+    let mut paths = Vec::new();
+    collect_menu_branch_paths(state.items(), &mut paths);
+    paths.sort_by_key(Vec::len);
+    let valid_keys = paths
+        .iter()
+        .map(|path| menu_path_key(path))
+        .collect::<HashSet<_>>();
+    let open_keys = paths
+        .iter()
+        .filter(|path| state.open() && menu_path_is_open(path, state.open_path()))
+        .map(|path| menu_path_key(path))
+        .collect::<HashSet<_>>();
+    let mut retained = runtime.read(cx).branch_layers().bindings().clone();
+
+    let released_keys = retained
+        .iter()
+        .filter_map(|(key, branch)| {
+            (menu_branch_lease_status(window_overlay_runtime, branch, window, cx)
+                == OverlayLayerLeaseStatus::Released)
+                .then(|| key.clone())
+        })
+        .collect::<Vec<_>>();
+    for key in released_keys {
+        retained.remove(&key);
+    }
+
+    for (key, branch) in &mut retained {
+        if valid_keys.contains(key) {
+            if menu_branch_lease_status(window_overlay_runtime, branch, window, cx)
+                != OverlayLayerLeaseStatus::PendingUnregister
+            {
+                branch.stale_since_epoch = None;
+            }
+        } else if branch.stale_since_epoch.is_none() {
+            branch.stale_since_epoch = Some(sync_epoch);
+        }
+    }
+
+    let mut closing = retained
+        .values()
+        .filter(|branch| {
+            let key = menu_path_key(&branch.path);
+            matches!(
+                menu_branch_lease_status(window_overlay_runtime, branch, window, cx),
+                OverlayLayerLeaseStatus::Registered { phase }
+                    if phase != OverlayLayerPhase::Hidden
+            ) && (!valid_keys.contains(&key) || !open_keys.contains(&key))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    closing.sort_by_key(|branch| std::cmp::Reverse(branch.path.len()));
+    for branch in closing {
+        window_overlay_runtime
+            .rebind_layer(
+                &branch.binding,
+                menu_branch_registration(
+                    layer_prefix,
+                    debug_id,
+                    state,
+                    &branch.path,
+                    OverlayPresence::Hidden,
+                    root_binding,
+                    runtime,
+                ),
+                window,
+                cx,
+            )
+            .expect("inactive menu branches should become noninteractive");
+    }
+
+    let ready_stale_paths = retained
+        .values()
+        .filter(|branch| {
+            matches!(
+                menu_branch_lease_status(window_overlay_runtime, branch, window, cx),
+                OverlayLayerLeaseStatus::Registered { .. }
+            ) && !valid_keys.contains(&menu_path_key(&branch.path))
+                && branch
+                    .stale_since_epoch
+                    .is_some_and(|epoch| epoch != sync_epoch)
+        })
+        .map(|branch| branch.path.clone())
+        .collect::<Vec<_>>();
+    let stale_roots = ready_stale_paths
+        .iter()
+        .filter(|path| {
+            !ready_stale_paths.iter().any(|ancestor| {
+                ancestor.len() < path.len() && path.starts_with(ancestor.as_slice())
+            })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    for root_path in stale_roots {
+        let root_key = menu_path_key(&root_path);
+        let binding = retained
+            .get(&root_key)
+            .expect("stale menu root should retain its binding until cleanup")
+            .binding
+            .clone();
+        window_overlay_runtime
+            .unregister_component_subtree(&binding, window, cx)
+            .expect("stale menu subtree should unregister from its window runtime");
+    }
+
+    let released_keys = retained
+        .iter()
+        .filter_map(|(key, branch)| {
+            (menu_branch_lease_status(window_overlay_runtime, branch, window, cx)
+                == OverlayLayerLeaseStatus::Released)
+                .then(|| key.clone())
+        })
+        .collect::<Vec<_>>();
+    for key in released_keys {
+        retained.remove(&key);
+    }
+
+    let mut available_keys = HashSet::new();
+    for path in &paths {
+        let key = menu_path_key(&path);
+        let parent_available =
+            path.len() == 1 || available_keys.contains(&menu_path_key(&path[..path.len() - 1]));
+        if !parent_available
+            || retained.get(&key).is_some_and(|branch| {
+                menu_branch_lease_status(window_overlay_runtime, branch, window, cx)
+                    == OverlayLayerLeaseStatus::PendingUnregister
+            })
+        {
+            continue;
+        }
+        let should_open = open_keys.contains(&key);
+        let existing = retained.get(&key).map(|branch| &branch.binding);
+        if should_open && existing.is_some() {
+            available_keys.insert(key);
+            continue;
+        }
+        let binding = window_overlay_runtime
+            .bind_component_layer(
+                runtime,
+                existing,
+                menu_branch_registration(
+                    layer_prefix,
+                    debug_id,
+                    state,
+                    path,
+                    OverlayPresence::Hidden,
+                    root_binding,
+                    runtime,
+                ),
+                window,
+                cx,
+            )
+            .expect("hidden menu branch registration should remain valid");
+        retained.insert(
+            key.clone(),
+            MenuBranchBinding {
+                path: path.clone(),
+                binding,
+                stale_since_epoch: None,
+            },
+        );
+        available_keys.insert(key);
+    }
+
+    for path in paths.iter().filter(|path| {
+        let key = menu_path_key(path);
+        open_keys.contains(&key) && available_keys.contains(&key)
+    }) {
+        let key = menu_path_key(path);
+        let existing = retained.get(&key).map(|branch| &branch.binding);
+        let binding = window_overlay_runtime
+            .bind_component_layer(
+                runtime,
+                existing,
+                menu_branch_registration(
+                    layer_prefix,
+                    debug_id,
+                    state,
+                    path,
+                    OverlayPresence::Open,
+                    root_binding,
+                    runtime,
+                ),
+                window,
+                cx,
+            )
+            .expect("menu branch overlay registration should remain valid");
+        retained.insert(
+            key.clone(),
+            MenuBranchBinding {
+                path: path.clone(),
+                binding: binding.clone(),
+                stale_since_epoch: None,
+            },
+        );
+    }
+
+    let rendered = paths
+        .iter()
+        .filter_map(|path| {
+            let key = menu_path_key(path);
+            let binding = retained.get(&key).filter(|branch| {
+                matches!(
+                    menu_branch_lease_status(window_overlay_runtime, branch, window, cx),
+                    OverlayLayerLeaseStatus::Registered { .. }
+                )
+            })?;
+            Some((key, binding.binding.clone()))
+        })
+        .collect();
+
+    let cleanup_pending = retained.values().any(|branch| {
+        branch.stale_since_epoch.is_some()
+            || menu_branch_lease_status(window_overlay_runtime, branch, window, cx)
+                == OverlayLayerLeaseStatus::PendingUnregister
+    });
+
+    runtime.update(cx, |runtime, _| {
+        runtime.branch_layers_mut().replace_bindings(retained);
+    });
+    if cleanup_pending {
+        schedule_menu_branch_cleanup_frame(runtime, window, cx);
+    }
+    Rc::new(rendered)
+}
+
 fn menu_item_element(
     item: MenuItem,
     item_state: MenuItemState,
@@ -56,10 +427,9 @@ fn menu_item_element(
     metrics: MenuMetrics,
     colors: MenuColors,
     runtime: open_gpui::Entity<MenuRuntime>,
-    overlay_host: OverlayLayerHost,
-    trigger_focus: FocusHandle,
-    focus_restore: FocusRestoreIntent,
-    on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
+    window_overlay_runtime: WindowOverlayRuntime,
+    root_binding: OverlayLayerBinding,
+    branch_bindings: MenuBranchBindings,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
     theme: &ThemeContext,
 ) -> AnyElement {
@@ -105,9 +475,12 @@ fn menu_item_element(
         | MenuItemKind::Radio
         | MenuItemKind::Submenu => {
             let selection = MenuSelection::from_item(&item_state);
+            let item_path_key = item_state.path_key();
+            let child_binding = branch_bindings.get(&item_path_key).cloned();
             let item_handler = item.on_select.clone();
             let global_handler = on_select.clone();
-            let overlay_host_for_click = overlay_host.clone();
+            let window_overlay_runtime_for_click = window_overlay_runtime.clone();
+            let root_binding_for_click = root_binding.clone();
             let item_label = item_state.label().to_owned();
             let icon_label = item_state.icon_label().map(str::to_owned);
             let shortcut = item_state.shortcut().map(str::to_owned);
@@ -115,10 +488,10 @@ fn menu_item_element(
             let accessibility_description =
                 item_state.accessibility_description().map(str::to_owned);
             let item_tooltip = item_state.tooltip().map(str::to_owned);
-            let item_path_key = item_state.path_key();
             let left_padding = metrics.item_padding_x();
             let focused = item_state.focused();
             let disabled = item_state.disabled();
+            let focusable = item_state.focusable();
             let toggled = item_state.toggled();
             let has_submenu = item_state.has_submenu();
             let submenu_navigation = if has_submenu {
@@ -160,11 +533,12 @@ fn menu_item_element(
                     |description| format!("{item_label}, {description}"),
                 );
 
-            div()
+            let element = div()
                 .id(format!("{debug_prefix}-item:{item_path_key}"))
                 .debug_selector({
                     let item_debug_id = debug_id.clone();
-                    move || format!("{debug_prefix}:{item_debug_id}:item:{item_path_key}")
+                    let item_debug_path_key = item_path_key.clone();
+                    move || format!("{debug_prefix}:{item_debug_id}:item:{item_debug_path_key}")
                 })
                 .min_h(gpui_px_from_ui(metrics.item_height()))
                 .pl(gpui_px_from_ui(left_padding))
@@ -179,6 +553,14 @@ fn menu_item_element(
                 .ui_role(Role::MenuItem)
                 .aria_label(item_aria_label)
                 .aria_disabled(disabled)
+                .when_some(
+                    child_binding.clone().filter(|_| focusable),
+                    |this, binding| {
+                        this.focusable()
+                            .tab_stop(false)
+                            .track_focus(binding.trigger_focus())
+                    },
+                )
                 .when_some(toggled, |this, toggled| this.ui_aria_toggled(toggled))
                 .when(has_submenu, |this| {
                     this.aria_expanded(item_state.submenu_open())
@@ -215,21 +597,23 @@ fn menu_item_element(
                             let Some(selection) = selection.clone() else {
                                 return;
                             };
-                            if let Some(item_handler) = item_handler.as_ref() {
-                                item_handler(selection.clone(), window, cx);
-                            }
-                            if let Some(global_handler) = global_handler.as_ref() {
-                                global_handler(selection, window, cx);
-                            }
-                            close_menu(
-                                overlay_host_for_click.clone(),
-                                runtime.clone(),
-                                trigger_focus.clone(),
-                                focus_restore.clone(),
-                                on_open_change.clone(),
-                                window,
-                                cx,
-                            );
+                            window_overlay_runtime_for_click
+                                .request_open_change_with_effect(
+                                    &root_binding_for_click,
+                                    false,
+                                    DismissReason::Selection,
+                                    window,
+                                    cx,
+                                    |window, cx| {
+                                        if let Some(item_handler) = item_handler.as_ref() {
+                                            item_handler(selection.clone(), window, cx);
+                                        }
+                                        if let Some(global_handler) = global_handler.as_ref() {
+                                            global_handler(selection, window, cx);
+                                        }
+                                    },
+                                )
+                                .expect("menu selection should own its root overlay registration");
                         })
                 })
                 .child(
@@ -265,7 +649,20 @@ fn menu_item_element(
                 .when_some(item_tooltip, |this, tooltip| {
                     this.tooltip(Tooltip::text(tooltip))
                 })
-                .into_any_element()
+                .into_any_element();
+
+            if let Some(child_binding) = child_binding {
+                window_overlay_runtime
+                    .inside_region(
+                        &child_binding,
+                        OverlayInsideRegionId::new("trigger"),
+                        format!("menu:{debug_id}:branch:{item_path_key}:trigger-region"),
+                        element,
+                    )
+                    .into_any_element()
+            } else {
+                element
+            }
         }
     }
 }
@@ -506,9 +903,10 @@ pub struct Menu {
     initial_focus_intent: InitialFocusIntent,
     focus_restore_intent: FocusRestoreIntent,
     tokens: ThemeTokens,
-    on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
+    on_open_change: Option<Rc<dyn Fn(OverlayOpenIntent, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
     trigger_tooltip: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
+    overlay_children: Vec<AnyElement>,
 }
 
 impl Menu {
@@ -534,6 +932,7 @@ impl Menu {
             on_open_change: None,
             on_select: None,
             trigger_tooltip: None,
+            overlay_children: Vec::new(),
         }
     }
 
@@ -620,10 +1019,10 @@ impl Menu {
         self
     }
 
-    /// Registers an open-change handler with the next open value.
+    /// Registers an open-change handler with the runtime-issued intent.
     pub fn on_open_change(
         mut self,
-        handler: impl Fn(bool, &mut Window, &mut App) + 'static,
+        handler: impl Fn(OverlayOpenIntent, &mut Window, &mut App) + 'static,
     ) -> Self {
         let handler = Rc::new(handler);
         self.on_open_change = Some(handler);
@@ -645,6 +1044,15 @@ impl Menu {
         tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) -> Self {
         self.trigger_tooltip = Some(Rc::new(tooltip));
+        self
+    }
+
+    /// Adds an overlay whose logical parent is this Menu's root layer.
+    ///
+    /// The child's inline trigger subtree also counts as inside the Menu for outside-press
+    /// arbitration. Descendant overlay surfaces remain separate regions linked by parentage.
+    pub fn overlay_child(mut self, child: impl IntoElement) -> Self {
+        self.overlay_children.push(child.into_any_element());
         self
     }
 
@@ -680,15 +1088,8 @@ impl RenderOnce for Menu {
         let theme = ThemeResolver::current(cx);
         let descriptors: Vec<MenuItemDescriptor> =
             self.items.iter().map(MenuItem::descriptor).collect();
-        let trigger_focus = cx.focus_handle();
-        let content_focus = cx.focus_handle();
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| {
-            MenuRuntime::new(
-                self.default_open,
-                trigger_focus.clone(),
-                content_focus.clone(),
-                self.focused_value.clone(),
-            )
+            MenuRuntime::new(self.default_open, self.focused_value.clone())
         });
         let runtime_state = runtime.read(cx).clone();
         let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
@@ -729,15 +1130,60 @@ impl RenderOnce for Menu {
         let items = self.items;
         let on_open_change = self.on_open_change;
         let on_select = self.on_select;
-        let focus_restore = state.focus_restore_intent().clone();
-        let initial_focus = state.initial_focus_intent().clone();
-        let trigger_focus = runtime_state.trigger_focus.clone();
-        let content_focus = runtime_state.content_focus.clone();
+        let overlay_children = self.overlay_children;
+        let window_overlay_runtime = WindowOverlayRuntime::for_window(window, cx);
+        let ownership = if open_state.controlled() {
+            OverlayOwnership::Controlled
+        } else {
+            OverlayOwnership::Uncontrolled
+        };
+        let mut registration = OverlayLayerRegistration::new(
+            format!("menu:{debug_id}"),
+            state.overlay().policy().clone(),
+            ownership,
+        );
+        if let Some(on_open_change) = on_open_change {
+            registration = registration.on_open_change(move |intent, window, cx| {
+                on_open_change(intent, window, cx);
+            });
+        }
+        if ownership == OverlayOwnership::Uncontrolled {
+            let runtime = runtime.downgrade();
+            registration = registration.uncontrolled_commit(move |open, _, cx| {
+                let _ = runtime.update(cx, |runtime, _| {
+                    runtime.open = open;
+                    if !open {
+                        runtime.reset_closed_state();
+                    }
+                });
+            });
+        }
+        let existing_binding = runtime.read(cx).overlay_binding.clone();
+        let root_binding = window_overlay_runtime
+            .bind_component_layer(
+                &runtime,
+                existing_binding.as_ref(),
+                registration,
+                window,
+                cx,
+            )
+            .expect("menu root overlay registration should remain valid");
+        if existing_binding.is_none() {
+            runtime.update(cx, |runtime, _| {
+                runtime.overlay_binding = Some(root_binding.clone());
+            });
+        }
+        let branch_bindings = sync_menu_branch_bindings(
+            "menu",
+            &debug_id,
+            &state,
+            &runtime,
+            &window_overlay_runtime,
+            &root_binding,
+            window,
+            cx,
+        );
         let scroll_handle = runtime_state.scroll_handle.clone();
-        let trigger_focus_for_escape = trigger_focus.clone();
-        let focus_restore_for_escape = focus_restore.clone();
-        let trigger_focus_for_content = trigger_focus.clone();
-        let focus_restore_for_content = focus_restore.clone();
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
@@ -750,7 +1196,7 @@ impl RenderOnce for Menu {
         let trigger_foreground = theme.resolve(colors.trigger_foreground());
         let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
         let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
-        let overlay_host = OverlayLayerHost::resolve(state.overlay());
+        let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 open_gpui_ui_core::OverlayAnchorInput::from_layout_bounds(open_gpui_ui_core::rect(
@@ -762,17 +1208,25 @@ impl RenderOnce for Menu {
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
             .with_offset(ui_px(4.0)),
-            overlay_host.adapter().snap_margin(),
+            overlay_adapter.snap_margin(),
         );
-
-        if open && !runtime_state.did_initial_focus {
-            runtime.update(cx, |runtime, _| {
-                runtime.did_initial_focus = true;
-            });
-            if let Some(focus) = menu_initial_focus_handle(&runtime, &initial_focus, cx) {
-                window.defer(cx, move |window, cx| focus.focus(window, cx));
-            }
-        }
+        let overlay_children = overlay_children
+            .into_iter()
+            .enumerate()
+            .map(|(index, child)| {
+                let child = window_overlay_runtime.parent_scope(
+                    &root_binding,
+                    format!("menu:{debug_id}:overlay-child:{index}"),
+                    child,
+                );
+                window_overlay_runtime.inside_region(
+                    &root_binding,
+                    OverlayInsideRegionId::new(format!("overlay-child:{index}")),
+                    format!("menu:{debug_id}:overlay-child-region:{index}"),
+                    child,
+                )
+            })
+            .collect::<Vec<_>>();
 
         div()
             .id(id.clone())
@@ -785,96 +1239,75 @@ impl RenderOnce for Menu {
             .flex_col()
             .items_start()
             .child(
-                div()
-                    .id(trigger_id)
-                    .debug_selector({
-                        let debug_id = debug_id.clone();
-                        move || format!("menu:{debug_id}:trigger")
-                    })
-                    .min_h(gpui_px_from_ui(metrics.trigger_height()))
-                    .when(!icon_only_trigger, |this| {
-                        this.px(gpui_px_from_ui(metrics.trigger_padding_x()))
-                    })
-                    .when(icon_only_trigger, |this| {
-                        this.w(gpui_px_from_ui(metrics.trigger_height()))
-                            .min_w(gpui_px_from_ui(metrics.trigger_height()))
-                    })
-                    .py(gpui_px_from_ui(metrics.trigger_padding_y()))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(gpui_px_from_ui(metrics.radius()))
-                    .border_1()
-                    .border_color(trigger_border)
-                    .bg(trigger_background)
-                    .text_color(trigger_foreground)
-                    .text_size(gpui_px_from_ui(metrics.text_size()))
-                    .line_height(gpui_px_from_ui(metrics.text_size()))
-                    .focusable()
-                    .tab_stop(!disabled)
-                    .ui_role(state.trigger_role())
-                    .aria_label(trigger_label.clone())
-                    .aria_selected(state.trigger_selected())
-                    .aria_expanded(open)
-                    .aria_disabled(disabled)
-                    .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
-                    .track_focus(&trigger_focus)
-                    .when(open, |this| {
-                        let runtime = runtime.clone();
-                        let on_open_change = on_open_change.clone();
-                        let trigger_focus = trigger_focus_for_escape.clone();
-                        let focus_restore = focus_restore_for_escape.clone();
-                        let overlay_host = overlay_host.clone();
-                        this.on_key_down(move |event: &KeyDownEvent, window, cx| {
-                            if event.keystroke.key.as_str() == "escape" {
-                                overlay_host.consume_event(window, cx);
-                                close_menu(
-                                    overlay_host.clone(),
-                                    runtime.clone(),
-                                    trigger_focus.clone(),
-                                    focus_restore.clone(),
-                                    on_open_change.clone(),
-                                    window,
-                                    cx,
-                                );
-                            }
+                window_overlay_runtime.inside_region(
+                    &root_binding,
+                    OverlayInsideRegionId::new("trigger"),
+                    format!("menu:{debug_id}:trigger-region"),
+                    div()
+                        .id(trigger_id)
+                        .debug_selector({
+                            let debug_id = debug_id.clone();
+                            move || format!("menu:{debug_id}:trigger")
                         })
-                    })
-                    .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
-                    .when(!disabled, |this| {
-                        let runtime = runtime.clone();
-                        let on_open_change = on_open_change.clone();
-                        let overlay_host = overlay_host.clone();
-                        this.cursor_pointer()
-                            .hover(move |style| style.bg(trigger_hover_background))
-                            .on_click(move |_event: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                let next_open = !open;
-                                overlay_host.apply_open_change(
-                                    OverlayOpenRuntimeRequest::new(
-                                        runtime.clone(),
-                                        next_open,
-                                        on_open_change.as_deref(),
-                                    ),
-                                    window,
-                                    cx,
-                                    |runtime| {
-                                        set_overlay_open(&mut runtime.open, next_open);
-                                        if !next_open {
-                                            runtime.reset_closed_state();
-                                        }
-                                    },
-                                );
-                            })
-                    })
-                    .when_some(trigger_tooltip, |this, tooltip| {
-                        this.tooltip(move |window, cx| tooltip(window, cx))
-                    })
-                    .child(trigger_content),
+                        .min_h(gpui_px_from_ui(metrics.trigger_height()))
+                        .when(!icon_only_trigger, |this| {
+                            this.px(gpui_px_from_ui(metrics.trigger_padding_x()))
+                        })
+                        .when(icon_only_trigger, |this| {
+                            this.w(gpui_px_from_ui(metrics.trigger_height()))
+                                .min_w(gpui_px_from_ui(metrics.trigger_height()))
+                        })
+                        .py(gpui_px_from_ui(metrics.trigger_padding_y()))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(gpui_px_from_ui(metrics.radius()))
+                        .border_1()
+                        .border_color(trigger_border)
+                        .bg(trigger_background)
+                        .text_color(trigger_foreground)
+                        .text_size(gpui_px_from_ui(metrics.text_size()))
+                        .line_height(gpui_px_from_ui(metrics.text_size()))
+                        .focusable()
+                        .tab_stop(!disabled)
+                        .ui_role(state.trigger_role())
+                        .aria_label(trigger_label.clone())
+                        .aria_selected(state.trigger_selected())
+                        .aria_expanded(open)
+                        .aria_disabled(disabled)
+                        .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
+                        .track_focus(root_binding.trigger_focus())
+                        .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
+                        .when(!disabled, |this| {
+                            let window_overlay_runtime = window_overlay_runtime.clone();
+                            let root_binding = root_binding.clone();
+                            this.cursor_pointer()
+                                .hover(move |style| style.bg(trigger_hover_background))
+                                .on_click(move |_event: &ClickEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    window_overlay_runtime
+                                        .request_open_change(
+                                            &root_binding,
+                                            !open,
+                                            DismissReason::Trigger,
+                                            window,
+                                            cx,
+                                        )
+                                        .expect(
+                                            "menu trigger should own its root overlay registration",
+                                        );
+                                })
+                        })
+                        .when_some(trigger_tooltip, |this, tooltip| {
+                            this.tooltip(move |window, cx| tooltip(window, cx))
+                        })
+                        .child(trigger_content),
+                ),
             )
+            .children(overlay_children)
             .when(open, |this| {
-                let overlay_host = overlay_host.clone();
-                this.child(overlay_host.relative_layer(
+                this.child(gpui_relative_overlay_layer(
+                    &overlay_adapter,
                     &placement,
                     menu_content_element(
                         items,
@@ -882,17 +1315,15 @@ impl RenderOnce for Menu {
                         debug_id.clone(),
                         state.clone(),
                         runtime.clone(),
-                        overlay_host.clone(),
-                        trigger_focus_for_content.clone(),
-                        content_focus.clone(),
+                        window_overlay_runtime.clone(),
+                        root_binding.clone(),
+                        branch_bindings.clone(),
                         scroll_handle.clone(),
-                        focus_restore_for_content.clone(),
-                        on_open_change.clone(),
                         on_select.clone(),
                         &theme,
                         cx,
-                        overlay_host.adapter().snap_margin(),
-                        overlay_host.adapter().deferred_priority(),
+                        overlay_adapter.snap_margin(),
+                        overlay_adapter.deferred_priority(),
                     ),
                 ))
             })
@@ -905,12 +1336,10 @@ fn menu_content_element(
     debug_id: String,
     state: MenuState,
     runtime: open_gpui::Entity<MenuRuntime>,
-    overlay_host: OverlayLayerHost,
-    trigger_focus: FocusHandle,
-    content_focus: FocusHandle,
+    window_overlay_runtime: WindowOverlayRuntime,
+    root_binding: OverlayLayerBinding,
+    branch_bindings: MenuBranchBindings,
     scroll_handle: ScrollHandle,
-    focus_restore: FocusRestoreIntent,
-    on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
     theme: &ThemeContext,
     cx: &mut App,
@@ -919,16 +1348,11 @@ fn menu_content_element(
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
-    let outside_change = overlay_host.outside_press_open_change();
     let key_state = state.clone();
     let key_runtime = runtime.clone();
-    let key_open_change = on_open_change.clone();
     let key_select = on_select.clone();
-    let key_overlay_host = overlay_host.clone();
-    let trigger_focus_for_keydown = trigger_focus.clone();
-    let focus_restore_for_keydown = focus_restore.clone();
-    let trigger_focus_for_outside = trigger_focus.clone();
-    let focus_restore_for_outside = focus_restore.clone();
+    let key_window_overlay_runtime = window_overlay_runtime.clone();
+    let key_root_binding = root_binding.clone();
     let key_items = visible_menu_items(&items, state.open_path());
     let root_branch = menu_branch_surface(
         &items,
@@ -937,10 +1361,9 @@ fn menu_content_element(
         None,
         debug_id.clone(),
         runtime.clone(),
-        overlay_host.clone(),
-        trigger_focus.clone(),
-        focus_restore.clone(),
-        on_open_change.clone(),
+        window_overlay_runtime.clone(),
+        root_binding.clone(),
+        branch_bindings.clone(),
         on_select.clone(),
         Some(scroll_handle),
         theme,
@@ -949,7 +1372,7 @@ fn menu_content_element(
         deferred_priority,
     );
 
-    div()
+    let content = div()
         .id(content_id)
         .debug_selector({
             let content_debug_id = debug_id.clone();
@@ -958,7 +1381,7 @@ fn menu_content_element(
         .focusable()
         .relative()
         .tab_group()
-        .track_focus(&content_focus)
+        .track_focus(root_binding.surface_focus())
         .ui_role(state.content_role())
         .text_color(theme.resolve(colors.foreground()))
         .text_size(gpui_px_from_ui(metrics.text_size()))
@@ -970,24 +1393,6 @@ fn menu_content_element(
             };
 
             match intent {
-                MenuKeyboardIntent::DismissSubmenu(target) => {
-                    key_overlay_host.consume_event(window, cx);
-                    key_runtime.update(cx, |runtime, _| {
-                        runtime.apply_submenu_target(&target);
-                    });
-                }
-                MenuKeyboardIntent::DismissRoot => {
-                    key_overlay_host.consume_event(window, cx);
-                    close_menu(
-                        key_overlay_host.clone(),
-                        key_runtime.clone(),
-                        trigger_focus_for_keydown.clone(),
-                        focus_restore_for_keydown.clone(),
-                        key_open_change.clone(),
-                        window,
-                        cx,
-                    );
-                }
                 MenuKeyboardIntent::NavigateSubmenu(target) => {
                     cx.stop_propagation();
                     window.prevent_default();
@@ -1009,47 +1414,40 @@ fn menu_content_element(
                 MenuKeyboardIntent::Activate(selection) => {
                     cx.stop_propagation();
                     window.prevent_default();
-                    if let Some(item_handler) = key_items
-                        .iter()
-                        .zip(key_state.visible_items())
-                        .find(|(_, item_state)| item_state.path() == selection.path())
-                        .and_then(|(item, _)| item.select_handler())
-                        .as_ref()
-                    {
-                        item_handler(selection.clone(), window, cx);
-                    }
-                    if let Some(on_select) = key_select.as_ref() {
-                        on_select(selection, window, cx);
-                    }
-                    close_menu(
-                        key_overlay_host.clone(),
-                        key_runtime.clone(),
-                        trigger_focus_for_keydown.clone(),
-                        focus_restore_for_keydown.clone(),
-                        key_open_change.clone(),
-                        window,
-                        cx,
-                    );
+                    key_window_overlay_runtime
+                        .request_open_change_with_effect(
+                            &key_root_binding,
+                            false,
+                            DismissReason::Selection,
+                            window,
+                            cx,
+                            |window, cx| {
+                                if let Some(item_handler) = key_items
+                                    .iter()
+                                    .zip(key_state.visible_items())
+                                    .find(|(_, item_state)| item_state.path() == selection.path())
+                                    .and_then(|(item, _)| item.select_handler())
+                                    .as_ref()
+                                {
+                                    item_handler(selection.clone(), window, cx);
+                                }
+                                if let Some(on_select) = key_select.as_ref() {
+                                    on_select(selection, window, cx);
+                                }
+                            },
+                        )
+                        .expect("menu keyboard selection should own the root registration");
                 }
             }
         })
-        .when(outside_change.is_some(), |this| {
-            let runtime = runtime.clone();
-            let on_open_change = on_open_change.clone();
-            let overlay_host = overlay_host.clone();
-            this.on_mouse_down_out(move |_, window, cx| {
-                close_menu(
-                    overlay_host.clone(),
-                    runtime.clone(),
-                    trigger_focus_for_outside.clone(),
-                    focus_restore_for_outside.clone(),
-                    on_open_change.clone(),
-                    window,
-                    cx,
-                );
-            })
-        })
-        .child(root_branch)
+        .child(root_branch);
+
+    window_overlay_runtime.surface(
+        &root_binding,
+        OverlayInsideRegionId::new("root-surface"),
+        format!("menu:{debug_id}:root-surface-region"),
+        content,
+    )
 }
 
 fn menu_branch_surface(
@@ -1059,10 +1457,9 @@ fn menu_branch_surface(
     surface_id: Option<ElementId>,
     debug_id: String,
     runtime: open_gpui::Entity<MenuRuntime>,
-    overlay_host: OverlayLayerHost,
-    trigger_focus: FocusHandle,
-    focus_restore: FocusRestoreIntent,
-    on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
+    window_overlay_runtime: WindowOverlayRuntime,
+    root_binding: OverlayLayerBinding,
+    branch_bindings: MenuBranchBindings,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
     scroll_handle: Option<ScrollHandle>,
     theme: &ThemeContext,
@@ -1075,7 +1472,15 @@ fn menu_branch_surface(
     let branch_key = if branch_path.is_empty() {
         "root".to_string()
     } else {
-        branch_path.join("/")
+        menu_path_key(branch_path)
+    };
+    let branch_binding = if branch_path.is_empty() {
+        None
+    } else {
+        let Some(binding) = branch_bindings.get(&branch_key).cloned() else {
+            return div().into_any_element();
+        };
+        Some(binding)
     };
     let Some((branch_items, branch_states)) =
         menu_branch_items_and_states(items, state.items(), branch_path)
@@ -1119,10 +1524,9 @@ fn menu_branch_surface(
             metrics,
             colors,
             runtime.clone(),
-            overlay_host.clone(),
-            trigger_focus.clone(),
-            focus_restore.clone(),
-            on_open_change.clone(),
+            window_overlay_runtime.clone(),
+            root_binding.clone(),
+            branch_bindings.clone(),
             on_select.clone(),
             theme,
         ));
@@ -1132,10 +1536,9 @@ fn menu_branch_surface(
         &branch_states,
         debug_id.clone(),
         runtime.clone(),
-        overlay_host.clone(),
-        trigger_focus.clone(),
-        focus_restore.clone(),
-        on_open_change.clone(),
+        window_overlay_runtime.clone(),
+        root_binding.clone(),
+        branch_bindings.clone(),
         on_select.clone(),
         theme,
         cx,
@@ -1170,6 +1573,12 @@ fn menu_branch_surface(
         .shadow_lg()
         .occlude()
         .overflow_hidden()
+        .when_some(branch_binding.clone(), |this, binding| {
+            this.focusable()
+                .tab_stop(false)
+                .track_focus(binding.surface_focus())
+                .ui_role(state.content_role())
+        })
         .when(!branch_path.is_empty(), |this| {
             let runtime = runtime.clone();
             this.on_hover(move |hovered, window, cx| {
@@ -1183,6 +1592,19 @@ fn menu_branch_surface(
                 .scroll_handle(&scroll_handle)
                 .with_size(state.size()),
         );
+
+    let shell = if let Some(branch_binding) = branch_binding {
+        window_overlay_runtime
+            .surface(
+                &branch_binding,
+                OverlayInsideRegionId::new("surface"),
+                format!("menu:{debug_id}:branch:{branch_key}:surface-region"),
+                shell,
+            )
+            .into_any_element()
+    } else {
+        shell.into_any_element()
+    };
 
     div()
         .relative()
@@ -1199,10 +1621,9 @@ fn menu_submenu_layer(
     branch_states: &[MenuItemState],
     debug_id: String,
     runtime: open_gpui::Entity<MenuRuntime>,
-    overlay_host: OverlayLayerHost,
-    trigger_focus: FocusHandle,
-    focus_restore: FocusRestoreIntent,
-    on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
+    window_overlay_runtime: WindowOverlayRuntime,
+    root_binding: OverlayLayerBinding,
+    branch_bindings: MenuBranchBindings,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
     theme: &ThemeContext,
     cx: &mut App,
@@ -1212,6 +1633,10 @@ fn menu_submenu_layer(
     let open_child = branch_states
         .iter()
         .find(|item| item.submenu_open() && item.has_submenu())?;
+    let child_branch_path = open_child.path().to_vec();
+    if !branch_bindings.contains_key(&menu_path_key(&child_branch_path)) {
+        return None;
+    }
     let trigger_bounds = runtime
         .read(cx)
         .submenu_trigger_bounds
@@ -1230,7 +1655,6 @@ fn menu_submenu_layer(
         .with_offset(UiPx::ZERO),
         snap_margin,
     );
-    let child_branch_path = open_child.path().to_vec();
     let submenu_surface = menu_branch_surface(
         items,
         state,
@@ -1238,10 +1662,9 @@ fn menu_submenu_layer(
         None,
         debug_id,
         runtime,
-        overlay_host.clone(),
-        trigger_focus,
-        focus_restore,
-        on_open_change,
+        window_overlay_runtime,
+        root_binding,
+        branch_bindings,
         on_select,
         None,
         theme,
@@ -1250,13 +1673,14 @@ fn menu_submenu_layer(
         deferred_priority,
     );
 
-    let submenu_host = OverlayLayerHost::from_adapter(GpuiOverlayState::resolve(
+    let submenu_adapter = GpuiOverlayState::resolve(
         state.overlay().policy().clone(),
         deferred_priority,
         snap_margin,
-    ));
+    );
 
-    Some(submenu_host.positioned_layer(
+    Some(gpui_positioned_overlay_layer(
+        &submenu_adapter,
         &placement,
         placement.position().unwrap_or_default(),
         submenu_surface,
@@ -1270,10 +1694,9 @@ fn menu_item_elements(
     metrics: MenuMetrics,
     colors: MenuColors,
     runtime: open_gpui::Entity<MenuRuntime>,
-    overlay_host: OverlayLayerHost,
-    trigger_focus: FocusHandle,
-    focus_restore: FocusRestoreIntent,
-    on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
+    window_overlay_runtime: WindowOverlayRuntime,
+    root_binding: OverlayLayerBinding,
+    branch_bindings: MenuBranchBindings,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
     theme: &ThemeContext,
 ) -> Vec<AnyElement> {
@@ -1289,10 +1712,9 @@ fn menu_item_elements(
                 metrics,
                 colors,
                 runtime.clone(),
-                overlay_host.clone(),
-                trigger_focus.clone(),
-                focus_restore.clone(),
-                on_open_change.clone(),
+                window_overlay_runtime.clone(),
+                root_binding.clone(),
+                branch_bindings.clone(),
                 on_select.clone(),
                 theme,
             )
@@ -1300,7 +1722,7 @@ fn menu_item_elements(
         .collect()
 }
 
-fn menu_branch_items_and_states(
+pub(crate) fn menu_branch_items_and_states(
     items: &[MenuItem],
     states: &[MenuItemState],
     branch_path: &[String],
@@ -1363,46 +1785,5 @@ fn flatten_visible_menu_items(
             flatten_visible_menu_items(item.child_items(), parent_path, open_path, visible);
         }
         parent_path.pop();
-    }
-}
-
-fn close_menu(
-    overlay_host: OverlayLayerHost,
-    runtime: open_gpui::Entity<MenuRuntime>,
-    trigger_focus: FocusHandle,
-    focus_restore: FocusRestoreIntent,
-    on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    overlay_host.close_runtime(
-        OverlayCloseRuntimeRequest::new(
-            runtime,
-            &focus_restore,
-            trigger_focus,
-            on_open_change.as_deref(),
-        )
-        .defer_focus_restore(true),
-        window,
-        cx,
-        |runtime| {
-            set_overlay_open(&mut runtime.open, false);
-            runtime.reset_closed_state();
-        },
-    );
-}
-
-fn menu_initial_focus_handle(
-    runtime: &open_gpui::Entity<MenuRuntime>,
-    intent: &InitialFocusIntent,
-    cx: &App,
-) -> Option<FocusHandle> {
-    match intent {
-        InitialFocusIntent::None => None,
-        InitialFocusIntent::FirstFocusable => Some(runtime.read(cx).content_focus.clone()),
-        InitialFocusIntent::Target(_) => None,
-        InitialFocusIntent::TargetOrFirstFocusable(_) => {
-            Some(runtime.read(cx).content_focus.clone())
-        }
     }
 }

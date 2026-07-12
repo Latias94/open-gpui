@@ -5,8 +5,8 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, ElementId, Entity, IntoElement, KeyDownEvent, ParentElement,
-    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, IntoElement, KeyDownEvent,
+    ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
@@ -846,6 +846,13 @@ struct ListboxRuntime {
     selected_value: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum ListboxFocusOwner {
+    #[default]
+    Listbox,
+    Editor,
+}
+
 /// A concrete GPUI listbox component.
 #[derive(IntoElement)]
 pub struct Listbox {
@@ -856,6 +863,8 @@ pub struct Listbox {
     size: Size,
     disabled: bool,
     embedded: bool,
+    focus_owner: ListboxFocusOwner,
+    active_focus: Option<FocusHandle>,
     selected_value: Option<String>,
     active_value: Option<String>,
     typeahead_query: Option<String>,
@@ -875,6 +884,8 @@ impl Listbox {
             size: Size::Medium,
             disabled: false,
             embedded: false,
+            focus_owner: ListboxFocusOwner::Listbox,
+            active_focus: None,
             selected_value: None,
             active_value: None,
             typeahead_query: None,
@@ -917,6 +928,17 @@ impl Listbox {
     /// Removes the standalone scroll surface when the parent owns clipping and scrolling.
     pub fn embedded(mut self, embedded: bool) -> Self {
         self.embedded = embedded;
+        self
+    }
+
+    pub(crate) fn active_focus_handle(mut self, focus: FocusHandle) -> Self {
+        self.active_focus = Some(focus);
+        self
+    }
+
+    pub(crate) fn editor_owned_focus(mut self) -> Self {
+        self.focus_owner = ListboxFocusOwner::Editor;
+        self.active_focus = None;
         self
     }
 
@@ -1032,6 +1054,11 @@ impl RenderOnce for Listbox {
                 }))
                 .collect::<Vec<_>>(),
         );
+        let focus_owner = self.focus_owner;
+        let active_focus = self.active_focus.clone();
+        let root_focus = active_focus
+            .clone()
+            .filter(|_| state.active_value().is_none());
 
         div()
             .id(id.clone())
@@ -1059,24 +1086,27 @@ impl RenderOnce for Listbox {
             .text_color(theme.resolve(colors.foreground()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
-            .focusable()
-            .tab_group()
-            .tab_stop(!state.disabled() && !state.empty())
             .ui_role(state.role())
             .aria_label(state.label().to_owned())
             .aria_disabled(state.disabled())
-            .focus_visible(move |style| style.shadow(focus_shadow.clone()))
-            .on_key_down(move |event: &KeyDownEvent, window, cx| {
-                handle_listbox_key_down(
-                    &key_state,
-                    key_runtime.clone(),
-                    key_option_handlers.clone(),
-                    key_select.clone(),
-                    event,
-                    window,
-                    cx,
-                );
+            .when(focus_owner == ListboxFocusOwner::Listbox, |this| {
+                this.focusable()
+                    .tab_group()
+                    .tab_stop(!state.disabled() && !state.empty())
+                    .focus_visible(move |style| style.shadow(focus_shadow.clone()))
+                    .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                        handle_listbox_key_down(
+                            &key_state,
+                            key_runtime.clone(),
+                            key_option_handlers.clone(),
+                            key_select.clone(),
+                            event,
+                            window,
+                            cx,
+                        );
+                    })
             })
+            .when_some(root_focus, |this, focus| this.track_focus(&focus))
             .children(listbox_children(
                 debug_id,
                 self.options,
@@ -1084,6 +1114,8 @@ impl RenderOnce for Listbox {
                 state,
                 runtime,
                 self.on_select,
+                focus_owner,
+                active_focus,
                 &theme,
             ))
     }
@@ -1133,6 +1165,8 @@ fn listbox_children(
     state: ListboxState,
     runtime: Entity<ListboxRuntime>,
     on_select: Option<ListboxSelectHandler>,
+    focus_owner: ListboxFocusOwner,
+    active_focus: Option<FocusHandle>,
     theme: &ThemeContext,
 ) -> Vec<AnyElement> {
     if state.empty() {
@@ -1166,6 +1200,8 @@ fn listbox_children(
             state.colors(),
             runtime.clone(),
             on_select.clone(),
+            focus_owner,
+            active_focus.clone(),
             theme,
         ));
     }
@@ -1206,6 +1242,8 @@ fn listbox_children(
                 state.colors(),
                 runtime.clone(),
                 on_select.clone(),
+                focus_owner,
+                active_focus.clone(),
                 theme,
             ));
         }
@@ -1222,6 +1260,8 @@ fn listbox_option_elements(
     colors: ListboxColors,
     runtime: Entity<ListboxRuntime>,
     on_select: Option<ListboxSelectHandler>,
+    focus_owner: ListboxFocusOwner,
+    active_focus: Option<FocusHandle>,
     theme: &ThemeContext,
 ) -> Vec<AnyElement> {
     options
@@ -1249,7 +1289,11 @@ fn listbox_option_elements(
                 let global_handler = on_select.clone();
                 let runtime = runtime.clone();
                 let disabled = state.disabled();
+                let active = state.active();
                 let option_value = state.value().to_owned();
+                let option_focus = active_focus
+                    .clone()
+                    .filter(|_| focus_owner == ListboxFocusOwner::Listbox && active);
                 let option_background_color =
                     theme.resolve(option_background(state.clone(), colors));
                 let option_foreground = theme.resolve(if disabled {
@@ -1277,8 +1321,11 @@ fn listbox_option_elements(
                     .aria_label(state.label().to_owned())
                     .aria_selected(state.selected())
                     .aria_disabled(disabled)
-                    .focusable()
-                    .tab_stop(state.active())
+                    .when(focus_owner == ListboxFocusOwner::Listbox, |this| {
+                        this.focusable()
+                            .tab_stop(active)
+                            .when_some(option_focus, |this, focus| this.track_focus(&focus))
+                    })
                     .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                     .when(!disabled, |this| {
                         this.cursor_pointer()

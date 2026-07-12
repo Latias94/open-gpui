@@ -322,7 +322,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         callbacks: &[
             CallbackApi {
                 name: "on_open_change",
-                payload: "bool",
+                payload: "OverlayOpenIntent",
             },
             CallbackApi {
                 name: "on_select",
@@ -349,7 +349,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         callbacks: &[
             CallbackApi {
                 name: "on_open_change",
-                payload: "bool",
+                payload: "OverlayOpenIntent",
             },
             CallbackApi {
                 name: "on_select",
@@ -401,7 +401,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         callbacks: &[
             CallbackApi {
                 name: "on_open_change",
-                payload: "bool",
+                payload: "OverlayOpenIntent",
             },
             CallbackApi {
                 name: "on_query_change",
@@ -874,7 +874,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         ],
         callbacks: &[CallbackApi {
             name: "on_open_change",
-            payload: "bool",
+            payload: "OverlayOpenIntent",
         }],
         renderer_neutral_state: true,
         no_interaction_note: None,
@@ -895,7 +895,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         ],
         callbacks: &[CallbackApi {
             name: "on_open_change",
-            payload: "bool",
+            payload: "OverlayOpenIntent",
         }],
         renderer_neutral_state: true,
         no_interaction_note: None,
@@ -915,7 +915,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         ],
         callbacks: &[CallbackApi {
             name: "on_open_change",
-            payload: "bool",
+            payload: "OverlayOpenIntent",
         }],
         renderer_neutral_state: true,
         no_interaction_note: None,
@@ -944,7 +944,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             },
             CallbackApi {
                 name: "on_open_change",
-                payload: "bool",
+                payload: "OverlayOpenIntent",
             },
         ],
         renderer_neutral_state: true,
@@ -966,16 +966,10 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             "initial_focus_intent",
             "focus_restore_intent",
         ],
-        callbacks: &[
-            CallbackApi {
-                name: "on_close",
-                payload: "()",
-            },
-            CallbackApi {
-                name: "on_open_change",
-                payload: "bool",
-            },
-        ],
+        callbacks: &[CallbackApi {
+            name: "on_open_change",
+            payload: "OverlayOpenIntent",
+        }],
         renderer_neutral_state: true,
         no_interaction_note: None,
     },
@@ -1002,7 +996,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         callbacks: &[
             CallbackApi {
                 name: "on_open_change",
-                payload: "bool",
+                payload: "OverlayOpenIntent",
             },
             CallbackApi {
                 name: "on_select",
@@ -1035,7 +1029,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         callbacks: &[
             CallbackApi {
                 name: "on_open_change",
-                payload: "bool",
+                payload: "OverlayOpenIntent",
             },
             CallbackApi {
                 name: "on_select",
@@ -1976,7 +1970,6 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "initial_focus_intent",
             "focus_restore_intent",
             "tokens",
-            "on_close",
             "on_open_change",
             "state",
         ],

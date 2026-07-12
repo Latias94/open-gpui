@@ -2,25 +2,26 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ElementId, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
-    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    App, ElementId, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, RenderOnce,
+    SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
-    FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayAnchorInput,
+    DismissReason, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayAnchorInput,
     OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, Sizable, Size,
     ThemeTokens, rect, ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::choice_overlay_runtime::{
-    ChoiceOverlayRuntimeState, close_choice_overlay, commit_choice_overlay_single_value,
+    ChoiceOverlayRuntimeState, commit_registered_choice_overlay_single_value,
 };
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::gpui_px_from_ui;
 use crate::listbox::{Listbox, ListboxGroup, ListboxOption};
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayLayerHost, OverlayOpenRuntimeRequest, resolve_overlay_open_state,
-    set_overlay_open,
+    GpuiOverlayPlacement, OverlayInsideRegionId, OverlayLayerBinding, OverlayLayerRegistration,
+    OverlayOpenIntent, OverlayOwnership, WindowOverlayRuntime, gpui_overlay_state,
+    gpui_relative_overlay_layer, resolve_overlay_open_state,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::{ThemeContext, ThemeResolver};
@@ -28,26 +29,18 @@ use crate::theme::{ThemeContext, ThemeResolver};
 use super::model::{SelectSelection, SelectState, SelectStateRequest};
 use super::render_plan::SelectRenderPlan;
 
-type SelectOpenChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
+type SelectOpenChangeHandler = Rc<dyn Fn(OverlayOpenIntent, &mut Window, &mut App)>;
 type SelectSelectionHandler = Rc<dyn Fn(SelectSelection, &mut Window, &mut App)>;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct SelectRuntime {
     open: bool,
     active_value: Option<String>,
     selected_value: Option<String>,
-    trigger_focus: FocusHandle,
+    overlay_binding: Option<OverlayLayerBinding>,
 }
 
 impl ChoiceOverlayRuntimeState for SelectRuntime {
-    fn open_mut(&mut self) -> &mut bool {
-        &mut self.open
-    }
-
-    fn trigger_focus(&self) -> FocusHandle {
-        self.trigger_focus.clone()
-    }
-
     fn commit_single_value(&mut self, value: String) {
         self.selected_value = Some(value.clone());
         self.active_value = Some(value);
@@ -207,10 +200,10 @@ impl Select {
         self
     }
 
-    /// Registers an open-change handler with the next open value.
+    /// Registers an open-change handler with the runtime-issued intent.
     pub fn on_open_change(
         mut self,
-        handler: impl Fn(bool, &mut Window, &mut App) + 'static,
+        handler: impl Fn(OverlayOpenIntent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_open_change = Some(Rc::new(handler));
         self
@@ -258,11 +251,11 @@ impl Sizable for Select {
 impl RenderOnce for Select {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = ThemeResolver::current(cx);
-        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, cx| SelectRuntime {
+        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| SelectRuntime {
             open: self.default_open,
             active_value: self.active_value.clone(),
             selected_value: self.selected_value.clone(),
-            trigger_focus: cx.focus_handle(),
+            overlay_binding: None,
         });
         let runtime_state = runtime.read(cx).clone();
         let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
@@ -303,6 +296,45 @@ impl RenderOnce for Select {
         });
         let explicit_active_value = self.active_value.clone();
         let plan = SelectRenderPlan::from_state(self.id, &state);
+        let window_overlay_runtime = WindowOverlayRuntime::for_window(window, cx);
+        let ownership = if open_state.controlled() {
+            OverlayOwnership::Controlled
+        } else {
+            OverlayOwnership::Uncontrolled
+        };
+        let mut registration = OverlayLayerRegistration::new(
+            format!("select:{}", plan.debug_id),
+            state.overlay().policy().clone(),
+            ownership,
+        );
+        if let Some(on_open_change) = self.on_open_change.clone() {
+            registration = registration.on_open_change(move |intent, window, cx| {
+                on_open_change(intent, window, cx);
+            });
+        }
+        if ownership == OverlayOwnership::Uncontrolled {
+            let runtime = runtime.downgrade();
+            registration = registration.uncontrolled_commit(move |open, _, cx| {
+                let _ = runtime.update(cx, |runtime, _| {
+                    runtime.open = open;
+                });
+            });
+        }
+        let existing_binding = runtime.read(cx).overlay_binding.clone();
+        let overlay_binding = window_overlay_runtime
+            .bind_component_layer(
+                &runtime,
+                existing_binding.as_ref(),
+                registration,
+                window,
+                cx,
+            )
+            .expect("Select overlay registration should remain valid");
+        if existing_binding.is_none() {
+            runtime.update(cx, |runtime, _| {
+                runtime.overlay_binding = Some(overlay_binding.clone());
+            });
+        }
         let trigger_border = theme.resolve(plan.colors.trigger_border());
         let trigger_background = theme.resolve(plan.colors.trigger_background());
         let trigger_foreground = theme.resolve(if plan.selected {
@@ -312,9 +344,8 @@ impl RenderOnce for Select {
         });
         let trigger_hover_background = theme.resolve(plan.colors.trigger_hover_background());
         let trigger_focus_shadow = focus_ring_shadow_with_theme(plan.focus_ring, &theme);
-        let trigger_focus = runtime_state.trigger_focus.clone();
         let open = plan.open;
-        let overlay_host = OverlayLayerHost::resolve(state.overlay());
+        let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 OverlayAnchorInput::from_layout_bounds(rect(
@@ -326,7 +357,7 @@ impl RenderOnce for Select {
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
             .with_offset(ui_px(4.0)),
-            overlay_host.adapter().snap_margin(),
+            overlay_adapter.snap_margin(),
         );
 
         div()
@@ -342,126 +373,116 @@ impl RenderOnce for Select {
             .when(!self.full_width, |this| this.items_start())
             .when(self.full_width, |this| this.occlude())
             .child(
-                div()
-                    .id(plan.trigger_id)
-                    .debug_selector({
-                        let debug_id = plan.debug_id.clone();
-                        move || format!("select:{debug_id}:trigger")
-                    })
-                    .when(self.full_width, |this| this.w_full())
-                    .when(!self.full_width, |this| {
-                        this.min_w(gpui_px_from_ui(plan.metrics.min_width()))
-                            .max_w(gpui_px_from_ui(plan.metrics.max_width()))
-                    })
-                    .min_h(gpui_px_from_ui(plan.metrics.trigger_height()))
-                    .px(gpui_px_from_ui(plan.metrics.trigger_padding_x()))
-                    .py(gpui_px_from_ui(plan.metrics.trigger_padding_y()))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_2()
-                    .rounded(gpui_px_from_ui(plan.metrics.radius()))
-                    .border_1()
-                    .border_color(trigger_border)
-                    .bg(trigger_background)
-                    .text_color(trigger_foreground)
-                    .text_size(gpui_px_from_ui(plan.metrics.text_size()))
-                    .line_height(gpui_px_from_ui(plan.metrics.text_size()))
-                    .focusable()
-                    .track_focus(&trigger_focus)
-                    .tab_stop(!plan.disabled)
-                    .ui_role(plan.trigger_role)
-                    .aria_label(state.label().to_owned())
-                    .aria_selected(plan.trigger_selected)
-                    .aria_expanded(plan.open)
-                    .aria_disabled(plan.disabled)
-                    .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
-                    .on_key_down({
-                        let runtime = runtime.clone();
-                        let on_open_change = self.on_open_change.clone();
-                        let focus_restore = state.focus_restore_intent().clone();
-                        let overlay_host = overlay_host.clone();
-                        move |event: &KeyDownEvent, window, cx| {
-                            let key = event.keystroke.key.as_str();
-                            if matches!(key, "enter" | "space" | "down" | "up") {
-                                overlay_host.consume_event(window, cx);
-                                if !open {
-                                    overlay_host.apply_open_change(
-                                        OverlayOpenRuntimeRequest::new(
-                                            runtime.clone(),
+                window_overlay_runtime.inside_region(
+                    &overlay_binding,
+                    OverlayInsideRegionId::new("trigger"),
+                    format!("select:{}:trigger-region", plan.debug_id),
+                    div()
+                        .id(plan.trigger_id)
+                        .debug_selector({
+                            let debug_id = plan.debug_id.clone();
+                            move || format!("select:{debug_id}:trigger")
+                        })
+                        .when(self.full_width, |this| this.w_full())
+                        .when(!self.full_width, |this| {
+                            this.min_w(gpui_px_from_ui(plan.metrics.min_width()))
+                                .max_w(gpui_px_from_ui(plan.metrics.max_width()))
+                        })
+                        .min_h(gpui_px_from_ui(plan.metrics.trigger_height()))
+                        .px(gpui_px_from_ui(plan.metrics.trigger_padding_x()))
+                        .py(gpui_px_from_ui(plan.metrics.trigger_padding_y()))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .rounded(gpui_px_from_ui(plan.metrics.radius()))
+                        .border_1()
+                        .border_color(trigger_border)
+                        .bg(trigger_background)
+                        .text_color(trigger_foreground)
+                        .text_size(gpui_px_from_ui(plan.metrics.text_size()))
+                        .line_height(gpui_px_from_ui(plan.metrics.text_size()))
+                        .focusable()
+                        .track_focus(overlay_binding.trigger_focus())
+                        .tab_stop(!plan.disabled)
+                        .ui_role(plan.trigger_role)
+                        .aria_label(state.label().to_owned())
+                        .aria_selected(plan.trigger_selected)
+                        .aria_expanded(plan.open)
+                        .aria_disabled(plan.disabled)
+                        .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
+                        .on_key_down({
+                            let window_overlay_runtime = window_overlay_runtime.clone();
+                            let overlay_binding = overlay_binding.clone();
+                            move |event: &KeyDownEvent, window, cx| {
+                                let key = event.keystroke.key.as_str();
+                                if matches!(key, "enter" | "space" | "down" | "up") {
+                                    cx.stop_propagation();
+                                    window.prevent_default();
+                                    if !open {
+                                        window_overlay_runtime
+                                        .request_open_change(
+                                            &overlay_binding,
                                             true,
-                                            on_open_change.as_deref(),
-                                        ),
-                                        window,
-                                        cx,
-                                        |runtime| {
-                                            set_overlay_open(&mut runtime.open, true);
-                                        },
-                                    );
+                                            DismissReason::Trigger,
+                                            window,
+                                            cx,
+                                        )
+                                        .expect(
+                                            "Select keyboard trigger should own its registration",
+                                        );
+                                    }
                                 }
-                            } else if key == "escape" {
-                                overlay_host.consume_event(window, cx);
-                                close_select(
-                                    overlay_host.clone(),
-                                    runtime.clone(),
-                                    focus_restore.clone(),
-                                    on_open_change.clone(),
-                                    window,
-                                    cx,
-                                );
                             }
-                        }
-                    })
-                    .when(plan.disabled, |this| {
-                        this.opacity(0.56).cursor_not_allowed()
-                    })
-                    .when(!plan.disabled, |this| {
-                        let runtime = runtime.clone();
-                        let on_open_change = self.on_open_change.clone();
-                        let open = plan.open;
-                        let overlay_host = overlay_host.clone();
-                        this.cursor_pointer()
-                            .hover(move |style| style.bg(trigger_hover_background))
-                            .capture_any_mouse_up(move |_, window, cx| {
-                                overlay_host.consume_event(window, cx);
-                                let next_open = !open;
-                                overlay_host.apply_open_change(
-                                    OverlayOpenRuntimeRequest::new(
-                                        runtime.clone(),
-                                        next_open,
-                                        on_open_change.as_deref(),
-                                    ),
-                                    window,
-                                    cx,
-                                    |runtime| {
-                                        set_overlay_open(&mut runtime.open, next_open);
-                                    },
-                                );
-                            })
-                    })
-                    .child(
-                        div()
-                            .flex_1()
-                            .overflow_hidden()
-                            .truncate()
-                            .child(plan.trigger_label),
-                    )
-                    .child(div().child(if plan.open { "^" } else { "v" })),
+                        })
+                        .when(plan.disabled, |this| {
+                            this.opacity(0.56).cursor_not_allowed()
+                        })
+                        .when(!plan.disabled, |this| {
+                            let open = plan.open;
+                            let window_overlay_runtime = window_overlay_runtime.clone();
+                            let overlay_binding = overlay_binding.clone();
+                            this.cursor_pointer()
+                                .hover(move |style| style.bg(trigger_hover_background))
+                                .capture_any_mouse_up(move |_, window, cx| {
+                                    cx.stop_propagation();
+                                    window.prevent_default();
+                                    window_overlay_runtime
+                                        .request_open_change(
+                                            &overlay_binding,
+                                            !open,
+                                            DismissReason::Trigger,
+                                            window,
+                                            cx,
+                                        )
+                                        .expect("Select trigger should own its registration");
+                                })
+                        })
+                        .child(
+                            div()
+                                .flex_1()
+                                .overflow_hidden()
+                                .truncate()
+                                .child(plan.trigger_label),
+                        )
+                        .child(div().child(if plan.open { "^" } else { "v" })),
+                ),
             )
             .when(plan.open, |this| {
-                let overlay_host = overlay_host.clone();
-                this.child(overlay_host.relative_layer(
+                this.child(gpui_relative_overlay_layer(
+                    &overlay_adapter,
                     &placement,
                     select_content_element(
                         plan.content_id.clone(),
                         plan.listbox_id.clone(),
+                        plan.debug_id.clone(),
                         state.clone(),
-                        overlay_host.clone(),
+                        window_overlay_runtime.clone(),
+                        overlay_binding.clone(),
                         explicit_active_value.clone(),
                         self.options,
                         self.groups,
                         runtime.clone(),
-                        self.on_open_change.clone(),
                         self.on_select.clone(),
                         self.tokens,
                         &theme,
@@ -475,30 +496,24 @@ impl RenderOnce for Select {
 fn select_content_element(
     content_id: ElementId,
     listbox_id: ElementId,
+    debug_id: String,
     state: SelectState,
-    overlay_host: OverlayLayerHost,
+    window_overlay_runtime: WindowOverlayRuntime,
+    overlay_binding: OverlayLayerBinding,
     explicit_active_value: Option<String>,
     options: Vec<ListboxOption>,
     groups: Vec<ListboxGroup>,
     runtime: open_gpui::Entity<SelectRuntime>,
-    on_open_change: Option<SelectOpenChangeHandler>,
     on_select: Option<SelectSelectionHandler>,
     tokens: ThemeTokens,
     theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
-    let outside_change = overlay_host.outside_press_open_change();
-    let focus_restore = state.focus_restore_intent().clone();
-    let escape_runtime = runtime.clone();
-    let escape_open_change = on_open_change.clone();
-    let escape_focus_restore = focus_restore.clone();
     let listbox_runtime = runtime.clone();
-    let listbox_open_change = on_open_change.clone();
     let listbox_select = on_select.clone();
-    let listbox_focus_restore = focus_restore.clone();
-    let listbox_overlay_host = overlay_host.clone();
-    let key_overlay_host = overlay_host.clone();
+    let listbox_window_overlay_runtime = window_overlay_runtime.clone();
+    let listbox_overlay_binding = overlay_binding.clone();
     let selected_value = state.selected_value().map(str::to_owned);
     let label = state.label().to_owned();
     let listbox = options
@@ -511,15 +526,15 @@ fn select_content_element(
         .tokens(tokens)
         .with_size(state.size())
         .embedded(true)
+        .active_focus_handle(overlay_binding.surface_focus().clone())
         .on_select(move |selection, window, cx| {
             let selection = SelectSelection::from(selection);
             let selected_value = selection.value().to_owned();
             let on_select = listbox_select.clone();
-            commit_choice_overlay_single_value(
-                &listbox_overlay_host,
+            commit_registered_choice_overlay_single_value(
+                &listbox_window_overlay_runtime,
+                &listbox_overlay_binding,
                 listbox_runtime.clone(),
-                listbox_focus_restore.clone(),
-                listbox_open_change.clone(),
                 selected_value,
                 window,
                 cx,
@@ -540,78 +555,36 @@ fn select_content_element(
 
     let scroll_viewport_id = state.scroll_area().viewport_id().to_owned();
 
-    div()
-        .id(content_id)
-        .debug_selector({
-            let viewport_id = scroll_viewport_id.clone();
-            move || format!("select:{viewport_id}:content")
-        })
-        .min_w(gpui_px_from_ui(metrics.min_width()))
-        .max_w(gpui_px_from_ui(metrics.max_width()))
-        .p(gpui_px_from_ui(metrics.content_padding()))
-        .h(gpui_px_from_ui(metrics.max_height()))
-        .flex()
-        .flex_col()
-        .rounded(gpui_px_from_ui(metrics.radius()))
-        .border_1()
-        .border_color(theme.resolve(colors.content_border()))
-        .bg(theme.resolve(colors.content_background()))
-        .text_color(theme.resolve(colors.content_foreground()))
-        .text_size(gpui_px_from_ui(metrics.text_size()))
-        .line_height(gpui_px_from_ui(metrics.text_size()))
-        .shadow_lg()
-        .occlude()
-        .on_key_down(move |event: &KeyDownEvent, window, cx| {
-            if event.keystroke.key.as_str() == "escape" {
-                key_overlay_host.consume_event(window, cx);
-                close_select(
-                    key_overlay_host.clone(),
-                    escape_runtime.clone(),
-                    escape_focus_restore.clone(),
-                    escape_open_change.clone(),
-                    window,
-                    cx,
-                );
-            }
-        })
-        .when(outside_change.is_some(), |this| {
-            let runtime = runtime.clone();
-            let on_open_change = on_open_change.clone();
-            let focus_restore = focus_restore.clone();
-            let overlay_host = overlay_host.clone();
-            this.on_mouse_down_out(move |_, window, cx| {
-                close_select(
-                    overlay_host.clone(),
-                    runtime.clone(),
-                    focus_restore.clone(),
-                    on_open_change.clone(),
-                    window,
-                    cx,
-                );
+    window_overlay_runtime.surface(
+        &overlay_binding,
+        OverlayInsideRegionId::new("surface"),
+        format!("select:{debug_id}:surface-region"),
+        div()
+            .id(content_id)
+            .debug_selector({
+                let viewport_id = scroll_viewport_id.clone();
+                move || format!("select:{viewport_id}:content")
             })
-        })
-        .child(
-            ScrollArea::new(scroll_viewport_id, listbox)
-                .vertical()
-                .preserve_scroll()
-                .with_size(state.size()),
-        )
-}
-
-fn close_select(
-    overlay_host: OverlayLayerHost,
-    runtime: open_gpui::Entity<SelectRuntime>,
-    focus_restore: FocusRestoreIntent,
-    on_open_change: Option<SelectOpenChangeHandler>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    close_choice_overlay(
-        &overlay_host,
-        runtime,
-        focus_restore,
-        on_open_change,
-        window,
-        cx,
-    );
+            .min_w(gpui_px_from_ui(metrics.min_width()))
+            .max_w(gpui_px_from_ui(metrics.max_width()))
+            .p(gpui_px_from_ui(metrics.content_padding()))
+            .h(gpui_px_from_ui(metrics.max_height()))
+            .flex()
+            .flex_col()
+            .rounded(gpui_px_from_ui(metrics.radius()))
+            .border_1()
+            .border_color(theme.resolve(colors.content_border()))
+            .bg(theme.resolve(colors.content_background()))
+            .text_color(theme.resolve(colors.content_foreground()))
+            .text_size(gpui_px_from_ui(metrics.text_size()))
+            .line_height(gpui_px_from_ui(metrics.text_size()))
+            .shadow_lg()
+            .occlude()
+            .child(
+                ScrollArea::new(scroll_viewport_id, listbox)
+                    .vertical()
+                    .preserve_scroll()
+                    .with_size(state.size()),
+            ),
+    )
 }

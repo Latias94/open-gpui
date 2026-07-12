@@ -324,7 +324,6 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_cancel",
         "on_change",
         "on_click",
-        "on_close",
         "on_cell_edit_change",
         "on_column_order_change",
         "on_column_sizing_change",
@@ -386,7 +385,7 @@ fn component_api_inventory_keeps_regression_sentinels_for_stateful_components() 
     assert_inventory_contains_controlled_input("Switch", "checked");
     assert_inventory_contains_callback("Switch", "on_change", "bool");
     assert_inventory_contains_default_seed("Popover", "default_open", "open");
-    assert_inventory_contains_callback("Popover", "on_open_change", "bool");
+    assert_inventory_contains_callback("Popover", "on_open_change", "OverlayOpenIntent");
     assert_inventory_contains_controlled_input("Select", "selected");
     assert_inventory_contains_controlled_input("Select", "active");
     assert_inventory_contains_callback("Select", "on_select", "SelectSelection");

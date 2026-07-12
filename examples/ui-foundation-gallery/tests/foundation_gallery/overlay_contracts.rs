@@ -152,7 +152,11 @@ fn overlay_page_hover_card_samples_expose_interactive_hover_contracts() {
         samples[0].state.overlay().policy().kind(),
         OverlayLayerKind::NonModalDismissible
     );
-    assert!(samples[0].state.overlay().wants_outside_press_handler());
+    assert!(!samples[0].state.overlay().wants_outside_press_handler());
+    assert_eq!(
+        samples[0].state.outside_press_policy(),
+        OutsidePressPolicy::Ignore
+    );
     assert_eq!(
         samples[0].state.focus_restore_intent(),
         &FocusRestoreIntent::None
@@ -174,7 +178,7 @@ fn overlay_page_hover_card_samples_expose_interactive_hover_contracts() {
     assert_eq!(samples[2].state.delay().open_delay().as_millis(), 80);
     assert_eq!(
         samples[2].state.outside_press_policy(),
-        OutsidePressPolicy::DismissAndConsume
+        OutsidePressPolicy::Ignore
     );
 }
 
@@ -311,7 +315,6 @@ fn overlay_page_alert_dialog_samples_expose_critical_action_contracts() {
     assert_eq!(samples[0].state.content_role(), Role::AlertDialog);
     assert_eq!(samples[0].state.action().label(), "Delete");
     assert_eq!(samples[0].state.cancel().label(), "Keep project");
-    assert!(samples[0].state.cancel().default_focus());
     assert_eq!(
         samples[0].state.outside_press_policy(),
         OutsidePressPolicy::Consume
