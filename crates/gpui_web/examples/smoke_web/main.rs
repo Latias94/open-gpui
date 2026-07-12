@@ -1,7 +1,8 @@
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, Bounds, Context, FocusHandle, InteractiveElement, KeyDownEvent, Window, WindowBounds,
-    WindowOptions, div, px, rgb, size,
+    App, Bounds, Context, DispatchPhase, FocusHandle, InteractiveElement, KeyDownEvent,
+    MouseButton, MouseDownEvent, PointerCancelEvent, PointerCancelReason, PointerCaptureHandle,
+    Window, WindowBounds, WindowOptions, canvas, div, px, rgb, size,
 };
 use open_gpui_docking::prelude::{
     DockPanelPlacement, DockSurface, DockSurfaceViewportOpenOutcome,
@@ -19,8 +20,14 @@ struct DockingProbe {
 
 struct SmokeWeb {
     focus_handle: FocusHandle,
+    pointer_capture: PointerCaptureHandle,
     click_events: u64,
     key_events: u64,
+    pointer_capture_requests: u64,
+    pointer_move_events: u64,
+    pointer_cancel_events: u64,
+    platform_capture_lost_events: u64,
+    window_deactivated_events: u64,
     shell_interactions: u64,
     platform_viewport_windows: bool,
     docking_probe: DockingProbe,
@@ -30,12 +37,19 @@ impl SmokeWeb {
     fn new(
         platform_viewport_windows: bool,
         docking_probe: DockingProbe,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let smoke = Self {
             focus_handle: cx.focus_handle(),
+            pointer_capture: window.new_pointer_capture_handle(),
             click_events: 0,
             key_events: 0,
+            pointer_capture_requests: 0,
+            pointer_move_events: 0,
+            pointer_cancel_events: 0,
+            platform_capture_lost_events: 0,
+            window_deactivated_events: 0,
             shell_interactions: 0,
             platform_viewport_windows,
             docking_probe,
@@ -58,6 +72,27 @@ impl SmokeWeb {
         self.publish_probe();
     }
 
+    fn record_pointer_capture_request(&mut self) {
+        self.pointer_capture_requests += 1;
+        self.publish_probe();
+    }
+
+    fn record_pointer_move(&mut self) {
+        self.pointer_move_events += 1;
+        self.publish_probe();
+    }
+
+    fn record_pointer_cancel(&mut self, reason: PointerCancelReason) {
+        self.pointer_cancel_events += 1;
+        if reason == PointerCancelReason::PlatformCaptureLost {
+            self.platform_capture_lost_events += 1;
+        }
+        if reason == PointerCancelReason::WindowDeactivated {
+            self.window_deactivated_events += 1;
+        }
+        self.publish_probe();
+    }
+
     fn publish_probe(&self) {
         let Some(window) = web_sys::window() else {
             return;
@@ -73,6 +108,31 @@ impl SmokeWeb {
             &probe,
             &"keyEvents".into(),
             &JsValue::from_f64(self.key_events as f64),
+        );
+        let _ = js_sys::Reflect::set(
+            &probe,
+            &"pointerCaptureRequests".into(),
+            &JsValue::from_f64(self.pointer_capture_requests as f64),
+        );
+        let _ = js_sys::Reflect::set(
+            &probe,
+            &"pointerMoveEvents".into(),
+            &JsValue::from_f64(self.pointer_move_events as f64),
+        );
+        let _ = js_sys::Reflect::set(
+            &probe,
+            &"pointerCancelEvents".into(),
+            &JsValue::from_f64(self.pointer_cancel_events as f64),
+        );
+        let _ = js_sys::Reflect::set(
+            &probe,
+            &"platformCaptureLostEvents".into(),
+            &JsValue::from_f64(self.platform_capture_lost_events as f64),
+        );
+        let _ = js_sys::Reflect::set(
+            &probe,
+            &"windowDeactivatedEvents".into(),
+            &JsValue::from_f64(self.window_deactivated_events as f64),
         );
         let _ = js_sys::Reflect::set(
             &probe,
@@ -128,6 +188,27 @@ impl Render for SmokeWeb {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.publish_probe();
         let focus_handle = self.focus_handle.clone();
+        let pointer_capture = self.pointer_capture;
+        let cancel_probe = cx.entity().downgrade();
+        let cancel_listener = canvas(
+            |_, _, _| (),
+            move |_, _, window, _| {
+                let cancel_probe = cancel_probe.clone();
+                window.on_pointer_cancel(move |event: &PointerCancelEvent, phase, _, cx| {
+                    if phase != DispatchPhase::Bubble {
+                        return;
+                    }
+                    cancel_probe
+                        .update(cx, |this, cx| {
+                            this.record_pointer_cancel(event.reason);
+                            cx.notify();
+                        })
+                        .ok();
+                });
+            },
+        )
+        .absolute()
+        .size_full();
 
         div()
             .id("smoke-root")
@@ -138,6 +219,18 @@ impl Render for SmokeWeb {
             .items_center()
             .justify_center()
             .track_focus(&focus_handle)
+            .track_pointer_capture(&pointer_capture)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                    window
+                        .capture_pointer(&pointer_capture, MouseButton::Left)
+                        .expect("web smoke pointer owner must capture after pointer down");
+                    this.record_pointer_capture_request();
+                    cx.notify();
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, _, _, _| this.record_pointer_move()))
             .on_click(cx.listener(move |this, _event, window, cx| {
                 this.record_click();
                 this.focus_handle.focus(window, cx);
@@ -147,6 +240,7 @@ impl Render for SmokeWeb {
                 this.record_key(event);
                 cx.notify();
             }))
+            .child(cancel_listener)
             .child(
                 div()
                     .id("smoke-shell")
@@ -254,7 +348,9 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|cx| SmokeWeb::new(platform_viewport_windows, docking_probe, cx)),
+            |window, cx| {
+                cx.new(|cx| SmokeWeb::new(platform_viewport_windows, docking_probe, window, cx))
+            },
         )
         .expect("failed to open smoke window");
         cx.activate(true);

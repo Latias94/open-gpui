@@ -43,11 +43,15 @@ fn mouse_button_mask(button: MouseButton) -> u8 {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct WindowsPointerCaptureState {
     pressed_buttons: u8,
+    owns_native_capture: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum WindowsPointerCaptureInput {
-    ButtonDown(MouseButton),
+    ButtonDown {
+        button: MouseButton,
+        acquire_native_capture: bool,
+    },
     ButtonUp(MouseButton),
     Cancel(PointerCancelReason),
 }
@@ -66,6 +70,24 @@ enum WindowsClientMouseButtonMessage {
     Up(MouseButton),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WindowsCaptionButtonAction {
+    Minimize,
+    ToggleMaximize,
+    Close,
+}
+
+impl WindowsCaptionButtonAction {
+    fn from_hit_test(hit_test: u32) -> Option<Self> {
+        match hit_test {
+            HTMINBUTTON => Some(Self::Minimize),
+            HTMAXBUTTON => Some(Self::ToggleMaximize),
+            HTCLOSE => Some(Self::Close),
+            _ => None,
+        }
+    }
+}
+
 impl WindowsClientMouseButtonMessage {
     fn button(self) -> MouseButton {
         match self {
@@ -73,9 +95,12 @@ impl WindowsClientMouseButtonMessage {
         }
     }
 
-    fn capture_input(self) -> WindowsPointerCaptureInput {
+    fn capture_input(self, acquire_native_capture: bool) -> WindowsPointerCaptureInput {
         match self {
-            Self::Down(button) => WindowsPointerCaptureInput::ButtonDown(button),
+            Self::Down(button) => WindowsPointerCaptureInput::ButtonDown {
+                button,
+                acquire_native_capture,
+            },
             Self::Up(button) => WindowsPointerCaptureInput::ButtonUp(button),
         }
     }
@@ -128,25 +153,46 @@ fn decode_client_mouse_button_message(
 }
 
 impl WindowsPointerCaptureState {
+    fn is_button_pressed(self, button: MouseButton) -> bool {
+        self.pressed_buttons & mouse_button_mask(button) != 0
+    }
+
     fn transition(self, input: WindowsPointerCaptureInput) -> (Self, WindowsPointerCaptureEffect) {
         match input {
-            WindowsPointerCaptureInput::ButtonDown(button) => {
+            WindowsPointerCaptureInput::ButtonDown {
+                button,
+                acquire_native_capture,
+            } => {
                 let pressed_buttons = self.pressed_buttons | mouse_button_mask(button);
-                let effect = if self.pressed_buttons == 0 {
+                let acquire_native_capture = acquire_native_capture && !self.owns_native_capture;
+                let effect = if acquire_native_capture {
                     WindowsPointerCaptureEffect::Acquire
                 } else {
                     WindowsPointerCaptureEffect::None
                 };
-                (Self { pressed_buttons }, effect)
+                (
+                    Self {
+                        pressed_buttons,
+                        owns_native_capture: self.owns_native_capture || acquire_native_capture,
+                    },
+                    effect,
+                )
             }
             WindowsPointerCaptureInput::ButtonUp(button) => {
                 let pressed_buttons = self.pressed_buttons & !mouse_button_mask(button);
-                let effect = if self.pressed_buttons != 0 && pressed_buttons == 0 {
+                let session_ended = self.pressed_buttons != 0 && pressed_buttons == 0;
+                let effect = if session_ended && self.owns_native_capture {
                     WindowsPointerCaptureEffect::Release
                 } else {
                     WindowsPointerCaptureEffect::None
                 };
-                (Self { pressed_buttons }, effect)
+                (
+                    Self {
+                        pressed_buttons,
+                        owns_native_capture: self.owns_native_capture && !session_ended,
+                    },
+                    effect,
+                )
             }
             WindowsPointerCaptureInput::Cancel(reason) if self.pressed_buttons != 0 => {
                 (Self::default(), WindowsPointerCaptureEffect::Cancel(reason))
@@ -253,8 +299,25 @@ fn dispatch_windows_pointer_cancel(
 
 struct WindowsClientPointerBoundary<'a> {
     pointer_capture: &'a Cell<WindowsPointerCaptureState>,
+    pressed_caption_button: &'a Cell<Option<WindowsCaptionButtonAction>>,
     callbacks: &'a Callbacks,
     dispatch_state: &'a Cell<WindowsInputDispatchState>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct WindowsNonClientButtonOutcome {
+    consumed: bool,
+    caption_action: Option<WindowsCaptionButtonAction>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct WindowsPointerCancelOutcome {
+    canceled: bool,
+    release_native_capture: bool,
+}
+
+struct WindowsNonClientPointerBoundary<'a> {
+    pointer: WindowsClientPointerBoundary<'a>,
 }
 
 impl WindowsClientPointerBoundary<'_> {
@@ -264,12 +327,52 @@ impl WindowsClientPointerBoundary<'_> {
         position: Point<Pixels>,
         modifiers: Modifiers,
         click_count: usize,
+        apply_capture_effect: impl FnMut(WindowsPointerCaptureEffect),
+    ) -> Option<isize> {
+        if message == WindowsClientMouseButtonMessage::Up(MouseButton::Left) {
+            self.pressed_caption_button.take();
+        }
+        self.handle_button_message_with_capture_policy(
+            message,
+            position,
+            modifiers,
+            click_count,
+            true,
+            apply_capture_effect,
+        )
+    }
+
+    fn handle_non_client_button_message(
+        &self,
+        message: WindowsClientMouseButtonMessage,
+        position: Point<Pixels>,
+        modifiers: Modifiers,
+        click_count: usize,
+        apply_capture_effect: impl FnMut(WindowsPointerCaptureEffect),
+    ) -> Option<isize> {
+        self.handle_button_message_with_capture_policy(
+            message,
+            position,
+            modifiers,
+            click_count,
+            false,
+            apply_capture_effect,
+        )
+    }
+
+    fn handle_button_message_with_capture_policy(
+        &self,
+        message: WindowsClientMouseButtonMessage,
+        position: Point<Pixels>,
+        modifiers: Modifiers,
+        click_count: usize,
+        acquire_native_capture: bool,
         mut apply_capture_effect: impl FnMut(WindowsPointerCaptureEffect),
     ) -> Option<isize> {
         let (next_capture, capture_effect) = self
             .pointer_capture
             .get()
-            .transition(message.capture_input());
+            .transition(message.capture_input(acquire_native_capture));
         self.pointer_capture.set(next_capture);
         if capture_effect == WindowsPointerCaptureEffect::Acquire {
             apply_capture_effect(capture_effect);
@@ -293,17 +396,92 @@ impl WindowsClientPointerBoundary<'_> {
         result
     }
 
-    fn handle_pointer_cancel(&self, reason: PointerCancelReason) -> bool {
+    fn handle_pointer_cancel(&self, reason: PointerCancelReason) -> WindowsPointerCancelOutcome {
+        self.pressed_caption_button.take();
+        let release_native_capture = self.pointer_capture.get().owns_native_capture;
         let (next_capture, effect) = self
             .pointer_capture
             .get()
             .transition(WindowsPointerCaptureInput::Cancel(reason));
         self.pointer_capture.set(next_capture);
         let WindowsPointerCaptureEffect::Cancel(reason) = effect else {
-            return false;
+            return WindowsPointerCancelOutcome::default();
         };
         dispatch_windows_pointer_cancel(self.callbacks, self.dispatch_state, reason);
-        true
+        WindowsPointerCancelOutcome {
+            canceled: true,
+            release_native_capture,
+        }
+    }
+}
+
+impl WindowsNonClientPointerBoundary<'_> {
+    fn handle_button_message(
+        &self,
+        message: WindowsClientMouseButtonMessage,
+        hit_test: u32,
+        position: Point<Pixels>,
+        modifiers: Modifiers,
+        click_count: usize,
+        apply_capture_effect: impl FnMut(WindowsPointerCaptureEffect),
+    ) -> WindowsNonClientButtonOutcome {
+        if message == WindowsClientMouseButtonMessage::Down(MouseButton::Left) {
+            self.pointer.pressed_caption_button.take();
+        }
+        let consumed = self.pointer.handle_non_client_button_message(
+            message,
+            position,
+            modifiers,
+            click_count,
+            apply_capture_effect,
+        ) == Some(0);
+        if consumed {
+            if message == WindowsClientMouseButtonMessage::Up(MouseButton::Left) {
+                self.pointer.pressed_caption_button.take();
+            }
+            return WindowsNonClientButtonOutcome {
+                consumed: true,
+                caption_action: None,
+            };
+        }
+
+        match message {
+            WindowsClientMouseButtonMessage::Down(MouseButton::Left) => {
+                let caption_action = WindowsCaptionButtonAction::from_hit_test(hit_test);
+                if caption_action.is_some()
+                    && self
+                        .pointer
+                        .pointer_capture
+                        .get()
+                        .is_button_pressed(MouseButton::Left)
+                {
+                    self.pointer.pressed_caption_button.set(caption_action);
+                }
+                WindowsNonClientButtonOutcome {
+                    consumed: caption_action.is_some(),
+                    caption_action: None,
+                }
+            }
+            WindowsClientMouseButtonMessage::Up(MouseButton::Left) => {
+                let released_caption_button = WindowsCaptionButtonAction::from_hit_test(hit_test);
+                let caption_action = self
+                    .pointer
+                    .pressed_caption_button
+                    .take()
+                    .filter(|pressed| Some(*pressed) == released_caption_button);
+                WindowsNonClientButtonOutcome {
+                    consumed: caption_action.is_some(),
+                    caption_action,
+                }
+            }
+            WindowsClientMouseButtonMessage::Down(_) | WindowsClientMouseButtonMessage::Up(_) => {
+                WindowsNonClientButtonOutcome::default()
+            }
+        }
+    }
+
+    fn handle_pointer_cancel(&self, reason: PointerCancelReason) -> WindowsPointerCancelOutcome {
+        self.pointer.handle_pointer_cancel(reason)
     }
 }
 
@@ -315,8 +493,15 @@ impl WindowsWindowInner {
     fn client_pointer_boundary(&self) -> WindowsClientPointerBoundary<'_> {
         WindowsClientPointerBoundary {
             pointer_capture: &self.state.pointer_capture,
+            pressed_caption_button: &self.state.pressed_caption_button,
             callbacks: &self.state.callbacks,
             dispatch_state: &self.state.input_dispatch,
+        }
+    }
+
+    fn non_client_pointer_boundary(&self) -> WindowsNonClientPointerBoundary<'_> {
+        WindowsNonClientPointerBoundary {
+            pointer: self.client_pointer_boundary(),
         }
     }
 
@@ -730,15 +915,17 @@ impl WindowsWindowInner {
     }
 
     fn handle_pointer_capture_lost_msg(&self) -> Option<isize> {
-        self.client_pointer_boundary()
+        self.non_client_pointer_boundary()
             .handle_pointer_cancel(PointerCancelReason::PlatformCaptureLost)
+            .canceled
             .then_some(0)
     }
 
     fn handle_cancel_mode_msg(&self, handle: HWND) -> Option<isize> {
-        self.client_pointer_boundary()
+        let outcome = self
+            .non_client_pointer_boundary()
             .handle_pointer_cancel(PointerCancelReason::PlatformCaptureLost);
-        if unsafe { GetCapture() } == handle {
+        if outcome.release_native_capture && unsafe { GetCapture() } == handle {
             unsafe { ReleaseCapture().log_err() };
         }
         None
@@ -999,10 +1186,12 @@ impl WindowsWindowInner {
 
         if !activated {
             this.state.cursor_visible.store(true, Ordering::Relaxed);
-            this.state
-                .pointer_capture
-                .set(WindowsPointerCaptureState::default());
-            if unsafe { GetCapture() } == this.platform_window_handle {
+            let outcome = this
+                .non_client_pointer_boundary()
+                .handle_pointer_cancel(PointerCancelReason::WindowDeactivated);
+            if outcome.release_native_capture
+                && unsafe { GetCapture() } == this.platform_window_handle
+            {
                 unsafe { ReleaseCapture().log_err() };
             }
         }
@@ -1239,32 +1428,16 @@ impl WindowsWindowInner {
         let physical_point = point(DevicePixels(cursor_point.x), DevicePixels(cursor_point.y));
         let click_count = self.state.click_state.update(button, physical_point);
 
-        let input = PlatformInput::MouseDown(MouseDownEvent {
-            button,
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            modifiers: current_modifiers(),
+        let position = logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor);
+        let outcome = self.non_client_pointer_boundary().handle_button_message(
+            WindowsClientMouseButtonMessage::Down(button),
+            wparam.0 as u32,
+            position,
+            current_modifiers(),
             click_count,
-            first_mouse: false,
-        });
-        if self
-            .dispatch_input(input)
-            .is_some_and(|result| !result.propagate)
-        {
-            return Some(0);
-        }
-
-        // Since these are handled in handle_nc_mouse_up_msg we must prevent the default window proc
-        if button == MouseButton::Left {
-            match wparam.0 as u32 {
-                HTMINBUTTON => self.state.nc_button_pressed.set(Some(HTMINBUTTON)),
-                HTMAXBUTTON => self.state.nc_button_pressed.set(Some(HTMAXBUTTON)),
-                HTCLOSE => self.state.nc_button_pressed.set(Some(HTCLOSE)),
-                _ => return None,
-            };
-            Some(0)
-        } else {
-            None
-        }
+            |effect| self.apply_native_pointer_capture_effect(handle, effect),
+        );
+        outcome.consumed.then_some(0)
     }
 
     fn handle_nc_mouse_up_msg(
@@ -1281,51 +1454,36 @@ impl WindowsWindowInner {
             y: lparam.signed_hiword().into(),
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let input = PlatformInput::MouseUp(MouseUpEvent {
-            button,
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            modifiers: current_modifiers(),
-            click_count: 1,
-        });
-        if self
-            .dispatch_input(input)
-            .is_some_and(|result| !result.propagate)
-        {
-            return Some(0);
-        }
-
-        let last_pressed = self.state.nc_button_pressed.take();
-        if button == MouseButton::Left
-            && let Some(last_pressed) = last_pressed
-        {
-            let handled = match (wparam.0 as u32, last_pressed) {
-                (HTMINBUTTON, HTMINBUTTON) => {
+        let position = logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor);
+        let outcome = self.non_client_pointer_boundary().handle_button_message(
+            WindowsClientMouseButtonMessage::Up(button),
+            wparam.0 as u32,
+            position,
+            current_modifiers(),
+            1,
+            |effect| self.apply_native_pointer_capture_effect(handle, effect),
+        );
+        if let Some(caption_action) = outcome.caption_action {
+            match caption_action {
+                WindowsCaptionButtonAction::Minimize => {
                     unsafe { ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err() };
-                    true
                 }
-                (HTMAXBUTTON, HTMAXBUTTON) => {
+                WindowsCaptionButtonAction::ToggleMaximize => {
                     if self.state.is_maximized() {
                         unsafe { ShowWindowAsync(handle, SW_NORMAL).ok().log_err() };
                     } else {
                         unsafe { ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err() };
                     }
-                    true
                 }
-                (HTCLOSE, HTCLOSE) => {
+                WindowsCaptionButtonAction::Close => {
                     unsafe {
                         PostMessageW(Some(handle), WM_CLOSE, WPARAM::default(), LPARAM::default())
                             .log_err()
                     };
-                    true
                 }
-                _ => false,
-            };
-            if handled {
-                return Some(0);
             }
         }
-
-        None
+        outcome.consumed.then_some(0)
     }
 
     fn handle_set_cursor(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
@@ -1937,7 +2095,8 @@ mod tests {
     };
 
     use super::{
-        WindowsClientPointerBoundary, WindowsInputDispatchState, WindowsPointerCaptureEffect,
+        WindowsCaptionButtonAction, WindowsClientMouseButtonMessage, WindowsClientPointerBoundary,
+        WindowsInputDispatchState, WindowsNonClientPointerBoundary, WindowsPointerCaptureEffect,
         WindowsPointerCaptureInput, WindowsPointerCaptureState, decode_client_mouse_button_message,
         hit_test_window_control_area,
     };
@@ -1945,12 +2104,18 @@ mod tests {
 
     #[test]
     fn pointer_capture_tracks_first_companion_and_final_buttons() {
-        let (state, effect) = WindowsPointerCaptureState::default()
-            .transition(WindowsPointerCaptureInput::ButtonDown(MouseButton::Left));
+        let (state, effect) = WindowsPointerCaptureState::default().transition(
+            WindowsPointerCaptureInput::ButtonDown {
+                button: MouseButton::Left,
+                acquire_native_capture: true,
+            },
+        );
         assert_eq!(effect, WindowsPointerCaptureEffect::Acquire);
 
-        let (state, effect) =
-            state.transition(WindowsPointerCaptureInput::ButtonDown(MouseButton::Right));
+        let (state, effect) = state.transition(WindowsPointerCaptureInput::ButtonDown {
+            button: MouseButton::Right,
+            acquire_native_capture: true,
+        });
         assert_eq!(effect, WindowsPointerCaptureEffect::None);
 
         let (state, effect) =
@@ -1992,8 +2157,10 @@ mod tests {
         }));
         let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
         let dispatch_state = Cell::new(WindowsInputDispatchState::default());
+        let pressed_caption_button = Cell::new(None);
         let boundary = WindowsClientPointerBoundary {
             pointer_capture: &pointer_capture,
+            pressed_caption_button: &pressed_caption_button,
             callbacks: &callbacks,
             dispatch_state: &dispatch_state,
         };
@@ -2052,18 +2219,28 @@ mod tests {
                 DispatchEventResult::default()
             }
         }));
-        let (active_capture, _) = WindowsPointerCaptureState::default()
-            .transition(WindowsPointerCaptureInput::ButtonDown(MouseButton::Left));
+        let (active_capture, _) = WindowsPointerCaptureState::default().transition(
+            WindowsPointerCaptureInput::ButtonDown {
+                button: MouseButton::Left,
+                acquire_native_capture: true,
+            },
+        );
         let pointer_capture = Cell::new(active_capture);
         let dispatch_state = Cell::new(WindowsInputDispatchState::default());
+        let pressed_caption_button = Cell::new(None);
         let boundary = WindowsClientPointerBoundary {
             pointer_capture: &pointer_capture,
+            pressed_caption_button: &pressed_caption_button,
             callbacks: &callbacks,
             dispatch_state: &dispatch_state,
         };
 
-        assert!(boundary.handle_pointer_cancel(PointerCancelReason::PlatformCaptureLost));
-        assert!(!boundary.handle_pointer_cancel(PointerCancelReason::PlatformCaptureLost));
+        let cancel = boundary.handle_pointer_cancel(PointerCancelReason::PlatformCaptureLost);
+        assert!(cancel.canceled);
+        assert!(cancel.release_native_capture);
+        let duplicate = boundary.handle_pointer_cancel(PointerCancelReason::PlatformCaptureLost);
+        assert!(!duplicate.canceled);
+        assert!(!duplicate.release_native_capture);
 
         assert_eq!(
             observed.borrow().as_slice(),
@@ -2074,9 +2251,492 @@ mod tests {
     }
 
     #[test]
+    fn non_client_button_session_cancels_once_without_acquiring_native_capture() {
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let callbacks = Callbacks::default();
+        callbacks.set_input(Box::new({
+            let observed = observed.clone();
+            move |input| {
+                match input {
+                    PlatformInput::MouseDown(event) => {
+                        observed.borrow_mut().push(Ok(event.button));
+                    }
+                    PlatformInput::PointerCanceled(event) => {
+                        observed.borrow_mut().push(Err(event.reason));
+                    }
+                    _ => {}
+                }
+                DispatchEventResult::default()
+            }
+        }));
+        let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
+        let dispatch_state = Cell::new(WindowsInputDispatchState::default());
+        let pressed_caption_button = Cell::new(None);
+        let boundary = WindowsClientPointerBoundary {
+            pointer_capture: &pointer_capture,
+            pressed_caption_button: &pressed_caption_button,
+            callbacks: &callbacks,
+            dispatch_state: &dispatch_state,
+        };
+        let mut native_effects = Vec::new();
+
+        boundary.handle_non_client_button_message(
+            WindowsClientMouseButtonMessage::Down(MouseButton::Left),
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |effect| native_effects.push(effect),
+        );
+
+        assert_ne!(pointer_capture.get(), WindowsPointerCaptureState::default());
+        assert!(native_effects.is_empty());
+        let cancel = boundary.handle_pointer_cancel(PointerCancelReason::PlatformCaptureLost);
+        assert!(cancel.canceled);
+        assert!(!cancel.release_native_capture);
+        let duplicate = boundary.handle_pointer_cancel(PointerCancelReason::PlatformCaptureLost);
+        assert!(!duplicate.canceled);
+        assert!(!duplicate.release_native_capture);
+        assert_eq!(
+            observed.borrow().as_slice(),
+            &[
+                Ok(MouseButton::Left),
+                Err(PointerCancelReason::PlatformCaptureLost),
+            ]
+        );
+    }
+
+    #[test]
+    fn non_client_button_session_never_changes_native_capture() {
+        let callbacks = Callbacks::default();
+        callbacks.set_input(Box::new(|_| DispatchEventResult::default()));
+        let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
+        let dispatch_state = Cell::new(WindowsInputDispatchState::default());
+        let pressed_caption_button = Cell::new(None);
+        let boundary = WindowsClientPointerBoundary {
+            pointer_capture: &pointer_capture,
+            pressed_caption_button: &pressed_caption_button,
+            callbacks: &callbacks,
+            dispatch_state: &dispatch_state,
+        };
+        let mut native_effects = Vec::new();
+
+        for message in [
+            WindowsClientMouseButtonMessage::Down(MouseButton::Left),
+            WindowsClientMouseButtonMessage::Up(MouseButton::Left),
+        ] {
+            boundary.handle_non_client_button_message(
+                message,
+                Point::default(),
+                Modifiers::default(),
+                1,
+                |effect| native_effects.push(effect),
+            );
+        }
+
+        assert!(native_effects.is_empty());
+        assert_eq!(pointer_capture.get(), WindowsPointerCaptureState::default());
+    }
+
+    #[test]
+    fn client_owned_capture_releases_when_final_up_arrives_non_client() {
+        let callbacks = Callbacks::default();
+        callbacks.set_input(Box::new(|_| DispatchEventResult::default()));
+        let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
+        let dispatch_state = Cell::new(WindowsInputDispatchState::default());
+        let pressed_caption_button = Cell::new(None);
+        let boundary = WindowsClientPointerBoundary {
+            pointer_capture: &pointer_capture,
+            pressed_caption_button: &pressed_caption_button,
+            callbacks: &callbacks,
+            dispatch_state: &dispatch_state,
+        };
+        let mut native_effects = Vec::new();
+
+        boundary.handle_button_message(
+            WindowsClientMouseButtonMessage::Down(MouseButton::Left),
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |effect| native_effects.push(effect),
+        );
+        boundary.handle_non_client_button_message(
+            WindowsClientMouseButtonMessage::Up(MouseButton::Left),
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |effect| native_effects.push(effect),
+        );
+
+        assert_eq!(
+            native_effects,
+            [
+                WindowsPointerCaptureEffect::Acquire,
+                WindowsPointerCaptureEffect::Release,
+            ]
+        );
+        assert_eq!(pointer_capture.get(), WindowsPointerCaptureState::default());
+    }
+
+    #[test]
+    fn non_left_up_does_not_terminate_left_caption_session() {
+        let callbacks = Callbacks::default();
+        callbacks.set_input(Box::new(|_| DispatchEventResult::default()));
+        let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
+        let dispatch_state = Cell::new(WindowsInputDispatchState::default());
+        let pressed_caption_button = Cell::new(None);
+        let boundary = WindowsNonClientPointerBoundary {
+            pointer: WindowsClientPointerBoundary {
+                pointer_capture: &pointer_capture,
+                pressed_caption_button: &pressed_caption_button,
+                callbacks: &callbacks,
+                dispatch_state: &dispatch_state,
+            },
+        };
+
+        boundary.handle_button_message(
+            WindowsClientMouseButtonMessage::Down(MouseButton::Left),
+            HTCLOSE,
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |_| {},
+        );
+        let right_up = boundary.handle_button_message(
+            WindowsClientMouseButtonMessage::Up(MouseButton::Right),
+            HTCLOSE,
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |_| {},
+        );
+
+        assert_eq!(right_up.caption_action, None);
+        assert_eq!(
+            pressed_caption_button.get(),
+            Some(WindowsCaptionButtonAction::Close)
+        );
+
+        let left_up = boundary.handle_button_message(
+            WindowsClientMouseButtonMessage::Up(MouseButton::Left),
+            HTCLOSE,
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |_| {},
+        );
+        assert_eq!(
+            left_up.caption_action,
+            Some(WindowsCaptionButtonAction::Close)
+        );
+    }
+
+    #[test]
+    fn non_client_caption_down_then_client_left_up_terminates_without_native_release() {
+        let callbacks = Callbacks::default();
+        callbacks.set_input(Box::new(|_| DispatchEventResult::default()));
+        let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
+        let dispatch_state = Cell::new(WindowsInputDispatchState::default());
+        let pressed_caption_button = Cell::new(None);
+        let boundary = WindowsNonClientPointerBoundary {
+            pointer: WindowsClientPointerBoundary {
+                pointer_capture: &pointer_capture,
+                pressed_caption_button: &pressed_caption_button,
+                callbacks: &callbacks,
+                dispatch_state: &dispatch_state,
+            },
+        };
+        let mut native_effects = Vec::new();
+
+        let down = boundary.handle_button_message(
+            WindowsClientMouseButtonMessage::Down(MouseButton::Left),
+            HTCLOSE,
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |effect| native_effects.push(effect),
+        );
+        assert!(down.consumed);
+
+        boundary.pointer.handle_button_message(
+            WindowsClientMouseButtonMessage::Up(MouseButton::Left),
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |effect| native_effects.push(effect),
+        );
+
+        assert!(native_effects.is_empty());
+        assert_eq!(pressed_caption_button.get(), None);
+
+        let later_non_client_up = boundary.handle_button_message(
+            WindowsClientMouseButtonMessage::Up(MouseButton::Left),
+            HTCLOSE,
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |effect| native_effects.push(effect),
+        );
+        assert_eq!(later_non_client_up.caption_action, None);
+        assert!(native_effects.is_empty());
+    }
+
+    #[test]
+    fn canceled_non_client_caption_button_cannot_commit_on_later_up() {
+        let callbacks = Callbacks::default();
+        callbacks.set_input(Box::new(|_| DispatchEventResult::default()));
+        let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
+        let dispatch_state = Cell::new(WindowsInputDispatchState::default());
+        let pressed_caption_button = Cell::new(None);
+        let boundary = WindowsNonClientPointerBoundary {
+            pointer: WindowsClientPointerBoundary {
+                pointer_capture: &pointer_capture,
+                pressed_caption_button: &pressed_caption_button,
+                callbacks: &callbacks,
+                dispatch_state: &dispatch_state,
+            },
+        };
+
+        let down = boundary.handle_button_message(
+            WindowsClientMouseButtonMessage::Down(MouseButton::Left),
+            HTCLOSE,
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |_| {},
+        );
+        assert!(down.consumed);
+        assert_eq!(down.caption_action, None);
+        assert_eq!(
+            pressed_caption_button.get(),
+            Some(WindowsCaptionButtonAction::Close)
+        );
+
+        assert!(
+            boundary
+                .handle_pointer_cancel(PointerCancelReason::PlatformCaptureLost)
+                .canceled
+        );
+        assert_eq!(pressed_caption_button.get(), None);
+
+        let up = boundary.handle_button_message(
+            WindowsClientMouseButtonMessage::Up(MouseButton::Left),
+            HTCLOSE,
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |_| {},
+        );
+        assert!(!up.consumed);
+        assert_eq!(up.caption_action, None);
+    }
+
+    #[test]
+    fn consumed_non_client_caption_button_up_clears_pending_action() {
+        let callbacks = Callbacks::default();
+        callbacks.set_input(Box::new(|input| DispatchEventResult {
+            propagate: !matches!(input, PlatformInput::MouseUp(_)),
+            default_prevented: false,
+        }));
+        let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
+        let dispatch_state = Cell::new(WindowsInputDispatchState::default());
+        let pressed_caption_button = Cell::new(None);
+        let boundary = WindowsNonClientPointerBoundary {
+            pointer: WindowsClientPointerBoundary {
+                pointer_capture: &pointer_capture,
+                pressed_caption_button: &pressed_caption_button,
+                callbacks: &callbacks,
+                dispatch_state: &dispatch_state,
+            },
+        };
+
+        boundary.handle_button_message(
+            WindowsClientMouseButtonMessage::Down(MouseButton::Left),
+            HTCLOSE,
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |_| {},
+        );
+        let up = boundary.handle_button_message(
+            WindowsClientMouseButtonMessage::Up(MouseButton::Left),
+            HTCLOSE,
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |_| {},
+        );
+
+        assert!(up.consumed);
+        assert_eq!(up.caption_action, None);
+        assert_eq!(pressed_caption_button.get(), None);
+    }
+
+    #[test]
+    fn reentrant_cancel_during_non_client_down_does_not_restore_caption_action() {
+        let pointer_capture = Rc::new(Cell::new(WindowsPointerCaptureState::default()));
+        let pressed_caption_button = Rc::new(Cell::new(None));
+        let callbacks = Callbacks::default();
+        callbacks.set_input(Box::new({
+            let pointer_capture = pointer_capture.clone();
+            let pressed_caption_button = pressed_caption_button.clone();
+            move |input| {
+                if matches!(input, PlatformInput::MouseDown(_)) {
+                    let (next_capture, _) =
+                        pointer_capture
+                            .get()
+                            .transition(WindowsPointerCaptureInput::Cancel(
+                                PointerCancelReason::PlatformCaptureLost,
+                            ));
+                    pointer_capture.set(next_capture);
+                    pressed_caption_button.take();
+                }
+                DispatchEventResult::default()
+            }
+        }));
+        let dispatch_state = Cell::new(WindowsInputDispatchState::default());
+        let boundary = WindowsNonClientPointerBoundary {
+            pointer: WindowsClientPointerBoundary {
+                pointer_capture: pointer_capture.as_ref(),
+                pressed_caption_button: pressed_caption_button.as_ref(),
+                callbacks: &callbacks,
+                dispatch_state: &dispatch_state,
+            },
+        };
+
+        let down = boundary.handle_button_message(
+            WindowsClientMouseButtonMessage::Down(MouseButton::Left),
+            HTCLOSE,
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |_| {},
+        );
+
+        assert!(down.consumed);
+        assert_eq!(down.caption_action, None);
+        assert_eq!(pressed_caption_button.get(), None);
+        assert_eq!(pointer_capture.get(), WindowsPointerCaptureState::default());
+    }
+
+    #[test]
+    fn reentrant_cancel_during_non_client_up_revokes_caption_action() {
+        let pointer_capture = Rc::new(Cell::new(WindowsPointerCaptureState::default()));
+        let pressed_caption_button = Rc::new(Cell::new(None));
+        let callbacks = Callbacks::default();
+        callbacks.set_input(Box::new({
+            let pointer_capture = pointer_capture.clone();
+            let pressed_caption_button = pressed_caption_button.clone();
+            move |input| {
+                if matches!(input, PlatformInput::MouseUp(_)) {
+                    let (next_capture, _) =
+                        pointer_capture
+                            .get()
+                            .transition(WindowsPointerCaptureInput::Cancel(
+                                PointerCancelReason::PlatformCaptureLost,
+                            ));
+                    pointer_capture.set(next_capture);
+                    pressed_caption_button.take();
+                }
+                DispatchEventResult::default()
+            }
+        }));
+        let dispatch_state = Cell::new(WindowsInputDispatchState::default());
+        let boundary = WindowsNonClientPointerBoundary {
+            pointer: WindowsClientPointerBoundary {
+                pointer_capture: pointer_capture.as_ref(),
+                pressed_caption_button: pressed_caption_button.as_ref(),
+                callbacks: &callbacks,
+                dispatch_state: &dispatch_state,
+            },
+        };
+
+        boundary.handle_button_message(
+            WindowsClientMouseButtonMessage::Down(MouseButton::Left),
+            HTCLOSE,
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |_| {},
+        );
+        let up = boundary.handle_button_message(
+            WindowsClientMouseButtonMessage::Up(MouseButton::Left),
+            HTCLOSE,
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |_| {},
+        );
+
+        assert_eq!(up.caption_action, None);
+        assert_eq!(pressed_caption_button.get(), None);
+        assert_eq!(pointer_capture.get(), WindowsPointerCaptureState::default());
+    }
+
+    #[test]
+    fn window_deactivation_cancels_non_client_caption_session_exactly_once() {
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let callbacks = Callbacks::default();
+        callbacks.set_input(Box::new({
+            let observed = observed.clone();
+            move |input| {
+                if let PlatformInput::PointerCanceled(event) = input {
+                    observed.borrow_mut().push(event.reason);
+                }
+                DispatchEventResult::default()
+            }
+        }));
+        let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
+        let dispatch_state = Cell::new(WindowsInputDispatchState::default());
+        let pressed_caption_button = Cell::new(None);
+        let boundary = WindowsNonClientPointerBoundary {
+            pointer: WindowsClientPointerBoundary {
+                pointer_capture: &pointer_capture,
+                pressed_caption_button: &pressed_caption_button,
+                callbacks: &callbacks,
+                dispatch_state: &dispatch_state,
+            },
+        };
+
+        boundary.handle_button_message(
+            WindowsClientMouseButtonMessage::Down(MouseButton::Left),
+            HTCLOSE,
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |_| {},
+        );
+
+        let cancel = boundary.handle_pointer_cancel(PointerCancelReason::WindowDeactivated);
+        assert!(cancel.canceled);
+        assert!(!cancel.release_native_capture);
+        let duplicate = boundary.handle_pointer_cancel(PointerCancelReason::WindowDeactivated);
+        assert!(!duplicate.canceled);
+        assert!(!duplicate.release_native_capture);
+        assert_eq!(
+            observed.borrow().as_slice(),
+            &[PointerCancelReason::WindowDeactivated]
+        );
+        assert_eq!(pressed_caption_button.get(), None);
+
+        let later_up = boundary.handle_button_message(
+            WindowsClientMouseButtonMessage::Up(MouseButton::Left),
+            HTCLOSE,
+            Point::default(),
+            Modifiers::default(),
+            1,
+            |_| {},
+        );
+        assert_eq!(later_up.caption_action, None);
+    }
+
+    #[test]
     fn pointer_capture_cancel_is_terminal_and_deduplicated() {
-        let (state, _) = WindowsPointerCaptureState::default()
-            .transition(WindowsPointerCaptureInput::ButtonDown(MouseButton::Left));
+        let (state, _) = WindowsPointerCaptureState::default().transition(
+            WindowsPointerCaptureInput::ButtonDown {
+                button: MouseButton::Left,
+                acquire_native_capture: true,
+            },
+        );
         let (state, effect) = state.transition(WindowsPointerCaptureInput::Cancel(
             PointerCancelReason::PlatformCaptureLost,
         ));

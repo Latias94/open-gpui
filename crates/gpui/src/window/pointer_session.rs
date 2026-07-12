@@ -395,7 +395,13 @@ impl Window {
             return;
         }
 
-        if event.is::<MouseMoveEvent>() && cx.has_active_drag() {
+        let window_id = self.handle.window_id();
+        if event.is::<MouseMoveEvent>()
+            && cx
+                .active_drag
+                .as_ref()
+                .is_some_and(|drag| drag.window_id == window_id)
+        {
             self.refresh();
         }
 
@@ -403,7 +409,7 @@ impl Window {
             if cx
                 .active_drag
                 .as_ref()
-                .is_some_and(|drag| drag.button == event.button)
+                .is_some_and(|drag| drag.window_id == window_id && drag.button == event.button)
             {
                 cx.active_drag = None;
                 self.refresh();

@@ -1,17 +1,22 @@
 use std::{
     cell::{Cell, RefCell},
+    ops::Range,
     rc::Rc,
     sync::Arc,
 };
 
 use crate::{
-    AnyDrag, AnyView, AppContext as _, Context, DispatchPhase, Empty, Entity, HitboxBehavior,
-    InteractiveElement, InteractiveText, IntoElement, KeyDownEvent, Keystroke, Modifiers,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PlatformInput,
-    PointerCancelEvent, PointerCancelReason, PointerCaptureError, PointerCaptureHandle, Render,
-    StatefulInteractiveElement, StyleRefinement, Styled, StyledText, TestAppContext, VisualContext,
-    Window, WindowMouseEvent, canvas, deferred, div, point, px, size,
+    AnyDrag, AnyView, App, AppContext as _, Bounds, Context, DispatchPhase, Empty, Entity,
+    FocusHandle, HitboxBehavior, InputHandler, InteractiveElement, InteractiveText, IntoElement,
+    KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, PlatformInput, Point, PointerCancelEvent,
+    PointerCancelReason, PointerCaptureError, PointerCaptureHandle, Render,
+    StatefulInteractiveElement, StyleRefinement, Styled, StyledText, TestAppContext,
+    UTF16Selection, VisualContext, Window, WindowMouseEvent, canvas, deferred, div, point, px,
+    size,
 };
+
+crate::actions!(pointer_session_actions, [RemoveWindowWithPointer]);
 
 fn mouse_down(button: MouseButton, x: f32, y: f32) -> PlatformInput {
     PlatformInput::MouseDown(MouseDownEvent {
@@ -35,6 +40,23 @@ fn mouse_up(button: MouseButton, x: f32, y: f32) -> PlatformInput {
 fn pointer_cancel() -> PlatformInput {
     PlatformInput::PointerCanceled(PointerCancelEvent {
         reason: PointerCancelReason::PlatformCaptureLost,
+    })
+}
+
+fn record_window_close(
+    cx: &mut TestAppContext,
+    lifecycle: Rc<RefCell<Vec<&'static str>>>,
+    close_count: Rc<Cell<usize>>,
+) -> crate::Subscription {
+    cx.update(|cx| {
+        cx.on_window_closed(move |cx, window_id| {
+            close_count.set(close_count.get() + 1);
+            lifecycle.borrow_mut().push("closed");
+            assert!(
+                cx.update_window_id(window_id, |_, _, _| ()).is_err(),
+                "close observers must run after registry removal"
+            );
+        })
     })
 }
 
@@ -183,6 +205,97 @@ struct PointerCaptureProbe {
     events: Rc<RefCell<Vec<(&'static str, usize)>>>,
 }
 
+struct DragPreviewProbe {
+    renders: Rc<Cell<usize>>,
+}
+
+struct ActionWindowRemovalProbe {
+    handle: PointerCaptureHandle,
+    focus: FocusHandle,
+    lifecycle: Rc<RefCell<Vec<&'static str>>>,
+}
+
+struct TextInputWindowRemovalProbe {
+    handle: PointerCaptureHandle,
+    focus: FocusHandle,
+    lifecycle: Rc<RefCell<Vec<&'static str>>>,
+    remove_on_key: bool,
+}
+
+#[derive(Clone)]
+struct WindowRemovalInputHandler {
+    lifecycle: Rc<RefCell<Vec<&'static str>>>,
+}
+
+impl InputHandler for WindowRemovalInputHandler {
+    fn selected_text_range(
+        &mut self,
+        _: bool,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<UTF16Selection> {
+        None
+    }
+
+    fn marked_text_range(&mut self, _: &mut Window, _: &mut App) -> Option<Range<usize>> {
+        None
+    }
+
+    fn text_for_range(
+        &mut self,
+        _: Range<usize>,
+        _: &mut Option<Range<usize>>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<String> {
+        None
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        _: Option<Range<usize>>,
+        _: &str,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.lifecycle.borrow_mut().push("input");
+        window.remove_window(cx);
+        window.remove_window(cx);
+        assert!(!window.removed, "removal must wait for the input callback");
+        self.lifecycle.borrow_mut().push("input-returned");
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _: Option<Range<usize>>,
+        _: &str,
+        _: Option<Range<usize>>,
+        _: &mut Window,
+        _: &mut App,
+    ) {
+    }
+
+    fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
+
+    fn bounds_for_range(
+        &mut self,
+        _: Range<usize>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<Bounds<Pixels>> {
+        None
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        _: Point<Pixels>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<usize> {
+        None
+    }
+}
+
 struct PointerCaptureBindingProbe {
     first: PointerCaptureHandle,
     second: PointerCaptureHandle,
@@ -235,6 +348,85 @@ impl Render for PointerCaptureProbe {
                 move |_, _, _| events.borrow_mut().push(("up", render))
             })
             .into_any_element()
+    }
+}
+
+impl Render for DragPreviewProbe {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.set(self.renders.get() + 1);
+        div().w(px(1.0)).h(px(1.0))
+    }
+}
+
+impl Render for ActionWindowRemovalProbe {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let handle = self.handle;
+        let lifecycle = self.lifecycle.clone();
+        div()
+            .size_full()
+            .track_focus(&self.focus)
+            .track_pointer_capture(&self.handle)
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                window
+                    .capture_pointer(&handle, MouseButton::Left)
+                    .expect("mouse down should establish pointer capture before the action");
+                cx.active_drag = Some(AnyDrag {
+                    window_id: window.window_handle().window_id(),
+                    value: Arc::new("drag"),
+                    view: cx.new(|_| Empty).into(),
+                    cursor_offset: point(px(0.0), px(0.0)),
+                    cursor_style: None,
+                    button: MouseButton::Left,
+                });
+            })
+            .on_action(move |_: &RemoveWindowWithPointer, window, cx| {
+                lifecycle.borrow_mut().push("action");
+                window.remove_window(cx);
+                window.remove_window(cx);
+                lifecycle.borrow_mut().push("action-returned");
+            })
+    }
+}
+
+impl Render for TextInputWindowRemovalProbe {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let handle = self.handle;
+        let key_lifecycle = self.lifecycle.clone();
+        let remove_on_key = self.remove_on_key;
+        let input_focus = self.focus.clone();
+        let input_handler = WindowRemovalInputHandler {
+            lifecycle: self.lifecycle.clone(),
+        };
+        div()
+            .id("text-input-window-removal-probe")
+            .size_full()
+            .focusable()
+            .track_focus(&self.focus)
+            .track_pointer_capture(&self.handle)
+            .on_mouse_down(MouseButton::Left, move |_, window, _| {
+                window
+                    .capture_pointer(&handle, MouseButton::Left)
+                    .expect("mouse down should establish pointer capture before text input");
+            })
+            .on_key_down(move |_, window, cx| {
+                key_lifecycle.borrow_mut().push("key");
+                if remove_on_key {
+                    window.remove_window(cx);
+                    window.remove_window(cx);
+                    assert!(!window.removed, "removal must wait for the key callback");
+                }
+                key_lifecycle.borrow_mut().push("key-returned");
+            })
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |_, _, window, cx| {
+                        window.handle_input(&input_focus, input_handler.clone(), cx);
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
     }
 }
 
@@ -693,6 +885,7 @@ fn pointer_capture_releases_when_owner_is_absent_from_the_next_frame(cx: &mut Te
     let visible = Rc::new(Cell::new(true));
     let render_count = Rc::new(Cell::new(0));
     let events = Rc::new(RefCell::new(Vec::new()));
+    let cancellations = Rc::new(RefCell::new(Vec::new()));
     let (view, cx) = cx.add_window_view({
         let visible = visible.clone();
         let render_count = render_count.clone();
@@ -708,6 +901,15 @@ fn pointer_capture_releases_when_owner_is_absent_from_the_next_frame(cx: &mut Te
     cx.run_until_parked();
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
     cx.update(|window, cx| window.draw(cx).clear());
+    let handle = cx.update_window_entity(&view, |view, _, _| view.handle);
+    let _cancel_subscription = cx.update(|window, _| {
+        let cancellations = cancellations.clone();
+        window.intercept_mouse_events(move |event, _, _| {
+            if let WindowMouseEvent::Cancel(event) = event {
+                cancellations.borrow_mut().push(event.reason);
+            }
+        })
+    });
 
     cx.update(|window, cx| {
         window.dispatch_event(
@@ -719,14 +921,39 @@ fn pointer_capture_releases_when_owner_is_absent_from_the_next_frame(cx: &mut Te
                 first_mouse: false,
             }),
             cx,
-        )
+        );
+        cx.active_drag = Some(AnyDrag {
+            window_id: window.window_handle().window_id(),
+            value: Arc::new("drag"),
+            view: cx.new(|_| Empty).into(),
+            cursor_offset: point(px(0.0), px(0.0)),
+            cursor_style: None,
+            button: MouseButton::Left,
+        });
     });
     assert!(cx.update(|window, _| window.captured_pointer().is_some()));
 
     visible.set(false);
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
-    assert!(cx.update(|window, _| window.captured_pointer().is_none()));
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+        window.draw(cx).clear();
+    });
+    assert_eq!(
+        cancellations.borrow().as_slice(),
+        &[PointerCancelReason::CaptureRevoked]
+    );
+    cx.update(|window, cx| {
+        assert!(window.captured_pointer().is_none());
+        assert!(cx.active_drag.is_none());
+        assert!(!window.has_active_pointer_session(cx));
+        assert_eq!(
+            window.capture_pointer(&handle, MouseButton::Left),
+            Err(PointerCaptureError::ButtonNotPressed {
+                button: MouseButton::Left,
+            })
+        );
+    });
 
     events.borrow_mut().clear();
     cx.update(|window, cx| {
@@ -740,6 +967,110 @@ fn pointer_capture_releases_when_owner_is_absent_from_the_next_frame(cx: &mut Te
         )
     });
     assert!(events.borrow().is_empty());
+}
+
+#[open_gpui::test]
+fn completed_missing_owner_frame_revokes_before_a_later_rebind(cx: &mut TestAppContext) {
+    let visible = Rc::new(Cell::new(true));
+    let render_count = Rc::new(Cell::new(0));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let cancellations = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view({
+        let visible = visible.clone();
+        let render_count = render_count.clone();
+        let events = events.clone();
+        move |window, _| PointerCaptureProbe {
+            handle: window.new_pointer_capture_handle(),
+            visible,
+            render_count,
+            events,
+        }
+    });
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| window.draw(cx).clear());
+    let _cancel_subscription = cx.update(|window, _| {
+        let cancellations = cancellations.clone();
+        window.intercept_mouse_events(move |event, _, _| {
+            if let WindowMouseEvent::Cancel(event) = event {
+                cancellations.borrow_mut().push(event.reason);
+            }
+        })
+    });
+    cx.update(|window, cx| {
+        window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
+    });
+    assert!(cx.update(|window, _| window.captured_pointer().is_some()));
+
+    visible.set(false);
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    let rebound_visible = visible.clone();
+    let rebound_view = view.clone();
+    cx.update(|window, cx| {
+        window.defer(cx, move |window, cx| {
+            rebound_visible.set(true);
+            rebound_view.update(cx, |_, cx| cx.notify());
+            window.draw(cx).clear();
+        });
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        cancellations.borrow().as_slice(),
+        &[PointerCancelReason::CaptureRevoked]
+    );
+    assert!(cx.update(|window, _| window.captured_pointer().is_none()));
+}
+
+#[open_gpui::test]
+fn completed_missing_owner_frame_does_not_duplicate_cancellation_on_later_window_close(
+    cx: &mut TestAppContext,
+) {
+    let visible = Rc::new(Cell::new(true));
+    let render_count = Rc::new(Cell::new(0));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let cancellations = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view({
+        let visible = visible.clone();
+        let render_count = render_count.clone();
+        let events = events.clone();
+        move |window, _| PointerCaptureProbe {
+            handle: window.new_pointer_capture_handle(),
+            visible,
+            render_count,
+            events,
+        }
+    });
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| window.draw(cx).clear());
+    let _cancel_subscription = cx.update(|window, _| {
+        let cancellations = cancellations.clone();
+        window.intercept_mouse_events(move |event, _, _| {
+            if let WindowMouseEvent::Cancel(event) = event {
+                cancellations.borrow_mut().push(event.reason);
+            }
+        })
+    });
+    cx.update(|window, cx| {
+        window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
+    });
+
+    visible.set(false);
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| {
+        window.defer(cx, |window, cx| window.remove_window(cx));
+        window.draw(cx).clear();
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        cancellations.borrow().as_slice(),
+        &[PointerCancelReason::CaptureRevoked]
+    );
+    assert!(cx.windows().is_empty());
 }
 
 #[open_gpui::test]
@@ -846,6 +1177,303 @@ fn pointer_capture_clears_when_the_window_is_removed(cx: &mut TestAppContext) {
         window.remove_window(cx);
         assert!(window.captured_pointer().is_none());
     });
+}
+
+#[open_gpui::test]
+fn remove_window_from_input_callback_cancels_after_dispatch_before_removal(
+    cx: &mut TestAppContext,
+) {
+    let visible = Rc::new(Cell::new(true));
+    let render_count = Rc::new(Cell::new(0));
+    let pointer_events = Rc::new(RefCell::new(Vec::new()));
+    let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let close_count = Rc::new(Cell::new(0));
+    let _close_subscription = record_window_close(cx, lifecycle.clone(), close_count.clone());
+    let (view, cx) = cx.add_window_view({
+        let visible = visible.clone();
+        let render_count = render_count.clone();
+        let pointer_events = pointer_events.clone();
+        move |window, _| PointerCaptureProbe {
+            handle: window.new_pointer_capture_handle(),
+            visible,
+            render_count,
+            events: pointer_events,
+        }
+    });
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| window.draw(cx).clear());
+    let handle = cx.update_window_entity(&view, |view, _, _| view.handle);
+    let _subscription = cx.update(|window, _| {
+        let lifecycle = lifecycle.clone();
+        window.intercept_mouse_events(move |event, window, cx| match event {
+            WindowMouseEvent::Down(_) => {
+                window
+                    .capture_pointer(&handle, MouseButton::Left)
+                    .expect("the input callback should establish pointer capture");
+                cx.active_drag = Some(AnyDrag {
+                    window_id: window.window_handle().window_id(),
+                    value: Arc::new("drag"),
+                    view: cx.new(|_| Empty).into(),
+                    cursor_offset: point(px(0.0), px(0.0)),
+                    cursor_style: None,
+                    button: MouseButton::Left,
+                });
+                lifecycle.borrow_mut().push("input");
+                window.remove_window(cx);
+                window.remove_window(cx);
+                lifecycle.borrow_mut().push("input-returned");
+                cx.stop_propagation();
+            }
+            WindowMouseEvent::Cancel(event) => {
+                assert_eq!(event.reason, PointerCancelReason::WindowClosed);
+                assert!(!window.removed, "cancellation must precede window removal");
+                lifecycle.borrow_mut().push("cancel");
+                window.remove_window(cx);
+                window.remove_window(cx);
+                lifecycle.borrow_mut().push("cancel-returned");
+            }
+            _ => {}
+        })
+    });
+
+    cx.update(|window, cx| window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx));
+
+    assert_eq!(
+        lifecycle.borrow().as_slice(),
+        &[
+            "input",
+            "input-returned",
+            "cancel",
+            "cancel-returned",
+            "closed",
+        ]
+    );
+    assert_eq!(close_count.get(), 1);
+    assert!(cx.windows().is_empty());
+}
+
+#[open_gpui::test]
+fn remove_window_from_action_callback_cancels_after_dispatch_before_removal(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new("escape", RemoveWindowWithPointer, None)]);
+    });
+    let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view({
+        let lifecycle = lifecycle.clone();
+        move |window, cx| ActionWindowRemovalProbe {
+            handle: window.new_pointer_capture_handle(),
+            focus: cx.focus_handle(),
+            lifecycle,
+        }
+    });
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update_window_entity(&view, |view, window, cx| view.focus.focus(window, cx));
+    let _subscription = cx.update(|window, _| {
+        let lifecycle = lifecycle.clone();
+        window.intercept_mouse_events(move |event, window, _| {
+            if let WindowMouseEvent::Cancel(event) = event {
+                assert_eq!(event.reason, PointerCancelReason::WindowClosed);
+                assert!(!window.removed, "cancellation must precede window removal");
+                lifecycle.borrow_mut().push("cancel");
+            }
+        })
+    });
+
+    cx.update(|window, cx| {
+        window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
+        assert!(window.has_active_pointer_session(cx));
+        window.dispatch_event(
+            PlatformInput::KeyDown(KeyDownEvent {
+                keystroke: Keystroke::parse("escape").expect("escape should parse"),
+                is_held: false,
+                prefer_character_input: false,
+            }),
+            cx,
+        );
+    });
+
+    assert_eq!(
+        lifecycle.borrow().as_slice(),
+        &["action", "action-returned", "cancel"]
+    );
+    assert!(cx.windows().is_empty());
+}
+
+#[open_gpui::test]
+fn key_listener_close_skips_synthetic_text_input(cx: &mut TestAppContext) {
+    let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let close_count = Rc::new(Cell::new(0));
+    let _close_subscription = record_window_close(cx, lifecycle.clone(), close_count.clone());
+    let (view, cx) = cx.add_window_view({
+        let lifecycle = lifecycle.clone();
+        move |window, cx| TextInputWindowRemovalProbe {
+            handle: window.new_pointer_capture_handle(),
+            focus: cx.focus_handle(),
+            lifecycle,
+            remove_on_key: true,
+        }
+    });
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.focus.focus(window, cx);
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let _subscription = cx.update(|window, _| {
+        let lifecycle = lifecycle.clone();
+        window.intercept_mouse_events(move |event, window, cx| {
+            if let WindowMouseEvent::Cancel(event) = event {
+                assert_eq!(event.reason, PointerCancelReason::WindowClosed);
+                assert!(!window.removed, "cancellation must precede window removal");
+                lifecycle.borrow_mut().push("cancel");
+                window.remove_window(cx);
+                window.remove_window(cx);
+                lifecycle.borrow_mut().push("cancel-returned");
+            }
+        })
+    });
+
+    cx.update(|window, cx| {
+        window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
+        assert!(window.has_active_pointer_session(cx));
+        assert!(window.dispatch_keystroke(Keystroke::parse("a").expect("a should parse"), cx));
+    });
+
+    assert_eq!(
+        lifecycle.borrow().as_slice(),
+        &["key", "key-returned", "cancel", "cancel-returned", "closed"]
+    );
+    assert_eq!(close_count.get(), 1);
+    assert!(cx.windows().is_empty());
+}
+
+#[open_gpui::test]
+fn synthetic_text_handler_close_waits_for_handler_return(cx: &mut TestAppContext) {
+    let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let close_count = Rc::new(Cell::new(0));
+    let _close_subscription = record_window_close(cx, lifecycle.clone(), close_count.clone());
+    let (view, cx) = cx.add_window_view({
+        let lifecycle = lifecycle.clone();
+        move |window, cx| TextInputWindowRemovalProbe {
+            handle: window.new_pointer_capture_handle(),
+            focus: cx.focus_handle(),
+            lifecycle,
+            remove_on_key: false,
+        }
+    });
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.focus.focus(window, cx);
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let _subscription = cx.update(|window, _| {
+        let lifecycle = lifecycle.clone();
+        window.intercept_mouse_events(move |event, window, cx| {
+            if let WindowMouseEvent::Cancel(event) = event {
+                assert_eq!(event.reason, PointerCancelReason::WindowClosed);
+                assert!(!window.removed, "cancellation must precede window removal");
+                lifecycle.borrow_mut().push("cancel");
+                window.remove_window(cx);
+                window.remove_window(cx);
+                lifecycle.borrow_mut().push("cancel-returned");
+            }
+        })
+    });
+
+    cx.update(|window, cx| {
+        window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
+        assert!(window.has_active_pointer_session(cx));
+        assert!(window.dispatch_keystroke(Keystroke::parse("a").expect("a should parse"), cx));
+    });
+
+    assert_eq!(
+        lifecycle.borrow().as_slice(),
+        &[
+            "key",
+            "key-returned",
+            "input",
+            "input-returned",
+            "cancel",
+            "cancel-returned",
+            "closed",
+        ]
+    );
+    assert_eq!(close_count.get(), 1);
+    assert!(cx.windows().is_empty());
+}
+
+#[open_gpui::test]
+fn platform_ime_insert_text_close_waits_for_callback_and_notifies_once(cx: &mut TestAppContext) {
+    let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let close_count = Rc::new(Cell::new(0));
+    let _close_subscription = record_window_close(cx, lifecycle.clone(), close_count.clone());
+    let (view, cx) = cx.add_window_view({
+        let lifecycle = lifecycle.clone();
+        move |window, cx| TextInputWindowRemovalProbe {
+            handle: window.new_pointer_capture_handle(),
+            focus: cx.focus_handle(),
+            lifecycle,
+            remove_on_key: false,
+        }
+    });
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.focus.focus(window, cx);
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let _subscription = cx.update(|window, _| {
+        let lifecycle = lifecycle.clone();
+        window.intercept_mouse_events(move |event, window, cx| {
+            if let WindowMouseEvent::Cancel(event) = event {
+                assert_eq!(event.reason, PointerCancelReason::WindowClosed);
+                assert!(!window.removed, "cancellation must precede window removal");
+                lifecycle.borrow_mut().push("cancel");
+                window.remove_window(cx);
+                window.remove_window(cx);
+                lifecycle.borrow_mut().push("cancel-returned");
+            }
+        })
+    });
+    cx.update(|window, cx| {
+        window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
+        assert!(window.has_active_pointer_session(cx));
+    });
+    let mut input_handler = cx
+        .update(|window, _| window.platform_window.take_input_handler())
+        .expect("focused probe should install a platform input handler");
+
+    input_handler.replace_text_in_range(None, "ime");
+
+    assert_eq!(
+        lifecycle.borrow().as_slice(),
+        &[
+            "input",
+            "input-returned",
+            "cancel",
+            "cancel-returned",
+            "closed",
+        ]
+    );
+    assert_eq!(close_count.get(), 1);
+    assert!(cx.windows().is_empty());
 }
 
 #[open_gpui::test]
@@ -1127,4 +1755,90 @@ fn companion_button_up_routes_only_to_the_pointer_capture_owner(cx: &mut TestApp
 
     cx.update(|window, cx| window.dispatch_event(mouse_up(MouseButton::Left, 250.0, 10.0), cx));
     assert!(cx.update(|window, _| window.captured_pointer().is_none()));
+}
+
+#[open_gpui::test]
+fn active_drag_preview_and_pointer_events_are_isolated_to_its_window(cx: &mut TestAppContext) {
+    let first: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    let second: crate::AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    let preview_renders = Rc::new(Cell::new(0));
+
+    cx.update_window(first, |_, window, cx| window.draw(cx).clear())
+        .expect("the drag-owning window should remain open");
+    cx.update_window(second, |_, window, cx| window.draw(cx).clear())
+        .expect("the unrelated window should remain open");
+    cx.update({
+        let preview_renders = preview_renders.clone();
+        move |app| {
+            app.active_drag = Some(AnyDrag {
+                window_id: first.window_id(),
+                value: Arc::new("first-window-drag"),
+                view: app
+                    .new(move |_| DragPreviewProbe {
+                        renders: preview_renders,
+                    })
+                    .into(),
+                cursor_offset: point(px(0.0), px(0.0)),
+                cursor_style: None,
+                button: MouseButton::Left,
+            });
+        }
+    });
+
+    cx.update_window(second, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .expect("the unrelated window should be drawable");
+    assert_eq!(
+        preview_renders.get(),
+        0,
+        "an unrelated window must not render another window's drag preview"
+    );
+
+    cx.update_window(first, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .expect("the drag-owning window should be drawable");
+    assert_eq!(
+        preview_renders.get(),
+        1,
+        "the drag-owning window should render its own preview"
+    );
+
+    cx.update_window(second, |_, window, cx| {
+        assert!(!window.invalidator.is_dirty());
+        window.dispatch_event(
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position: point(px(10.0), px(10.0)),
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Modifiers::none(),
+            }),
+            cx,
+        );
+        assert!(
+            !window.invalidator.is_dirty(),
+            "a drag from another window must not refresh this window on mouse move"
+        );
+        window.dispatch_event(mouse_up(MouseButton::Left, 10.0, 10.0), cx);
+    })
+    .expect("the unrelated window should accept isolated input");
+    cx.update(|app| {
+        assert_eq!(
+            app.active_drag.as_ref().map(|drag| drag.window_id),
+            Some(first.window_id()),
+            "a mouse up from another window must not terminate the owner drag"
+        );
+    });
+
+    cx.update_window(first, |_, window, cx| {
+        window.dispatch_event(mouse_up(MouseButton::Left, 10.0, 10.0), cx);
+    })
+    .expect("the drag-owning window should accept the terminating mouse up");
+    cx.update(|app| assert!(app.active_drag.is_none()));
 }

@@ -806,6 +806,7 @@ pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
     pub(crate) removed: bool,
+    removal_state: WindowRemovalState,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: Option<DisplayId>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
@@ -844,6 +845,7 @@ pub struct Window {
     mouse_interceptors: SubscriberSet<(), AnyWindowMouseInterceptor>,
     window_states: Rc<RefCell<TypeIdHashMap<WindowStateSlot>>>,
     input_dispatch_active: Rc<Cell<bool>>,
+    input_transaction_depth: Rc<Cell<usize>>,
     mouse_event_target: Rc<Cell<Option<HitboxId>>>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
@@ -883,6 +885,32 @@ pub struct Window {
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
     pub(crate) a11y: A11y,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WindowRemovalState {
+    Open,
+    PendingAfterInput,
+    Removing,
+}
+
+struct InputTransactionGuard {
+    depth: Rc<Cell<usize>>,
+}
+
+impl InputTransactionGuard {
+    fn enter(depth: Rc<Cell<usize>>) -> Self {
+        depth.set(depth.get().saturating_add(1));
+        Self { depth }
+    }
+}
+
+impl Drop for InputTransactionGuard {
+    fn drop(&mut self) {
+        let depth = self.depth.get();
+        debug_assert!(depth > 0, "input transaction depth must remain balanced");
+        self.depth.set(depth.saturating_sub(1));
+    }
 }
 
 enum WindowStateSlot {
@@ -1541,6 +1569,7 @@ impl Window {
             handle,
             invalidator,
             removed: false,
+            removal_state: WindowRemovalState::Open,
             platform_window,
             display_id,
             sprite_atlas,
@@ -1574,6 +1603,7 @@ impl Window {
             mouse_interceptors: SubscriberSet::new(),
             window_states: Rc::new(RefCell::new(TypeIdHashMap::default())),
             input_dispatch_active: Rc::new(Cell::new(false)),
+            input_transaction_depth: Rc::new(Cell::new(0)),
             mouse_event_target: Rc::new(Cell::new(None)),
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
@@ -1798,6 +1828,43 @@ impl Window {
 
     /// Close this window.
     pub fn remove_window(&mut self, cx: &mut App) {
+        if self.removed || self.removal_state == WindowRemovalState::Removing {
+            return;
+        }
+        if self.input_transaction_depth.get() > 0 {
+            self.removal_state = WindowRemovalState::PendingAfterInput;
+            return;
+        }
+
+        self.finish_remove_window(cx);
+    }
+
+    fn finish_pending_window_removal(&mut self, cx: &mut App) {
+        if self.removal_state == WindowRemovalState::PendingAfterInput
+            && self.input_transaction_depth.get() == 0
+        {
+            debug_assert!(
+                !self.input_dispatch_active.get(),
+                "window removal must commit after the input dispatch guard is released"
+            );
+            self.finish_remove_window(cx);
+        }
+    }
+
+    pub(crate) fn with_input_transaction<R>(
+        &mut self,
+        cx: &mut App,
+        callback: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> R {
+        let transaction = InputTransactionGuard::enter(self.input_transaction_depth.clone());
+        let result = callback(self, cx);
+        drop(transaction);
+        self.finish_pending_window_removal(cx);
+        result
+    }
+
+    fn finish_remove_window(&mut self, cx: &mut App) {
+        self.removal_state = WindowRemovalState::Removing;
         self.cancel_pointer_session(PointerCancelReason::WindowClosed, cx);
         self.removed = true;
     }
@@ -1911,6 +1978,11 @@ impl Window {
         }
 
         self.focus_claim_revision = self.focus_claim_revision.wrapping_add(1);
+        self.focus = None;
+        self.refresh();
+    }
+
+    pub(crate) fn clear_dropped_focus(&mut self) {
         self.focus = None;
         self.refresh();
     }
@@ -2806,7 +2878,19 @@ impl Window {
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
         if self.captured_pointer.is_some() && self.captured_pointer_hitbox().is_none() {
-            self.captured_pointer = None;
+            // Cancellation listeners may mutate the window, so leave the draw stack before dispatch.
+            let window = self.handle;
+            cx.defer(move |cx| {
+                window
+                    .update(cx, |_, window, cx| {
+                        if window.captured_pointer.is_some()
+                            && window.captured_pointer_hitbox().is_none()
+                        {
+                            window.cancel_pointer_session(PointerCancelReason::CaptureRevoked, cx);
+                        }
+                    })
+                    .ok();
+            });
         }
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
@@ -2928,7 +3012,15 @@ impl Window {
             element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
             prompt_element = Some(element);
             self.prompt = Some(prompt);
-        } else if let Some(active_drag) = cx.active_drag.take() {
+        } else if cx
+            .active_drag
+            .as_ref()
+            .is_some_and(|drag| drag.window_id == self.handle.window_id())
+        {
+            let active_drag = cx
+                .active_drag
+                .take()
+                .expect("window-owned active drag should remain available");
             let mut element = active_drag.view.clone().into_any();
             let offset = self.mouse_position() - active_drag.cursor_offset;
             element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
@@ -4592,20 +4684,6 @@ impl Window {
         subscription
     }
 
-    /// Registers a persistent mouse-down interceptor owned by this window.
-    ///
-    /// This compatibility helper delegates to [`Self::intercept_mouse_events`].
-    pub fn intercept_mouse_down(
-        &mut self,
-        mut listener: impl FnMut(&crate::MouseDownEvent, &mut Window, &mut App) + 'static,
-    ) -> Subscription {
-        self.intercept_mouse_events(move |event, window, cx| {
-            if let WindowMouseEvent::Down(event) = event {
-                listener(event, window, cx);
-            }
-        })
-    }
-
     /// Register a key event listener on this node for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
@@ -4726,28 +4804,33 @@ impl Window {
     /// Dispatch a given keystroke as though the user had typed it.
     /// You can create a keystroke with Keystroke::parse("").
     pub fn dispatch_keystroke(&mut self, keystroke: Keystroke, cx: &mut App) -> bool {
-        let keystroke = keystroke.with_simulated_ime();
-        let result = self.dispatch_event(
-            PlatformInput::KeyDown(KeyDownEvent {
-                keystroke: keystroke.clone(),
-                is_held: false,
-                prefer_character_input: false,
-            }),
-            cx,
-        );
-        if !result.propagate {
-            return true;
-        }
+        self.with_input_transaction(cx, move |window, cx| {
+            let keystroke = keystroke.with_simulated_ime();
+            let result = window.dispatch_event(
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke: keystroke.clone(),
+                    is_held: false,
+                    prefer_character_input: false,
+                }),
+                cx,
+            );
+            if !result.propagate {
+                return true;
+            }
+            if window.removal_state != WindowRemovalState::Open {
+                return true;
+            }
 
-        if let Some(input) = keystroke.key_char
-            && let Some(mut input_handler) = self.platform_window.take_input_handler()
-        {
-            input_handler.dispatch_input(&input, self, cx);
-            self.platform_window.set_input_handler(input_handler);
-            return true;
-        }
+            if let Some(input) = keystroke.key_char
+                && let Some(mut input_handler) = window.platform_window.take_input_handler()
+            {
+                input_handler.dispatch_input(&input, window, cx);
+                window.platform_window.set_input_handler(input_handler);
+                return true;
+            }
 
-        false
+            false
+        })
     }
 
     /// Return a key binding string for an action, to display in the UI. Uses the highest precedence
@@ -4771,7 +4854,11 @@ impl Window {
     /// bypassing persistent interceptors or overwriting the outer event's shared dispatch state.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
-        let Some(_dispatch_guard) =
+        self.with_input_transaction(cx, move |window, cx| window.dispatch_event_inner(event, cx))
+    }
+
+    fn dispatch_event_inner(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
+        let Some(dispatch_guard) =
             InputDispatchGuard::try_enter(self.input_dispatch_active.clone())
         else {
             return DispatchEventResult {
@@ -4806,6 +4893,7 @@ impl Window {
             default_prevented: self.default_prevented,
         };
         self.last_dispatch_event_result = Some(result);
+        drop(dispatch_guard);
         result
     }
 

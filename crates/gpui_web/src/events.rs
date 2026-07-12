@@ -136,8 +136,8 @@ impl WebWindowInner {
             });
     }
 
-    pub(crate) fn cleanup_pointer_capture(&self) {
-        let (next_state, transition) = self.pointer_capture.get().cleanup();
+    pub(crate) fn cleanup_pointer_capture(&self, reason: PointerCancelReason) {
+        let (next_state, transition) = self.pointer_capture.get().cleanup(reason);
         self.apply_pointer_transition(next_state, transition);
     }
 
@@ -511,7 +511,7 @@ impl WebWindowInner {
     fn register_blur(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
         let this = Rc::clone(self);
         self.listen_input("blur", move |_event: JsValue| {
-            this.cleanup_pointer_capture();
+            this.cleanup_pointer_capture(PointerCancelReason::WindowDeactivated);
             {
                 let mut state = this.state.borrow_mut();
                 state.is_active = false;
@@ -647,12 +647,10 @@ impl WebPointerInputBoundary<'_> {
     ) {
         self.pointer_capture.set(next_state);
         apply_capture_command(transition.capture_command);
-        if transition.emit_cancel {
+        if let Some(reason) = transition.cancel_reason {
             let _ = dispatch_web_input(
                 self.callbacks,
-                PlatformInput::PointerCanceled(PointerCancelEvent {
-                    reason: PointerCancelReason::PlatformCaptureLost,
-                }),
+                PlatformInput::PointerCanceled(PointerCancelEvent { reason }),
             );
         }
     }
@@ -890,7 +888,7 @@ mod tests {
 
     use open_gpui::{
         DispatchEventResult, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput,
-        Point,
+        Point, PointerCancelReason,
     };
 
     use super::{
@@ -954,7 +952,7 @@ mod tests {
             WebPointerCaptureCommand::Release(7)
         );
         assert!(transition.accept_event);
-        assert!(!transition.emit_cancel);
+        assert_eq!(transition.cancel_reason, None);
 
         let (_, unchanged) = state.pointer_motion(7, -1, 0);
         assert!(unchanged.button_change.is_none());
@@ -965,10 +963,13 @@ mod tests {
         let (state, _) = WebPointerCaptureState::default().pointer_down(7, 0, 1);
         let (state, transition) = state.pointer_capture_lost(7);
         assert_eq!(state, WebPointerCaptureState::default());
-        assert!(transition.emit_cancel);
+        assert_eq!(
+            transition.cancel_reason,
+            Some(PointerCancelReason::PlatformCaptureLost)
+        );
 
         let (_, duplicate) = state.pointer_capture_lost(7);
-        assert!(!duplicate.emit_cancel);
+        assert_eq!(duplicate.cancel_reason, None);
     }
 
     #[test]
@@ -980,20 +981,23 @@ mod tests {
             transition.capture_command,
             WebPointerCaptureCommand::Release(7)
         );
-        assert!(transition.emit_cancel);
+        assert_eq!(
+            transition.cancel_reason,
+            Some(PointerCancelReason::PlatformCaptureLost)
+        );
 
         let (_, duplicate) = state.pointer_capture_lost(7);
-        assert!(!duplicate.emit_cancel);
+        assert_eq!(duplicate.cancel_reason, None);
     }
 
     #[test]
     fn final_pointer_up_then_lost_capture_does_not_cancel() {
         let (state, _) = WebPointerCaptureState::default().pointer_down(7, 0, 1);
         let (state, transition) = state.pointer_up(7, 0, 0);
-        assert!(!transition.emit_cancel);
+        assert_eq!(transition.cancel_reason, None);
 
         let (_, lost) = state.pointer_capture_lost(7);
-        assert!(!lost.emit_cancel);
+        assert_eq!(lost.cancel_reason, None);
     }
 
     #[test]
@@ -1008,7 +1012,10 @@ mod tests {
             WebPointerCaptureCommand::Release(7)
         );
         assert!(!transition.accept_event);
-        assert!(transition.emit_cancel);
+        assert_eq!(
+            transition.cancel_reason,
+            Some(PointerCancelReason::PlatformCaptureLost)
+        );
     }
 
     #[test]
@@ -1143,14 +1150,17 @@ mod tests {
     #[test]
     fn repeated_cleanup_cancels_only_the_active_session() {
         let (state, _) = WebPointerCaptureState::default().pointer_down(7, 0, 1);
-        let (state, cleanup) = state.cleanup();
+        let (state, cleanup) = state.cleanup(PointerCancelReason::PlatformCaptureLost);
         assert_eq!(
             cleanup.capture_command,
             WebPointerCaptureCommand::Release(7)
         );
-        assert!(cleanup.emit_cancel);
+        assert_eq!(
+            cleanup.cancel_reason,
+            Some(PointerCancelReason::PlatformCaptureLost)
+        );
 
-        let (_, duplicate_cleanup) = state.cleanup();
-        assert!(!duplicate_cleanup.emit_cancel);
+        let (_, duplicate_cleanup) = state.cleanup(PointerCancelReason::PlatformCaptureLost);
+        assert_eq!(duplicate_cleanup.cancel_reason, None);
     }
 }

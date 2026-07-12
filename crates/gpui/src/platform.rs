@@ -1411,22 +1411,32 @@ impl PlatformInputHandler {
         Self { cx, handler }
     }
 
+    fn update_in_input_transaction<R>(
+        &mut self,
+        callback: impl FnOnce(&mut dyn InputHandler, &mut Window, &mut App) -> R,
+    ) -> Result<R> {
+        let Self { cx, handler } = self;
+        cx.update(|window, app| {
+            window
+                .with_input_transaction(app, |window, app| callback(handler.as_mut(), window, app))
+        })
+    }
+
     pub fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
-        self.cx
-            .update(|window, cx| {
-                self.handler
-                    .selected_text_range(ignore_disabled_input, window, cx)
-            })
-            .ok()
-            .flatten()
+        self.update_in_input_transaction(|handler, window, cx| {
+            handler.selected_text_range(ignore_disabled_input, window, cx)
+        })
+        .ok()
+        .flatten()
     }
 
     #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn marked_text_range(&mut self) -> Option<Range<usize>> {
-        self.cx
-            .update(|window, cx| self.handler.marked_text_range(window, cx))
-            .ok()
-            .flatten()
+        self.update_in_input_transaction(|handler, window, cx| {
+            handler.marked_text_range(window, cx)
+        })
+        .ok()
+        .flatten()
     }
 
     #[cfg_attr(
@@ -1438,22 +1448,18 @@ impl PlatformInputHandler {
         range_utf16: Range<usize>,
         adjusted: &mut Option<Range<usize>>,
     ) -> Option<String> {
-        self.cx
-            .update(|window, cx| {
-                self.handler
-                    .text_for_range(range_utf16, adjusted, window, cx)
-            })
-            .ok()
-            .flatten()
+        self.update_in_input_transaction(|handler, window, cx| {
+            handler.text_for_range(range_utf16, adjusted, window, cx)
+        })
+        .ok()
+        .flatten()
     }
 
     pub fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
-        self.cx
-            .update(|window, cx| {
-                self.handler
-                    .replace_text_in_range(replacement_range, text, window, cx);
-            })
-            .ok();
+        self.update_in_input_transaction(|handler, window, cx| {
+            handler.replace_text_in_range(replacement_range, text, window, cx);
+        })
+        .ok();
     }
 
     pub fn replace_and_mark_text_in_range(
@@ -1462,31 +1468,30 @@ impl PlatformInputHandler {
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
     ) {
-        self.cx
-            .update(|window, cx| {
-                self.handler.replace_and_mark_text_in_range(
-                    range_utf16,
-                    new_text,
-                    new_selected_range,
-                    window,
-                    cx,
-                )
-            })
-            .ok();
+        self.update_in_input_transaction(|handler, window, cx| {
+            handler.replace_and_mark_text_in_range(
+                range_utf16,
+                new_text,
+                new_selected_range,
+                window,
+                cx,
+            )
+        })
+        .ok();
     }
 
     #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn unmark_text(&mut self) {
-        self.cx
-            .update(|window, cx| self.handler.unmark_text(window, cx))
+        self.update_in_input_transaction(|handler, window, cx| handler.unmark_text(window, cx))
             .ok();
     }
 
     pub fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>> {
-        self.cx
-            .update(|window, cx| self.handler.bounds_for_range(range_utf16, window, cx))
-            .ok()
-            .flatten()
+        self.update_in_input_transaction(|handler, window, cx| {
+            handler.bounds_for_range(range_utf16, window, cx)
+        })
+        .ok()
+        .flatten()
     }
 
     #[allow(dead_code)]
@@ -1495,7 +1500,10 @@ impl PlatformInputHandler {
     }
 
     pub fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {
-        self.handler.replace_text_in_range(None, input, window, cx);
+        let handler = self.handler.as_mut();
+        window.with_input_transaction(cx, |window, cx| {
+            handler.replace_text_in_range(None, input, window, cx);
+        });
     }
 
     pub fn compute_ime_candidate_bounds(
@@ -1534,10 +1542,13 @@ impl PlatformInputHandler {
     }
 
     pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
-        let marked_range = self.handler.marked_text_range(window, cx);
-        let selection = self.handler.selected_text_range(true, window, cx)?;
-        Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
-            self.handler.bounds_for_range(range, window, cx)
+        let handler = self.handler.as_mut();
+        window.with_input_transaction(cx, |window, cx| {
+            let marked_range = handler.marked_text_range(window, cx);
+            let selection = handler.selected_text_range(true, window, cx)?;
+            Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
+                handler.bounds_for_range(range, window, cx)
+            })
         })
     }
 
@@ -1551,29 +1562,33 @@ impl PlatformInputHandler {
 
     #[allow(unused)]
     pub fn character_index_for_point(&mut self, point: Point<Pixels>) -> Option<usize> {
-        self.cx
-            .update(|window, cx| self.handler.character_index_for_point(point, window, cx))
-            .ok()
-            .flatten()
+        self.update_in_input_transaction(|handler, window, cx| {
+            handler.character_index_for_point(point, window, cx)
+        })
+        .ok()
+        .flatten()
     }
 
     #[allow(dead_code)]
     pub fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
-        self.handler.accepts_text_input(window, cx)
+        let handler = self.handler.as_mut();
+        window.with_input_transaction(cx, |window, cx| handler.accepts_text_input(window, cx))
     }
 
     #[allow(dead_code)]
     pub fn query_accepts_text_input(&mut self) -> bool {
-        self.cx
-            .update(|window, cx| self.handler.accepts_text_input(window, cx))
-            .unwrap_or(true)
+        self.update_in_input_transaction(|handler, window, cx| {
+            handler.accepts_text_input(window, cx)
+        })
+        .unwrap_or(true)
     }
 
     #[allow(dead_code)]
     pub fn query_prefers_ime_for_printable_keys(&mut self) -> bool {
-        self.cx
-            .update(|window, cx| self.handler.prefers_ime_for_printable_keys(window, cx))
-            .unwrap_or(false)
+        self.update_in_input_transaction(|handler, window, cx| {
+            handler.prefers_ime_for_printable_keys(window, cx)
+        })
+        .unwrap_or(false)
     }
 }
 

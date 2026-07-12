@@ -4553,6 +4553,53 @@ mod tests {
         });
     }
 
+    struct DroppedFocusProbe {
+        focus: Option<FocusHandle>,
+    }
+
+    impl Render for DroppedFocusProbe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().when_some(self.focus.clone(), |root, focus| {
+                root.child(
+                    div()
+                        .id("dropped-focus-probe")
+                        .debug_selector(|| "dropped-focus:target".to_owned())
+                        .track_focus(&focus),
+                )
+            })
+        }
+    }
+
+    #[test]
+    fn dropping_the_focused_handle_does_not_advance_the_explicit_claim_revision() {
+        let mut test_app = TestAppContext::single();
+        let (view, cx) = test_app.add_window_view(|_, cx| DroppedFocusProbe {
+            focus: Some(cx.focus_handle()),
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        let claim_revision = cx.update(|window, cx| {
+            let focus = view
+                .read(cx)
+                .focus
+                .clone()
+                .expect("focus target should be mounted");
+            focus.focus(window, cx);
+            window.focus_claim_revision()
+        });
+        assert!(cx.debug_selector_is_focused("dropped-focus:target"));
+
+        view.update(cx, |view, cx| {
+            view.focus = None;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+            assert!(window.focused(cx).is_none());
+            assert_eq!(window.focus_claim_revision(), claim_revision);
+        });
+    }
+
     struct ScopedTabStopProbe {
         outside: FocusHandle,
         scope: FocusHandle,

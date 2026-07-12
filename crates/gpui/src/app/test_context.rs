@@ -1885,15 +1885,17 @@ mod tests {
         cx.update_window_entity(&view, |view, window, _cx| {
             let consume = view.consume.clone();
             let events = view.events.clone();
-            view.mouse_subscription = Some(window.intercept_mouse_down(
-                move |_: &MouseDownEvent, window, cx| {
+            view.mouse_subscription =
+                Some(window.intercept_mouse_events(move |event, window, cx| {
+                    if !matches!(event, WindowMouseEvent::Down(_)) {
+                        return;
+                    }
                     events.borrow_mut().push("interceptor");
                     if consume.get() {
                         cx.stop_propagation();
                         window.prevent_default();
                     }
-                },
-            ));
+                }));
         });
 
         let pass_through = cx.simulate_event_with_dispatch_snapshot(MouseDownEvent {
@@ -2075,7 +2077,10 @@ mod tests {
             let events = view.events.clone();
             let reentered = reentered.clone();
             view.mouse_subscription =
-                Some(window.intercept_mouse_down(move |event, window, cx| {
+                Some(window.intercept_mouse_events(move |event, window, cx| {
+                    let WindowMouseEvent::Down(event) = event else {
+                        return;
+                    };
                     events.borrow_mut().push("interceptor");
                     if !reentered.replace(true) {
                         let nested =

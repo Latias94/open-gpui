@@ -1,6 +1,6 @@
 //! DOM pointer-session state that remains host-testable without a browser runtime.
 
-use open_gpui::{MouseButton, NavigationDirection, Pixels, Point};
+use open_gpui::{MouseButton, NavigationDirection, Pixels, Point, PointerCancelReason};
 
 pub(crate) struct ClickState {
     last_button: Option<MouseButton>,
@@ -79,7 +79,7 @@ pub(crate) struct WebPointerTransition {
     pub(crate) capture_command: WebPointerCaptureCommand,
     pub(crate) button_change: Option<WebPointerButtonChange>,
     pub(crate) accept_event: bool,
-    pub(crate) emit_cancel: bool,
+    pub(crate) cancel_reason: Option<PointerCancelReason>,
 }
 
 impl WebPointerCaptureState {
@@ -250,7 +250,7 @@ impl WebPointerCaptureState {
             Self::default(),
             WebPointerTransition {
                 capture_command: WebPointerCaptureCommand::Release(pointer_id),
-                emit_cancel: true,
+                cancel_reason: Some(PointerCancelReason::PlatformCaptureLost),
                 ..WebPointerTransition::default()
             },
         )
@@ -266,13 +266,13 @@ impl WebPointerCaptureState {
         (
             Self::default(),
             WebPointerTransition {
-                emit_cancel: true,
+                cancel_reason: Some(PointerCancelReason::PlatformCaptureLost),
                 ..WebPointerTransition::default()
             },
         )
     }
 
-    pub(crate) fn cleanup(self) -> (Self, WebPointerTransition) {
+    pub(crate) fn cleanup(self, reason: PointerCancelReason) -> (Self, WebPointerTransition) {
         let Some(active) = self.active else {
             return (self, WebPointerTransition::default());
         };
@@ -280,7 +280,7 @@ impl WebPointerCaptureState {
             Self::default(),
             WebPointerTransition {
                 capture_command: WebPointerCaptureCommand::Release(active.pointer_id),
-                emit_cancel: active.pressed_buttons != 0,
+                cancel_reason: (active.pressed_buttons != 0).then_some(reason),
                 ..WebPointerTransition::default()
             },
         )
@@ -291,7 +291,7 @@ impl WebPointerCaptureState {
             Self::default(),
             WebPointerTransition {
                 capture_command: WebPointerCaptureCommand::Release(pointer_id),
-                emit_cancel: true,
+                cancel_reason: Some(PointerCancelReason::PlatformCaptureLost),
                 ..WebPointerTransition::default()
             },
         )
@@ -383,7 +383,7 @@ mod tests {
             transition.capture_command,
             WebPointerCaptureCommand::Release(7)
         );
-        assert!(!transition.emit_cancel);
+        assert_eq!(transition.cancel_reason, None);
     }
 
     #[test]
@@ -391,8 +391,11 @@ mod tests {
         let (state, _) = WebPointerCaptureState::default().pointer_down(7, 0, 1);
         let (state, transition) = state.pointer_capture_lost(7);
         assert_eq!(state, WebPointerCaptureState::default());
-        assert!(transition.emit_cancel);
-        assert!(!state.pointer_capture_lost(7).1.emit_cancel);
+        assert_eq!(
+            transition.cancel_reason,
+            Some(PointerCancelReason::PlatformCaptureLost)
+        );
+        assert_eq!(state.pointer_capture_lost(7).1.cancel_reason, None);
     }
 
     #[test]
@@ -403,16 +406,19 @@ mod tests {
             transition.capture_command,
             WebPointerCaptureCommand::Release(7)
         );
-        assert!(transition.emit_cancel);
-        assert!(!state.pointer_capture_lost(7).1.emit_cancel);
+        assert_eq!(
+            transition.cancel_reason,
+            Some(PointerCancelReason::PlatformCaptureLost)
+        );
+        assert_eq!(state.pointer_capture_lost(7).1.cancel_reason, None);
     }
 
     #[test]
     fn final_pointer_up_then_lost_capture_does_not_cancel() {
         let (state, _) = WebPointerCaptureState::default().pointer_down(7, 0, 1);
         let (state, transition) = state.pointer_up(7, 0, 0);
-        assert!(!transition.emit_cancel);
-        assert!(!state.pointer_capture_lost(7).1.emit_cancel);
+        assert_eq!(transition.cancel_reason, None);
+        assert_eq!(state.pointer_capture_lost(7).1.cancel_reason, None);
     }
 
     #[test]
@@ -427,19 +433,50 @@ mod tests {
             WebPointerCaptureCommand::Release(7)
         );
         assert!(!transition.accept_event);
-        assert!(transition.emit_cancel);
+        assert_eq!(
+            transition.cancel_reason,
+            Some(PointerCancelReason::PlatformCaptureLost)
+        );
     }
 
     #[test]
     fn repeated_cleanup_cancels_only_the_active_session() {
         let (state, _) = WebPointerCaptureState::default().pointer_down(7, 0, 1);
-        let (state, cleanup) = state.cleanup();
+        let (state, cleanup) = state.cleanup(PointerCancelReason::PlatformCaptureLost);
         assert_eq!(
             cleanup.capture_command,
             WebPointerCaptureCommand::Release(7)
         );
-        assert!(cleanup.emit_cancel);
-        assert!(!state.cleanup().1.emit_cancel);
+        assert_eq!(
+            cleanup.cancel_reason,
+            Some(PointerCancelReason::PlatformCaptureLost)
+        );
+        assert_eq!(
+            state
+                .cleanup(PointerCancelReason::PlatformCaptureLost)
+                .1
+                .cancel_reason,
+            None
+        );
+    }
+
+    #[test]
+    fn window_deactivation_cleanup_preserves_cancel_reason() {
+        let (state, _) = WebPointerCaptureState::default().pointer_down(7, 0, 1);
+        let (state, cleanup) = state.cleanup(PointerCancelReason::WindowDeactivated);
+
+        assert_eq!(state, WebPointerCaptureState::default());
+        assert_eq!(
+            cleanup.cancel_reason,
+            Some(PointerCancelReason::WindowDeactivated)
+        );
+        assert_eq!(
+            state
+                .cleanup(PointerCancelReason::WindowDeactivated)
+                .1
+                .cancel_reason,
+            None
+        );
     }
 
     #[test]

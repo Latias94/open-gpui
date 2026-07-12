@@ -1533,7 +1533,7 @@ impl App {
                         window_handle
                             .update(self, |_, window, _| {
                                 if window.focus == Some(handle_id) {
-                                    window.blur();
+                                    window.clear_dropped_focus();
                                 }
                             })
                             .unwrap();

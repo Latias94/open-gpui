@@ -81,7 +81,7 @@ pub struct WindowsWindowState {
     pub pointer_capture: Cell<WindowsPointerCaptureState>,
     /// Prevents terminal pointer cancellation from re-entering the core input callback.
     pub input_dispatch: Cell<WindowsInputDispatchState>,
-    pub nc_button_pressed: Cell<Option<u32>>,
+    pub pressed_caption_button: Cell<Option<WindowsCaptionButtonAction>>,
     accepts_pointer_input: Cell<bool>,
 
     pub display: Cell<WindowsDisplay>,
@@ -152,7 +152,7 @@ impl WindowsWindowState {
         let click_state = ClickState::new();
         let pointer_capture = Cell::new(WindowsPointerCaptureState::default());
         let input_dispatch = Cell::new(WindowsInputDispatchState::default());
-        let nc_button_pressed = None;
+        let pressed_caption_button = None;
         let fullscreen = None;
         let initial_placement = None;
 
@@ -183,7 +183,7 @@ impl WindowsWindowState {
             cursor_visible,
             pointer_capture,
             input_dispatch,
-            nc_button_pressed: Cell::new(nc_button_pressed),
+            pressed_caption_button: Cell::new(pressed_caption_button),
             accepts_pointer_input: Cell::new(accepts_pointer_input),
             display: Cell::new(display),
             fullscreen: Cell::new(fullscreen),

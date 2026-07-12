@@ -10,9 +10,9 @@ use std::{cell::Cell, cell::RefCell, rc::Rc};
 use open_gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, DispatchEventResult,
     GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
+    PlatformInputHandler, PlatformWindow, Point, PointerCancelReason, PromptButton, PromptLevel,
+    RequestFrameOptions, ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
 };
 use open_gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
 use wasm_bindgen::prelude::*;
@@ -509,7 +509,7 @@ impl WebWindowInner {
                 .unwrap_or(true);
 
             if !is_visible {
-                this.cleanup_pointer_capture();
+                this.cleanup_pointer_capture(PointerCancelReason::WindowDeactivated);
             }
             {
                 let mut state = this.state.borrow_mut();
