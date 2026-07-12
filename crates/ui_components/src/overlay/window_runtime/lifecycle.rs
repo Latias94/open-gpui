@@ -23,6 +23,39 @@ impl WindowOverlayRuntimeState {
         }
     }
 
+    pub(super) fn accessibility_tree_scope(
+        &self,
+        lease: &OverlayLayerLease,
+        runtime_window_id: WindowId,
+    ) -> AccessibilityTreeScope {
+        let active_modal = self.stack.iter().rev().find(|layer_id| {
+            self.entries.get(*layer_id).is_some_and(|entry| {
+                entry.policy.kind() == OverlayLayerKind::Modal
+                    && entry.keyboard_eligible()
+                    && !entry.pending_unregister
+            })
+        });
+        let surface = (lease.window_id == runtime_window_id)
+            .then(|| self.entries.get(&lease.layer_id))
+            .flatten()
+            .filter(|entry| {
+                entry.lease_token == lease.token
+                    && entry.keyboard_eligible()
+                    && !entry.pending_unregister
+            });
+
+        match (active_modal, surface) {
+            (None, Some(_)) => AccessibilityTreeScope::Unrestricted,
+            (Some(modal_id), Some(entry)) if &entry.id == modal_id => {
+                AccessibilityTreeScope::ModalRoot
+            }
+            (Some(modal_id), Some(entry)) if self.is_descendant_or_same(modal_id, &entry.id) => {
+                AccessibilityTreeScope::ModalDescendant
+            }
+            _ => AccessibilityTreeScope::Excluded,
+        }
+    }
+
     pub(super) fn register_layer(
         &mut self,
         registration: OverlayLayerRegistration,

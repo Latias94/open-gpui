@@ -1,8 +1,8 @@
 //! Overlay surface projection and frame-scoped inside geometry.
 
 use super::{
-    AnyElement, App, Bounds, Element, ElementId, Entity, FocusHandle, GlobalElementId,
-    InspectorElementId, IntoElement, LayoutId, LiveInsideRegion, MouseButton,
+    AccessibilityTreeScope, AnyElement, App, Bounds, Element, ElementId, Entity, FocusHandle,
+    GlobalElementId, InspectorElementId, IntoElement, LayoutId, LiveInsideRegion, MouseButton,
     OverlayInsideRegionId, OverlayLayerBinding, OverlayLayerId, OverlayLayerLease,
     OverlayLayerLeaseStatus, OverlayLayerRegistration, Pixels, Rc, RefCell, Window,
     WindowOverlayRuntime, WindowOverlayRuntimeError, WindowOverlayRuntimeState,
@@ -353,6 +353,14 @@ impl Element for OverlaySurface {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let accessibility_tree_scope = if self.projects_parent {
+            self.runtime
+                .state
+                .read(cx)
+                .accessibility_tree_scope(self.binding.lease(), self.runtime.window_id)
+        } else {
+            AccessibilityTreeScope::Unrestricted
+        };
         let binding_is_valid = self
             .runtime
             .validate_surface_binding(&self.binding, window, cx)
@@ -369,14 +377,21 @@ impl Element for OverlaySurface {
                 );
             }
             if self.projects_parent {
-                self.runtime
-                    .with_parent_layer(&self.binding, || child.prepaint(window, cx));
+                self.runtime.with_parent_layer(&self.binding, || {
+                    window.with_accessibility_tree_scope(accessibility_tree_scope, |window| {
+                        child.prepaint(window, cx)
+                    });
+                });
             } else {
                 child.prepaint(window, cx);
             }
             let _ =
                 self.runtime
                     .retry_focus_claim_after_surface_prepaint(&self.binding, window, cx);
+        } else if self.projects_parent {
+            window.with_accessibility_tree_scope(AccessibilityTreeScope::Excluded, |window| {
+                child.prepaint(window, cx)
+            });
         } else {
             child.prepaint(window, cx);
         }

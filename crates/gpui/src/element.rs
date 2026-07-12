@@ -113,6 +113,11 @@ pub trait Element: 'static + IntoElement {
         None
     }
 
+    /// Returns whether this element excludes its whole subtree from accessibility.
+    fn a11y_hidden(&self) -> bool {
+        false
+    }
+
     /// Write accessibility properties to the given node.
     /// Called only when `a11y_role()` returns `Some`.
     ///
@@ -457,6 +462,8 @@ impl<E: Element> Drawable<E> {
                 }
 
                 let bounds = window.layout_bounds(layout_id);
+                let _hidden_a11y_scope = (window.a11y.is_active() && self.element.a11y_hidden())
+                    .then(|| window.a11y.nodes.enter_hidden_subtree());
                 let mut pushed_a11y_node = false;
                 if window.a11y.is_active() {
                     if let Some(global_id) = global_id.as_ref() {
@@ -471,8 +478,10 @@ impl<E: Element> Drawable<E> {
                                 y1: ((bounds.origin.y.0 + bounds.size.height.0) * scale) as f64,
                             });
                             self.element.write_a11y_info(&mut node);
-                            window.a11y.node_bounds.insert(node_id, bounds);
                             pushed_a11y_node = window.a11y.nodes.push(node_id, node);
+                            if pushed_a11y_node {
+                                window.a11y.record_node_bounds(node_id, bounds);
+                            }
                         }
                     }
                 }

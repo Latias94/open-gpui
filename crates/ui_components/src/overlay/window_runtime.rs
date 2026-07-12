@@ -7,10 +7,10 @@ use std::fmt;
 use std::rc::Rc;
 
 use open_gpui::{
-    AnyElement, AnyWeakEntity, App, Bounds, Element, ElementId, Entity, EntityId, FocusHandle,
-    GlobalElementId, InspectorElementId, IntoElement, KeyDownEvent, LayoutId, MouseButton,
-    MouseDownEvent, Pixels, Point, PointerCancelReason, PointerCapture, PointerCaptureHandle,
-    Subscription, Window, WindowId, WindowMouseEvent,
+    AccessibilityTreeScope, AnyElement, AnyWeakEntity, App, Bounds, Element, ElementId, Entity,
+    EntityId, FocusHandle, GlobalElementId, InspectorElementId, IntoElement, KeyDownEvent,
+    LayoutId, MouseButton, MouseDownEvent, Pixels, Point, PointerCancelReason, PointerCapture,
+    PointerCaptureHandle, Subscription, Window, WindowId, WindowMouseEvent,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyResolution, FocusScopeId, FocusScopeMode, FocusScopePolicy,

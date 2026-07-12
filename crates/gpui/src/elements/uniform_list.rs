@@ -37,17 +37,16 @@ where
             .map(|component| component.into_any_element())
             .collect()
     };
+    let mut interactivity = Interactivity::new();
+    interactivity.element_id = Some(id);
+    interactivity.base_style = Box::new(base_style);
 
     UniformList {
         item_count,
         item_to_measure_index: 0,
         render_items: Box::new(render_range),
         decorations: Vec::new(),
-        interactivity: Interactivity {
-            element_id: Some(id),
-            base_style: Box::new(base_style),
-            ..Interactivity::new()
-        },
+        interactivity,
         scroll_handle: None,
         sizing_behavior: ListSizingBehavior::default(),
         horizontal_sizing_behavior: ListHorizontalSizingBehavior::default(),

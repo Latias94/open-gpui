@@ -52,7 +52,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Weak,
-        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
     },
     time::Duration,
 };
@@ -67,6 +67,7 @@ mod pointer_session;
 mod prompts;
 
 use self::a11y::A11y;
+pub use self::a11y::AccessibilityTreeScope;
 pub(crate) use self::frame_journal::{
     DeferredDraw, Frame, PaintIndex, PrepaintStateIndex, TooltipRequest,
 };
@@ -1246,33 +1247,37 @@ impl Window {
         }
 
         let accessibility_force_disabled = cx.accessibility_force_disabled;
-        let a11y_active_flag = Arc::new(AtomicBool::new(false));
+        let a11y_active_state = Arc::new(AtomicU64::new(0));
 
         #[cfg(not(target_family = "wasm"))]
         if !accessibility_force_disabled {
             let (activation_sender, activation_receiver) = async_channel::unbounded::<()>();
             let (deactivation_sender, deactivation_receiver) = async_channel::unbounded::<()>();
             let (action_sender, action_receiver) =
-                async_channel::unbounded::<accesskit::ActionRequest>();
+                async_channel::unbounded::<(u64, accesskit::ActionRequest)>();
 
             platform_window.a11y_init(crate::A11yCallbacks {
                 activation: {
-                    let active_flag = a11y_active_flag.clone();
+                    let active_state = a11y_active_state.clone();
                     Box::new(move || {
                         log::info!("Accessibility activated");
-                        active_flag.store(true, SeqCst);
+                        a11y::set_requested_active(&active_state, true);
                         activation_sender.send_blocking(()).log_err();
                         None
                     })
                 },
-                action: Box::new(move |request| {
-                    action_sender.send_blocking(request).log_err();
-                }),
+                action: {
+                    let active_state = a11y_active_state.clone();
+                    Box::new(move |request| {
+                        let generation = a11y::requested_generation(&active_state);
+                        action_sender.send_blocking((generation, request)).log_err();
+                    })
+                },
                 deactivation: {
-                    let active_flag = a11y_active_flag.clone();
+                    let active_state = a11y_active_state.clone();
                     Box::new(move || {
                         log::info!("Accessibility deactivated");
-                        active_flag.store(false, SeqCst);
+                        a11y::set_requested_active(&active_state, false);
                         deactivation_sender.send_blocking(()).log_err();
                     })
                 },
@@ -1306,10 +1311,10 @@ impl Window {
             let mut async_cx = cx.to_async();
             cx.foreground_executor()
                 .spawn(async move {
-                    while let Ok(request) = action_receiver.recv().await {
+                    while let Ok((activation_generation, request)) = action_receiver.recv().await {
                         handle
                             .update(&mut async_cx, |_, window, cx| {
-                                window.handle_a11y_action(request, cx);
+                                window.handle_a11y_action(activation_generation, request, cx);
                             })
                             .log_err();
                     }
@@ -1640,7 +1645,7 @@ impl Window {
             captured_pointer: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
-            a11y: A11y::new(a11y_active_flag, accessibility_force_disabled),
+            a11y: A11y::new(a11y_active_state, accessibility_force_disabled),
         })
     }
 
@@ -3054,10 +3059,14 @@ impl Window {
 
         // a11y may have been activated/deactivated halfway through the frame
         let a11y_active_start_of_frame = self.a11y.is_active();
+        let a11y_generation_start_of_frame = self.a11y.activation_generation();
         self.a11y.sync_active_flag();
         let a11y_active_end_of_frame = self.a11y.is_active();
+        let a11y_generation_end_of_frame = self.a11y.activation_generation();
 
-        let should_send_a11y_update = a11y_active_start_of_frame && a11y_active_end_of_frame;
+        let should_send_a11y_update = a11y_active_start_of_frame
+            && a11y_active_end_of_frame
+            && a11y_generation_start_of_frame == a11y_generation_end_of_frame;
 
         if a11y_active_start_of_frame {
             // clear the builder state regardless
@@ -3068,6 +3077,8 @@ impl Window {
                     "Sending a11y tree update: {} nodes",
                     tree_update.nodes.len()
                 );
+                self.a11y
+                    .publish(&tree_update, a11y_generation_start_of_frame);
                 self.platform_window.a11y_tree_update(tree_update);
             }
         }
@@ -3173,6 +3184,8 @@ impl Window {
 
             for deferred_draw_ix in traversal_order {
                 let deferred_draw = &mut deferred_draws[deferred_draw_ix];
+                let accessibility_tree_scope = deferred_draw.accessibility_tree_scope;
+                let accessibility_hidden = deferred_draw.accessibility_hidden;
                 self.element_id_stack
                     .clone_from(&deferred_draw.element_id_stack);
                 self.text_style_stack
@@ -3188,7 +3201,12 @@ impl Window {
                             window.with_absolute_element_offset(
                                 deferred_draw.absolute_offset,
                                 |window| {
-                                    element.prepaint(window, cx);
+                                    let _hidden_subtree = accessibility_hidden
+                                        .then(|| window.a11y.nodes.enter_hidden_subtree());
+                                    window.with_accessibility_tree_scope(
+                                        accessibility_tree_scope,
+                                        |window| element.prepaint(window, cx),
+                                    );
                                 },
                             );
                         });
@@ -3331,6 +3349,8 @@ impl Window {
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
+                    accessibility_tree_scope: deferred_draw.accessibility_tree_scope,
+                    accessibility_hidden: deferred_draw.accessibility_hidden,
                     content_mask: deferred_draw.content_mask,
                     rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
@@ -3540,6 +3560,29 @@ impl Window {
         result
     }
 
+    /// Project frame-local accessibility membership while prepainting a surface subtree.
+    ///
+    /// This does not choose which surface is authoritative. Callers derive the scope from their
+    /// owning runtime, while GPUI remains responsible for final tree membership and repair.
+    pub fn with_accessibility_tree_scope<R>(
+        &mut self,
+        scope: AccessibilityTreeScope,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_prepaint();
+        if !self.a11y.is_active() {
+            return f(self);
+        }
+
+        let _scope = self.a11y.nodes.enter_scope(scope);
+        f(self)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_accessibility_active_for_test(&mut self, active: bool) {
+        self.a11y.set_requested_active_for_test(active);
+    }
+
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
     /// of prepaints can be discarded before prepainting again. This is used to support autoscroll
     /// where we need to prepaint children to detect the autoscroll bounds, then adjust the
@@ -3548,6 +3591,10 @@ impl Window {
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
         let index = self.prepaint_index();
+        let a11y_checkpoint = self
+            .a11y
+            .is_active()
+            .then(|| self.a11y.prepaint_checkpoint());
         let result = f(self);
         if result.is_err() {
             self.next_frame.hitboxes.truncate(index.hitboxes_index);
@@ -3570,6 +3617,9 @@ impl Window {
                 .accessed_element_states
                 .truncate(index.accessed_element_states_index);
             self.text_system.truncate_layouts(index.line_layout_index);
+            if let Some(checkpoint) = a11y_checkpoint {
+                self.a11y.rollback_prepaint(checkpoint);
+            }
         }
         result
     }
@@ -3861,6 +3911,8 @@ impl Window {
             parent_node,
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
+            accessibility_tree_scope: self.a11y.current_tree_scope(),
+            accessibility_hidden: self.a11y.current_tree_hidden(),
             content_mask,
             rem_size: self.rem_size(),
             priority,
@@ -5825,17 +5877,37 @@ impl Window {
         listener: impl FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static,
     ) {
         self.a11y
-            .action_listeners
-            .entry(node_id)
-            .or_default()
-            .push((action, Box::new(listener)));
+            .record_action_listener(node_id, action, Box::new(listener));
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub(crate) fn handle_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
+    pub(crate) fn handle_a11y_action(
+        &mut self,
+        request_activation_generation: u64,
+        request: accesskit::ActionRequest,
+        cx: &mut App,
+    ) {
+        if !self.a11y.accepts_action(
+            request_activation_generation,
+            request.target_tree,
+            request.target_node,
+            request.action,
+        ) {
+            log::debug!(
+                "Rejected a11y action {:?} on unavailable tree {:?} node {:?}",
+                request.action,
+                request.target_tree,
+                request.target_node
+            );
+            return;
+        }
+
         // Take listeners out temporarily so the closures can borrow Window
         // mutably, then restore them afterward.
-        if let Some(mut listeners) = self.a11y.action_listeners.remove(&request.target_node) {
+        if let Some((published_revision, mut listeners)) = self
+            .a11y
+            .take_published_action_listeners(request.target_node)
+        {
             let extra_data = request.data.as_ref();
             let mut matched = false;
             for (action, listener) in &mut listeners {
@@ -5844,9 +5916,11 @@ impl Window {
                     matched = true;
                 }
             }
-            self.a11y
-                .action_listeners
-                .insert(request.target_node, listeners);
+            self.a11y.restore_published_action_listeners(
+                published_revision,
+                request.target_node,
+                listeners,
+            );
             if matched {
                 return;
             }
@@ -5855,7 +5929,7 @@ impl Window {
         // Fall back to built-in action handling.
         match request.action {
             accesskit::Action::Click => {
-                if let Some(bounds) = self.a11y.node_bounds.get(&request.target_node).copied() {
+                if let Some(bounds) = self.a11y.published_node_bounds(request.target_node) {
                     let center = bounds.center();
                     let mouse_down = PlatformInput::MouseDown(crate::MouseDownEvent {
                         button: MouseButton::Left,
@@ -5875,7 +5949,7 @@ impl Window {
                 }
             }
             accesskit::Action::Focus => {
-                if let Some(focus_id) = self.a11y.focus_ids.get(&request.target_node).copied()
+                if let Some(focus_id) = self.a11y.published_focus_id(request.target_node)
                     && let Some(handle) = FocusHandle::for_id(focus_id, &cx.focus_handles)
                 {
                     self.focus(&handle, cx);

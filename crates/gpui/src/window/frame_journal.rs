@@ -1,10 +1,10 @@
 #[cfg(any(test, feature = "test-support"))]
 use crate::Bounds;
 use crate::{
-    AnyElement, AnyTooltip, App, AtlasAccessDiagnostic, CursorStyle, DispatchNodeId, DispatchTree,
-    ElementId, EntityId, GlobalElementId, Hitbox, HitboxBehavior, HitboxId, LineLayoutIndex,
-    Pixels, PlatformInputHandler, Point, PointerCaptureId, Scene, TabStopMap, TextStyleRefinement,
-    Window, WindowControlArea,
+    AccessibilityTreeScope, AnyElement, AnyTooltip, App, AtlasAccessDiagnostic, CursorStyle,
+    DispatchNodeId, DispatchTree, ElementId, EntityId, GlobalElementId, Hitbox, HitboxBehavior,
+    HitboxId, LineLayoutIndex, Pixels, PlatformInputHandler, Point, PointerCaptureId, Scene,
+    TabStopMap, TextStyleRefinement, Window, WindowControlArea,
 };
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
@@ -29,6 +29,8 @@ pub(crate) struct DeferredDraw {
     pub(super) parent_node: DispatchNodeId,
     pub(super) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(super) text_style_stack: Vec<TextStyleRefinement>,
+    pub(super) accessibility_tree_scope: AccessibilityTreeScope,
+    pub(super) accessibility_hidden: bool,
     pub(super) content_mask: Option<ContentMask<Pixels>>,
     pub(super) rem_size: Pixels,
     pub(super) element: Option<AnyElement>,
