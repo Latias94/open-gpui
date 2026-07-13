@@ -31,12 +31,11 @@ use crate::scroll_surface::{
 };
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, DragMoveEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement,
-    Styled, Window, div, px, rgb,
+    App, DragMoveEvent, ParentElement, RenderOnce, SharedString, Styled, Window, div, px, rgb,
 };
 use open_gpui_ui_core::{
-    Sizable, Size, TableColumnResizeDirection, TableColumnResizeMode, TableExpansionMode,
-    TableRowId, TableState, UiPx, VirtualizerSnapshot,
+    Role, SemanticDescriptor, Sizable, Size, TableColumnResizeDirection, TableColumnResizeMode,
+    TableExpansionMode, TableRowId, TableState, UiPx, VirtualizerSnapshot,
 };
 pub use open_gpui_ui_core::{
     TableResolvedHeaderCell, TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions,
@@ -377,6 +376,13 @@ impl RenderOnce for Table {
         let on_row_selection_change = self.on_row_selection_change.clone();
         let on_row_expansion_request = self.on_row_expansion_request.clone();
         let on_cell_edit_change = self.on_cell_edit_change.clone();
+        let mut semantics = SemanticDescriptor::new(Role::Table)
+            .with_label(&label)
+            .with_row_count(plan.aria_row_count());
+        let column_count = plan.aria_column_count();
+        if column_count > 0 {
+            semantics = semantics.with_column_count(column_count);
+        }
 
         div()
             .id(self.id)
@@ -393,14 +399,7 @@ impl RenderOnce for Table {
             .overflow_hidden()
             .text_size(gpui_px_from_ui(metrics.size().control_text_px()))
             .text_color(rgb(0x2f3845))
-            .ui_role(plan.role())
-            .aria_label(label)
-            .when(plan.aria_row_count() > 0, |this| {
-                this.aria_row_count(plan.aria_row_count())
-            })
-            .when(plan.aria_column_count() > 0, |this| {
-                this.aria_column_count(plan.aria_column_count())
-            })
+            .ui_semantics(&semantics)
             .capture_scroll_wheel({
                 let scroll_handle = scroll_handle.clone();
                 move |event, window, _| {

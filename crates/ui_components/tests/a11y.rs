@@ -1,14 +1,260 @@
-use open_gpui::div;
+use open_gpui::prelude::FluentBuilder;
+use open_gpui::{
+    Context, ElementId, InteractiveElement, IntoElement, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Window, accesskit, div,
+};
+use open_gpui_ui_components::gpui_adapter::UiA11yElementExt;
 use open_gpui_ui_components::{
     A11yContractError, A11yLabelSource, A11yStateEvidence, A11yValueKind, A11yValueMetadata,
     Button, COMPONENT_A11Y_EVIDENCE, Checkbox, ComponentA11yContract, Dialog, IconButton, Listbox,
     Menu, MenuItem, NumberInput, Progress, Slider, Splitter, SplitterPanel,
-    SplitterPanelDescriptor, Table, Tree, TreeItemDescriptor, VirtualizedList,
-    VirtualizedListItemDescriptor, VirtualizedListStatusKind, listbox::ListboxOption,
+    SplitterPanelDescriptor, Tree, TreeItemDescriptor, VirtualizedList,
+    VirtualizedListItemDescriptor, VirtualizedListStatusKind, component_a11y_evidence,
+    listbox::ListboxOption,
 };
-use open_gpui_ui_core::{
-    AccessibleAction, Orientation, Role, TableColumn, TableRow, TableState, Toggled, ui_px,
-};
+use open_gpui_ui_core::{AccessibleAction, Orientation, Role, SemanticDescriptor, Toggled, ui_px};
+use std::{cell::RefCell, rc::Rc};
+
+fn a11y_node_with_label<'a>(
+    update: &'a accesskit::TreeUpdate,
+    label: &str,
+) -> (accesskit::NodeId, &'a accesskit::Node) {
+    update
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some(label))
+        .map(|(id, node)| (*id, node))
+        .unwrap_or_else(|| panic!("missing accessibility node labelled {label:?}"))
+}
+
+#[open_gpui::test]
+fn button_final_tree_and_actions_follow_resolved_projection(cx: &mut open_gpui::TestAppContext) {
+    struct ButtonA11yProbe {
+        activations: Rc<RefCell<usize>>,
+        disabled: bool,
+        show: bool,
+    }
+
+    impl Render for ButtonA11yProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let activations = self.activations.clone();
+            let disabled = self.disabled;
+            let button = Button::new("semantic-button", "Save")
+                .selected(true)
+                .disabled(disabled)
+                .accessibility_description("Writes the document")
+                .on_click(move |_, _, _| *activations.borrow_mut() += 1);
+
+            div()
+                .size_full()
+                .when(self.show, |this| this.child(button))
+                .child(Button::new("focus-only-button", "Focus only"))
+        }
+    }
+
+    let activations = Rc::new(RefCell::new(0));
+    let (view, cx) = cx.add_window_view(|_, _| ButtonA11yProbe {
+        activations: activations.clone(),
+        disabled: false,
+        show: true,
+    });
+
+    assert!(cx.activate_accessibility());
+    let initial = cx
+        .latest_accessibility_tree_update()
+        .expect("button accessibility tree should publish");
+    let (button_id, button_node) = a11y_node_with_label(&initial, "Save");
+    assert_eq!(button_node.role(), accesskit::Role::Button);
+    assert_eq!(button_node.description(), Some("Writes the document"));
+    assert_eq!(button_node.is_selected(), Some(true));
+    assert!(!button_node.is_disabled());
+    assert!(button_node.supports_action(accesskit::Action::Click));
+    assert!(button_node.supports_action(accesskit::Action::Focus));
+
+    let (focus_only_id, focus_only) = a11y_node_with_label(&initial, "Focus only");
+    assert!(!focus_only.supports_action(accesskit::Action::Click));
+    assert!(focus_only.supports_action(accesskit::Action::Focus));
+
+    assert!(cx.dispatch_accessibility_action(accesskit::ActionRequest {
+        action: accesskit::Action::Focus,
+        target_tree: accesskit::TreeId::ROOT,
+        target_node: focus_only_id,
+        data: None,
+    }));
+    cx.run_until_parked();
+    assert_eq!(
+        cx.latest_accessibility_tree_update()
+            .expect("focus-only button focus should publish")
+            .focus,
+        focus_only_id
+    );
+
+    assert!(cx.dispatch_accessibility_action(accesskit::ActionRequest {
+        action: accesskit::Action::Click,
+        target_tree: accesskit::TreeId::ROOT,
+        target_node: button_id,
+        data: None,
+    }));
+    assert_eq!(*activations.borrow(), 1);
+
+    view.update(cx, |probe, cx| {
+        probe.disabled = true;
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    let disabled = cx
+        .latest_accessibility_tree_update()
+        .expect("disabled button accessibility tree should publish");
+    let (disabled_id, disabled_node) = a11y_node_with_label(&disabled, "Save");
+    assert_eq!(
+        disabled_id, button_id,
+        "equivalent rerenders keep node identity"
+    );
+    assert!(disabled_node.is_disabled());
+    assert!(!disabled_node.supports_action(accesskit::Action::Click));
+    assert!(!disabled_node.supports_action(accesskit::Action::Focus));
+
+    assert!(cx.dispatch_accessibility_action(accesskit::ActionRequest {
+        action: accesskit::Action::Click,
+        target_tree: accesskit::TreeId::ROOT,
+        target_node: button_id,
+        data: None,
+    }));
+    assert_eq!(*activations.borrow(), 1);
+
+    view.update(cx, |probe, cx| {
+        probe.show = false;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let unmounted = cx
+        .latest_accessibility_tree_update()
+        .expect("button unmount accessibility tree should publish");
+    assert!(
+        !unmounted.nodes.iter().any(|(id, _)| *id == button_id),
+        "unmounted semantic nodes must leave the final tree"
+    );
+}
+
+#[open_gpui::test]
+fn semantic_relations_resolve_update_and_repair_after_unmount(cx: &mut open_gpui::TestAppContext) {
+    struct RelationProbe {
+        alternate_label: bool,
+        show_controlled: bool,
+        show_description: bool,
+    }
+
+    impl Render for RelationProbe {
+        fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let controlled_id: ElementId = "semantic-relation-controlled".into();
+            let primary_label_id: ElementId = "semantic-relation-label-primary".into();
+            let alternate_label_id: ElementId = "semantic-relation-label-alternate".into();
+            let description_id: ElementId = "semantic-relation-description".into();
+            let controls = [controlled_id.clone()];
+            let labelled_by = [if self.alternate_label {
+                alternate_label_id.clone()
+            } else {
+                primary_label_id.clone()
+            }];
+            let described_by = self
+                .show_description
+                .then(|| description_id.clone())
+                .into_iter()
+                .collect::<Vec<_>>();
+            let semantics = SemanticDescriptor::<ElementId>::new(Role::TextInput)
+                .with_label("Relation source")
+                .with_controls(&controls)
+                .with_labelled_by(&labelled_by)
+                .with_described_by(&described_by);
+
+            let source = div()
+                .id("semantic-relation-source")
+                .ui_semantics_with_relations(&semantics, |id| {
+                    window.with_global_id(id.clone(), |global_id, _| global_id.accesskit_node_id())
+                });
+
+            div()
+                .child(source)
+                .child(
+                    div()
+                        .id(primary_label_id)
+                        .role(accesskit::Role::Label)
+                        .aria_label("Primary relation label"),
+                )
+                .child(
+                    div()
+                        .id(alternate_label_id)
+                        .role(accesskit::Role::Label)
+                        .aria_label("Alternate relation label"),
+                )
+                .when(self.show_controlled, |this| {
+                    this.child(
+                        div()
+                            .id(controlled_id)
+                            .role(accesskit::Role::Group)
+                            .aria_label("Controlled relation target"),
+                    )
+                })
+                .when(self.show_description, |this| {
+                    this.child(
+                        div()
+                            .id(description_id)
+                            .role(accesskit::Role::Label)
+                            .aria_label("Relation description"),
+                    )
+                })
+        }
+    }
+
+    let (view, cx) = cx.add_window_view(|_, _| RelationProbe {
+        alternate_label: false,
+        show_controlled: true,
+        show_description: true,
+    });
+
+    assert!(cx.activate_accessibility());
+    let initial = cx
+        .latest_accessibility_tree_update()
+        .expect("relation projection should publish");
+    let (source_id, source) = a11y_node_with_label(&initial, "Relation source");
+    let (controlled_id, _) = a11y_node_with_label(&initial, "Controlled relation target");
+    let (primary_label_id, _) = a11y_node_with_label(&initial, "Primary relation label");
+    let (description_id, _) = a11y_node_with_label(&initial, "Relation description");
+    assert_eq!(source.controls(), &[controlled_id]);
+    assert_eq!(source.labelled_by(), &[primary_label_id]);
+    assert_eq!(source.described_by(), &[description_id]);
+
+    view.update(cx, |probe, cx| {
+        probe.alternate_label = true;
+        probe.show_controlled = false;
+        probe.show_description = false;
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    let updated = cx
+        .latest_accessibility_tree_update()
+        .expect("updated relation projection should publish");
+    let (updated_source_id, updated_source) = a11y_node_with_label(&updated, "Relation source");
+    let (alternate_label_id, _) = a11y_node_with_label(&updated, "Alternate relation label");
+    assert_eq!(updated_source_id, source_id);
+    assert!(updated_source.controls().is_empty());
+    assert_eq!(updated_source.labelled_by(), &[alternate_label_id]);
+    assert!(updated_source.described_by().is_empty());
+    assert!(
+        !updated
+            .nodes
+            .iter()
+            .any(|(id, _)| { *id == controlled_id || *id == description_id })
+    );
+}
+
+#[test]
+fn migrated_components_have_no_static_a11y_evidence() {
+    assert!(component_a11y_evidence("Button").is_none());
+    assert!(component_a11y_evidence("Table").is_none());
+}
 
 #[test]
 fn a11y_contract_validation_reports_required_metadata_failures() {
@@ -37,7 +283,7 @@ fn a11y_contract_validation_reports_required_metadata_failures() {
         A11yContractError::MissingValueMetadata
     );
 
-    let missing_action = ComponentA11yContract::new("Button", Role::Button)
+    let missing_action = ComponentA11yContract::new("Action control", Role::Button)
         .with_label_source(A11yLabelSource::VisibleText)
         .validate()
         .unwrap_err();
@@ -88,10 +334,6 @@ fn component_contract_a11y_evidence_is_valid() {
 #[test]
 fn component_contract_a11y_evidence_records_state_and_focus_coverage() {
     assert_state_coverage(
-        "Button",
-        &[A11yStateEvidence::Disabled, A11yStateEvidence::Selected],
-    );
-    assert_state_coverage(
         "Checkbox",
         &[A11yStateEvidence::Checked, A11yStateEvidence::Disabled],
     );
@@ -135,15 +377,6 @@ fn component_contract_a11y_evidence_records_state_and_focus_coverage() {
 
 #[test]
 fn representative_component_a11y_contracts_are_valid() {
-    let button = Button::new("save", "Save").state();
-    contract("Button", button.role())
-        .with_label_source(A11yLabelSource::VisibleText)
-        .selected_state(button.selected())
-        .disabled_state(button.disabled())
-        .with_actions(&[AccessibleAction::Click])
-        .validate()
-        .unwrap();
-
     let icon_button = IconButton::new("search", "?", "Search").state();
     assert_eq!(icon_button.accessible_label(), "Search");
     contract("IconButton", icon_button.role())
@@ -290,24 +523,6 @@ fn representative_component_a11y_contracts_are_valid() {
         .selected_state(tree_row.selected())
         .expanded_state(true)
         .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus])
-        .validate()
-        .unwrap();
-
-    let table_state = TableState::new([TableRow::new("row-a").with_cell("name", "Alpha")])
-        .with_columns([TableColumn::new("name", "Name")]);
-    let table = Table::new("release-table", "Release table", table_state)
-        .behavior_snapshot(ui_px(0.0), ui_px(160.0));
-    contract("Table", table.role())
-        .with_label_source(A11yLabelSource::VisibleText)
-        .with_value_metadata(A11yValueMetadata::present(A11yValueKind::Count))
-        .validate()
-        .unwrap();
-    contract("Table row", table.row_role()).validate().unwrap();
-    contract("Table header", table.column_header_role())
-        .with_label_source(A11yLabelSource::VisibleText)
-        .validate()
-        .unwrap();
-    contract("Table cell", table.cell_role())
         .validate()
         .unwrap();
 

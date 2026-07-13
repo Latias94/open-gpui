@@ -4,7 +4,8 @@ use open_gpui::{
     px, rgb,
 };
 use open_gpui_ui_core::{
-    Role, TableExpansionState, TableRowChildrenLoadState, TableTreeRow, ui_px,
+    AccessibleAction, Role, SemanticDescriptor, TableExpansionState, TableRowChildrenLoadState,
+    TableTreeRow, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -85,6 +86,9 @@ pub(super) fn render_table_body_cell(
         );
     }
 
+    let semantics = SemanticDescriptor::new(Role::Cell)
+        .with_value(cell.text())
+        .with_column_index(cell.aria_column_index());
     let cell = div()
         .id(format!("table:{table_id}:cell:{render_key}:{column_id}"))
         .debug_selector(move || format!("table:{table_id}:cell:{render_key}:{column_id}"))
@@ -97,8 +101,7 @@ pub(super) fn render_table_body_cell(
         .border_color(rgb(0xe7e9e1))
         .text_xs()
         .text_color(rgb(0x2f3845))
-        .ui_role(cell.role())
-        .aria_column_index(cell.aria_column_index())
+        .ui_semantics(&semantics)
         .children(content)
         .when(measured_rows, |this| this.whitespace_normal())
         .when(!measured_rows, |this| this.truncate().whitespace_nowrap());
@@ -145,6 +148,10 @@ fn render_table_tree_toggle(
         }
         TableRowChildrenLoadState::Idle => format!("Expand row {}", row.id().as_str()),
     };
+    let semantics = SemanticDescriptor::new(Role::Button)
+        .with_label(&aria_label)
+        .with_expanded(tree_expanded)
+        .with_actions(&[AccessibleAction::Click]);
 
     div()
         .id(format!("table:{table_id}:tree-toggle:{render_key}"))
@@ -161,9 +168,7 @@ fn render_table_tree_toggle(
         .justify_center()
         .rounded_sm()
         .text_xs()
-        .ui_role(Role::Button)
-        .aria_label(aria_label)
-        .aria_expanded(tree_expanded)
+        .ui_semantics(&semantics)
         .cursor_pointer()
         .hover(|style| style.bg(rgb(0xe8ede6)))
         .on_click(move |event: &ClickEvent, window: &mut Window, cx| {

@@ -22,7 +22,7 @@ pub mod table;
 pub mod tokens;
 pub mod virtualizer;
 
-pub use a11y::{AccessibleAction, Orientation, Role, Toggled};
+pub use a11y::{AccessibleAction, Orientation, Role, SemanticDescriptor, SortDirection, Toggled};
 pub use active_descendant::ActiveDescendant;
 pub use adaptive::{
     AdaptiveQuerySource, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceAdaptiveSnapshot,

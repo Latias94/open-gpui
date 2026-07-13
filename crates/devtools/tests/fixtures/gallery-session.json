@@ -236,31 +236,9 @@
                     "id": "accessibility",
                     "label": "Accessibility contracts",
                     "payload": {
-                      "contract_count": 12
+                      "contract_count": 10
                     },
                     "children": [
-                      {
-                        "id": "accessibility.button",
-                        "label": "Button",
-                        "payload": {
-                          "component": "Button",
-                          "role": "button",
-                          "label_source": "visible-text",
-                          "description_source": "none",
-                          "selected": null,
-                          "checked": null,
-                          "expanded": null,
-                          "disabled": null,
-                          "value": null,
-                          "orientation": null,
-                          "actions": [
-                            "click"
-                          ],
-                          "valid": true,
-                          "violation": null
-                        },
-                        "children": []
-                      },
                       {
                         "id": "accessibility.iconbutton",
                         "label": "IconButton",
@@ -425,29 +403,6 @@
                             "click",
                             "focus"
                           ],
-                          "valid": true,
-                          "violation": null
-                        },
-                        "children": []
-                      },
-                      {
-                        "id": "accessibility.table",
-                        "label": "Table",
-                        "payload": {
-                          "component": "Table",
-                          "role": "table",
-                          "label_source": "visible-text",
-                          "description_source": "none",
-                          "selected": null,
-                          "checked": null,
-                          "expanded": null,
-                          "disabled": null,
-                          "value": {
-                            "kind": "count",
-                            "present": true
-                          },
-                          "orientation": null,
-                          "actions": [],
                           "valid": true,
                           "violation": null
                         },
@@ -1806,31 +1761,9 @@
                   "id": "accessibility",
                   "label": "Accessibility contracts",
                   "payload": {
-                    "contract_count": 12
+                    "contract_count": 10
                   },
                   "children": [
-                    {
-                      "id": "accessibility.button",
-                      "label": "Button",
-                      "payload": {
-                        "component": "Button",
-                        "role": "button",
-                        "label_source": "visible-text",
-                        "description_source": "none",
-                        "selected": null,
-                        "checked": null,
-                        "expanded": null,
-                        "disabled": null,
-                        "value": null,
-                        "orientation": null,
-                        "actions": [
-                          "click"
-                        ],
-                        "valid": true,
-                        "violation": null
-                      },
-                      "children": []
-                    },
                     {
                       "id": "accessibility.iconbutton",
                       "label": "IconButton",
@@ -1995,29 +1928,6 @@
                           "click",
                           "focus"
                         ],
-                        "valid": true,
-                        "violation": null
-                      },
-                      "children": []
-                    },
-                    {
-                      "id": "accessibility.table",
-                      "label": "Table",
-                      "payload": {
-                        "component": "Table",
-                        "role": "table",
-                        "label_source": "visible-text",
-                        "description_source": "none",
-                        "selected": null,
-                        "checked": null,
-                        "expanded": null,
-                        "disabled": null,
-                        "value": {
-                          "kind": "count",
-                          "present": true
-                        },
-                        "orientation": null,
-                        "actions": [],
                         "valid": true,
                         "violation": null
                       },
@@ -3373,31 +3283,9 @@
                     "id": "accessibility",
                     "label": "Accessibility contracts",
                     "payload": {
-                      "contract_count": 12
+                      "contract_count": 10
                     },
                     "children": [
-                      {
-                        "id": "accessibility.button",
-                        "label": "Button",
-                        "payload": {
-                          "component": "Button",
-                          "role": "button",
-                          "label_source": "visible-text",
-                          "description_source": "none",
-                          "selected": null,
-                          "checked": null,
-                          "expanded": null,
-                          "disabled": null,
-                          "value": null,
-                          "orientation": null,
-                          "actions": [
-                            "click"
-                          ],
-                          "valid": true,
-                          "violation": null
-                        },
-                        "children": []
-                      },
                       {
                         "id": "accessibility.iconbutton",
                         "label": "IconButton",
@@ -3562,29 +3450,6 @@
                             "click",
                             "focus"
                           ],
-                          "valid": true,
-                          "violation": null
-                        },
-                        "children": []
-                      },
-                      {
-                        "id": "accessibility.table",
-                        "label": "Table",
-                        "payload": {
-                          "component": "Table",
-                          "role": "table",
-                          "label_source": "visible-text",
-                          "description_source": "none",
-                          "selected": null,
-                          "checked": null,
-                          "expanded": null,
-                          "disabled": null,
-                          "value": {
-                            "kind": "count",
-                            "present": true
-                          },
-                          "orientation": null,
-                          "actions": [],
                           "valid": true,
                           "violation": null
                         },
@@ -4943,31 +4808,9 @@
                   "id": "accessibility",
                   "label": "Accessibility contracts",
                   "payload": {
-                    "contract_count": 12
+                    "contract_count": 10
                   },
                   "children": [
-                    {
-                      "id": "accessibility.button",
-                      "label": "Button",
-                      "payload": {
-                        "component": "Button",
-                        "role": "button",
-                        "label_source": "visible-text",
-                        "description_source": "none",
-                        "selected": null,
-                        "checked": null,
-                        "expanded": null,
-                        "disabled": null,
-                        "value": null,
-                        "orientation": null,
-                        "actions": [
-                          "click"
-                        ],
-                        "valid": true,
-                        "violation": null
-                      },
-                      "children": []
-                    },
                     {
                       "id": "accessibility.iconbutton",
                       "label": "IconButton",
@@ -5132,29 +4975,6 @@
                           "click",
                           "focus"
                         ],
-                        "valid": true,
-                        "violation": null
-                      },
-                      "children": []
-                    },
-                    {
-                      "id": "accessibility.table",
-                      "label": "Table",
-                      "payload": {
-                        "component": "Table",
-                        "role": "table",
-                        "label_source": "visible-text",
-                        "description_source": "none",
-                        "selected": null,
-                        "checked": null,
-                        "expanded": null,
-                        "disabled": null,
-                        "value": {
-                          "kind": "count",
-                          "present": true
-                        },
-                        "orientation": null,
-                        "actions": [],
                         "valid": true,
                         "violation": null
                       },
@@ -6809,31 +6629,9 @@
                       "id": "accessibility",
                       "label": "Accessibility contracts",
                       "payload": {
-                        "contract_count": 12
+                        "contract_count": 10
                       },
                       "children": [
-                        {
-                          "id": "accessibility.button",
-                          "label": "Button",
-                          "payload": {
-                            "component": "Button",
-                            "role": "button",
-                            "label_source": "visible-text",
-                            "description_source": "none",
-                            "selected": null,
-                            "checked": null,
-                            "expanded": null,
-                            "disabled": null,
-                            "value": null,
-                            "orientation": null,
-                            "actions": [
-                              "click"
-                            ],
-                            "valid": true,
-                            "violation": null
-                          },
-                          "children": []
-                        },
                         {
                           "id": "accessibility.iconbutton",
                           "label": "IconButton",
@@ -6998,29 +6796,6 @@
                               "click",
                               "focus"
                             ],
-                            "valid": true,
-                            "violation": null
-                          },
-                          "children": []
-                        },
-                        {
-                          "id": "accessibility.table",
-                          "label": "Table",
-                          "payload": {
-                            "component": "Table",
-                            "role": "table",
-                            "label_source": "visible-text",
-                            "description_source": "none",
-                            "selected": null,
-                            "checked": null,
-                            "expanded": null,
-                            "disabled": null,
-                            "value": {
-                              "kind": "count",
-                              "present": true
-                            },
-                            "orientation": null,
-                            "actions": [],
                             "valid": true,
                             "violation": null
                           },
@@ -7126,31 +6901,9 @@
                       "id": "accessibility",
                       "label": "Accessibility contracts",
                       "payload": {
-                        "contract_count": 12
+                        "contract_count": 10
                       },
                       "children": [
-                        {
-                          "id": "accessibility.button",
-                          "label": "Button",
-                          "payload": {
-                            "component": "Button",
-                            "role": "button",
-                            "label_source": "visible-text",
-                            "description_source": "none",
-                            "selected": null,
-                            "checked": null,
-                            "expanded": null,
-                            "disabled": null,
-                            "value": null,
-                            "orientation": null,
-                            "actions": [
-                              "click"
-                            ],
-                            "valid": true,
-                            "violation": null
-                          },
-                          "children": []
-                        },
                         {
                           "id": "accessibility.iconbutton",
                           "label": "IconButton",
@@ -7315,29 +7068,6 @@
                               "click",
                               "focus"
                             ],
-                            "valid": true,
-                            "violation": null
-                          },
-                          "children": []
-                        },
-                        {
-                          "id": "accessibility.table",
-                          "label": "Table",
-                          "payload": {
-                            "component": "Table",
-                            "role": "table",
-                            "label_source": "visible-text",
-                            "description_source": "none",
-                            "selected": null,
-                            "checked": null,
-                            "expanded": null,
-                            "disabled": null,
-                            "value": {
-                              "kind": "count",
-                              "present": true
-                            },
-                            "orientation": null,
-                            "actions": [],
                             "valid": true,
                             "violation": null
                           },
@@ -10064,31 +9794,9 @@
                     "id": "accessibility",
                     "label": "Accessibility contracts",
                     "payload": {
-                      "contract_count": 12
+                      "contract_count": 10
                     },
                     "children": [
-                      {
-                        "id": "accessibility.button",
-                        "label": "Button",
-                        "payload": {
-                          "component": "Button",
-                          "role": "button",
-                          "label_source": "visible-text",
-                          "description_source": "none",
-                          "selected": null,
-                          "checked": null,
-                          "expanded": null,
-                          "disabled": null,
-                          "value": null,
-                          "orientation": null,
-                          "actions": [
-                            "click"
-                          ],
-                          "valid": true,
-                          "violation": null
-                        },
-                        "children": []
-                      },
                       {
                         "id": "accessibility.iconbutton",
                         "label": "IconButton",
@@ -10253,29 +9961,6 @@
                             "click",
                             "focus"
                           ],
-                          "valid": true,
-                          "violation": null
-                        },
-                        "children": []
-                      },
-                      {
-                        "id": "accessibility.table",
-                        "label": "Table",
-                        "payload": {
-                          "component": "Table",
-                          "role": "table",
-                          "label_source": "visible-text",
-                          "description_source": "none",
-                          "selected": null,
-                          "checked": null,
-                          "expanded": null,
-                          "disabled": null,
-                          "value": {
-                            "kind": "count",
-                            "present": true
-                          },
-                          "orientation": null,
-                          "actions": [],
                           "valid": true,
                           "violation": null
                         },
@@ -10368,31 +10053,9 @@
                     "id": "accessibility",
                     "label": "Accessibility contracts",
                     "payload": {
-                      "contract_count": 12
+                      "contract_count": 10
                     },
                     "children": [
-                      {
-                        "id": "accessibility.button",
-                        "label": "Button",
-                        "payload": {
-                          "component": "Button",
-                          "role": "button",
-                          "label_source": "visible-text",
-                          "description_source": "none",
-                          "selected": null,
-                          "checked": null,
-                          "expanded": null,
-                          "disabled": null,
-                          "value": null,
-                          "orientation": null,
-                          "actions": [
-                            "click"
-                          ],
-                          "valid": true,
-                          "violation": null
-                        },
-                        "children": []
-                      },
                       {
                         "id": "accessibility.iconbutton",
                         "label": "IconButton",
@@ -10557,29 +10220,6 @@
                             "click",
                             "focus"
                           ],
-                          "valid": true,
-                          "violation": null
-                        },
-                        "children": []
-                      },
-                      {
-                        "id": "accessibility.table",
-                        "label": "Table",
-                        "payload": {
-                          "component": "Table",
-                          "role": "table",
-                          "label_source": "visible-text",
-                          "description_source": "none",
-                          "selected": null,
-                          "checked": null,
-                          "expanded": null,
-                          "disabled": null,
-                          "value": {
-                            "kind": "count",
-                            "present": true
-                          },
-                          "orientation": null,
-                          "actions": [],
                           "valid": true,
                           "violation": null
                         },

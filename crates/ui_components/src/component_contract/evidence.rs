@@ -8,15 +8,6 @@ use super::{ComponentA11yEvidence, ComponentConformanceGate};
 /// Representative accessibility evidence owned by the component contract.
 pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[
     ComponentA11yEvidence {
-        component: "Button",
-        role: Role::Button,
-        label_source: A11yLabelSource::VisibleText,
-        value_kind: None,
-        orientation: None,
-        actions: &[AccessibleAction::Click],
-        state_coverage: &[A11yStateEvidence::Disabled, A11yStateEvidence::Selected],
-    },
-    ComponentA11yEvidence {
         component: "IconButton",
         role: Role::Button,
         label_source: A11yLabelSource::ExplicitLabel,
@@ -94,15 +85,6 @@ pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[
             A11yStateEvidence::Focusable,
             A11yStateEvidence::Selected,
         ],
-    },
-    ComponentA11yEvidence {
-        component: "Table",
-        role: Role::Table,
-        label_source: A11yLabelSource::VisibleText,
-        value_kind: Some(A11yValueKind::Count),
-        orientation: None,
-        actions: &[],
-        state_coverage: &[A11yStateEvidence::Value],
     },
     ComponentA11yEvidence {
         component: "VirtualizedList row",

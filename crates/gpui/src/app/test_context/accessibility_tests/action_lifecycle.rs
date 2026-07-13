@@ -18,6 +18,62 @@ struct GenerationFlipAccessibilityProbeView {
     activations: usize,
 }
 
+struct ExactActionProjectionProbeView {
+    activations: usize,
+}
+
+impl Render for ExactActionProjectionProbeView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let click_target = cx.entity().downgrade();
+        let increment_target = click_target.clone();
+
+        div()
+            .id("exact-action-projection-probe")
+            .role(Role::Group)
+            .child(
+                div()
+                    .id("exact-empty-actions")
+                    .role(Role::Button)
+                    .aria_label("Exact empty actions")
+                    .focusable()
+                    .aria_actions([])
+                    .on_click(move |_, _, cx| {
+                        click_target
+                            .update(cx, |this, _| this.activations += 1)
+                            .ok();
+                    })
+                    .on_a11y_action(AccessibleAction::Increment, move |_, _, cx| {
+                        increment_target
+                            .update(cx, |this, _| this.activations += 1)
+                            .ok();
+                    }),
+            )
+            .child(
+                div()
+                    .id("declared-listener-free-action")
+                    .role(Role::SpinButton)
+                    .aria_label("Declared listener-free action")
+                    .aria_action(AccessibleAction::Increment),
+            )
+            .child(
+                div()
+                    .id("single-then-set-actions")
+                    .role(Role::Button)
+                    .aria_label("Single then set actions")
+                    .aria_action(AccessibleAction::Click)
+                    .aria_actions([AccessibleAction::Focus]),
+            )
+            .child(
+                div()
+                    .id("set-then-single-actions")
+                    .role(Role::SpinButton)
+                    .aria_label("Set then single actions")
+                    .aria_actions([AccessibleAction::Focus])
+                    .aria_action(AccessibleAction::Increment),
+            )
+    }
+}
+
 impl Render for GenerationFlipAccessibilityProbeView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let this = cx.entity().downgrade();
@@ -49,6 +105,58 @@ impl Render for GenerationFlipAccessibilityProbeView {
                 |_, _, _, _| {},
             ))
     }
+}
+
+#[open_gpui::test]
+fn accessibility_action_declarations_publish_exact_sets(cx: &mut TestAppContext) {
+    let typed_window = cx.open_window(size(px(320.0), px(200.0)), |_, _| {
+        ExactActionProjectionProbeView { activations: 0 }
+    });
+    let view = typed_window.root(cx).unwrap();
+    let window = typed_window.into();
+
+    assert!(cx.activate_accessibility(window));
+    let update = cx.latest_accessibility_tree_update(window).unwrap();
+
+    let (empty_id, empty) = node_with_label(&update, "Exact empty actions");
+    assert!(!empty.supports_action(AccessibleAction::Click));
+    assert!(!empty.supports_action(AccessibleAction::Focus));
+    assert!(!empty.supports_action(AccessibleAction::Increment));
+
+    assert!(cx.dispatch_accessibility_action(
+        window,
+        ActionRequest {
+            action: AccessibleAction::Click,
+            target_tree: TreeId::ROOT,
+            target_node: empty_id,
+            data: None,
+        },
+    ));
+    assert!(cx.dispatch_accessibility_action(
+        window,
+        ActionRequest {
+            action: AccessibleAction::Increment,
+            target_tree: TreeId::ROOT,
+            target_node: empty_id,
+            data: None,
+        },
+    ));
+    assert_eq!(cx.read(|cx| view.read(cx).activations), 0);
+
+    let (_, listener_free) = node_with_label(&update, "Declared listener-free action");
+    assert!(listener_free.supports_action(AccessibleAction::Increment));
+    assert!(!listener_free.supports_action(AccessibleAction::Click));
+    assert!(!listener_free.supports_action(AccessibleAction::Focus));
+
+    let (_, replaced) = node_with_label(&update, "Single then set actions");
+    assert!(!replaced.supports_action(AccessibleAction::Click));
+    assert!(replaced.supports_action(AccessibleAction::Focus));
+    assert!(!replaced.supports_action(AccessibleAction::Increment));
+
+    let (_, extended) = node_with_label(&update, "Set then single actions");
+    assert!(!extended.supports_action(AccessibleAction::Click));
+    assert!(extended.supports_action(AccessibleAction::Focus));
+    assert!(extended.supports_action(AccessibleAction::Increment));
 }
 
 struct EarlyA11yRegistrationProbeView {

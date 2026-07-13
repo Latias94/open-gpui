@@ -55,7 +55,7 @@ fn framework_adapters_convert_accessibility_evidence() {
     let serialized = serde_json::to_string(&snapshot.tree()).unwrap();
 
     assert!(serialized.contains("Accessibility contracts"));
-    assert!(serialized.contains("Button"));
+    assert!(serialized.contains("IconButton"));
     assert!(serialized.contains("\"role\":\"button\""));
     assert!(serialized.contains("\"actions\":[\"click\"]"));
     assert!(serialized.contains("\"valid\":true"));

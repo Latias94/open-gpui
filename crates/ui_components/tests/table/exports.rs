@@ -32,6 +32,14 @@ fn table_public_exports_keep_component_surface_and_core_owner_paths_explicit() {
     let _prelude_region_snapshot: prelude::TableColumnRegionSnapshot = snapshot.column_regions();
     let _header_summary: root::TableHeaderSummarySnapshot = snapshot.header_summary();
     let _row_counts: root::TableRowCountSnapshot = snapshot.row_counts();
+    assert_eq!(snapshot.role(), ui_core::Role::Table);
+    assert_eq!(snapshot.row_role(), ui_core::Role::Row);
+    assert_eq!(snapshot.column_header_role(), ui_core::Role::ColumnHeader);
+    assert_eq!(snapshot.cell_role(), ui_core::Role::Cell);
+    let row_snapshot: &root::TableRowBehaviorSnapshot = &snapshot.rows()[0];
+    assert_eq!(row_snapshot.role(), ui_core::Role::Row);
+    let cell_snapshot: &root::TableCellBehaviorSnapshot = &row_snapshot.cells()[0];
+    assert_eq!(cell_snapshot.role(), ui_core::Role::Cell);
     let _header_action: root::TableHeaderAction = snapshot.columns()[0]
         .sort_action()
         .expect("sortable exported table column should expose a header action")
@@ -76,7 +84,6 @@ fn table_public_exports_keep_component_surface_and_core_owner_paths_explicit() {
     let _child_load_state: ui_core::TableRowChildrenLoadState =
         ui_core::TableRowChildrenLoadState::loading("Loading children");
 
-    assert_eq!(snapshot.role(), Role::Table);
     assert!(!snapshot.columns().is_empty());
 }
 
@@ -111,6 +118,7 @@ fn table_public_exports_include_component_table_controls_only() {
     let toolbar: root::TableToolbar =
         root::TableToolbar::new("root-table-toolbar", "Filters").summary("2 visible controls");
     let toolbar_state: root::TableToolbarState = toolbar.state();
+    assert_eq!(toolbar_state.role(), ui_core::Role::Toolbar);
     let _toolbar_colors: root::TableToolbarColors = toolbar_state.colors();
 
     let faceted_filter: root::TableFacetedFilter =

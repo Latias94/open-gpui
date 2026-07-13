@@ -12,7 +12,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_overlay: prelude::OverlayResolvedState = prelude::OverlayResolvedState::resolve(
         OverlayLayerPolicy::new(OverlayLayerKind::Tooltip, OverlayPresence::open()),
     );
-    let root_a11y_contract = root::ComponentA11yContract::new("Button", Role::Button)
+    let root_a11y_contract = root::ComponentA11yContract::new("Action control", Role::Button)
         .with_label_source(root::A11yLabelSource::VisibleText)
         .with_description_source(root::A11yDescriptionSource::None)
         .selected_state(false)

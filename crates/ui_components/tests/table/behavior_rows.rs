@@ -34,6 +34,8 @@ fn table_behavior_snapshot_uses_core_state_and_virtualizer_contracts() {
     );
     assert_eq!(snapshot.rows()[0].model_index(), 3);
     assert_eq!(snapshot.rows()[0].id().as_str(), "row-0093");
+    assert_eq!(snapshot.rows()[0].role(), Role::Row);
+    assert_eq!(snapshot.rows()[0].cells()[0].role(), Role::Cell);
     assert!(
         snapshot
             .rows()

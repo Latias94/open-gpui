@@ -21,7 +21,6 @@ pub struct TableRowBehaviorSnapshot {
     loaded_child_count: usize,
     children_load_state: Option<TableRowChildrenLoadState>,
     cells: Vec<TableCellBehaviorSnapshot>,
-    role: Role,
 }
 
 impl TableRowBehaviorSnapshot {
@@ -45,7 +44,6 @@ impl TableRowBehaviorSnapshot {
                 .iter()
                 .map(TableCellBehaviorSnapshot::from_plan)
                 .collect(),
-            role: row.role(),
         }
     }
 
@@ -136,7 +134,7 @@ impl TableRowBehaviorSnapshot {
 
     /// Returns the accessibility role for this row.
     pub const fn role(&self) -> Role {
-        self.role
+        Role::Row
     }
 }
 
@@ -149,7 +147,6 @@ pub struct TableCellBehaviorSnapshot {
     select_options: Vec<TableSelectOption>,
     region: TableColumnRegion,
     aria_column_index: usize,
-    role: Role,
     width: UiPx,
     editor: Option<TableCellEditor>,
 }
@@ -163,7 +160,6 @@ impl TableCellBehaviorSnapshot {
             select_options: cell.select_options().to_vec(),
             region: cell.region(),
             aria_column_index: cell.aria_column_index(),
-            role: cell.role(),
             width: cell.width(),
             editor: cell.editor(),
         }
@@ -201,7 +197,7 @@ impl TableCellBehaviorSnapshot {
 
     /// Returns the accessibility role for this cell.
     pub const fn role(&self) -> Role {
-        self.role
+        Role::Cell
     }
 
     /// Returns the resolved width for this body cell.

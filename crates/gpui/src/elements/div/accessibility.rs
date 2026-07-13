@@ -1,8 +1,38 @@
-use crate::{SharedString, window::a11y::A11yActionListener};
+use crate::{
+    SharedString,
+    window::a11y::{A11yActionListener, ACCESSKIT_ACTIONS, action_mask},
+};
+
+#[derive(Clone, Copy, Default)]
+struct A11yActionSet(u32);
+
+impl A11yActionSet {
+    fn insert(&mut self, action: accesskit::Action) {
+        self.0 |= action_mask(action);
+    }
+
+    fn iter(self) -> impl Iterator<Item = accesskit::Action> {
+        ACCESSKIT_ACTIONS
+            .iter()
+            .copied()
+            .filter(move |action| self.0 & action_mask(*action) != 0)
+    }
+}
+
+impl FromIterator<accesskit::Action> for A11yActionSet {
+    fn from_iter<T: IntoIterator<Item = accesskit::Action>>(iter: T) -> Self {
+        let mut actions = Self::default();
+        for action in iter {
+            actions.insert(action);
+        }
+        actions
+    }
+}
 
 #[derive(Default)]
 pub(super) struct InteractivityAccessibility {
     pub(super) action_listeners: Vec<(accesskit::Action, A11yActionListener)>,
+    explicit_actions: Option<A11yActionSet>,
     pub(super) override_role: Option<accesskit::Role>,
     pub(super) label: Option<SharedString>,
     pub(super) description: Option<SharedString>,
@@ -29,11 +59,29 @@ pub(super) struct InteractivityAccessibility {
     pub(super) size_of_set: Option<usize>,
     pub(super) row_index: Option<usize>,
     pub(super) column_index: Option<usize>,
+    pub(super) row_span: Option<usize>,
+    pub(super) column_span: Option<usize>,
     pub(super) row_count: Option<usize>,
     pub(super) column_count: Option<usize>,
+    pub(super) sort_direction: Option<accesskit::SortDirection>,
 }
 
 impl InteractivityAccessibility {
+    pub(super) fn add_explicit_action(&mut self, action: accesskit::Action) {
+        self.explicit_actions.get_or_insert_default().insert(action);
+    }
+
+    pub(super) fn set_explicit_actions(
+        &mut self,
+        actions: impl IntoIterator<Item = accesskit::Action>,
+    ) {
+        self.explicit_actions = Some(actions.into_iter().collect());
+    }
+
+    fn action_allowed(&self, action: accesskit::Action) -> bool {
+        self.read_only != Some(true) || !action_mutates_value(action)
+    }
+
     pub(super) fn write_node(
         &self,
         node: &mut accesskit::Node,
@@ -143,23 +191,39 @@ impl InteractivityAccessibility {
         if let Some(index) = self.column_index {
             node.set_column_index(index);
         }
+        if let Some(span) = self.row_span {
+            node.set_row_span(span);
+        }
+        if let Some(span) = self.column_span {
+            node.set_column_span(span);
+        }
         if let Some(count) = self.row_count {
             node.set_row_count(count);
         }
         if let Some(count) = self.column_count {
             node.set_column_count(count);
         }
-        if self.disabled != Some(true) {
-            if supports_click {
-                node.add_action(accesskit::Action::Click);
+        if let Some(direction) = self.sort_direction {
+            node.set_sort_direction(direction);
+        }
+        if self.disabled == Some(true) {
+            return;
+        }
+        if let Some(actions) = self.explicit_actions {
+            for action in actions.iter().filter(|action| self.action_allowed(*action)) {
+                node.add_action(action);
             }
-            if supports_focus {
-                node.add_action(accesskit::Action::Focus);
-            }
-            for (action, _) in &self.action_listeners {
-                if self.read_only != Some(true) || !action_mutates_value(*action) {
-                    node.add_action(*action);
-                }
+            return;
+        }
+        if supports_click {
+            node.add_action(accesskit::Action::Click);
+        }
+        if supports_focus {
+            node.add_action(accesskit::Action::Focus);
+        }
+        for (action, _) in &self.action_listeners {
+            if self.action_allowed(*action) {
+                node.add_action(*action);
             }
         }
     }
@@ -173,4 +237,86 @@ fn action_mutates_value(action: accesskit::Action) -> bool {
             | accesskit::Action::ReplaceSelectedText
             | accesskit::Action::SetValue
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn declared_actions_are_written_without_listeners() {
+        let accessibility = InteractivityAccessibility {
+            explicit_actions: Some(
+                [accesskit::Action::Click, accesskit::Action::Increment]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..Default::default()
+        };
+        let mut node = accesskit::Node::new(accesskit::Role::Button);
+
+        accessibility.write_node(&mut node, false, false);
+
+        assert!(node.supports_action(accesskit::Action::Click));
+        assert!(node.supports_action(accesskit::Action::Increment));
+    }
+
+    #[test]
+    fn exact_empty_actions_override_legacy_inference() {
+        let mut accessibility = InteractivityAccessibility {
+            explicit_actions: Some(A11yActionSet::default()),
+            ..Default::default()
+        };
+        accessibility.action_listeners.push((
+            accesskit::Action::Increment,
+            Box::new(|_, _, _| unreachable!("undeclared listeners must not run")),
+        ));
+        let mut node = accesskit::Node::new(accesskit::Role::Button);
+
+        accessibility.write_node(&mut node, true, true);
+
+        assert!(!node.supports_action(accesskit::Action::Click));
+        assert!(!node.supports_action(accesskit::Action::Focus));
+        assert!(!node.supports_action(accesskit::Action::Increment));
+    }
+
+    #[test]
+    fn declared_and_listener_actions_share_disabled_and_read_only_policy() {
+        let mut disabled = InteractivityAccessibility {
+            explicit_actions: Some([accesskit::Action::Click].into_iter().collect()),
+            disabled: Some(true),
+            ..Default::default()
+        };
+        disabled.action_listeners.push((
+            accesskit::Action::Increment,
+            Box::new(|_, _, _| unreachable!("disabled listeners must not run")),
+        ));
+        let mut disabled_node = accesskit::Node::new(accesskit::Role::Button);
+
+        disabled.write_node(&mut disabled_node, false, false);
+
+        assert!(!disabled_node.supports_action(accesskit::Action::Click));
+        assert!(!disabled_node.supports_action(accesskit::Action::Increment));
+
+        let mut read_only = InteractivityAccessibility {
+            explicit_actions: Some(
+                [accesskit::Action::Click, accesskit::Action::SetValue]
+                    .into_iter()
+                    .collect(),
+            ),
+            read_only: Some(true),
+            ..Default::default()
+        };
+        read_only.action_listeners.push((
+            accesskit::Action::Increment,
+            Box::new(|_, _, _| unreachable!("read-only mutation listeners must not run")),
+        ));
+        let mut read_only_node = accesskit::Node::new(accesskit::Role::Slider);
+
+        read_only.write_node(&mut read_only_node, false, false);
+
+        assert!(read_only_node.supports_action(accesskit::Action::Click));
+        assert!(!read_only_node.supports_action(accesskit::Action::SetValue));
+        assert!(!read_only_node.supports_action(accesskit::Action::Increment));
+    }
 }

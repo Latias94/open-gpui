@@ -6,8 +6,8 @@ use open_gpui::{
     ParentElement, Pixels, ScrollHandle, StatefulInteractiveElement, Styled, div, px, rgb,
 };
 use open_gpui_ui_core::{
-    Sizable, TableColumnRegion, TableExpansionState, TableResolvedRow, TableRowId, TableRowRegion,
-    TableSelectionPolicy, TableTreeRow, UiPx,
+    AccessibleAction, Role, SemanticDescriptor, Sizable, TableColumnRegion, TableExpansionState,
+    TableResolvedRow, TableRowId, TableRowRegion, TableSelectionPolicy, TableTreeRow, UiPx,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -172,6 +172,13 @@ fn render_table_row(
             cells.first().map(|cell| cell.column_id().clone())
         })
     });
+    let mut semantics = SemanticDescriptor::new(Role::Row)
+        .with_row_index(row.aria_row_index())
+        .with_selected(row.selected())
+        .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
+    if tree_branch {
+        semantics = semantics.with_expanded(tree_expanded);
+    }
 
     let row_element = div()
         .on_children_prepainted({
@@ -211,10 +218,7 @@ fn render_table_row(
         .border_color(rgb(0xe2e4dc))
         .bg(row_background)
         .hover(|this| this.bg(rgb(0xeef2f7)))
-        .ui_role(row.role())
-        .aria_row_index(row.aria_row_index())
-        .aria_selected(row.selected())
-        .when(tree_branch, |this| this.aria_expanded(tree_expanded))
+        .ui_semantics(&semantics)
         .focusable()
         .tab_stop(focused)
         .when_some(focus_handle.clone(), |this, focus_handle| {

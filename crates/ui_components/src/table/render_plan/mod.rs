@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use open_gpui_ui_core::{
-    Role, RowWindow, TableColumnFacets, TableColumnId, TableColumnRegion, TableGlobalFacetSummary,
+    RowWindow, TableColumnFacets, TableColumnId, TableColumnRegion, TableGlobalFacetSummary,
     TableResolvedRow, TableResolvedState, TableRowId, TableRowRegion, TableSelectionPolicy,
     TableSelectionSummary, TableStageMode, TableState, UiPx, VirtualizerItemKey,
     VirtualizerItemMeasurement, VirtualizerResolvedState,
@@ -54,10 +54,6 @@ pub(in crate::table) struct TableRenderPlan {
     bottom_rows: Vec<TableRowRenderPlan>,
     center_visible_row_count: usize,
     center_overscan_count: usize,
-    role: Role,
-    header_row_role: Role,
-    column_header_role: Role,
-    cell_role: Role,
 }
 
 impl TableRenderPlan {
@@ -84,6 +80,7 @@ impl TableRenderPlan {
             &columns,
             &column_regions,
         );
+        let header_row_count = header_groups.row_count().max(1);
         let total_column_width = column_regions
             .iter()
             .fold(UiPx::ZERO, |total, region| total + region.total_width());
@@ -121,12 +118,14 @@ impl TableRenderPlan {
             &duplicate_row_ids,
             0,
             UiPx::ZERO,
+            header_row_count,
         );
         let center_window = virtualized_center_row_window(
             table.center_rows(),
             &columns,
             &virtualizer,
             top_row_count,
+            header_row_count,
         );
         let top_height = top_rows
             .iter()
@@ -141,6 +140,7 @@ impl TableRenderPlan {
             &duplicate_row_ids,
             top_row_count + center_total_row_count,
             top_height + virtualizer.total_size(),
+            header_row_count,
         );
         let pagination = state.pagination();
         let selection_summary = table.final_selection_summary();
@@ -173,10 +173,6 @@ impl TableRenderPlan {
             bottom_rows,
             center_visible_row_count: center_window.visible_row_count,
             center_overscan_count: center_window.overscan_count,
-            role: Role::Table,
-            header_row_role: Role::Row,
-            column_header_role: Role::ColumnHeader,
-            cell_role: Role::Cell,
         }
     }
 
@@ -282,12 +278,12 @@ impl TableRenderPlan {
 
     /// Returns the maximum header row count across all regions.
     pub fn header_row_count(&self) -> usize {
-        self.header_groups.row_count()
+        self.header_groups.row_count().max(1)
     }
 
     /// Returns the total height reserved for the table header band.
     pub fn sticky_header_band_height(&self) -> UiPx {
-        self.metrics.header_height() * self.header_row_count().max(1) as f32
+        self.metrics.header_height() * self.header_row_count() as f32
     }
 
     /// Returns sticky pinned-column layout metadata, when a split layout is needed.
@@ -337,29 +333,13 @@ impl TableRenderPlan {
             .chain(self.bottom_rows.iter())
     }
 
-    /// Returns the accessibility role for the table root.
-    pub const fn role(&self) -> Role {
-        self.role
-    }
-
-    /// Returns the accessibility role for row containers.
-    pub const fn row_role(&self) -> Role {
-        self.header_row_role
-    }
-
-    /// Returns the accessibility role for header cells.
-    pub const fn column_header_role(&self) -> Role {
-        self.column_header_role
-    }
-
-    /// Returns the accessibility role for body cells.
-    pub const fn cell_role(&self) -> Role {
-        self.cell_role
-    }
-
     /// Returns the accessibility row count, including the header row.
     pub fn aria_row_count(&self) -> usize {
-        self.table.final_model().rows().len().saturating_add(1)
+        self.table
+            .final_model()
+            .rows()
+            .len()
+            .saturating_add(self.header_row_count())
     }
 
     /// Returns the accessibility column count.
@@ -395,6 +375,7 @@ fn virtualized_center_row_window(
     columns: &[TableColumnRenderPlan],
     virtualizer: &VirtualizerResolvedState,
     model_index_start: usize,
+    header_row_count: usize,
 ) -> TableCenterRowWindow {
     let row_window = RowWindow::project(virtualizer, |index| rows.get(index).cloned());
     let visible_row_count = row_window.visible_row_count();
@@ -410,6 +391,7 @@ fn virtualized_center_row_window(
                 TableRowRegion::Center,
                 render_key,
                 model_index,
+                header_row_count,
                 measurement,
                 columns,
             )
@@ -433,6 +415,7 @@ fn row_render_plans(
     duplicate_row_ids: &BTreeSet<TableRowId>,
     model_index_start: usize,
     start_offset: UiPx,
+    header_row_count: usize,
 ) -> Vec<TableRowRenderPlan> {
     let mut cursor = start_offset;
     rows.iter()
@@ -459,7 +442,15 @@ fn row_render_plans(
                 measured,
             );
             cursor = measurement.end();
-            TableRowRenderPlan::new(row, region, render_key, model_index, measurement, columns)
+            TableRowRenderPlan::new(
+                row,
+                region,
+                render_key,
+                model_index,
+                header_row_count,
+                measurement,
+                columns,
+            )
         })
         .collect()
 }

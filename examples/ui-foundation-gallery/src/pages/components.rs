@@ -282,10 +282,6 @@ pub const SIGNALS: &[&str] = &[
     "Role::TabList",
     "Role::Tab",
     "Role::TabPanel",
-    "Role::Table",
-    "Role::Row",
-    "Role::ColumnHeader",
-    "Role::Cell",
     "Role::Tree",
     "Role::TreeItem",
 ];

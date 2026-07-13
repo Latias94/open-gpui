@@ -133,7 +133,9 @@ struct PublishedA11yDispatch {
 
 macro_rules! define_published_action_masks {
     ($($variant:ident),+ $(,)?) => {
-        fn action_mask(action: Action) -> u32 {
+        pub(crate) const ACCESSKIT_ACTIONS: &[Action] = &[$(Action::$variant),+];
+
+        pub(crate) fn action_mask(action: Action) -> u32 {
             match action {
                 $(Action::$variant => 1 << (Action::$variant as u8),)+
             }

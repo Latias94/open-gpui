@@ -193,6 +193,8 @@ fn sample_center_window_table_state_from_rows(
         .with_pagination(TablePagination::disabled())
 }
 
+#[path = "table/accessibility.rs"]
+mod accessibility;
 #[path = "table/behavior_rows.rs"]
 mod behavior_rows;
 #[path = "table/editing_contracts.rs"]

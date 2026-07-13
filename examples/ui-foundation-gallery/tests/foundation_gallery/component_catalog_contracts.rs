@@ -207,7 +207,7 @@ fn components_page_samples_expose_component_metadata() {
     );
 
     let a11y_claims = pages::components::COMPONENT_A11Y_CLAIMS;
-    assert_eq!(a11y_claims.len(), 12);
+    assert_eq!(a11y_claims.len(), 10);
     assert!(a11y_claims.iter().all(|claim| {
         claim.selector_prefix.starts_with("gallery:component-")
             && claim.evidence().label_source.provides_name()
@@ -217,7 +217,6 @@ fn components_page_samples_expose_component_metadata() {
         .map(|claim| claim.component)
         .collect::<std::collections::BTreeSet<_>>();
     for expected in [
-        "Button",
         "IconButton",
         "Checkbox",
         "Slider",
@@ -225,7 +224,6 @@ fn components_page_samples_expose_component_metadata() {
         "Progress",
         "Listbox option",
         "Tree item",
-        "Table",
         "VirtualizedList row",
         "VirtualizedList structural row",
         "Splitter handle",
@@ -252,12 +250,6 @@ fn components_page_samples_expose_component_metadata() {
     }));
     assert!(a11y_claims.iter().any(|claim| {
         let evidence = claim.evidence();
-        claim.component == "Table"
-            && evidence.role == Role::Table
-            && evidence.value_kind == Some(A11yValueKind::Count)
-    }));
-    assert!(a11y_claims.iter().any(|claim| {
-        let evidence = claim.evidence();
         claim.component == "Splitter handle"
             && evidence.role == Role::Splitter
             && evidence.orientation == Some(Orientation::Vertical)
@@ -267,7 +259,6 @@ fn components_page_samples_expose_component_metadata() {
 
     assert_eq!(buttons.len(), 6);
     assert_eq!(buttons[0].id, "default");
-    assert_eq!(buttons[0].state.role(), Role::Button);
     assert_eq!(
         buttons[3].state.colors().background().token(),
         semantic::DESTRUCTIVE
@@ -1044,9 +1035,6 @@ fn components_page_samples_expose_component_metadata() {
         "descending"
     );
     let release_plan = release_queue.behavior_snapshot();
-    assert_eq!(release_plan.role(), Role::Table);
-    assert_eq!(release_plan.column_header_role(), Role::ColumnHeader);
-    assert_eq!(release_plan.cell_role(), Role::Cell);
     assert_eq!(release_plan.aria_row_count(), 10_001);
     assert_eq!(release_plan.aria_column_count(), 4);
     assert!(release_plan.rendered_row_count() <= release_plan.visible_row_count() + 5);

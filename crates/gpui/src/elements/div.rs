@@ -1381,6 +1381,18 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set the number of table rows spanned by this element.
+    fn aria_row_span(mut self, span: usize) -> Self {
+        self.interactivity().accessibility.row_span = Some(span);
+        self
+    }
+
+    /// Set the number of table columns spanned by this element.
+    fn aria_column_span(mut self, span: usize) -> Self {
+        self.interactivity().accessibility.column_span = Some(span);
+        self
+    }
+
     /// Set the row count for this element.
     fn aria_row_count(mut self, count: usize) -> Self {
         self.interactivity().accessibility.row_count = Some(count);
@@ -1390,6 +1402,35 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set the column count for this element.
     fn aria_column_count(mut self, count: usize) -> Self {
         self.interactivity().accessibility.column_count = Some(count);
+        self
+    }
+
+    /// Set the sort direction for this element.
+    fn aria_sort_direction(mut self, direction: accesskit::SortDirection) -> Self {
+        self.interactivity().accessibility.sort_direction = Some(direction);
+        self
+    }
+
+    /// Declare an accessibility action supported by this element.
+    ///
+    /// Calling this method switches action projection to an exact declared set, so inferred
+    /// click, focus, and listener actions are no longer added implicitly. This advertises
+    /// capability without registering a handler. Use
+    /// [`StatefulInteractiveElement::on_a11y_action`] when the action also needs a listener.
+    fn aria_action(mut self, action: accesskit::Action) -> Self {
+        self.interactivity()
+            .accessibility
+            .add_explicit_action(action);
+        self
+    }
+
+    /// Replace inferred accessibility actions with an exact declared set.
+    ///
+    /// Passing an empty iterator explicitly advertises no actions.
+    fn aria_actions(mut self, actions: impl IntoIterator<Item = accesskit::Action>) -> Self {
+        self.interactivity()
+            .accessibility
+            .set_explicit_actions(actions);
         self
     }
 

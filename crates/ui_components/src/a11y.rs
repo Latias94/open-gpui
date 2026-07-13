@@ -2,9 +2,11 @@
 
 use open_gpui::{
     AccessibleAction as GpuiAccessibleAction, Orientation as GpuiOrientation, Role as GpuiRole,
-    StatefulInteractiveElement, Toggled as GpuiToggled,
+    StatefulInteractiveElement, Toggled as GpuiToggled, accesskit,
 };
-use open_gpui_ui_core::{AccessibleAction, Orientation, Role, Toggled};
+use open_gpui_ui_core::{
+    AccessibleAction, Orientation, Role, SemanticDescriptor, SortDirection, Toggled,
+};
 
 /// Source that provides an accessible name for a component or component part.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -406,7 +408,7 @@ pub fn gpui_role_from_ui(role: Role) -> GpuiRole {
         Role::AlertDialog => GpuiRole::AlertDialog,
         Role::Window => GpuiRole::Window,
         Role::ProgressIndicator => GpuiRole::ProgressIndicator,
-        Role::Separator => GpuiRole::Group,
+        Role::Separator => GpuiRole::Splitter,
         Role::SpinButton => GpuiRole::SpinButton,
         Role::Slider => GpuiRole::Slider,
         Role::Splitter => GpuiRole::Splitter,
@@ -463,8 +465,160 @@ pub fn gpui_accessible_action_from_ui(action: AccessibleAction) -> GpuiAccessibl
     }
 }
 
+fn gpui_sort_direction_from_ui(direction: SortDirection) -> accesskit::SortDirection {
+    match direction {
+        SortDirection::Ascending => accesskit::SortDirection::Ascending,
+        SortDirection::Descending => accesskit::SortDirection::Descending,
+        SortDirection::Other => accesskit::SortDirection::Other,
+    }
+}
+
+fn apply_ui_semantics<Element, NodeId>(
+    mut element: Element,
+    descriptor: &SemanticDescriptor<'_, NodeId>,
+) -> Element
+where
+    Element: StatefulInteractiveElement,
+{
+    element = StatefulInteractiveElement::role(element, gpui_role_from_ui(descriptor.role()));
+    if let Some(label) = descriptor.label() {
+        element = StatefulInteractiveElement::aria_label(element, label);
+    }
+    if let Some(description) = descriptor.description() {
+        element = StatefulInteractiveElement::aria_description(element, description);
+    }
+    if let Some(value) = descriptor.value() {
+        element = StatefulInteractiveElement::aria_value(element, value);
+    }
+    if let Some(selected) = descriptor.selected() {
+        element = StatefulInteractiveElement::aria_selected(element, selected);
+    }
+    if let Some(required) = descriptor.required() {
+        element = StatefulInteractiveElement::aria_required(element, required);
+    }
+    if let Some(invalid) = descriptor.invalid() {
+        element = StatefulInteractiveElement::aria_invalid(element, invalid);
+    }
+    if let Some(busy) = descriptor.busy() {
+        element = StatefulInteractiveElement::aria_busy(element, busy);
+    }
+    if let Some(read_only) = descriptor.read_only() {
+        element = StatefulInteractiveElement::aria_read_only(element, read_only);
+    }
+    if let Some(hidden) = descriptor.hidden() {
+        element = StatefulInteractiveElement::aria_hidden(element, hidden);
+    }
+    if let Some(modal) = descriptor.modal() {
+        element = StatefulInteractiveElement::aria_modal(element, modal);
+    }
+    if let Some(disabled) = descriptor.disabled() {
+        element = StatefulInteractiveElement::aria_disabled(element, disabled);
+    }
+    if let Some(expanded) = descriptor.expanded() {
+        element = StatefulInteractiveElement::aria_expanded(element, expanded);
+    }
+    if let Some(toggled) = descriptor.toggled() {
+        element = StatefulInteractiveElement::aria_toggled(element, gpui_toggled_from_ui(toggled));
+    }
+    if let Some(value) = descriptor.numeric_value() {
+        element = StatefulInteractiveElement::aria_numeric_value(element, value);
+    }
+    if let Some(value) = descriptor.min_numeric_value() {
+        element = StatefulInteractiveElement::aria_min_numeric_value(element, value);
+    }
+    if let Some(value) = descriptor.max_numeric_value() {
+        element = StatefulInteractiveElement::aria_max_numeric_value(element, value);
+    }
+    if let Some(orientation) = descriptor.orientation() {
+        element = StatefulInteractiveElement::aria_orientation(
+            element,
+            gpui_orientation_from_ui(orientation),
+        );
+    }
+    if let Some(level) = descriptor.level() {
+        element = StatefulInteractiveElement::aria_level(element, level);
+    }
+    if let Some(position) = descriptor.position_in_set() {
+        element = StatefulInteractiveElement::aria_position_in_set(element, position);
+    }
+    if let Some(size) = descriptor.size_of_set() {
+        element = StatefulInteractiveElement::aria_size_of_set(element, size);
+    }
+    if let Some(index) = descriptor.row_index() {
+        element = StatefulInteractiveElement::aria_row_index(element, index);
+    }
+    if let Some(index) = descriptor.column_index() {
+        element = StatefulInteractiveElement::aria_column_index(element, index);
+    }
+    if let Some(span) = descriptor.row_span() {
+        element = StatefulInteractiveElement::aria_row_span(element, span);
+    }
+    if let Some(span) = descriptor.column_span() {
+        element = StatefulInteractiveElement::aria_column_span(element, span);
+    }
+    if let Some(count) = descriptor.row_count() {
+        element = StatefulInteractiveElement::aria_row_count(element, count);
+    }
+    if let Some(count) = descriptor.column_count() {
+        element = StatefulInteractiveElement::aria_column_count(element, count);
+    }
+    if let Some(direction) = descriptor.sort_direction() {
+        element = StatefulInteractiveElement::aria_sort_direction(
+            element,
+            gpui_sort_direction_from_ui(direction),
+        );
+    }
+
+    StatefulInteractiveElement::aria_actions(
+        element,
+        descriptor
+            .available_actions()
+            .map(gpui_accessible_action_from_ui),
+    )
+}
+
 /// Applies renderer-neutral accessibility vocabulary to GPUI elements.
 pub trait UiA11yElementExt: StatefulInteractiveElement + Sized {
+    /// Projects a relation-free semantic descriptor onto this GPUI element.
+    fn ui_semantics(self, descriptor: &SemanticDescriptor<'_>) -> Self {
+        apply_ui_semantics(self, descriptor)
+    }
+
+    /// Projects a relation-bearing descriptor through a renderer-scoped node resolver.
+    fn ui_semantics_with_relations<NodeId>(
+        self,
+        descriptor: &SemanticDescriptor<'_, NodeId>,
+        mut resolve_node_id: impl FnMut(&NodeId) -> accesskit::NodeId,
+    ) -> Self {
+        let controls = descriptor
+            .controls()
+            .iter()
+            .map(&mut resolve_node_id)
+            .collect::<Vec<_>>();
+        let labelled_by = descriptor
+            .labelled_by()
+            .iter()
+            .map(&mut resolve_node_id)
+            .collect::<Vec<_>>();
+        let described_by = descriptor
+            .described_by()
+            .iter()
+            .map(resolve_node_id)
+            .collect::<Vec<_>>();
+
+        let mut element = apply_ui_semantics(self, descriptor);
+        if !controls.is_empty() {
+            element = StatefulInteractiveElement::aria_controls(element, controls);
+        }
+        if !labelled_by.is_empty() {
+            element = StatefulInteractiveElement::aria_labelled_by(element, labelled_by);
+        }
+        if !described_by.is_empty() {
+            element = StatefulInteractiveElement::aria_described_by(element, described_by);
+        }
+        element
+    }
+
     /// Sets a renderer-neutral accessible role.
     fn ui_role(self, role: Role) -> Self {
         StatefulInteractiveElement::role(self, gpui_role_from_ui(role))
@@ -517,6 +671,11 @@ mod tests {
     #[test]
     fn gpui_adapter_maps_splitter_role() {
         assert_eq!(gpui_role_from_ui(Role::Splitter), GpuiRole::Splitter);
+    }
+
+    #[test]
+    fn gpui_adapter_maps_separator_role_without_semantic_downgrade() {
+        assert_eq!(gpui_role_from_ui(Role::Separator), GpuiRole::Splitter);
     }
 
     #[test]

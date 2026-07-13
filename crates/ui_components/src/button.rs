@@ -8,7 +8,9 @@ use open_gpui::{
     AnyView, App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
+use open_gpui_ui_core::{
+    AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx,
+};
 
 use crate::a11y::UiA11yElementExt;
 use crate::action::ResolvedActionState;
@@ -384,14 +386,22 @@ impl RenderOnce for Button {
         let foreground = theme.resolve(colors.foreground());
         let hover_background = theme.resolve(colors.hover_background());
         let focus_shadow = focus_ring_shadow_with_theme(focus_ring, theme);
-
-        let aria_label = accessibility_description
-            .as_ref()
-            .or(disabled_reason.as_ref())
-            .map_or_else(
-                || label.clone(),
-                |description| format!("{label}, {description}").into(),
-            );
+        let description = accessibility_description
+            .as_deref()
+            .or(disabled_reason.as_deref());
+        let actions: &[AccessibleAction] = if self.on_click.is_some() {
+            &[AccessibleAction::Click, AccessibleAction::Focus]
+        } else {
+            &[AccessibleAction::Focus]
+        };
+        let mut semantics = SemanticDescriptor::new(state.role())
+            .with_label(label.as_ref())
+            .with_selected(state.selected())
+            .with_disabled(disabled)
+            .with_actions(actions);
+        if let Some(description) = description {
+            semantics = semantics.with_description(description);
+        }
 
         div()
             .id(self.id)
@@ -411,10 +421,7 @@ impl RenderOnce for Button {
             .line_height(gpui_px_from_ui(metrics.text_size()))
             .focusable()
             .tab_stop(!disabled)
-            .ui_role(state.role())
-            .aria_label(aria_label)
-            .aria_selected(state.selected())
-            .aria_disabled(disabled)
+            .ui_semantics(&semantics)
             .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| {

@@ -1,5 +1,5 @@
 use open_gpui_ui_core::{
-    Role, TableCellEditor, TableCellValue, TableColumnId, TableColumnRegion, TableResolvedRow,
+    TableCellEditor, TableCellValue, TableColumnId, TableColumnRegion, TableResolvedRow,
     TableRowChildrenLoadState, TableRowRegion, TableSelectOption, UiPx, VirtualizerItemMeasurement,
 };
 
@@ -14,7 +14,6 @@ pub(in crate::table) struct TableCellRenderPlan {
     select_options: Vec<TableSelectOption>,
     region: TableColumnRegion,
     aria_column_index: usize,
-    role: Role,
     width: UiPx,
     editor: Option<TableCellEditor>,
 }
@@ -52,7 +51,6 @@ impl TableCellRenderPlan {
             select_options,
             region: column.region(),
             aria_column_index: column.aria_column_index(),
-            role: Role::Cell,
             width: column.width(),
             editor,
         }
@@ -86,11 +84,6 @@ impl TableCellRenderPlan {
     /// Returns the 1-based accessibility column index.
     pub const fn aria_column_index(&self) -> usize {
         self.aria_column_index
-    }
-
-    /// Returns the accessibility role for this cell.
-    pub const fn role(&self) -> Role {
-        self.role
     }
 
     /// Returns the resolved width for this body cell.
@@ -134,7 +127,6 @@ pub(in crate::table) struct TableRowRenderPlan {
     aria_row_index: usize,
     measurement: VirtualizerItemMeasurement,
     cells: Vec<TableCellRenderPlan>,
-    role: Role,
 }
 
 impl TableRowRenderPlan {
@@ -143,6 +135,7 @@ impl TableRowRenderPlan {
         region: TableRowRegion,
         render_key: String,
         model_index: usize,
+        header_row_count: usize,
         measurement: VirtualizerItemMeasurement,
         columns: &[TableColumnRenderPlan],
     ) -> Self {
@@ -156,10 +149,9 @@ impl TableRowRenderPlan {
             region,
             render_key,
             model_index,
-            aria_row_index: model_index + 2,
+            aria_row_index: model_index + header_row_count + 1,
             measurement,
             cells,
-            role: Role::Row,
         }
     }
 
@@ -251,10 +243,5 @@ impl TableRowRenderPlan {
         self.cells
             .iter()
             .filter(move |cell| cell.region() == region)
-    }
-
-    /// Returns the accessibility role for this row.
-    pub const fn role(&self) -> Role {
-        self.role
     }
 }

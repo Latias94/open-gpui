@@ -7,12 +7,9 @@ use open_gpui::{
     ScrollHandle, Styled, div, px, rgb,
 };
 use open_gpui_ui_core::{
-    Role, Sizable, TableColumnId, TableColumnRegion, TableSortDirection, UiPx,
+    AccessibleAction, Role, SemanticDescriptor, SortDirection as A11ySortDirection, TableColumnId,
+    TableColumnRegion, TableSortDirection, UiPx,
 };
-
-use crate::a11y::UiA11yElementExt;
-use crate::geometry::gpui_px_from_ui;
-use crate::scroll_area::ScrollArea;
 
 use super::resize::{
     TableColumnOrderDrag, TableResizeRenderConfig, render_table_column_order_drop_zone,
@@ -23,6 +20,8 @@ use super::{
     TableColumnRenderPlan, TableHeaderCellRenderPlan, TableMetrics, TableRenderPlan,
     TableSortHandler,
 };
+use crate::a11y::UiA11yElementExt;
+use crate::geometry::gpui_px_from_ui;
 
 pub(super) fn render_table_header(
     plan: &TableRenderPlan,
@@ -34,7 +33,6 @@ pub(super) fn render_table_header(
 ) -> impl IntoElement {
     let table_id = plan.table_id().to_owned();
     let metrics = plan.metrics();
-    let column_header_role = plan.column_header_role();
     let regions = plan.column_regions().to_vec();
     let header_groups = plan.header_groups().clone();
     let columns_by_id = Rc::new(
@@ -57,37 +55,13 @@ pub(super) fn render_table_header(
             .map(|column| column.id().clone())
             .collect::<BTreeSet<_>>()
     });
-    div()
-        .id(format!("table:{table_id}:header-row"))
-        .debug_selector({
-            let table_id = table_id.clone();
-            move || format!("table:{table_id}:header-row")
-        })
-        .absolute()
-        .top(px(0.0))
-        .left(px(0.0))
-        .right(px(0.0))
-        .h(gpui_px_from_ui(header_band_height))
-        .flex()
-        .items_center()
-        .overflow_hidden()
-        .border_b_1()
-        .border_color(rgb(0xd6d8ce))
-        .bg(rgb(0xf3f4ef))
-        .ui_role(plan.row_role())
-        .aria_row_index(1)
-        .children(regions.iter().map(move |region_plan| {
-            let table_id = table_id.clone();
-            let pinned_layout = pinned_layout.clone();
-            let center_window = center_window.clone();
-            let on_sort_requested = on_sort_requested.clone();
-            let on_column_order_change = on_column_order_change.clone();
-            let resize_config = resize_config.clone();
-            let header_groups = header_groups.clone();
-            let columns_by_id = columns_by_id.clone();
-            let rendered_center_leaf_ids = rendered_center_leaf_ids.clone();
-            let metrics = metrics;
-            let column_header_role = column_header_role;
+    let header_row_count = header_groups.row_count().max(1);
+    let mut occupied_leaf_ids = BTreeMap::<TableColumnRegion, BTreeSet<TableColumnId>>::new();
+    let mut header_rows = Vec::with_capacity(header_row_count);
+
+    for depth in 0..header_row_count {
+        let mut row_regions = Vec::with_capacity(regions.len());
+        for region_plan in &regions {
             let region = region_plan.region();
             let region_name = region.as_str().to_owned();
             let active_center_window = (region == TableColumnRegion::Center)
@@ -96,12 +70,17 @@ pub(super) fn render_table_header(
             let region_width = active_center_window
                 .map(TableCenterColumnWindowPlan::center_width)
                 .unwrap_or_else(|| region_plan.total_width());
-            let header_region = header_groups.region(region);
             let reorder_enabled =
                 on_column_order_change.is_some() && region_plan.columns().len() > 1;
-            let mut occupied_leaf_ids = BTreeSet::new();
+            let occupied = occupied_leaf_ids.entry(region).or_default();
             let mut header_children = Vec::new();
-            for group in header_region.groups() {
+
+            if let Some(group) = header_groups
+                .region(region)
+                .groups()
+                .iter()
+                .find(|group| group.depth() == depth)
+            {
                 for header in group.headers() {
                     let effective_leaf_ids = header
                         .leaf_column_ids()
@@ -123,7 +102,7 @@ pub(super) fn render_table_header(
                     if header.kind().is_placeholder()
                         && effective_leaf_ids
                             .iter()
-                            .all(|leaf_id| occupied_leaf_ids.contains(leaf_id))
+                            .all(|leaf_id| occupied.contains(leaf_id))
                     {
                         continue;
                     }
@@ -132,7 +111,6 @@ pub(super) fn render_table_header(
                         render_table_header_group_cell(
                             table_id.clone(),
                             metrics,
-                            column_header_role,
                             header.clone(),
                             effective_leaf_ids.clone(),
                             columns_by_id.clone(),
@@ -144,54 +122,109 @@ pub(super) fn render_table_header(
                         .into_any_element(),
                     );
                     if header.kind().is_leaf() {
-                        occupied_leaf_ids.extend(effective_leaf_ids);
+                        occupied.extend(effective_leaf_ids);
                     }
                 }
             }
-            let center_scroll_id = pinned_layout.as_ref().and_then(|layout| {
-                (region == TableColumnRegion::Center && !region_plan.columns().is_empty())
-                    .then(|| layout.header_center_scroll_id())
-            });
 
             let region_lane = div()
-                .id(format!("table:{table_id}:header-region:{region_name}"))
+                .id(format!(
+                    "table:{table_id}:header-region:{region_name}:row:{depth}"
+                ))
                 .debug_selector({
                     let table_id = table_id.clone();
                     let region_name = region_name.clone();
-                    move || format!("table:{table_id}:header-region:{region_name}")
+                    move || {
+                        if depth == 0 {
+                            format!("table:{table_id}:header-region:{region_name}")
+                        } else {
+                            format!("table:{table_id}:header-region:{region_name}:row:{depth}")
+                        }
+                    }
                 })
                 .relative()
                 .h_full()
                 .min_w(px(0.0))
                 .w(gpui_px_from_ui(region_width))
                 .flex_none()
-                .overflow_hidden()
+                .overflow_x_hidden()
                 .children(header_children)
                 .into_any_element();
 
-            if let Some(center_scroll_id) = center_scroll_id {
+            let center_scroll_id = pinned_layout.as_ref().and_then(|layout| {
+                (region == TableColumnRegion::Center && !region_plan.columns().is_empty())
+                    .then(|| layout.header_center_scroll_id())
+            });
+            let region_element = if let Some(center_scroll_id) = center_scroll_id {
+                let center_scroll_id = if depth == 0 {
+                    center_scroll_id
+                } else {
+                    format!("{center_scroll_id}:row:{depth}")
+                };
                 div()
+                    .id(center_scroll_id.clone())
+                    .debug_selector(move || format!("scroll-area:{center_scroll_id}"))
                     .h_full()
                     .min_w(px(0.0))
                     .flex_1()
-                    .child(
-                        ScrollArea::new(center_scroll_id, region_lane)
-                            .horizontal()
-                            .scroll_handle(&horizontal_scroll_handle)
-                            .with_size(metrics.size()),
-                    )
+                    .overflow_x_scroll()
+                    .scrollbar_width(px(0.0))
+                    .track_scroll(&horizontal_scroll_handle)
+                    .child(region_lane)
                     .into_any_element()
             } else {
                 region_lane
-            }
-        }))
+            };
+            row_regions.push(region_element);
+        }
+
+        let row_id = format!("table:{table_id}:header-row:{depth}");
+        let row_debug_selector = if depth == 0 {
+            format!("table:{table_id}:header-row")
+        } else {
+            row_id.clone()
+        };
+        let semantics = SemanticDescriptor::new(Role::Row).with_row_index(depth + 1);
+        header_rows.push(
+            div()
+                .id(row_id.clone())
+                .debug_selector(move || row_debug_selector.clone())
+                .absolute()
+                .top(gpui_px_from_ui(metrics.header_height() * depth as f32))
+                .left(px(0.0))
+                .right(px(0.0))
+                .h(gpui_px_from_ui(metrics.header_height()))
+                .flex()
+                .ui_semantics(&semantics)
+                .children(row_regions)
+                .into_any_element(),
+        );
+    }
+
+    div()
+        .id(format!("table:{table_id}:header-band"))
+        .debug_selector({
+            let table_id = table_id.clone();
+            move || format!("table:{table_id}:header-band")
+        })
+        .absolute()
+        .top(px(0.0))
+        .left(px(0.0))
+        .right(px(0.0))
+        .h(gpui_px_from_ui(header_band_height))
+        .flex()
+        .items_center()
+        .overflow_hidden()
+        .border_b_1()
+        .border_color(rgb(0xd6d8ce))
+        .bg(rgb(0xf3f4ef))
+        .children(header_rows)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn render_table_header_group_cell(
     table_id: String,
     metrics: TableMetrics,
-    column_header_role: Role,
     header: TableHeaderCellRenderPlan,
     effective_leaf_ids: Vec<TableColumnId>,
     columns_by_id: Rc<BTreeMap<TableColumnId, TableColumnRenderPlan>>,
@@ -201,6 +234,7 @@ fn render_table_header_group_cell(
     resize_config: TableResizeRenderConfig,
 ) -> impl IntoElement {
     let header_id = header.id().to_owned();
+    let header_debug_selector = header.debug_selector().to_owned();
     let header_kind = header.kind();
     let header_label = header.label().to_owned();
     let is_leaf = header_kind.is_leaf();
@@ -254,14 +288,29 @@ fn render_table_header_group_cell(
             TableSortDirection::Descending => " ↓",
         })
         .unwrap_or("");
+    let actions: &[AccessibleAction] = if interactive_sort.is_some() {
+        &[AccessibleAction::Click, AccessibleAction::Focus]
+    } else {
+        &[]
+    };
+    let mut semantics = SemanticDescriptor::new(Role::ColumnHeader)
+        .with_label(&header_label)
+        .with_column_index(aria_column_index)
+        .with_row_span(header.row_span().max(1))
+        .with_column_span(effective_leaf_ids.len().max(1))
+        .with_actions(actions);
+    if let Some(direction) = header.sort_direction() {
+        semantics = semantics.with_sort_direction(match direction {
+            TableSortDirection::Ascending => A11ySortDirection::Ascending,
+            TableSortDirection::Descending => A11ySortDirection::Descending,
+        });
+    }
 
     div()
         .id(header_id.clone())
-        .debug_selector(move || header_id.clone())
+        .debug_selector(move || header_debug_selector.clone())
         .absolute()
-        .top(gpui_px_from_ui(
-            metrics.header_height() * header.depth() as f32,
-        ))
+        .top(px(0.0))
         .left(gpui_px_from_ui(start))
         .w(gpui_px_from_ui(width))
         .min_w(gpui_px_from_ui(width))
@@ -279,9 +328,7 @@ fn render_table_header_group_cell(
         .text_color(rgb(0x3f4a57))
         .truncate()
         .whitespace_nowrap()
-        .ui_role(column_header_role)
-        .aria_label(header.label().to_owned())
-        .aria_column_index(aria_column_index)
+        .ui_semantics(&semantics)
         .when_some(interactive_sort, |this, (action, handler)| {
             let key_action = action.clone();
             let key_handler = handler.clone();

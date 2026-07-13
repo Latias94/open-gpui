@@ -45,10 +45,6 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(release_plan.row_counts().pinned_center_rows(), 10_000);
     assert!(!release_plan.visible_rows().visible_range().is_empty());
     assert!(release_plan.rendered_row_count() <= release_plan.visible_row_count() + 5);
-    assert_eq!(release_plan.row_role(), Role::Row);
-    assert_eq!(release_plan.column_header_role(), Role::ColumnHeader);
-    assert_eq!(release_plan.cell_role(), Role::Cell);
-
     let filter_board = table_sample(samples, "filter-board");
     let filter_plan = filter_board.behavior_snapshot();
     let filter_summary = filter_board.state_summary();
@@ -1203,10 +1199,6 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"Role::ProgressIndicator"));
     assert!(signals.contains(&"Role::Image"));
     assert!(signals.contains(&"Role::Label"));
-    assert!(signals.contains(&"Role::Table"));
-    assert!(signals.contains(&"Role::Row"));
-    assert!(signals.contains(&"Role::ColumnHeader"));
-    assert!(signals.contains(&"Role::Cell"));
     assert!(signals.contains(&"Role::Tree"));
     assert!(signals.contains(&"Role::TreeItem"));
 

@@ -12,8 +12,8 @@ use super::columns::{TableColumnRegionRenderPlan, TableColumnRenderPlan};
 #[derive(Debug, Clone, PartialEq)]
 pub(in crate::table) struct TableHeaderCellRenderPlan {
     id: String,
+    debug_selector: String,
     label: String,
-    depth: usize,
     kind: TableResolvedHeaderKind,
     row_span: usize,
     width: UiPx,
@@ -53,9 +53,25 @@ impl TableHeaderCellRenderPlan {
             .flatten()
             .unwrap_or(false);
         Self {
-            id: header_cell_render_id(table_id, cell),
+            id: format!("table:{table_id}:header-cell:{}", cell.id()),
+            debug_selector: match cell.kind() {
+                TableResolvedHeaderKind::Leaf => {
+                    format!("table:{table_id}:header:{}", cell.source_id())
+                }
+                TableResolvedHeaderKind::Group => format!(
+                    "table:{table_id}:header-group:{}:{}:{}",
+                    cell.region().as_str(),
+                    cell.depth(),
+                    cell.source_id()
+                ),
+                TableResolvedHeaderKind::Placeholder => format!(
+                    "table:{table_id}:header-placeholder:{}:{}:{}",
+                    cell.region().as_str(),
+                    cell.depth(),
+                    cell.placeholder_id().unwrap_or(cell.source_id())
+                ),
+            },
             label: cell.label().to_owned(),
-            depth: cell.depth(),
             kind: cell.kind(),
             row_span: cell.row_span(),
             width,
@@ -71,14 +87,14 @@ impl TableHeaderCellRenderPlan {
         &self.id
     }
 
+    /// Returns the stable diagnostic selector for this header cell.
+    pub fn debug_selector(&self) -> &str {
+        &self.debug_selector
+    }
+
     /// Returns the visible header label.
     pub fn label(&self) -> &str {
         &self.label
-    }
-
-    /// Returns the header row depth.
-    pub const fn depth(&self) -> usize {
-        self.depth
     }
 
     /// Returns the resolved header kind.
@@ -115,6 +131,7 @@ impl TableHeaderCellRenderPlan {
 /// One header row in a render region.
 #[derive(Debug, Clone, PartialEq)]
 pub(in crate::table) struct TableHeaderGroupRenderPlan {
+    depth: usize,
     headers: Vec<TableHeaderCellRenderPlan>,
 }
 
@@ -129,7 +146,15 @@ impl TableHeaderGroupRenderPlan {
             .iter()
             .map(|cell| TableHeaderCellRenderPlan::from_resolved(table_id, cell, columns_by_id))
             .collect::<Vec<_>>();
-        Self { headers }
+        Self {
+            depth: group.depth(),
+            headers,
+        }
+    }
+
+    /// Returns the zero-based header row depth.
+    pub const fn depth(&self) -> usize {
+        self.depth
     }
 
     /// Returns the header cells in this row.
@@ -236,25 +261,5 @@ impl TableHeaderGroupRegionsRenderPlan {
             .header_row_count()
             .max(self.center.header_row_count())
             .max(self.right.header_row_count())
-    }
-}
-
-fn header_cell_render_id(table_id: &str, cell: &TableResolvedHeaderCell) -> String {
-    match cell.kind() {
-        TableResolvedHeaderKind::Leaf => {
-            format!("table:{table_id}:header:{}", cell.source_id())
-        }
-        TableResolvedHeaderKind::Group => format!(
-            "table:{table_id}:header-group:{}:{}:{}",
-            cell.region().as_str(),
-            cell.depth(),
-            cell.source_id()
-        ),
-        TableResolvedHeaderKind::Placeholder => format!(
-            "table:{table_id}:header-placeholder:{}:{}:{}",
-            cell.region().as_str(),
-            cell.depth(),
-            cell.placeholder_id().unwrap_or(cell.source_id())
-        ),
     }
 }

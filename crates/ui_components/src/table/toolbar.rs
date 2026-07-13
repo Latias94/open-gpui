@@ -6,7 +6,7 @@ use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div, px,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{Role, SemanticDescriptor, Sizable, Size, ThemeTokens};
 /// Resolved renderer-neutral state for a table toolbar recipe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableToolbarState {
@@ -88,7 +88,7 @@ impl TableToolbarState {
         self.summary.is_some()
     }
 
-    /// Returns accessibility role.
+    /// Returns the accessibility role.
     pub const fn role(&self) -> Role {
         Role::Toolbar
     }
@@ -241,12 +241,15 @@ impl RenderOnce for TableToolbar {
         let primary_controls = self.primary_controls;
         let secondary_controls = self.secondary_controls;
         let summary = self.summary;
+        let mut semantics = SemanticDescriptor::new(state.role()).with_label(&label);
+        if let Some(summary) = state.summary() {
+            semantics = semantics.with_description(summary);
+        }
 
         div()
             .id(self.id)
             .debug_selector(move || format!("table-toolbar:{debug_id}:root"))
-            .ui_role(state.role())
-            .aria_label(label)
+            .ui_semantics(&semantics)
             .min_w(px(0.0))
             .w_full()
             .flex()

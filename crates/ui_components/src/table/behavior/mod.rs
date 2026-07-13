@@ -52,10 +52,6 @@ pub struct TableBehaviorSnapshot {
     rows: Vec<TableRowBehaviorSnapshot>,
     column_facets: Vec<TableColumnFacets>,
     global_facet_summary: TableGlobalFacetSummary,
-    role: Role,
-    row_role: Role,
-    column_header_role: Role,
-    cell_role: Role,
 }
 
 impl TableBehaviorSnapshot {
@@ -116,10 +112,6 @@ impl TableBehaviorSnapshot {
             rows,
             column_facets: plan.column_facets().to_vec(),
             global_facet_summary: plan.global_facet_summary().clone(),
-            role: plan.role(),
-            row_role: plan.row_role(),
-            column_header_role: plan.column_header_role(),
-            cell_role: plan.cell_role(),
         }
     }
 
@@ -310,22 +302,22 @@ impl TableBehaviorSnapshot {
 
     /// Returns the accessibility role for the table root.
     pub const fn role(&self) -> Role {
-        self.role
+        Role::Table
     }
 
     /// Returns the accessibility role for row containers.
     pub const fn row_role(&self) -> Role {
-        self.row_role
+        Role::Row
     }
 
     /// Returns the accessibility role for header cells.
     pub const fn column_header_role(&self) -> Role {
-        self.column_header_role
+        Role::ColumnHeader
     }
 
     /// Returns the accessibility role for body cells.
     pub const fn cell_role(&self) -> Role {
-        self.cell_role
+        Role::Cell
     }
 
     /// Returns the accessibility row count, including the header row.

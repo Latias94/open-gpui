@@ -1,10 +1,13 @@
 use super::*;
 
 #[test]
-fn gpui_role_mapping_covers_neutral_image_and_separator_fallback() {
+fn gpui_role_mapping_preserves_neutral_semantics() {
     assert_eq!(gpui_role_from_ui(Role::Image), open_gpui::Role::Image);
     assert_eq!(gpui_role_from_ui(Role::Link), open_gpui::Role::Link);
-    assert_eq!(gpui_role_from_ui(Role::Separator), open_gpui::Role::Group);
+    assert_eq!(
+        gpui_role_from_ui(Role::Separator),
+        open_gpui::Role::Splitter
+    );
     assert_eq!(gpui_role_from_ui(Role::Slider), open_gpui::Role::Slider);
     assert_eq!(gpui_role_from_ui(Role::Tree), open_gpui::Role::Tree);
     assert_eq!(gpui_role_from_ui(Role::TreeItem), open_gpui::Role::TreeItem);

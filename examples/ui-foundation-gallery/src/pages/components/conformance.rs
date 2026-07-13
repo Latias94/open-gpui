@@ -23,10 +23,6 @@ impl ComponentA11yClaim {
 /// Gallery selector bindings for component-owned representative accessibility evidence.
 pub const COMPONENT_A11Y_CLAIMS: &[ComponentA11yClaim] = &[
     ComponentA11yClaim {
-        component: "Button",
-        selector_prefix: "gallery:component-button-sample",
-    },
-    ComponentA11yClaim {
         component: "IconButton",
         selector_prefix: "gallery:component-icon-button-sample",
     },
@@ -53,10 +49,6 @@ pub const COMPONENT_A11Y_CLAIMS: &[ComponentA11yClaim] = &[
     ComponentA11yClaim {
         component: "Tree item",
         selector_prefix: "gallery:component-tree-sample",
-    },
-    ComponentA11yClaim {
-        component: "Table",
-        selector_prefix: "gallery:component-table-sample",
     },
     ComponentA11yClaim {
         component: "VirtualizedList row",
