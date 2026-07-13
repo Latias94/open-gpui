@@ -148,6 +148,8 @@ KTD11. **Public API cleanup is evidence-led.** Table's engine and `ActionDescrip
 
 KTD12. **Breaking means clean replacement.** No deprecated aliases are retained for old semantic callbacks, color-only theme models/schema, overlay forwarding helpers, or evidence tables. The project is unreleased: the expanded theme contract deletes and replaces the old format in place and remains version `v1`; there is no compatibility loader, dual model, or `v2` naming.
 
+KTD13. **TanStack Table is a semantic reference, not an implementation dependency.** The repository-local `repo-ref/tanstack-table` reference clone (currently `@tanstack/table-core` `9.0.0-beta.31` at `5af79a877fa80f63703c6dc21861acc9d18baecf`) anchors row-model ordering, stable row/column identity, client/manual stage ownership, and pinning-region semantics. Open GPUI retains its Rust engine, GPUI adapter, native keyboard/accessibility policy, and separate virtualizer; this plan does not adopt TanStack v9 atoms/plugins, add a runtime dependency, or pursue full API parity.
+
 ### High-Level Technical Design
 
 Authority flow after the refactor:
@@ -565,8 +567,10 @@ Every official component that emits accessibility semantics derives one ephemera
 - Derive required, invalid, busy, values, relations, actions, collection position/count, and modal/hidden facts from existing resolved state rather than duplicating those fields in a stored descriptor.
 - Pilot the design on Button and one multi-node family from Tabs/Table. The projection must delete more family-local assembly/evidence than it adds. If it fails that deletion test, resolved state remains the semantic authority and only a shared projection helper is introduced.
 - After the pilot gate, migrate every inventoried official producer and centralize GPUI/AccessKit projection; eliminate family-local hand assembly where the projection owns the fact.
+- Execute the fleet migration in bounded family checkpoints: action/form controls, text/form fields, choice/navigation, overlay/modal, collections, and structural/display. Each checkpoint runs focused final-tree/action gates and deletes that family's old assembly/evidence before the next checkpoint; the number of static evidence rows is not a producer inventory or completion metric.
 - Correct semantic downgrade such as Separator mapping to Group.
 - Keep stable node identity across equivalent rerenders and remove nodes/relations on unmount or virtualization recycle.
+- For Table, derive semantic node identity from logical table/row/column/header identity rather than a pinned render region or virtual slot. Diagnosed duplicate source row IDs include stable source-instance identity in their render/semantic key. Filter, sort, group, expand, paginate, pin, and same-node value/sort updates must preserve or retire nodes according to that logical identity.
 - While a modal is active, remove its underlay from the navigable accessibility surface, reject underlay focus/value/activation actions, keep accessibility focus within the modal, and restore the prior tree when the modal is semantically closed.
 - Project DevTools from the resolved semantic authority, not `COMPONENT_A11Y_EVIDENCE`. Its adapter accepts only allowlisted structural facts and opaque IDs; accessible name, description, value text, labels, user input, and clipboard-derived text become typed redacted/summary markers before capture construction.
 - Update each family's Gallery/a11y scenario and migration notes in the same migration slice.
@@ -832,6 +836,7 @@ Narrow typed authorities own facts at their natural lifecycle: `COMPONENT_CONTRA
 - Derive only shared product metadata in Gallery/DevTools from contract rows; their runtime selectors, probes, and inspection data remain locally owned.
 - Split common public exports from explicit extended/diagnostic modules.
 - Characterize Table consumers; keep `Table`, core state/resolved state, engine, and adapter public. Move diagnostic-only behavior snapshots out of root/common prelude only when the census confirms no intended common API use.
+- Calibrate Table characterization against the local TanStack reference boundary: preserve `core -> filtered -> grouped -> sorted -> expanded -> paginated -> final` ordering, stable row/column IDs across transforms, client/manual ownership for the stages Open GPUI exposes, pinning as a partition of logical rows/columns rather than new identities, and the Table/Virtualizer ownership split. Unsupported TanStack features and full API parity remain out of scope.
 - Update conformance migration notes and the relevant ADR 0014 amendment/reaffirmation in this unit.
 
 **Test scenarios**
@@ -840,7 +845,8 @@ Narrow typed authorities own facts at their natural lifecycle: `COMPONENT_CONTRA
 - A final-tree role or activation matrix mismatch fails an executable probe; changing evidence text cannot repair it.
 - Comments, aliases, grouped exports, formatting, and braces cannot affect structured checks.
 - Gallery and DevTools receive the same contract ID/revision/family metadata without moving their runtime-specific facts into the component contract.
-- Table filter/sort/group/paginate/pin/virtualize/edit outputs remain behaviorally identical through export cleanup.
+- Table filter/sort/group/expand/paginate/pin/virtualize/edit outputs, logical identities, and exposed client/manual stage ownership remain behaviorally identical through export cleanup.
+- Duplicate Table source row IDs remain explicitly diagnosed and stably disambiguated by source-instance identity; no duplicate may collide in virtualizer keys or final accessibility nodes.
 
 **Deletion/replacement**
 
@@ -878,7 +884,7 @@ The product surfaces already updated by U1-U10 are audited together, architectur
 - Compose cross-domain Gallery smoke from the real per-unit flows already added for nested overlay/focus, final accessibility state, async form validation, scoped themes, semantic activation, and collection typeahead.
 - Audit runtime inspection against an allowlist contract: structured status/count/role/action/relation and opaque IDs only. Free-form form errors, accessible names/descriptions/value text, clipboard, input, and labels must already be typed redacted/summary markers before `DevtoolsCapture` construction.
 - Cross-link the ADRs created with U3/U4, U5, U6, U7/U8, and U10; reaffirm ADR 0014's federated ownership rather than introducing a central manifest.
-- Explicitly retain ADR 0009's Table engine shape and existing motion ownership.
+- Reconcile ADR 0009 with the implemented grouped, expanded, and pinned Table stages, record the TanStack reference boundary, and explicitly retain its Table/Virtualizer ownership shape and existing motion ownership.
 - Consolidate and release-audit the callback, theme, overlay, accessibility, and conformance migration guidance already committed with their owning units.
 - Extend `xtask verify` so GPUI accessibility/focus tests and required DevTools features cannot be skipped by the main gate.
 
@@ -986,7 +992,7 @@ Test execution rules:
 
 ### Explicit Preservation Gates
 
-- Table engine, `RowWindow`, stable identities, row pipeline, and virtualization stay.
+- Table engine, `RowWindow`, stable identities, `core -> filtered -> grouped -> sorted -> expanded -> paginated -> final` pipeline, pinning partition semantics, client/manual ownership, and separate virtualization stay.
 - `ActionDescriptor`/`ResolvedActionState` stay unless implementation uncovers a separate proven deletion case; they are not the semantic activation runtime.
 - The renderer-neutral accessibility vocabulary stays unless an individual type demonstrably adds no domain value; only duplicate mappings/evidence are deleted.
 - `open-gpui-motion` retains execution ownership; theme supplies policy/defaults only.
