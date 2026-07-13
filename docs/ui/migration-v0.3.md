@@ -72,6 +72,26 @@ free-form errors. It emits typed redaction markers, counts, lifecycle facts, and
 opaque field identities before a `DevtoolsCapture` is constructed. Do not parse DevTools payloads
 for application form data; application and rendering code should consume `FormSnapshot` directly.
 
+## Accessibility Semantic Projection
+
+Button, Table, IconButton, Switch, Toggle, Checkbox, Slider, NumberInput, and Progress now derive an
+ephemeral `SemanticDescriptor` from their resolved render state. The descriptor is projected into
+GPUI with `UiA11yElementExt::ui_semantics`; it is not stored as a second component state model.
+Final `TreeUpdate` assertions and real AccessKit action dispatch are the executable authority for
+these producers. Do not restore their deleted `COMPONENT_A11Y_EVIDENCE` rows or Gallery
+`COMPONENT_A11Y_CLAIMS` as substitute runtime evidence.
+
+IconButton keeps its accessible name separate from its description. Slider and NumberInput expose
+`SetValue` only when a change callback exists, consume only numeric AccessKit payloads, and reject
+non-finite values. Disabled controls reject focus and mutation actions; read-only NumberInput keeps
+focus but rejects value changes. Indeterminate Progress omits the current numeric value while
+retaining its supported range.
+
+`NumberInputStepAction` now includes `SetValue`, so exhaustive downstream matches must handle the
+new variant. This breaking addition preserves the real source of a `NumberInputChange`; mapping an
+explicit accessibility value request to Increment or Decrement would lose behaviorally relevant
+information.
+
 ## GPUI Pointer Sessions
 
 Window removal now needs application context so GPUI can deliver terminal pointer cancellation and

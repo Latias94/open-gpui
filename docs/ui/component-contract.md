@@ -978,9 +978,9 @@ these gates visible:
 - Splitter runtime fractions continue to share one constraint solver;
 - Tabs keep overflow and roving-focus behavior visible in the page;
 - icon-only affordances and labels keep their accessible metadata explicit;
-- `COMPONENT_A11Y_EVIDENCE` keeps representative roles, label sources, state/focus coverage, value
-  metadata, orientation, and actions aligned with `ComponentA11yContract`; gallery
-  `COMPONENT_A11Y_CLAIMS` bind those facts to sample selectors.
+- final `TreeUpdate` and real AccessKit action tests own evidence for migrated semantic producers;
+  `COMPONENT_A11Y_EVIDENCE` and gallery `COMPONENT_A11Y_CLAIMS` are transitional bindings only for
+  producer families that have not yet moved to the unified projection;
 - `cargo run -p xtask -- scan-ui-contract` keeps contract rows, default exports, docs tokens,
   conformance evidence, a11y claims, and the theme schema artifact aligned before gallery smoke
   tests are needed.

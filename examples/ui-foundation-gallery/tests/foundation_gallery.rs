@@ -10,12 +10,12 @@ use open_gpui_ui_components::component_contract::{
     official_component_rows,
 };
 use open_gpui_ui_components::{
-    A11yLabelSource, A11yValueKind, AlertDialogIntent, AlertDialogOpenMode, BadgeVariant,
-    ButtonVariant, ComboboxOpenMode, CommandIndexSnapshotMode, CommandKeyBindingEditorFilterMode,
-    CommandOpenMode, CommandSelectionMode, CommandStatusIntent, DialogOpenMode, FeedbackIntent,
-    HoverCardOpenIntent, HoverCardOpenMode, MenuItemKind, MenuOpenMode, OverlayResolvedState,
-    PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode, SheetCloseAffordance,
-    SheetModalMode, SheetOpenMode, SheetSide, TableColumnOrderChange, TableGlobalFilterChange,
+    AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant, ComboboxOpenMode,
+    CommandIndexSnapshotMode, CommandKeyBindingEditorFilterMode, CommandOpenMode,
+    CommandSelectionMode, CommandStatusIntent, DialogOpenMode, FeedbackIntent, HoverCardOpenIntent,
+    HoverCardOpenMode, MenuItemKind, MenuOpenMode, OverlayResolvedState, PopoverOpenMode,
+    ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode, SheetCloseAffordance, SheetModalMode,
+    SheetOpenMode, SheetSide, TableColumnOrderChange, TableGlobalFilterChange,
     TablePredicateFilterChange, TablePredicateFilterOperator, TableRangeFilterChange,
     TextInputDisplayMode, ThemeMode, ToggleVariant, TooltipOpenIntent, TreeKeyboardAction,
     VirtualizedListRowMeasureMode, VirtualizedListScrollStrategy,

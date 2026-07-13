@@ -207,7 +207,7 @@ fn components_page_samples_expose_component_metadata() {
     );
 
     let a11y_claims = pages::components::COMPONENT_A11Y_CLAIMS;
-    assert_eq!(a11y_claims.len(), 10);
+    assert_eq!(a11y_claims.len(), 5);
     assert!(a11y_claims.iter().all(|claim| {
         claim.selector_prefix.starts_with("gallery:component-")
             && claim.evidence().label_source.provides_name()
@@ -217,11 +217,6 @@ fn components_page_samples_expose_component_metadata() {
         .map(|claim| claim.component)
         .collect::<std::collections::BTreeSet<_>>();
     for expected in [
-        "IconButton",
-        "Checkbox",
-        "Slider",
-        "NumberInput",
-        "Progress",
         "Listbox option",
         "Tree item",
         "VirtualizedList row",
@@ -233,21 +228,6 @@ fn components_page_samples_expose_component_metadata() {
             "expected `{expected}` in component a11y claims"
         );
     }
-    assert!(a11y_claims.iter().any(|claim| {
-        let evidence = claim.evidence();
-        claim.component == "IconButton"
-            && evidence.role == Role::Button
-            && evidence.label_source == A11yLabelSource::ExplicitLabel
-            && evidence.actions.contains(&AccessibleAction::Click)
-    }));
-    assert!(a11y_claims.iter().any(|claim| {
-        let evidence = claim.evidence();
-        claim.component == "Slider"
-            && evidence.role == Role::Slider
-            && evidence.value_kind == Some(A11yValueKind::Percent)
-            && evidence.orientation == Some(Orientation::Horizontal)
-            && evidence.actions.contains(&AccessibleAction::SetValue)
-    }));
     assert!(a11y_claims.iter().any(|claim| {
         let evidence = claim.evidence();
         claim.component == "Splitter handle"

@@ -8,7 +8,9 @@ use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled};
+use open_gpui_ui_core::{
+    AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, Toggled,
+};
 
 use crate::a11y::UiA11yElementExt;
 use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
@@ -233,6 +235,16 @@ impl RenderOnce for Toggle {
         let foreground = theme.resolve(colors.foreground());
         let hover_background = theme.resolve(colors.hover_background());
         let focus_shadow = focus_ring_shadow_with_theme(focus_ring, theme);
+        let actions: &[AccessibleAction] = if self.on_change.is_some() {
+            &[AccessibleAction::Click, AccessibleAction::Focus]
+        } else {
+            &[AccessibleAction::Focus]
+        };
+        let semantics = SemanticDescriptor::new(state.role())
+            .with_label(label.as_ref())
+            .with_toggled(state.toggled())
+            .with_disabled(disabled)
+            .with_actions(actions);
 
         div()
             .id(self.id)
@@ -252,9 +264,7 @@ impl RenderOnce for Toggle {
             .line_height(gpui_px_from_ui(metrics.text_size()))
             .focusable()
             .tab_stop(!disabled)
-            .ui_role(state.role())
-            .aria_label(label.clone())
-            .ui_aria_toggled(state.toggled())
+            .ui_semantics(&semantics)
             .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| {

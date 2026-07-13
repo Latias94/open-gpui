@@ -23,26 +23,6 @@ impl ComponentA11yClaim {
 /// Gallery selector bindings for component-owned representative accessibility evidence.
 pub const COMPONENT_A11Y_CLAIMS: &[ComponentA11yClaim] = &[
     ComponentA11yClaim {
-        component: "IconButton",
-        selector_prefix: "gallery:component-icon-button-sample",
-    },
-    ComponentA11yClaim {
-        component: "Checkbox",
-        selector_prefix: "gallery:component-checkbox-sample",
-    },
-    ComponentA11yClaim {
-        component: "Slider",
-        selector_prefix: "gallery:component-slider-sample",
-    },
-    ComponentA11yClaim {
-        component: "NumberInput",
-        selector_prefix: "gallery:component-number-input-sample",
-    },
-    ComponentA11yClaim {
-        component: "Progress",
-        selector_prefix: "gallery:component-progress-sample",
-    },
-    ComponentA11yClaim {
         component: "Listbox option",
         selector_prefix: "gallery:component-listbox-sample",
     },

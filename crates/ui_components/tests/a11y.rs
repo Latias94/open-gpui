@@ -6,13 +6,12 @@ use open_gpui::{
 use open_gpui_ui_components::gpui_adapter::UiA11yElementExt;
 use open_gpui_ui_components::{
     A11yContractError, A11yLabelSource, A11yStateEvidence, A11yValueKind, A11yValueMetadata,
-    Button, COMPONENT_A11Y_EVIDENCE, Checkbox, ComponentA11yContract, Dialog, IconButton, Listbox,
-    Menu, MenuItem, NumberInput, Progress, Slider, Splitter, SplitterPanel,
-    SplitterPanelDescriptor, Tree, TreeItemDescriptor, VirtualizedList,
+    Button, COMPONENT_A11Y_EVIDENCE, ComponentA11yContract, Dialog, Listbox, Menu, MenuItem,
+    Splitter, SplitterPanel, SplitterPanelDescriptor, Tree, TreeItemDescriptor, VirtualizedList,
     VirtualizedListItemDescriptor, VirtualizedListStatusKind, component_a11y_evidence,
     listbox::ListboxOption,
 };
-use open_gpui_ui_core::{AccessibleAction, Orientation, Role, SemanticDescriptor, Toggled, ui_px};
+use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Toggled, ui_px};
 use std::{cell::RefCell, rc::Rc};
 
 fn a11y_node_with_label<'a>(
@@ -252,8 +251,20 @@ fn semantic_relations_resolve_update_and_repair_after_unmount(cx: &mut open_gpui
 
 #[test]
 fn migrated_components_have_no_static_a11y_evidence() {
-    assert!(component_a11y_evidence("Button").is_none());
-    assert!(component_a11y_evidence("Table").is_none());
+    for component in [
+        "Button",
+        "Table",
+        "IconButton",
+        "Checkbox",
+        "Slider",
+        "NumberInput",
+        "Progress",
+    ] {
+        assert!(
+            component_a11y_evidence(component).is_none(),
+            "migrated component `{component}` must not retain static a11y evidence"
+        );
+    }
 }
 
 #[test]
@@ -334,14 +345,6 @@ fn component_contract_a11y_evidence_is_valid() {
 #[test]
 fn component_contract_a11y_evidence_records_state_and_focus_coverage() {
     assert_state_coverage(
-        "Checkbox",
-        &[A11yStateEvidence::Checked, A11yStateEvidence::Disabled],
-    );
-    assert_state_coverage(
-        "Slider",
-        &[A11yStateEvidence::Disabled, A11yStateEvidence::Value],
-    );
-    assert_state_coverage(
         "Listbox option",
         &[
             A11yStateEvidence::Disabled,
@@ -377,64 +380,6 @@ fn component_contract_a11y_evidence_records_state_and_focus_coverage() {
 
 #[test]
 fn representative_component_a11y_contracts_are_valid() {
-    let icon_button = IconButton::new("search", "?", "Search").state();
-    assert_eq!(icon_button.accessible_label(), "Search");
-    contract("IconButton", icon_button.role())
-        .with_label_source(A11yLabelSource::ExplicitLabel)
-        .disabled_state(icon_button.disabled())
-        .with_actions(&[AccessibleAction::Click])
-        .validate()
-        .unwrap();
-
-    let checkbox = Checkbox::new("terms")
-        .label("Accept terms")
-        .checked_state(Toggled::Mixed)
-        .state();
-    contract("Checkbox", checkbox.role())
-        .with_label_source(A11yLabelSource::VisibleText)
-        .checked_state(checkbox.toggled())
-        .disabled_state(checkbox.disabled())
-        .with_actions(&[AccessibleAction::Click])
-        .validate()
-        .unwrap();
-
-    let slider = Slider::new("volume", "Volume").value(40.0).state();
-    contract("Slider", slider.role())
-        .with_label_source(A11yLabelSource::VisibleText)
-        .with_value_metadata(A11yValueMetadata::present(A11yValueKind::Percent))
-        .with_orientation(Orientation::Horizontal)
-        .disabled_state(slider.disabled())
-        .with_actions(&[
-            AccessibleAction::Increment,
-            AccessibleAction::Decrement,
-            AccessibleAction::SetValue,
-        ])
-        .validate()
-        .unwrap();
-
-    let number_input = NumberInput::new("quantity", "Quantity").value(3.0).state();
-    contract("NumberInput", number_input.role())
-        .with_label_source(A11yLabelSource::VisibleText)
-        .with_value_metadata(A11yValueMetadata::present(A11yValueKind::Number))
-        .disabled_state(number_input.disabled())
-        .with_actions(&[
-            AccessibleAction::Increment,
-            AccessibleAction::Decrement,
-            AccessibleAction::SetValue,
-        ])
-        .validate()
-        .unwrap();
-
-    let progress = Progress::new("build-progress", "Build progress")
-        .value(70.0)
-        .state();
-    assert_eq!(progress.value_percent(), Some(70.0));
-    contract("Progress", progress.role())
-        .with_label_source(A11yLabelSource::VisibleText)
-        .with_value_metadata(A11yValueMetadata::present(A11yValueKind::Percent))
-        .validate()
-        .unwrap();
-
     let dialog = Dialog::new("release-dialog", "Open", "Release notes", "Details").state();
     contract("Dialog trigger", dialog.trigger_role())
         .with_label_source(A11yLabelSource::VisibleText)

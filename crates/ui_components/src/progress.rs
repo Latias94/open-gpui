@@ -6,10 +6,9 @@ use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
 use open_gpui::{
-    ElementId, IntoElement, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement,
-    Styled, div, relative,
+    ElementId, IntoElement, ParentElement, RenderOnce, SharedString, Styled, div, relative,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 const INDETERMINATE_INDICATOR_START_FRACTION: f32 = 0.32;
 const INDETERMINATE_INDICATOR_FRACTION: f32 = 0.36;
@@ -228,6 +227,13 @@ impl RenderOnce for Progress {
         let indicator_start = state.indicator_start_fraction();
         let indicator_width = state.indicator_fraction();
         let label = self.label.clone();
+        let mut semantics = SemanticDescriptor::new(state.role())
+            .with_label(label.as_ref())
+            .with_min_numeric_value(0.0)
+            .with_max_numeric_value(100.0);
+        if let Some(value) = state.value_percent() {
+            semantics = semantics.with_numeric_value(value as f64);
+        }
 
         div()
             .id(self.id)
@@ -238,13 +244,7 @@ impl RenderOnce for Progress {
             .rounded(gpui_px_from_ui(metrics.radius()))
             .overflow_hidden()
             .bg(theme.resolve(colors.track()))
-            .ui_role(state.role())
-            .aria_label(label)
-            .aria_min_numeric_value(0.0)
-            .aria_max_numeric_value(100.0)
-            .when_some(state.value_percent(), |this, value| {
-                this.aria_numeric_value(value as f64)
-            })
+            .ui_semantics(&semantics)
             .child(
                 div()
                     .debug_selector(move || format!("progress:{indicator_debug_id}:indicator"))

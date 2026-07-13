@@ -8,7 +8,9 @@ use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_px};
+use open_gpui_ui_core::{
+    AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_px,
+};
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
@@ -415,6 +417,19 @@ impl RenderOnce for Checkbox {
             .unwrap_or_else(|| SharedString::from("Checkbox"));
         let debug_id = self.id.to_string();
         let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+        let actions: &[AccessibleAction] = if self.on_toggle.is_some() {
+            &[AccessibleAction::Click, AccessibleAction::Focus]
+        } else {
+            &[AccessibleAction::Focus]
+        };
+        let semantics = SemanticDescriptor::new(state.role())
+            .with_label(label_text.as_ref())
+            .with_toggled(state.toggled())
+            .with_required(state.required())
+            .with_invalid(state.invalid())
+            .with_busy(state.busy())
+            .with_disabled(disabled)
+            .with_actions(actions);
 
         div()
             .id(self.id)
@@ -424,9 +439,7 @@ impl RenderOnce for Checkbox {
             .gap_2()
             .focusable()
             .tab_stop(state.tab_stop_enabled())
-            .ui_role(state.role())
-            .aria_label(label_text)
-            .ui_aria_toggled(state.toggled())
+            .ui_semantics(&semantics)
             .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| this.cursor_pointer())

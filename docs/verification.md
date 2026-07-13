@@ -842,13 +842,12 @@ continue to prove role, orientation, toggled-state, and action mapping into GPUI
 cargo nextest run -p open-gpui-ui-components a11y --no-fail-fast
 ```
 
-That gate covers `A11yLabelSource`, `A11yDescriptionSource`, `A11yValueMetadata`,
-`A11yValueKind`, `A11yContractError`, and `A11yContractViolation` across representative Button,
-IconButton, Checkbox, Slider, NumberInput, Progress, Dialog, Menu, Listbox, Tree, Table,
-VirtualizedList, and Splitter contracts. The Components gallery conformance gate also exposes
-component-owned `COMPONENT_A11Y_EVIDENCE` plus gallery-owned `COMPONENT_A11Y_CLAIMS`
-selector bindings, so sample selector metadata stays aligned with roles, label sources, value
-metadata, orientation, and supported actions.
+That gate keeps the renderer-neutral validation vocabulary covered. Migrated Button, IconButton,
+Switch, Toggle, Checkbox, Slider, NumberInput, and Progress producers are additionally asserted in
+the final GPUI `TreeUpdate` with real Focus, Click, Increment, Decrement, and SetValue dispatch;
+Table has its own multi-node final-tree target. `COMPONENT_A11Y_EVIDENCE` and Gallery
+`COMPONENT_A11Y_CLAIMS` remain only for producers that have not yet migrated. Their row count is not
+a completion signal and deleted rows must not be restored in place of final-tree tests.
 
 Theme portability is guarded by the theme focused gate:
 
@@ -1224,9 +1223,9 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_exp
 ```
 
 `scan-ui-contract` checks the component contract tables, default root/prelude exports, source
-homes, docs tokens, removed primitive targets, gallery conformance evidence, representative
-`COMPONENT_A11Y_EVIDENCE`, gallery `COMPONENT_A11Y_CLAIMS`, and the committed theme schema
-artifact. Use the narrower
+homes, docs tokens, removed primitive targets, gallery conformance evidence, remaining transitional
+`COMPONENT_A11Y_EVIDENCE`, Gallery `COMPONENT_A11Y_CLAIMS`, and the committed theme schema artifact.
+Use the narrower
 `scan-theme-schema`, `scan-theme-drift`, and focused nextest commands when investigating a specific
 failure.
 

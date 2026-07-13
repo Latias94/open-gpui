@@ -10,7 +10,10 @@ use open_gpui::{
     App, ElementId, IntoElement, KeyDownEvent, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div, px, relative,
 };
-use open_gpui_ui_core::{AccessibleAction, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{
+    AccessibleAction, Orientation, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx,
+    ui_px,
+};
 use std::rc::Rc;
 
 /// Resolved slider color intents.
@@ -283,6 +286,16 @@ impl SliderState {
         ))
     }
 
+    fn set_value_change(&self, requested_value: f64) -> Option<SliderChange> {
+        if !self.activation_enabled() {
+            return None;
+        }
+
+        let requested_value =
+            normalize_requested_numeric_value(requested_value, self.min, self.max, self.step)?;
+        Some(SliderChange::new(self.value, requested_value))
+    }
+
     /// Returns resolved metrics.
     pub const fn metrics(&self) -> SliderMetrics {
         self.metrics
@@ -401,7 +414,7 @@ impl Sizable for Slider {
 impl RenderOnce for Slider {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = ThemeResolver::current(cx);
-        let state = self.state();
+        let state = Rc::new(self.state());
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
@@ -410,6 +423,24 @@ impl RenderOnce for Slider {
         let label = self.label.clone();
         let value_fraction = state.normalized_value();
         let debug_id = self.id.to_string();
+        let actions: &[AccessibleAction] = if self.on_change.is_some() {
+            &[
+                AccessibleAction::Focus,
+                AccessibleAction::Increment,
+                AccessibleAction::Decrement,
+                AccessibleAction::SetValue,
+            ]
+        } else {
+            &[AccessibleAction::Focus]
+        };
+        let semantics = SemanticDescriptor::new(state.role())
+            .with_label(state.label())
+            .with_numeric_value(state.value() as f64)
+            .with_min_numeric_value(state.min() as f64)
+            .with_max_numeric_value(state.max() as f64)
+            .with_orientation(Orientation::Horizontal)
+            .with_disabled(disabled)
+            .with_actions(actions);
 
         div()
             .id(self.id)
@@ -422,16 +453,12 @@ impl RenderOnce for Slider {
             .text_size(gpui_px_from_ui(metrics.label_text_size()))
             .focusable()
             .tab_stop(!disabled)
-            .ui_role(state.role())
-            .aria_label(label.clone())
-            .aria_numeric_value(state.value() as f64)
-            .aria_min_numeric_value(state.min() as f64)
-            .aria_max_numeric_value(state.max() as f64)
+            .ui_semantics(&semantics)
             .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| this.cursor_pointer())
             .when_some(self.on_change.filter(|_| !disabled), |this, on_change| {
-                let key_state = state.clone();
+                let key_state = Rc::clone(&state);
                 let key_on_change = on_change.clone();
                 this.on_key_down(move |event: &KeyDownEvent, window, cx| {
                     if event.keystroke.modifiers.modified() {
@@ -447,7 +474,7 @@ impl RenderOnce for Slider {
                     cx.stop_propagation();
                 })
                 .on_ui_a11y_action(AccessibleAction::Increment, {
-                    let action_state = state.clone();
+                    let action_state = Rc::clone(&state);
                     let on_change = on_change.clone();
                     move |_, window, cx| {
                         if let Some(change) = action_state.keyboard_change("up")
@@ -458,9 +485,24 @@ impl RenderOnce for Slider {
                     }
                 })
                 .on_ui_a11y_action(AccessibleAction::Decrement, {
-                    let action_state = state.clone();
+                    let action_state = Rc::clone(&state);
+                    let on_change = on_change.clone();
                     move |_, window, cx| {
                         if let Some(change) = action_state.keyboard_change("down")
+                            && change.changed()
+                        {
+                            on_change(change, window, cx);
+                        }
+                    }
+                })
+                .on_ui_a11y_action(AccessibleAction::SetValue, {
+                    let action_state = Rc::clone(&state);
+                    move |data, window, cx| {
+                        let Some(open_gpui::accesskit::ActionData::NumericValue(value)) = data
+                        else {
+                            return;
+                        };
+                        if let Some(change) = action_state.set_value_change(*value)
                             && change.changed()
                         {
                             on_change(change, window, cx);
@@ -525,6 +567,20 @@ pub(crate) fn normalize_numeric_value(value: f32, min: f32, max: f32, step: f32)
     (min + steps * step).clamp(min, max)
 }
 
+pub(crate) fn normalize_requested_numeric_value(
+    value: f64,
+    min: f32,
+    max: f32,
+    step: f32,
+) -> Option<f32> {
+    if !value.is_finite() {
+        return None;
+    }
+
+    let value = value.clamp(min as f64, max as f64) as f32;
+    Some(normalize_numeric_value(value, min, max, step))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,5 +632,29 @@ mod tests {
         assert!(state.disabled());
         assert!(!state.activation_enabled());
         assert_eq!(state.keyboard_change("right"), None);
+    }
+
+    #[test]
+    fn slider_set_value_change_normalizes_valid_numeric_requests() {
+        let state = Slider::new("volume", "Volume")
+            .min(0.0)
+            .max(10.0)
+            .step(2.0)
+            .value(4.0)
+            .state();
+
+        let change = state
+            .set_value_change(7.1)
+            .expect("finite numeric values should produce a change payload");
+        assert_eq!(change.previous_value(), 4.0);
+        assert_eq!(change.value(), 8.0);
+        assert!(state.set_value_change(f64::NAN).is_none());
+        assert!(
+            Slider::new("disabled", "Disabled")
+                .disabled(true)
+                .state()
+                .set_value_change(50.0)
+                .is_none()
+        );
     }
 }

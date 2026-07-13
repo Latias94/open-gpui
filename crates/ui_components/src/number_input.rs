@@ -4,7 +4,9 @@ use crate::a11y::UiA11yElementExt;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::form_control::FormControlState;
 use crate::geometry::gpui_px_from_ui;
-use crate::slider::{normalize_bounds, normalize_numeric_value, normalize_step};
+use crate::slider::{
+    normalize_bounds, normalize_numeric_value, normalize_requested_numeric_value, normalize_step,
+};
 use crate::text_input::{TextInputColors, TextInputMetrics};
 use crate::theme::{ThemeContext, ThemeResolver};
 use open_gpui::prelude::*;
@@ -12,7 +14,7 @@ use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, KeyDownEvent, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{AccessibleAction, Role, Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens};
 use std::rc::Rc;
 
 /// Resolved number-input color intents.
@@ -21,7 +23,7 @@ pub type NumberInputColors = TextInputColors;
 /// Resolved number-input metrics.
 pub type NumberInputMetrics = TextInputMetrics;
 
-/// Number-input step action.
+/// Number-input value-change action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NumberInputStepAction {
     /// Increment by one step.
@@ -32,6 +34,8 @@ pub enum NumberInputStepAction {
     Minimum,
     /// Jump to the maximum.
     Maximum,
+    /// Set an explicit numeric value.
+    SetValue,
 }
 
 impl NumberInputStepAction {
@@ -42,6 +46,7 @@ impl NumberInputStepAction {
             Self::Decrement => "decrement",
             Self::Minimum => "minimum",
             Self::Maximum => "maximum",
+            Self::SetValue => "set-value",
         }
     }
 }
@@ -241,6 +246,7 @@ impl NumberInputState {
             NumberInputStepAction::Decrement => self.value - self.step,
             NumberInputStepAction::Minimum => self.min,
             NumberInputStepAction::Maximum => self.max,
+            NumberInputStepAction::SetValue => return None,
         };
 
         Some(NumberInputChange::new(
@@ -261,6 +267,20 @@ impl NumberInputState {
         };
 
         self.step_change(action)
+    }
+
+    fn set_value_change(&self, requested_value: f64) -> Option<NumberInputChange> {
+        if !self.input_enabled() {
+            return None;
+        }
+
+        let requested_value =
+            normalize_requested_numeric_value(requested_value, self.min, self.max, self.step)?;
+        Some(NumberInputChange::new(
+            NumberInputStepAction::SetValue,
+            self.value,
+            requested_value,
+        ))
     }
 
     /// Returns resolved metrics.
@@ -407,17 +427,37 @@ impl Sizable for NumberInput {
 impl RenderOnce for NumberInput {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = ThemeResolver::current(cx);
-        let state = self.state();
+        let state = Rc::new(self.state());
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
-        let label = self.label.clone();
         let debug_id = self.id.to_string();
         let on_change_for_keyboard = self.on_change.clone();
         let on_change_for_increment = self.on_change.clone();
         let on_change_for_decrement = self.on_change.clone();
         let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+        let actions: &[AccessibleAction] = if self.on_change.is_some() {
+            &[
+                AccessibleAction::Focus,
+                AccessibleAction::Increment,
+                AccessibleAction::Decrement,
+                AccessibleAction::SetValue,
+            ]
+        } else {
+            &[AccessibleAction::Focus]
+        };
+        let semantics = SemanticDescriptor::new(state.role())
+            .with_label(state.label())
+            .with_numeric_value(state.value() as f64)
+            .with_min_numeric_value(state.min() as f64)
+            .with_max_numeric_value(state.max() as f64)
+            .with_required(state.required())
+            .with_invalid(state.invalid())
+            .with_busy(state.busy())
+            .with_read_only(state.read_only())
+            .with_disabled(disabled)
+            .with_actions(actions);
 
         div()
             .id(self.id)
@@ -438,18 +478,14 @@ impl RenderOnce for NumberInput {
             .line_height(gpui_px_from_ui(metrics.text_size()))
             .focusable()
             .tab_stop(state.tab_stop_enabled())
-            .ui_role(state.role())
-            .aria_label(label)
-            .aria_numeric_value(state.value() as f64)
-            .aria_min_numeric_value(state.min() as f64)
-            .aria_max_numeric_value(state.max() as f64)
+            .ui_semantics(&semantics)
             .focus_visible(move |style| style.shadow(focus_shadow))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(state.input_enabled(), |this| this.cursor_text())
             .when_some(
                 on_change_for_keyboard.filter(|_| state.input_enabled()),
                 |this, on_change| {
-                    let key_state = state.clone();
+                    let key_state = Rc::clone(&state);
                     let key_on_change = on_change.clone();
                     this.on_key_down(move |event: &KeyDownEvent, window, cx| {
                         if event.keystroke.modifiers.modified() {
@@ -465,7 +501,7 @@ impl RenderOnce for NumberInput {
                         cx.stop_propagation();
                     })
                     .on_ui_a11y_action(AccessibleAction::Increment, {
-                        let action_state = state.clone();
+                        let action_state = Rc::clone(&state);
                         let on_change = on_change.clone();
                         move |_, window, cx| {
                             if let Some(change) =
@@ -477,10 +513,25 @@ impl RenderOnce for NumberInput {
                         }
                     })
                     .on_ui_a11y_action(AccessibleAction::Decrement, {
-                        let action_state = state.clone();
+                        let action_state = Rc::clone(&state);
+                        let on_change = on_change.clone();
                         move |_, window, cx| {
                             if let Some(change) =
                                 action_state.step_change(NumberInputStepAction::Decrement)
+                                && change.changed()
+                            {
+                                on_change(change, window, cx);
+                            }
+                        }
+                    })
+                    .on_ui_a11y_action(AccessibleAction::SetValue, {
+                        let action_state = Rc::clone(&state);
+                        move |data, window, cx| {
+                            let Some(open_gpui::accesskit::ActionData::NumericValue(value)) = data
+                            else {
+                                return;
+                            };
+                            if let Some(change) = action_state.set_value_change(*value)
                                 && change.changed()
                             {
                                 on_change(change, window, cx);
@@ -498,7 +549,7 @@ impl RenderOnce for NumberInput {
                     .child(number_step_button(
                         "number-step-up",
                         "+",
-                        state.clone(),
+                        Rc::clone(&state),
                         NumberInputStepAction::Increment,
                         on_change_for_increment,
                         &theme,
@@ -518,7 +569,7 @@ impl RenderOnce for NumberInput {
 fn number_step_button(
     id: &'static str,
     label: &'static str,
-    state: NumberInputState,
+    state: Rc<NumberInputState>,
     action: NumberInputStepAction,
     on_change: Option<Rc<dyn Fn(NumberInputChange, &mut Window, &mut App)>>,
     theme: &ThemeContext,
@@ -621,5 +672,31 @@ mod tests {
         assert!(!disabled.activation_enabled());
         assert!(!disabled.tab_stop_enabled());
         assert_eq!(disabled.keyboard_change("up"), None);
+    }
+
+    #[test]
+    fn number_input_set_value_change_preserves_action_and_normalizes_value() {
+        let state = NumberInput::new("quantity", "Quantity")
+            .min(0.0)
+            .max(10.0)
+            .step(2.0)
+            .value(4.0)
+            .state();
+
+        let change = state
+            .set_value_change(7.1)
+            .expect("finite numeric values should produce a change payload");
+        assert_eq!(change.action(), NumberInputStepAction::SetValue);
+        assert_eq!(change.previous_value(), 4.0);
+        assert_eq!(change.value(), 8.0);
+        assert_eq!(state.step_change(NumberInputStepAction::SetValue), None);
+        assert!(state.set_value_change(f64::INFINITY).is_none());
+        assert!(
+            NumberInput::new("readonly", "Read only")
+                .read_only(true)
+                .state()
+                .set_value_change(50.0)
+                .is_none()
+        );
     }
 }
