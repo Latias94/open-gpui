@@ -21,16 +21,26 @@ use open_gpui_devtools::{
     DevtoolsSession, DevtoolsSessionError, DevtoolsSessionExport, DevtoolsSessionFrame,
     DevtoolsTargetId, DevtoolsTargetKind, DevtoolsTargetSnapshot, DevtoolsWorkbench,
     DevtoolsWorkbenchRefreshStatus, ProbeId, SnapshotCollection, SnapshotDiagnostic, SnapshotKind,
-    adapters::sanitize_sensitive_text, command as devtools_command, form, gpui, motion, resource,
-    ui_components,
+    SnapshotNode, SnapshotProbeSnapshot, SnapshotRedactionSummary, SnapshotTree,
+    adapters::{sanitize_sensitive_text, snapshot_node_with_payload},
+    command as devtools_command, form, gpui, motion, resource,
+    ui_components::{
+        self, ComponentSemanticIdentity, OpaqueSemanticNodeId, ResolvedSemanticNode,
+        resolved_semantics_probe_snapshot,
+    },
 };
 use open_gpui_motion::{MotionFrameDemand, MotionFrameReason};
 use open_gpui_resource::PaginatedResourceSnapshotView;
-use open_gpui_ui_components::{COMPONENT_A11Y_EVIDENCE, ThemeSnapshot};
+use open_gpui_ui_components::ThemeSnapshot;
+use open_gpui_ui_core::{Role, SemanticDescriptor, ThemeTokens};
 
 use super::components::{
     form_devtools_dogfood_snapshot, form_devtools_validation_dogfood_snapshot,
     resource_devtools_dogfood_snapshots,
+};
+use super::focus_a11y::{
+    FOCUS_A11Y_SCENARIOS, FocusA11yPageState, FocusA11yScenarioId, FocusA11yTextFormStoryState,
+    PASSWORD_LABEL, TEXT_INPUT_CHANGED_VALUE, TEXT_INPUT_LABEL,
 };
 
 /// Page title.
@@ -56,7 +66,7 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_devtools::gpui::scroll_viewport_layout_probe_snapshot",
     "open_gpui_devtools::resource::resource_snapshot_probe",
     "open_gpui_devtools::ui_components::theme_probe_snapshot",
-    "open_gpui_devtools::ui_components::a11y_evidence_probe_snapshot",
+    "open_gpui_devtools::ui_components::resolved_semantics_probe_snapshot",
     "open_gpui_devtools::motion::motion_frame_demand_probe_snapshot",
     "open_gpui_devtools::motion::motion_frame_demand_timeline_probe_snapshot",
 ];
@@ -279,6 +289,8 @@ pub fn devtools_gallery_session_export() -> DevtoolsSessionExport {
 /// Deterministic headless Gallery artifacts used by fixtures and CLI contract tests.
 #[derive(Clone, Debug)]
 pub struct GalleryDevtoolsHeadlessArtifacts {
+    /// Typed Focus/A11y stories represented by the redacted accessibility snapshot.
+    pub accessibility_scenarios: Vec<FocusA11yScenarioId>,
     /// Sanitized two-frame Gallery session export.
     pub session_export: DevtoolsSessionExport,
     /// Report derived from the current Gallery session frame.
@@ -291,6 +303,10 @@ pub struct GalleryDevtoolsHeadlessArtifacts {
 
 /// Builds deterministic Gallery DevTools artifacts without launching a GUI window.
 pub fn devtools_gallery_headless_artifacts() -> GalleryDevtoolsHeadlessArtifacts {
+    let accessibility_scenarios = FOCUS_A11Y_SCENARIOS
+        .iter()
+        .map(|scenario| scenario.scenario_id)
+        .collect();
     let session_export = devtools_gallery_session_export();
     let report = DevtoolsReport::from_session_export(&session_export);
     let session_record = DevtoolsArtifactRecord::new(
@@ -303,6 +319,7 @@ pub fn devtools_gallery_headless_artifacts() -> GalleryDevtoolsHeadlessArtifacts
     );
 
     GalleryDevtoolsHeadlessArtifacts {
+        accessibility_scenarios,
         session_export,
         report,
         session_record,
@@ -467,10 +484,8 @@ fn devtools_gallery_legacy_collection(refresh_index: u64) -> SnapshotCollection 
     let mutation_snapshot = resource_snapshots.mutation;
 
     registry
-        .register_snapshot_probe("accessibility", SnapshotKind::Accessibility, || {
-            Ok(ui_components::a11y_evidence_probe_snapshot(
-                COMPONENT_A11Y_EVIDENCE,
-            ))
+        .register_snapshot_probe("accessibility", SnapshotKind::Accessibility, move || {
+            Ok(accessibility_devtools_dogfood_snapshot(refresh_index))
         })
         .expect("unique accessibility probe");
     registry
@@ -549,6 +564,144 @@ fn devtools_gallery_legacy_collection(refresh_index: u64) -> SnapshotCollection 
         .diagnostics
         .extend(unmounted_framework_diagnostics());
     collection
+}
+
+fn accessibility_devtools_dogfood_snapshot(refresh_index: u64) -> SnapshotProbeSnapshot {
+    let mut page_state = FocusA11yPageState::default();
+    if refresh_index % 2 == 1 {
+        page_state.set_text_input_value(TEXT_INPUT_CHANGED_VALUE.to_owned());
+        page_state.toggle_field_invalid();
+    }
+    let state = page_state.text_form_story_state(ThemeTokens::default());
+    let scenario_snapshots = FOCUS_A11Y_SCENARIOS
+        .iter()
+        .copied()
+        .map(|scenario| {
+            let snapshot = match scenario.scenario_id {
+                FocusA11yScenarioId::TextInputValueSelection => {
+                    text_input_devtools_snapshot(&state)
+                }
+                FocusA11yScenarioId::TextareaFieldRelations => {
+                    textarea_field_devtools_snapshot(&state)
+                }
+                FocusA11yScenarioId::PasswordFreeTextRedaction => {
+                    password_devtools_snapshot(&state)
+                }
+            };
+            (scenario, snapshot)
+        })
+        .collect::<Vec<_>>();
+    let semantic_node_count = scenario_snapshots
+        .iter()
+        .map(|(_, snapshot)| resolved_snapshot_children(snapshot).len())
+        .sum::<usize>();
+    let scenario_ids = FOCUS_A11Y_SCENARIOS
+        .iter()
+        .map(|scenario| scenario.id)
+        .collect::<Vec<_>>();
+    let mut root = snapshot_node_with_payload(
+        ["accessibility"],
+        "Resolved accessibility semantics",
+        serde_json::json!({
+            "node_count": semantic_node_count,
+            "scenario_count": scenario_ids.len(),
+            "scenario_ids": scenario_ids,
+        }),
+    );
+    let mut redaction = SnapshotRedactionSummary::default();
+    for (scenario, snapshot) in scenario_snapshots {
+        let children = resolved_snapshot_children(&snapshot);
+        let mut scenario_node = snapshot_node_with_payload(
+            ["accessibility", "scenario", scenario.id],
+            format!("{} accessibility scenario", scenario.id),
+            serde_json::json!({
+                "scenario_id": scenario.id,
+                "component_ids": scenario.component_ids,
+                "semantic_node_count": children.len(),
+            }),
+        );
+        for child in children {
+            scenario_node = scenario_node.with_child(child);
+        }
+        redaction.merge(snapshot.redaction().clone());
+        root = root.with_child(scenario_node);
+    }
+
+    SnapshotProbeSnapshot::new(SnapshotTree::new([root])).with_redaction(redaction)
+}
+
+fn resolved_snapshot_children(snapshot: &SnapshotProbeSnapshot) -> Vec<SnapshotNode> {
+    snapshot
+        .tree()
+        .nodes
+        .iter()
+        .flat_map(|root| root.children.iter().cloned())
+        .collect()
+}
+
+fn component_identity(component: &str) -> ComponentSemanticIdentity {
+    ComponentSemanticIdentity::for_component(component)
+        .unwrap_or_else(|| panic!("missing canonical component contract for {component}"))
+}
+
+fn text_input_devtools_snapshot(state: &FocusA11yTextFormStoryState) -> SnapshotProbeSnapshot {
+    let projection = state.text_input().semantic_projection::<u64>();
+    let semantics = projection.descriptor().with_label(TEXT_INPUT_LABEL);
+    resolved_semantics_probe_snapshot([ResolvedSemanticNode::new(
+        component_identity("TextInput"),
+        OpaqueSemanticNodeId::new(0x1001),
+        semantics,
+    )])
+}
+
+fn textarea_field_devtools_snapshot(state: &FocusA11yTextFormStoryState) -> SnapshotProbeSnapshot {
+    let field = state.field();
+    let label_node_id = 0x2001_u64;
+    let support_node_id = if field.invalid() {
+        0x2003_u64
+    } else {
+        0x2002_u64
+    };
+    let labelled_by = [label_node_id];
+    let described_by = [support_node_id];
+    let label_semantics = SemanticDescriptor::<u64>::new(Role::Label).with_label(field.label());
+    let support_semantics = SemanticDescriptor::<u64>::new(Role::Label)
+        .with_label(field.support_text().expect("Focus/A11y Field support text"));
+    let projection = state.textarea().semantic_projection::<u64>();
+    let mut textarea_semantics = projection.descriptor().with_labelled_by(&labelled_by);
+    if field.invalid() {
+        textarea_semantics = textarea_semantics.with_error_message(&support_node_id);
+    } else {
+        textarea_semantics = textarea_semantics.with_described_by(&described_by);
+    }
+
+    resolved_semantics_probe_snapshot([
+        ResolvedSemanticNode::new(
+            component_identity("Field"),
+            OpaqueSemanticNodeId::new(label_node_id),
+            label_semantics,
+        ),
+        ResolvedSemanticNode::new(
+            component_identity("Field"),
+            OpaqueSemanticNodeId::new(support_node_id),
+            support_semantics,
+        ),
+        ResolvedSemanticNode::new(
+            component_identity("Textarea"),
+            OpaqueSemanticNodeId::new(0x2004),
+            textarea_semantics,
+        ),
+    ])
+}
+
+fn password_devtools_snapshot(state: &FocusA11yTextFormStoryState) -> SnapshotProbeSnapshot {
+    let projection = state.password().semantic_projection::<u64>();
+    let semantics = projection.descriptor().with_label(PASSWORD_LABEL);
+    resolved_semantics_probe_snapshot([ResolvedSemanticNode::new(
+        component_identity("TextInput"),
+        OpaqueSemanticNodeId::new(0x3001),
+        semantics,
+    )])
 }
 
 fn command_registry_sample() -> CommandRegistrySnapshot {

@@ -56,43 +56,17 @@ pub struct FieldTextareaSample {
 /// Returns label samples backed by real component state.
 pub fn label_samples(tokens: ThemeTokens) -> [LabelSample; 4] {
     [
-        (
-            "email",
-            "Email",
-            Some("email-input"),
-            false,
-            false,
-            Size::Medium,
-        ),
-        (
-            "terms",
-            "Terms",
-            Some("terms-checkbox"),
-            true,
-            false,
-            Size::Medium,
-        ),
-        (
-            "disabled",
-            "Disabled",
-            Some("disabled-control"),
-            false,
-            true,
-            Size::Medium,
-        ),
-        ("standalone", "Standalone", None, false, false, Size::Small),
+        ("email", "Email", false, false, Size::Medium),
+        ("terms", "Terms", true, false, Size::Medium),
+        ("disabled", "Disabled", false, true, Size::Medium),
+        ("small", "Small", false, false, Size::Small),
     ]
-    .map(|(id, text, control_id, required, disabled, size)| {
+    .map(|(id, text, required, disabled, size)| {
         let label = Label::new(id, text)
             .required(required)
             .disabled(disabled)
             .with_size(size)
             .tokens(tokens);
-        let label = if let Some(control_id) = control_id {
-            label.for_control(control_id)
-        } else {
-            label
-        };
 
         LabelSample {
             id,
@@ -349,7 +323,7 @@ pub fn field_samples(tokens: ThemeTokens) -> [FieldSample; 3] {
                 .disabled(disabled)
                 .invalid(invalid)
                 .tokens(tokens);
-            let field = Field::new(id, format!("{id}-input"), label)
+            let field = Field::new(id, label)
                 .help(help)
                 .required(required)
                 .disabled(disabled)
@@ -394,7 +368,7 @@ pub fn field_textarea_samples(tokens: ThemeTokens) -> [FieldTextareaSample; 1] {
                 .disabled(disabled)
                 .invalid(invalid)
                 .tokens(tokens);
-            let field = Field::new(id, format!("{id}-textarea"), label)
+            let field = Field::new(id, label)
                 .help(help)
                 .required(required)
                 .disabled(disabled)

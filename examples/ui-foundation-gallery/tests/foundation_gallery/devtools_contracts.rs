@@ -4,11 +4,14 @@ use open_gpui_devtools::{
     DevtoolsSessionFrame, SnapshotEnvelope,
 };
 
-fn assert_form_canaries_absent(serialized: &str) {
-    for &canary in pages::components::FORM_DEVTOOLS_DOGFOOD_CANARIES {
+fn assert_devtools_canaries_absent(serialized: &str) {
+    for &canary in pages::components::FORM_DEVTOOLS_DOGFOOD_CANARIES
+        .iter()
+        .chain(pages::focus_a11y::FOCUS_A11Y_SENSITIVE_TEXT)
+    {
         assert!(
             !serialized.contains(canary),
-            "form DevTools canary leaked: {canary}"
+            "DevTools canary leaked: {canary}"
         );
     }
 }
@@ -109,7 +112,7 @@ fn devtools_gallery_collects_registry_backed_snapshots() {
             .redacted_values,
         expected_form_redactions
     );
-    assert_form_canaries_absent(&serde_json::to_string(&collection).unwrap());
+    assert_devtools_canaries_absent(&serde_json::to_string(&collection).unwrap());
     assert_eq!(
         collection
             .snapshots
@@ -179,7 +182,7 @@ fn devtools_gallery_capture_projects_targets_domains_and_events() {
             .any(|diagnostic| diagnostic.code.starts_with("capture.duplicate_"))
     );
     assert_eq!(capture.snapshot_collection().snapshots.len(), 11);
-    assert_form_canaries_absent(&serde_json::to_string(&capture).unwrap());
+    assert_devtools_canaries_absent(&serde_json::to_string(&capture).unwrap());
 }
 
 #[test]
@@ -226,7 +229,7 @@ fn devtools_gallery_session_frame_exposes_history_and_diff() {
     assert!(export_json.contains("open-gpui-devtools-session/v1"));
     assert!(!export_json.contains("raw_text"));
     assert!(!export_json.contains("clipboard_contents"));
-    assert_form_canaries_absent(&export_json);
+    assert_devtools_canaries_absent(&export_json);
 }
 
 #[open_gpui::test]
@@ -279,7 +282,7 @@ fn devtools_gallery_inspector_copies_validating_form_detail(
                     .is_some_and(|payload| payload["value"]["kind"] == "redacted")
             })
     );
-    assert_form_canaries_absent(&clipboard_json);
+    assert_devtools_canaries_absent(&clipboard_json);
 }
 
 #[test]
@@ -312,9 +315,55 @@ fn devtools_gallery_headless_artifacts_use_artifact_records() {
     assert!(lines[1].contains("\"artifact_kind\":\"report\""));
     let session_json = serde_json::to_string(&artifacts.session_export).unwrap();
     let report_json = serde_json::to_string(&artifacts.report).unwrap();
-    assert_form_canaries_absent(&jsonl);
-    assert_form_canaries_absent(&session_json);
-    assert_form_canaries_absent(&report_json);
+    assert_devtools_canaries_absent(&jsonl);
+    assert_devtools_canaries_absent(&session_json);
+    assert_devtools_canaries_absent(&report_json);
+}
+
+#[test]
+fn devtools_gallery_accessibility_artifact_is_bound_to_focus_a11y_scenarios() {
+    let artifacts = pages::devtools::devtools_gallery_headless_artifacts();
+    let expected_scenarios = pages::focus_a11y::FOCUS_A11Y_SCENARIOS
+        .iter()
+        .map(|scenario| scenario.scenario_id)
+        .collect::<Vec<_>>();
+    assert_eq!(artifacts.accessibility_scenarios, expected_scenarios);
+
+    let accessibility = artifacts
+        .session_export
+        .frames
+        .last()
+        .expect("current Gallery DevTools frame")
+        .capture
+        .snapshots
+        .iter()
+        .find(|snapshot| snapshot.probe_id.as_str() == "accessibility")
+        .expect("Focus/A11y accessibility snapshot");
+    let root = accessibility
+        .tree
+        .nodes
+        .first()
+        .expect("Focus/A11y accessibility snapshot root");
+    let snapshot_scenario_ids = root
+        .children
+        .iter()
+        .map(|scenario| {
+            scenario
+                .payload
+                .as_ref()
+                .and_then(|payload| payload["scenario_id"].as_str())
+                .expect("allowlisted Focus/A11y scenario id")
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        snapshot_scenario_ids,
+        pages::focus_a11y::FOCUS_A11Y_SCENARIOS
+            .iter()
+            .map(|scenario| scenario.id)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(root.payload.as_ref().unwrap()["scenario_count"], 3);
 }
 
 #[test]
@@ -323,8 +372,8 @@ fn devtools_gallery_headless_fixtures_match_producer_output() {
     let session_json = serde_json::to_string_pretty(&artifacts.session_export).unwrap();
     let report_json = serde_json::to_string_pretty(&artifacts.report).unwrap();
 
-    assert_form_canaries_absent(&session_json);
-    assert_form_canaries_absent(&report_json);
+    assert_devtools_canaries_absent(&session_json);
+    assert_devtools_canaries_absent(&report_json);
     assert_fixture_matches("gallery-session.json", &session_json);
     assert_fixture_matches("gallery-report.json", &report_json);
 }
@@ -404,6 +453,7 @@ fn devtools_gallery_workbench_refreshes_from_shell_live_facts() {
 fn assert_fixture_matches(name: &str, actual: &str) {
     let expected = std::fs::read_to_string(gallery_fixture_dir().join(name))
         .unwrap_or_else(|error| panic!("failed to read fixture {name}: {error}"));
+    assert_devtools_canaries_absent(&expected);
     assert_eq!(normalize_json(&expected), normalize_json(actual));
 }
 
@@ -436,14 +486,26 @@ fn devtools_gallery_snapshots_reflect_component_sample_state() {
         .iter()
         .find(|snapshot| snapshot.probe_id.as_str() == "resource")
         .expect("resource snapshot");
+    let accessibility = collection
+        .snapshots
+        .iter()
+        .find(|snapshot| snapshot.probe_id.as_str() == "accessibility")
+        .expect("resolved accessibility snapshot");
     let form_json = serde_json::to_string(form).unwrap();
     let resource_json = serde_json::to_string(resource).unwrap();
+    let accessibility_json = serde_json::to_string(accessibility).unwrap();
 
     assert!(form_json.contains("SubmitFailed"));
     assert!(form_json.contains("submit_count"));
     assert!(resource_json.contains("Refetching"));
     assert!(resource_json.contains("Success"));
     assert!(resource_json.contains("observer_count"));
+    assert!(accessibility_json.contains("Resolved accessibility semantics"));
+    assert!(accessibility_json.contains("\"contract_id\":\"TextInput\""));
+    assert!(accessibility_json.contains("\"contract_id\":\"Textarea\""));
+    assert!(accessibility_json.contains("\"contract_id\":\"Field\""));
+    assert!(accessibility_json.contains("password-redacted"));
+    assert_devtools_canaries_absent(&accessibility_json);
     assert!(
         collection
             .snapshots
@@ -590,6 +652,19 @@ fn devtools_gallery_does_not_keep_static_demo_snapshot_builders() {
     assert!(source.contains("DevtoolsSession::new"));
     assert!(source.contains("DevtoolsRegistry::default()"));
     assert!(source.contains("register_capture_provider_fn"));
+    assert!(!source.contains("COMPONENT_A11Y_EVIDENCE"));
+    assert!(!source.contains("a11y_evidence_probe_snapshot"));
+    assert!(source.contains("resolved_semantics_probe_snapshot"));
+}
+
+#[test]
+fn devtools_gallery_text_control_projections_own_placeholders() {
+    let source = include_str!("../../src/pages/devtools.rs");
+
+    assert!(
+        !source.contains(".with_placeholder("),
+        "text-control semantic projections must be the Gallery placeholder authority"
+    );
 }
 
 #[open_gpui::test]

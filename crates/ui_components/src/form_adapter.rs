@@ -209,7 +209,6 @@ impl FormFieldProjection {
     pub fn field_state(&self, tokens: ThemeTokens) -> FieldState {
         FieldState::resolve(
             self.label.clone(),
-            self.control_id.clone(),
             self.help.clone(),
             self.error.clone(),
             self.size,

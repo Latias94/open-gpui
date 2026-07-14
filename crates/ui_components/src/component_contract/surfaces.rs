@@ -20,6 +20,11 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
         home: "form_control.rs",
     },
     PublicSurfaceOwnerEntry {
+        name: "TextControlSemanticProjection",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        home: "a11y/text_control.rs",
+    },
+    PublicSurfaceOwnerEntry {
         name: "GpuiOverlayAdapterConfig",
         owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
         home: "overlay/adapter.rs",
@@ -31,6 +36,16 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
     },
     PublicSurfaceOwnerEntry {
         name: "TextInputController",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "FieldControl",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "FieldControlSemantics",
         owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
         home: "gpui_adapter",
     },

@@ -96,6 +96,8 @@ pub enum StoryContractKind {
     Component,
     /// Concrete official overlay sample.
     Overlay,
+    /// Concrete Focus/A11y interaction scenario.
+    FocusAccessibility,
     /// Renderer-neutral state contract readout.
     StateContract,
 }
@@ -106,6 +108,7 @@ impl StoryContractKind {
         match self {
             Self::Component => "component",
             Self::Overlay => "overlay",
+            Self::FocusAccessibility => "focus-accessibility",
             Self::StateContract => "state-contract",
         }
     }
@@ -153,6 +156,18 @@ impl StorySelectorContract {
             state_readout: None,
             trigger,
             surface,
+            control,
+        }
+    }
+
+    /// Creates selectors for a Focus/A11y scenario.
+    pub fn focus_accessibility(sample: &'static str, control: Option<&'static str>) -> Self {
+        Self {
+            catalog: None,
+            sample: Some(sample),
+            state_readout: None,
+            trigger: control,
+            surface: Some(sample),
             control,
         }
     }
@@ -271,6 +286,30 @@ impl StoryContract {
                 sample_selector,
                 trigger_selector,
                 surface_selector,
+                control_selector,
+            ),
+            probes,
+        }
+    }
+
+    /// Creates a Focus/A11y scenario story.
+    pub fn focus_accessibility(
+        owner_name: &'static str,
+        family: &'static str,
+        state: &'static str,
+        sample_selector: &'static str,
+        control_selector: Option<&'static str>,
+        probes: &'static [StoryProbeContract],
+    ) -> Self {
+        Self {
+            page: GalleryPage::FocusAccessibility,
+            kind: StoryContractKind::FocusAccessibility,
+            owner_name,
+            family,
+            state: Some(state),
+            section_id: None,
+            selectors: StorySelectorContract::focus_accessibility(
+                sample_selector,
                 control_selector,
             ),
             probes,

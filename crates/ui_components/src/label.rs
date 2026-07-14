@@ -2,11 +2,8 @@
 
 use crate::geometry::gpui_px_from_ui;
 use open_gpui::prelude::*;
-use open_gpui::{
-    ElementId, IntoElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window,
-    div,
-};
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui::{ElementId, IntoElement, RenderOnce, SharedString, Styled, Window, div};
+use open_gpui_ui_core::{Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
@@ -69,7 +66,6 @@ impl LabelMetrics {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LabelState {
     text: String,
-    control_id: Option<String>,
     size: Size,
     required: bool,
     disabled: bool,
@@ -81,7 +77,6 @@ impl LabelState {
     /// Resolves the public state for a label.
     pub fn resolve(
         text: impl Into<String>,
-        control_id: Option<String>,
         size: Size,
         required: bool,
         disabled: bool,
@@ -89,7 +84,6 @@ impl LabelState {
     ) -> Self {
         Self {
             text: text.into(),
-            control_id,
             size,
             required,
             disabled,
@@ -101,16 +95,6 @@ impl LabelState {
     /// Returns the label text.
     pub fn text(&self) -> &str {
         &self.text
-    }
-
-    /// Returns the associated control id, when present.
-    pub fn control_id(&self) -> Option<&str> {
-        self.control_id.as_deref()
-    }
-
-    /// Returns whether the label is associated with a control.
-    pub fn associated(&self) -> bool {
-        self.control_id.is_some()
     }
 
     /// Returns the foundation size.
@@ -149,7 +133,6 @@ impl LabelState {
 pub struct Label {
     id: ElementId,
     text: SharedString,
-    control_id: Option<SharedString>,
     required: bool,
     disabled: bool,
     size: Size,
@@ -162,18 +145,11 @@ impl Label {
         Self {
             id: id.into(),
             text: text.into(),
-            control_id: None,
             required: false,
             disabled: false,
             size: Size::Medium,
             tokens: ThemeTokens::default(),
         }
-    }
-
-    /// Associates this label with a logical control id.
-    pub fn for_control(mut self, control_id: impl Into<SharedString>) -> Self {
-        self.control_id = Some(control_id.into());
-        self
     }
 
     /// Marks the label as required.
@@ -198,7 +174,6 @@ impl Label {
     pub fn state(&self) -> LabelState {
         LabelState::resolve(
             self.text.to_string(),
-            self.control_id.as_ref().map(ToString::to_string),
             self.size,
             self.required,
             self.disabled,
@@ -221,14 +196,16 @@ impl RenderOnce for Label {
         let metrics = state.metrics();
         let colors = state.colors();
         let text = self.text.clone();
+        let semantics = SemanticDescriptor::new(state.role())
+            .with_label(text.as_ref())
+            .with_disabled(state.disabled());
 
         div()
             .id(self.id)
             .flex()
             .items_center()
             .gap_1()
-            .ui_role(state.role())
-            .aria_label(text.clone())
+            .ui_semantics(&semantics)
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
             .text_color(theme.resolve(colors.text()))

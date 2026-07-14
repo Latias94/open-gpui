@@ -423,10 +423,10 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         component: "Label",
         controlled_inputs: &[],
         default_seeds: &[],
-        policy_hints: &["for_control"],
+        policy_hints: &[],
         callbacks: &[],
         renderer_neutral_state: true,
-        no_interaction_note: Some("control-association primitive"),
+        no_interaction_note: Some("display-only visible label primitive"),
     },
     ComponentApiInventoryEntry {
         component: "TextInput",
@@ -1620,14 +1620,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "behavior_snapshot",
             "behavior_snapshot_with_viewport",
         ],
-        "Label" => &[
-            "new",
-            "for_control",
-            "required",
-            "disabled",
-            "tokens",
-            "state",
-        ],
+        "Label" => &["new", "required", "disabled", "tokens", "state"],
         "TextInput" => &[
             "new",
             "controller",

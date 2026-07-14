@@ -26,6 +26,28 @@ fn default_text_input_state_uses_text_input_role_and_placeholder_display() {
     assert_eq!(state.display_text().as_ref(), "Email address");
     assert!(state.displaying_placeholder());
     assert!(state.editable());
+    assert_eq!(
+        state
+            .semantic_projection::<std::convert::Infallible>()
+            .descriptor()
+            .placeholder(),
+        Some("Email address")
+    );
+}
+
+#[test]
+fn textarea_state_projects_its_resolved_placeholder() {
+    let state = Textarea::new("notes", "Notes")
+        .placeholder("Release notes")
+        .state();
+
+    assert_eq!(
+        state
+            .semantic_projection::<std::convert::Infallible>()
+            .descriptor()
+            .placeholder(),
+        Some("Release notes")
+    );
 }
 
 #[test]
@@ -353,13 +375,13 @@ fn controller_driven_text_input_state_marks_disabled_editing(cx: &mut open_gpui:
 }
 
 #[test]
-fn default_textarea_state_uses_text_input_role_and_rows() {
+fn default_textarea_state_uses_multiline_role_and_rows() {
     let state = Textarea::new("notes", "Notes")
         .placeholder("Release notes")
         .rows(4)
         .state();
 
-    assert_eq!(state.role(), Role::TextInput);
+    assert_eq!(state.role(), Role::MultilineTextInput);
     assert_eq!(state.rows(), 4);
     assert_eq!(state.metrics().rows(), 4);
     assert!(state.placeholder_visible());

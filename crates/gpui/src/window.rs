@@ -1314,7 +1314,9 @@ impl Window {
                     while let Ok((activation_generation, request)) = action_receiver.recv().await {
                         handle
                             .update(&mut async_cx, |_, window, cx| {
-                                window.handle_a11y_action(activation_generation, request, cx);
+                                window.with_input_transaction(cx, |window, cx| {
+                                    window.handle_a11y_action(activation_generation, request, cx);
+                                });
                             })
                             .log_err();
                     }
@@ -2504,6 +2506,14 @@ impl Window {
     /// Returns whether this window is focused by the operating system (receiving key events).
     pub fn is_window_active(&self) -> bool {
         self.active.get()
+    }
+
+    /// Returns whether accessibility is effectively active for the current frame.
+    ///
+    /// This is GPUI's frame-local accessibility state, not whether the operating system considers
+    /// the window active. See [`Self::is_window_active`] for the latter.
+    pub fn is_accessibility_active(&self) -> bool {
+        self.a11y.is_active()
     }
 
     /// Returns whether this window is considered to be the window
@@ -5945,6 +5955,9 @@ impl Window {
                         click_count: 1,
                     });
                     self.dispatch_event(mouse_down, cx);
+                    if self.removal_state != WindowRemovalState::Open {
+                        return;
+                    }
                     self.dispatch_event(mouse_up, cx);
                 }
             }

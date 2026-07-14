@@ -689,6 +689,7 @@ pub(crate) fn ui_role_for_dock_role(role: DockAccessibilityRole) -> Option<Role>
 fn gpui_role_for_ui_role(role: Role) -> GpuiRole {
     match role {
         Role::Label => GpuiRole::Label,
+        Role::TextRun => GpuiRole::TextRun,
         Role::Image => GpuiRole::Image,
         Role::Button => GpuiRole::Button,
         Role::Link => GpuiRole::Link,
@@ -711,6 +712,8 @@ fn gpui_role_for_ui_role(role: Role) -> GpuiRole {
         Role::Menu => GpuiRole::Menu,
         Role::MenuItem => GpuiRole::MenuItem,
         Role::TextInput => GpuiRole::TextInput,
+        Role::MultilineTextInput => GpuiRole::MultilineTextInput,
+        Role::PasswordInput => GpuiRole::PasswordInput,
         Role::EditableComboBox => GpuiRole::EditableComboBox,
         Role::Dialog => GpuiRole::Dialog,
         Role::AlertDialog => GpuiRole::AlertDialog,

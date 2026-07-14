@@ -8,6 +8,17 @@ use open_gpui_ui_core::{
     AccessibleAction, Orientation, Role, SemanticDescriptor, SortDirection, Toggled,
 };
 
+mod text_control;
+
+pub use text_control::TextControlSemanticProjection;
+#[cfg(test)]
+use text_control::text_runs_cover_value;
+pub(crate) use text_control::{
+    AccessibleTextInputHandler, AccessibleTextReplacementTarget, AccessibleTextRunRange,
+    dispatch_accessible_text_replacement, dispatch_accessible_text_selection,
+    dispatch_accessible_text_selection_in_runs, project_accessible_text_selection_in_runs,
+};
+
 /// Source that provides an accessible name for a component or component part.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum A11yLabelSource {
@@ -339,6 +350,8 @@ const fn role_requires_name(role: Role) -> bool {
             | Role::Menu
             | Role::MenuItem
             | Role::TextInput
+            | Role::MultilineTextInput
+            | Role::PasswordInput
             | Role::EditableComboBox
             | Role::Dialog
             | Role::AlertDialog
@@ -381,6 +394,7 @@ const fn role_requires_action(role: Role) -> bool {
 pub fn gpui_role_from_ui(role: Role) -> GpuiRole {
     match role {
         Role::Label => GpuiRole::Label,
+        Role::TextRun => GpuiRole::TextRun,
         Role::Image => GpuiRole::Image,
         Role::Button => GpuiRole::Button,
         Role::Link => GpuiRole::Link,
@@ -403,6 +417,8 @@ pub fn gpui_role_from_ui(role: Role) -> GpuiRole {
         Role::Menu => GpuiRole::Menu,
         Role::MenuItem => GpuiRole::MenuItem,
         Role::TextInput => GpuiRole::TextInput,
+        Role::MultilineTextInput => GpuiRole::MultilineTextInput,
+        Role::PasswordInput => GpuiRole::PasswordInput,
         Role::EditableComboBox => GpuiRole::EditableComboBox,
         Role::Dialog => GpuiRole::Dialog,
         Role::AlertDialog => GpuiRole::AlertDialog,
@@ -489,6 +505,15 @@ where
     }
     if let Some(value) = descriptor.value() {
         element = StatefulInteractiveElement::aria_value(element, value);
+    }
+    if let Some(placeholder) = descriptor.placeholder() {
+        element = StatefulInteractiveElement::aria_placeholder(element, placeholder);
+    }
+    if descriptor.role() == Role::TextRun {
+        element = StatefulInteractiveElement::aria_character_lengths(
+            element,
+            descriptor.character_lengths().iter().copied(),
+        );
     }
     if let Some(selected) = descriptor.selected() {
         element = StatefulInteractiveElement::aria_selected(element, selected);
@@ -603,8 +628,22 @@ pub trait UiA11yElementExt: StatefulInteractiveElement + Sized {
         let described_by = descriptor
             .described_by()
             .iter()
-            .map(resolve_node_id)
+            .map(&mut resolve_node_id)
             .collect::<Vec<_>>();
+        let error_message = descriptor.error_message().map(&mut resolve_node_id);
+        let text_selection =
+            descriptor
+                .text_selection()
+                .map(|selection| accesskit::TextSelection {
+                    anchor: accesskit::TextPosition {
+                        node: resolve_node_id(selection.anchor().node()),
+                        character_index: selection.anchor().character_index(),
+                    },
+                    focus: accesskit::TextPosition {
+                        node: resolve_node_id(selection.focus().node()),
+                        character_index: selection.focus().character_index(),
+                    },
+                });
 
         let mut element = apply_ui_semantics(self, descriptor);
         if !controls.is_empty() {
@@ -615,6 +654,12 @@ pub trait UiA11yElementExt: StatefulInteractiveElement + Sized {
         }
         if !described_by.is_empty() {
             element = StatefulInteractiveElement::aria_described_by(element, described_by);
+        }
+        if let Some(error_message) = error_message {
+            element = StatefulInteractiveElement::aria_error_message(element, error_message);
+        }
+        if let Some(text_selection) = text_selection {
+            element = StatefulInteractiveElement::aria_text_selection(element, text_selection);
         }
         element
     }
@@ -669,8 +714,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn text_run_ranges_require_contiguous_unique_accesskit_nodes() {
+        let value = "a\nb";
+        let text_runs = [
+            AccessibleTextRunRange::from_text(accesskit::NodeId(1), 0..2, value).unwrap(),
+            AccessibleTextRunRange::from_text(accesskit::NodeId(2), 2..3, value).unwrap(),
+        ];
+
+        assert!(text_runs_cover_value(value, &text_runs));
+        assert!(!text_runs_cover_value(
+            value,
+            &[
+                AccessibleTextRunRange::from_text(accesskit::NodeId(1), 0..2, value).unwrap(),
+                AccessibleTextRunRange::from_text(accesskit::NodeId(1), 2..3, value).unwrap(),
+            ]
+        ));
+        assert!(!text_runs_cover_value(
+            value,
+            &[
+                AccessibleTextRunRange::from_text(accesskit::NodeId(1), 0..1, value).unwrap(),
+                AccessibleTextRunRange::from_text(accesskit::NodeId(2), 2..3, value).unwrap(),
+            ]
+        ));
+
+        let oversized = format!("a{}", "\u{301}".repeat(128));
+        assert!(
+            AccessibleTextRunRange::from_text(
+                accesskit::NodeId(1),
+                0..oversized.len(),
+                &oversized,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn text_run_ranges_map_offsets_from_precomputed_character_lengths() {
+        let text_run = AccessibleTextRunRange::from_character_lengths(
+            accesskit::NodeId(1),
+            0..3,
+            std::rc::Rc::from([3_u8]),
+        )
+        .expect("one three-byte grapheme should form valid text-run metadata");
+
+        assert_eq!(text_run.character_index_from_offset(0), Some(0));
+        assert_eq!(text_run.character_index_from_offset(3), Some(1));
+        assert_eq!(text_run.offset_from_character_index(0), Some(0));
+        assert_eq!(text_run.offset_from_character_index(1), Some(3));
+        assert_eq!(text_run.offset_from_character_index(2), None);
+    }
+
+    #[test]
     fn gpui_adapter_maps_splitter_role() {
         assert_eq!(gpui_role_from_ui(Role::Splitter), GpuiRole::Splitter);
+    }
+
+    #[test]
+    fn gpui_adapter_maps_text_run_role() {
+        assert_eq!(gpui_role_from_ui(Role::TextRun), GpuiRole::TextRun);
     }
 
     #[test]

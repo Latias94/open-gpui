@@ -2,6 +2,7 @@ use super::*;
 
 #[test]
 fn gpui_role_mapping_preserves_neutral_semantics() {
+    assert_eq!(gpui_role_from_ui(Role::TextRun), open_gpui::Role::TextRun);
     assert_eq!(gpui_role_from_ui(Role::Image), open_gpui::Role::Image);
     assert_eq!(gpui_role_from_ui(Role::Link), open_gpui::Role::Link);
     assert_eq!(
@@ -9,6 +10,14 @@ fn gpui_role_mapping_preserves_neutral_semantics() {
         open_gpui::Role::Splitter
     );
     assert_eq!(gpui_role_from_ui(Role::Slider), open_gpui::Role::Slider);
+    assert_eq!(
+        gpui_role_from_ui(Role::MultilineTextInput),
+        open_gpui::Role::MultilineTextInput
+    );
+    assert_eq!(
+        gpui_role_from_ui(Role::PasswordInput),
+        open_gpui::Role::PasswordInput
+    );
     assert_eq!(gpui_role_from_ui(Role::Tree), open_gpui::Role::Tree);
     assert_eq!(gpui_role_from_ui(Role::TreeItem), open_gpui::Role::TreeItem);
     assert_eq!(gpui_role_from_ui(Role::Table), open_gpui::Role::Table);
@@ -165,6 +174,8 @@ fn production_render_paths_do_not_use_default_light_focus_ring_helper() {
 fn gpui_adapter_exports_group_runtime_specific_surfaces() {
     use open_gpui_ui_components::{self as root, prelude};
 
+    fn assert_field_control<T: root::gpui_adapter::FieldControl>() {}
+
     let module_text_input = root::text_input::TextInput::new("module-text-input", "Module input");
     let _module_state: root::text_input::TextInputState = module_text_input.state();
     let _module_colors: Option<root::text_input::TextInputColors> = None;
@@ -184,6 +195,9 @@ fn gpui_adapter_exports_group_runtime_specific_surfaces() {
 
     let _root_init: fn(&mut open_gpui::App) = root::gpui_adapter::init_text_input;
     let _root_controller: Option<root::gpui_adapter::TextInputController> = None;
+    let _field_semantics: Option<root::gpui_adapter::FieldControlSemantics> = None;
+    assert_field_control::<root::TextInput>();
+    assert_field_control::<root::Textarea>();
     let _root_px: fn(UiPx) -> open_gpui::Pixels = root::gpui_adapter::gpui_px_from_ui;
     let _root_point: fn(UiPoint) -> open_gpui::Point<open_gpui::Pixels> =
         root::gpui_adapter::gpui_point_from_ui;

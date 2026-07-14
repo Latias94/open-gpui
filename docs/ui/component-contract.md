@@ -910,6 +910,11 @@ the component crate maps that vocabulary to GPUI roles and ARIA-style element st
 tabs, tab bars, splitters, drop targets, drag sources, and overlay state from the same presentation
 scene rather than from render-local rectangles.
 
+Resolved `TextInputState` and `TextareaState` values derive an owned
+`TextControlSemanticProjection` on demand. That projection owns the policy-filtered value,
+placeholder, form-control flags, actions, and optional text selection consumed by GPUI and the
+final AccessKit tree; it is never stored as a second component state authority.
+
 Component accessibility assertions use `ComponentA11yContract` rather than a live platform
 accessibility backend. The contract records `A11yLabelSource`, `A11yDescriptionSource`, selected,
 checked, expanded, disabled, `A11yValueMetadata`, `A11yValueKind`, `A11yStateEvidence`,
@@ -1075,8 +1080,8 @@ semantic facades with GPUI adapter mapping exposed through
 state now uses neutral `OverlayResolvedState`; `GpuiOverlayState` is adapter-only scheduling
 state. Extraction is no longer blocked by UI-core GPUI dependencies or `UiPx` style conversion
 impls; the remaining non-headless surfaces are GPUI-owned adapter APIs such as
-`TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow_with_theme`, the
-adapter geometry conversion helpers, and GPUI overlay scheduling
+`TextInputController`, `FieldControl`, `FieldControlSemantics`, externally supplied `ScrollHandle`,
+`focus_ring_shadow_with_theme`, the adapter geometry conversion helpers, and GPUI overlay scheduling
 helpers. These public adapter APIs are now grouped under `open_gpui_ui_components::gpui_adapter`.
 Shared roving-focus helpers now live behind the private `roving_focus` implementation module;
 explicit low-level consumers use `open_gpui_ui_components::primitives::roving_focus_group`, while
@@ -1095,8 +1100,10 @@ GPUI layer mounting and any final live trigger/content measurement remain inside
 adapter/render boundary. Overlay stack Escape, outside-press, placement policy, and focus-restore
 ordering now have window-free tests in `open_gpui_ui_core`.
 `Checkbox` now exposes checked, unchecked, and indeterminate resolved state plus theme intents for
-the box, indicator, label, and focus ring. `Label` now exposes control-association metadata at the
-resolved-state layer while keeping the visual adapter small. `Tabs` now keeps the roving-focus
+the box, indicator, label, and focus ring. `Label` derives its visible-text semantics from
+`LabelState`; `Field` exclusively owns control `labelled_by`, `described_by`, and error-message
+relations from its rendered composition. `FieldState` no longer carries a logical control id that
+can drift from that rendered composition. `Tabs` now keeps the roving-focus
 contract in resolved state, with orientation, activation mode, selected/focused/tab-stop metadata,
 while the GPUI adapter owns the focus handles and `aria` wiring. `RadioGroup` reuses the shared
 roving-focus helpers, exposes group required/disabled metadata plus per-item

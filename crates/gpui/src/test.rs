@@ -34,6 +34,12 @@ use std::{
     pin::Pin,
 };
 
+/// AccessKit actions covered by GPUI's published accessibility action mapping.
+///
+/// This universe is available only with GPUI test support so downstream tests can
+/// assert exact action sets without duplicating GPUI's internal mapping.
+pub const ACCESSKIT_ACTIONS: &[crate::accesskit::Action] = crate::window::a11y::ACCESSKIT_ACTIONS;
+
 /// Strategy injected into `#[open_gpui::property_test]` tests to control the seed
 /// given to the scheduler. Doesn't shrink, since all scheduler seeds are
 /// equivalent in complexity. If `$SEED` is set, it always uses that value.

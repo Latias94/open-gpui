@@ -134,6 +134,11 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         .item(root::ToggleGroupItem::new("right", "Right"))
         .selected_values(["left"]);
     let root_form_control = root::FormControlState::new(ui_core::Size::Medium).with_required(true);
+    let root_text_projection: root::TextControlSemanticProjection =
+        root::TextInput::new("semantic-input", "Semantic input")
+            .placeholder("Projected placeholder")
+            .state()
+            .semantic_projection();
     let root_theme_context = root::ThemeContext::light();
 
     let prelude_button = prelude::Button::new("save", "Save");
@@ -230,6 +235,11 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         .default_selected_values(["bold"]);
     let prelude_form_control =
         prelude::FormControlState::new(ui_core::Size::Small).with_invalid(true);
+    let prelude_text_projection: prelude::TextControlSemanticProjection =
+        prelude::Textarea::new("semantic-textarea", "Semantic textarea")
+            .placeholder("Projected placeholder")
+            .state()
+            .semantic_projection();
     let prelude_theme_context = prelude::ThemeContext::dark();
 
     let _ = (
@@ -272,6 +282,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_toast_stack.state(),
         root_toggle_group.state(),
         root_form_control.required(),
+        root_text_projection.descriptor().role(),
         root_theme_context.mode(),
         prelude_button.state(),
         prelude_accordion.state(),
@@ -312,6 +323,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_toast_stack.state(),
         prelude_toggle_group.state(),
         prelude_form_control.invalid(),
+        prelude_text_projection.descriptor().role(),
         prelude_theme_context.mode(),
         root::toggle_group_navigation_target(Orientation::Horizontal, "right", 0, &[false, false]),
         prelude::toggle_group_navigation_target(
@@ -567,7 +579,12 @@ fn gpui_adapter_helpers_keep_single_public_import_paths() {
         .expect("read lib.rs");
     let adapter_source = public_module_source(&lib, "gpui_adapter")
         .expect("gpui_adapter module should remain public");
-    for token in ["UiA11yElementExt", "VirtualizedListGpuiExt"] {
+    for token in [
+        "FieldControl",
+        "FieldControlSemantics",
+        "UiA11yElementExt",
+        "VirtualizedListGpuiExt",
+    ] {
         assert!(
             adapter_source.contains(token),
             "gpui_adapter should remain the public import path for `{token}`"

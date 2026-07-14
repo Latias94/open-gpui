@@ -11,10 +11,17 @@ use open_gpui::{
     PaintQuad, ParentElement, Pixels, Point, RenderOnce, ShapedLine, SharedString, Style, Styled,
     TextRun, UTF16Selection, Window, actions, div, fill, point, px, relative, rgba,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
+use open_gpui_ui_core::{
+    AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx,
+};
 
-use crate::a11y::UiA11yElementExt;
+use crate::a11y::{
+    AccessibleTextInputHandler, AccessibleTextReplacementTarget, AccessibleTextRunRange,
+    TextControlSemanticProjection, UiA11yElementExt, dispatch_accessible_text_replacement,
+    dispatch_accessible_text_selection, project_accessible_text_selection_in_runs,
+};
 use crate::color::ColorIntent;
+use crate::field::adapter::{FieldControl, FieldControlSemantics};
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::form_control::FormControlState;
 use crate::text_editing::{
@@ -406,18 +413,16 @@ pub(crate) mod adapter {
             }
         }
 
-        /// Moves the caret to a byte offset clamped to a character boundary.
+        /// Moves the caret to a byte offset clamped to a user-visible grapheme boundary.
         pub fn move_to_offset(&mut self, offset: usize, cx: &mut Context<Self>) {
             self.move_to(offset, cx);
         }
 
-        /// Selects a byte range clamped to character boundaries.
+        /// Selects a byte range clamped to user-visible grapheme boundaries.
         pub fn select_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
-            let start = text_editing::clamp_to_char_boundary(self.value(), range.start);
-            let end = text_editing::clamp_to_char_boundary(self.value(), range.end);
             let projection = EditableTextDocument::from_parts(
                 self.value(),
-                TextSelection::from_offsets(start, end),
+                TextSelection::from_offsets(range.start, range.end),
                 self.marked_range.clone(),
                 self.editing_policy(),
             )
@@ -480,12 +485,14 @@ pub(crate) mod adapter {
             if let Some(value) = controlled_value {
                 let value = text_editing::sanitize_single_line(value);
                 if self.content.as_ref() != value {
-                    self.content = value.into();
-                    let cursor =
-                        text_editing::clamp_to_char_boundary(self.value(), self.cursor_offset());
-                    self.selected_range = cursor..cursor;
-                    self.selection_reversed = false;
-                    self.marked_range = None;
+                    let projection = EditableTextDocument::from_parts(
+                        value,
+                        TextSelection::caret(self.cursor_offset()),
+                        None,
+                        self.editing_policy(),
+                    )
+                    .into_projection();
+                    self.apply_editing_projection(projection);
                 }
             }
         }
@@ -496,6 +503,28 @@ pub(crate) mod adapter {
             } else {
                 self.selected_range.end
             }
+        }
+
+        pub(super) const fn selection_reversed(&self) -> bool {
+            self.selection_reversed
+        }
+
+        pub(super) fn accepts_accessible_selection(&self) -> bool {
+            !self.disabled && self.display_mode != TextInputDisplayMode::Password
+        }
+
+        pub(super) fn set_accessible_selection_bytes(
+            &mut self,
+            anchor: usize,
+            focus: usize,
+            cx: &mut Context<Self>,
+        ) {
+            if !self.accepts_accessible_selection() {
+                return;
+            }
+            let projection = self.document().set_accessible_selection(anchor, focus);
+            self.apply_editing_projection(projection);
+            cx.notify();
         }
 
         fn offset_to_utf16(&self, offset: usize) -> usize {
@@ -897,12 +926,111 @@ pub(crate) mod adapter {
             self.accepts_editing()
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[open_gpui::test]
+        fn controlled_sync_repairs_selection_to_a_grapheme_boundary(
+            cx: &mut open_gpui::TestAppContext,
+        ) {
+            let controller = cx.new(|cx| TextInputController::with_value("ab", cx));
+
+            cx.update_entity(&controller, |controller, cx| {
+                controller.move_to_offset(1, cx);
+                controller.sync_adapter_state(
+                    Some("e\u{301}"),
+                    None,
+                    false,
+                    false,
+                    TextInputDisplayMode::Plain,
+                    None,
+                );
+
+                assert_eq!(controller.selected_range(), 0..0);
+                let text_run = crate::a11y::AccessibleTextRunRange::from_text(
+                    open_gpui::accesskit::NodeId(7),
+                    0..controller.value().len(),
+                    controller.value(),
+                )
+                .expect("repaired value should expose text-run metadata");
+                let selection = crate::a11y::project_accessible_text_selection_in_runs(
+                    controller,
+                    std::slice::from_ref(&text_run),
+                )
+                .expect("repaired selection should remain accessible");
+                assert_eq!(selection.anchor().character_index(), 0);
+                assert_eq!(selection.focus().character_index(), 0);
+
+                controller.delete_backward(cx);
+                assert_eq!(controller.value(), "e\u{301}");
+                controller.delete_forward(cx);
+                assert_eq!(controller.value(), "");
+            });
+        }
+
+        #[open_gpui::test]
+        fn accessible_selection_rejects_a_stale_published_value(
+            cx: &mut open_gpui::TestAppContext,
+        ) {
+            let controller = cx.new(|cx| TextInputController::with_value("ab", cx));
+            cx.update_entity(&controller, |controller, cx| {
+                controller.set_value("xy", cx);
+                assert_eq!(controller.selected_range(), 2..2);
+            });
+
+            let text_run_id = open_gpui::accesskit::NodeId(7);
+            let data = open_gpui::accesskit::ActionData::SetTextSelection(
+                open_gpui::accesskit::TextSelection {
+                    anchor: open_gpui::accesskit::TextPosition {
+                        node: text_run_id,
+                        character_index: 0,
+                    },
+                    focus: open_gpui::accesskit::TextPosition {
+                        node: text_run_id,
+                        character_index: 1,
+                    },
+                },
+            );
+            cx.update(|cx| {
+                dispatch_accessible_text_selection(&controller, "ab", Some(&data), text_run_id, cx);
+            });
+
+            cx.update_entity(&controller, |controller, _| {
+                assert_eq!(controller.value(), "xy");
+                assert_eq!(controller.selected_range(), 2..2);
+            });
+        }
+    }
 }
 
 use adapter::{
     Backspace, Copy, Cut, Delete, End, Home, Left, Paste, Right, SelectAll, SelectLeft,
     SelectRight, ShowCharacterPalette, TEXT_INPUT_KEY_CONTEXT, TextInputController,
 };
+
+impl AccessibleTextInputHandler for TextInputController {
+    fn value(&self) -> &str {
+        TextInputController::value(self)
+    }
+
+    fn selected_range_bytes(&self) -> Range<usize> {
+        self.selected_range()
+    }
+
+    fn selection_reversed(&self) -> bool {
+        TextInputController::selection_reversed(self)
+    }
+
+    fn accepts_accessible_selection(&self) -> bool {
+        TextInputController::accepts_accessible_selection(self)
+    }
+
+    fn set_accessible_selection(&mut self, anchor: usize, focus: usize, cx: &mut Context<Self>) {
+        self.set_accessible_selection_bytes(anchor, focus, cx);
+    }
+}
 
 /// Resolved text input state used by tests, demos, and rendering.
 #[derive(Debug, Clone, PartialEq)]
@@ -1019,8 +1147,36 @@ impl TextInputState {
         if self.placeholder_visible() {
             Cow::Borrowed(self.placeholder().unwrap_or(""))
         } else {
-            TextDisplayProjection::for_policy(self.value(), self.display_mode.into()).display_text()
+            self.accessible_value()
         }
+    }
+
+    fn accessible_value(&self) -> Cow<'_, str> {
+        TextDisplayProjection::for_policy(self.value(), self.display_mode.into())
+            .into_display_text()
+    }
+
+    /// Derives an owned, renderer-neutral semantic projection from this resolved state.
+    pub fn semantic_projection<NodeId>(&self) -> TextControlSemanticProjection<NodeId> {
+        self.semantic_projection_for_value(self.value(), self.placeholder())
+    }
+
+    pub(crate) fn semantic_projection_for_value<NodeId>(
+        &self,
+        value: &str,
+        placeholder: Option<&str>,
+    ) -> TextControlSemanticProjection<NodeId> {
+        let semantic_value =
+            TextDisplayProjection::for_policy(value, self.display_mode.into()).into_display_text();
+        let exposes_text_runs = !self.display_mode.masks_value()
+            && text_editing::supports_accessible_character_lengths(semantic_value.as_ref());
+        TextControlSemanticProjection::new(
+            self.role(),
+            semantic_value.into_owned(),
+            placeholder,
+            self.control,
+            exposes_text_runs,
+        )
     }
 
     /// Returns the display mode.
@@ -1090,7 +1246,10 @@ impl TextInputState {
 
     /// Returns the accessibility role.
     pub const fn role(&self) -> Role {
-        Role::TextInput
+        match self.display_mode {
+            TextInputDisplayMode::Plain => Role::TextInput,
+            TextInputDisplayMode::Password => Role::PasswordInput,
+        }
     }
 
     /// Returns resolved metrics.
@@ -1121,6 +1280,7 @@ pub struct TextInput {
     display_mode: TextInputDisplayMode,
     tokens: ThemeTokens,
     on_change: Option<TextInputChangeHandler>,
+    field_semantics: Option<FieldControlSemantics>,
 }
 
 impl TextInput {
@@ -1136,6 +1296,7 @@ impl TextInput {
             display_mode: TextInputDisplayMode::default(),
             tokens: ThemeTokens::default(),
             on_change: None,
+            field_semantics: None,
         }
     }
 
@@ -1239,15 +1400,44 @@ impl Sizable for TextInput {
     }
 }
 
+impl FieldControl for TextInput {
+    fn field_control_state(&self) -> FormControlState {
+        self.control
+    }
+
+    fn with_field_semantics(mut self, semantics: FieldControlSemantics) -> Self {
+        self.control = semantics.apply_control_state(self.control);
+        self.field_semantics = Some(semantics);
+        self
+    }
+}
+
+fn resolve_text_input_character_lengths_when_active(
+    accessibility_active: bool,
+    exposes_text_runs: bool,
+    resolve: impl FnOnce() -> Option<Vec<u8>>,
+) -> Option<Vec<u8>> {
+    (accessibility_active && exposes_text_runs)
+        .then(resolve)
+        .flatten()
+}
+
 impl RenderOnce for TextInput {
     fn render(self, _window: &mut Window, cx: &mut open_gpui::App) -> impl IntoElement {
         let state = self.state();
         let debug_id = self.id.to_string();
         let runtime_id = format!("text-input:{debug_id}:controller");
+        let text_run_id: ElementId = (self.id.clone(), "text-run").into();
+        let text_run_node_id = _window.with_id(self.id.clone(), |window| {
+            window.with_global_id(text_run_id.clone(), |global_id, _| {
+                global_id.accesskit_node_id()
+            })
+        });
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
         let theme = ThemeResolver::current(cx);
+        let controller_is_external = self.controller.is_some();
         let controller = self.controller.clone().or_else(|| {
             self.on_change.as_ref().map(|_| {
                 let initial_value = self.value.clone();
@@ -1259,7 +1449,11 @@ impl RenderOnce for TextInput {
         let builder_placeholder = self.placeholder.clone().unwrap_or_default();
         if let Some(controller) = controller.as_ref() {
             let controlled_value = self.on_change.as_ref().map(|_| self.value.as_ref());
-            let placeholder = self.placeholder.clone();
+            let placeholder = if controller_is_external {
+                self.placeholder.clone()
+            } else {
+                Some(builder_placeholder.clone())
+            };
             let on_change = self.on_change.clone();
             controller.update(cx, |controller, _cx| {
                 controller.sync_adapter_state(
@@ -1273,11 +1467,48 @@ impl RenderOnce for TextInput {
             });
         }
         let controller_text = controller.as_ref().map(|controller| controller.read(cx));
+        let semantic_value = controller_text
+            .as_ref()
+            .map(|controller| controller.value())
+            .unwrap_or_else(|| state.value());
         let placeholder = controller_text
             .as_ref()
             .map(|controller| controller.placeholder().to_owned().into())
             .filter(|placeholder: &SharedString| !placeholder.is_empty())
             .unwrap_or(builder_placeholder.clone());
+        let semantic_projection = state
+            .semantic_projection_for_value::<open_gpui::accesskit::NodeId>(
+                semantic_value,
+                (!placeholder.is_empty()).then_some(placeholder.as_ref()),
+            );
+        let character_lengths = resolve_text_input_character_lengths_when_active(
+            _window.is_accessibility_active(),
+            semantic_projection.exposes_text_runs(),
+            || text_editing::accessible_character_lengths(semantic_projection.value()),
+        )
+        .map(Rc::<[u8]>::from);
+        let text_run_range = character_lengths.as_ref().and_then(|character_lengths| {
+            AccessibleTextRunRange::from_character_lengths(
+                text_run_node_id,
+                0..semantic_projection.value().len(),
+                character_lengths.clone(),
+            )
+        });
+        let text_selection = text_run_range.as_ref().and_then(|text_run_range| {
+            controller_text.as_ref().and_then(|controller| {
+                project_accessible_text_selection_in_runs(
+                    &**controller,
+                    std::slice::from_ref(text_run_range),
+                )
+            })
+        });
+        let semantic_projection = semantic_projection.with_text_selection(text_selection);
+        let published_semantic_value = semantic_projection.value().to_owned();
+        let semantics = FieldControlSemantics::project_text_control_descriptor(
+            self.field_semantics.as_ref(),
+            self.label.as_ref(),
+            semantic_projection.descriptor(),
+        );
         let show_placeholder = controller_text
             .as_ref()
             .map(|controller| controller.value().is_empty() && !placeholder.is_empty())
@@ -1286,7 +1517,7 @@ impl RenderOnce for TextInput {
             placeholder.clone()
         } else {
             TextDisplayProjection::for_policy(self.value.as_ref(), state.display_mode().into())
-                .display_text()
+                .into_display_text()
                 .into_owned()
                 .into()
         };
@@ -1300,6 +1531,37 @@ impl RenderOnce for TextInput {
         let background = theme.resolve(colors.background());
         let placeholder_color = theme.resolve(colors.placeholder());
         let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+        let text_run_semantics = character_lengths.as_ref().map(|character_lengths| {
+            SemanticDescriptor::new(Role::TextRun)
+                .with_value(semantic_projection.value())
+                .with_character_lengths(character_lengths)
+        });
+        let text_content = div()
+            .id(text_run_id)
+            .min_w(px(0.0))
+            .w_full()
+            .truncate()
+            .children(
+                controller
+                    .clone()
+                    .into_iter()
+                    .map(|controller| EditableTextElement {
+                        controller,
+                        placeholder: placeholder.clone(),
+                        text_color: text_color.into(),
+                        placeholder_color: placeholder_color.into(),
+                        selection_color: rgba(0x2f80ed33).into(),
+                        caret_color: text_color.into(),
+                        text_size: gpui_px_from_ui(metrics.text_size()).into(),
+                        display_mode: state.display_mode(),
+                    }),
+            )
+            .when(!state.controller_driven(), |this| {
+                this.child(static_display_text)
+            })
+            .when_some(text_run_semantics.as_ref(), |this, semantics| {
+                this.ui_semantics(semantics)
+            });
         div()
             .id(self.id)
             .debug_selector(move || format!("text-input:{debug_id}:root"))
@@ -1319,8 +1581,7 @@ impl RenderOnce for TextInput {
             .text_color(text_color)
             .focusable()
             .tab_stop(state.tab_stop_enabled())
-            .ui_role(state.role())
-            .aria_label(self.label)
+            .ui_semantics_with_relations(&semantics, |node_id| *node_id)
             .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(state.disabled(), |this| {
                 this.opacity(0.56).cursor_not_allowed()
@@ -1350,9 +1611,46 @@ impl RenderOnce for TextInput {
                 let mouse_up = controller.clone();
                 let mouse_up_out = controller.clone();
                 let mouse_move = controller.clone();
+                let replace_selected_text = controller.clone();
+                let set_text_selection = controller.clone();
+                let set_text_selection_published_value = published_semantic_value;
+                let set_value = controller.clone();
 
                 this.key_context(TEXT_INPUT_KEY_CONTEXT)
                     .track_focus(&focus)
+                    .on_ui_a11y_action(
+                        AccessibleAction::ReplaceSelectedText,
+                        move |data, window, cx| {
+                            dispatch_accessible_text_replacement(
+                                &replace_selected_text,
+                                data,
+                                AccessibleTextReplacementTarget::SelectedText,
+                                window,
+                                cx,
+                            );
+                        },
+                    )
+                    .on_ui_a11y_action(
+                        AccessibleAction::SetTextSelection,
+                        move |data, _window, cx| {
+                            dispatch_accessible_text_selection(
+                                &set_text_selection,
+                                set_text_selection_published_value.as_str(),
+                                data,
+                                text_run_node_id,
+                                cx,
+                            );
+                        },
+                    )
+                    .on_ui_a11y_action(AccessibleAction::SetValue, move |data, window, cx| {
+                        dispatch_accessible_text_replacement(
+                            &set_value,
+                            data,
+                            AccessibleTextReplacementTarget::EntireValue,
+                            window,
+                            cx,
+                        );
+                    })
                     .on_action(move |action: &Backspace, window, cx| {
                         backspace.update(cx, |controller, cx| {
                             controller.backspace(action, window, cx);
@@ -1425,29 +1723,7 @@ impl RenderOnce for TextInput {
                         });
                     })
             })
-            .child(
-                div()
-                    .min_w(px(0.0))
-                    .w_full()
-                    .truncate()
-                    .children(
-                        controller
-                            .into_iter()
-                            .map(|controller| EditableTextElement {
-                                controller,
-                                placeholder: placeholder.clone(),
-                                text_color: text_color.into(),
-                                placeholder_color: placeholder_color.into(),
-                                selection_color: rgba(0x2f80ed33).into(),
-                                caret_color: text_color.into(),
-                                text_size: gpui_px_from_ui(metrics.text_size()).into(),
-                                display_mode: state.display_mode(),
-                            }),
-                    )
-                    .when(!state.controller_driven(), |this| {
-                        this.child(static_display_text)
-                    }),
-            )
+            .child(text_content)
     }
 }
 
@@ -1621,5 +1897,44 @@ impl Element for EditableTextElement {
             controller.last_layout = Some(line);
             controller.last_bounds = Some(bounds);
         });
+    }
+}
+
+#[cfg(test)]
+mod render_tests {
+    use std::cell::Cell;
+
+    use super::resolve_text_input_character_lengths_when_active;
+
+    #[test]
+    fn inactive_accessibility_skips_text_run_metadata_derivation() {
+        let calls = Cell::new(0);
+        let resolve = || {
+            calls.set(calls.get() + 1);
+            Some(vec![1_u8])
+        };
+
+        assert_eq!(
+            resolve_text_input_character_lengths_when_active(false, true, resolve),
+            None
+        );
+        assert_eq!(calls.get(), 0);
+    }
+
+    #[test]
+    fn active_accessibility_derives_only_exposed_text_runs() {
+        let calls = Cell::new(0);
+        let hidden = resolve_text_input_character_lengths_when_active(true, false, || {
+            calls.set(calls.get() + 1);
+            Some(vec![1_u8])
+        });
+        let exposed = resolve_text_input_character_lengths_when_active(true, true, || {
+            calls.set(calls.get() + 1);
+            Some(vec![1_u8])
+        });
+
+        assert_eq!(hidden, None);
+        assert_eq!(exposed, Some(vec![1_u8]));
+        assert_eq!(calls.get(), 1);
     }
 }

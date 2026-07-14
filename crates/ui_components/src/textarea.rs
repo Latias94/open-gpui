@@ -11,10 +11,17 @@ use open_gpui::{
     ParentElement, Pixels, Point, RenderOnce, ScrollHandle, ShapedLine, SharedString, Style,
     Styled, TextRun, UTF16Selection, Window, div, fill, point, px, relative, rgba,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{
+    AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px,
+};
 
-use crate::a11y::UiA11yElementExt;
+use crate::a11y::{
+    AccessibleTextInputHandler, AccessibleTextReplacementTarget, AccessibleTextRunRange,
+    TextControlSemanticProjection, UiA11yElementExt, dispatch_accessible_text_replacement,
+    dispatch_accessible_text_selection_in_runs, project_accessible_text_selection_in_runs,
+};
 use crate::color::ColorIntent;
+use crate::field::adapter::{FieldControl, FieldControlSemantics};
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::form_control::FormControlState;
 use crate::text_editing::{
@@ -300,7 +307,31 @@ impl TextareaState {
 
     /// Returns the accessibility role.
     pub const fn role(&self) -> Role {
-        Role::TextInput
+        Role::MultilineTextInput
+    }
+
+    /// Derives an owned, renderer-neutral semantic projection from this resolved state.
+    pub fn semantic_projection<NodeId>(&self) -> TextControlSemanticProjection<NodeId> {
+        self.semantic_projection_for_value(
+            self.value(),
+            self.placeholder(),
+            text_editing::supports_accessible_character_lengths(self.value()),
+        )
+    }
+
+    pub(crate) fn semantic_projection_for_value<NodeId>(
+        &self,
+        semantic_value: &str,
+        placeholder: Option<&str>,
+        exposes_text_runs: bool,
+    ) -> TextControlSemanticProjection<NodeId> {
+        TextControlSemanticProjection::new(
+            self.role(),
+            semantic_value.to_owned(),
+            placeholder,
+            self.control,
+            exposes_text_runs,
+        )
     }
 
     /// Returns resolved metrics.
@@ -322,12 +353,14 @@ impl TextareaState {
 #[derive(Debug, Clone)]
 struct TextareaRuntime {
     scroll_handle: ScrollHandle,
+    accessible_text_cache: Option<TextareaAccessibleTextCache>,
 }
 
 impl Default for TextareaRuntime {
     fn default() -> Self {
         Self {
             scroll_handle: ScrollHandle::new(),
+            accessible_text_cache: None,
         }
     }
 }
@@ -397,10 +430,6 @@ impl TextareaController {
         self.content.as_ref()
     }
 
-    fn placeholder(&self) -> &str {
-        self.placeholder.as_ref()
-    }
-
     fn selected_range(&self) -> Range<usize> {
         self.selected_range.clone()
     }
@@ -417,6 +446,28 @@ impl TextareaController {
         }
     }
 
+    const fn selection_reversed(&self) -> bool {
+        self.selection_reversed
+    }
+
+    const fn accepts_accessible_selection(&self) -> bool {
+        !self.disabled
+    }
+
+    fn set_accessible_selection_bytes(
+        &mut self,
+        anchor: usize,
+        focus: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.accepts_accessible_selection() {
+            return;
+        }
+        let projection = self.document().set_accessible_selection(anchor, focus);
+        self.apply_editing_projection(projection);
+        cx.notify();
+    }
+
     fn sync_adapter_state(
         &mut self,
         controlled_value: Option<&str>,
@@ -429,19 +480,19 @@ impl TextareaController {
         self.read_only = read_only;
         self.on_change = on_change;
 
-        if let Some(placeholder) = placeholder {
-            self.placeholder = placeholder;
-        }
+        self.placeholder = placeholder.unwrap_or_default();
 
         if let Some(value) = controlled_value {
             let value = text_editing::normalize_multiline(value);
             if self.content.as_ref() != value {
-                self.content = value.into();
-                let cursor =
-                    text_editing::clamp_to_char_boundary(self.value(), self.cursor_offset());
-                self.selected_range = cursor..cursor;
-                self.selection_reversed = false;
-                self.marked_range = None;
+                let projection = EditableTextDocument::from_parts(
+                    value,
+                    TextSelection::caret(self.cursor_offset()),
+                    None,
+                    self.editing_policy(),
+                )
+                .into_projection();
+                self.apply_editing_projection(projection);
             }
         }
     }
@@ -699,6 +750,28 @@ impl EntityInputHandler for TextareaController {
     }
 }
 
+impl AccessibleTextInputHandler for TextareaController {
+    fn value(&self) -> &str {
+        TextareaController::value(self)
+    }
+
+    fn selected_range_bytes(&self) -> Range<usize> {
+        self.selected_range()
+    }
+
+    fn selection_reversed(&self) -> bool {
+        TextareaController::selection_reversed(self)
+    }
+
+    fn accepts_accessible_selection(&self) -> bool {
+        TextareaController::accepts_accessible_selection(self)
+    }
+
+    fn set_accessible_selection(&mut self, anchor: usize, focus: usize, cx: &mut Context<Self>) {
+        self.set_accessible_selection_bytes(anchor, focus, cx);
+    }
+}
+
 /// A concrete GPUI textarea component shell.
 #[derive(IntoElement)]
 pub struct Textarea {
@@ -710,6 +783,7 @@ pub struct Textarea {
     control: FormControlState,
     tokens: ThemeTokens,
     on_change: Option<TextareaChangeHandler>,
+    field_semantics: Option<FieldControlSemantics>,
 }
 
 impl Textarea {
@@ -724,6 +798,7 @@ impl Textarea {
             control: FormControlState::default(),
             tokens: ThemeTokens::default(),
             on_change: None,
+            field_semantics: None,
         }
     }
 
@@ -819,6 +894,117 @@ impl Sizable for Textarea {
     }
 }
 
+impl FieldControl for Textarea {
+    fn field_control_state(&self) -> FormControlState {
+        self.control
+    }
+
+    fn with_field_semantics(mut self, semantics: FieldControlSemantics) -> Self {
+        self.control = semantics.apply_control_state(self.control);
+        self.field_semantics = Some(semantics);
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TextareaAccessibleTextRun {
+    index: usize,
+    element_id: ElementId,
+    accessible_range: AccessibleTextRunRange,
+    value: SharedString,
+}
+
+type TextareaAccessibleTextRuns = Rc<[TextareaAccessibleTextRun]>;
+
+#[derive(Debug, Clone)]
+struct TextareaAccessibleTextCache {
+    semantic_value: SharedString,
+    text_runs: Option<TextareaAccessibleTextRuns>,
+}
+
+fn resolve_textarea_accessible_text_runs(
+    control_id: &ElementId,
+    value: &str,
+    window: &mut Window,
+) -> Option<TextareaAccessibleTextRuns> {
+    let text_runs = text_editing::multiline_line_ranges(value)
+        .into_iter()
+        .enumerate()
+        .map(|(index, byte_range)| {
+            let line = value.get(byte_range.clone())?;
+            let character_lengths =
+                Rc::<[u8]>::from(text_editing::accessible_character_lengths(line)?);
+            let element_id = textarea_text_run_element_id(control_id, index);
+            let node_id = window.with_id(control_id.clone(), |window| {
+                window.with_global_id(element_id.clone(), |global_id, _| {
+                    global_id.accesskit_node_id()
+                })
+            });
+            let accessible_range = AccessibleTextRunRange::from_character_lengths(
+                node_id,
+                byte_range,
+                character_lengths,
+            )?;
+            Some(TextareaAccessibleTextRun {
+                index,
+                element_id,
+                accessible_range,
+                value: line.to_owned().into(),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(text_runs.into())
+}
+
+impl TextareaRuntime {
+    fn resolve_accessible_text_runs_with(
+        &mut self,
+        semantic_value: SharedString,
+        resolve: impl FnOnce(&str) -> Option<TextareaAccessibleTextRuns>,
+    ) -> Option<TextareaAccessibleTextRuns> {
+        if let Some(cache) = self
+            .accessible_text_cache
+            .as_ref()
+            .filter(|cache| cache.semantic_value == semantic_value)
+        {
+            return cache.text_runs.clone();
+        }
+
+        let text_runs = resolve(semantic_value.as_ref());
+        self.accessible_text_cache = Some(TextareaAccessibleTextCache {
+            semantic_value,
+            text_runs: text_runs.clone(),
+        });
+        text_runs
+    }
+
+    fn resolve_accessible_text_runs(
+        &mut self,
+        control_id: &ElementId,
+        semantic_value: SharedString,
+        window: &mut Window,
+    ) -> Option<TextareaAccessibleTextRuns> {
+        self.resolve_accessible_text_runs_with(semantic_value, |value| {
+            resolve_textarea_accessible_text_runs(control_id, value, window)
+        })
+    }
+}
+
+fn resolve_textarea_accessible_text_runs_when_active(
+    accessibility_active: bool,
+    resolve: impl FnOnce() -> Option<TextareaAccessibleTextRuns>,
+) -> Option<TextareaAccessibleTextRuns> {
+    accessibility_active.then(resolve).flatten()
+}
+
+fn textarea_text_run_element_id(control_id: &ElementId, index: usize) -> ElementId {
+    if index == 0 {
+        (control_id.clone(), "text-run").into()
+    } else {
+        (control_id.clone(), format!("text-run:{index}")).into()
+    }
+}
+
 impl RenderOnce for Textarea {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = ThemeResolver::current(cx);
@@ -859,22 +1045,110 @@ impl RenderOnce for Textarea {
             });
         }
 
-        let controller_text = controller.as_ref().map(|controller| controller.read(cx));
-        let placeholder = controller_text
+        let controller_snapshot = controller.as_ref().map(|controller| {
+            let controller = controller.read(cx);
+            (controller.content.clone(), controller.placeholder.clone())
+        });
+        let semantic_value = controller_snapshot
             .as_ref()
-            .map(|controller| controller.placeholder().to_owned().into())
+            .map(|(value, _)| value.clone())
+            .unwrap_or_else(|| self.value.clone());
+        let placeholder = controller_snapshot
+            .as_ref()
+            .map(|(_, placeholder)| placeholder.clone())
             .filter(|placeholder: &SharedString| !placeholder.is_empty())
             .or(self.placeholder.clone())
             .unwrap_or_default();
-        let show_placeholder = controller_text
+        let accessible_text_runs = resolve_textarea_accessible_text_runs_when_active(
+            window.is_accessibility_active(),
+            || {
+                runtime.update(cx, |runtime, _| {
+                    runtime.resolve_accessible_text_runs(&self.id, semantic_value.clone(), window)
+                })
+            },
+        );
+        let semantic_projection = state
+            .semantic_projection_for_value::<open_gpui::accesskit::NodeId>(
+                semantic_value.as_ref(),
+                (!placeholder.is_empty()).then_some(placeholder.as_ref()),
+                accessible_text_runs.is_some(),
+            );
+        let text_run_ranges = accessible_text_runs
+            .as_deref()
+            .map(|text_runs| {
+                text_runs
+                    .iter()
+                    .map(|text_run| text_run.accessible_range.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let text_selection = controller.as_ref().and_then(|controller| {
+            let controller = controller.read(cx);
+            project_accessible_text_selection_in_runs(&*controller, &text_run_ranges)
+        });
+        let semantic_projection = semantic_projection.with_text_selection(text_selection);
+        let published_semantic_value = semantic_value;
+        let semantics = FieldControlSemantics::project_text_control_descriptor(
+            self.field_semantics.as_ref(),
+            self.label.as_ref(),
+            semantic_projection.descriptor(),
+        );
+        let show_placeholder = controller_snapshot
             .as_ref()
-            .map(|controller| controller.value().is_empty() && !placeholder.is_empty())
+            .map(|(value, _)| value.is_empty() && !placeholder.is_empty())
             .unwrap_or_else(|| state.placeholder_visible());
         let static_display_text = if show_placeholder {
             placeholder.clone()
         } else {
             self.value.clone()
         };
+        let text_line_height = gpui_px_from_ui(metrics.line_height());
+        let text_content = div()
+            .relative()
+            .min_w(px(0.0))
+            .w_full()
+            .children(
+                accessible_text_runs
+                    .as_deref()
+                    .into_iter()
+                    .flatten()
+                    .map(|text_run| {
+                        let semantics = SemanticDescriptor::new(Role::TextRun)
+                            .with_value(text_run.value.as_ref())
+                            .with_character_lengths(text_run.accessible_range.character_lengths());
+                        div()
+                            .id(text_run.element_id.clone())
+                            .absolute()
+                            .top(text_line_height * text_run.index as f32)
+                            .left(px(0.0))
+                            .w_full()
+                            .h(text_line_height)
+                            .ui_semantics(&semantics)
+                    }),
+            )
+            .children(
+                controller
+                    .clone()
+                    .into_iter()
+                    .map(|controller| EditableTextareaElement {
+                        controller,
+                        placeholder: placeholder.clone(),
+                        text_color: theme.resolve(colors.foreground()).into(),
+                        placeholder_color: theme.resolve(colors.placeholder()).into(),
+                        selection_color: rgba(0x2f80ed33).into(),
+                        caret_color: theme.resolve(colors.foreground()).into(),
+                        text_size: gpui_px_from_ui(metrics.text_size()).into(),
+                        line_height: text_line_height,
+                        min_rows: metrics.rows(),
+                    }),
+            )
+            .when(!state.controller_driven(), |this| {
+                this.children(render_static_textarea_lines(
+                    debug_id.as_ref(),
+                    static_display_text.as_ref(),
+                    show_placeholder,
+                ))
+            });
 
         let root_debug_id = debug_id.clone();
 
@@ -902,8 +1176,7 @@ impl RenderOnce for Textarea {
             .on_scroll_wheel(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
             .focusable()
             .tab_stop(state.tab_stop_enabled())
-            .ui_role(state.role())
-            .aria_label(self.label)
+            .ui_semantics_with_relations(&semantics, |node_id| *node_id)
             .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(state.disabled(), |this| {
                 this.opacity(0.56).cursor_not_allowed()
@@ -920,8 +1193,46 @@ impl RenderOnce for Textarea {
                 let mouse_up = controller.clone();
                 let mouse_up_out = controller.clone();
                 let mouse_move = controller.clone();
+                let replace_selected_text = controller.clone();
+                let set_text_selection = controller.clone();
+                let set_text_selection_runs = text_run_ranges.clone();
+                let set_text_selection_published_value = published_semantic_value;
+                let set_value = controller.clone();
 
                 this.track_focus(&focus)
+                    .on_ui_a11y_action(
+                        AccessibleAction::ReplaceSelectedText,
+                        move |data, window, cx| {
+                            dispatch_accessible_text_replacement(
+                                &replace_selected_text,
+                                data,
+                                AccessibleTextReplacementTarget::SelectedText,
+                                window,
+                                cx,
+                            );
+                        },
+                    )
+                    .on_ui_a11y_action(
+                        AccessibleAction::SetTextSelection,
+                        move |data, _window, cx| {
+                            dispatch_accessible_text_selection_in_runs(
+                                &set_text_selection,
+                                set_text_selection_published_value.as_str(),
+                                data,
+                                &set_text_selection_runs,
+                                cx,
+                            );
+                        },
+                    )
+                    .on_ui_a11y_action(AccessibleAction::SetValue, move |data, window, cx| {
+                        dispatch_accessible_text_replacement(
+                            &set_value,
+                            data,
+                            AccessibleTextReplacementTarget::EntireValue,
+                            window,
+                            cx,
+                        );
+                    })
                     .on_mouse_down(MouseButton::Left, move |event, window, cx| {
                         mouse_down.update(cx, |controller, cx| {
                             controller.on_mouse_down(event, window, cx);
@@ -943,33 +1254,7 @@ impl RenderOnce for Textarea {
                         });
                     })
             })
-            .child(
-                div()
-                    .min_w(px(0.0))
-                    .w_full()
-                    .children(
-                        controller
-                            .into_iter()
-                            .map(|controller| EditableTextareaElement {
-                                controller,
-                                placeholder: placeholder.clone(),
-                                text_color: theme.resolve(colors.foreground()).into(),
-                                placeholder_color: theme.resolve(colors.placeholder()).into(),
-                                selection_color: rgba(0x2f80ed33).into(),
-                                caret_color: theme.resolve(colors.foreground()).into(),
-                                text_size: gpui_px_from_ui(metrics.text_size()).into(),
-                                line_height: gpui_px_from_ui(metrics.line_height()),
-                                min_rows: metrics.rows(),
-                            }),
-                    )
-                    .when(!state.controller_driven(), |this| {
-                        this.children(render_static_textarea_lines(
-                            debug_id.as_ref(),
-                            static_display_text.as_ref(),
-                            show_placeholder,
-                        ))
-                    }),
-            )
+            .child(text_content)
     }
 }
 
@@ -1201,13 +1486,13 @@ struct TextareaLayoutLine {
 impl TextareaLayoutLine {
     fn x_for_stored_offset(&self, offset: usize, content: &str) -> Pixels {
         let offset =
-            text_editing::clamp_to_char_boundary(content, offset.clamp(self.start, self.end));
+            text_editing::clamp_to_grapheme_boundary(content, offset.clamp(self.start, self.end));
         self.shaped.x_for_index(offset.saturating_sub(self.start))
     }
 
     fn stored_offset_for_x(&self, x: Pixels, content: &str) -> usize {
         let line_offset = self.shaped.closest_index_for_x(x);
-        text_editing::clamp_to_char_boundary(
+        text_editing::clamp_to_grapheme_boundary(
             content,
             self.start + line_offset.min(self.end - self.start),
         )
@@ -1249,32 +1534,21 @@ fn text_line_count(text: &str) -> usize {
 }
 
 fn textarea_line_slices(text: &str) -> Vec<TextareaLineSlice<'_>> {
-    if text.is_empty() {
-        return vec![TextareaLineSlice {
-            text: "",
-            start: 0,
-            end: 0,
-        }];
-    }
-
-    let mut lines = Vec::new();
-    let mut start = 0;
-    for (idx, ch) in text.char_indices() {
-        if ch == '\n' {
-            lines.push(TextareaLineSlice {
-                text: &text[start..idx],
-                start,
-                end: idx,
-            });
-            start = idx + ch.len_utf8();
-        }
-    }
-    lines.push(TextareaLineSlice {
-        text: &text[start..],
-        start,
-        end: text.len(),
-    });
-    lines
+    text_editing::multiline_line_ranges(text)
+        .into_iter()
+        .map(|range| {
+            let end = if range.end > range.start && text.as_bytes()[range.end - 1] == b'\n' {
+                range.end - 1
+            } else {
+                range.end
+            };
+            TextareaLineSlice {
+                text: &text[range.start..end],
+                start: range.start,
+                end,
+            }
+        })
+        .collect()
 }
 
 fn textarea_layout_line_height(bounds: &Bounds<Pixels>, lines: &[TextareaLayoutLine]) -> Pixels {
@@ -1342,7 +1616,25 @@ fn selection_quads_for_range(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::*;
+
+    fn test_accessible_text_runs() -> TextareaAccessibleTextRuns {
+        let character_lengths = Rc::<[u8]>::from(vec![1; 12]);
+        vec![TextareaAccessibleTextRun {
+            index: 0,
+            element_id: "cached-text-run".into(),
+            accessible_range: AccessibleTextRunRange::from_character_lengths(
+                open_gpui::accesskit::NodeId(7),
+                0..12,
+                character_lengths,
+            )
+            .unwrap(),
+            value: "cached value".into(),
+        }]
+        .into()
+    }
 
     #[test]
     fn textarea_line_slices_preserve_trailing_empty_line() {
@@ -1368,5 +1660,126 @@ mod tests {
 
         assert_eq!(three.rows(), 3);
         assert!(six.min_height() > three.min_height());
+    }
+
+    #[test]
+    fn accessible_text_run_cache_hit_shares_derived_line_storage() {
+        let computations = Cell::new(0);
+        let mut runtime = TextareaRuntime::default();
+        let first_hit = runtime
+            .resolve_accessible_text_runs_with("cached value".into(), |_| {
+                computations.set(computations.get() + 1);
+                Some(test_accessible_text_runs())
+            })
+            .unwrap();
+        let second_hit = runtime
+            .resolve_accessible_text_runs_with("cached value".into(), |_| {
+                computations.set(computations.get() + 1);
+                Some(test_accessible_text_runs())
+            })
+            .unwrap();
+        let changed_value = runtime
+            .resolve_accessible_text_runs_with("changed value".into(), |_| {
+                computations.set(computations.get() + 1);
+                Some(test_accessible_text_runs())
+            })
+            .unwrap();
+
+        assert_eq!(computations.get(), 2);
+        assert!(Rc::ptr_eq(&first_hit, &second_hit));
+        assert!(!Rc::ptr_eq(&second_hit, &changed_value));
+        assert_eq!(
+            first_hit[0].accessible_range.character_lengths().as_ptr(),
+            second_hit[0].accessible_range.character_lengths().as_ptr()
+        );
+    }
+
+    #[test]
+    fn inactive_accessibility_skips_text_run_derivation() {
+        let computations = Cell::new(0);
+
+        let text_runs = resolve_textarea_accessible_text_runs_when_active(false, || {
+            computations.set(computations.get() + 1);
+            Some(test_accessible_text_runs())
+        });
+
+        assert!(text_runs.is_none());
+        assert_eq!(computations.get(), 0);
+    }
+
+    #[open_gpui::test]
+    fn controlled_sync_repairs_multiline_selection_to_a_grapheme_boundary(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
+        let controller = cx.new(|cx| TextareaController::with_value("ab", cx));
+
+        cx.update_entity(&controller, |controller, cx| {
+            controller.move_to(1, cx);
+            controller.sync_adapter_state(Some("e\u{301}"), None, false, false, None);
+
+            assert_eq!(controller.selected_range(), 0..0);
+            let text_runs = [AccessibleTextRunRange::from_text(
+                open_gpui::accesskit::NodeId(9),
+                0..controller.value().len(),
+                controller.value(),
+            )
+            .unwrap()];
+            let selection = project_accessible_text_selection_in_runs(controller, &text_runs)
+                .expect("repaired selection should remain accessible");
+            assert_eq!(selection.anchor().character_index(), 0);
+            assert_eq!(selection.focus().character_index(), 0);
+
+            assert!(controller.document().delete_backward().is_none());
+            let deleted = controller
+                .document()
+                .delete_forward()
+                .expect("delete should remove the full grapheme");
+            controller.apply_editing_projection(deleted);
+            assert_eq!(controller.value(), "");
+        });
+    }
+
+    #[open_gpui::test]
+    fn accessible_selection_rejects_ranges_from_a_stale_published_value(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
+        let controller = cx.new(|cx| TextareaController::with_value("ab\n", cx));
+        cx.update_entity(&controller, |controller, _| {
+            controller.sync_adapter_state(Some("a\nb"), None, false, false, None);
+            assert_eq!(controller.selected_range(), 3..3);
+        });
+
+        let text_runs = [
+            AccessibleTextRunRange::from_text(open_gpui::accesskit::NodeId(7), 0..3, "ab\n")
+                .unwrap(),
+            AccessibleTextRunRange::from_text(open_gpui::accesskit::NodeId(8), 3..3, "ab\n")
+                .unwrap(),
+        ];
+        let data = open_gpui::accesskit::ActionData::SetTextSelection(
+            open_gpui::accesskit::TextSelection {
+                anchor: open_gpui::accesskit::TextPosition {
+                    node: open_gpui::accesskit::NodeId(7),
+                    character_index: 2,
+                },
+                focus: open_gpui::accesskit::TextPosition {
+                    node: open_gpui::accesskit::NodeId(7),
+                    character_index: 2,
+                },
+            },
+        );
+        cx.update(|cx| {
+            dispatch_accessible_text_selection_in_runs(
+                &controller,
+                "ab\n",
+                Some(&data),
+                &text_runs,
+                cx,
+            );
+        });
+
+        cx.update_entity(&controller, |controller, _| {
+            assert_eq!(controller.value(), "a\nb");
+            assert_eq!(controller.selected_range(), 3..3);
+        });
     }
 }

@@ -1,6 +1,9 @@
 //! Focus and accessibility foundation page metadata.
 
-use open_gpui_ui_core::{Role, Toggled};
+use open_gpui_ui_components::{FieldState, TextInputDisplayMode, TextInputState, TextareaState};
+use open_gpui_ui_core::{Role, Size, ThemeTokens, Toggled};
+
+use crate::story::{StoryContract, StoryProbeContract, StoryProbeOperation};
 
 /// Page title.
 pub const TITLE: &str = "Focus & A11y";
@@ -15,6 +18,213 @@ pub const SIGNALS: &[&str] = &[
     "Toggled",
 ];
 
+/// Initial fake secret used to prove password accessibility redaction.
+pub const PASSWORD_REDACTION_CANARY: &str = "gallery-password-redaction-canary";
+/// Accessible label rendered by the editable account-name input.
+pub const TEXT_INPUT_LABEL: &str = "Editable account name";
+/// Initial controlled account-name value.
+pub const TEXT_INPUT_INITIAL_VALUE: &str = "gallery account";
+/// Deterministic changed account-name value used by headless history.
+pub const TEXT_INPUT_CHANGED_VALUE: &str = "gallery account updated";
+/// Placeholder rendered by the editable account-name input.
+pub const TEXT_INPUT_PLACEHOLDER: &str = "Account name";
+/// Label shared by the release-notes Field and Textarea.
+pub const TEXTAREA_FIELD_LABEL: &str = "Release notes";
+/// Initial controlled release-notes value.
+pub const TEXTAREA_INITIAL_VALUE: &str = "Release note draft";
+/// Placeholder rendered by the release-notes Textarea.
+pub const TEXTAREA_PLACEHOLDER: &str = "Write release notes";
+/// Help relation rendered by the valid release-notes Field.
+pub const TEXTAREA_FIELD_HELP: &str = "Summarize user-visible changes.";
+/// Error relation rendered by the invalid release-notes Field.
+pub const TEXTAREA_FIELD_ERROR: &str = "Add a concise release note.";
+/// Accessible label rendered by the password input.
+pub const PASSWORD_LABEL: &str = "Gallery password";
+/// Placeholder rendered by the password input.
+pub const PASSWORD_PLACEHOLDER: &str = "Password";
+
+/// Raw Focus/A11y story text that must never cross a DevTools artifact boundary.
+pub const FOCUS_A11Y_SENSITIVE_TEXT: &[&str] = &[
+    TEXT_INPUT_LABEL,
+    TEXT_INPUT_INITIAL_VALUE,
+    TEXT_INPUT_CHANGED_VALUE,
+    TEXT_INPUT_PLACEHOLDER,
+    TEXTAREA_FIELD_LABEL,
+    TEXTAREA_INITIAL_VALUE,
+    TEXTAREA_PLACEHOLDER,
+    TEXTAREA_FIELD_HELP,
+    TEXTAREA_FIELD_ERROR,
+    PASSWORD_LABEL,
+    PASSWORD_REDACTION_CANARY,
+    PASSWORD_PLACEHOLDER,
+];
+
+const TEXT_INPUT_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(
+        StoryProbeOperation::Edit,
+        "TextInput",
+        "final accessible value and selection",
+    ),
+    StoryProbeContract::new(StoryProbeOperation::Focus, "TextInput", "input focus"),
+    StoryProbeContract::new(
+        StoryProbeOperation::ReadPublicPayload,
+        "final tree",
+        "resolved TextInput semantics",
+    ),
+];
+
+const TEXTAREA_FIELD_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(
+        StoryProbeOperation::Activate,
+        "relation toggle",
+        "help and error relation transition",
+    ),
+    StoryProbeContract::new(StoryProbeOperation::Edit, "Textarea", "multiline value"),
+    StoryProbeContract::new(
+        StoryProbeOperation::ReadPublicPayload,
+        "final tree",
+        "Field-owned label, description, and error relations",
+    ),
+];
+
+const PASSWORD_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(
+        StoryProbeOperation::Edit,
+        "PasswordInput",
+        "masked accessible value",
+    ),
+    StoryProbeContract::new(StoryProbeOperation::Focus, "PasswordInput", "input focus"),
+    StoryProbeContract::new(
+        StoryProbeOperation::ReadPublicPayload,
+        "final tree",
+        "redacted password semantics",
+    ),
+];
+
+/// Component id for the editable account-name input scenario.
+pub const TEXT_INPUT_COMPONENT_ID: &str = "focus-a11y-text-input";
+/// Component id for the Field that owns the release-notes relations.
+pub const TEXTAREA_FIELD_COMPONENT_ID: &str = "focus-a11y-textarea-field";
+/// Component id for the release-notes Textarea control.
+pub const TEXTAREA_COMPONENT_ID: &str = "focus-a11y-field-textarea";
+/// Component id for the password-redaction input scenario.
+pub const PASSWORD_COMPONENT_ID: &str = "focus-a11y-password-input";
+/// Stable selector for the Textarea Field relation transition control.
+pub const TEXTAREA_FIELD_ERROR_TOGGLE_SELECTOR: &str = "gallery:focus-a11y-field-error-toggle";
+
+const TEXT_INPUT_COMPONENT_IDS: &[&str] = &[TEXT_INPUT_COMPONENT_ID];
+const TEXTAREA_FIELD_COMPONENT_IDS: &[&str] = &[TEXTAREA_FIELD_COMPONENT_ID, TEXTAREA_COMPONENT_ID];
+const PASSWORD_COMPONENT_IDS: &[&str] = &[PASSWORD_COMPONENT_ID];
+
+/// Typed identity for one real Focus/A11y Text/Form story.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FocusA11yScenarioId {
+    /// Editable TextInput value-and-selection story.
+    TextInputValueSelection,
+    /// Textarea Field help-and-error relation story.
+    TextareaFieldRelations,
+    /// Password free-text redaction story.
+    PasswordFreeTextRedaction,
+}
+
+impl FocusA11yScenarioId {
+    /// All real Focus/A11y Text/Form stories in canonical page order.
+    pub const ALL: [Self; 3] = [
+        Self::TextInputValueSelection,
+        Self::TextareaFieldRelations,
+        Self::PasswordFreeTextRedaction,
+    ];
+
+    /// Returns the stable scenario id used by story contracts and artifacts.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TextInputValueSelection => "text-input-value-selection",
+            Self::TextareaFieldRelations => "textarea-field-relations",
+            Self::PasswordFreeTextRedaction => "password-free-text-redaction",
+        }
+    }
+}
+
+/// One executable Focus/A11y scenario and the concrete component instances it owns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FocusA11yScenarioSpec {
+    /// Typed scenario identity.
+    pub scenario_id: FocusA11yScenarioId,
+    /// Stable scenario id.
+    pub id: &'static str,
+    /// Concrete component ids rendered only by this scenario.
+    pub component_ids: &'static [&'static str],
+    /// Stable selector for the scenario's primary component.
+    pub sample_selector: &'static str,
+    /// Optional stable selector for the scenario transition control.
+    pub control_selector: Option<&'static str>,
+    state: &'static str,
+    probes: &'static [StoryProbeContract],
+}
+
+impl FocusA11yScenarioSpec {
+    /// Returns the federated Gallery story contract for this scenario.
+    pub fn story_contract(self) -> StoryContract {
+        StoryContract::focus_accessibility(
+            self.id,
+            "text-form",
+            self.state,
+            self.sample_selector,
+            self.control_selector,
+            self.probes,
+        )
+    }
+}
+
+/// Editable TextInput value-and-selection scenario.
+pub const TEXT_INPUT_VALUE_SELECTION_SCENARIO: FocusA11yScenarioSpec = FocusA11yScenarioSpec {
+    scenario_id: FocusA11yScenarioId::TextInputValueSelection,
+    id: FocusA11yScenarioId::TextInputValueSelection.as_str(),
+    component_ids: TEXT_INPUT_COMPONENT_IDS,
+    sample_selector: "text-input:focus-a11y-text-input:root",
+    control_selector: None,
+    state: "TextInputState",
+    probes: TEXT_INPUT_PROBES,
+};
+
+/// Textarea Field help-and-error relation scenario.
+pub const TEXTAREA_FIELD_RELATIONS_SCENARIO: FocusA11yScenarioSpec = FocusA11yScenarioSpec {
+    scenario_id: FocusA11yScenarioId::TextareaFieldRelations,
+    id: FocusA11yScenarioId::TextareaFieldRelations.as_str(),
+    component_ids: TEXTAREA_FIELD_COMPONENT_IDS,
+    sample_selector: "textarea:focus-a11y-field-textarea:root",
+    control_selector: Some(TEXTAREA_FIELD_ERROR_TOGGLE_SELECTOR),
+    state: "FieldState + TextareaState",
+    probes: TEXTAREA_FIELD_PROBES,
+};
+
+/// Password free-text redaction scenario.
+pub const PASSWORD_FREE_TEXT_REDACTION_SCENARIO: FocusA11yScenarioSpec = FocusA11yScenarioSpec {
+    scenario_id: FocusA11yScenarioId::PasswordFreeTextRedaction,
+    id: FocusA11yScenarioId::PasswordFreeTextRedaction.as_str(),
+    component_ids: PASSWORD_COMPONENT_IDS,
+    sample_selector: "text-input:focus-a11y-password-input:root",
+    control_selector: None,
+    state: "TextInputState::Password",
+    probes: PASSWORD_PROBES,
+};
+
+/// Real Text/Form scenarios rendered by the Focus/A11y page.
+pub const FOCUS_A11Y_SCENARIOS: &[FocusA11yScenarioSpec] = &[
+    TEXT_INPUT_VALUE_SELECTION_SCENARIO,
+    TEXTAREA_FIELD_RELATIONS_SCENARIO,
+    PASSWORD_FREE_TEXT_REDACTION_SCENARIO,
+];
+
+/// Returns executable story contracts for the Focus/A11y Text/Form scenarios.
+pub fn focus_a11y_story_contracts() -> Vec<StoryContract> {
+    FOCUS_A11Y_SCENARIOS
+        .iter()
+        .copied()
+        .map(FocusA11yScenarioSpec::story_contract)
+        .collect()
+}
+
 /// One focusable control row in the gallery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FocusControlSpec {
@@ -23,13 +233,13 @@ pub struct FocusControlSpec {
     /// User-facing label.
     pub label: &'static str,
     /// Tab index used by the focus handle.
-    pub tab_index: usize,
+    pub tab_index: isize,
     /// Accessibility role used by the rendered control.
     pub role: Role,
 }
 
 impl FocusControlSpec {
-    const fn new(id: &'static str, label: &'static str, tab_index: usize, role: Role) -> Self {
+    const fn new(id: &'static str, label: &'static str, tab_index: isize, role: Role) -> Self {
         Self {
             id,
             label,
@@ -39,19 +249,33 @@ impl FocusControlSpec {
     }
 }
 
+/// Primary action in the Focus/A11y keyboard order.
+pub const PRIMARY_FOCUS_CONTROL: FocusControlSpec =
+    FocusControlSpec::new("focus-primary", "Primary action", 1, Role::Button);
+/// Counter action in the Focus/A11y keyboard order.
+pub const COUNTER_FOCUS_CONTROL: FocusControlSpec =
+    FocusControlSpec::new("focus-counter", "Counter", 2, Role::SpinButton);
+/// Switch action in the Focus/A11y keyboard order.
+pub const SWITCH_FOCUS_CONTROL: FocusControlSpec =
+    FocusControlSpec::new("focus-switch", "Feature switch", 3, Role::Switch);
+
 /// Canonical focusable controls used by the demo.
 pub const FOCUS_CONTROLS: [FocusControlSpec; 3] = [
-    FocusControlSpec::new("focus-primary", "Primary action", 1, Role::Button),
-    FocusControlSpec::new("focus-counter", "Counter", 2, Role::SpinButton),
-    FocusControlSpec::new("focus-switch", "Feature switch", 3, Role::Switch),
+    PRIMARY_FOCUS_CONTROL,
+    COUNTER_FOCUS_CONTROL,
+    SWITCH_FOCUS_CONTROL,
 ];
 
 /// Mutable shell state for the focus and accessibility page.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FocusA11yPageState {
     counter: i32,
     enabled: bool,
     focus_message: &'static str,
+    text_input_value: String,
+    textarea_value: String,
+    field_invalid: bool,
+    password_value: String,
 }
 
 impl Default for FocusA11yPageState {
@@ -60,28 +284,83 @@ impl Default for FocusA11yPageState {
             counter: 0,
             enabled: false,
             focus_message: "Ready for keyboard focus.",
+            text_input_value: TEXT_INPUT_INITIAL_VALUE.to_owned(),
+            textarea_value: TEXTAREA_INITIAL_VALUE.to_owned(),
+            field_invalid: false,
+            password_value: PASSWORD_REDACTION_CANARY.to_owned(),
         }
     }
 }
 
 impl FocusA11yPageState {
+    /// Builds the resolved Text/Form story state consumed by rendering and DevTools projection.
+    pub(crate) fn text_form_story_state(&self, tokens: ThemeTokens) -> FocusA11yTextFormStoryState {
+        FocusA11yTextFormStoryState {
+            text_input: TextInputState::resolve(
+                self.text_input_value.clone(),
+                Some(TEXT_INPUT_PLACEHOLDER),
+                Size::Medium,
+                false,
+                false,
+                false,
+                false,
+                true,
+                tokens,
+            ),
+            field: FieldState::resolve(
+                TEXTAREA_FIELD_LABEL,
+                Some(TEXTAREA_FIELD_HELP),
+                Some(TEXTAREA_FIELD_ERROR),
+                Size::Medium,
+                true,
+                false,
+                self.field_invalid,
+                tokens,
+            ),
+            textarea: TextareaState::resolve(
+                self.textarea_value.clone(),
+                Some(TEXTAREA_PLACEHOLDER),
+                Size::Medium,
+                3,
+                false,
+                false,
+                self.field_invalid,
+                true,
+                true,
+                tokens,
+            ),
+            password: TextInputState::resolve_with_display_mode(
+                self.password_value.clone(),
+                Some(PASSWORD_PLACEHOLDER),
+                Size::Medium,
+                false,
+                false,
+                false,
+                false,
+                true,
+                TextInputDisplayMode::Password,
+                tokens,
+            ),
+        }
+    }
+
     /// Returns the current demo counter.
-    pub(crate) fn counter(self) -> i32 {
+    pub(crate) fn counter(&self) -> i32 {
         self.counter
     }
 
     /// Returns the derived accessibility state used by the page renderer.
-    pub(crate) fn demo_state(self) -> A11yDemoState {
+    pub(crate) fn demo_state(&self) -> A11yDemoState {
         a11y_demo_state(self.counter, self.enabled)
     }
 
     /// Returns the current user-facing focus message.
-    pub(crate) fn focus_message(self) -> &'static str {
+    pub(crate) fn focus_message(&self) -> &'static str {
         self.focus_message
     }
 
     /// Returns whether the demo switch is enabled.
-    pub(crate) fn enabled(self) -> bool {
+    pub(crate) fn enabled(&self) -> bool {
         self.enabled
     }
 
@@ -126,6 +405,70 @@ impl FocusA11yPageState {
     pub(crate) fn toggle_enabled(&mut self) -> bool {
         self.enabled = !self.enabled;
         true
+    }
+
+    /// Updates the controlled TextInput value.
+    pub(crate) fn set_text_input_value(&mut self, value: String) -> bool {
+        if self.text_input_value == value {
+            return false;
+        }
+        self.text_input_value = value;
+        true
+    }
+
+    /// Updates the controlled Textarea value.
+    pub(crate) fn set_textarea_value(&mut self, value: String) -> bool {
+        if self.textarea_value == value {
+            return false;
+        }
+        self.textarea_value = value;
+        true
+    }
+
+    /// Switches between the Field help and error relation states.
+    pub(crate) fn toggle_field_invalid(&mut self) -> bool {
+        self.field_invalid = !self.field_invalid;
+        true
+    }
+
+    /// Updates the controlled password value.
+    pub(crate) fn set_password_value(&mut self, value: String) -> bool {
+        if self.password_value == value {
+            return false;
+        }
+        self.password_value = value;
+        true
+    }
+}
+
+/// Resolved component states shared by the Focus/A11y renderer and DevTools projection.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FocusA11yTextFormStoryState {
+    text_input: TextInputState,
+    field: FieldState,
+    textarea: TextareaState,
+    password: TextInputState,
+}
+
+impl FocusA11yTextFormStoryState {
+    /// Returns the editable account-name state.
+    pub(crate) fn text_input(&self) -> &TextInputState {
+        &self.text_input
+    }
+
+    /// Returns the release-notes Field state.
+    pub(crate) fn field(&self) -> &FieldState {
+        &self.field
+    }
+
+    /// Returns the release-notes Textarea state.
+    pub(crate) fn textarea(&self) -> &TextareaState {
+        &self.textarea
+    }
+
+    /// Returns the password input state.
+    pub(crate) fn password(&self) -> &TextInputState {
+        &self.password
     }
 }
 
@@ -178,5 +521,21 @@ mod tests {
         assert_eq!(state.focus_message(), "Focus moved.");
         assert!(state.reset_counter());
         assert_eq!(state.demo_state(), a11y_demo_state(0, true));
+
+        let initial_story = state.text_form_story_state(ThemeTokens::default());
+        assert_eq!(initial_story.text_input().value(), TEXT_INPUT_INITIAL_VALUE);
+        assert_eq!(initial_story.textarea().value(), TEXTAREA_INITIAL_VALUE);
+        assert!(!initial_story.field().invalid());
+        assert_eq!(initial_story.password().value(), PASSWORD_REDACTION_CANARY);
+
+        assert!(state.set_text_input_value("updated account".to_owned()));
+        assert!(state.set_textarea_value("Updated note".to_owned()));
+        assert!(state.toggle_field_invalid());
+        assert!(state.set_password_value("updated secret".to_owned()));
+        let updated_story = state.text_form_story_state(ThemeTokens::default());
+        assert_eq!(updated_story.text_input().value(), "updated account");
+        assert_eq!(updated_story.textarea().value(), "Updated note");
+        assert!(updated_story.field().invalid());
+        assert_eq!(updated_story.password().value(), "updated secret");
     }
 }

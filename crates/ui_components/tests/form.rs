@@ -9,7 +9,7 @@ use support::tokens::custom_tokens;
 
 #[test]
 fn default_field_state_exposes_label_help_and_metrics() {
-    let state = Field::new("email-field", "email", "Email")
+    let state = Field::new("email-field", "Email")
         .help("Use a work address.")
         .state();
 
@@ -26,9 +26,7 @@ fn default_field_state_exposes_label_help_and_metrics() {
 
 #[test]
 fn required_field_exposes_required_metadata() {
-    let state = Field::new("email-field", "email", "Email")
-        .required(true)
-        .state();
+    let state = Field::new("email-field", "Email").required(true).state();
 
     assert!(state.required());
     assert_eq!(
@@ -40,7 +38,7 @@ fn required_field_exposes_required_metadata() {
 #[test]
 fn invalid_field_prefers_error_support_text() {
     let tokens = custom_tokens();
-    let state = Field::new("email-field", "email", "Email")
+    let state = Field::new("email-field", "Email")
         .help("Use a work address.")
         .error("Enter a valid email.")
         .invalid(true)
@@ -56,7 +54,7 @@ fn invalid_field_prefers_error_support_text() {
 #[test]
 fn disabled_field_uses_muted_label_intent() {
     let tokens = custom_tokens();
-    let state = Field::new("email-field", "email", "Email")
+    let state = Field::new("email-field", "Email")
         .disabled(true)
         .tokens(tokens)
         .state();
@@ -84,7 +82,7 @@ fn form_control_state_centralizes_editing_and_focus_rules() {
 
 #[test]
 fn field_and_inputs_expose_shared_form_control_state() {
-    let field = Field::new("email-field", "email", "Email")
+    let field = Field::new("email-field", "Email")
         .required(true)
         .invalid(true)
         .state();
@@ -110,9 +108,7 @@ fn field_and_inputs_expose_shared_form_control_state() {
 
 #[test]
 fn concrete_form_builders_preserve_busy_without_disabling_input() {
-    let field = Field::new("email-field", "email", "Email")
-        .busy(true)
-        .state();
+    let field = Field::new("email-field", "Email").busy(true).state();
     let text_input = TextInput::new("email", "Email").busy(true).state();
     let textarea = Textarea::new("notes", "Notes").busy(true).state();
     let number_input = NumberInput::new("quantity", "Quantity").busy(true).state();

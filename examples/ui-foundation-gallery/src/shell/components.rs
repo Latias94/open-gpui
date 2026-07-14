@@ -2,6 +2,7 @@
 
 use super::support::{format_px, gallery_card_shell, label_pill, toggled_label_text};
 use super::*;
+use open_gpui_ui_components::{Field, TextInput, Textarea, gpui_adapter::FieldControl};
 
 pub(crate) fn component_button_state_row(state: ButtonState) -> impl IntoElement {
     div()
@@ -276,17 +277,11 @@ pub(crate) fn component_checkbox_state_row(state: CheckboxState) -> impl IntoEle
 }
 
 pub(crate) fn component_label(id: String, state: &LabelState, tokens: ThemeTokens) -> Label {
-    let label = Label::new(id, state.text())
+    Label::new(id, state.text())
         .with_size(state.size())
         .required(state.required())
         .disabled(state.disabled())
-        .tokens(tokens);
-
-    if let Some(control_id) = state.control_id() {
-        label.for_control(control_id)
-    } else {
-        label
-    }
+        .tokens(tokens)
 }
 
 pub(crate) fn component_label_state_row(state: &LabelState) -> impl IntoElement {
@@ -309,10 +304,6 @@ pub(crate) fn component_label_state_row(state: &LabelState) -> impl IntoElement 
             } else {
                 "enabled"
             }
-        ))
-        .child(format!(
-            "{}",
-            state.control_id().unwrap_or("no control association")
         ))
 }
 
@@ -356,11 +347,11 @@ pub(crate) fn component_field(
 
     state: &FieldState,
 
-    control: impl IntoElement,
+    control: impl FieldControl,
 
     tokens: ThemeTokens,
 ) -> Field {
-    let field = Field::new(id, state.control_id(), state.label())
+    let field = Field::new(id, state.label())
         .with_size(state.size())
         .required(state.required())
         .disabled(state.disabled())

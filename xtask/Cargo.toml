@@ -21,6 +21,7 @@ clap.workspace = true
 open_gpui_devtools.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+syn.workspace = true
 toml = "1.1.2"
 
 [lints]

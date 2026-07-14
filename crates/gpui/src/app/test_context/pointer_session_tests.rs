@@ -222,9 +222,103 @@ struct TextInputWindowRemovalProbe {
     remove_on_key: bool,
 }
 
+struct MarkedTextWindowRemovalProbe {
+    focus: FocusHandle,
+    lifecycle: Rc<RefCell<Vec<&'static str>>>,
+}
+
+struct SwitchingMarkedTextProbe {
+    first_focus: FocusHandle,
+    second_focus: FocusHandle,
+    lifecycle: Rc<RefCell<Vec<&'static str>>>,
+}
+
+#[derive(Clone)]
+struct SwitchingMarkedTextInputHandler {
+    name: &'static str,
+    next_focus: Option<FocusHandle>,
+    redraw_target: crate::WeakEntity<SwitchingMarkedTextProbe>,
+    lifecycle: Rc<RefCell<Vec<&'static str>>>,
+}
+
+impl InputHandler for SwitchingMarkedTextInputHandler {
+    fn selected_text_range(
+        &mut self,
+        _: bool,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<UTF16Selection> {
+        None
+    }
+
+    fn marked_text_range(&mut self, _: &mut Window, _: &mut App) -> Option<Range<usize>> {
+        None
+    }
+
+    fn text_for_range(
+        &mut self,
+        _: Range<usize>,
+        _: &mut Option<Range<usize>>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<String> {
+        None
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        _: Option<Range<usize>>,
+        _: &str,
+        _: &mut Window,
+        _: &mut App,
+    ) {
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _: Option<Range<usize>>,
+        _: &str,
+        _: Option<Range<usize>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.lifecycle.borrow_mut().push(self.name);
+        let Some(next_focus) = self.next_focus.as_ref() else {
+            return;
+        };
+
+        next_focus.focus(window, cx);
+        self.redraw_target
+            .update(cx, |_, cx| cx.notify())
+            .expect("the marked-text probe should remain alive during its callback");
+        window.draw(cx).clear();
+    }
+
+    fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
+
+    fn bounds_for_range(
+        &mut self,
+        _: Range<usize>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<Bounds<Pixels>> {
+        None
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        _: Point<Pixels>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<usize> {
+        None
+    }
+}
+
 #[derive(Clone)]
 struct WindowRemovalInputHandler {
     lifecycle: Rc<RefCell<Vec<&'static str>>>,
+    remove_on_marked_text: bool,
 }
 
 impl InputHandler for WindowRemovalInputHandler {
@@ -270,9 +364,14 @@ impl InputHandler for WindowRemovalInputHandler {
         _: Option<Range<usize>>,
         _: &str,
         _: Option<Range<usize>>,
-        _: &mut Window,
-        _: &mut App,
+        window: &mut Window,
+        cx: &mut App,
     ) {
+        self.lifecycle.borrow_mut().push("marked-input");
+        if self.remove_on_marked_text {
+            window.remove_window(cx);
+            self.lifecycle.borrow_mut().push("marked-input-returned");
+        }
     }
 
     fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
@@ -396,6 +495,7 @@ impl Render for TextInputWindowRemovalProbe {
         let input_focus = self.focus.clone();
         let input_handler = WindowRemovalInputHandler {
             lifecycle: self.lifecycle.clone(),
+            remove_on_marked_text: false,
         };
         div()
             .id("text-input-window-removal-probe")
@@ -422,6 +522,78 @@ impl Render for TextInputWindowRemovalProbe {
                     |_, _, _| (),
                     move |_, _, window, cx| {
                         window.handle_input(&input_focus, input_handler.clone(), cx);
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
+    }
+}
+
+impl Render for MarkedTextWindowRemovalProbe {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let input_focus = self.focus.clone();
+        let input_handler = WindowRemovalInputHandler {
+            lifecycle: self.lifecycle.clone(),
+            remove_on_marked_text: true,
+        };
+
+        div()
+            .id("marked-text-window-removal-probe")
+            .size_full()
+            .focusable()
+            .track_focus(&self.focus)
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |_, _, window, cx| {
+                        window.handle_input(&input_focus, input_handler.clone(), cx);
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
+    }
+}
+
+impl Render for SwitchingMarkedTextProbe {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let redraw_target = cx.entity().downgrade();
+        let first_handler = SwitchingMarkedTextInputHandler {
+            name: "first",
+            next_focus: Some(self.second_focus.clone()),
+            redraw_target: redraw_target.clone(),
+            lifecycle: self.lifecycle.clone(),
+        };
+        let second_handler = SwitchingMarkedTextInputHandler {
+            name: "second",
+            next_focus: None,
+            redraw_target,
+            lifecycle: self.lifecycle.clone(),
+        };
+        let first_focus = self.first_focus.clone();
+        let second_focus = self.second_focus.clone();
+
+        div()
+            .size_full()
+            .child(
+                div()
+                    .id("first-marked-text-handler")
+                    .focusable()
+                    .track_focus(&self.first_focus),
+            )
+            .child(
+                div()
+                    .id("second-marked-text-handler")
+                    .focusable()
+                    .track_focus(&self.second_focus),
+            )
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |_, _, window, cx| {
+                        window.handle_input(&first_focus, first_handler.clone(), cx);
+                        window.handle_input(&second_focus, second_handler.clone(), cx);
                     },
                 )
                 .absolute()
@@ -1303,6 +1475,98 @@ fn remove_window_from_action_callback_cancels_after_dispatch_before_removal(
         lifecycle.borrow().as_slice(),
         &["action", "action-returned", "cancel"]
     );
+    assert!(cx.windows().is_empty());
+}
+
+#[open_gpui::test]
+fn simulated_marked_text_preserves_the_platform_input_handler_without_redraw(
+    cx: &mut TestAppContext,
+) {
+    let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let (view, mut cx) = cx.add_window_view({
+        let lifecycle = lifecycle.clone();
+        move |window, cx| TextInputWindowRemovalProbe {
+            handle: window.new_pointer_capture_handle(),
+            focus: cx.focus_handle(),
+            lifecycle,
+            remove_on_key: false,
+        }
+    });
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.focus.focus(window, cx);
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    cx.simulate_marked_text(None, "first", None);
+    cx.simulate_marked_text(None, "second", None);
+
+    assert_eq!(
+        lifecycle.borrow().as_slice(),
+        &["marked-input", "marked-input"]
+    );
+}
+
+#[open_gpui::test]
+fn simulated_marked_text_preserves_handler_installed_during_callback(cx: &mut TestAppContext) {
+    let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let (view, mut cx) = cx.add_window_view({
+        let lifecycle = lifecycle.clone();
+        move |_, cx| SwitchingMarkedTextProbe {
+            first_focus: cx.focus_handle(),
+            second_focus: cx.focus_handle(),
+            lifecycle,
+        }
+    });
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.first_focus.focus(window, cx);
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    cx.simulate_marked_text(None, "first", None);
+    cx.simulate_marked_text(None, "second", None);
+
+    assert_eq!(lifecycle.borrow().as_slice(), &["first", "second"]);
+}
+
+#[open_gpui::test]
+fn simulated_marked_text_returns_after_callback_removes_window(cx: &mut TestAppContext) {
+    let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let close_count = Rc::new(Cell::new(0));
+    let _close_subscription = record_window_close(cx, lifecycle.clone(), close_count.clone());
+    let (view, mut cx) = cx.add_window_view({
+        let lifecycle = lifecycle.clone();
+        move |_, cx| MarkedTextWindowRemovalProbe {
+            focus: cx.focus_handle(),
+            lifecycle,
+        }
+    });
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.focus.focus(window, cx);
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    cx.simulate_marked_text(None, "closing composition", None);
+
+    assert_eq!(
+        lifecycle.borrow().as_slice(),
+        &["marked-input", "marked-input-returned", "closed"]
+    );
+    assert_eq!(close_count.get(), 1);
     assert!(cx.windows().is_empty());
 }
 

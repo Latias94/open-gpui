@@ -36,9 +36,13 @@ pub(super) struct InteractivityAccessibility {
     pub(super) override_role: Option<accesskit::Role>,
     pub(super) label: Option<SharedString>,
     pub(super) description: Option<SharedString>,
+    pub(super) placeholder: Option<SharedString>,
+    pub(super) character_lengths: Option<Vec<u8>>,
+    pub(super) text_selection: Option<accesskit::TextSelection>,
     pub(super) controls: Option<Vec<accesskit::NodeId>>,
     pub(super) labelled_by: Option<Vec<accesskit::NodeId>>,
     pub(super) described_by: Option<Vec<accesskit::NodeId>>,
+    pub(super) error_message: Option<accesskit::NodeId>,
     pub(super) value: Option<SharedString>,
     pub(super) selected: Option<bool>,
     pub(super) required: Option<bool>,
@@ -94,6 +98,15 @@ impl InteractivityAccessibility {
         if let Some(description) = &self.description {
             node.set_description(description.to_string());
         }
+        if let Some(placeholder) = &self.placeholder {
+            node.set_placeholder(placeholder.to_string());
+        }
+        if let Some(character_lengths) = &self.character_lengths {
+            node.set_character_lengths(character_lengths.clone());
+        }
+        if let Some(text_selection) = self.text_selection {
+            node.set_text_selection(text_selection);
+        }
         if let Some(controls) = &self.controls {
             node.set_controls(controls.clone());
         }
@@ -102,6 +115,9 @@ impl InteractivityAccessibility {
         }
         if let Some(described_by) = &self.described_by {
             node.set_described_by(described_by.clone());
+        }
+        if let Some(error_message) = self.error_message {
+            node.set_error_message(error_message);
         }
         if let Some(value) = &self.value {
             node.set_value(value.to_string());
@@ -318,5 +334,36 @@ mod tests {
         assert!(read_only_node.supports_action(accesskit::Action::Click));
         assert!(!read_only_node.supports_action(accesskit::Action::SetValue));
         assert!(!read_only_node.supports_action(accesskit::Action::Increment));
+    }
+
+    #[test]
+    fn text_run_and_selection_properties_are_written_exactly() {
+        let text_run_id = accesskit::NodeId(7);
+        let selection = accesskit::TextSelection {
+            anchor: accesskit::TextPosition {
+                node: text_run_id,
+                character_index: 2,
+            },
+            focus: accesskit::TextPosition {
+                node: text_run_id,
+                character_index: 1,
+            },
+        };
+        let text_run_accessibility = InteractivityAccessibility {
+            character_lengths: Some(vec![1, 4, 3]),
+            ..Default::default()
+        };
+        let control_accessibility = InteractivityAccessibility {
+            text_selection: Some(selection),
+            ..Default::default()
+        };
+        let mut text_run = accesskit::Node::new(accesskit::Role::TextRun);
+        let mut control = accesskit::Node::new(accesskit::Role::TextInput);
+
+        text_run_accessibility.write_node(&mut text_run, false, false);
+        control_accessibility.write_node(&mut control, false, false);
+
+        assert_eq!(text_run.character_lengths(), &[1, 4, 3]);
+        assert_eq!(control.text_selection(), Some(&selection));
     }
 }

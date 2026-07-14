@@ -1,7 +1,10 @@
 //! Convenient re-exports for the Open GPUI UI foundation layer.
 
 pub use crate::{
-    a11y::{AccessibleAction, Orientation, Role, SemanticDescriptor, SortDirection, Toggled},
+    a11y::{
+        AccessibleAction, AccessibleTextPosition, AccessibleTextSelection, Orientation, Role,
+        SemanticDescriptor, SortDirection, Toggled,
+    },
     active_descendant::ActiveDescendant,
     adaptive::{
         AdaptiveQuerySource, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceAdaptiveSnapshot,

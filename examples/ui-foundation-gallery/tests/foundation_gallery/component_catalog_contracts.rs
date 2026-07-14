@@ -914,10 +914,10 @@ fn components_page_samples_expose_component_metadata() {
 
     assert_eq!(labels.len(), 4);
     assert_eq!(labels[0].state.role(), Role::Label);
-    assert_eq!(labels[0].state.control_id(), Some("email-input"));
+    assert_eq!(labels[0].state.text(), "Email");
     assert!(labels[1].state.required());
     assert!(labels[2].state.disabled());
-    assert!(!labels[3].state.associated());
+    assert_eq!(labels[3].state.size(), Size::Small);
 
     assert_eq!(text_inputs.len(), 6);
     assert_eq!(text_inputs[0].state.role(), Role::TextInput);
@@ -942,7 +942,7 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(text_inputs[5].state.display_text().as_ref(), "•••");
 
     assert_eq!(textareas.len(), 4);
-    assert_eq!(textareas[0].state.role(), Role::TextInput);
+    assert_eq!(textareas[0].state.role(), Role::MultilineTextInput);
     assert!(textareas[0].state.displaying_placeholder());
     assert!(!textareas[0].state.controller_driven());
     assert_eq!(textareas[1].state.value(), "Line 1\nLine 2");
@@ -970,7 +970,10 @@ fn components_page_samples_expose_component_metadata() {
     assert!(field_textareas[0].state.required());
     assert!(field_textareas[0].state.invalid());
     assert_eq!(field_textareas[0].textarea_state.rows(), 4);
-    assert_eq!(field_textareas[0].textarea_state.role(), Role::TextInput);
+    assert_eq!(
+        field_textareas[0].textarea_state.role(),
+        Role::MultilineTextInput
+    );
 
     assert_eq!(scroll_areas.len(), 3);
     assert_eq!(scroll_areas[0].id, "activity-log");

@@ -1380,7 +1380,7 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    RadioGroup, Toggle, Label, TextInput, Textarea, Field, Tabs, Toolbar, Sidebar, Listbox, Select,
    Combobox, Command, Table, and VirtualizedList samples render with enabled, disabled, selected, checked, unchecked,
    indeterminate, pressed, invalid, required, read-only, placeholder, value, help, error,
-   control-association, decorative, semantic, indeterminate-progress, fallback-initial,
+   decorative, semantic, indeterminate-progress, fallback-initial,
    source-metadata, roving-focus, popup, overflow-axis, scroll-reset, resize-constraint, row-model,
    and virtualized-viewport states. The Badge, Kbd, Skeleton, and non-removable Tag samples should
    remain display-only.

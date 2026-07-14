@@ -22,7 +22,7 @@ form = ["dep:open_gpui_form"]
 gpui = ["dep:open_gpui", "ui-components"]
 motion = ["dep:open_gpui_motion"]
 resource = ["dep:open_gpui_resource"]
-ui-components = ["dep:open_gpui_ui_components"]
+ui-components = ["dep:open_gpui_ui_components", "dep:open_gpui_ui_core"]
 
 [dependencies]
 open_gpui = { workspace = true, optional = true }
@@ -32,6 +32,7 @@ open_gpui_form = { workspace = true, optional = true }
 open_gpui_motion = { workspace = true, optional = true }
 open_gpui_resource = { workspace = true, optional = true }
 open_gpui_ui_components = { workspace = true, optional = true }
+open_gpui_ui_core = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

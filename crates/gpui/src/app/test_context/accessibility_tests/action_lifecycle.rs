@@ -1,4 +1,12 @@
 use super::*;
+use crate::{
+    Modifiers, MouseButton, MouseDownEvent, PointerCancelReason, PointerCaptureHandle,
+    WindowMouseEvent, point,
+};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 struct TransactionalAccessibilityProbeView {
     leaked_activations: usize,
@@ -20,6 +28,67 @@ struct GenerationFlipAccessibilityProbeView {
 
 struct ExactActionProjectionProbeView {
     activations: usize,
+}
+
+struct AccessibilityWindowRemovalProbeView {
+    pointer_capture: PointerCaptureHandle,
+    lifecycle: Rc<RefCell<Vec<&'static str>>>,
+}
+
+struct BuiltinClickWindowRemovalProbeView {
+    lifecycle: Rc<RefCell<Vec<&'static str>>>,
+}
+
+impl Render for BuiltinClickWindowRemovalProbeView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let mouse_down_lifecycle = self.lifecycle.clone();
+        let mouse_up_lifecycle = self.lifecycle.clone();
+
+        div()
+            .id("builtin-click-window-removal-probe")
+            .size_full()
+            .role(Role::Button)
+            .aria_label("Built-in click window removal probe")
+            .aria_action(AccessibleAction::Click)
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                mouse_down_lifecycle.borrow_mut().push("down");
+                window.remove_window(cx);
+                assert!(
+                    !window.removed,
+                    "removal must wait for the click transaction"
+                );
+                mouse_down_lifecycle.borrow_mut().push("down-returned");
+            })
+            .on_mouse_up(MouseButton::Left, move |_, _, _| {
+                mouse_up_lifecycle.borrow_mut().push("up");
+            })
+    }
+}
+
+impl Render for AccessibilityWindowRemovalProbeView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let pointer_capture = self.pointer_capture;
+        let lifecycle = self.lifecycle.clone();
+
+        div()
+            .id("accessibility-window-removal-probe")
+            .size_full()
+            .role(Role::Button)
+            .aria_label("Accessibility window removal probe")
+            .track_pointer_capture(&self.pointer_capture)
+            .on_mouse_down(MouseButton::Left, move |_, window, _| {
+                window
+                    .capture_pointer(&pointer_capture, MouseButton::Left)
+                    .expect("mouse down should establish pointer capture before the action");
+            })
+            .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+                lifecycle.borrow_mut().push("action");
+                window.remove_window(cx);
+                window.remove_window(cx);
+                assert!(!window.removed, "removal must wait for the action callback");
+                lifecycle.borrow_mut().push("action-returned");
+            })
+    }
 }
 
 impl Render for ExactActionProjectionProbeView {
@@ -407,6 +476,36 @@ fn accessibility_harness_uses_published_bounds_for_click_fallback(cx: &mut TestA
 }
 
 #[open_gpui::test]
+fn accessibility_click_fallback_skips_mouse_up_after_mouse_down_requests_window_removal(
+    cx: &mut TestAppContext,
+) {
+    let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let typed_window = cx.open_window(size(px(320.0), px(200.0)), {
+        let lifecycle = lifecycle.clone();
+        move |_, _| BuiltinClickWindowRemovalProbeView { lifecycle }
+    });
+    let window = typed_window.into();
+
+    assert!(cx.activate_accessibility(window));
+    let update = cx.latest_accessibility_tree_update(window).unwrap();
+    let (node_id, node) = node_with_label(&update, "Built-in click window removal probe");
+    assert!(node.supports_action(AccessibleAction::Click));
+
+    assert!(cx.dispatch_accessibility_action(
+        window,
+        ActionRequest {
+            action: AccessibleAction::Click,
+            target_tree: TreeId::ROOT,
+            target_node: node_id,
+            data: None,
+        },
+    ));
+
+    assert_eq!(lifecycle.borrow().as_slice(), &["down", "down-returned"]);
+    assert!(cx.windows().is_empty());
+}
+
+#[open_gpui::test]
 fn accessibility_harness_authorizes_actions_from_the_published_root_tree(cx: &mut TestAppContext) {
     let typed_window = cx.open_window(size(px(320.0), px(200.0)), |_, _| {
         PublishedActionProbeView { activations: 0 }
@@ -523,6 +622,95 @@ fn accessibility_harness_publishes_only_matching_frame_generations(cx: &mut Test
         cx.accessibility_tree_update_history(window).len(),
         initial_history_len + 1
     );
+}
+
+#[open_gpui::test]
+fn accessibility_action_window_removal_commits_after_listener_and_pointer_cancellation(
+    cx: &mut TestAppContext,
+) {
+    let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let close_count = Rc::new(Cell::new(0));
+    let _close_subscription = cx.update(|cx| {
+        let lifecycle = lifecycle.clone();
+        let close_count = close_count.clone();
+        cx.on_window_closed(move |_, _| {
+            close_count.set(close_count.get() + 1);
+            lifecycle.borrow_mut().push("closed");
+        })
+    });
+    let typed_window = cx.open_window(size(px(320.0), px(200.0)), {
+        let lifecycle = lifecycle.clone();
+        move |window, _| AccessibilityWindowRemovalProbeView {
+            pointer_capture: window.new_pointer_capture_handle(),
+            lifecycle,
+        }
+    });
+    let window: crate::AnyWindowHandle = typed_window.into();
+
+    window
+        .update(cx, |_, window, _| window.activate_window())
+        .unwrap();
+    cx.run_until_parked();
+    assert!(cx.activate_accessibility(window));
+    let update = cx.latest_accessibility_tree_update(window).unwrap();
+    let (node_id, node) = node_with_label(&update, "Accessibility window removal probe");
+    assert!(node.supports_action(AccessibleAction::Click));
+
+    let _pointer_subscription = window
+        .update(cx, {
+            let lifecycle = lifecycle.clone();
+            move |_, window, _| {
+                window.intercept_mouse_events(move |event, window, cx| {
+                    if let WindowMouseEvent::Cancel(event) = event {
+                        assert_eq!(event.reason, PointerCancelReason::WindowClosed);
+                        assert!(!window.removed, "cancellation must precede window removal");
+                        lifecycle.borrow_mut().push("cancel");
+                        window.remove_window(cx);
+                        window.remove_window(cx);
+                        lifecycle.borrow_mut().push("cancel-returned");
+                    }
+                })
+            }
+        })
+        .unwrap();
+    cx.simulate_event(
+        window,
+        MouseDownEvent {
+            button: MouseButton::Left,
+            position: point(px(10.0), px(10.0)),
+            modifiers: Modifiers::none(),
+            click_count: 1,
+            first_mouse: false,
+        },
+    );
+    window
+        .update(cx, |_, window, cx| {
+            assert!(window.has_active_pointer_session(cx));
+        })
+        .unwrap();
+
+    assert!(cx.dispatch_accessibility_action(
+        window,
+        ActionRequest {
+            action: AccessibleAction::Click,
+            target_tree: TreeId::ROOT,
+            target_node: node_id,
+            data: None,
+        },
+    ));
+
+    assert_eq!(
+        lifecycle.borrow().as_slice(),
+        &[
+            "action",
+            "action-returned",
+            "cancel",
+            "cancel-returned",
+            "closed"
+        ]
+    );
+    assert_eq!(close_count.get(), 1);
+    assert!(cx.windows().is_empty());
 }
 
 #[open_gpui::test]

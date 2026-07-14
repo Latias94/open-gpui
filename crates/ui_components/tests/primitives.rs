@@ -675,18 +675,15 @@ fn checkbox_checked_state_builder_accepts_mixed() {
 }
 
 #[test]
-fn label_state_records_control_association_and_required_marker() {
+fn label_state_derives_visible_text_and_required_marker() {
     let tokens = custom_tokens();
     let state = Label::new("email-label", "Email")
-        .for_control("email-input")
         .required(true)
         .tokens(tokens)
         .state();
 
     assert_eq!(state.role(), Role::Label);
     assert_eq!(state.text(), "Email");
-    assert_eq!(state.control_id(), Some("email-input"));
-    assert!(state.associated());
     assert!(state.required());
     assert_eq!(state.colors().text().token(), tokens.text);
     assert_eq!(state.colors().required_marker().token(), tokens.destructive);

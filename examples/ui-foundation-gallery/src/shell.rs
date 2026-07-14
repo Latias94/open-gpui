@@ -14,12 +14,11 @@ use open_gpui_ui_components::{
     AlertDialog, Avatar, AvatarGroup, AvatarState, BadgeState, Button, ButtonState, ButtonVariant,
     Checkbox, CheckboxState, ColorIntent, Combobox, ComboboxGroup, ComboboxOpenMode,
     ComboboxOption, ComboboxState, Command, CommandGroup, CommandItem, CommandOpenMode,
-    CommandSelectionMode, CommandState, ContextMenu, Dialog, Field, FieldState, FocusRing,
-    HoverCard, IconButtonState, Kbd, KbdState, Label, LabelState, Listbox, ListboxGroup,
-    ListboxState, Menu, MenuItem, OverlayResolvedState, Popover, Progress, ProgressState,
-    ScrollArea, Select, SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, Skeleton,
-    SkeletonState, SwitchState, TextInput, TextInputState, Textarea, TextareaState, ThemeResolver,
-    ToggleState, Tooltip,
+    CommandSelectionMode, CommandState, ContextMenu, Dialog, FieldState, FocusRing, HoverCard,
+    IconButtonState, Kbd, KbdState, Label, LabelState, Listbox, ListboxGroup, ListboxState, Menu,
+    MenuItem, OverlayResolvedState, Popover, Progress, ProgressState, ScrollArea, Select,
+    SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, Skeleton, SkeletonState,
+    SwitchState, TextInputState, TextareaState, ThemeResolver, ToggleState, Tooltip,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt,
         focus_ring_shadow_with_theme, gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui,
@@ -39,6 +38,7 @@ use crate::pages::{
 };
 
 mod components;
+mod focus_a11y;
 mod overlay;
 mod support;
 
@@ -131,7 +131,7 @@ pub struct GalleryShell {
     page_scroll_handle: ScrollHandle,
     components_list_state: ListState,
     editable_text_input: open_gpui::Entity<TextInputController>,
-    focus_controls: [FocusHandle; 3],
+    focus_controls: [FocusHandle; pages::focus_a11y::FOCUS_CONTROLS.len()],
     tooltip_focus_controls: [FocusHandle; 4],
     focus_a11y: FocusA11yPageState,
     overlay: OverlayPageState,
@@ -172,11 +172,8 @@ impl GalleryShell {
                 controller
             }),
 
-            focus_controls: [
-                cx.focus_handle().tab_index(1).tab_stop(true),
-                cx.focus_handle().tab_index(2).tab_stop(true),
-                cx.focus_handle().tab_index(3).tab_stop(true),
-            ],
+            focus_controls: pages::focus_a11y::FOCUS_CONTROLS
+                .map(|spec| cx.focus_handle().tab_index(spec.tab_index).tab_stop(true)),
 
             tooltip_focus_controls: [
                 cx.focus_handle().tab_index(10).tab_stop(true),
@@ -1021,13 +1018,15 @@ impl GalleryShell {
             .flex_col()
             .gap_4()
             .child(
-                div()
-                    .flex()
-                    .gap_3()
-                    .flex_wrap()
-                    .child(self.render_focus_control(0, pages::focus_a11y::FOCUS_CONTROLS[0], cx))
-                    .child(self.render_focus_control(1, pages::focus_a11y::FOCUS_CONTROLS[1], cx))
-                    .child(self.render_focus_control(2, pages::focus_a11y::FOCUS_CONTROLS[2], cx)),
+                div().flex().gap_3().flex_wrap().children(
+                    pages::focus_a11y::FOCUS_CONTROLS
+                        .into_iter()
+                        .zip(self.focus_controls.iter())
+                        .map(|(spec, handle)| {
+                            self.render_focus_control(handle, spec, cx)
+                                .into_any_element()
+                        }),
+                ),
             )
             .child(
                 div()
@@ -1147,6 +1146,11 @@ impl GalleryShell {
                             .child(toggled_label(a11y.toggled)),
                     ),
             )
+            .child(focus_a11y::render_focus_a11y_text_form_scenarios(
+                self,
+                snapshot.tokens,
+                cx,
+            ))
             .child(
                 div()
                     .rounded_sm()
@@ -1165,14 +1169,12 @@ impl GalleryShell {
     fn render_focus_control(
         &self,
 
-        index: usize,
+        handle: &FocusHandle,
 
         spec: pages::focus_a11y::FocusControlSpec,
 
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let handle = &self.focus_controls[index];
-
         let focus_ring = FocusRing::from_color(ColorIntent::new(
             ThemeTokens::default().focus_ring,
             0x2f80ed,

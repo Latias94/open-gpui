@@ -5,6 +5,8 @@
 pub enum Role {
     /// A title or descriptive text node.
     Label,
+    /// A selectable run of text within a text control.
+    TextRun,
     /// An image or image-like identity primitive.
     Image,
     /// A push button.
@@ -49,6 +51,10 @@ pub enum Role {
     MenuItem,
     /// A text input field.
     TextInput,
+    /// A multiline text input field.
+    MultilineTextInput,
+    /// A password input whose value is masked for assistive technology.
+    PasswordInput,
     /// An editable combobox input.
     EditableComboBox,
     /// A dialog surface.
@@ -171,6 +177,60 @@ impl AccessibleAction {
     }
 }
 
+/// A renderer-neutral position within a semantic text run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AccessibleTextPosition<NodeId> {
+    node: NodeId,
+    character_index: usize,
+}
+
+impl<NodeId> AccessibleTextPosition<NodeId> {
+    /// Creates a position at a selectable-character boundary in a text run.
+    pub const fn new(node: NodeId, character_index: usize) -> Self {
+        Self {
+            node,
+            character_index,
+        }
+    }
+
+    /// Returns the semantic text-run identity.
+    pub const fn node(&self) -> &NodeId {
+        &self.node
+    }
+
+    /// Returns the selectable-character index within the text run.
+    pub const fn character_index(&self) -> usize {
+        self.character_index
+    }
+}
+
+/// A renderer-neutral directional selection within semantic text runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AccessibleTextSelection<NodeId> {
+    anchor: AccessibleTextPosition<NodeId>,
+    focus: AccessibleTextPosition<NodeId>,
+}
+
+impl<NodeId> AccessibleTextSelection<NodeId> {
+    /// Creates a selection from its stable anchor and active focus positions.
+    pub const fn new(
+        anchor: AccessibleTextPosition<NodeId>,
+        focus: AccessibleTextPosition<NodeId>,
+    ) -> Self {
+        Self { anchor, focus }
+    }
+
+    /// Returns the stable position where selection began.
+    pub const fn anchor(&self) -> &AccessibleTextPosition<NodeId> {
+        &self.anchor
+    }
+
+    /// Returns the active end of the selection or caret position.
+    pub const fn focus(&self) -> &AccessibleTextPosition<NodeId> {
+        &self.focus
+    }
+}
+
 /// Ephemeral accessibility semantics derived from a component's resolved state.
 ///
 /// Components construct this value while rendering. It is a projection, not stored component
@@ -181,9 +241,13 @@ pub struct SemanticDescriptor<'a, NodeId = std::convert::Infallible> {
     label: Option<&'a str>,
     description: Option<&'a str>,
     value: Option<&'a str>,
+    placeholder: Option<&'a str>,
+    character_lengths: &'a [u8],
+    text_selection: Option<&'a AccessibleTextSelection<NodeId>>,
     controls: &'a [NodeId],
     labelled_by: &'a [NodeId],
     described_by: &'a [NodeId],
+    error_message: Option<&'a NodeId>,
     selected: Option<bool>,
     required: Option<bool>,
     invalid: Option<bool>,
@@ -219,9 +283,13 @@ impl<'a, NodeId> SemanticDescriptor<'a, NodeId> {
             label: None,
             description: None,
             value: None,
+            placeholder: None,
+            character_lengths: &[],
+            text_selection: None,
             controls: &[],
             labelled_by: &[],
             described_by: &[],
+            error_message: None,
             selected: None,
             required: None,
             invalid: None,
@@ -270,6 +338,21 @@ impl<'a, NodeId> SemanticDescriptor<'a, NodeId> {
         self.value
     }
 
+    /// Returns placeholder guidance for an editable value.
+    pub const fn placeholder(&self) -> Option<&'a str> {
+        self.placeholder
+    }
+
+    /// Returns the UTF-8 byte length of each selectable character in this text run.
+    pub const fn character_lengths(&self) -> &'a [u8] {
+        self.character_lengths
+    }
+
+    /// Returns the directional selection projected by a containing text control.
+    pub const fn text_selection(&self) -> Option<&'a AccessibleTextSelection<NodeId>> {
+        self.text_selection
+    }
+
     /// Returns controlled semantic node identities.
     pub const fn controls(&self) -> &[NodeId] {
         self.controls
@@ -283,6 +366,11 @@ impl<'a, NodeId> SemanticDescriptor<'a, NodeId> {
     /// Returns describing semantic node identities.
     pub const fn described_by(&self) -> &[NodeId] {
         self.described_by
+    }
+
+    /// Returns the semantic node that contains this node's validation error.
+    pub const fn error_message(&self) -> Option<&NodeId> {
+        self.error_message
     }
 
     /// Returns selected state when applicable.
@@ -436,6 +524,27 @@ impl<'a, NodeId> SemanticDescriptor<'a, NodeId> {
         self
     }
 
+    /// Applies placeholder guidance for an editable value.
+    pub const fn with_placeholder(mut self, placeholder: &'a str) -> Self {
+        self.placeholder = Some(placeholder);
+        self
+    }
+
+    /// Applies the UTF-8 byte length of each selectable character in this text run.
+    pub const fn with_character_lengths(mut self, character_lengths: &'a [u8]) -> Self {
+        self.character_lengths = character_lengths;
+        self
+    }
+
+    /// Applies a directional text selection that references semantic text runs.
+    pub const fn with_text_selection(
+        mut self,
+        text_selection: &'a AccessibleTextSelection<NodeId>,
+    ) -> Self {
+        self.text_selection = Some(text_selection);
+        self
+    }
+
     /// Applies controlled node relations.
     pub const fn with_controls(mut self, controls: &'a [NodeId]) -> Self {
         self.controls = controls;
@@ -451,6 +560,12 @@ impl<'a, NodeId> SemanticDescriptor<'a, NodeId> {
     /// Applies describing node relations.
     pub const fn with_described_by(mut self, described_by: &'a [NodeId]) -> Self {
         self.described_by = described_by;
+        self
+    }
+
+    /// Applies a validation error-message relation.
+    pub const fn with_error_message(mut self, error_message: &'a NodeId) -> Self {
+        self.error_message = Some(error_message);
         self
     }
 
@@ -622,6 +737,37 @@ mod tests {
     }
 
     #[test]
+    fn text_roles_distinguish_plain_multiline_and_password_inputs() {
+        let roles = BTreeSet::from([
+            Role::TextRun,
+            Role::TextInput,
+            Role::MultilineTextInput,
+            Role::PasswordInput,
+        ]);
+
+        assert_eq!(roles.len(), 4);
+    }
+
+    #[test]
+    fn text_run_descriptor_preserves_character_map_and_directional_selection() {
+        let lengths = [1, 4, 3];
+        let selection = AccessibleTextSelection::new(
+            AccessibleTextPosition::new(9_u16, 2),
+            AccessibleTextPosition::new(9_u16, 1),
+        );
+        let descriptor = SemanticDescriptor::new(Role::TextRun)
+            .with_value("a🙂中")
+            .with_character_lengths(&lengths)
+            .with_text_selection(&selection);
+
+        assert_eq!(descriptor.character_lengths(), &lengths);
+        assert_eq!(descriptor.text_selection(), Some(&selection));
+        assert_eq!(selection.anchor().node(), &9);
+        assert_eq!(selection.anchor().character_index(), 2);
+        assert_eq!(selection.focus().character_index(), 1);
+    }
+
+    #[test]
     fn docking_actions_are_renderer_neutral_vocabulary() {
         let actions = BTreeSet::from([
             AccessibleAction::Click,
@@ -642,10 +788,12 @@ mod tests {
         let label = String::from("Save");
         let description = String::from("Writes the document");
         let controls = [7_u16];
+        let error_message = 11_u16;
         let descriptor = SemanticDescriptor::<u16>::new(Role::Button)
             .with_label(&label)
             .with_description(&description)
             .with_controls(&controls)
+            .with_error_message(&error_message)
             .with_row_span(2)
             .with_column_span(3)
             .with_sort_direction(SortDirection::Ascending);
@@ -653,6 +801,7 @@ mod tests {
         assert_eq!(descriptor.label(), Some("Save"));
         assert_eq!(descriptor.description(), Some("Writes the document"));
         assert_eq!(descriptor.controls(), &[7]);
+        assert_eq!(descriptor.error_message(), Some(&11));
         assert_eq!(descriptor.row_span(), Some(2));
         assert_eq!(descriptor.column_span(), Some(3));
         assert_eq!(descriptor.sort_direction(), Some(SortDirection::Ascending));

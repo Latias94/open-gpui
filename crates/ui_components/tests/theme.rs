@@ -717,16 +717,10 @@ fn default_theme_resolves_all_current_component_color_intents() {
         TextInput::new("invalid", "Invalid").invalid(true).state(),
     ];
     let fields = [
-        Field::new("field", "control", "Field").state(),
-        Field::new("required", "control", "Required")
-            .required(true)
-            .state(),
-        Field::new("disabled", "control", "Disabled")
-            .disabled(true)
-            .state(),
-        Field::new("invalid", "control", "Invalid")
-            .invalid(true)
-            .state(),
+        Field::new("field", "Field").state(),
+        Field::new("required", "Required").required(true).state(),
+        Field::new("disabled", "Disabled").disabled(true).state(),
+        Field::new("invalid", "Invalid").invalid(true).state(),
     ];
     let labels = [
         Label::new("label", "Label").state(),
@@ -1201,9 +1195,7 @@ fn theme_snapshots_resolve_state_specific_component_tokens() {
         .disabled(true)
         .state();
     let invalid_input = TextInput::new("email", "Email").invalid(true).state();
-    let required_field = Field::new("email-field", "email", "Email")
-        .required(true)
-        .state();
+    let required_field = Field::new("email-field", "Email").required(true).state();
     let theme = ThemeSnapshot::light();
 
     assert_eq!(

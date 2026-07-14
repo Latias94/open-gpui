@@ -1,0 +1,90 @@
+{
+  "node_count": 7,
+  "nodes": [
+    {
+      "semantic_id": "semantic-node-000000000000000b",
+      "contract_id": "Field",
+      "family": "form",
+      "role": "label",
+      "text": {
+        "label": { "kind": "redacted" },
+        "description": { "kind": "absent" },
+        "value": { "kind": "absent" },
+        "placeholder": { "kind": "absent" }
+      }
+    },
+    {
+      "semantic_id": "semantic-node-000000000000000c",
+      "contract_id": "Field",
+      "family": "form",
+      "role": "label",
+      "text": {
+        "label": { "kind": "redacted" },
+        "description": { "kind": "absent" },
+        "value": { "kind": "absent" },
+        "placeholder": { "kind": "absent" }
+      }
+    },
+    {
+      "semantic_id": "semantic-node-0000000000000014",
+      "contract_id": "TextInput",
+      "family": "form",
+      "role": "password-input",
+      "text": {
+        "label": { "kind": "absent" },
+        "description": { "kind": "redacted" },
+        "value": { "kind": "password-redacted" },
+        "placeholder": { "kind": "redacted" }
+      }
+    },
+    {
+      "semantic_id": "semantic-node-0000000000000015",
+      "contract_id": "TextInput",
+      "family": "form",
+      "role": "text-input",
+      "text": {
+        "label": { "kind": "absent" },
+        "description": { "kind": "absent" },
+        "value": { "kind": "redacted" },
+        "placeholder": { "kind": "absent" }
+      }
+    },
+    {
+      "semantic_id": "semantic-node-000000000000001e",
+      "contract_id": "Textarea",
+      "family": "form",
+      "role": "multiline-text-input",
+      "text": {
+        "label": { "kind": "absent" },
+        "description": { "kind": "absent" },
+        "value": { "kind": "redacted" },
+        "placeholder": { "kind": "absent" }
+      }
+    },
+    {
+      "semantic_id": "semantic-node-0000000000000028",
+      "contract_id": "Slider",
+      "family": "form",
+      "role": "slider",
+      "text": {
+        "label": { "kind": "absent" },
+        "description": { "kind": "absent" },
+        "value": { "kind": "absent" },
+        "placeholder": { "kind": "absent" }
+      }
+    },
+    {
+      "semantic_id": "semantic-node-0000000000000032",
+      "contract_id": "TextInput",
+      "family": "form",
+      "role": "text-run",
+      "text": {
+        "label": { "kind": "absent" },
+        "description": { "kind": "absent" },
+        "value": { "kind": "redacted" },
+        "placeholder": { "kind": "absent" }
+      }
+    }
+  ],
+  "redacted_values": 11
+}

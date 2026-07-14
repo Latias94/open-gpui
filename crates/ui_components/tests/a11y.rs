@@ -1,3 +1,6 @@
+#[path = "support/a11y.rs"]
+mod a11y_support;
+
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
     Context, ElementId, InteractiveElement, IntoElement, ParentElement, Render,
@@ -14,17 +17,7 @@ use open_gpui_ui_components::{
 use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Toggled, ui_px};
 use std::{cell::RefCell, rc::Rc};
 
-fn a11y_node_with_label<'a>(
-    update: &'a accesskit::TreeUpdate,
-    label: &str,
-) -> (accesskit::NodeId, &'a accesskit::Node) {
-    update
-        .nodes
-        .iter()
-        .find(|(_, node)| node.label() == Some(label))
-        .map(|(id, node)| (*id, node))
-        .unwrap_or_else(|| panic!("missing accessibility node labelled {label:?}"))
-}
+use a11y_support::node_with_label as a11y_node_with_label;
 
 #[open_gpui::test]
 fn button_final_tree_and_actions_follow_resolved_projection(cx: &mut open_gpui::TestAppContext) {
@@ -259,6 +252,10 @@ fn migrated_components_have_no_static_a11y_evidence() {
         "Slider",
         "NumberInput",
         "Progress",
+        "TextInput",
+        "Textarea",
+        "Field",
+        "Label",
     ] {
         assert!(
             component_a11y_evidence(component).is_none(),

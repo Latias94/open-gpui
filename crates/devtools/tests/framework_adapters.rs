@@ -47,23 +47,6 @@ fn framework_adapters_convert_theme_snapshots() {
 }
 
 #[cfg(feature = "ui-components")]
-#[test]
-fn framework_adapters_convert_accessibility_evidence() {
-    use open_gpui_ui_components::COMPONENT_A11Y_EVIDENCE;
-
-    let snapshot = ui_components::a11y_evidence_probe_snapshot(COMPONENT_A11Y_EVIDENCE);
-    let serialized = serde_json::to_string(&snapshot.tree()).unwrap();
-
-    assert!(serialized.contains("Accessibility contracts"));
-    assert!(serialized.contains("Listbox option"));
-    assert!(serialized.contains("\"role\":\"list-box-option\""));
-    assert!(serialized.contains("\"actions\":[\"click\"]"));
-    assert!(serialized.contains("\"valid\":true"));
-    assert!(!serialized.contains("IconButton"));
-    assert!(!serialized.contains("\"Click\""));
-}
-
-#[cfg(feature = "ui-components")]
 #[open_gpui::test]
 fn framework_adapters_project_window_overlay_runtime_without_raw_layer_ids(
     cx: &mut open_gpui::TestAppContext,

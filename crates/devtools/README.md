@@ -8,7 +8,7 @@ GPUI UI surfaces later:
 
 - `form` for `open-gpui-form` snapshots.
 - `resource` for `open-gpui-resource` snapshots.
-- `ui-components` for theme, accessibility contract, and window overlay runtime snapshots.
+- `ui-components` for theme, resolved accessibility semantics, and window overlay runtime snapshots.
 - `motion` for `open-gpui-motion` frame-demand snapshots.
 - `docking` for `open-gpui-docking` runtime diagnostics.
 - `command` for `open-gpui-command` registry, keybinding, and keymap-resolution snapshots.
@@ -73,6 +73,10 @@ mutation and live property editing are intentionally out of scope for the initia
   identity, lifecycle generations, and intent revisions are omitted. This inspection path covers
   the complete official overlay fleet: Dialog, Sheet, AlertDialog, Popover, Menu, ContextMenu,
   Select, Combobox, Command overlay mode, HoverCard, and Tooltip.
+- `ui_components::resolved_semantics_probe_snapshot` consumes the same ephemeral
+  `SemanticDescriptor` used by the renderer. It preserves contract id/family, role, state, actions,
+  structural counts, and opaque node ids while converting all accessible text and numeric values
+  to typed redaction markers before snapshot construction.
 - `DevtoolsInspectorState` provides filter, selection, category summaries, row projection,
   session-frame loading, diff rows, target/domain/event navigation, diagnostics, selected-detail
   JSON, and legacy snapshot export without requiring a GPUI window.
@@ -335,6 +339,8 @@ Checked-in fixtures live under `crates/devtools/tests/fixtures/`:
   timeline, motion, GPUI runtime, accessibility/theme, and redaction facts.
 - `docking-session.json` and `docking-report.json` cover docking-native runtime targets, viewport
   facts, platform capability findings, and route readiness diagnostics.
+- `resolved-semantic-redaction.json` locks the allowlisted TextInput, Textarea, and Field semantic
+  shape without retaining any accessible free text.
 
 Fixture artifacts are sanitized, versioned, and intended for contract tests and examples only. They
 are not persistent trace storage.

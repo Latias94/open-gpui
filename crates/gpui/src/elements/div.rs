@@ -1237,6 +1237,24 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set placeholder guidance for this editable element.
+    fn aria_placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
+        self.interactivity().accessibility.placeholder = Some(placeholder.into());
+        self
+    }
+
+    /// Set the UTF-8 byte length of each selectable character in this text run.
+    fn aria_character_lengths(mut self, lengths: impl IntoIterator<Item = u8>) -> Self {
+        self.interactivity().accessibility.character_lengths = Some(lengths.into_iter().collect());
+        self
+    }
+
+    /// Set the directional text selection for this text control.
+    fn aria_text_selection(mut self, selection: accesskit::TextSelection) -> Self {
+        self.interactivity().accessibility.text_selection = Some(selection);
+        self
+    }
+
     /// Set the nodes this element controls.
     fn aria_controls(mut self, controls: impl IntoIterator<Item = accesskit::NodeId>) -> Self {
         self.interactivity().accessibility.controls = Some(controls.into_iter().collect());
@@ -1258,6 +1276,12 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         described_by: impl IntoIterator<Item = accesskit::NodeId>,
     ) -> Self {
         self.interactivity().accessibility.described_by = Some(described_by.into_iter().collect());
+        self
+    }
+
+    /// Set the node that contains this element's validation error message.
+    fn aria_error_message(mut self, error_message: accesskit::NodeId) -> Self {
+        self.interactivity().accessibility.error_message = Some(error_message);
         self
     }
 

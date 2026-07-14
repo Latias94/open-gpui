@@ -105,10 +105,10 @@ impl TextSelection {
         }
     }
 
-    /// Clamps this selection to character boundaries for the provided text.
+    /// Clamps this selection to user-visible grapheme boundaries for the provided text.
     pub(crate) fn clamp_to_text(&self, text: &str) -> Self {
-        let start = clamp_to_char_boundary(text, self.range.start);
-        let end = clamp_to_char_boundary(text, self.range.end);
+        let start = clamp_to_grapheme_boundary(text, self.range.start);
+        let end = clamp_to_grapheme_boundary(text, self.range.end);
         Self {
             range: start.min(end)..start.max(end),
             reversed: self.reversed,
@@ -174,8 +174,8 @@ impl EditableTextDocument {
         let selection = selection.clamp_to_text(text.as_str());
         let marked_range = marked_range
             .map(|range| {
-                let start = clamp_to_char_boundary(text.as_str(), range.start);
-                let end = clamp_to_char_boundary(text.as_str(), range.end);
+                let start = clamp_to_grapheme_boundary(text.as_str(), range.start);
+                let end = clamp_to_grapheme_boundary(text.as_str(), range.end);
                 start.min(end)..start.max(end)
             })
             .filter(|range| !range.is_empty());
@@ -200,7 +200,7 @@ impl EditableTextDocument {
 
     /// Moves the caret to a byte offset.
     pub(crate) fn move_to(mut self, offset: usize) -> TextEditingProjection {
-        let offset = clamp_to_char_boundary(self.text.as_str(), offset);
+        let offset = clamp_to_grapheme_boundary(self.text.as_str(), offset);
         self.selection = TextSelection::caret(offset);
         self.marked_range = None;
         self.into_projection()
@@ -208,7 +208,7 @@ impl EditableTextDocument {
 
     /// Extends selection to a byte offset.
     pub(crate) fn select_to(mut self, offset: usize) -> TextEditingProjection {
-        let offset = clamp_to_char_boundary(self.text.as_str(), offset);
+        let offset = clamp_to_grapheme_boundary(self.text.as_str(), offset);
         let anchor = if self.selection.reversed {
             self.selection.range.end
         } else {
@@ -216,6 +216,18 @@ impl EditableTextDocument {
         };
         self.selection = TextSelection::from_offsets(anchor, offset);
         self.marked_range = None;
+        self.into_projection()
+    }
+
+    /// Replaces the directional selection while preserving an active IME marked range.
+    pub(crate) fn set_accessible_selection(
+        mut self,
+        anchor: usize,
+        focus: usize,
+    ) -> TextEditingProjection {
+        let anchor = clamp_to_grapheme_boundary(self.text.as_str(), anchor);
+        let focus = clamp_to_grapheme_boundary(self.text.as_str(), focus);
+        self.selection = TextSelection::from_offsets(anchor, focus);
         self.into_projection()
     }
 
@@ -264,7 +276,8 @@ impl EditableTextDocument {
                     range.start + offset_from_utf16(&new_text, selected.end),
                 )
             })
-            .unwrap_or_else(|| TextSelection::caret(new_end));
+            .unwrap_or_else(|| TextSelection::caret(new_end))
+            .clamp_to_text(self.text.as_str());
         self.into_projection()
     }
 
@@ -345,12 +358,17 @@ impl<'a> TextDisplayProjection<'a> {
         self.display_text.clone()
     }
 
+    /// Consumes this projection and returns its display text without cloning an owned mask.
+    pub(crate) fn into_display_text(self) -> Cow<'a, str> {
+        self.display_text
+    }
+
     /// Maps a stored byte offset to a display byte offset.
     pub(crate) fn stored_to_display_offset(&self, offset: usize) -> usize {
         match self.display_policy {
             TextDisplayPolicy::Plain => {
                 debug_assert_eq!(self.stored_text, self.display_text.as_ref());
-                clamp_to_char_boundary(self.display_text.as_ref(), offset)
+                clamp_to_grapheme_boundary(self.display_text.as_ref(), offset)
             }
             TextDisplayPolicy::Masked => {
                 let offset = clamp_to_grapheme_boundary(self.stored_text, offset);
@@ -365,7 +383,7 @@ impl<'a> TextDisplayProjection<'a> {
         match self.display_policy {
             TextDisplayPolicy::Plain => {
                 debug_assert_eq!(self.stored_text, self.display_text.as_ref());
-                clamp_to_char_boundary(self.stored_text, offset)
+                clamp_to_grapheme_boundary(self.stored_text, offset)
             }
             TextDisplayPolicy::Masked => {
                 if offset >= self.display_text.len() {
@@ -392,6 +410,20 @@ pub(crate) fn sanitize_single_line(text: &str) -> String {
 /// Normalizes text for multiline inputs.
 pub(crate) fn normalize_multiline(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+/// Returns LF-delimited line ranges, retaining each delimiter in the preceding line.
+pub(crate) fn multiline_line_ranges(text: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    for (offset, byte) in text.bytes().enumerate() {
+        if byte == b'\n' {
+            ranges.push(start..offset + 1);
+            start = offset + 1;
+        }
+    }
+    ranges.push(start..text.len());
+    ranges
 }
 
 /// Clamps a byte offset to the nearest preceding UTF-8 character boundary.
@@ -442,6 +474,19 @@ pub(crate) fn offset_to_utf16(text: &str, offset: usize) -> usize {
     utf16_offset
 }
 
+/// Returns each selectable character's UTF-8 byte length for AccessKit text runs.
+pub(crate) fn accessible_character_lengths(text: &str) -> Option<Vec<u8>> {
+    text.graphemes(true)
+        .map(|grapheme| u8::try_from(grapheme.len()).ok())
+        .collect()
+}
+
+/// Returns whether every grapheme can be represented by AccessKit's byte-length metadata.
+pub(crate) fn supports_accessible_character_lengths(text: &str) -> bool {
+    text.graphemes(true)
+        .all(|grapheme| u8::try_from(grapheme.len()).is_ok())
+}
+
 /// Converts and normalizes a UTF-16 range into a UTF-8 byte range.
 pub(crate) fn range_from_utf16(text: &str, range_utf16: &Range<usize>) -> Range<usize> {
     let start = offset_from_utf16(text, range_utf16.start);
@@ -469,7 +514,7 @@ pub(crate) fn next_grapheme_boundary(text: &str, offset: usize) -> usize {
         .unwrap_or(text.len())
 }
 
-fn clamp_to_grapheme_boundary(text: &str, offset: usize) -> usize {
+pub(crate) fn clamp_to_grapheme_boundary(text: &str, offset: usize) -> usize {
     if offset >= text.len() {
         return text.len();
     }
@@ -558,6 +603,33 @@ mod tests {
     }
 
     #[test]
+    fn document_repairs_stale_controlled_selection_before_grapheme_edits() {
+        let combining = "e\u{301}";
+        let document = EditableTextDocument::from_parts(
+            combining,
+            TextSelection::caret(1),
+            None,
+            TextEditingPolicy::single_line(),
+        );
+
+        assert_eq!(document.selection.range(), 0..0);
+        let deleted = document.delete_forward().expect("delete should edit");
+        assert_eq!(deleted.text(), "");
+        assert_eq!(deleted.selection().range(), 0..0);
+
+        let family = "👨‍👩‍👧‍👦";
+        let document = EditableTextDocument::from_parts(
+            family,
+            TextSelection::caret("👨".len()),
+            None,
+            TextEditingPolicy::multiline(),
+        );
+        assert_eq!(document.selection.range(), 0..0);
+        let deleted = document.delete_forward().expect("delete should edit");
+        assert_eq!(deleted.text(), "");
+    }
+
+    #[test]
     fn document_replaces_selection_consistently() {
         let document = EditableTextDocument::from_parts(
             "alpha gamma",
@@ -593,6 +665,77 @@ mod tests {
         assert_eq!(committed.text(), "你");
         assert_eq!(committed.marked_range(), None);
         assert_eq!(committed.selection().range(), "你".len().."你".len());
+    }
+
+    #[test]
+    fn document_composition_clamps_platform_selection_to_grapheme_boundaries() {
+        let combining = EditableTextDocument::new("", TextEditingPolicy::single_line())
+            .replace_and_mark_text_in_range(None, "e\u{301}", Some(1..1));
+        assert_eq!(combining.selection().range(), 0..0);
+
+        let family = "👨‍👩‍👧‍👦";
+        let zwj = EditableTextDocument::new("", TextEditingPolicy::single_line())
+            .replace_and_mark_text_in_range(None, family, Some(2..9));
+        assert_eq!(zwj.selection().range(), 0..0);
+        assert_eq!(zwj.marked_range(), Some(0..family.len()));
+    }
+
+    #[test]
+    fn accessible_selection_preserves_active_composition() {
+        let composing = EditableTextDocument::new("", TextEditingPolicy::single_line())
+            .replace_and_mark_text_in_range(None, "ni", Some(1..2));
+        let document = EditableTextDocument::from_parts(
+            composing.text(),
+            composing.selection().clone(),
+            composing.marked_range(),
+            TextEditingPolicy::single_line(),
+        );
+
+        let selected = document.set_accessible_selection(0, 1);
+
+        assert_eq!(selected.selection().range(), 0..1);
+        assert_eq!(selected.marked_range(), Some(0..2));
+    }
+
+    #[test]
+    fn multiline_line_ranges_retain_delimiters_and_trailing_empty_line() {
+        let text = "中\na\n";
+        let ranges = multiline_line_ranges(text);
+
+        assert_eq!(ranges, [0..4, 4..6, 6..6]);
+        assert_eq!(
+            ranges
+                .iter()
+                .map(|range| &text[range.clone()])
+                .collect::<Vec<_>>(),
+            ["中\n", "a\n", ""]
+        );
+    }
+
+    #[test]
+    fn accessible_character_lengths_follow_grapheme_boundaries() {
+        const FAMILY: &str = "👨‍👩‍👧‍👦";
+        const COMBINING: &str = "e\u{301}";
+        let text = format!("a{FAMILY}{COMBINING}\r\n中");
+
+        assert_eq!(
+            accessible_character_lengths(&text),
+            Some(vec![
+                1,
+                FAMILY.len() as u8,
+                COMBINING.len() as u8,
+                2,
+                "中".len() as u8,
+            ])
+        );
+    }
+
+    #[test]
+    fn oversized_grapheme_disables_fine_grained_accessibility() {
+        let text = format!("a{}", "\u{301}".repeat(128));
+        assert!(text.len() > u8::MAX as usize);
+
+        assert_eq!(accessible_character_lengths(&text), None);
     }
 
     #[test]

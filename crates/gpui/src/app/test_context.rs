@@ -12,7 +12,13 @@ use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
 
 use std::{
-    cell::RefCell, future::Future, ops::Deref, path::PathBuf, rc::Rc, sync::Arc, time::Duration,
+    cell::RefCell,
+    future::Future,
+    ops::{Deref, Range},
+    path::PathBuf,
+    rc::Rc,
+    sync::Arc,
+    time::Duration,
 };
 
 /// Stable test-facing summary for the most recent simulated platform input dispatch.
@@ -732,6 +738,33 @@ impl TestAppContext {
         self.background_executor.run_until_parked()
     }
 
+    /// Simulates an IME composition update through the focused platform input handler.
+    pub fn simulate_marked_text(
+        &mut self,
+        window: AnyWindowHandle,
+        replacement_range: Option<Range<usize>>,
+        text: &str,
+        selected_range: Option<Range<usize>>,
+    ) {
+        let mut input_handler = self
+            .update_window(window, |_, window, _| {
+                window.platform_window.take_input_handler()
+            })
+            .expect("test window should be available")
+            .expect("focused element should install a platform input handler");
+        input_handler.replace_and_mark_text_in_range(replacement_range, text, selected_range);
+        let _ = self.update_window(window, |_, window, _| {
+            if let Some(current_input_handler) = window.platform_window.take_input_handler() {
+                window
+                    .platform_window
+                    .set_input_handler(current_input_handler);
+            } else {
+                window.platform_window.set_input_handler(input_handler);
+            }
+        });
+        self.background_executor.run_until_parked();
+    }
+
     /// dispatches a single Keystroke (see also `simulate_keystrokes` and `simulate_input`)
     pub fn dispatch_keystroke(&mut self, window: AnyWindowHandle, keystroke: Keystroke) {
         self.update_window(window, |_, window, cx| {
@@ -1115,6 +1148,17 @@ impl VisualTestContext {
     /// Automatically runs until parked.
     pub fn simulate_input(&mut self, input: &str) {
         self.cx.simulate_input(self.window, input)
+    }
+
+    /// Simulates an IME composition update through the focused platform input handler.
+    pub fn simulate_marked_text(
+        &mut self,
+        replacement_range: Option<Range<usize>>,
+        text: &str,
+        selected_range: Option<Range<usize>>,
+    ) {
+        self.cx
+            .simulate_marked_text(self.window, replacement_range, text, selected_range)
     }
 
     /// Simulate a mouse move event to the given point

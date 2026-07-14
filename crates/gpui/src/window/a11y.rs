@@ -271,7 +271,6 @@ impl A11y {
     pub(crate) fn publish(&mut self, update: &TreeUpdate, activation_generation: u64) {
         let mut published = self.published.take().unwrap_or_default();
         published.action_masks.clear();
-        published.action_masks.reserve(update.nodes.len());
         for (id, node) in &update.nodes {
             let mask = node_action_mask(node);
             if mask != 0 {
@@ -904,6 +903,34 @@ impl A11yNodeBuilder {
     /// checks invariants that accesskit panics on, and tries to fix them.
     fn repair_tree_update(mut update: TreeUpdate) -> TreeUpdate {
         let node_ids: FxHashSet<NodeId> = update.nodes.iter().map(|(id, _)| *id).collect();
+        let mut text_runs = FxHashMap::default();
+        let mut has_text_selection = false;
+        for (id, node) in &mut update.nodes {
+            has_text_selection |= node.text_selection().is_some();
+            if node.role() != accesskit::Role::TextRun {
+                continue;
+            }
+            if valid_text_run(node) {
+                text_runs.insert(*id, node.character_lengths().len());
+            } else {
+                log::error!(
+                    "a11y: TextRun {:?} has invalid value/character lengths. Stripping text-run \
+                     indexing metadata.",
+                    id
+                );
+                node.clear_character_lengths();
+                node.clear_character_positions();
+                node.clear_character_widths();
+                node.clear_word_starts();
+            }
+        }
+        let parents = has_text_selection.then(|| {
+            update
+                .nodes
+                .iter()
+                .flat_map(|(parent, node)| node.children().iter().map(|child| (*child, *parent)))
+                .collect::<FxHashMap<NodeId, NodeId>>()
+        });
 
         // Focus must point to a node in the tree.
         if !node_ids.contains(&update.focus) {
@@ -954,10 +981,72 @@ impl A11yNodeBuilder {
             repair_node_id!(node, id, next_on_line, clear_next_on_line);
             repair_node_id!(node, id, previous_on_line, clear_previous_on_line);
             repair_node_id!(node, id, popup_for, clear_popup_for);
+
+            if let Some(selection) = node.text_selection().copied() {
+                let valid = parents.as_ref().is_some_and(|parents| {
+                    valid_text_position(selection.anchor, *id, &text_runs, parents)
+                        && valid_text_position(selection.focus, *id, &text_runs, parents)
+                });
+                if !valid {
+                    log::error!(
+                        "a11y: Node {:?} has a text selection outside a valid text run. \
+                         Stripping invalid selection.",
+                        id
+                    );
+                    node.clear_text_selection();
+                }
+            }
         }
 
         update
     }
+}
+
+fn valid_text_run(node: &accesskit::Node) -> bool {
+    let Some(value) = node.value() else {
+        return false;
+    };
+    let lengths = node.character_lengths();
+    let mut offset = 0usize;
+    for length in lengths {
+        let Some(next) = offset.checked_add(*length as usize) else {
+            return false;
+        };
+        if next <= offset || next > value.len() || !value.is_char_boundary(next) {
+            return false;
+        }
+        offset = next;
+    }
+    offset == value.len()
+}
+
+fn valid_text_position(
+    position: accesskit::TextPosition,
+    selection_owner: NodeId,
+    text_runs: &FxHashMap<NodeId, usize>,
+    parents: &FxHashMap<NodeId, NodeId>,
+) -> bool {
+    text_runs
+        .get(&position.node)
+        .is_some_and(|character_count| position.character_index <= *character_count)
+        && node_is_descendant_of(position.node, selection_owner, parents)
+}
+
+fn node_is_descendant_of(
+    mut node: NodeId,
+    ancestor: NodeId,
+    parents: &FxHashMap<NodeId, NodeId>,
+) -> bool {
+    for _ in 0..=parents.len() {
+        let Some(parent) = parents.get(&node).copied() else {
+            return false;
+        };
+        if parent == ancestor {
+            return true;
+        }
+        node = parent;
+    }
+    false
 }
 
 fn log_invalid_node_id_reference(node_id: &NodeId, property: &'static str, reference: NodeId) {
@@ -1006,6 +1095,18 @@ fn filter_node_id_slice(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn published_action_mask_mapping_covers_the_action_universe() {
+        for (bit_index, action) in ACCESSKIT_ACTIONS.iter().copied().enumerate() {
+            assert!(bit_index < u32::BITS as usize);
+            assert_eq!(
+                action_mask(action),
+                1_u32 << bit_index,
+                "{action:?} must have exactly one stable action-mask bit"
+            );
+        }
+    }
 
     #[test]
     fn published_action_authority_changes_only_after_matching_activation_delivery() {
@@ -1387,5 +1488,238 @@ mod tests {
         assert_eq!(repaired.focus, input_id);
         assert_eq!(input.error_message(), None);
         assert_eq!(input.popup_for(), None);
+    }
+
+    #[test]
+    fn repair_tree_update_clears_invalid_text_selections() {
+        let missing = NodeId(99);
+        let label_id = NodeId(1);
+        let text_run_id = NodeId(2);
+        let input_ids = [NodeId(3), NodeId(4), NodeId(5)];
+        let mut root = accesskit::Node::new(accesskit::Role::Window);
+        let label = accesskit::Node::new(accesskit::Role::Label);
+        let mut text_run = accesskit::Node::new(accesskit::Role::TextRun);
+        text_run.set_value("ok");
+        text_run.set_character_lengths([1, 1]);
+        let selections = [
+            accesskit::TextSelection {
+                anchor: accesskit::TextPosition {
+                    node: missing,
+                    character_index: 0,
+                },
+                focus: accesskit::TextPosition {
+                    node: text_run_id,
+                    character_index: 1,
+                },
+            },
+            accesskit::TextSelection {
+                anchor: accesskit::TextPosition {
+                    node: label_id,
+                    character_index: 0,
+                },
+                focus: accesskit::TextPosition {
+                    node: label_id,
+                    character_index: 0,
+                },
+            },
+            accesskit::TextSelection {
+                anchor: accesskit::TextPosition {
+                    node: text_run_id,
+                    character_index: 0,
+                },
+                focus: accesskit::TextPosition {
+                    node: text_run_id,
+                    character_index: 3,
+                },
+            },
+        ];
+        let mut inputs = input_ids.map(|id| (id, accesskit::Node::new(accesskit::Role::TextInput)));
+        for ((_, input), selection) in inputs.iter_mut().zip(selections) {
+            input.set_text_selection(selection);
+        }
+        root.set_children(
+            [label_id, text_run_id]
+                .into_iter()
+                .chain(input_ids)
+                .collect::<Vec<_>>(),
+        );
+
+        let update = accesskit::TreeUpdate {
+            nodes: vec![
+                (ROOT_NODE_ID, root),
+                (label_id, label),
+                (text_run_id, text_run),
+            ]
+            .into_iter()
+            .chain(inputs)
+            .collect(),
+            tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
+            tree_id: accesskit::TreeId::ROOT,
+            focus: input_ids[0],
+        };
+
+        let repaired = A11yNodeBuilder::repair_tree_update(update);
+        for input_id in input_ids {
+            let input = repaired
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == input_id)
+                .map(|(_, node)| node)
+                .unwrap();
+            assert_eq!(input.text_selection(), None);
+        }
+    }
+
+    #[test]
+    fn repair_tree_update_preserves_valid_text_selection() {
+        let input_id = NodeId(1);
+        let text_run_id = NodeId(2);
+        let mut root = accesskit::Node::new(accesskit::Role::Window);
+        let mut input = accesskit::Node::new(accesskit::Role::TextInput);
+        let mut text_run = accesskit::Node::new(accesskit::Role::TextRun);
+        let selection = accesskit::TextSelection {
+            anchor: accesskit::TextPosition {
+                node: text_run_id,
+                character_index: 0,
+            },
+            focus: accesskit::TextPosition {
+                node: text_run_id,
+                character_index: 2,
+            },
+        };
+        root.set_children([input_id]);
+        input.set_children([text_run_id]);
+        input.set_text_selection(selection);
+        text_run.set_value("ok");
+        text_run.set_character_lengths([1, 1]);
+
+        let repaired = A11yNodeBuilder::repair_tree_update(accesskit::TreeUpdate {
+            nodes: vec![
+                (ROOT_NODE_ID, root),
+                (input_id, input),
+                (text_run_id, text_run),
+            ],
+            tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
+            tree_id: accesskit::TreeId::ROOT,
+            focus: input_id,
+        });
+        let input = repaired
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == input_id)
+            .map(|(_, node)| node)
+            .unwrap();
+
+        assert_eq!(input.text_selection(), Some(&selection));
+    }
+
+    #[test]
+    fn repair_tree_update_rejects_a_foreign_text_run_selection() {
+        let first_input_id = NodeId(1);
+        let second_input_id = NodeId(2);
+        let second_text_run_id = NodeId(3);
+        let mut root = accesskit::Node::new(accesskit::Role::Window);
+        let mut first_input = accesskit::Node::new(accesskit::Role::TextInput);
+        let mut second_input = accesskit::Node::new(accesskit::Role::TextInput);
+        let mut second_text_run = accesskit::Node::new(accesskit::Role::TextRun);
+        root.set_children([first_input_id, second_input_id]);
+        second_input.set_children([second_text_run_id]);
+        second_text_run.set_value("ok");
+        second_text_run.set_character_lengths([1, 1]);
+        first_input.set_text_selection(accesskit::TextSelection {
+            anchor: accesskit::TextPosition {
+                node: second_text_run_id,
+                character_index: 0,
+            },
+            focus: accesskit::TextPosition {
+                node: second_text_run_id,
+                character_index: 2,
+            },
+        });
+
+        let repaired = A11yNodeBuilder::repair_tree_update(accesskit::TreeUpdate {
+            nodes: vec![
+                (ROOT_NODE_ID, root),
+                (first_input_id, first_input),
+                (second_input_id, second_input),
+                (second_text_run_id, second_text_run),
+            ],
+            tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
+            tree_id: accesskit::TreeId::ROOT,
+            focus: first_input_id,
+        });
+        let first_input = repaired
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == first_input_id)
+            .map(|(_, node)| node)
+            .unwrap();
+
+        assert_eq!(first_input.text_selection(), None);
+    }
+
+    #[test]
+    fn repair_tree_update_strips_malformed_text_run_indexing_and_selection() {
+        let cases = [
+            (None, vec![1]),
+            (Some("ok"), vec![1]),
+            (Some("é"), vec![1, 1]),
+        ];
+
+        for (case_index, (value, lengths)) in cases.into_iter().enumerate() {
+            let input_id = NodeId(10 + case_index as u64 * 2);
+            let text_run_id = NodeId(input_id.0 + 1);
+            let mut root = accesskit::Node::new(accesskit::Role::Window);
+            let mut input = accesskit::Node::new(accesskit::Role::TextInput);
+            let mut text_run = accesskit::Node::new(accesskit::Role::TextRun);
+            root.set_children([input_id]);
+            input.set_children([text_run_id]);
+            input.set_text_selection(accesskit::TextSelection {
+                anchor: accesskit::TextPosition {
+                    node: text_run_id,
+                    character_index: 0,
+                },
+                focus: accesskit::TextPosition {
+                    node: text_run_id,
+                    character_index: lengths.len(),
+                },
+            });
+            if let Some(value) = value {
+                text_run.set_value(value);
+            }
+            text_run.set_character_lengths(lengths);
+            text_run.set_character_positions([0.0]);
+            text_run.set_character_widths([1.0]);
+            text_run.set_word_starts([0]);
+
+            let repaired = A11yNodeBuilder::repair_tree_update(accesskit::TreeUpdate {
+                nodes: vec![
+                    (ROOT_NODE_ID, root),
+                    (input_id, input),
+                    (text_run_id, text_run),
+                ],
+                tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
+                tree_id: accesskit::TreeId::ROOT,
+                focus: input_id,
+            });
+            let input = repaired
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == input_id)
+                .map(|(_, node)| node)
+                .unwrap();
+            let text_run = repaired
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == text_run_id)
+                .map(|(_, node)| node)
+                .unwrap();
+
+            assert_eq!(input.text_selection(), None);
+            assert!(text_run.character_lengths().is_empty());
+            assert!(text_run.character_positions().is_none());
+            assert!(text_run.character_widths().is_none());
+            assert!(text_run.word_starts().is_empty());
+        }
     }
 }

@@ -92,6 +92,62 @@ new variant. This breaking addition preserves the real source of a `NumberInputC
 explicit accessibility value request to Increment or Decrement would lose behaviorally relevant
 information.
 
+TextInput and Textarea now publish their value, required, invalid, busy, read-only, disabled, and
+available text actions from an ephemeral descriptor. Textarea uses the multiline text-input role;
+password inputs use the password role and expose only a masked value in the final tree. AccessKit
+`SetValue` and `ReplaceSelectedText` enter the same controlled text-editing path as platform input.
+Plain TextInput publishes one stable `(control id, "text-run")` child. Textarea publishes one stable
+TextRun per logical line: its first run uses `(control id, "text-run")`, later runs use stable
+`text-run:{line index}` identities, a hard line break belongs to the preceding run, and a trailing
+line break creates an empty final run. Directional selection may span Textarea runs. AccessKit
+character indices follow Unicode grapheme boundaries, including combining sequences, emoji ZWJ
+sequences, and normalized LF line breaks. Read-only controls remain focusable and selectable but
+reject value mutation; disabled controls reject both selection and mutation. Password inputs
+intentionally publish neither a TextRun child nor text-selection actions, so masked content cannot
+be recovered through fine-grained accessibility metadata. If any single grapheme exceeds
+AccessKit's `u8` character-length limit, the control omits TextRun and selection metadata and
+retains only whole-value accessibility actions.
+
+`Label::for_control` and `LabelState` control-association metadata have been removed because they
+never created a real accessibility relation. Compose labels and support text through `Field`, whose
+typed control adapter resolves `labelled_by`, `described_by`, and validation error relations from
+the actual GPUI element path. Standalone `Label` remains a visible-text semantic primitive.
+`Field::new(id, control_id, label)` is replaced by `Field::new(id, label)`, and
+`FieldState::control_id()` is removed; the composed control continues to own its own element id.
+Custom field controls implement `open_gpui_ui_components::gpui_adapter::FieldControl` rather than
+depending on the renderer-neutral prelude.
+
+### DevTools Semantic Probes
+
+The old `a11y_evidence_probe_snapshot` and `a11y_contracts_probe_snapshot` entry points are deleted
+without compatibility aliases. They projected contract evidence and claim rows rather than the
+resolved semantics used by the renderer.
+
+Construct the replacement probe from canonical component metadata, an app-assigned opaque identity,
+and the ephemeral resolved descriptor:
+
+```rust
+use open_gpui_devtools::ui_components::{
+    ComponentSemanticIdentity, OpaqueSemanticNodeId, ResolvedSemanticNode,
+    resolved_semantics_probe_snapshot,
+};
+
+let component = ComponentSemanticIdentity::for_component("TextInput")
+    .expect("TextInput must have a canonical component contract row");
+let node = ResolvedSemanticNode::new(
+    component,
+    OpaqueSemanticNodeId::new(42),
+    semantic_descriptor,
+);
+let snapshot = resolved_semantics_probe_snapshot([node]);
+```
+
+`OpaqueSemanticNodeId` must not encode a renderer node id, accessible text, or application data.
+The new payload replaces `contract_count` and claim rows with a root `node_count` plus typed,
+redacted semantic nodes. Each node retains canonical contract/family metadata, role, state, actions,
+structural counts, and presence facts; accessible text and numeric values are represented only by
+typed redaction markers.
+
 ## GPUI Pointer Sessions
 
 Window removal now needs application context so GPUI can deliver terminal pointer cancellation and

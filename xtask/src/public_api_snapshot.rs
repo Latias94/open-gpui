@@ -129,6 +129,25 @@ fn scan_devtools_public_api(root: &Path, failures: &mut Vec<String>) {
         ));
     }
 
+    let ui_components_path = source_dir.join("ui_components.rs");
+    let ui_components_items = top_level_public_item_names(&ui_components_path, failures);
+    let expected_ui_components_items = devtools_ui_components_public_item_allowlist();
+    let extra_items = ui_components_items
+        .difference(&expected_ui_components_items)
+        .cloned()
+        .collect::<Vec<_>>();
+    let missing_items = expected_ui_components_items
+        .difference(&ui_components_items)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !extra_items.is_empty() || !missing_items.is_empty() {
+        failures.push(format!(
+            "crates/devtools/src/ui_components.rs: top-level public item allowlist drifted; extra [{}], missing [{}]",
+            extra_items.join(", "),
+            missing_items.join(", ")
+        ));
+    }
+
     reject_public_reexport_wildcards(
         &source_dir.join("lib.rs"),
         "devtools root public re-exports must stay explicit so artifact/report/session APIs are intentional",
@@ -409,6 +428,8 @@ fn scan_ui_components_public_api(root: &Path, failures: &mut Vec<String>) {
     let lib_source = read_to_string(&source_dir.join("lib.rs"), failures).unwrap_or_default();
     let gpui_adapter_source = public_module_source(&lib_source, "gpui_adapter").unwrap_or("");
     for required in [
+        "FieldControl",
+        "FieldControlSemantics",
         "TextInputController",
         "VirtualizedListGpuiExt",
         "UiA11yElementExt",
@@ -895,6 +916,187 @@ fn public_module_declarations(source: &str) -> BTreeSet<String> {
         .collect()
 }
 
+fn top_level_public_item_names(path: &Path, failures: &mut Vec<String>) -> BTreeSet<String> {
+    let Some(source) = read_to_string(path, failures) else {
+        return BTreeSet::new();
+    };
+    let syntax = match syn::parse_file(&source) {
+        Ok(syntax) => syntax,
+        Err(error) => {
+            failures.push(format!(
+                "{}: failed to parse Rust source while scanning top-level public items: {error}",
+                path.display()
+            ));
+            return BTreeSet::new();
+        }
+    };
+    let mut items = BTreeSet::new();
+
+    for item in &syntax.items {
+        collect_top_level_public_item(item, path, &mut items, failures);
+    }
+
+    items
+}
+
+fn collect_top_level_public_item(
+    item: &syn::Item,
+    path: &Path,
+    items: &mut BTreeSet<String>,
+    failures: &mut Vec<String>,
+) {
+    let public_ident = match item {
+        syn::Item::Const(item) => is_public(&item.vis).then_some(&item.ident),
+        syn::Item::Enum(item) => is_public(&item.vis).then_some(&item.ident),
+        syn::Item::ExternCrate(item) => is_public(&item.vis).then_some(
+            item.rename
+                .as_ref()
+                .map(|(_, rename)| rename)
+                .unwrap_or(&item.ident),
+        ),
+        syn::Item::Fn(item) => is_public(&item.vis).then_some(&item.sig.ident),
+        syn::Item::ForeignMod(item) => {
+            for foreign_item in &item.items {
+                collect_public_foreign_item(foreign_item, path, items, failures);
+            }
+            None
+        }
+        syn::Item::Impl(_) => None,
+        syn::Item::Mod(item) => is_public(&item.vis).then_some(&item.ident),
+        syn::Item::Static(item) => is_public(&item.vis).then_some(&item.ident),
+        syn::Item::Struct(item) => is_public(&item.vis).then_some(&item.ident),
+        syn::Item::Trait(item) => is_public(&item.vis).then_some(&item.ident),
+        syn::Item::TraitAlias(item) => is_public(&item.vis).then_some(&item.ident),
+        syn::Item::Type(item) => is_public(&item.vis).then_some(&item.ident),
+        syn::Item::Union(item) => is_public(&item.vis).then_some(&item.ident),
+        syn::Item::Use(item) => {
+            if is_public(&item.vis) {
+                collect_public_use_tree(&item.tree, None, path, items, failures);
+            }
+            None
+        }
+        syn::Item::Macro(item) => {
+            let macro_name = macro_path_name(&item.mac.path);
+            failures.push(format!(
+                "{}: top-level item macro `{macro_name}!` may generate public API that the scanner cannot determine",
+                path.display()
+            ));
+            None
+        }
+        syn::Item::Verbatim(_) => {
+            failures.push(format!(
+                "{}: top-level verbatim Rust syntax may define public API that the scanner cannot determine",
+                path.display()
+            ));
+            None
+        }
+        _ => {
+            failures.push(format!(
+                "{}: unsupported top-level Rust item may define public API that the scanner cannot determine",
+                path.display()
+            ));
+            None
+        }
+    };
+
+    if let Some(ident) = public_ident {
+        insert_exported_ident(ident, items);
+    }
+}
+
+fn collect_public_foreign_item(
+    item: &syn::ForeignItem,
+    path: &Path,
+    items: &mut BTreeSet<String>,
+    failures: &mut Vec<String>,
+) {
+    let public_ident = match item {
+        syn::ForeignItem::Fn(item) => is_public(&item.vis).then_some(&item.sig.ident),
+        syn::ForeignItem::Static(item) => is_public(&item.vis).then_some(&item.ident),
+        syn::ForeignItem::Type(item) => is_public(&item.vis).then_some(&item.ident),
+        syn::ForeignItem::Macro(item) => {
+            let macro_name = macro_path_name(&item.mac.path);
+            failures.push(format!(
+                "{}: foreign item macro `{macro_name}!` may generate public API that the scanner cannot determine",
+                path.display()
+            ));
+            None
+        }
+        syn::ForeignItem::Verbatim(_) => {
+            failures.push(format!(
+                "{}: verbatim foreign-item syntax may define public API that the scanner cannot determine",
+                path.display()
+            ));
+            None
+        }
+        _ => {
+            failures.push(format!(
+                "{}: unsupported foreign item may define public API that the scanner cannot determine",
+                path.display()
+            ));
+            None
+        }
+    };
+
+    if let Some(ident) = public_ident {
+        insert_exported_ident(ident, items);
+    }
+}
+
+fn macro_path_name(path: &syn::Path) -> String {
+    path.segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+fn collect_public_use_tree(
+    tree: &syn::UseTree,
+    parent: Option<&syn::Ident>,
+    path: &Path,
+    items: &mut BTreeSet<String>,
+    failures: &mut Vec<String>,
+) {
+    match tree {
+        syn::UseTree::Path(use_path) => {
+            collect_public_use_tree(&use_path.tree, Some(&use_path.ident), path, items, failures);
+        }
+        syn::UseTree::Name(use_name) if use_name.ident == "self" => {
+            if let Some(parent) = parent {
+                insert_exported_ident(parent, items);
+            } else {
+                failures.push(format!(
+                    "{}: top-level public `use self` has no exported name the scanner can determine",
+                    path.display()
+                ));
+            }
+        }
+        syn::UseTree::Name(use_name) => insert_exported_ident(&use_name.ident, items),
+        syn::UseTree::Rename(use_rename) => insert_exported_ident(&use_rename.rename, items),
+        syn::UseTree::Glob(_) => failures.push(format!(
+            "{}: top-level public glob re-export cannot determine exported names; use explicit names instead",
+            path.display()
+        )),
+        syn::UseTree::Group(use_group) => {
+            for tree in &use_group.items {
+                collect_public_use_tree(tree, parent, path, items, failures);
+            }
+        }
+    }
+}
+
+fn insert_exported_ident(ident: &syn::Ident, items: &mut BTreeSet<String>) {
+    let ident = ident.to_string();
+    if ident != "_" {
+        items.insert(ident);
+    }
+}
+
+fn is_public(visibility: &syn::Visibility) -> bool {
+    matches!(visibility, syn::Visibility::Public(_))
+}
+
 fn public_signature_tokens(path: &Path, failures: &mut Vec<String>) -> BTreeSet<String> {
     let Some(source) = read_to_string(path, failures) else {
         return BTreeSet::new();
@@ -1214,9 +1416,25 @@ fn devtools_root_export_allowlist() -> BTreeSet<String> {
     .collect()
 }
 
+fn devtools_ui_components_public_item_allowlist() -> BTreeSet<String> {
+    [
+        "ComponentSemanticIdentity",
+        "OpaqueSemanticNodeId",
+        "ResolvedSemanticNode",
+        "resolved_semantics_probe_snapshot",
+        "theme_probe_snapshot",
+        "window_overlay_probe_snapshot",
+    ]
+    .into_iter()
+    .map(ToOwned::to_owned)
+    .collect()
+}
+
 fn ui_core_prelude_allowlist() -> BTreeSet<String> {
     [
         "AccessibleAction",
+        "AccessibleTextPosition",
+        "AccessibleTextSelection",
         "ActiveDescendant",
         "AdaptiveQuerySource",
         "CollectionPosition",
@@ -1262,8 +1480,10 @@ fn ui_core_prelude_allowlist() -> BTreeSet<String> {
         "PanelAdaptivePolicy",
         "Rect",
         "Role",
+        "SemanticDescriptor",
         "Sizable",
         "Size",
+        "SortDirection",
         "ThemeTokens",
         "Toggled",
         "TokenKey",
@@ -1406,10 +1626,272 @@ mod tests {
     }
 
     #[test]
+    fn top_level_public_item_scanner_ignores_braces_outside_rust_syntax() {
+        let root = temp_root("top_level_public_item_braces");
+        let source = root.join("items.rs");
+        fs::write(
+            &source,
+            r####"
+                const NORMAL_STRING: &str = "{";
+                pub struct AfterNormalString;
+                const NORMAL_STRING_RESET: &str = "}";
+
+                const RAW_STRING: &str = r###"{"###;
+                pub enum AfterRawString {}
+                const RAW_STRING_RESET: &str = r###"}"###;
+
+                // {
+                pub const AFTER_LINE_COMMENT: usize = 1;
+                // }
+
+                /* { */
+                pub type AfterBlockComment = ();
+                /* } */
+            "####,
+        )
+        .expect("brace scanner fixture should be writable");
+
+        let mut failures = Vec::new();
+        let items = top_level_public_item_names(&source, &mut failures);
+
+        assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(
+            items,
+            [
+                "AFTER_LINE_COMMENT",
+                "AfterBlockComment",
+                "AfterNormalString",
+                "AfterRawString",
+            ]
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn top_level_public_item_scanner_collects_supported_items_and_grouped_uses() {
+        let root = temp_root("top_level_public_item_kinds");
+        let source = root.join("items.rs");
+        fs::write(
+            &source,
+            r#"
+                #[doc = "a public function split across lines"]
+                pub
+                fn multiline_function() {}
+
+                #[derive(Clone)]
+                pub struct ExportedStruct;
+                pub enum ExportedEnum { Variant }
+                pub union ExportedUnion { value: u32 }
+                pub trait ExportedTrait {}
+                pub type ExportedType = u32;
+                pub const EXPORTED_CONST: u32 = 1;
+                pub static EXPORTED_STATIC: u32 = 1;
+                pub mod exported_module {
+                    pub struct NestedItem;
+                }
+                pub use crate::api::{
+                    Direct,
+                    Nested::{self, Original as Alias},
+                    module as RenamedModule,
+                };
+
+                pub(crate) struct CrateVisibleOnly;
+                impl ExportedStruct {
+                    pub fn associated_function() {}
+                }
+            "#,
+        )
+        .expect("public item scanner fixture should be writable");
+
+        let mut failures = Vec::new();
+        let items = top_level_public_item_names(&source, &mut failures);
+
+        assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(
+            items,
+            [
+                "Alias",
+                "Direct",
+                "EXPORTED_CONST",
+                "EXPORTED_STATIC",
+                "ExportedEnum",
+                "ExportedStruct",
+                "ExportedTrait",
+                "ExportedType",
+                "ExportedUnion",
+                "Nested",
+                "RenamedModule",
+                "exported_module",
+                "multiline_function",
+            ]
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn top_level_public_item_scanner_collects_extern_crate_and_foreign_exports() {
+        let root = temp_root("top_level_public_item_extern_exports");
+        let source = root.join("items.rs");
+        fs::write(
+            &source,
+            r#"
+                pub extern crate serde as public_serde;
+                extern "C" {
+                    pub fn public_foreign_function(value: i32) -> i32;
+                    pub static PUBLIC_FOREIGN_STATIC: i32;
+                    fn private_foreign_function();
+                }
+            "#,
+        )
+        .expect("extern export scanner fixture should be writable");
+
+        let mut failures = Vec::new();
+        let items = top_level_public_item_names(&source, &mut failures);
+
+        assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(
+            items,
+            [
+                "PUBLIC_FOREIGN_STATIC",
+                "public_foreign_function",
+                "public_serde",
+            ]
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn top_level_public_item_scanner_rejects_foreign_item_macros() {
+        let root = temp_root("top_level_public_item_foreign_macro");
+        let source = root.join("items.rs");
+        fs::write(
+            &source,
+            r#"
+                extern "C" {
+                    generate_foreign_api!();
+                }
+            "#,
+        )
+        .expect("foreign macro scanner fixture should be writable");
+
+        let mut failures = Vec::new();
+        let items = top_level_public_item_names(&source, &mut failures);
+
+        assert!(items.is_empty());
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert!(
+            failures[0].contains("generate_foreign_api!"),
+            "{failures:?}"
+        );
+        assert!(
+            failures[0].contains("may generate public API"),
+            "{failures:?}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn top_level_public_item_scanner_rejects_glob_reexports() {
+        let root = temp_root("top_level_public_item_glob");
+        let source = root.join("items.rs");
+        fs::write(
+            &source,
+            "pub use crate::api::{Known, nested::*, Original as Alias};\n",
+        )
+        .expect("glob scanner fixture should be writable");
+
+        let mut failures = Vec::new();
+        let items = top_level_public_item_names(&source, &mut failures);
+
+        assert_eq!(
+            items,
+            ["Alias".to_owned(), "Known".to_owned()]
+                .into_iter()
+                .collect()
+        );
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert!(failures[0].contains("glob re-export"), "{failures:?}");
+        assert!(
+            failures[0].contains("cannot determine exported names"),
+            "{failures:?}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn top_level_public_item_scanner_rejects_item_macros() {
+        let root = temp_root("top_level_public_item_macros");
+        let source = root.join("items.rs");
+        fs::write(
+            &source,
+            r#"
+                include!("generated_items.rs");
+                generate_public_api!();
+                pub struct KnownItem;
+            "#,
+        )
+        .expect("macro scanner fixture should be writable");
+
+        let mut failures = Vec::new();
+        let items = top_level_public_item_names(&source, &mut failures);
+
+        assert_eq!(items, ["KnownItem".to_owned()].into_iter().collect());
+        assert_eq!(failures.len(), 2, "{failures:?}");
+        assert!(
+            failures.iter().any(|failure| failure.contains("include!")),
+            "{failures:?}"
+        );
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.contains("generate_public_api!")),
+            "{failures:?}"
+        );
+        assert!(
+            failures
+                .iter()
+                .all(|failure| failure.contains("may generate public API")),
+            "{failures:?}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn devtools_public_api_scan_tracks_artifact_pipeline_exports() {
         let root = temp_root("devtools_public_api");
         let devtools_src = root.join("crates/devtools/src");
         fs::create_dir_all(&devtools_src).unwrap();
+        let ui_components_api = r#"
+            pub fn theme_probe_snapshot() {}
+            pub fn window_overlay_probe_snapshot() {}
+            pub struct ComponentSemanticIdentity;
+            pub struct OpaqueSemanticNodeId;
+            pub struct ResolvedSemanticNode;
+            pub fn resolved_semantics_probe_snapshot() {}
+
+            impl ComponentSemanticIdentity {
+                pub fn contract_id(&self) -> &'static str { "Button" }
+            }
+
+            pub(crate) struct CratePrivateSemanticNode;
+            fn private_semantic_helper() {}
+        "#;
+        fs::write(devtools_src.join("ui_components.rs"), ui_components_api).unwrap();
         let modules = [
             "adapters",
             "command",
@@ -1439,6 +1921,34 @@ mod tests {
         let mut failures = Vec::new();
         scan_devtools_public_api(&root, &mut failures);
         assert!(failures.is_empty(), "{failures:?}");
+
+        fs::write(
+            devtools_src.join("ui_components.rs"),
+            ui_components_api.replace("pub struct ResolvedSemanticNode;\n", ""),
+        )
+        .unwrap();
+        let mut failures = Vec::new();
+        scan_devtools_public_api(&root, &mut failures);
+        assert_eq!(
+            failures,
+            [
+                "crates/devtools/src/ui_components.rs: top-level public item allowlist drifted; extra [], missing [ResolvedSemanticNode]"
+            ]
+        );
+
+        fs::write(
+            devtools_src.join("ui_components.rs"),
+            format!("{ui_components_api}\npub struct LeakedSemanticPayload;\n"),
+        )
+        .unwrap();
+        let mut failures = Vec::new();
+        scan_devtools_public_api(&root, &mut failures);
+        assert_eq!(
+            failures,
+            [
+                "crates/devtools/src/ui_components.rs: top-level public item allowlist drifted; extra [LeakedSemanticPayload], missing []"
+            ]
+        );
 
         fs::write(
             devtools_src.join("lib.rs"),

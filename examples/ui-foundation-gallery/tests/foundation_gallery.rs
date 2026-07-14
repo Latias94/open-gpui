@@ -1,6 +1,6 @@
 use open_gpui::{
-    Bounds, Entity, MouseButton, Pixels, ScrollDelta, ScrollWheelEvent, VisualTestContext, point,
-    px, size,
+    Bounds, Entity, MouseButton, Pixels, ScrollDelta, ScrollWheelEvent, VisualTestContext,
+    accesskit, point, px, size,
 };
 use open_gpui_command::{
     CommandKeyBindingPatchOperation, CommandKeyBindingPatchOutcome, CommandProviderState,
@@ -637,6 +637,8 @@ mod component_smoke_table_models;
 mod component_smoke_tree_virtualized;
 #[path = "foundation_gallery/devtools_contracts.rs"]
 mod devtools_contracts;
+#[path = "foundation_gallery/focus_a11y_smoke.rs"]
+mod focus_a11y_smoke;
 #[path = "foundation_gallery/foundation_contracts.rs"]
 mod foundation_contracts;
 #[path = "foundation_gallery/overlay_contracts.rs"]
