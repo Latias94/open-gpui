@@ -928,7 +928,7 @@ fn virtualized_list_runtime_nested_action_click_does_not_activate_row(
                                 .child(
                                     Button::new(format!("nested-action-button-{key}"), "Open")
                                         .with_size(Size::Small)
-                                        .on_click(move |_, _, _| {
+                                        .on_activate(move |_, _, _| {
                                             nested_actions.borrow_mut().push(action_key.clone());
                                         }),
                                 )

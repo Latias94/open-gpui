@@ -123,9 +123,14 @@ pub(super) fn render_focus_a11y_text_form_scenarios(
                             .variant(ButtonVariant::Secondary)
                             .with_size(Size::Small)
                             .tokens(tokens)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.mutate_focus_a11y(|state| state.toggle_field_invalid(), cx);
-                            })),
+                            .on_activate(cx.processor(
+                                |this, _, _, cx| {
+                                    this.mutate_focus_a11y(
+                                        |state| state.toggle_field_invalid(),
+                                        cx,
+                                    );
+                                },
+                            )),
                         ),
                 ),
         )

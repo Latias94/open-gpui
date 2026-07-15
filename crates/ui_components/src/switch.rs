@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
+    App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
@@ -13,6 +13,7 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
+use crate::activation::{ActivationBinding, ActivationHandle, ActivationKeyPolicy};
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::theme::ThemeResolver;
@@ -119,6 +120,7 @@ impl SwitchColors {
 pub struct SwitchState {
     checked: bool,
     disabled: bool,
+    read_only: bool,
     size: Size,
     metrics: SwitchMetrics,
     colors: SwitchColors,
@@ -133,6 +135,7 @@ impl SwitchState {
         Self {
             checked,
             disabled,
+            read_only: false,
             size,
             metrics: SwitchMetrics::from_size(size),
             colors,
@@ -150,6 +153,17 @@ impl SwitchState {
         self.disabled
     }
 
+    /// Returns this state with read-only behavior updated.
+    pub const fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    /// Returns whether the switch is read-only.
+    pub const fn read_only(self) -> bool {
+        self.read_only
+    }
+
     /// Returns the foundation size.
     pub const fn size(self) -> Size {
         self.size
@@ -157,7 +171,7 @@ impl SwitchState {
 
     /// Returns whether activation handlers should run.
     pub const fn activation_enabled(self) -> bool {
-        !self.disabled
+        !self.disabled && !self.read_only
     }
 
     /// Returns the accessibility role.
@@ -197,9 +211,11 @@ pub struct Switch {
     label: Option<SharedString>,
     checked: bool,
     disabled: bool,
+    read_only: bool,
     size: Size,
     tokens: ThemeTokens,
-    on_change: Option<Rc<dyn Fn(bool, &ClickEvent, &mut Window, &mut App)>>,
+    on_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
+    activation_handle: Option<ActivationHandle>,
 }
 
 impl Switch {
@@ -210,9 +226,11 @@ impl Switch {
             label: None,
             checked: false,
             disabled: false,
+            read_only: false,
             size: Size::Medium,
             tokens: ThemeTokens::default(),
             on_change: None,
+            activation_handle: None,
         }
     }
 
@@ -234,6 +252,12 @@ impl Switch {
         self
     }
 
+    /// Marks the switch as read-only.
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
     /// Applies a token bundle.
     pub fn tokens(mut self, tokens: ThemeTokens) -> Self {
         self.tokens = tokens;
@@ -241,17 +265,21 @@ impl Switch {
     }
 
     /// Registers a change handler with the next checked value.
-    pub fn on_change(
-        mut self,
-        handler: impl Fn(bool, &ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Self {
+    pub fn on_change(mut self, handler: impl Fn(bool, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Rc::new(handler));
+        self
+    }
+
+    /// Binds an application-owned programmatic activation handle.
+    pub fn activation_handle(mut self, handle: &ActivationHandle) -> Self {
+        self.activation_handle = Some(handle.clone());
         self
     }
 
     /// Returns the resolved switch state.
     pub fn state(&self) -> SwitchState {
         SwitchState::resolve(self.checked, self.disabled, self.size, self.tokens)
+            .with_read_only(self.read_only)
     }
 }
 
@@ -263,12 +291,16 @@ impl Sizable for Switch {
 }
 
 impl RenderOnce for Switch {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
+        let read_only = state.read_only();
+        let activation_enabled = state.activation_enabled();
+        let activation_state_key: ElementId = (self.id.clone(), "switch-activation").into();
+        let activation_handle = self.activation_handle;
         let next_checked = !state.checked();
         let label = self.label.clone();
         let debug_id = self.id.to_string();
@@ -280,7 +312,7 @@ impl RenderOnce for Switch {
         let label_color = theme.resolve(colors.label());
         let focus_shadow = focus_ring_shadow_with_theme(focus_ring, theme);
         let accessible_label = label.as_deref().unwrap_or("Switch");
-        let actions: &[AccessibleAction] = if self.on_change.is_some() {
+        let actions: &[AccessibleAction] = if self.on_change.is_some() && activation_enabled {
             &[AccessibleAction::Click, AccessibleAction::Focus]
         } else {
             &[AccessibleAction::Focus]
@@ -288,6 +320,7 @@ impl RenderOnce for Switch {
         let semantics = SemanticDescriptor::new(state.role())
             .with_label(accessible_label)
             .with_toggled(state.toggled())
+            .with_read_only(read_only)
             .with_disabled(disabled)
             .with_actions(actions);
 
@@ -302,16 +335,19 @@ impl RenderOnce for Switch {
             .ui_semantics(&semantics)
             .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
-            .when(!disabled, |this| this.cursor_pointer())
-            .when_some(
-                self.on_change.filter(|_| !disabled),
-                move |this, on_change| {
-                    this.on_click(move |event, window, cx| {
-                        cx.stop_propagation();
-                        on_change(next_checked, event, window, cx);
-                    })
-                },
-            )
+            .when(activation_enabled, |this| this.cursor_pointer())
+            .when_some(self.on_change, move |this, on_change| {
+                ActivationBinding::new(
+                    window,
+                    cx,
+                    activation_state_key,
+                    activation_enabled,
+                    ActivationKeyPolicy::Space,
+                    move |_, window, cx| on_change(next_checked, window, cx),
+                )
+                .with_programmatic_handle(activation_handle)
+                .bind(this)
+            })
             .child(
                 div()
                     .relative()

@@ -36,7 +36,7 @@ fn button_final_tree_and_actions_follow_resolved_projection(cx: &mut open_gpui::
                 .selected(true)
                 .disabled(disabled)
                 .accessibility_description("Writes the document")
-                .on_click(move |_, _, _| *activations.borrow_mut() += 1);
+                .on_activate(move |_, _, _| *activations.borrow_mut() += 1);
 
             div()
                 .size_full()

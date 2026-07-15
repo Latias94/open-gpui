@@ -110,7 +110,7 @@ pub(in crate::table::faceted_filter) fn table_faceted_filter_content_element(
                         .variant(ButtonVariant::Ghost)
                         .with_size(size)
                         .disabled(disabled)
-                        .on_click(move |_, window, cx| {
+                        .on_activate(move |_, window, cx| {
                             if let Some(on_change) = on_change_for_clear.as_ref() {
                                 let change =
                                     TableFacetedFilterChange::clear(column_id_for_toggle.clone());
@@ -240,7 +240,7 @@ fn table_faceted_filter_options_element(
                                 .label(option_label.clone())
                                 .checked(option_checked)
                                 .disabled(disabled)
-                                .on_toggle(move |toggled, _event, window, cx| {
+                                .on_toggle(move |toggled, window, cx| {
                                     let mut next_values = option_selected_values.clone();
                                     match toggled {
                                         Toggled::True => {

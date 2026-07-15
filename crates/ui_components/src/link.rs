@@ -1,13 +1,14 @@
 //! Link component.
 
 use crate::a11y::UiA11yElementExt;
+use crate::activation::{Activation, ActivationBinding, ActivationHandle, ActivationKeyPolicy};
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
+    App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
@@ -225,7 +226,8 @@ pub struct Link {
     external: bool,
     size: Size,
     tokens: ThemeTokens,
-    on_activate: Option<Rc<dyn Fn(LinkActivation, &ClickEvent, &mut Window, &mut App)>>,
+    on_activate: Option<Rc<dyn Fn(LinkActivation, Activation, &mut Window, &mut App)>>,
+    activation_handle: Option<ActivationHandle>,
 }
 
 impl Link {
@@ -244,6 +246,7 @@ impl Link {
             size: Size::Medium,
             tokens: ThemeTokens::default(),
             on_activate: None,
+            activation_handle: None,
         }
     }
 
@@ -268,9 +271,15 @@ impl Link {
     /// Registers an activation handler.
     pub fn on_activate(
         mut self,
-        handler: impl Fn(LinkActivation, &ClickEvent, &mut Window, &mut App) + 'static,
+        handler: impl Fn(LinkActivation, Activation, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_activate = Some(Rc::new(handler));
+        self
+    }
+
+    /// Binds an application-owned programmatic activation handle.
+    pub fn activation_handle(mut self, handle: &ActivationHandle) -> Self {
+        self.activation_handle = Some(handle.clone());
         self
     }
 
@@ -295,7 +304,7 @@ impl Sizable for Link {
 }
 
 impl RenderOnce for Link {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
@@ -307,7 +316,7 @@ impl RenderOnce for Link {
         let text_color = theme.resolve(colors.text());
         let hover_text = theme.resolve(colors.hover_text());
         let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
-        let actions: &[AccessibleAction] = if self.on_activate.is_some() {
+        let actions: &[AccessibleAction] = if self.on_activate.is_some() && !disabled {
             &[AccessibleAction::Click, AccessibleAction::Focus]
         } else {
             &[AccessibleAction::Focus]
@@ -316,9 +325,14 @@ impl RenderOnce for Link {
             .with_label(state.label())
             .with_disabled(disabled)
             .with_actions(actions);
+        let debug_id = self.id.to_string();
+        let activation_state_key: ElementId = (self.id.clone(), "link-activation").into();
+        let activation_handle = self.activation_handle;
+        let activation = LinkActivation::new(state.href(), state.label());
 
         div()
             .id(self.id)
+            .debug_selector(move || format!("link:{debug_id}:root"))
             .px(gpui_px_from_ui(metrics.padding_x()))
             .py(gpui_px_from_ui(metrics.padding_y()))
             .rounded(gpui_px_from_ui(metrics.radius()))
@@ -335,17 +349,20 @@ impl RenderOnce for Link {
                 this.cursor_pointer()
                     .hover(move |style| style.text_color(hover_text))
             })
-            .when_some(
-                self.on_activate
-                    .filter(|_| !disabled)
-                    .zip(state.activation()),
-                |this, (on_activate, activation)| {
-                    this.on_click(move |event, window, cx| {
-                        cx.stop_propagation();
-                        on_activate(activation.clone(), event, window, cx);
-                    })
-                },
-            )
+            .when_some(self.on_activate, |this, on_activate| {
+                ActivationBinding::new(
+                    window,
+                    cx,
+                    activation_state_key,
+                    !disabled,
+                    ActivationKeyPolicy::Enter,
+                    move |source, window, cx| {
+                        on_activate(activation.clone(), source, window, cx);
+                    },
+                )
+                .with_programmatic_handle(activation_handle)
+                .bind(this)
+            })
             .child(visible_label)
     }
 }

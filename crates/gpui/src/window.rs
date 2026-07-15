@@ -11,18 +11,18 @@ use crate::{
     CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree,
     DisplayId, Edges, Entity, EntityId, EventEmitter, FontId, Global, GlobalElementId, GlyphId,
     GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
-    Keystroke, KeystrokeEvent, LayoutId, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PointerCancelEvent,
-    PointerCancelReason, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
-    SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, profiler, px, rems, size,
-    transparent_black,
+    KeyUpEvent, Keystroke, KeystrokeEvent, LayoutId, Modifiers, ModifiersChangedEvent,
+    MonochromeSprite, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PointerCancelEvent, PointerCancelReason, PolychromeSprite, Priority, PromptButton, PromptLevel,
+    Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay,
+    ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels,
+    Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet,
+    Subscription, SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task,
+    TextRenderingMode, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
+    UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, profiler,
+    px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use derive_more::{Deref, DerefMut};
@@ -874,6 +874,7 @@ pub struct Window {
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_claim_revision: u64,
+    key_event_revision: u64,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
@@ -1636,6 +1637,7 @@ impl Window {
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_claim_revision: 0,
+            key_event_revision: 0,
             focus_enabled: true,
             pending_input: None,
             pending_modifier: ModifierState::default(),
@@ -1889,6 +1891,14 @@ impl Window {
     /// not only a different final focus value.
     pub const fn focus_claim_revision(&self) -> u64 {
         self.focus_claim_revision
+    }
+
+    /// Returns an opaque revision that advances before each key-down or key-up dispatch.
+    ///
+    /// The revision advances even when an interceptor or capture listener stops the event, so
+    /// consumers can reject a stale key transaction without observing the stopped event itself.
+    pub const fn key_event_revision(&self) -> u64 {
+        self.key_event_revision
     }
 
     /// Returns an opaque revision for the most recently completed rendered frame.
@@ -5043,6 +5053,10 @@ impl Window {
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
+        if event.is::<KeyDownEvent>() || event.is::<KeyUpEvent>() {
+            self.key_event_revision = self.key_event_revision.wrapping_add(1);
+        }
+
         if self.invalidator.is_dirty() {
             self.draw(cx).clear();
         }

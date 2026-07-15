@@ -120,7 +120,7 @@ pub(in crate::table::column_visibility) fn table_column_visibility_content_eleme
                                 .variant(ButtonVariant::Ghost)
                                 .with_size(size)
                                 .disabled(disabled || !show_all_enabled)
-                                .on_click(move |_, window, cx| {
+                                .on_activate(move |_, window, cx| {
                                     runtime_for_show_all.update(cx, |runtime, _| {
                                         runtime.visibility = show_all_ids.iter().cloned().fold(
                                             runtime.visibility.clone(),
@@ -151,7 +151,7 @@ pub(in crate::table::column_visibility) fn table_column_visibility_content_eleme
                                 .variant(ButtonVariant::Ghost)
                                 .with_size(size)
                                 .disabled(disabled || !reset_enabled)
-                                .on_click(move |_, window, cx| {
+                                .on_activate(move |_, window, cx| {
                                     runtime_for_reset.update(cx, |runtime, _| {
                                         runtime.visibility =
                                             TableColumnVisibilityOverrides::default();
@@ -236,7 +236,7 @@ fn table_column_visibility_items_element(
                             .label(label)
                             .checked(checked)
                             .disabled(row_disabled)
-                            .on_toggle(move |toggled, _event, window, cx| {
+                            .on_toggle(move |toggled, window, cx| {
                                 let next_visible = matches!(toggled, Toggled::True);
                                 runtime_for_checkbox.update(cx, |runtime, _| {
                                     runtime.visibility =

@@ -788,7 +788,7 @@ fn render_nested_action_virtualized_list_row(
                         "Open",
                     )
                     .with_size(Size::Small)
-                    .on_click(move |_, _, cx| {
+                    .on_activate(move |_, _, cx| {
                         record_virtualized_list_nested_action(
                             action_sample_id.clone(),
                             action_key.clone(),

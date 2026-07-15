@@ -191,7 +191,7 @@ impl Render for SplitterMotionDemo {
                                 .variant(ButtonVariant::Secondary)
                                 .selected(self.three_panes)
                                 .with_size(Size::Small)
-                                .on_click(cx.listener(|this, _, _, cx| {
+                                .on_activate(cx.processor(|this, _, _, cx| {
                                     this.three_panes = !this.three_panes;
                                     cx.notify();
                                 })),
@@ -211,7 +211,7 @@ impl Render for SplitterMotionDemo {
                                 .variant(ButtonVariant::Ghost)
                                 .selected(self.summary_collapsed)
                                 .with_size(Size::Small)
-                                .on_click(cx.listener(|this, _, _, cx| {
+                                .on_activate(cx.processor(|this, _, _, cx| {
                                     this.summary_collapsed = !this.summary_collapsed;
                                     cx.notify();
                                 })),

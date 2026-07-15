@@ -380,6 +380,10 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
 
 #[test]
 fn component_api_inventory_keeps_regression_sentinels_for_stateful_components() {
+    assert_inventory_contains_callback("Link", "on_activate", "(LinkActivation, Activation)");
+    assert_inventory_contains_callback("Tag", "on_remove", "(TagRemove, Activation)");
+    assert_inventory_contains_callback("ToastStack", "on_action", "(ToastAction, Activation)");
+    assert_inventory_contains_callback("ToastStack", "on_dismiss", "(ToastDismiss, Activation)");
     assert_inventory_contains_controlled_input("TextInput", "value");
     assert_inventory_contains_callback("TextInput", "on_change", "String");
     assert_inventory_contains_controlled_input("Textarea", "value");
@@ -409,6 +413,7 @@ fn component_api_inventory_keeps_regression_sentinels_for_stateful_components() 
         "ScrollViewportChangedEvent",
     );
     assert_inventory_contains_default_seed("RadioGroup", "default_selected", "selected");
+    assert_inventory_contains_controlled_input("RadioGroup", "selected");
     assert_inventory_contains_default_seed("Toolbar", "default_focused", "focused");
     assert_inventory_contains_default_seed("Sidebar", "default_focused", "focused");
     assert_inventory_contains_default_seed("Tree", "default_selected", "selected");

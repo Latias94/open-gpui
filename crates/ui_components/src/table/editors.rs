@@ -96,7 +96,7 @@ pub(super) fn render_table_cell_editor(
             Checkbox::new(editor_id)
                 .aria_label(editor_label)
                 .checked(checked)
-                .on_toggle(move |next_toggled, _, window, cx| {
+                .on_toggle(move |next_toggled, window, cx| {
                     if let Some(on_change) = on_change.as_ref() {
                         on_change(
                             TableCellEditChange::new(

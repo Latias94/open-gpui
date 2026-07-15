@@ -680,7 +680,7 @@ fn switch_runtime_click_emits_on_change_with_next_checked(cx: &mut open_gpui::Te
                     Switch::new("runtime-switch")
                         .label("Runtime switch")
                         .checked(checked)
-                        .on_change(move |checked, _, _, _| {
+                        .on_change(move |checked, _, _| {
                             *next_checked.borrow_mut() = checked;
                             changes.borrow_mut().push(checked);
                         }),
@@ -689,7 +689,7 @@ fn switch_runtime_click_emits_on_change_with_next_checked(cx: &mut open_gpui::Te
                     Switch::new("disabled-runtime-switch")
                         .label("Disabled runtime switch")
                         .disabled(true)
-                        .on_change(move |checked, _, _, _| {
+                        .on_change(move |checked, _, _| {
                             disabled_changes.borrow_mut().push(checked);
                         }),
                 )

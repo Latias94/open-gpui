@@ -8,6 +8,7 @@
 mod a11y;
 pub mod accordion;
 pub mod action;
+mod activation;
 pub mod alert_dialog;
 pub mod avatar;
 pub mod badge;

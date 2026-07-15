@@ -79,7 +79,7 @@ pub(super) fn component_focus_button(
                 .selected(selected)
                 .with_size(Size::Small)
                 .tokens(tokens)
-                .on_click(cx.listener(move |this, _, _, cx| {
+                .on_activate(cx.processor(move |this, _, _, cx| {
                     this.set_components_focus(focus, cx);
                 })),
         )

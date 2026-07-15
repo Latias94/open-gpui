@@ -1,5 +1,7 @@
 #[path = "support/a11y.rs"]
 mod a11y_support;
+#[path = "navigation/radio.rs"]
+mod radio;
 
 use open_gpui::{
     Context, InteractiveElement, IntoElement, ParentElement, Render, ScrollDelta, ScrollWheelEvent,
@@ -7,8 +9,7 @@ use open_gpui::{
 };
 use open_gpui_ui_components::{
     ActionDescriptor, Button, CommandItemDescriptor, IconButton, Menu, MenuItem,
-    MenuItemDescriptor, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor,
-    RadioSelection, ResolvedActionIcon, Sidebar, SidebarCollapseMode, SidebarItemDescriptor,
+    MenuItemDescriptor, ResolvedActionIcon, Sidebar, SidebarCollapseMode, SidebarItemDescriptor,
     SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Tabs,
     TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, ToggleGroup,
     ToggleGroupItem, Toolbar, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection,
@@ -743,182 +744,6 @@ fn toggle_group_controlled_values_override_runtime_selection(cx: &mut open_gpui:
         &[vec!["left".to_string()], vec!["left".to_string()]],
         "controlled empty selection should reset adapter runtime before each activation"
     );
-}
-
-#[open_gpui::test]
-fn radio_group_runtime_keyboard_navigation_skips_disabled_items_and_payloads(
-    cx: &mut open_gpui::TestAppContext,
-) {
-    struct TestView {
-        selections: Rc<RefCell<Vec<RadioSelection>>>,
-    }
-
-    impl Render for TestView {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            let selections = self.selections.clone();
-
-            div().size_full().child(
-                RadioGroup::new("runtime-radio")
-                    .label("Runtime radio")
-                    .orientation(Orientation::Horizontal)
-                    .default_selected("personal")
-                    .item(RadioItem::new("personal", "Personal"))
-                    .item(RadioItem::new("team", "Team").disabled(true))
-                    .item(RadioItem::new("enterprise", "Enterprise"))
-                    .on_selection_change(move |selection, _, _| {
-                        selections.borrow_mut().push(selection);
-                    }),
-            )
-        }
-    }
-
-    let selections = Rc::new(RefCell::new(Vec::new()));
-    let (_, cx) = cx.add_window_view(|_, _| TestView {
-        selections: selections.clone(),
-    });
-    cx.update(|window, cx| {
-        window.draw(cx).clear();
-    });
-
-    assert!(
-        cx.debug_bounds("radio-group:runtime-radio").is_some(),
-        "radio group root should expose a stable debug selector"
-    );
-
-    let disabled_team = cx
-        .debug_bounds("radio-group:runtime-radio:item:team")
-        .expect("disabled Team radio item should be rendered");
-    cx.simulate_click(disabled_team.center(), Default::default());
-    cx.update(|window, cx| {
-        window.draw(cx).clear();
-    });
-    assert!(
-        selections.borrow().is_empty(),
-        "disabled radio click should not emit a selection change"
-    );
-
-    let enterprise = cx
-        .debug_bounds("radio-group:runtime-radio:item:enterprise")
-        .expect("Enterprise radio item should be rendered");
-    cx.simulate_click(enterprise.center(), Default::default());
-    cx.update(|window, cx| {
-        window.draw(cx).clear();
-    });
-    let after_click = selections.borrow().clone();
-    assert_eq!(after_click.len(), 1);
-    assert_eq!(after_click[0].index(), 2);
-    assert_eq!(after_click[0].value(), "enterprise");
-    assert_eq!(after_click[0].label(), "Enterprise");
-
-    cx.simulate_keystrokes("left");
-    cx.update(|window, cx| {
-        window.draw(cx).clear();
-    });
-    let after_left = selections.borrow().clone();
-    assert_eq!(after_left.len(), 2);
-    assert_eq!(after_left[1].index(), 0);
-    assert_eq!(after_left[1].value(), "personal");
-    assert_eq!(after_left[1].label(), "Personal");
-
-    cx.simulate_keystrokes("space");
-    cx.update(|window, cx| {
-        window.draw(cx).clear();
-    });
-    let after_space = selections.borrow().clone();
-    assert_eq!(
-        after_space.len(),
-        2,
-        "Space on the already selected radio should not emit a duplicate selection change"
-    );
-
-    cx.simulate_keystrokes("right");
-    cx.update(|window, cx| {
-        window.draw(cx).clear();
-    });
-    let after_right = selections.borrow().clone();
-    assert_eq!(after_right.len(), 3);
-    assert_eq!(after_right[2].index(), 2);
-    assert_eq!(after_right[2].value(), "enterprise");
-    assert_eq!(after_right[2].label(), "Enterprise");
-}
-
-#[test]
-fn radio_group_state_exposes_selection_required_and_disabled_items() {
-    let state = RadioGroupState::resolve(
-        Orientation::Vertical,
-        Size::Medium,
-        false,
-        true,
-        Some("team"),
-        None,
-        [
-            RadioItemDescriptor::new("personal", "Personal"),
-            RadioItemDescriptor::new("team", "Team"),
-            RadioItemDescriptor::new("enterprise", "Enterprise").disabled(true),
-        ],
-        ThemeTokens::default(),
-    );
-
-    assert_eq!(state.role(), Role::RadioGroup);
-    assert!(state.required());
-    assert_eq!(state.selected_value(), Some("team"));
-    assert_eq!(state.focused_value(), Some("team"));
-    assert_eq!(state.tab_stop_index(), state.focused_index());
-    assert_eq!(state.items().len(), 3);
-    assert!(state.items()[1].selected());
-    assert!(state.items()[1].focused());
-    assert!(state.items()[2].disabled());
-    assert!(!state.items()[2].activation_enabled());
-    assert_eq!(state.items()[0].role(), Role::RadioButton);
-}
-
-#[test]
-fn radio_group_reuses_roving_focus_helpers_and_skips_disabled_items() {
-    let state = RadioGroupState::resolve(
-        Orientation::Horizontal,
-        Size::Small,
-        false,
-        false,
-        Some("missing"),
-        Some("enterprise"),
-        [
-            RadioItemDescriptor::new("starter", "Starter"),
-            RadioItemDescriptor::new("pro", "Pro").disabled(true),
-            RadioItemDescriptor::new("enterprise", "Enterprise"),
-        ],
-        ThemeTokens::default(),
-    );
-
-    assert_eq!(state.orientation(), Orientation::Horizontal);
-    assert_eq!(state.size(), Size::Small);
-    assert_eq!(state.selected_value(), Some("starter"));
-    assert_eq!(state.focused_value(), Some("enterprise"));
-    assert_eq!(state.tab_stop_index(), state.focused_index());
-    assert!(state.items()[1].disabled());
-    assert!(!state.items()[1].focused());
-}
-
-#[test]
-fn radio_group_builder_state_falls_back_to_first_enabled_item() {
-    let state = RadioGroup::new("plan")
-        .label("Plan")
-        .orientation(Orientation::Horizontal)
-        .with_size(Size::Large)
-        .required(true)
-        .default_selected("enterprise")
-        .item(RadioItem::new("starter", "Starter"))
-        .item(RadioItem::new("pro", "Pro"))
-        .item(RadioItem::new("enterprise", "Enterprise").disabled(true))
-        .state();
-
-    assert_eq!(state.orientation(), Orientation::Horizontal);
-    assert_eq!(state.size(), Size::Large);
-    assert!(state.required());
-    assert_eq!(state.selected_value(), Some("starter"));
-    assert_eq!(state.focused_value(), Some("starter"));
-    assert_eq!(state.tab_stop_index(), state.focused_index());
-    assert!(state.items()[2].disabled());
-    assert!(!state.items()[2].selected());
 }
 
 #[test]

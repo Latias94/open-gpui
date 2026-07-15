@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyView, App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
+    AnyView, App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
@@ -14,6 +14,7 @@ use open_gpui_ui_core::{
 
 use crate::a11y::UiA11yElementExt;
 use crate::action::ResolvedActionState;
+use crate::activation::{Activation, ActivationBinding, ActivationHandle, ActivationKeyPolicy};
 use crate::button::{ButtonColors, ButtonVariant};
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::theme::ThemeResolver;
@@ -159,7 +160,8 @@ pub struct IconButton {
     tooltip_text: Option<SharedString>,
     accessibility_description: Option<SharedString>,
     resolved_action: Option<ResolvedActionState>,
-    on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    on_activate: Option<Rc<dyn Fn(Activation, &mut Window, &mut App)>>,
+    activation_handle: Option<ActivationHandle>,
     tooltip: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
 }
 
@@ -183,7 +185,8 @@ impl IconButton {
             tooltip_text: None,
             accessibility_description: None,
             resolved_action: None,
-            on_click: None,
+            on_activate: None,
+            activation_handle: None,
             tooltip: None,
         }
     }
@@ -206,7 +209,8 @@ impl IconButton {
             tooltip_text: action.tooltip().map(SharedString::from),
             accessibility_description: action.accessibility_description().map(SharedString::from),
             resolved_action: Some(action.clone()),
-            on_click: None,
+            on_activate: None,
+            activation_handle: None,
             tooltip: None,
         }
     }
@@ -248,12 +252,18 @@ impl IconButton {
         self
     }
 
-    /// Registers a click handler.
-    pub fn on_click(
+    /// Registers a semantic activation handler.
+    pub fn on_activate(
         mut self,
-        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        handler: impl Fn(Activation, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_click = Some(Rc::new(handler));
+        self.on_activate = Some(Rc::new(handler));
+        self
+    }
+
+    /// Binds an application-owned programmatic activation handle.
+    pub fn activation_handle(mut self, handle: &ActivationHandle) -> Self {
+        self.activation_handle = Some(handle.clone());
         self
     }
 
@@ -306,7 +316,7 @@ impl Sizable for IconButton {
 }
 
 impl RenderOnce for IconButton {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let disabled_reason = self.disabled_reason.clone();
         let accessibility_description = self.accessibility_description.clone();
         let tooltip_text = self.tooltip_text.clone();
@@ -326,7 +336,7 @@ impl RenderOnce for IconButton {
         let description = accessibility_description
             .as_deref()
             .or(disabled_reason.as_deref());
-        let actions: &[AccessibleAction] = if self.on_click.is_some() {
+        let actions: &[AccessibleAction] = if self.on_activate.is_some() {
             &[AccessibleAction::Click, AccessibleAction::Focus]
         } else {
             &[AccessibleAction::Focus]
@@ -339,6 +349,8 @@ impl RenderOnce for IconButton {
         if let Some(description) = description {
             semantics = semantics.with_description(description);
         }
+        let activation_handle = self.activation_handle;
+        let activation_state_key: ElementId = (self.id.clone(), "icon-button-activation").into();
 
         div()
             .id(self.id)
@@ -365,11 +377,17 @@ impl RenderOnce for IconButton {
                 this.cursor_pointer()
                     .hover(move |style| style.bg(hover_background))
             })
-            .when_some(self.on_click.filter(|_| !disabled), |this, on_click| {
-                this.on_click(move |event, window, cx| {
-                    cx.stop_propagation();
-                    on_click(event, window, cx);
-                })
+            .when_some(self.on_activate, |this, on_activate| {
+                ActivationBinding::new(
+                    window,
+                    cx,
+                    activation_state_key,
+                    !disabled,
+                    ActivationKeyPolicy::EnterOrSpace,
+                    move |activation, window, cx| on_activate(activation, window, cx),
+                )
+                .with_programmatic_handle(activation_handle)
+                .bind(this)
             })
             .when_some(self.tooltip, |this, tooltip| {
                 this.tooltip(move |window, cx| tooltip(window, cx))

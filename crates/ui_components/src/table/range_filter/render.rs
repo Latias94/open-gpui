@@ -136,7 +136,7 @@ pub(in crate::table::range_filter) fn table_range_filter_content_element(
                         .variant(ButtonVariant::Ghost)
                         .with_size(size)
                         .disabled(disabled)
-                        .on_click(move |_, window, cx| {
+                        .on_activate(move |_, window, cx| {
                             runtime_for_clear.update(cx, |runtime, _| {
                                 runtime.min_text.clear();
                                 runtime.max_text.clear();

@@ -1,20 +1,18 @@
 //! Toast notification stack component.
 
-use crate::a11y::UiA11yElementExt;
-use crate::feedback::{FeedbackColors, FeedbackIntent};
-use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
-use crate::geometry::gpui_px_from_ui;
-use crate::theme::ThemeResolver;
-use open_gpui::prelude::*;
-use open_gpui::{
-    App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    SharedString, StatefulInteractiveElement, Styled, Window, div,
-};
-use open_gpui_ui_core::{
-    AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px,
-};
+mod render;
+
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::Duration;
+
+use open_gpui::{App, ElementId, IntoElement, SharedString, Window};
+use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+
+use crate::activation::{Activation, ActivationHandle};
+use crate::feedback::{FeedbackColors, FeedbackIntent};
+use crate::focus::FocusRing;
+use crate::theme::ThemeResolver;
 
 const DEFAULT_MAX_VISIBLE_TOASTS: usize = 3;
 const DEFAULT_TOAST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -617,8 +615,8 @@ impl ToastStackState {
     }
 }
 
-type ToastActionHandler = Rc<dyn Fn(ToastAction, &ClickEvent, &mut Window, &mut App)>;
-type ToastDismissHandler = Rc<dyn Fn(ToastDismiss, &ClickEvent, &mut Window, &mut App)>;
+type ToastActionHandler = Rc<dyn Fn(ToastAction, Activation, &mut Window, &mut App)>;
+type ToastDismissHandler = Rc<dyn Fn(ToastDismiss, Activation, &mut Window, &mut App)>;
 
 /// A concrete GPUI toast stack component.
 #[derive(IntoElement)]
@@ -631,6 +629,8 @@ pub struct ToastStack {
     toasts: Vec<Toast>,
     on_action: Option<ToastActionHandler>,
     on_dismiss: Option<ToastDismissHandler>,
+    action_activation_handles: BTreeMap<String, ActivationHandle>,
+    dismiss_activation_handles: BTreeMap<String, ActivationHandle>,
 }
 
 impl ToastStack {
@@ -645,6 +645,8 @@ impl ToastStack {
             toasts: Vec::new(),
             on_action: None,
             on_dismiss: None,
+            action_activation_handles: BTreeMap::new(),
+            dismiss_activation_handles: BTreeMap::new(),
         }
     }
 
@@ -675,7 +677,7 @@ impl ToastStack {
     /// Registers a toast action handler.
     pub fn on_action(
         mut self,
-        handler: impl Fn(ToastAction, &ClickEvent, &mut Window, &mut App) + 'static,
+        handler: impl Fn(ToastAction, Activation, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_action = Some(Rc::new(handler));
         self
@@ -684,9 +686,31 @@ impl ToastStack {
     /// Registers a toast dismiss handler.
     pub fn on_dismiss(
         mut self,
-        handler: impl Fn(ToastDismiss, &ClickEvent, &mut Window, &mut App) + 'static,
+        handler: impl Fn(ToastDismiss, Activation, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_dismiss = Some(Rc::new(handler));
+        self
+    }
+
+    /// Binds a programmatic activation handle to one toast action by id.
+    pub fn action_activation_handle(
+        mut self,
+        toast_id: impl Into<String>,
+        handle: &ActivationHandle,
+    ) -> Self {
+        self.action_activation_handles
+            .insert(toast_id.into(), handle.clone());
+        self
+    }
+
+    /// Binds a programmatic activation handle to one toast dismiss action by id.
+    pub fn dismiss_activation_handle(
+        mut self,
+        toast_id: impl Into<String>,
+        handle: &ActivationHandle,
+    ) -> Self {
+        self.dismiss_activation_handles
+            .insert(toast_id.into(), handle.clone());
         self
     }
 
@@ -706,178 +730,6 @@ impl Sizable for ToastStack {
     fn with_size(mut self, size: Size) -> Self {
         self.size = size;
         self
-    }
-}
-
-impl RenderOnce for ToastStack {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
-        let state = self.state();
-        let stack_metrics = state.metrics();
-        let overflow_colors = ThemeResolver::feedback_colors(state.tokens, ToastIntent::Neutral);
-        let debug_id = self.id.to_string();
-        let on_action = self.on_action.clone();
-        let on_dismiss = self.on_dismiss.clone();
-        let label = self.label;
-        let stack_semantics = SemanticDescriptor::new(state.role()).with_label(label.as_ref());
-
-        div()
-            .id(self.id)
-            .debug_selector({
-                let debug_id = debug_id.clone();
-                move || format!("toast-stack:{debug_id}:root")
-            })
-            .ui_semantics(&stack_semantics)
-            .flex()
-            .flex_col()
-            .items_end()
-            .gap(gpui_px_from_ui(stack_metrics.gap()))
-            .children(state.visible_toasts().iter().map(|toast| {
-                let metrics = toast.metrics();
-                let colors = toast.colors();
-                let focus_ring = toast.focus_ring();
-                let action_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
-                let dismiss_focus_shadow = action_focus_shadow.clone();
-                let action = toast.action();
-                let dismiss = toast.dismiss(ToastDismissReason::Manual);
-                let on_action = on_action.clone();
-                let on_dismiss = on_dismiss.clone();
-                let toast_id = toast.id().to_owned();
-                let title = toast.title().to_owned();
-                let description = toast.description().map(str::to_owned);
-                let action_label = toast.action_label().map(str::to_owned);
-                let toast_semantics = SemanticDescriptor::new(toast.role()).with_label(&title);
-                let action_actions: &[AccessibleAction] = if on_action.is_some() {
-                    &[AccessibleAction::Click, AccessibleAction::Focus]
-                } else {
-                    &[AccessibleAction::Focus]
-                };
-                let dismiss_actions: &[AccessibleAction] = if on_dismiss.is_some() {
-                    &[AccessibleAction::Click, AccessibleAction::Focus]
-                } else {
-                    &[AccessibleAction::Focus]
-                };
-
-                div()
-                    .id(format!("toast:{toast_id}"))
-                    .debug_selector({
-                        let debug_id = debug_id.clone();
-                        let toast_id = toast_id.clone();
-                        move || format!("toast-stack:{debug_id}:toast:{toast_id}")
-                    })
-                    .min_w(gpui_px_from_ui(metrics.min_width()))
-                    .max_w(gpui_px_from_ui(metrics.max_width()))
-                    .p(gpui_px_from_ui(metrics.padding()))
-                    .flex()
-                    .items_start()
-                    .gap(gpui_px_from_ui(metrics.gap()))
-                    .rounded(gpui_px_from_ui(metrics.radius()))
-                    .border_1()
-                    .border_color(theme.resolve(colors.border()))
-                    .bg(theme.resolve(colors.background()))
-                    .text_color(theme.resolve(colors.foreground()))
-                    .ui_semantics(&toast_semantics)
-                    .child(
-                        div()
-                            .mt(gpui_px_from_ui(ui_px(3.0)))
-                            .w(gpui_px_from_ui(metrics.marker_size()))
-                            .h(gpui_px_from_ui(metrics.marker_size()))
-                            .rounded(gpui_px_from_ui(ui_px(999.0)))
-                            .bg(theme.resolve(colors.marker())),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_size(gpui_px_from_ui(metrics.title_size()))
-                                    .line_height(gpui_px_from_ui(metrics.title_size()))
-                                    .font_weight(open_gpui::FontWeight::BOLD)
-                                    .child(title),
-                            )
-                            .when_some(description, |this, description| {
-                                this.child(
-                                    div()
-                                        .text_color(theme.resolve(colors.muted_foreground()))
-                                        .text_size(gpui_px_from_ui(metrics.description_size()))
-                                        .line_height(gpui_px_from_ui(metrics.description_size()))
-                                        .child(description),
-                                )
-                            })
-                            .when_some(action_label.zip(action), |this, (label, action)| {
-                                let action_semantics = SemanticDescriptor::new(toast.action_role())
-                                    .with_label(&label)
-                                    .with_actions(action_actions);
-                                this.child(
-                                    div()
-                                        .id(format!("toast-action:{toast_id}"))
-                                        .min_h(gpui_px_from_ui(metrics.action_height()))
-                                        .self_start()
-                                        .px(gpui_px_from_ui(ui_px(8.0)))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .rounded(gpui_px_from_ui(metrics.radius()))
-                                        .border_1()
-                                        .border_color(theme.resolve(colors.border()))
-                                        .focusable()
-                                        .tab_stop(true)
-                                        .ui_semantics(&action_semantics)
-                                        .focus_visible(move |style| {
-                                            style.shadow(action_focus_shadow.clone())
-                                        })
-                                        .cursor_pointer()
-                                        .when_some(on_action.clone(), |this, on_action| {
-                                            this.on_click(move |event, window, cx| {
-                                                cx.stop_propagation();
-                                                on_action(action.clone(), event, window, cx);
-                                            })
-                                        })
-                                        .child(label),
-                                )
-                            }),
-                    )
-                    .when_some(dismiss, |this, dismiss| {
-                        let dismiss_semantics = SemanticDescriptor::new(toast.dismiss_role())
-                            .with_label("Dismiss notification")
-                            .with_actions(dismiss_actions);
-                        this.child(
-                            div()
-                                .id(format!("toast-dismiss:{toast_id}"))
-                                .size(gpui_px_from_ui(metrics.dismiss_size()))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(gpui_px_from_ui(metrics.radius()))
-                                .focusable()
-                                .tab_stop(true)
-                                .ui_semantics(&dismiss_semantics)
-                                .focus_visible(move |style| {
-                                    style.shadow(dismiss_focus_shadow.clone())
-                                })
-                                .cursor_pointer()
-                                .when_some(on_dismiss.clone(), |this, on_dismiss| {
-                                    this.on_click(move |event, window, cx| {
-                                        cx.stop_propagation();
-                                        on_dismiss(dismiss.clone(), event, window, cx);
-                                    })
-                                })
-                                .child("x"),
-                        )
-                    })
-                    .into_any_element()
-            }))
-            .when(state.overflow_count() > 0, |this| {
-                this.child(
-                    div()
-                        .text_size(gpui_px_from_ui(stack_metrics.description_size()))
-                        .text_color(theme.resolve(overflow_colors.muted_foreground()))
-                        .child(format!("+{} more", state.overflow_count())),
-                )
-            })
     }
 }
 

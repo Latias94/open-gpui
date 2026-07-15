@@ -658,7 +658,7 @@ impl GalleryShell {
                             .variant(ButtonVariant::Secondary)
                             .with_size(Size::Small)
                             .accessibility_description("Refresh Gallery DevTools session")
-                            .on_click(cx.listener(|this, _, _, cx| {
+                            .on_activate(cx.processor(|this, _, _, cx| {
                                 this.refresh_devtools(cx);
                             })),
                     ),
@@ -2481,7 +2481,7 @@ impl GalleryShell {
                                     "overlay-dialog-owner-commit-close",
                                     "Confirm close",
                                 )
-                                .on_click(move |_, _, cx| {
+                                .on_activate(move |_, _, cx| {
                                     commit_dialog
                                         .update(cx, |this, cx| {
                                             this.mutate_overlay(
@@ -2608,7 +2608,7 @@ impl GalleryShell {
                         Checkbox::new("overlay-dialog-refuse-close:controlled-modal")
                             .label("Require close confirmation")
                             .checked(refuse_dialog_close)
-                            .on_toggle(move |toggled, _, _, cx| {
+                            .on_toggle(move |toggled, _, cx| {
                                 toggle_dialog_refusal
                                     .update(cx, |this, cx| {
                                         this.mutate_overlay(

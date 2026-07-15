@@ -13,6 +13,9 @@ pub use crate::action::{
     ActionDescriptor, ActionIconDescriptor, ActionIconDiagnostic, ActionIconResolver,
     ResolvedActionIcon, ResolvedActionState,
 };
+pub use crate::activation::{
+    Activation, ActivationHandle, ActivationKey, ActivationRequestResult, ActivationSource,
+};
 pub use crate::alert_dialog::{
     AlertDialog, AlertDialogActionKind, AlertDialogActionState, AlertDialogColors,
     AlertDialogIntent, AlertDialogMetrics, AlertDialogOpenMode, AlertDialogState,
@@ -97,7 +100,7 @@ pub use crate::progress::{
 };
 pub use crate::radio::{
     RadioGroup, RadioGroupColors, RadioGroupMetrics, RadioGroupState, RadioItem,
-    RadioItemDescriptor, RadioItemState, RadioSelection,
+    RadioItemDescriptor, RadioItemState, RadioSelection, RadioSelectionAuthority,
 };
 pub use crate::resource_adapter::{
     ResourceAdapterLabels, ResourceCollectionProjection, ResourceMutationProjection,

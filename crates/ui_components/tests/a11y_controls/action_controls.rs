@@ -23,7 +23,7 @@ fn action_controls_project_exact_semantics_and_dispatch(cx: &mut open_gpui::Test
                         .selected(true)
                         .disabled(self.icon_disabled)
                         .accessibility_description("Search documents")
-                        .on_click(move |_, _, _| *icon_activations.borrow_mut() += 1),
+                        .on_activate(move |_, _, _| *icon_activations.borrow_mut() += 1),
                 )
                 .child(IconButton::new(
                     "semantic-passive-icon-button",
@@ -34,14 +34,14 @@ fn action_controls_project_exact_semantics_and_dispatch(cx: &mut open_gpui::Test
                     Switch::new("semantic-switch")
                         .label("Auto save")
                         .checked(self.switch_checked)
-                        .on_change(move |checked, _, _, _| {
+                        .on_change(move |checked, _, _| {
                             switch_changes.borrow_mut().push(checked);
                         }),
                 )
                 .child(
                     Toggle::new("semantic-toggle", "Bold")
                         .pressed(self.toggle_pressed)
-                        .on_change(move |pressed, _, _, _| {
+                        .on_change(move |pressed, _, _| {
                             toggle_changes.borrow_mut().push(pressed);
                         }),
                 )
@@ -175,7 +175,7 @@ fn checkbox_final_tree_tracks_form_state_actions_and_stable_identity(
                 .required(self.required)
                 .invalid(self.invalid)
                 .busy(self.busy)
-                .on_toggle(move |toggled, _, _, _| changes.borrow_mut().push(toggled));
+                .on_toggle(move |toggled, _, _| changes.borrow_mut().push(toggled));
 
             if self.show {
                 div().child(checkbox)

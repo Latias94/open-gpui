@@ -8,11 +8,13 @@ use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
+    App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens};
 use std::rc::Rc;
+
+use crate::activation::{Activation, ActivationBinding, ActivationHandle, ActivationKeyPolicy};
 
 /// Visual intent for a [`Tag`].
 pub type TagVariant = BadgeVariant;
@@ -136,6 +138,11 @@ impl TagState {
             .then(|| TagRemove::new(self.value.clone(), self.label.clone()))
     }
 
+    fn remove_payload(&self) -> Option<TagRemove> {
+        self.removable
+            .then(|| TagRemove::new(self.value.clone(), self.label.clone()))
+    }
+
     /// Returns the foundation size.
     pub const fn size(&self) -> Size {
         self.size
@@ -168,7 +175,8 @@ pub struct Tag {
     disabled: bool,
     size: Size,
     tokens: ThemeTokens,
-    on_remove: Option<Rc<dyn Fn(TagRemove, &ClickEvent, &mut Window, &mut App)>>,
+    on_remove: Option<Rc<dyn Fn(TagRemove, Activation, &mut Window, &mut App)>>,
+    activation_handle: Option<ActivationHandle>,
 }
 
 impl Tag {
@@ -188,6 +196,7 @@ impl Tag {
             size: Size::Medium,
             tokens: ThemeTokens::default(),
             on_remove: None,
+            activation_handle: None,
         }
     }
 
@@ -218,10 +227,16 @@ impl Tag {
     /// Registers a remove handler.
     pub fn on_remove(
         mut self,
-        handler: impl Fn(TagRemove, &ClickEvent, &mut Window, &mut App) + 'static,
+        handler: impl Fn(TagRemove, Activation, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_remove = Some(Rc::new(handler));
         self.removable = true;
+        self
+    }
+
+    /// Binds an application-owned programmatic remove activation handle.
+    pub fn activation_handle(mut self, handle: &ActivationHandle) -> Self {
+        self.activation_handle = Some(handle.clone());
         self
     }
 
@@ -247,7 +262,7 @@ impl Sizable for Tag {
 }
 
 impl RenderOnce for Tag {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
@@ -255,8 +270,12 @@ impl RenderOnce for Tag {
         let remove_focus_ring = state.remove_focus_ring();
         let remove_focus_shadow = focus_ring_shadow_with_theme(remove_focus_ring, &theme);
         let disabled = state.disabled();
+        let remove_enabled = state.remove_enabled();
         let label = self.label.clone();
-        let remove_payload = state.remove();
+        let remove_payload = state.remove_payload();
+        let remove_state_key = (self.id.clone(), "remove-activation");
+        let remove_debug_id = self.id.to_string();
+        let activation_handle = self.activation_handle;
         let semantics = SemanticDescriptor::new(state.role())
             .with_label(label.as_ref())
             .with_disabled(disabled);
@@ -280,33 +299,51 @@ impl RenderOnce for Tag {
             .when(disabled, |this| this.opacity(0.56))
             .child(label)
             .when_some(
-                self.on_remove
-                    .filter(|_| state.remove_enabled())
-                    .zip(remove_payload),
+                self.on_remove.zip(remove_payload),
                 |this, (on_remove, remove_payload)| {
                     let remove_label = format!("Remove {}", remove_payload.label());
-                    let remove_actions = [AccessibleAction::Click, AccessibleAction::Focus];
+                    let remove_actions: &[AccessibleAction] = if remove_enabled {
+                        &[AccessibleAction::Click, AccessibleAction::Focus]
+                    } else {
+                        &[AccessibleAction::Focus]
+                    };
                     let remove_semantics = SemanticDescriptor::new(state.remove_role())
                         .with_label(&remove_label)
-                        .with_actions(&remove_actions);
+                        .with_disabled(disabled)
+                        .with_actions(remove_actions);
+                    let activation_payload = remove_payload.clone();
+                    let remove_debug_id = remove_debug_id.clone();
                     this.child(
-                        div()
-                            .id(format!("tag-remove:{}", remove_payload.value()))
-                            .size(gpui_px_from_ui(metrics.min_height()))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(gpui_px_from_ui(metrics.radius()))
-                            .focusable()
-                            .tab_stop(true)
-                            .ui_semantics(&remove_semantics)
-                            .focus_visible(move |style| style.shadow(remove_focus_shadow.clone()))
-                            .cursor_pointer()
-                            .on_click(move |event, window, cx| {
-                                cx.stop_propagation();
-                                on_remove(remove_payload.clone(), event, window, cx);
-                            })
-                            .child("x"),
+                        ActivationBinding::new(
+                            window,
+                            cx,
+                            remove_state_key.clone(),
+                            remove_enabled,
+                            ActivationKeyPolicy::EnterOrSpace,
+                            move |activation, window, cx| {
+                                on_remove(activation_payload.clone(), activation, window, cx);
+                            },
+                        )
+                        .with_programmatic_handle(activation_handle.clone())
+                        .bind(
+                            div()
+                                .id(format!("tag-remove:{}", remove_payload.value()))
+                                .debug_selector(move || format!("tag:{remove_debug_id}:remove"))
+                                .size(gpui_px_from_ui(metrics.min_height()))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(gpui_px_from_ui(metrics.radius()))
+                                .focusable()
+                                .tab_stop(remove_enabled)
+                                .ui_semantics(&remove_semantics)
+                                .focus_visible(move |style| {
+                                    style.shadow(remove_focus_shadow.clone())
+                                })
+                                .when(remove_enabled, |this| this.cursor_pointer())
+                                .when(disabled, |this| this.cursor_not_allowed())
+                                .child("x"),
+                        ),
                     )
                 },
             )

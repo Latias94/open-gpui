@@ -1609,7 +1609,7 @@ fn radio_group_state(
         size,
         disabled,
         required,
-        Some(selected),
+        RadioSelectionAuthority::Uncontrolled(Some(selected)),
         None,
         items
             .iter()

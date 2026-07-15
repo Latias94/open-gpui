@@ -200,7 +200,7 @@ impl RenderOnce for TableGlobalFilter {
                         .variant(ButtonVariant::Ghost)
                         .with_size(size)
                         .disabled(disabled)
-                        .on_click(move |_, window, cx| {
+                        .on_activate(move |_, window, cx| {
                             runtime_for_clear.update(cx, |runtime, _| {
                                 runtime.query.clear();
                             });

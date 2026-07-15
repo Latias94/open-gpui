@@ -873,7 +873,7 @@ pub(crate) fn component_page_jump(
         .variant(ButtonVariant::Ghost)
         .with_size(Size::Small)
         .tokens(tokens)
-        .on_click(cx.listener(move |this, _, _, cx| {
+        .on_activate(cx.processor(move |this, _, _, cx| {
             this.jump_to_components_section(id, cx);
         }));
 

@@ -1,24 +1,17 @@
 //! Radio group component.
 
-use crate::geometry::gpui_px_from_ui;
+mod render;
+
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use open_gpui::prelude::FluentBuilder;
-use open_gpui::{
-    App, ClickEvent, Context, ElementId, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
-    Window, div, px,
-};
-use open_gpui_ui_core::{
-    AccessibleAction, Orientation, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx,
-    ui_px,
-};
+use open_gpui::{App, ElementId, IntoElement, SharedString, Window};
+use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
-use crate::a11y::UiA11yElementExt;
+use crate::activation::ActivationHandle;
 use crate::choice::{ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
+use crate::focus::FocusRing;
 use crate::theme::ThemeResolver;
 
 /// Pure descriptor for one radio item.
@@ -204,6 +197,7 @@ pub struct RadioItemState {
     value: String,
     label: String,
     disabled: bool,
+    read_only: bool,
     selected: bool,
     focused: bool,
 }
@@ -229,6 +223,11 @@ impl RadioItemState {
         self.disabled
     }
 
+    /// Returns whether the owning group is read-only.
+    pub const fn read_only(&self) -> bool {
+        self.read_only
+    }
+
     /// Returns whether the item is selected.
     pub const fn selected(&self) -> bool {
         self.selected
@@ -241,7 +240,7 @@ impl RadioItemState {
 
     /// Returns whether activation handlers should run for this item.
     pub const fn activation_enabled(&self) -> bool {
-        !self.disabled
+        !self.disabled && !self.read_only
     }
 
     /// Returns the accessibility role.
@@ -290,6 +289,7 @@ pub struct RadioGroupState {
     orientation: Orientation,
     size: Size,
     disabled: bool,
+    read_only: bool,
     required: bool,
     metrics: RadioGroupMetrics,
     colors: RadioGroupColors,
@@ -299,6 +299,45 @@ pub struct RadioGroupState {
     focused_index: Option<usize>,
 }
 
+/// Selection ownership passed to [`RadioGroupState::resolve`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RadioSelectionAuthority<'a> {
+    /// Preserve the caller-owned value exactly, including no or unavailable selection.
+    Controlled(Option<&'a str>),
+    /// Resolve an adapter-owned default, falling back according to the choice policy.
+    Uncontrolled(Option<&'a str>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+enum RadioSelectionControl {
+    #[default]
+    Uncontrolled,
+    Controlled(Option<String>),
+}
+
+impl RadioSelectionControl {
+    fn authority<'a>(
+        &'a self,
+        default_selected_value: Option<&'a str>,
+    ) -> RadioSelectionAuthority<'a> {
+        match self {
+            Self::Uncontrolled => RadioSelectionAuthority::Uncontrolled(default_selected_value),
+            Self::Controlled(value) => RadioSelectionAuthority::Controlled(value.as_deref()),
+        }
+    }
+
+    const fn controlled(&self) -> bool {
+        matches!(self, Self::Controlled(_))
+    }
+
+    fn initial_value(&self, default_selected_value: Option<&String>) -> Option<String> {
+        match self {
+            Self::Uncontrolled => default_selected_value.cloned(),
+            Self::Controlled(value) => value.clone(),
+        }
+    }
+}
+
 impl RadioGroupState {
     /// Resolves the public state for a radio group.
     pub fn resolve(
@@ -306,12 +345,16 @@ impl RadioGroupState {
         size: Size,
         disabled: bool,
         required: bool,
-        selected_value: Option<&str>,
+        selection: RadioSelectionAuthority<'_>,
         focused_value: Option<&str>,
         items: impl IntoIterator<Item = RadioItemDescriptor>,
         tokens: ThemeTokens,
     ) -> Self {
         let descriptors: Vec<RadioItemDescriptor> = items.into_iter().collect();
+        let selected_value = match selection {
+            RadioSelectionAuthority::Controlled(value)
+            | RadioSelectionAuthority::Uncontrolled(value) => value,
+        };
         let collection = ChoiceCollection::resolve(
             disabled,
             radio_choice_items(disabled, &descriptors),
@@ -319,7 +362,13 @@ impl RadioGroupState {
             focused_value,
             ChoiceInteractionPolicy::single_required(orientation),
         );
-        let selected_index = collection.selected_index();
+        let selected_index = match selection {
+            RadioSelectionAuthority::Controlled(Some(value)) => descriptors
+                .iter()
+                .position(|descriptor| descriptor.value() == value),
+            RadioSelectionAuthority::Controlled(None) => None,
+            RadioSelectionAuthority::Uncontrolled(_) => collection.selected_index(),
+        };
         let focused_index = collection.active_index();
         let metrics = RadioGroupMetrics::from_size(size);
         let colors = ThemeResolver::radio_group_colors(tokens);
@@ -337,6 +386,7 @@ impl RadioGroupState {
                     value: descriptor.value,
                     label: descriptor.label,
                     disabled: disabled || descriptor.disabled,
+                    read_only: false,
                     selected,
                     focused,
                 }
@@ -347,6 +397,7 @@ impl RadioGroupState {
             orientation,
             size,
             disabled,
+            read_only: false,
             required,
             metrics,
             colors,
@@ -355,6 +406,15 @@ impl RadioGroupState {
             selected_index,
             focused_index,
         }
+    }
+
+    /// Returns a copy with read-only state applied to the group and every item.
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        for item in &mut self.items {
+            item.read_only = read_only;
+        }
+        self
     }
 
     /// Returns the group orientation.
@@ -372,6 +432,11 @@ impl RadioGroupState {
         self.disabled
     }
 
+    /// Returns whether the group is read-only.
+    pub const fn read_only(&self) -> bool {
+        self.read_only
+    }
+
     /// Returns whether the group is required.
     pub const fn required(&self) -> bool {
         self.required
@@ -379,7 +444,7 @@ impl RadioGroupState {
 
     /// Returns whether any activation handlers should run.
     pub const fn activation_enabled(&self) -> bool {
-        !self.disabled
+        !self.disabled && !self.read_only
     }
 
     /// Returns the accessibility role.
@@ -491,13 +556,16 @@ pub struct RadioGroup {
     id: ElementId,
     label: Option<SharedString>,
     orientation: Orientation,
-    selected_value: Option<String>,
+    selection: RadioSelectionControl,
+    default_selected_value: Option<String>,
     disabled: bool,
+    read_only: bool,
     required: bool,
     size: Size,
     tokens: ThemeTokens,
     items: Vec<RadioItem>,
     on_selection_change: Option<Rc<dyn Fn(RadioSelection, &mut Window, &mut App)>>,
+    activation_handles: BTreeMap<String, ActivationHandle>,
 }
 
 impl RadioGroup {
@@ -507,13 +575,16 @@ impl RadioGroup {
             id: id.into(),
             label: None,
             orientation: Orientation::Vertical,
-            selected_value: None,
+            selection: RadioSelectionControl::default(),
+            default_selected_value: None,
             disabled: false,
+            read_only: false,
             required: false,
             size: Size::Medium,
             tokens: ThemeTokens::default(),
             items: Vec::new(),
             on_selection_change: None,
+            activation_handles: BTreeMap::new(),
         }
     }
 
@@ -529,15 +600,27 @@ impl RadioGroup {
         self
     }
 
+    /// Applies the caller-owned selected radio value.
+    pub fn selected(mut self, value: Option<String>) -> Self {
+        self.selection = RadioSelectionControl::Controlled(value);
+        self
+    }
+
     /// Applies the default selected radio value for adapter-owned runtime state.
     pub fn default_selected(mut self, value: impl Into<String>) -> Self {
-        self.selected_value = Some(value.into());
+        self.default_selected_value = Some(value.into());
         self
     }
 
     /// Marks the whole group as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Marks the group as read-only while preserving focus and semantics.
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
         self
     }
 
@@ -568,6 +651,16 @@ impl RadioGroup {
         self
     }
 
+    /// Binds an application-owned activation handle to one stable item value.
+    pub fn activation_handle(
+        mut self,
+        value: impl Into<String>,
+        handle: &ActivationHandle,
+    ) -> Self {
+        self.activation_handles.insert(value.into(), handle.clone());
+        self
+    }
+
     /// Returns the resolved state.
     pub fn state(&self) -> RadioGroupState {
         RadioGroupState::resolve(
@@ -575,11 +668,13 @@ impl RadioGroup {
             self.size,
             self.disabled,
             self.required,
-            self.selected_value.as_deref(),
+            self.selection
+                .authority(self.default_selected_value.as_deref()),
             None,
             self.items.iter().map(RadioItem::descriptor),
             self.tokens,
         )
+        .with_read_only(self.read_only)
     }
 }
 
@@ -587,325 +682,6 @@ impl Sizable for RadioGroup {
     fn with_size(mut self, size: Size) -> Self {
         self.size = size;
         self
-    }
-}
-
-impl RenderOnce for RadioGroup {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
-        let RadioGroup {
-            id,
-            label,
-            orientation,
-            selected_value,
-            disabled,
-            required,
-            size,
-            tokens,
-            items,
-            on_selection_change,
-        } = self;
-
-        window.with_id(id.clone(), |window| {
-            let debug_id = id.to_string();
-            let descriptors: Vec<RadioItemDescriptor> =
-                items.iter().map(RadioItem::descriptor).collect();
-            let selected_seed = selected_value.clone();
-            let runtime = window.use_keyed_state("runtime", cx, |_, _| RadioRuntime {
-                selected_value: selected_seed.clone(),
-                focused_value: selected_seed.clone(),
-                focus_handles: BTreeMap::new(),
-            });
-            let runtime_snapshot = {
-                let runtime = runtime.read(cx);
-                (
-                    runtime.selected_value.clone(),
-                    runtime.focused_value.clone(),
-                )
-            };
-            let state = RadioGroupState::resolve(
-                orientation,
-                size,
-                disabled,
-                required,
-                runtime_snapshot.0.as_deref(),
-                runtime_snapshot.1.as_deref(),
-                descriptors.clone(),
-                tokens,
-            );
-            runtime.update(cx, |runtime, cx| runtime.sync(&state, &descriptors, cx));
-
-            let item_descriptors = Rc::new(descriptors);
-            let disabled_items = Rc::new(
-                state
-                    .items()
-                    .iter()
-                    .map(RadioItemState::disabled)
-                    .collect::<Vec<_>>(),
-            );
-            let selected_value = state.selected_value().map(str::to_owned);
-            let metrics = state.metrics();
-            let colors = state.colors();
-            let focus_ring = state.focus_ring();
-            let is_vertical = matches!(orientation, Orientation::Vertical);
-            let tab_stop_index = state.tab_stop_index();
-            let label = label.unwrap_or_else(|| SharedString::from("Radio group"));
-            let semantics = SemanticDescriptor::new(state.role())
-                .with_label(label.as_ref())
-                .with_orientation(orientation)
-                .with_required(state.required())
-                .with_disabled(state.disabled());
-            let focus_handles = {
-                let runtime = runtime.read(cx);
-                state
-                    .items()
-                    .iter()
-                    .map(|item| runtime.focus_handles.get(item.value()).cloned())
-                    .collect::<Vec<_>>()
-            };
-
-            div()
-                .id(id.clone())
-                .debug_selector({
-                    let debug_id = debug_id.clone();
-                    move || format!("radio-group:{debug_id}")
-                })
-                .ui_semantics(&semantics)
-                .flex()
-                .gap(gpui_px_from_ui(metrics.item_gap()))
-                .when(is_vertical, |this| this.flex_col())
-                .when(!is_vertical, |this| this.flex_row().flex_wrap())
-                .children(state.items().iter().enumerate().map(|(index, item)| {
-                    let descriptor = item_descriptors[index].clone();
-                    let disabled_items = disabled_items.clone();
-                    let focus_handle = focus_handles[index].clone();
-                    let click_runtime = runtime.clone();
-                    let click_on_selection_change = on_selection_change.clone();
-                    let click_selected_value = selected_value.clone();
-                    let key_runtime = runtime.clone();
-                    let key_on_selection_change = on_selection_change.clone();
-                    let key_selected_value = selected_value.clone();
-                    let key_item_descriptors = item_descriptors.clone();
-                    let item_index = index;
-                    let is_selected = item.selected();
-                    let is_tab_stop = Some(index) == tab_stop_index;
-                    let item_value = item.value().to_owned();
-                    let label_color = theme.resolve(if item.disabled() {
-                        colors.label_muted()
-                    } else {
-                        colors.label()
-                    });
-                    let hover_background = theme.resolve(colors.hover_background());
-                    let control_border = theme.resolve(if is_selected {
-                        colors.control_border_selected()
-                    } else {
-                        colors.control_border()
-                    });
-                    let control_background = theme.resolve(if is_selected {
-                        colors.control_background_selected()
-                    } else {
-                        colors.control_background()
-                    });
-                    let indicator_color = theme.resolve(colors.indicator());
-                    let item_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
-                    let item_semantics = SemanticDescriptor::new(item.role())
-                        .with_label(item.label())
-                        .with_selected(is_selected)
-                        .with_disabled(item.disabled())
-                        .with_position_in_set(item_index + 1)
-                        .with_size_of_set(state.items().len())
-                        .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
-
-                    div()
-                        .id(radio_item_id(item.value()))
-                        .debug_selector({
-                            let debug_id = debug_id.clone();
-                            let item_value = item_value.clone();
-                            move || format!("radio-group:{debug_id}:item:{item_value}")
-                        })
-                        .focusable()
-                        .tab_stop(is_tab_stop)
-                        .ui_semantics(&item_semantics)
-                        .when_some(focus_handle, |this, focus_handle| {
-                            this.track_focus(&focus_handle)
-                        })
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .px(gpui_px_from_ui(metrics.item_padding_x()))
-                        .py(gpui_px_from_ui(metrics.item_padding_y()))
-                        .rounded(gpui_px_from_ui(metrics.radius()))
-                        .text_size(gpui_px_from_ui(metrics.label_text_size()))
-                        .line_height(gpui_px_from_ui(metrics.label_text_size()))
-                        .text_color(label_color)
-                        .focus_visible(move |style| style.shadow(item_focus_shadow.clone()))
-                        .when(!item.disabled(), |this| {
-                            this.cursor_pointer()
-                                .hover(move |style| style.bg(hover_background))
-                        })
-                        .when(item.disabled(), |this| {
-                            this.opacity(0.56).cursor_not_allowed()
-                        })
-                        .on_click({
-                            let descriptor = descriptor.clone();
-                            move |_event: &ClickEvent, window, cx| {
-                                if descriptor.disabled_state() || disabled {
-                                    return;
-                                }
-
-                                cx.stop_propagation();
-                                let changed =
-                                    click_selected_value.as_deref() != Some(descriptor.value());
-                                let focus_handle = click_runtime.update(cx, |runtime, cx| {
-                                    runtime.set_active(descriptor.value(), cx)
-                                });
-
-                                if changed && let Some(handler) = click_on_selection_change.clone()
-                                {
-                                    handler(
-                                        RadioSelection::from_descriptor(item_index, &descriptor),
-                                        window,
-                                        cx,
-                                    );
-                                }
-
-                                if let Some(focus_handle) = focus_handle {
-                                    focus_handle.focus(window, cx);
-                                }
-                            }
-                        })
-                        .on_key_down({
-                            let descriptor = descriptor.clone();
-                            let disabled_items = disabled_items.clone();
-                            move |event: &KeyDownEvent, window, cx| {
-                                if descriptor.disabled_state() || disabled {
-                                    return;
-                                }
-                                if event.keystroke.modifiers.modified() {
-                                    return;
-                                }
-
-                                let key = event.keystroke.key.as_str();
-                                let Some(target_index) =
-                                    ChoiceInteractionPolicy::single_required(orientation)
-                                        .navigation_target_index(key, item_index, &disabled_items)
-                                else {
-                                    if !matches!(key, "space" | "enter") {
-                                        return;
-                                    }
-
-                                    let changed =
-                                        key_selected_value.as_deref() != Some(descriptor.value());
-                                    let focus_handle = key_runtime.update(cx, |runtime, cx| {
-                                        runtime.set_active(descriptor.value(), cx)
-                                    });
-
-                                    if changed
-                                        && let Some(handler) = key_on_selection_change.clone()
-                                    {
-                                        handler(
-                                            RadioSelection::from_descriptor(
-                                                item_index,
-                                                &descriptor,
-                                            ),
-                                            window,
-                                            cx,
-                                        );
-                                    }
-
-                                    if let Some(focus_handle) = focus_handle {
-                                        focus_handle.focus(window, cx);
-                                    }
-                                    cx.stop_propagation();
-                                    return;
-                                };
-
-                                let target = &key_item_descriptors[target_index];
-                                let target_value = target.value().to_owned();
-                                let target_selection =
-                                    RadioSelection::from_descriptor(target_index, target);
-                                let changed = key_selected_value.as_deref() != Some(target.value());
-                                let focus_handle = key_runtime.update(cx, |runtime, cx| {
-                                    runtime.set_active(&target_value, cx)
-                                });
-
-                                if changed && let Some(handler) = key_on_selection_change.clone() {
-                                    handler(target_selection, window, cx);
-                                }
-
-                                if let Some(focus_handle) = focus_handle {
-                                    focus_handle.focus(window, cx);
-                                }
-
-                                cx.stop_propagation();
-                            }
-                        })
-                        .child(
-                            div()
-                                .w(gpui_px_from_ui(metrics.control_size()))
-                                .h(gpui_px_from_ui(metrics.control_size()))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(gpui_px_from_ui(metrics.control_size()))
-                                .border_1()
-                                .border_color(control_border)
-                                .bg(control_background)
-                                .child(if is_selected {
-                                    div()
-                                        .w(gpui_px_from_ui(metrics.indicator_size()))
-                                        .h(gpui_px_from_ui(metrics.indicator_size()))
-                                        .rounded(gpui_px_from_ui(metrics.indicator_size()))
-                                        .bg(indicator_color)
-                                } else {
-                                    div().w(px(0.0)).h(px(0.0))
-                                }),
-                        )
-                        .child(descriptor.label().to_string())
-                }))
-        })
-    }
-}
-
-#[derive(Debug, Default)]
-struct RadioRuntime {
-    selected_value: Option<String>,
-    focused_value: Option<String>,
-    focus_handles: BTreeMap<String, FocusHandle>,
-}
-
-impl RadioRuntime {
-    fn sync(
-        &mut self,
-        state: &RadioGroupState,
-        items: &[RadioItemDescriptor],
-        cx: &mut Context<Self>,
-    ) {
-        self.focus_handles
-            .retain(|value, _| items.iter().any(|item| item.value() == value));
-
-        for item in items {
-            self.focus_handles
-                .entry(item.value().to_owned())
-                .or_insert_with(|| cx.focus_handle());
-        }
-
-        self.selected_value = state.selected_value().map(str::to_owned);
-        self.focused_value = state.focused_value().map(str::to_owned);
-    }
-
-    fn set_active(&mut self, value: &str, cx: &mut Context<Self>) -> Option<FocusHandle> {
-        if self.selected_value.as_deref() == Some(value)
-            && self.focused_value.as_deref() == Some(value)
-        {
-            return self.focus_handles.get(value).cloned();
-        }
-
-        let value = value.to_owned();
-        self.selected_value = Some(value.clone());
-        self.focused_value = Some(value.clone());
-        cx.notify();
-        self.focus_handles.get(&value).cloned()
     }
 }
 
@@ -931,10 +707,6 @@ fn radio_choice_items(
         .collect()
 }
 
-fn radio_item_id(value: &str) -> ElementId {
-    format!("radio-{value}").into()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -946,7 +718,7 @@ mod tests {
             Size::Medium,
             false,
             true,
-            Some("team"),
+            RadioSelectionAuthority::Uncontrolled(Some("team")),
             None,
             [
                 RadioItemDescriptor::new("personal", "Personal"),
