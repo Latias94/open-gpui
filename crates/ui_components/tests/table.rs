@@ -1,11 +1,11 @@
 mod support;
 
 use open_gpui::{
-    Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Render, ScrollDelta,
-    ScrollWheelEvent, Styled, Window, div, point, px,
+    Context, FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
+    ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, Styled, Window, div, point, px,
 };
 use open_gpui_ui_components::{
-    PopoverOpenMode, ScrollArea, Table, TableCellEditApplyOutcome, TableCellEditChange,
+    PopoverOpenMode, ScrollArea, Table, TableCellEditApplyOutcome, TableCellEditRequest,
     TableColumnOrderChange, TableColumnOrderPlacement, TableColumnSizingChange,
     TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
     TableColumnVisibilityState, TableFacetedFilter, TableFacetedFilterChange,
@@ -14,7 +14,8 @@ use open_gpui_ui_components::{
     TablePredicateFilterOperator, TablePredicateFilterOperatorOptionState,
     TablePredicateFilterState, TableRangeFilter, TableRangeFilterChange, TableRangeFilterState,
     TableRowMeasureMode, TableSelectionScope, TableToolbar, TableToolbarState,
-    gpui_adapter::init_text_input,
+    TableVirtualizerSnapshot, TableVirtualizerSnapshotItem,
+    gpui_adapter::{TableDebugSelector, init_text_input},
 };
 use open_gpui_ui_core::{
     OutsidePressPolicy, OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable, Size,
@@ -22,10 +23,10 @@ use open_gpui_ui_core::{
     TableColumnId, TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
     TableColumnVisibilityOverrides, TableExpansionMode, TableFacetValueCount, TableFilter,
     TableGlobalFacetSummary, TableNumericFilterOperator, TablePagination, TableRow,
-    TableRowChildrenLoadState, TableRowId, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
-    TableSelectOption, TableSelectionActivationMode, TableSelectionMode, TableSort,
-    TableSortDirection, TableStageMode, TableState, TableTextFilterOperator, UiPx,
-    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem, ui_px,
+    TableRowChildrenLoadState, TableRowId, TableRowIdentity, TableRowPinning,
+    TableRowPinningPolicy, TableRowRegion, TableSelectOption, TableSelectionActivationMode,
+    TableSelectionMode, TableSort, TableSortDirection, TableSourceRowIdentity, TableStageMode,
+    TableState, TableTextFilterOperator, UiPx, VirtualizerRange, ui_px,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -51,6 +52,107 @@ fn sample_table_state(row_count: usize) -> TableState {
         TableColumn::new("team", "Team"),
         TableColumn::new("score", "Score"),
     ])
+}
+
+fn table_source_row_identity(row_id: impl Into<TableRowId>) -> TableRowIdentity {
+    TableRowIdentity::source(row_id)
+}
+
+fn table_source_row_selector(table_id: &str, row_id: impl Into<TableRowId>) -> String {
+    TableDebugSelector::row(table_id, &table_source_row_identity(row_id))
+}
+
+fn table_source_cell_selector(
+    table_id: &str,
+    row_id: impl Into<TableRowId>,
+    column_id: impl Into<TableColumnId>,
+) -> String {
+    TableDebugSelector::cell(
+        table_id,
+        &table_source_row_identity(row_id),
+        &column_id.into(),
+    )
+}
+
+fn table_source_tree_toggle_selector(table_id: &str, row_id: impl Into<TableRowId>) -> String {
+    TableDebugSelector::tree_toggle(table_id, &table_source_row_identity(row_id))
+}
+
+fn table_source_row_region_selector(
+    table_id: &str,
+    row_id: impl Into<TableRowId>,
+    region: TableColumnRegion,
+) -> String {
+    TableDebugSelector::row_region(table_id, &table_source_row_identity(row_id), region)
+}
+
+fn table_source_row_center_scroll_selector(
+    table_id: &str,
+    row_id: impl Into<TableRowId>,
+) -> String {
+    TableDebugSelector::row_center_scroll(table_id, &table_source_row_identity(row_id))
+}
+
+fn table_source_text_input_editor_selector(
+    table_id: &str,
+    row_id: impl Into<TableRowId>,
+    column_id: impl Into<TableColumnId>,
+) -> String {
+    TableDebugSelector::text_input_editor_root(
+        table_id,
+        &table_source_row_identity(row_id),
+        &column_id.into(),
+    )
+}
+
+fn table_source_textarea_editor_selector(
+    table_id: &str,
+    row_id: impl Into<TableRowId>,
+    column_id: impl Into<TableColumnId>,
+) -> String {
+    TableDebugSelector::textarea_editor_root(
+        table_id,
+        &table_source_row_identity(row_id),
+        &column_id.into(),
+    )
+}
+
+fn table_source_checkbox_editor_selector(
+    table_id: &str,
+    row_id: impl Into<TableRowId>,
+    column_id: impl Into<TableColumnId>,
+) -> String {
+    TableDebugSelector::checkbox_editor_root(
+        table_id,
+        &table_source_row_identity(row_id),
+        &column_id.into(),
+    )
+}
+
+fn table_source_select_editor_selector(
+    table_id: &str,
+    row_id: impl Into<TableRowId>,
+    column_id: impl Into<TableColumnId>,
+) -> String {
+    TableDebugSelector::select_editor_trigger(
+        table_id,
+        &table_source_row_identity(row_id),
+        &column_id.into(),
+    )
+}
+
+fn table_source_select_option_selector(
+    table_id: &str,
+    row_id: impl Into<TableRowId>,
+    column_id: impl Into<TableColumnId>,
+    option_value: &str,
+) -> String {
+    TableDebugSelector::select_editor_option(
+        table_id,
+        &table_source_row_identity(row_id),
+        &column_id.into(),
+        option_value,
+    )
 }
 
 fn text_facet_counts(facet: &TableColumnFacets) -> Vec<(String, usize)> {
@@ -205,6 +307,8 @@ mod exports;
 mod filters_toolbar;
 #[path = "table/layout_contracts.rs"]
 mod layout_contracts;
+#[path = "table/runtime_editing.rs"]
+mod runtime_editing;
 #[path = "table/runtime_interactions.rs"]
 mod runtime_interactions;
 #[path = "table/runtime_layout.rs"]

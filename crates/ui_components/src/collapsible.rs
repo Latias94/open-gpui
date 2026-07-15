@@ -10,7 +10,7 @@ use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens};
 use std::rc::Rc;
 
 /// Resolved collapsible color intents.
@@ -213,6 +213,17 @@ impl RenderOnce for Collapsible {
         let foreground = theme.resolve(colors.foreground());
         let hover_background = theme.resolve(colors.hover_background());
         let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+        let trigger_actions: &[AccessibleAction] = if self.on_open_change.is_some() {
+            &[AccessibleAction::Click, AccessibleAction::Focus]
+        } else {
+            &[AccessibleAction::Focus]
+        };
+        let trigger_semantics = SemanticDescriptor::new(state.trigger_role())
+            .with_label(state.label())
+            .with_disabled(disabled)
+            .with_expanded(open)
+            .with_actions(trigger_actions);
+        let content_semantics = SemanticDescriptor::new(state.content_role());
 
         div()
             .id(self.id)
@@ -239,9 +250,7 @@ impl RenderOnce for Collapsible {
                     .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
                     .tab_stop(!disabled)
-                    .ui_role(state.trigger_role())
-                    .aria_label(label.clone())
-                    .aria_expanded(open)
+                    .ui_semantics(&trigger_semantics)
                     .focus_visible(move |style| style.shadow(focus_shadow.clone()))
                     .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                     .when(!disabled, |this| {
@@ -264,7 +273,7 @@ impl RenderOnce for Collapsible {
                 this.child(
                     div()
                         .id(content_id)
-                        .ui_role(state.content_role())
+                        .ui_semantics(&content_semantics)
                         .rounded(gpui_px_from_ui(metrics.radius()))
                         .border_1()
                         .border_color(border_color)

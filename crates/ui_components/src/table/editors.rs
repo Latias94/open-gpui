@@ -1,6 +1,6 @@
 use open_gpui::prelude::*;
 use open_gpui::{AnyElement, ParentElement, Styled, div, px};
-use open_gpui_ui_core::{Sizable, TableCellEditor, TableCellValue, Toggled};
+use open_gpui_ui_core::{Sizable, TableCellEditor, TableCellValue, TableColumnId, Toggled};
 
 use crate::checkbox::Checkbox;
 use crate::listbox::ListboxOption;
@@ -8,6 +8,7 @@ use crate::select::Select;
 use crate::text_input::TextInput;
 use crate::textarea::Textarea;
 
+use super::identity::TableDebugSelector;
 use super::{
     TableCellEditChange, TableCellEditHandler, TableCellRenderPlan, TableInputModifiers,
     TableMetrics, TableRowAction, TableRowRenderPlan,
@@ -15,8 +16,7 @@ use super::{
 
 pub(super) fn render_table_cell_editor(
     table_id: &str,
-    render_key: &str,
-    column_id: &str,
+    column_id: &TableColumnId,
     metrics: TableMetrics,
     cell: &TableCellRenderPlan,
     row: &TableRowRenderPlan,
@@ -27,7 +27,7 @@ pub(super) fn render_table_cell_editor(
     };
 
     let action = TableRowAction::from_render_plan(row, TableInputModifiers::default());
-    let column_id_for_change = cell.column_id().clone();
+    let column_id_for_change = column_id.clone();
     let previous_value = cell.value().cloned().unwrap_or_default();
     let cell_text = cell.text().to_owned();
     let cell_value = cell.value().cloned();
@@ -40,8 +40,11 @@ pub(super) fn render_table_cell_editor(
         .as_ref()
         .map(TableCellValue::filter_text)
         .unwrap_or_default();
-    let editor_id = format!("table:{table_id}:cell:{render_key}:{column_id}:editor");
-    let editor_label = format!("Edit {column_id} for row {}", row.id().as_str());
+    let editor_id =
+        TableDebugSelector::cell_editor_id_key(table_id, row.row().identity_key(), column_id);
+    let editor_shell_id = format!("{editor_id}-shell");
+    let column_label = column_id.as_str();
+    let editor_label = format!("Edit {column_label} for row {}", row.row().debug_label());
     let editor_element = match editor {
         TableCellEditor::Text => {
             let on_change = on_cell_edit_change.clone();
@@ -89,7 +92,7 @@ pub(super) fn render_table_cell_editor(
         TableCellEditor::Checkbox => {
             let on_change = on_cell_edit_change.clone();
             let checked = matches!(cell_value.as_ref(), Some(TableCellValue::Bool(true)));
-            let editor_label = format!("Toggle {column_id} for row {}", row.id().as_str());
+            let editor_label = format!("Toggle {column_label} for row {}", row.row().debug_label());
             Checkbox::new(editor_id)
                 .aria_label(editor_label)
                 .checked(checked)
@@ -136,14 +139,10 @@ pub(super) fn render_table_cell_editor(
 
     Some(
         div()
-            .id(format!(
-                "table:{table_id}:cell:{render_key}:{column_id}:editor-shell"
-            ))
+            .id(editor_shell_id.clone())
             .debug_selector({
-                let table_id = table_id.to_owned();
-                let render_key = render_key.to_owned();
-                let column_id = column_id.to_owned();
-                move || format!("table:{table_id}:cell:{render_key}:{column_id}:editor-shell")
+                let editor_shell_id = editor_shell_id.clone();
+                move || editor_shell_id.clone()
             })
             .flex_1()
             .w_full()

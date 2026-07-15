@@ -1,6 +1,9 @@
+#[path = "support/a11y.rs"]
+mod a11y_support;
+
 use open_gpui::{
     Context, InteractiveElement, IntoElement, ParentElement, Render, ScrollDelta, ScrollWheelEvent,
-    Styled, Window, div, point, px,
+    Styled, Window, accesskit, div, point, px,
 };
 use open_gpui_ui_components::{
     ActionDescriptor, Button, CommandItemDescriptor, IconButton, Menu, MenuItem,
@@ -19,6 +22,8 @@ use open_gpui_ui_components::{
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, Toggled, ui_px};
 use std::cell::RefCell;
 use std::rc::Rc;
+
+use a11y_support::node_with_label as a11y_node_with_label;
 
 #[test]
 fn resolved_action_projects_consistent_facts_to_navigation_and_action_surfaces() {
@@ -262,6 +267,195 @@ fn tabs_vertical_tablist_scrolls_when_constrained(cx: &mut open_gpui::TestAppCon
         tab_after.top() < tab_before.top(),
         "expected constrained vertical tablist to scroll; before={tab_before:?} after={tab_after:?}"
     );
+}
+
+#[open_gpui::test]
+fn tabs_final_tree_relations_actions_and_node_ids_follow_runtime_selection(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TabsA11yProbe;
+
+    impl Render for TabsA11yProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                Tabs::new("a11y-navigation-tabs")
+                    .default_selected("overview")
+                    .item(TabsItem::new(
+                        "overview",
+                        "Overview",
+                        div().child("Overview panel"),
+                    ))
+                    .item(TabsItem::new(
+                        "details",
+                        "Details",
+                        div().child("Details panel"),
+                    ))
+                    .item(
+                        TabsItem::new("billing", "Billing", div().child("Billing panel"))
+                            .disabled(true),
+                    ),
+            )
+        }
+    }
+
+    fn node_with_role(
+        update: &accesskit::TreeUpdate,
+        role: accesskit::Role,
+    ) -> (accesskit::NodeId, &accesskit::Node) {
+        update
+            .nodes
+            .iter()
+            .find(|(_, node)| node.role() == role)
+            .map(|(id, node)| (*id, node))
+            .unwrap_or_else(|| panic!("missing accessibility node with role {role:?}"))
+    }
+
+    fn dispatch_action(
+        cx: &open_gpui::VisualTestContext,
+        action: accesskit::Action,
+        target_node: accesskit::NodeId,
+    ) {
+        assert!(cx.dispatch_accessibility_action(accesskit::ActionRequest {
+            action,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node,
+            data: None,
+        }));
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TabsA11yProbe);
+    assert!(cx.activate_accessibility());
+
+    let initial = cx
+        .latest_accessibility_tree_update()
+        .expect("tabs accessibility tree should publish");
+    let (tablist_id, tablist) = node_with_role(&initial, accesskit::Role::TabList);
+    let (panel_id, panel) = node_with_role(&initial, accesskit::Role::TabPanel);
+    let (overview_id, overview) = a11y_node_with_label(&initial, "Overview");
+    let (details_id, details) = a11y_node_with_label(&initial, "Details");
+    let (billing_id, billing) = a11y_node_with_label(&initial, "Billing");
+
+    assert_eq!(
+        tablist.orientation(),
+        Some(accesskit::Orientation::Horizontal)
+    );
+    assert!(!tablist.supports_action(accesskit::Action::Click));
+    assert!(!tablist.supports_action(accesskit::Action::Focus));
+    assert!(!panel.supports_action(accesskit::Action::Click));
+    assert!(!panel.supports_action(accesskit::Action::Focus));
+
+    for (index, tab) in [overview, details, billing].into_iter().enumerate() {
+        assert_eq!(tab.role(), accesskit::Role::Tab);
+        assert_eq!(tab.position_in_set(), Some(index + 1));
+        assert_eq!(tab.size_of_set(), Some(3));
+        assert_eq!(tab.controls(), &[panel_id]);
+    }
+    assert_eq!(overview.is_selected(), Some(true));
+    assert_eq!(details.is_selected(), Some(false));
+    assert_eq!(billing.is_selected(), Some(false));
+    assert_eq!(panel.labelled_by(), &[overview_id]);
+
+    for tab in [overview, details] {
+        assert!(tab.supports_action(accesskit::Action::Click));
+        assert!(tab.supports_action(accesskit::Action::Focus));
+        assert!(!tab.supports_action(accesskit::Action::Increment));
+    }
+    assert!(billing.is_disabled());
+    assert!(!billing.supports_action(accesskit::Action::Click));
+    assert!(!billing.supports_action(accesskit::Action::Focus));
+
+    dispatch_action(cx, accesskit::Action::Focus, details_id);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.latest_accessibility_tree_update()
+            .expect("tab focus should publish")
+            .focus,
+        details_id
+    );
+
+    dispatch_action(cx, accesskit::Action::Click, details_id);
+    cx.run_until_parked();
+    let selected = cx
+        .latest_accessibility_tree_update()
+        .expect("tab selection should publish");
+    let (selected_tablist_id, _) = node_with_role(&selected, accesskit::Role::TabList);
+    let (selected_panel_id, selected_panel) = node_with_role(&selected, accesskit::Role::TabPanel);
+    let (selected_overview_id, selected_overview) = a11y_node_with_label(&selected, "Overview");
+    let (selected_details_id, selected_details) = a11y_node_with_label(&selected, "Details");
+    let (selected_billing_id, selected_billing) = a11y_node_with_label(&selected, "Billing");
+
+    assert_eq!(selected_tablist_id, tablist_id);
+    assert_eq!(selected_panel_id, panel_id);
+    assert_eq!(selected_overview_id, overview_id);
+    assert_eq!(selected_details_id, details_id);
+    assert_eq!(selected_billing_id, billing_id);
+    assert_eq!(selected_overview.is_selected(), Some(false));
+    assert_eq!(selected_details.is_selected(), Some(true));
+    assert_eq!(selected_billing.is_selected(), Some(false));
+    assert_eq!(selected_details.controls(), &[selected_panel_id]);
+    assert_eq!(selected_panel.labelled_by(), &[selected_details_id]);
+
+    dispatch_action(cx, accesskit::Action::Click, billing_id);
+    cx.run_until_parked();
+    let after_disabled_action = cx
+        .latest_accessibility_tree_update()
+        .expect("disabled tab action should preserve the final tree");
+    let (after_panel_id, after_panel) =
+        node_with_role(&after_disabled_action, accesskit::Role::TabPanel);
+    let (after_details_id, after_details) = a11y_node_with_label(&after_disabled_action, "Details");
+    let (after_billing_id, after_billing) = a11y_node_with_label(&after_disabled_action, "Billing");
+    assert_eq!(after_panel_id, panel_id);
+    assert_eq!(after_details_id, details_id);
+    assert_eq!(after_billing_id, billing_id);
+    assert_eq!(after_details.is_selected(), Some(true));
+    assert_eq!(after_billing.is_selected(), Some(false));
+    assert!(after_billing.is_disabled());
+    assert_eq!(after_panel.labelled_by(), &[after_details_id]);
+}
+
+#[open_gpui::test]
+fn tabs_vertical_final_tree_panel_relation_uses_scrolled_trigger_node_id(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct VerticalTabsA11yProbe;
+
+    impl Render for VerticalTabsA11yProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                Tabs::new("vertical-a11y-navigation-tabs")
+                    .orientation(Orientation::Vertical)
+                    .default_selected("overview")
+                    .item(TabsItem::new(
+                        "overview",
+                        "Vertical overview",
+                        div().child("Overview panel"),
+                    ))
+                    .item(TabsItem::new(
+                        "details",
+                        "Vertical details",
+                        div().child("Details panel"),
+                    )),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| VerticalTabsA11yProbe);
+    assert!(cx.activate_accessibility());
+
+    let update = cx
+        .latest_accessibility_tree_update()
+        .expect("vertical tabs accessibility tree should publish");
+    let (selected_tab_id, selected_tab) = a11y_node_with_label(&update, "Vertical overview");
+    let (panel_id, panel) = update
+        .nodes
+        .iter()
+        .find(|(_, node)| node.role() == accesskit::Role::TabPanel)
+        .map(|(id, node)| (*id, node))
+        .expect("vertical tabs should publish a tab panel");
+
+    assert_eq!(selected_tab.role(), accesskit::Role::Tab);
+    assert_eq!(selected_tab.controls(), &[panel_id]);
+    assert_eq!(panel.labelled_by(), &[selected_tab_id]);
 }
 
 #[open_gpui::test]

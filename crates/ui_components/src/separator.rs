@@ -6,7 +6,9 @@ use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
 use open_gpui::{ElementId, InteractiveElement, IntoElement, RenderOnce, Styled, div};
-use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{
+    Orientation, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px,
+};
 
 /// Resolved separator color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,7 +188,8 @@ impl RenderOnce for Separator {
                 this.w(thickness).min_w(thickness).h_full()
             })
             .when_some(state.role(), |this, role| {
-                this.ui_role(role).ui_aria_orientation(state.orientation())
+                let semantics = SemanticDescriptor::new(role).with_orientation(state.orientation());
+                this.ui_semantics(&semantics)
             })
     }
 }

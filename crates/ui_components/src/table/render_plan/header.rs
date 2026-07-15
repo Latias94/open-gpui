@@ -1,17 +1,19 @@
 use std::collections::BTreeMap;
 
+use open_gpui::ElementId;
 use open_gpui_ui_core::{
     TableColumnId, TableColumnRegion, TableResolvedHeaderCell, TableResolvedHeaderGroup,
     TableResolvedHeaderGroupRegions, TableResolvedHeaderKind, TableSortDirection, UiPx,
 };
 
 use super::super::TableHeaderAction;
-use super::columns::{TableColumnRegionRenderPlan, TableColumnRenderPlan};
+use super::super::identity::{table_header_debug_selector, table_header_element_id};
+use super::columns::TableColumnRenderPlan;
 
 /// One resolved table header cell in render-plan form.
 #[derive(Debug, Clone, PartialEq)]
 pub(in crate::table) struct TableHeaderCellRenderPlan {
-    id: String,
+    element_id: ElementId,
     debug_selector: String,
     label: String,
     kind: TableResolvedHeaderKind,
@@ -53,24 +55,8 @@ impl TableHeaderCellRenderPlan {
             .flatten()
             .unwrap_or(false);
         Self {
-            id: format!("table:{table_id}:header-cell:{}", cell.id()),
-            debug_selector: match cell.kind() {
-                TableResolvedHeaderKind::Leaf => {
-                    format!("table:{table_id}:header:{}", cell.source_id())
-                }
-                TableResolvedHeaderKind::Group => format!(
-                    "table:{table_id}:header-group:{}:{}:{}",
-                    cell.region().as_str(),
-                    cell.depth(),
-                    cell.source_id()
-                ),
-                TableResolvedHeaderKind::Placeholder => format!(
-                    "table:{table_id}:header-placeholder:{}:{}:{}",
-                    cell.region().as_str(),
-                    cell.depth(),
-                    cell.placeholder_id().unwrap_or(cell.source_id())
-                ),
-            },
+            element_id: table_header_element_id(table_id, cell.identity()),
+            debug_selector: table_header_debug_selector(table_id, cell.identity()),
             label: cell.label().to_owned(),
             kind: cell.kind(),
             row_span: cell.row_span(),
@@ -82,9 +68,9 @@ impl TableHeaderCellRenderPlan {
         }
     }
 
-    /// Returns the stable render identity for this header cell.
-    pub fn id(&self) -> &str {
-        &self.id
+    /// Returns the stable GPUI element identity for this header fragment.
+    pub const fn element_id(&self) -> &ElementId {
+        &self.element_id
     }
 
     /// Returns the stable diagnostic selector for this header cell.
@@ -207,14 +193,11 @@ impl TableHeaderGroupRegionsRenderPlan {
         table_id: &str,
         header_groups: &TableResolvedHeaderGroupRegions,
         columns: &[TableColumnRenderPlan],
-        column_regions: &[TableColumnRegionRenderPlan],
     ) -> Self {
         let columns_by_id = columns
             .iter()
             .map(|column| (column.id().clone(), column))
             .collect::<BTreeMap<_, _>>();
-        let _ = column_regions;
-
         Self {
             left: TableHeaderGroupRegionRenderPlan::from_resolved(
                 table_id,

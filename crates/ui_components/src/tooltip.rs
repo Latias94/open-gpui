@@ -7,13 +7,12 @@ use std::time::Duration;
 use open_gpui::prelude::*;
 use open_gpui::{
     Action, AnyElement, AnyView, App, Context, ElementId, IntoElement, KeyBinding, KeyContext,
-    ParentElement, Render, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window,
-    div,
+    ParentElement, Render, RenderOnce, SharedString, Styled, Window, div,
 };
 use open_gpui_ui_core::{
     InitialFocusIntent, OverlayAnchorInput, OverlayLayerKind, OverlayPlacementAlignment,
-    OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role, Sizable, Size, ThemeTokens,
-    UiPx, rect, ui_point, ui_px, ui_size,
+    OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role, SemanticDescriptor,
+    Sizable, Size, ThemeTokens, UiPx, rect, ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -659,6 +658,7 @@ fn tooltip_surface_element(
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
+    let semantics = SemanticDescriptor::new(state.role()).with_label(accessible_label.as_ref());
 
     div()
         .id(content_id)
@@ -674,8 +674,7 @@ fn tooltip_surface_element(
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .shadow_lg()
-        .ui_role(state.role())
-        .aria_label(accessible_label)
+        .ui_semantics(&semantics)
         .children(children)
 }
 

@@ -1,6 +1,11 @@
 use super::*;
 use open_gpui::accesskit;
 
+#[path = "accessibility/identity.rs"]
+mod identity;
+#[path = "accessibility/virtual_focus.rs"]
+mod virtual_focus;
+
 fn node_with_role_and_label<'a>(
     update: &'a accesskit::TreeUpdate,
     role: accesskit::Role,
@@ -25,6 +30,36 @@ fn node_with_role_and_row_index(
         .find(|(_, node)| node.role() == role && node.row_index() == Some(row_index))
         .map(|(id, node)| (*id, node))
         .unwrap_or_else(|| panic!("missing {role:?} node at row {row_index}"))
+}
+
+fn cell_with_column_and_value<'a>(
+    update: &'a accesskit::TreeUpdate,
+    column_index: usize,
+    value: &str,
+) -> (accesskit::NodeId, &'a accesskit::Node) {
+    update
+        .nodes
+        .iter()
+        .find(|(_, node)| {
+            node.role() == accesskit::Role::Cell
+                && node.column_index() == Some(column_index)
+                && node.value() == Some(value)
+        })
+        .map(|(id, node)| (*id, node))
+        .unwrap_or_else(|| panic!("missing cell at column {column_index} with value {value:?}"))
+}
+
+fn parent_with_role(
+    update: &accesskit::TreeUpdate,
+    child_id: accesskit::NodeId,
+    role: accesskit::Role,
+) -> (accesskit::NodeId, &accesskit::Node) {
+    update
+        .nodes
+        .iter()
+        .find(|(_, node)| node.role() == role && node.children().contains(&child_id))
+        .map(|(id, node)| (*id, node))
+        .unwrap_or_else(|| panic!("missing {role:?} parent for node {child_id:?}"))
 }
 
 #[open_gpui::test]
@@ -124,7 +159,11 @@ fn table_runtime_final_accessibility_tree(cx: &mut open_gpui::TestAppContext) {
                 .viewport_extent(ui_px(96.0))
                 .on_row_activate(move |activation, _, _| {
                     row_activations.borrow_mut().push((
-                        activation.row_id().as_str().to_owned(),
+                        activation
+                            .source_row_id()
+                            .expect("source-backed activation")
+                            .as_str()
+                            .to_owned(),
                         activation.kind().as_str().to_owned(),
                         activation.action().depth(),
                         activation.action().tree_expanded(),
@@ -132,7 +171,11 @@ fn table_runtime_final_accessibility_tree(cx: &mut open_gpui::TestAppContext) {
                 })
                 .on_row_expansion_request(move |toggle, _, _| {
                     expansion_toggles.borrow_mut().push((
-                        toggle.row_id().as_str().to_owned(),
+                        toggle
+                            .source_row_id()
+                            .expect("source-backed expansion toggle")
+                            .as_str()
+                            .to_owned(),
                         toggle.expanded(),
                         toggle.action().depth(),
                         toggle.action().tree_expanded(),
@@ -490,191 +533,4 @@ fn nested_table_headers_preserve_rows_spans_sort_and_segment_identity(
         descending_score.sort_direction(),
         Some(accesskit::SortDirection::Descending)
     );
-}
-
-#[open_gpui::test]
-fn table_header_rows_keep_identity_when_column_pinning_changes(cx: &mut open_gpui::TestAppContext) {
-    struct HeaderPinningA11yProbe {
-        pinned: bool,
-    }
-
-    impl Render for HeaderPinningA11yProbe {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            let state = TableState::new([TableRow::new("row-a")
-                .with_cell("name", "Alpha")
-                .with_cell("team", "UI")
-                .with_cell("score", 42_usize)
-                .with_cell("status", "Ready")])
-            .with_column_tree([
-                TableColumnGroup::new(
-                    "identity",
-                    "Identity",
-                    [
-                        TableColumn::new("name", "Name"),
-                        TableColumn::new("team", "Team"),
-                    ],
-                ),
-                TableColumnGroup::new(
-                    "delivery",
-                    "Delivery",
-                    [
-                        TableColumn::new("score", "Score"),
-                        TableColumn::new("status", "Status"),
-                    ],
-                ),
-            ]);
-            let state = if self.pinned {
-                state.with_column_pinning(
-                    TableColumnPinning::new()
-                        .pinned_left(["name"])
-                        .pinned_right(["status"]),
-                )
-            } else {
-                state
-            };
-
-            div().w(px(640.0)).h(px(220.0)).child(
-                Table::new("pinning-semantic-table", "Pinning semantic table", state)
-                    .row_height(ui_px(24.0))
-                    .viewport_extent(ui_px(96.0)),
-            )
-        }
-    }
-
-    let (view, cx) = cx.add_window_view(|_, _| HeaderPinningA11yProbe { pinned: false });
-    assert!(cx.activate_accessibility());
-    let initial = cx
-        .latest_accessibility_tree_update()
-        .expect("initial header rows should publish");
-    let initial_header_rows = (1..=2)
-        .map(|row_index| node_with_role_and_row_index(&initial, accesskit::Role::Row, row_index).0)
-        .collect::<Vec<_>>();
-
-    view.update(cx, |probe, cx| {
-        probe.pinned = true;
-        cx.notify();
-    });
-    cx.run_until_parked();
-    let pinned = cx
-        .latest_accessibility_tree_update()
-        .expect("pinned header rows should publish");
-    let pinned_header_rows = (1..=2)
-        .map(|row_index| node_with_role_and_row_index(&pinned, accesskit::Role::Row, row_index).0)
-        .collect::<Vec<_>>();
-
-    assert_eq!(pinned_header_rows, initial_header_rows);
-}
-
-#[open_gpui::test]
-fn table_virtual_windows_recycle_without_reusing_semantic_identity(
-    cx: &mut open_gpui::TestAppContext,
-) {
-    struct VirtualTableA11yProbe;
-
-    impl Render for VirtualTableA11yProbe {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            let table = Table::new(
-                "semantic-virtual-table",
-                "Virtual release table",
-                sample_center_window_table_state_with_rows(80),
-            )
-            .row_height(ui_px(24.0))
-            .viewport_extent(ui_px(120.0))
-            .overscan(0);
-
-            div()
-                .size_full()
-                .child(div().w(px(340.0)).h(px(160.0)).child(table))
-        }
-    }
-
-    let (_, cx) = cx.add_window_view(|_, _| VirtualTableA11yProbe);
-    assert!(cx.activate_accessibility());
-    cx.update(|window, cx| window.draw(cx).clear());
-
-    let initial = cx
-        .latest_accessibility_tree_update()
-        .expect("initial virtual table tree should publish");
-    let (table_id, table) =
-        node_with_role_and_label(&initial, accesskit::Role::Table, "Virtual release table");
-    assert_eq!(table.row_count(), Some(81));
-    assert_eq!(table.column_count(), Some(8));
-    let (row_zero_id, row_zero) = node_with_role_and_row_index(&initial, accesskit::Role::Row, 2);
-    let (metric_zero_id, metric_zero) = row_zero
-        .children()
-        .iter()
-        .filter_map(|child_id| initial.nodes.iter().find(|(id, _)| id == child_id))
-        .find(|(_, node)| node.role() == accesskit::Role::Cell && node.column_index() == Some(2))
-        .map(|(id, node)| (*id, node))
-        .expect("initial center cell should publish");
-    assert_eq!(metric_zero.column_index(), Some(2));
-    assert_eq!(metric_zero.value(), Some("10"));
-
-    let horizontal_viewport = cx
-        .debug_bounds("scroll-area:table:semantic-virtual-table:row-center-scroll:row-0000")
-        .expect("body center lane should expose a horizontal viewport");
-    cx.simulate_event(ScrollWheelEvent {
-        position: horizontal_viewport.center(),
-        delta: ScrollDelta::Pixels(point(px(-440.0), px(0.0))),
-        ..Default::default()
-    });
-    cx.update(|window, cx| window.draw(cx).clear());
-
-    let horizontal = cx
-        .latest_accessibility_tree_update()
-        .expect("horizontal virtual window should publish");
-    let (horizontal_table_id, horizontal_table) =
-        node_with_role_and_label(&horizontal, accesskit::Role::Table, "Virtual release table");
-    assert_eq!(horizontal_table_id, table_id);
-    assert_eq!(horizontal_table.row_count(), Some(81));
-    assert_eq!(horizontal_table.column_count(), Some(8));
-    let (horizontal_row_id, horizontal_row) =
-        node_with_role_and_row_index(&horizontal, accesskit::Role::Row, 2);
-    assert_eq!(horizontal_row_id, row_zero_id);
-    assert!(!horizontal.nodes.iter().any(|(id, _)| *id == metric_zero_id));
-    let (metric_five_id, metric_five) = horizontal_row
-        .children()
-        .iter()
-        .filter_map(|child_id| horizontal.nodes.iter().find(|(id, _)| id == child_id))
-        .find(|(_, node)| node.role() == accesskit::Role::Cell && node.column_index() == Some(7))
-        .map(|(id, node)| (*id, node))
-        .expect("far center cell should replace the initial center cell");
-    assert_ne!(metric_five_id, metric_zero_id);
-    assert_eq!(metric_five.column_index(), Some(7));
-    assert_eq!(metric_five.value(), Some("60"));
-
-    let pinned_cell = cx
-        .debug_bounds("table:semantic-virtual-table:cell:row-0000:name")
-        .expect("left pinned cell should remain mounted");
-    cx.simulate_event(ScrollWheelEvent {
-        position: pinned_cell.center(),
-        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
-        ..Default::default()
-    });
-    cx.update(|window, cx| window.draw(cx).clear());
-
-    let vertical = cx
-        .latest_accessibility_tree_update()
-        .expect("vertical virtual window should publish");
-    let (vertical_table_id, vertical_table) =
-        node_with_role_and_label(&vertical, accesskit::Role::Table, "Virtual release table");
-    assert_eq!(vertical_table_id, table_id);
-    assert_eq!(vertical_table.row_count(), Some(81));
-    assert_eq!(vertical_table.column_count(), Some(8));
-    assert!(
-        !vertical.nodes.iter().any(|(id, _)| {
-            *id == row_zero_id || *id == metric_five_id || *id == metric_zero_id
-        })
-    );
-    let (row_ten_id, row_ten) = node_with_role_and_row_index(&vertical, accesskit::Role::Row, 12);
-    assert_ne!(row_ten_id, row_zero_id);
-    assert!(vertical_table.children().contains(&row_ten_id));
-    let metric_ten = row_ten
-        .children()
-        .iter()
-        .filter_map(|child_id| vertical.nodes.iter().find(|(id, _)| id == child_id))
-        .find(|(_, node)| node.role() == accesskit::Role::Cell && node.column_index() == Some(7))
-        .map(|(_, node)| node)
-        .expect("vertically recycled metric cell should publish");
-    assert_eq!(metric_ten.value(), Some("70"));
 }

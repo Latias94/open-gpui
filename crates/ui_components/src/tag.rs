@@ -11,7 +11,7 @@ use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens};
 use std::rc::Rc;
 
 /// Visual intent for a [`Tag`].
@@ -257,6 +257,9 @@ impl RenderOnce for Tag {
         let disabled = state.disabled();
         let label = self.label.clone();
         let remove_payload = state.remove();
+        let semantics = SemanticDescriptor::new(state.role())
+            .with_label(label.as_ref())
+            .with_disabled(disabled);
 
         div()
             .id(self.id)
@@ -273,8 +276,7 @@ impl RenderOnce for Tag {
             .text_color(theme.resolve(colors.foreground()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
-            .ui_role(state.role())
-            .aria_label(label.clone())
+            .ui_semantics(&semantics)
             .when(disabled, |this| this.opacity(0.56))
             .child(label)
             .when_some(
@@ -282,6 +284,11 @@ impl RenderOnce for Tag {
                     .filter(|_| state.remove_enabled())
                     .zip(remove_payload),
                 |this, (on_remove, remove_payload)| {
+                    let remove_label = format!("Remove {}", remove_payload.label());
+                    let remove_actions = [AccessibleAction::Click, AccessibleAction::Focus];
+                    let remove_semantics = SemanticDescriptor::new(state.remove_role())
+                        .with_label(&remove_label)
+                        .with_actions(&remove_actions);
                     this.child(
                         div()
                             .id(format!("tag-remove:{}", remove_payload.value()))
@@ -292,8 +299,7 @@ impl RenderOnce for Tag {
                             .rounded(gpui_px_from_ui(metrics.radius()))
                             .focusable()
                             .tab_stop(true)
-                            .ui_role(state.remove_role())
-                            .aria_label(format!("Remove {}", remove_payload.label()))
+                            .ui_semantics(&remove_semantics)
                             .focus_visible(move |style| style.shadow(remove_focus_shadow.clone()))
                             .cursor_pointer()
                             .on_click(move |event, window, cx| {

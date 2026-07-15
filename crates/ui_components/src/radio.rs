@@ -10,7 +10,10 @@ use open_gpui::{
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
     Window, div, px,
 };
-use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{
+    AccessibleAction, Orientation, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx,
+    ui_px,
+};
 
 use crate::a11y::UiA11yElementExt;
 use crate::choice::{ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
@@ -646,6 +649,12 @@ impl RenderOnce for RadioGroup {
             let focus_ring = state.focus_ring();
             let is_vertical = matches!(orientation, Orientation::Vertical);
             let tab_stop_index = state.tab_stop_index();
+            let label = label.unwrap_or_else(|| SharedString::from("Radio group"));
+            let semantics = SemanticDescriptor::new(state.role())
+                .with_label(label.as_ref())
+                .with_orientation(orientation)
+                .with_required(state.required())
+                .with_disabled(state.disabled());
             let focus_handles = {
                 let runtime = runtime.read(cx);
                 state
@@ -661,11 +670,7 @@ impl RenderOnce for RadioGroup {
                     let debug_id = debug_id.clone();
                     move || format!("radio-group:{debug_id}")
                 })
-                .ui_role(state.role())
-                .ui_aria_orientation(orientation)
-                .aria_label(label.unwrap_or_else(|| SharedString::from("Radio group")))
-                .aria_required(state.required())
-                .aria_disabled(state.disabled())
+                .ui_semantics(&semantics)
                 .flex()
                 .gap(gpui_px_from_ui(metrics.item_gap()))
                 .when(is_vertical, |this| this.flex_col())
@@ -703,6 +708,13 @@ impl RenderOnce for RadioGroup {
                     });
                     let indicator_color = theme.resolve(colors.indicator());
                     let item_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+                    let item_semantics = SemanticDescriptor::new(item.role())
+                        .with_label(item.label())
+                        .with_selected(is_selected)
+                        .with_disabled(item.disabled())
+                        .with_position_in_set(item_index + 1)
+                        .with_size_of_set(state.items().len())
+                        .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
 
                     div()
                         .id(radio_item_id(item.value()))
@@ -713,12 +725,7 @@ impl RenderOnce for RadioGroup {
                         })
                         .focusable()
                         .tab_stop(is_tab_stop)
-                        .ui_role(item.role())
-                        .aria_label(descriptor.label())
-                        .aria_selected(is_selected)
-                        .aria_disabled(item.disabled())
-                        .aria_position_in_set(item_index + 1)
-                        .aria_size_of_set(state.items().len())
+                        .ui_semantics(&item_semantics)
                         .when_some(focus_handle, |this, focus_handle| {
                             this.track_focus(&focus_handle)
                         })

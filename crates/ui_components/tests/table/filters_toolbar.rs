@@ -48,7 +48,7 @@ fn table_behavior_snapshot_exposes_faceting_metadata() {
         snapshot
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.source_row_id().expect("source row").as_str())
             .collect::<Vec<_>>(),
         ["row-1"],
         "pagination still limits the rendered row window"
@@ -542,7 +542,7 @@ fn table_column_visibility_change_updates_visibility_and_preserves_table_state()
     .with_sorting([TableSort::descending("score")])
     .with_selected_rows(["row-a"])
     .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
-    .with_row_pinning(TableRowPinning::new().pinned_top(["row-a"]))
+    .with_row_pinning(TableRowPinning::new().pinned_top([table_source_row_identity("row-a")]))
     .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(180.0)))
     .with_pagination(TablePagination::new(2, 25));
 
@@ -843,7 +843,7 @@ fn table_predicate_filter_change_updates_only_target_predicate_filters() {
     .with_selection_mode(TableSelectionMode::Multiple)
     .with_selected_rows(["row-a"])
     .with_column_pinning(TableColumnPinning::new().pinned_left(["team"]))
-    .with_row_pinning(TableRowPinning::new().pinned_top(["row-a"]))
+    .with_row_pinning(TableRowPinning::new().pinned_top([table_source_row_identity("row-a")]))
     .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(180.0)))
     .with_column_visibility(TableColumnVisibilityOverrides::new().hide("status"))
     .with_global_filter("ready")

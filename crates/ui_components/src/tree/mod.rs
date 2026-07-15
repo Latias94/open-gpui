@@ -20,7 +20,7 @@ use open_gpui::{
     IntoElement, KeyDownEvent, ParentElement, RenderOnce, ScrollHandle, SharedString,
     StatefulInteractiveElement, Styled, Window, div, px, rgb, rgba,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, UiPx, ui_px};
+use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Sizable, Size, UiPx, ui_px};
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
 
 pub(crate) use descriptor::apply_tree_expanded_overrides;
@@ -316,6 +316,8 @@ impl RenderOnce for Tree {
                     on_move.clone(),
                 )
             };
+            let root_label = label.to_string();
+            let root_semantics = SemanticDescriptor::new(state.role()).with_label(&root_label);
 
             div()
                 .id(id.clone())
@@ -335,8 +337,7 @@ impl RenderOnce for Tree {
                 .bg(rgb(0xffffff))
                 .text_size(gpui_px_from_ui(metrics.text_size()))
                 .text_color(rgb(0x2f3845))
-                .ui_role(state.role())
-                .aria_label(label.to_string())
+                .ui_semantics(&root_semantics)
                 .on_click(move |_, window, cx| {
                     if let Some(focus_handle) = root_focus_handle.as_ref() {
                         focus_handle.focus(window, cx);
@@ -484,6 +485,20 @@ fn render_tree_item(
     let virtual_start = virtual_geometry.map(|(start, _)| start);
     let virtual_size = virtual_geometry.map(|(_, size)| size);
     let move_enabled = draggable && on_move.is_some() && !disabled;
+    let mut semantics = SemanticDescriptor::new(item.role())
+        .with_label(&item_label)
+        .with_selected(selected)
+        .with_disabled(disabled)
+        .with_level(item.depth() + 1)
+        .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
+    if has_children {
+        semantics = semantics.with_expanded(expanded);
+    }
+    if let Some(position) = item_position {
+        semantics = semantics
+            .with_position_in_set(position)
+            .with_size_of_set(item_size_of_set);
+    }
 
     div()
         .id(format!("tree:{tree_id}:item:{item_value}"))
@@ -513,16 +528,7 @@ fn render_tree_item(
         .text_color(text_color)
         .overflow_hidden()
         .relative()
-        .ui_role(item.role())
-        .aria_label(item.label().to_owned())
-        .aria_selected(selected)
-        .aria_disabled(disabled)
-        .aria_level(item.depth() + 1)
-        .when(has_children, |this| this.aria_expanded(expanded))
-        .when_some(item_position, |this, position| {
-            this.aria_position_in_set(position)
-                .aria_size_of_set(item_size_of_set)
-        })
+        .ui_semantics(&semantics)
         .focusable()
         .tab_stop(focused)
         .when_some(focus_handle.clone(), |this, focus_handle| {
@@ -533,6 +539,17 @@ fn render_tree_item(
             this.cursor_pointer().hover(|style| style.bg(rgb(0xf1f5ee)))
         })
         .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
+        .when(!disabled, |this| {
+            let runtime = runtime.clone();
+            let item_value = item_value.clone();
+            this.on_ui_a11y_action(AccessibleAction::Focus, move |_, window, cx| {
+                if let Some(focus_handle) =
+                    runtime.update(cx, |runtime, cx| runtime.set_focused(&item_value, cx))
+                {
+                    focus_handle.focus(window, cx);
+                }
+            })
+        })
         .when(move_enabled, |this| {
             let tree_id = tree_id.clone();
             let item_value = item_value.clone();
@@ -608,7 +625,7 @@ fn render_tree_item(
                 .flex_1()
                 .min_w(px(0.0))
                 .overflow_hidden()
-                .child(item_label),
+                .child(item_label.clone()),
         )
         .when_some(tree_children_load_hint(&children_load_state), {
             let tree_id = tree_id.clone();
@@ -771,6 +788,11 @@ fn tree_disclosure(
     } else {
         format!("Expand {item_label}")
     };
+    let semantics = SemanticDescriptor::new(Role::Button)
+        .with_label(&aria_label)
+        .with_expanded(expanded)
+        .with_disabled(disabled || !has_children || children_loading)
+        .with_actions(&[AccessibleAction::Click]);
     div()
         .id(format!("tree:{tree_id}:toggle:{item_value}"))
         .debug_selector({
@@ -786,10 +808,7 @@ fn tree_disclosure(
         .justify_center()
         .rounded_sm()
         .text_xs()
-        .ui_role(Role::Button)
-        .aria_label(aria_label)
-        .aria_expanded(expanded)
-        .aria_disabled(disabled || !has_children || children_loading)
+        .ui_semantics(&semantics)
         .when(has_children && !disabled && !children_loading, |this| {
             this.cursor_pointer()
                 .hover(|style| style.bg(rgb(0xe8ede6)))

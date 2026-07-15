@@ -17,7 +17,7 @@ pub use api_inventory::{
     COMPONENT_API_INVENTORY, component_public_methods, component_render_inputs,
     public_owner_for_component_inventory,
 };
-pub use evidence::{COMPONENT_A11Y_EVIDENCE, COMPONENT_CONFORMANCE_GATES, component_a11y_evidence};
+pub use evidence::{COMPONENT_A11Y_EVIDENCE, COMPONENT_CONFORMANCE_GATES};
 pub use projections::{
     component_contract_entry, component_recipe_component_rows, default_surface_rows,
     gallery_surface_rows, official_component_rows, official_overlay_component_rows,

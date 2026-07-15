@@ -20,18 +20,20 @@ use open_gpui_ui_components::{
     TextInputDisplayMode, ThemeMode, ToggleVariant, TooltipOpenIntent, TreeKeyboardAction,
     VirtualizedListRowMeasureMode, VirtualizedListScrollStrategy,
     gpui_adapter::{
-        DEFAULT_OVERLAY_SAFE_MARGIN, OverlayLayerPhase, OverlayLayerSnapshot, WindowOverlayRuntime,
-        WindowOverlaySnapshot, default_deferred_priority, gpui_overlay_state, init_text_input,
+        DEFAULT_OVERLAY_SAFE_MARGIN, OverlayLayerPhase, OverlayLayerSnapshot, TableDebugSelector,
+        WindowOverlayRuntime, WindowOverlaySnapshot, default_deferred_priority, gpui_overlay_state,
+        init_text_input,
     },
 };
 use open_gpui_ui_core::{
-    AccessibleAction, Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy,
-    FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy, OverlayLayerKind,
+    Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
+    InitialFocusIntent, Orientation, OutsidePressPolicy, OverlayLayerKind,
     OverlayPlacementAlignment, OverlayPlacementSide, PanelAdaptiveClass, Role, Size,
     TableCellEditor, TableCellValue, TableColumnFacets, TableColumnId, TableColumnRegion,
-    TableColumnWidthPolicy, TableExpansionMode, TableExpansionState, TableRowChildrenLoadState,
-    TableRowId, TableRowRegion, TableStageMode, TableTextFilterOperator, ThemeTokens, Toggled,
-    semantic, ui_point, ui_px,
+    TableColumnWidthPolicy, TableExpansionMode, TableExpansionState, TableGroupRowIdentity,
+    TableResolvedHeaderIdentity, TableRowChildrenLoadState, TableRowId, TableRowIdentity,
+    TableRowRegion, TableStageMode, TableTextFilterOperator, ThemeTokens, Toggled, semantic,
+    ui_point, ui_px,
 };
 use open_gpui_ui_foundation_gallery::{
     DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, GalleryShell, GalleryShellSnapshot,
@@ -48,6 +50,104 @@ fn display_shortcut(keystrokes: &str) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn table_source_row_identity(row_id: impl Into<TableRowId>) -> TableRowIdentity {
+    TableRowIdentity::source(row_id)
+}
+
+fn table_row_selector(table_id: &str, identity: &TableRowIdentity) -> String {
+    TableDebugSelector::row(table_id, identity)
+}
+
+fn table_source_row_selector(table_id: &str, row_id: impl Into<TableRowId>) -> String {
+    table_row_selector(table_id, &table_source_row_identity(row_id))
+}
+
+fn table_cell_selector(
+    table_id: &str,
+    identity: &TableRowIdentity,
+    column_id: impl Into<TableColumnId>,
+) -> String {
+    TableDebugSelector::cell(table_id, identity, &column_id.into())
+}
+
+fn table_source_cell_selector(
+    table_id: &str,
+    row_id: impl Into<TableRowId>,
+    column_id: impl Into<TableColumnId>,
+) -> String {
+    table_cell_selector(table_id, &table_source_row_identity(row_id), column_id)
+}
+
+fn table_source_tree_toggle_selector(table_id: &str, row_id: impl Into<TableRowId>) -> String {
+    TableDebugSelector::tree_toggle(table_id, &table_source_row_identity(row_id))
+}
+
+fn table_source_text_input_editor_selector(
+    table_id: &str,
+    row_id: impl Into<TableRowId>,
+    column_id: impl Into<TableColumnId>,
+) -> String {
+    TableDebugSelector::text_input_editor_root(
+        table_id,
+        &table_source_row_identity(row_id),
+        &column_id.into(),
+    )
+}
+
+fn table_source_textarea_editor_selector(
+    table_id: &str,
+    row_id: impl Into<TableRowId>,
+    column_id: impl Into<TableColumnId>,
+) -> String {
+    TableDebugSelector::textarea_editor_root(
+        table_id,
+        &table_source_row_identity(row_id),
+        &column_id.into(),
+    )
+}
+
+fn table_source_checkbox_editor_selector(
+    table_id: &str,
+    row_id: impl Into<TableRowId>,
+    column_id: impl Into<TableColumnId>,
+) -> String {
+    TableDebugSelector::checkbox_editor_root(
+        table_id,
+        &table_source_row_identity(row_id),
+        &column_id.into(),
+    )
+}
+
+fn table_source_select_editor_selector(
+    table_id: &str,
+    row_id: impl Into<TableRowId>,
+    column_id: impl Into<TableColumnId>,
+) -> String {
+    TableDebugSelector::select_editor_trigger(
+        table_id,
+        &table_source_row_identity(row_id),
+        &column_id.into(),
+    )
+}
+
+fn table_source_select_option_selector(
+    table_id: &str,
+    row_id: impl Into<TableRowId>,
+    column_id: impl Into<TableColumnId>,
+    option_value: &str,
+) -> String {
+    TableDebugSelector::select_editor_option(
+        table_id,
+        &table_source_row_identity(row_id),
+        &column_id.into(),
+        option_value,
+    )
+}
+
+fn table_header_selector(table_id: &str, identity: &TableResolvedHeaderIdentity) -> String {
+    TableDebugSelector::header(table_id, identity)
 }
 
 fn redraw(cx: &mut VisualTestContext) {

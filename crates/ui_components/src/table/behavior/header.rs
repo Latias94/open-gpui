@@ -21,7 +21,7 @@ impl TableHeaderSummarySnapshot {
             .all()
             .flat_map(|group| group.headers().iter())
             .filter(|cell| cell.is_group())
-            .map(|cell| cell.source_id().to_owned())
+            .map(|cell| cell.logical_identity().clone())
             .collect::<BTreeSet<_>>()
             .len();
 

@@ -10,7 +10,9 @@ use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{
+    AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px,
+};
 use std::rc::Rc;
 
 /// Pure descriptor for one breadcrumb item.
@@ -472,12 +474,13 @@ impl RenderOnce for Breadcrumb {
         let colors = state.colors();
         let focus_ring = state.focus_ring();
         let on_activate = self.on_activate.clone();
+        let semantics = SemanticDescriptor::new(state.role())
+            .with_label(state.label())
+            .with_disabled(state.disabled());
 
         div()
             .id(self.id)
-            .ui_role(state.role())
-            .aria_label(self.label)
-            .aria_disabled(state.disabled())
+            .ui_semantics(&semantics)
             .flex()
             .items_center()
             .gap(gpui_px_from_ui(metrics.gap()))
@@ -507,6 +510,16 @@ impl RenderOnce for Breadcrumb {
                 });
                 let item_hover_text = theme.resolve(colors.current_text());
                 let item_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+                let item_actions: &[AccessibleAction] =
+                    if on_activate.is_some() && activation.is_some() {
+                        &[AccessibleAction::Click, AccessibleAction::Focus]
+                    } else {
+                        &[AccessibleAction::Focus]
+                    };
+                let item_semantics = SemanticDescriptor::new(item_role)
+                    .with_label(&label)
+                    .with_disabled(disabled)
+                    .with_actions(item_actions);
 
                 elements.push(
                     div()
@@ -514,9 +527,7 @@ impl RenderOnce for Breadcrumb {
                         .px(gpui_px_from_ui(metrics.padding_x()))
                         .py(gpui_px_from_ui(metrics.padding_y()))
                         .rounded(gpui_px_from_ui(metrics.radius()))
-                        .ui_role(item_role)
-                        .aria_label(label.clone())
-                        .aria_disabled(disabled)
+                        .ui_semantics(&item_semantics)
                         .tab_stop(!current && !disabled)
                         .focusable()
                         .text_color(item_text)

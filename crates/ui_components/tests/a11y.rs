@@ -1,5 +1,7 @@
 #[path = "support/a11y.rs"]
 mod a11y_support;
+#[path = "a11y/collection_semantics.rs"]
+mod collection_semantics;
 
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
@@ -8,11 +10,10 @@ use open_gpui::{
 };
 use open_gpui_ui_components::gpui_adapter::UiA11yElementExt;
 use open_gpui_ui_components::{
-    A11yContractError, A11yLabelSource, A11yStateEvidence, A11yValueKind, A11yValueMetadata,
-    Button, COMPONENT_A11Y_EVIDENCE, ComponentA11yContract, Dialog, Listbox, Menu, MenuItem,
-    Splitter, SplitterPanel, SplitterPanelDescriptor, Tree, TreeItemDescriptor, VirtualizedList,
-    VirtualizedListItemDescriptor, VirtualizedListStatusKind, component_a11y_evidence,
-    listbox::ListboxOption,
+    A11yContractError, A11yLabelSource, A11yValueKind, A11yValueMetadata, Button,
+    ComponentA11yContract, Dialog, Listbox, Menu, MenuItem, Splitter, SplitterPanel,
+    SplitterPanelDescriptor, Tree, TreeItemDescriptor, VirtualizedList,
+    VirtualizedListItemDescriptor, VirtualizedListStatusKind, listbox::ListboxOption,
 };
 use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Toggled, ui_px};
 use std::{cell::RefCell, rc::Rc};
@@ -243,28 +244,6 @@ fn semantic_relations_resolve_update_and_repair_after_unmount(cx: &mut open_gpui
 }
 
 #[test]
-fn migrated_components_have_no_static_a11y_evidence() {
-    for component in [
-        "Button",
-        "Table",
-        "IconButton",
-        "Checkbox",
-        "Slider",
-        "NumberInput",
-        "Progress",
-        "TextInput",
-        "Textarea",
-        "Field",
-        "Label",
-    ] {
-        assert!(
-            component_a11y_evidence(component).is_none(),
-            "migrated component `{component}` must not retain static a11y evidence"
-        );
-    }
-}
-
-#[test]
 fn a11y_contract_validation_reports_required_metadata_failures() {
     let missing_name = ComponentA11yContract::new("IconButton", Role::Button)
         .with_actions(&[AccessibleAction::Click])
@@ -298,80 +277,6 @@ fn a11y_contract_validation_reports_required_metadata_failures() {
     assert_eq!(
         missing_action.error(),
         A11yContractError::MissingSupportedAction
-    );
-}
-
-#[test]
-fn component_contract_a11y_evidence_is_valid() {
-    for evidence in COMPONENT_A11Y_EVIDENCE {
-        let mut contract = ComponentA11yContract::new(evidence.component, evidence.role)
-            .with_label_source(evidence.label_source)
-            .with_actions(evidence.actions);
-
-        if let Some(value_kind) = evidence.value_kind {
-            contract = contract.with_value_metadata(A11yValueMetadata::present(value_kind));
-        }
-        if let Some(orientation) = evidence.orientation {
-            contract = contract.with_orientation(orientation);
-        }
-
-        assert!(
-            !evidence.state_coverage.is_empty(),
-            "component a11y evidence `{}` must declare state or focus coverage",
-            evidence.component
-        );
-        assert_unique_state_coverage(evidence.component, evidence.state_coverage);
-        if evidence.state_coverage.contains(&A11yStateEvidence::Value) {
-            assert!(
-                evidence.value_kind.is_some(),
-                "component a11y evidence `{}` declares value coverage without value metadata",
-                evidence.component
-            );
-        }
-
-        contract.validate().unwrap_or_else(|violation| {
-            panic!(
-                "component a11y evidence `{}` failed validation: {:?}",
-                violation.component(),
-                violation.error()
-            )
-        });
-    }
-}
-
-#[test]
-fn component_contract_a11y_evidence_records_state_and_focus_coverage() {
-    assert_state_coverage(
-        "Listbox option",
-        &[
-            A11yStateEvidence::Disabled,
-            A11yStateEvidence::Selected,
-            A11yStateEvidence::Value,
-        ],
-    );
-    assert_state_coverage(
-        "Tree item",
-        &[
-            A11yStateEvidence::Expanded,
-            A11yStateEvidence::Focusable,
-            A11yStateEvidence::Selected,
-        ],
-    );
-    assert_state_coverage(
-        "VirtualizedList row",
-        &[
-            A11yStateEvidence::Focusable,
-            A11yStateEvidence::Selected,
-            A11yStateEvidence::Value,
-        ],
-    );
-    assert_state_coverage(
-        "VirtualizedList structural row",
-        &[A11yStateEvidence::NonInteractiveStructural],
-    );
-    assert_state_coverage(
-        "Splitter handle",
-        &[A11yStateEvidence::Disabled, A11yStateEvidence::Focusable],
     );
 }
 
@@ -571,25 +476,4 @@ fn representative_component_a11y_contracts_are_valid() {
 
 fn contract(component: &'static str, role: Role) -> ComponentA11yContract {
     ComponentA11yContract::new(component, role)
-}
-
-fn assert_state_coverage(component: &str, expected: &[A11yStateEvidence]) {
-    let evidence = COMPONENT_A11Y_EVIDENCE
-        .iter()
-        .find(|evidence| evidence.component == component)
-        .unwrap_or_else(|| panic!("missing a11y evidence for `{component}`"));
-
-    assert_eq!(
-        evidence.state_coverage, expected,
-        "unexpected a11y state coverage for `{component}`"
-    );
-}
-
-fn assert_unique_state_coverage(component: &str, coverage: &[A11yStateEvidence]) {
-    for (index, state) in coverage.iter().enumerate() {
-        assert!(
-            !coverage[..index].contains(state),
-            "component a11y evidence `{component}` repeats state coverage `{state:?}`"
-        );
-    }
 }

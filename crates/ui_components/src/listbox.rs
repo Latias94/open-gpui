@@ -8,7 +8,9 @@ use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, IntoElement, KeyDownEvent,
     ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{
+    AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px,
+};
 
 use crate::a11y::UiA11yElementExt;
 use crate::choice::{self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
@@ -555,7 +557,7 @@ impl ListboxState {
                     value: descriptor.value,
                     label: descriptor.label,
                     kind,
-                    disabled: descriptor.disabled,
+                    disabled: disabled || descriptor.disabled,
                     selected,
                     active,
                     position_in_set,
@@ -1059,6 +1061,17 @@ impl RenderOnce for Listbox {
         let root_focus = active_focus
             .clone()
             .filter(|_| state.active_value().is_none());
+        let root_label = state.label().to_owned();
+        let root_actions: &[AccessibleAction] =
+            if focus_owner == ListboxFocusOwner::Listbox && !state.empty() {
+                &[AccessibleAction::Focus]
+            } else {
+                &[]
+            };
+        let root_semantics = SemanticDescriptor::new(state.role())
+            .with_label(&root_label)
+            .with_disabled(state.disabled())
+            .with_actions(root_actions);
 
         div()
             .id(id.clone())
@@ -1086,9 +1099,7 @@ impl RenderOnce for Listbox {
             .text_color(theme.resolve(colors.foreground()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
-            .ui_role(state.role())
-            .aria_label(state.label().to_owned())
-            .aria_disabled(state.disabled())
+            .ui_semantics(&root_semantics)
             .when(focus_owner == ListboxFocusOwner::Listbox, |this| {
                 this.focusable()
                     .tab_group()
@@ -1207,6 +1218,8 @@ fn listbox_children(
     }
 
     for group_state in state.groups() {
+        let group_label = group_state.label().to_owned();
+        let group_semantics = SemanticDescriptor::new(group_state.role()).with_label(&group_label);
         children.push(
             div()
                 .id(format!("listbox-group-label:{}", group_state.value()))
@@ -1221,9 +1234,8 @@ fn listbox_children(
                 .text_xs()
                 .font_weight(open_gpui::FontWeight::BOLD)
                 .text_color(theme.resolve(state.colors().muted_foreground()))
-                .ui_role(group_state.role())
-                .aria_label(group_state.label().to_owned())
-                .child(group_state.label().to_owned())
+                .ui_semantics(&group_semantics)
+                .child(group_label.clone())
                 .into_any_element(),
         );
 
@@ -1270,6 +1282,7 @@ fn listbox_option_elements(
         .map(|(option, state)| match state.kind() {
             ListboxOptionKind::Separator => {
                 let option_value = state.value().to_owned();
+                let semantics = SemanticDescriptor::new(Role::Separator);
 
                 div()
                     .id(format!("listbox-separator:{}", state.index()))
@@ -1281,6 +1294,7 @@ fn listbox_option_elements(
                     .h(gpui_px_from_ui(metrics.separator_height()))
                     .my_1()
                     .bg(theme.resolve(colors.separator()))
+                    .ui_semantics(&semantics)
                     .into_any_element()
             }
             ListboxOptionKind::Option => {
@@ -1291,6 +1305,7 @@ fn listbox_option_elements(
                 let disabled = state.disabled();
                 let active = state.active();
                 let option_value = state.value().to_owned();
+                let option_label = state.label().to_owned();
                 let option_focus = active_focus
                     .clone()
                     .filter(|_| focus_owner == ListboxFocusOwner::Listbox && active);
@@ -1302,6 +1317,17 @@ fn listbox_option_elements(
                     colors.foreground()
                 });
                 let option_hover_background = theme.resolve(colors.option_hover_background());
+                let mut semantics = SemanticDescriptor::new(Role::ListBoxOption)
+                    .with_label(&option_label)
+                    .with_selected(state.selected())
+                    .with_disabled(disabled)
+                    .with_actions(&[AccessibleAction::Click]);
+                if let Some(position) = state.position_in_set() {
+                    semantics = semantics
+                        .with_position_in_set(position)
+                        .with_size_of_set(state.size_of_set());
+                }
+
                 div()
                     .id(format!("listbox-option:{}", state.value()))
                     .debug_selector({
@@ -1317,10 +1343,7 @@ fn listbox_option_elements(
                     .rounded(gpui_px_from_ui(metrics.radius()))
                     .bg(option_background_color)
                     .text_color(option_foreground)
-                    .ui_role(state.role().unwrap_or(Role::ListBoxOption))
-                    .aria_label(state.label().to_owned())
-                    .aria_selected(state.selected())
-                    .aria_disabled(disabled)
+                    .ui_semantics(&semantics)
                     .when(focus_owner == ListboxFocusOwner::Listbox, |this| {
                         this.focusable()
                             .tab_stop(active)
@@ -1347,7 +1370,7 @@ fn listbox_option_elements(
                                 }
                             })
                     })
-                    .child(state.label().to_owned())
+                    .child(option_label.clone())
                     .into_any_element()
             }
         })

@@ -45,7 +45,7 @@ pub use crate::command::{
 };
 pub use crate::component_contract::{
     COMPONENT_A11Y_EVIDENCE, COMPONENT_CONFORMANCE_GATES, ComponentA11yEvidence,
-    ComponentConformanceGate, component_a11y_evidence,
+    ComponentConformanceGate,
 };
 pub use crate::context_menu::{ContextMenu, ContextMenuState};
 pub use crate::dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
@@ -112,11 +112,12 @@ pub use crate::splitter::{
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use crate::table::{
     Table, TableBehaviorSnapshot, TableCellBehaviorSnapshot, TableCellEditApplyOutcome,
-    TableCellEditChange, TableColumnBehaviorSnapshot, TableColumnRegionSnapshot, TableHeaderAction,
-    TableHeaderSummarySnapshot, TableInputModifiers, TableMetrics, TableRowAction,
-    TableRowActivation, TableRowActivationKind, TableRowBehaviorSnapshot, TableRowCountSnapshot,
-    TableRowExpansionToggle, TableRowMeasureMode, TableSelectionScope, TableTreeSummarySnapshot,
-    TableVisibleRowsSnapshot,
+    TableCellEditChange, TableCellEditRequest, TableColumnBehaviorSnapshot,
+    TableColumnRegionSnapshot, TableHeaderAction, TableHeaderSummarySnapshot, TableInputModifiers,
+    TableMetrics, TableRowAction, TableRowActivation, TableRowActivationKind,
+    TableRowBehaviorSnapshot, TableRowCountSnapshot, TableRowExpansionToggle, TableRowMeasureMode,
+    TableSelectionScope, TableTreeSummarySnapshot, TableVirtualizerSnapshot,
+    TableVirtualizerSnapshotItem, TableVisibleRowsSnapshot,
 };
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

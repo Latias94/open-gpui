@@ -16,9 +16,13 @@ use open_gpui_motion::{
 #[cfg(test)]
 use open_gpui_ui_core::ui_px;
 #[cfg(test)]
+use open_gpui_ui_core::virtualizer::VirtualizerGeometryCache;
+#[cfg(test)]
 use open_gpui_ui_core::{Role, Sizable, Size, UiPx, VirtualizerItemKey, VirtualizerSnapshot};
 #[cfg(test)]
-use std::collections::BTreeMap;
+use std::cell::Cell;
+#[cfg(test)]
+use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
 use std::time::{Duration, Instant};
 
@@ -644,8 +648,14 @@ mod tests {
         assert_eq!(snapshot.overscan_count(), 4);
         assert_eq!(snapshot.rows().len(), 4);
         assert_eq!(snapshot.rows()[0].item().key(), "root");
-        assert_eq!(snapshot.rows()[1].render_key(), "1:duplicate");
-        assert_eq!(snapshot.rows()[2].render_key(), "2:duplicate");
+        assert_eq!(
+            snapshot.rows()[1].render_key(),
+            "#duplicate:0:1:9:duplicate"
+        );
+        assert_eq!(
+            snapshot.rows()[2].render_key(),
+            "#duplicate:0:2:9:duplicate"
+        );
         assert!(snapshot.rows()[0].selected());
         assert!(snapshot.rows()[2].disabled());
         assert!(snapshot.rows()[3].active());
@@ -661,7 +671,41 @@ mod tests {
                 .iter()
                 .map(|row| row.render_key())
                 .collect::<Vec<_>>(),
-            ["root", "1:duplicate", "2:duplicate", "tail"]
+            [
+                "root",
+                "#duplicate:0:1:9:duplicate",
+                "#duplicate:0:2:9:duplicate",
+                "tail"
+            ]
+        );
+    }
+
+    #[test]
+    fn virtualized_list_duplicate_render_keys_cannot_alias_legal_source_keys() {
+        let colliding_source_key = "#duplicate:0:0:1:a";
+        let snapshot = VirtualizedList::new(
+            "collision-list",
+            "Collision list",
+            [
+                VirtualizedListItemDescriptor::new("a", "First duplicate"),
+                VirtualizedListItemDescriptor::new("a", "Second duplicate"),
+                VirtualizedListItemDescriptor::new(colliding_source_key, "Legal source key"),
+            ],
+        )
+        .viewport_item_count(3)
+        .behavior_snapshot_with_viewport(UiPx::ZERO, ui_px(120.0));
+        let render_keys = snapshot
+            .rows()
+            .iter()
+            .map(|row| row.render_key())
+            .collect::<Vec<_>>();
+
+        assert_eq!(render_keys[0], "#duplicate:1:0:1:a");
+        assert_eq!(render_keys[1], "#duplicate:0:1:1:a");
+        assert_eq!(render_keys[2], colliding_source_key);
+        assert_eq!(
+            render_keys.iter().copied().collect::<BTreeSet<_>>().len(),
+            3
         );
     }
 
@@ -952,6 +996,102 @@ mod tests {
                 .map(|item| item.size()),
             Some(ui_px(72.0))
         );
+    }
+
+    #[test]
+    fn virtualized_list_adapter_invalidates_cached_geometry_on_measurement_revision() {
+        struct CountingMeasurements {
+            values: BTreeMap<String, UiPx>,
+            calls: Cell<usize>,
+        }
+
+        impl super::render_plan::VirtualizedListMeasurementLookup for CountingMeasurements {
+            fn row_measurement(&self, render_key: &str) -> Option<UiPx> {
+                self.calls.set(self.calls.get() + 1);
+                self.values.get(render_key).copied()
+            }
+        }
+
+        let items = [
+            VirtualizedListItemDescriptor::new("alpha", "Alpha"),
+            VirtualizedListItemDescriptor::new("beta", "Beta"),
+            VirtualizedListItemDescriptor::new("gamma", "Gamma"),
+        ];
+        let state = VirtualizedListState::resolve(
+            Size::Medium,
+            false,
+            items.iter().map(VirtualizedListStateItem::from),
+            Some("alpha"),
+            std::iter::empty::<&str>(),
+            VirtualizedListSelectionMode::Single,
+            Some(2),
+        )
+        .with_metrics(VirtualizedListMetrics::from_size(Size::Medium).with_row_height(ui_px(20.0)));
+        let mut measurements = CountingMeasurements {
+            values: BTreeMap::from([("beta".to_owned(), ui_px(44.0))]),
+            calls: Cell::new(0),
+        };
+        let mut cache = VirtualizerGeometryCache::default();
+
+        let first = VirtualizedListRenderPlan::resolve_cached(
+            "cached-list",
+            "Cached list",
+            state.clone(),
+            &items,
+            VirtualizedListRowMeasureMode::Measured,
+            &measurements,
+            None,
+            UiPx::ZERO,
+            ui_px(40.0),
+            &mut cache,
+            1,
+        );
+        assert_eq!(
+            first.virtualizer().item_geometry(1).unwrap().size(),
+            ui_px(44.0)
+        );
+        assert_eq!(measurements.calls.get(), items.len());
+
+        measurements.calls.set(0);
+        let scrolled = VirtualizedListRenderPlan::resolve_cached(
+            "cached-list",
+            "Cached list",
+            state.clone(),
+            &items,
+            VirtualizedListRowMeasureMode::Measured,
+            &measurements,
+            None,
+            ui_px(40.0),
+            ui_px(40.0),
+            &mut cache,
+            1,
+        );
+        assert_ne!(
+            first.virtualizer().visible_range(),
+            scrolled.virtualizer().visible_range()
+        );
+        assert_eq!(measurements.calls.get(), 0);
+
+        measurements.values.insert("beta".to_owned(), ui_px(72.0));
+        measurements.calls.set(0);
+        let invalidated = VirtualizedListRenderPlan::resolve_cached(
+            "cached-list",
+            "Cached list",
+            state,
+            &items,
+            VirtualizedListRowMeasureMode::Measured,
+            &measurements,
+            None,
+            UiPx::ZERO,
+            ui_px(40.0),
+            &mut cache,
+            2,
+        );
+        assert_eq!(
+            invalidated.virtualizer().item_geometry(1).unwrap().size(),
+            ui_px(72.0)
+        );
+        assert_eq!(measurements.calls.get(), items.len());
     }
 
     #[test]

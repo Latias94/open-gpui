@@ -9,8 +9,9 @@ use open_gpui::{
     RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use open_gpui_ui_core::{
-    DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    OverlayLayerKind, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
+    AccessibleAction, DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent,
+    OutsidePressPolicy, OverlayLayerKind, Role, SemanticDescriptor, Sizable, Size, ThemeTokens,
+    UiPx, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -639,6 +640,12 @@ impl RenderOnce for Dialog {
         let disabled = state.disabled();
         let open = state.open();
         let overlay_adapter = gpui_overlay_state(state.overlay());
+        let trigger_semantics = SemanticDescriptor::new(state.trigger_role())
+            .with_label(trigger_label.as_ref())
+            .with_selected(state.trigger_selected())
+            .with_expanded(open)
+            .with_disabled(disabled)
+            .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
 
         div()
             .id(id.clone())
@@ -675,11 +682,7 @@ impl RenderOnce for Dialog {
                         .line_height(gpui_px_from_ui(metrics.text_size()))
                         .focusable()
                         .tab_stop(!disabled)
-                        .ui_role(state.trigger_role())
-                        .aria_label(trigger_label.clone())
-                        .aria_selected(state.trigger_selected())
-                        .aria_expanded(open)
-                        .aria_disabled(disabled)
+                        .ui_semantics(&trigger_semantics)
                         .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                         .track_focus(overlay_binding.trigger_focus())
                         .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
@@ -746,6 +749,10 @@ fn dialog_layer_element(
     ));
     let x = ((viewport.width - gpui_px_from_ui(metrics.width())) / 2.0).max(px(12.0));
     let y = (viewport.height / 10.0).max(px(24.0));
+    let content_semantics = SemanticDescriptor::new(state.content_role())
+        .with_label(state.title())
+        .with_modal(true)
+        .with_actions(&[AccessibleAction::Focus]);
 
     div()
         .id(content_id)
@@ -788,8 +795,7 @@ fn dialog_layer_element(
                     .tab_group()
                     .focusable()
                     .track_focus(overlay_binding.surface_focus())
-                    .ui_role(state.content_role())
-                    .aria_label(state.title().to_owned())
+                    .ui_semantics(&content_semantics)
                     .child(
                         div()
                             .text_size(gpui_px_from_ui(metrics.title_size()))

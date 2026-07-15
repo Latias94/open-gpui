@@ -15,7 +15,10 @@ use open_gpui::{
     div, px,
 };
 use open_gpui_motion::{MotionFrameDriver, MotionPreference, advanced::MotionPreset};
-use open_gpui_ui_core::{Sizable, Size, ThemeTokens, UiPx, VirtualizerSnapshot};
+use open_gpui_ui_core::virtualizer::VirtualizerGeometryCache;
+use open_gpui_ui_core::{
+    AccessibleAction, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, VirtualizerSnapshot,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -48,6 +51,79 @@ pub(super) type VirtualizedListRowRenderer =
 const VIRTUALIZED_LIST_TYPEAHEAD_RESET: Duration = Duration::from_millis(700);
 
 #[derive(Debug, Clone)]
+struct VirtualizedListGeometryAuthority {
+    items: Arc<[VirtualizedListItemDescriptor]>,
+    snapshot: Option<VirtualizerSnapshot>,
+    cache: VirtualizerGeometryCache,
+    revision: u64,
+}
+
+impl VirtualizedListGeometryAuthority {
+    fn new(
+        items: Arc<[VirtualizedListItemDescriptor]>,
+        snapshot: Option<&VirtualizerSnapshot>,
+    ) -> Self {
+        Self {
+            items,
+            snapshot: snapshot.cloned(),
+            cache: VirtualizerGeometryCache::default(),
+            revision: 0,
+        }
+    }
+
+    fn sync(
+        &mut self,
+        items: &Arc<[VirtualizedListItemDescriptor]>,
+        snapshot: Option<&VirtualizerSnapshot>,
+    ) -> u64 {
+        let items_changed = !same_geometry_items(&self.items, items);
+        let snapshot_changed = !same_snapshot_measurements(self.snapshot.as_ref(), snapshot);
+
+        self.items = items.clone();
+        self.snapshot = snapshot.cloned();
+        if items_changed || snapshot_changed {
+            self.invalidate();
+        }
+        self.revision
+    }
+
+    fn invalidate(&mut self) {
+        let Some(next) = self.revision.checked_add(1) else {
+            self.revision = 0;
+            self.cache.clear();
+            return;
+        };
+        self.revision = next;
+    }
+}
+
+fn same_geometry_items(
+    left: &Arc<[VirtualizedListItemDescriptor]>,
+    right: &Arc<[VirtualizedListItemDescriptor]>,
+) -> bool {
+    Arc::ptr_eq(left, right)
+        || (left.len() == right.len()
+            && left
+                .iter()
+                .zip(right.iter())
+                .all(|(left, right)| left.key() == right.key()))
+}
+
+fn same_snapshot_measurements(
+    left: Option<&VirtualizerSnapshot>,
+    right: Option<&VirtualizerSnapshot>,
+) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            left.shares_measurement_authority_with(right)
+                || left.measurements() == right.measurements()
+        }
+        (None, Some(snapshot)) | (Some(snapshot), None) => snapshot.measurements().is_empty(),
+    }
+}
+
+#[derive(Debug)]
 pub(super) struct VirtualizedListRuntime {
     pub(super) scroll_surface: ScrollSurfaceRuntime,
     pub(super) focus_handle: FocusHandle,
@@ -55,6 +131,7 @@ pub(super) struct VirtualizedListRuntime {
     pub(super) selected_keys: BTreeSet<String>,
     pub(super) selection_anchor_key: Option<String>,
     pub(super) row_measurements: BTreeMap<String, UiPx>,
+    geometry: VirtualizedListGeometryAuthority,
     pub(super) pending_scroll_to_active: Option<String>,
     pub(super) typeahead_buffer: String,
     pub(super) last_typeahead_at: Option<Instant>,
@@ -62,7 +139,26 @@ pub(super) struct VirtualizedListRuntime {
     pub(super) active_indicator_frame_host: MotionFrameDriver,
 }
 
+#[derive(Debug)]
+struct VirtualizedListRuntimeRenderSnapshot {
+    scroll_surface: ScrollSurfaceRuntime,
+    focus_handle: FocusHandle,
+    active_key: Option<String>,
+    selected_keys: BTreeSet<String>,
+    pending_scroll_to_active: Option<String>,
+}
+
 impl VirtualizedListRuntime {
+    fn render_snapshot(&self) -> VirtualizedListRuntimeRenderSnapshot {
+        VirtualizedListRuntimeRenderSnapshot {
+            scroll_surface: self.scroll_surface.clone(),
+            focus_handle: self.focus_handle.clone(),
+            active_key: self.active_key.clone(),
+            selected_keys: self.selected_keys.clone(),
+            pending_scroll_to_active: self.pending_scroll_to_active.clone(),
+        }
+    }
+
     pub(super) fn set_row_measurement(
         &mut self,
         render_key: String,
@@ -72,6 +168,7 @@ impl VirtualizedListRuntime {
         let height = nonnegative_px(height);
         if self.row_measurements.get(&render_key).copied() != Some(height) {
             self.row_measurements.insert(render_key, height);
+            self.geometry.invalidate();
             cx.notify();
         }
     }
@@ -87,6 +184,58 @@ impl VirtualizedListRuntime {
         self.typeahead_buffer.push_str(&key.to_lowercase());
         self.last_typeahead_at = Some(now);
         self.typeahead_buffer.clone()
+    }
+}
+
+#[cfg(test)]
+mod geometry_authority_tests {
+    use super::*;
+    use open_gpui_ui_core::{VirtualizerSnapshotItem, ui_px};
+
+    fn items(keys: &[&str]) -> Arc<[VirtualizedListItemDescriptor]> {
+        keys.iter()
+            .map(|key| VirtualizedListItemDescriptor::new(*key, key.to_uppercase()))
+            .collect::<Vec<_>>()
+            .into()
+    }
+
+    #[test]
+    fn fresh_equivalent_item_storage_preserves_geometry_revision() {
+        let first = items(&["alpha", "beta", "gamma"]);
+        let equivalent = items(&["alpha", "beta", "gamma"]);
+        let reordered = items(&["beta", "alpha", "gamma"]);
+        let mut authority = VirtualizedListGeometryAuthority::new(first.clone(), None);
+
+        assert_eq!(authority.sync(&first, None), 0);
+        assert_eq!(authority.sync(&equivalent, None), 0);
+        assert_eq!(authority.sync(&reordered, None), 1);
+    }
+
+    #[test]
+    fn snapshot_measurement_authority_and_wrap_invalidate_exactly() {
+        let list_items = items(&["alpha", "beta"]);
+        let snapshot = VirtualizerSnapshot::new(
+            UiPx::ZERO,
+            [VirtualizerSnapshotItem::new("beta".into(), ui_px(44.0))],
+        );
+        let same_content = VirtualizerSnapshot::new(
+            ui_px(20.0),
+            [VirtualizerSnapshotItem::new("beta".into(), ui_px(44.0))],
+        );
+        let changed = VirtualizerSnapshot::new(
+            ui_px(20.0),
+            [VirtualizerSnapshotItem::new("beta".into(), ui_px(72.0))],
+        );
+        let mut authority =
+            VirtualizedListGeometryAuthority::new(list_items.clone(), Some(&snapshot));
+
+        assert_eq!(authority.sync(&list_items, Some(&snapshot)), 0);
+        assert_eq!(authority.sync(&list_items, Some(&same_content)), 0);
+        assert_eq!(authority.sync(&list_items, Some(&changed)), 1);
+
+        authority.revision = u64::MAX;
+        authority.invalidate();
+        assert_eq!(authority.revision, 0);
     }
 }
 
@@ -410,13 +559,17 @@ impl RenderOnce for VirtualizedList {
             selected_keys: self.selected_keys.clone(),
             selection_anchor_key: self.active_key.clone(),
             row_measurements: BTreeMap::new(),
+            geometry: VirtualizedListGeometryAuthority::new(
+                self.items.clone(),
+                self.snapshot.as_ref(),
+            ),
             pending_scroll_to_active: None,
             typeahead_buffer: String::new(),
             last_typeahead_at: None,
             active_indicator: VirtualizedListActiveIndicatorRuntime::default(),
             active_indicator_frame_host: MotionFrameDriver::new(),
         });
-        let runtime_state = runtime.read(cx).clone();
+        let runtime_state = runtime.read(cx).render_snapshot();
         let scroll_handle =
             scroll_surface_handle(&runtime_state.scroll_surface, self.scroll_handle.as_ref());
         let focus_handle = runtime_state.focus_handle.clone();
@@ -432,17 +585,27 @@ impl RenderOnce for VirtualizedList {
             viewport_item_count,
         );
         let scroll_offset = vertical_scroll_offset(&scroll_handle);
-        let plan = VirtualizedListRenderPlan::resolve(
-            self.id.clone(),
-            self.label.to_string(),
-            state.clone(),
-            self.items.as_ref(),
-            self.row_measure_mode,
-            &runtime_state.row_measurements,
-            self.snapshot.as_ref(),
-            scroll_offset,
-            viewport_extent,
-        );
+        let plan = runtime.update(cx, |runtime, _| {
+            let VirtualizedListRuntime {
+                row_measurements,
+                geometry,
+                ..
+            } = runtime;
+            let geometry_revision = geometry.sync(&self.items, self.snapshot.as_ref());
+            VirtualizedListRenderPlan::resolve_cached(
+                self.id.clone(),
+                self.label.to_string(),
+                state.clone(),
+                self.items.as_ref(),
+                self.row_measure_mode,
+                row_measurements,
+                self.snapshot.as_ref(),
+                scroll_offset,
+                viewport_extent,
+                &mut geometry.cache,
+                geometry_revision,
+            )
+        });
         if let Some(pending_scroll_to_active) = runtime_state.pending_scroll_to_active.as_deref() {
             scroll_active_key(
                 &scroll_handle,
@@ -508,6 +671,16 @@ impl RenderOnce for VirtualizedList {
             window.request_animation_frame();
         }
         let active_indicator = runtime.read(cx).active_indicator.snapshot();
+        let root_label = plan.label().to_owned();
+        let root_actions: &[AccessibleAction] = if list_state.visible_empty() {
+            &[]
+        } else {
+            &[AccessibleAction::Focus]
+        };
+        let root_semantics = SemanticDescriptor::new(plan.role())
+            .with_label(&root_label)
+            .with_disabled(list_state.disabled())
+            .with_actions(root_actions);
 
         div()
             .id(self.id)
@@ -532,9 +705,7 @@ impl RenderOnce for VirtualizedList {
             .tab_stop(!list_state.disabled() && !list_state.visible_empty())
             .track_focus(&focus_handle)
             .focus_visible(move |style| style.shadow(focus_shadow.clone()))
-            .ui_role(plan.role())
-            .aria_label(plan.label().to_owned())
-            .aria_disabled(list_state.disabled())
+            .ui_semantics(&root_semantics)
             .on_click({
                 let focus_handle = focus_handle.clone();
                 move |_, window, cx| {

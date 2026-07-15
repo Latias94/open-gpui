@@ -1,0 +1,10 @@
+{
+  "tests": [
+    {
+      "package": "open-gpui-ui-components",
+      "test_target": "a11y",
+      "test_name": "collection_semantics::listbox_final_tree_and_click_action_follow_resolved_state",
+      "ignored": false
+    }
+  ]
+}

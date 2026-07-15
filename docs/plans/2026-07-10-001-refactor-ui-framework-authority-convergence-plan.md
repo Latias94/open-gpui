@@ -79,9 +79,11 @@ R12. Extract one private collection typeahead session used by at least Tree and 
 
 R13. Establish federated typed authorities with narrow ownership: component contract rows own product metadata, Gallery owns selectors/probes, native tests own executable scenario IDs, and xtask cross-checks them structurally. Delete source parsing and parallel hand-authored facts without recreating a central registry.
 
-R14. Keep Table's engine, row identity, state pipeline, and virtualization architecture intact. Diagnostic snapshots may leave the common prelude/root surface, but no engine rewrite or 2D virtualization project is part of this plan.
+R14. Preserve Table's engine, `core -> filtered -> grouped -> sorted -> expanded -> paginated -> final` row-model order, stable logical-identity invariant, and independent Virtualizer ownership. U5 may replace `TableRowId`-only identity-sensitive APIs with typed source/group identities and correct column-order ownership, but no engine rewrite or 2D virtualization project is part of this plan.
 
 R15. Breaking migrations must update official components, gallery, DevTools, docs, examples, contracts, and tests in the same unit. Old aliases, forwarding facades, and stale evidence are deleted immediately.
+
+R16. Duplicate Table source rows must never alias focus, edits, callbacks, render/semantic nodes, or virtualizer measurements. Occurrence identities are valid only within their resolved source snapshot; callers that retain identity across source reorder must provide explicit instance IDs. A partial column order reorders columns without hiding otherwise visible columns.
 
 ### Acceptance Examples
 
@@ -93,6 +95,7 @@ R15. Breaking migrations must update official components, gallery, DevTools, doc
 6. A rendered Checkbox changes from unchecked to checked. The same stable AccessKit node is observed on the next frame, with its state updated. DevTools reports the same semantic facts and does not reconstruct them from an evidence string.
 7. Tree and VirtualizedList accumulate typeahead within the configured interval, reset after fake-clock advancement, skip structural or disabled targets, preserve stable-key identity across reorder, and never share a buffer across instances or windows.
 8. Removing a component's executable scenario binding causes the conformance gate to fail with its component/scenario ID and owner path. Editing a comment or brace count cannot make the gate pass.
+9. Two Table rows share one business ID and provide explicit instance IDs. After filtering, sorting, pinning, virtual recycle, and return, focus, edit, keyboard activation, and AccessKit Click still target the chosen instance and reuse its logical node identity. A partial column order keeps every other visible column available and reorderable.
 
 ### Scope Boundaries
 
@@ -148,7 +151,7 @@ KTD11. **Public API cleanup is evidence-led.** Table's engine and `ActionDescrip
 
 KTD12. **Breaking means clean replacement.** No deprecated aliases are retained for old semantic callbacks, color-only theme models/schema, overlay forwarding helpers, or evidence tables. The project is unreleased: the expanded theme contract deletes and replaces the old format in place and remains version `v1`; there is no compatibility loader, dual model, or `v2` naming.
 
-KTD13. **TanStack Table is a semantic reference, not an implementation dependency.** The repository-local `repo-ref/tanstack-table` reference clone (currently `@tanstack/table-core` `9.0.0-beta.31` at `5af79a877fa80f63703c6dc21861acc9d18baecf`) anchors row-model ordering, stable row/column identity, client/manual stage ownership, and pinning-region semantics. Open GPUI retains its Rust engine, GPUI adapter, native keyboard/accessibility policy, and separate virtualizer; this plan does not adopt TanStack v9 atoms/plugins, add a runtime dependency, or pursue full API parity.
+KTD13. **TanStack Table is a semantic reference, not an implementation dependency.** The repository-local `repo-ref/tanstack-table` reference clone (currently `@tanstack/table-core` `9.0.0-beta.31` at `5af79a877fa80f63703c6dc21861acc9d18baecf`) anchors row-model ordering, stable row/column identity, client/manual stage ownership, and pinning-region semantics. Open GPUI retains its Rust engine, GPUI adapter, native keyboard/accessibility policy, and separate virtualizer; this plan does not adopt TanStack v9 atoms/plugins, add a runtime dependency, or pursue full API parity. Row pinning addresses exact authoritative row identities by default; pinning every source instance with one business row ID is an explicitly named bulk target, never implicit string coercion. Occurrence identity is exact only inside its current resolved source snapshot, while retained state across reorder requires a caller-owned explicit instance ID. Caller target order owns order within each pinned region, each bulk target expands in current model order, top targets are resolved first, and a logical row already claimed by top is excluded from bottom. Open GPUI intentionally diverges from TanStack's default index/string identity, stringified group keys, overlap tolerance, and core-row fallback for filtered pinned rows; typed grouping, duplicate diagnostics, top-wins partitioning, filter-aware pinning, and independent Virtualizer ownership remain local contracts.
 
 ### High-Level Technical Design
 
@@ -311,8 +314,11 @@ Reference implementations:
 - `repo-ref/gpui-component/crates/ui/src/root.rs`
 - `repo-ref/gpui-component/crates/ui/src/`
 - `repo-ref/fret/`
+- `repo-ref/tanstack-table/packages/table-core/src/core/row-models/coreRowModelsFeature.utils.ts`
+- `repo-ref/tanstack-table/packages/table-core/src/core/rows/coreRowsFeature.utils.ts`
+- `repo-ref/tanstack-table/packages/table-core/src/features/row-pinning/rowPinningFeature.utils.ts`
 
-The references inform behavior and ownership only. Their package layouts and runtimes are not copied wholesale.
+The references inform behavior and ownership only. Their package layouts, APIs, and runtimes are not copied wholesale.
 
 ## Implementation Units
 
@@ -552,12 +558,21 @@ Every official component that emits accessibility semantics derives one ephemera
 
 - `crates/ui_core/src/a11y.rs`
 - `crates/ui_components/src/a11y.rs`
+- `crates/ui_core/src/table/`
+- `crates/ui_components/src/table/`
+- `crates/ui_components/tests/table/`
 - official action, form, choice, overlay, navigation, collection, and table component modules
 - `crates/gpui/src/window/a11y.rs`
 - `crates/devtools/src/ui_components.rs`
 - `crates/ui_components/tests/a11y.rs`
 - `crates/ui_components/tests/public_surface/adapter.rs`
+- `crates/ui_components/src/component_contract/`
+- `crates/ui_components/src/public_api/`
+- `crates/ui_components/tests/public_surface/`
+- `xtask/src/ui_contract.rs` and UI-contract fixtures
+- gallery component conformance/catalog modules and tests
 - `crates/devtools/tests/framework_adapters.rs`
+- `docs/ui/component-contract.md`
 - `docs/ui/migration-v0.3.md`
 - `docs/knowledge/engineering/decisions/` for the semantic accessibility/final-tree ADR
 
@@ -570,7 +585,11 @@ Every official component that emits accessibility semantics derives one ephemera
 - Execute the fleet migration in bounded family checkpoints: action/form controls, text/form fields, choice/navigation, overlay/modal, collections, and structural/display. Each checkpoint runs focused final-tree/action gates and deletes that family's old assembly/evidence before the next checkpoint; the number of static evidence rows is not a producer inventory or completion metric.
 - Correct semantic downgrade such as Separator mapping to Group.
 - Keep stable node identity across equivalent rerenders and remove nodes/relations on unmount or virtualization recycle.
-- For Table, derive semantic node identity from logical table/row/column/header identity rather than a pinned render region or virtual slot. Diagnosed duplicate source row IDs include stable source-instance identity in their render/semantic key. Filter, sort, group, expand, paginate, pin, and same-node value/sort updates must preserve or retire nodes according to that logical identity.
+- For Table, make the typed logical table/row/column/header identity algebra the only identity-sensitive boundary for expansion, default focus, editing, pinning, snapshots, debug selectors, render keys, and semantic nodes. Do not implicitly coerce a business row ID or string into an exact source identity.
+- Preserve exact source-instance and typed group identities through `core -> filtered -> grouped -> sorted -> expanded -> paginated -> final`. Duplicate business IDs require an explicit unique/occurrence/instance lookup result, and ambiguous business-ID editing must fail without changing component state or cache identity.
+- Keep logical Table focus against the complete final model while the rendered virtual window owns only row-mounted physical focus handles. When the logical row leaves overscan, bind the same focus claim to a stable Table-root focus proxy so real keyboard navigation remains actionable without publishing or impersonating a stale row node. The proxy may carry Table-level AccessKit focus but advertises no missing-row actions. Rebind to the exact row only while that proxy still owns the same claim; if the user moved focus elsewhere, remounting the row must not steal it back. If the exact identity leaves the complete final model, fall back to the first remaining row in final-model order, or clear logical focus when the model is empty. Physical focus and `TreeUpdate.focus` migrate or clear only while the Table/proxy still owns the claim.
+- Encode each exact Table node identity once in a collision-free key and derive source-row diagnostic labels from the identity. Avoid per-cell nested identity allocation and per-stage cloning of redundant source labels; only synthetic/group diagnostics retain shared label storage when derivation is unavailable.
+- Define partial column order as ordering the listed visible columns first and appending unlisted visible columns in source order. At the mutation boundary, complete a partial order with every source column in source order before applying a moved/target operation, then emit the normalized full order. Column order never owns visibility or pinning.
 - While a modal is active, remove its underlay from the navigable accessibility surface, reject underlay focus/value/activation actions, keep accessibility focus within the modal, and restore the prior tree when the modal is semantically closed.
 - Project DevTools from the resolved semantic authority, not `COMPONENT_A11Y_EVIDENCE`. Its adapter accepts only allowlisted structural facts and opaque IDs; accessible name, description, value text, labels, user input, and clipboard-derived text become typed redacted/summary markers before capture construction.
 - Update each family's Gallery/a11y scenario and migration notes in the same migration slice.
@@ -583,18 +602,28 @@ Every official component that emits accessibility semantics derives one ephemera
 - AccessKit Focus/Click/value actions target the correct node and are no-ops when disabled or under a modal.
 - Modal open/close TreeUpdates prove the underlay is non-navigable while active and restored afterward, not merely action-blocked.
 - Virtualized identities cannot be accidentally reused for a different stable item.
+- An explicit duplicate source instance retains the same exact identity, row/cell NodeIds, virtualizer measurement, and action target across filter/sort/paginate stages, reorder, top/bottom pinning, virtual recycle, and return.
+- Occurrence identities carry a source-snapshot-local discriminator. Replacing or reordering the source snapshot invalidates retained occurrence-backed focus, pin, edit, and measurement state instead of silently retargeting it; cross-snapshot retention uses an explicit instance identity.
+- A business-ID-only edit against duplicate rows returns `AmbiguousRowId` and leaves data, edit state, and cache identity unchanged; exact source identities update only their intended instance.
+- Scrolling a logically focused row outside overscan transfers its claim to the stable root proxy; real Up/Down/Home/End and Enter/Space continue to navigate and activate exact logical identities through that proxy. The unmounted row's stale AccessKit node is absent and rejects actions; AccessKit Focus/Click resumes only after reveal/remount publishes the exact row node. Returning the row rebinds only if the proxy still owns that claim. Removing the row from the complete final model selects the first remaining row in final-model order, or clears logical focus when the model is empty, without disturbing focus already moved outside the Table.
+- Typed group identities keep Empty, Text, Number, and Bool distinct even when display text matches. Every NaN payload normalizes to one stable Number identity, and `+0.0`/`-0.0` normalize to one Number identity; group counts and codecs prove both rules. Duplicate exact identities cannot collide in node or measurement keys.
+- Identity-sensitive public APIs reject raw strings at compile time, while migration examples show explicit unique, occurrence, instance, and bulk business-ID targeting.
+- A partial column order preserves every otherwise visible unlisted column in source order; an unlisted column remains reorderable as either the moved or target column under visibility and pinning projections, and the resulting callback carries a normalized full source-column order.
 - Unmount and relation repair produce no dangling references.
 - DevTools and final tree agree on allowlisted public semantic facts, while unique canaries in accessible free text never reach capture/history/diff/export/artifact/report fixtures.
 
 **Deletion/replacement**
 
-- Delete every inventoried component's duplicated aria assembly and static evidence claims as it migrates.
+- Delete every inventoried component's duplicated aria assembly and all semantic claims, consumers, and authority uses of `COMPONENT_A11Y_EVIDENCE` as it migrates. U5 owns this deletion; U10 may remove only residual empty types, exports, and conformance scaffolding.
 - Delete fallback mappings that silently change role semantics.
+- Delete implicit business-ID/string conversions into exact Table row identity and convenience edit paths that hide ambiguity.
 - Preserve the neutral vocabulary unless a concrete type has no domain value; do not force `ui_core` to depend on GPUI.
 
 **Unit gate**
 
 - GPUI accessibility tests, UI final-tree tests, public-surface tests, DevTools adapter tests, and gallery Focus/A11y tests pass.
+- Table gates include a compile-time signature guard, exact-identity stage/lifecycle tests, virtual-focus restoration, ambiguous-edit non-mutation, duplicate NodeId/measurement checks, and component-contract/migration documentation for typed identity and partial column order.
+- `scan-ui-contract`, public-surface tests, and Gallery catalog/conformance tests pass with no semantic `COMPONENT_A11Y_EVIDENCE` claim or consumer; only an empty type/export/scaffold explicitly assigned to U10 may remain.
 - The unit cannot claim completion if `TreeUpdate` is not directly observed.
 - U5 cannot complete while any inventoried official component retains a parallel semantic assembly/evidence authority. Representative action, form, choice, overlay, navigation, collection, and table families require deep final-tree/action tests; the remaining producers require unified projection coverage and a structured absence check for old authority.
 
@@ -836,7 +865,7 @@ Narrow typed authorities own facts at their natural lifecycle: `COMPONENT_CONTRA
 - Derive only shared product metadata in Gallery/DevTools from contract rows; their runtime selectors, probes, and inspection data remain locally owned.
 - Split common public exports from explicit extended/diagnostic modules.
 - Characterize Table consumers; keep `Table`, core state/resolved state, engine, and adapter public. Move diagnostic-only behavior snapshots out of root/common prelude only when the census confirms no intended common API use.
-- Calibrate Table characterization against the local TanStack reference boundary: preserve `core -> filtered -> grouped -> sorted -> expanded -> paginated -> final` ordering, stable row/column IDs across transforms, client/manual ownership for the stages Open GPUI exposes, pinning as a partition of logical rows/columns rather than new identities, and the Table/Virtualizer ownership split. Unsupported TanStack features and full API parity remain out of scope.
+- Calibrate Table characterization against the local TanStack reference boundary and the completed post-U5 contract: preserve `core -> filtered -> grouped -> sorted -> expanded -> paginated -> final` ordering, stable typed row/column IDs across transforms, client/manual ownership for the stages Open GPUI exposes, exact row-identity pinning plus explicitly named business-ID bulk targets, caller-owned pinned-region order, pinning as a partition of logical rows/columns rather than new identities, and the Table/Virtualizer ownership split. Unsupported TanStack features, pre-U5 implicit identity behavior, and full API parity remain out of scope.
 - Update conformance migration notes and the relevant ADR 0014 amendment/reaffirmation in this unit.
 
 **Test scenarios**
@@ -845,13 +874,14 @@ Narrow typed authorities own facts at their natural lifecycle: `COMPONENT_CONTRA
 - A final-tree role or activation matrix mismatch fails an executable probe; changing evidence text cannot repair it.
 - Comments, aliases, grouped exports, formatting, and braces cannot affect structured checks.
 - Gallery and DevTools receive the same contract ID/revision/family metadata without moving their runtime-specific facts into the component contract.
-- Table filter/sort/group/expand/paginate/pin/virtualize/edit outputs, logical identities, and exposed client/manual stage ownership remain behaviorally identical through export cleanup.
+- Table filter/sort/group/expand/paginate/pin/virtualize/edit outputs, logical identities, partial-order behavior, and exposed client/manual stage ownership remain behaviorally identical to the post-U5 checkpoint through export cleanup.
 - Duplicate Table source row IDs remain explicitly diagnosed and stably disambiguated by source-instance identity; no duplicate may collide in virtualizer keys or final accessibility nodes.
+- Exact pin targets distinguish duplicate source instances and typed group rows; explicit business-ID bulk targets expand in current model order and caller target order controls each pinned region. Top targets resolve first, and identities claimed by top are excluded from bottom.
 
 **Deletion/replacement**
 
 - Delete `COMPONENT_API_INVENTORY` method-name baselines that mirror Rust source.
-- Delete manual `COMPONENT_A11Y_EVIDENCE`/gate claims as product authorities.
+- Delete only the empty `COMPONENT_A11Y_EVIDENCE` type/export and conformance-gate scaffolding left after U5; reopening semantic-claim or consumer deletion belongs to U5 rather than delayed U10 cleanup.
 - Delete shallow source mapping/owner tables and source-string parsers once structured owner/export facts can be queried directly.
 - Delete duplicate default/common re-export lists where one public API owner can generate or structurally validate them.
 - Do not recreate ADR 0014's deleted JSON registry/scaffold product.
@@ -883,6 +913,7 @@ The product surfaces already updated by U1-U10 are audited together, architectur
 
 - Compose cross-domain Gallery smoke from the real per-unit flows already added for nested overlay/focus, final accessibility state, async form validation, scoped themes, semantic activation, and collection typeahead.
 - Audit runtime inspection against an allowlist contract: structured status/count/role/action/relation and opaque IDs only. Free-form form errors, accessible names/descriptions/value text, clipboard, input, and labels must already be typed redacted/summary markers before `DevtoolsCapture` construction.
+- Treat Table business/instance IDs, text group values, caller-owned table/column IDs, cell values, encoded identities, diagnostic labels, and debug selectors as sensitive source data. The DevTools adapter assigns non-reversible session-scoped opaque IDs and never persists their raw or merely formatted/hashed representation.
 - Cross-link the ADRs created with U3/U4, U5, U6, U7/U8, and U10; reaffirm ADR 0014's federated ownership rather than introducing a central manifest.
 - Reconcile ADR 0009 with the implemented grouped, expanded, and pinned Table stages, record the TanStack reference boundary, and explicitly retain its Table/Virtualizer ownership shape and existing motion ownership.
 - Consolidate and release-audit the callback, theme, overlay, accessibility, and conformance migration guidance already committed with their owning units.
@@ -893,7 +924,7 @@ The product surfaces already updated by U1-U10 are audited together, architectur
 - Gallery smoke opens nested overlays and verifies topmost dismiss/focus restoration.
 - Gallery displays two theme scopes and a real validating form without manually constructing unreachable states.
 - DevTools reads theme/form/overlay/focus/a11y/table authorities and preserves redaction across live capture, session frames/history, diff, Inspector detail/copy, session export, headless artifact, report, and Gallery fixture paths.
-- Unique canaries injected into form values/errors, accessible name/description/value text, clipboard, and user input appear nowhere in those outputs; only typed redacted markers and counts remain.
+- Unique canaries injected into form values/errors, accessible name/description/value text, clipboard, user input, `TableRowId`, explicit instance ID, text group value, table/column ID, cell value, identity diagnostic, debug selector, and diagnostic label appear nowhere in those outputs; only typed redacted markers, counts, and adapter-owned session IDs remain.
 - Release/doc scanners reject stale callback names, old theme authority, forwarding overlay helpers, manual evidence, and source scanners.
 
 **Deletion/replacement**
@@ -918,7 +949,7 @@ Verification is layered. A lower layer cannot substitute for a higher authority 
 Focused commands are run per unit using the packages and test targets named above. The final gate is:
 
 ```powershell
-cargo fmt --all --check
+cargo fmt --all -- --check
 cargo check --workspace --all-targets --locked
 cargo nextest run --workspace --no-fail-fast --locked
 
@@ -946,7 +977,7 @@ Test execution rules:
 - On Windows, serialize resource-heavy all-feature DevTools/link steps with `CARGO_BUILD_JOBS=1`.
 - Correctness tests use no retries. Any introduced nextest timeout/group configuration must preserve fast unit-test parallelism and isolate only native/GPU/singleton tests.
 - Platform-specific visual baselines are not a completion claim for this plan; structural/gallery/runtime assertions must pass on the active platform.
-- Redaction tests use unique canary strings and assert their absence from live capture, history, diff, Inspector detail/copy, session export, artifact, report, and Gallery fixtures. Post-hoc generic string sanitization does not satisfy this contract.
+- Redaction tests use unique canary strings, including Table identity/debug-label/selector sources, and assert their absence from live capture, history, diff, Inspector detail/copy, session export, artifact, report, and Gallery fixtures. Post-hoc generic string sanitization does not satisfy this contract.
 
 ## Definition of Done
 
@@ -958,8 +989,8 @@ Test execution rules:
 - Official semantic controls no longer expose legacy ClickEvent callbacks; semantic entry paths are role-correct, disabled-safe, and exactly once.
 - Theme scope is proven on the existing snapshot before replacement. The sole complete Theme v1 contract, required color scale, every consumer-proven candidate scale, clean rejection of the deleted color-only shape, effective revision, window/subtree scope, deferred inheritance, and recipe consumption pass focused tests and scanners; unproven categories are explicitly deferred rather than stubbed.
 - Tree and VirtualizedList no longer own duplicate typeahead buffer/timing implementations.
-- Federated typed component rows, Gallery probes, native scenario IDs, and public owners replace manual API inventory, a11y evidence, duplicate catalogs/maps, and source parsing wherever covered by U10 without recreating a central registry.
-- Table engine/virtualizer behavior is unchanged; any common-export narrowing is documented as a break and covered by characterization.
+- Federated typed component rows, Gallery probes, native scenario IDs, and public owners replace manual API inventory, duplicate catalogs/maps, source parsing, and the residual empty a11y-evidence exports/scaffolding left by U5 wherever covered by U10, without recreating a central registry.
+- Table keeps its engine/virtualizer ownership split while exact typed identities survive every row-model stage, pinning region, edit/focus path, and virtual recycle. U5's intentional typed-identity API and partial-column-order changes are documented and characterized. U10 preserves that completed post-U5 Table contract; only evidence-backed common/diagnostic export narrowing may add further public-surface breakage.
 - Action presentation and command execution remain separate, with no speculative replacement runtime.
 - ADRs and breaking migration documentation match the shipped architecture; stale helpers, aliases, evidence, and docs are deleted.
 - DevTools allowlist and canary tests prove that sensitive free text cannot enter or persist through capture, inspection, export, artifact, report, or Gallery paths.
@@ -980,8 +1011,10 @@ Test execution rules:
 | R8 | U6 | callback inventory, activation matrix tests, public `ClickEvent` absence gate |
 | R9-R11 | U7-U8 | scope tests on old/new payload, schema/recipe scanners, deferred capture |
 | R12 | U9 | fake-clock cross-collection tests and duplicate implementation deletion |
-| R13-R14 | U10 | federated binding fixtures, source-scanner deletion, Table characterization |
+| R13 | U10 | federated binding fixtures and source-scanner deletion |
+| R14 | U5, U10 | typed-identity/stage tests and post-U5 Table characterization through export cleanup |
 | R15 | each breaking unit; U11 audits | same-unit migration docs/Gallery/DevTools updates and final residual scan |
+| R16 | U5; preservation gates in U10/U11 | occurrence invalidation and explicit-instance focus/edit/callback/NodeId/measurement tests, normalized partial-order characterization, and Table redaction canaries |
 
 ### Priority Rationale
 
@@ -992,7 +1025,7 @@ Test execution rules:
 
 ### Explicit Preservation Gates
 
-- Table engine, `RowWindow`, stable identities, `core -> filtered -> grouped -> sorted -> expanded -> paginated -> final` pipeline, pinning partition semantics, client/manual ownership, and separate virtualization stay.
+- Table engine, `RowWindow`, stable identities, `core -> filtered -> grouped -> sorted -> expanded -> paginated -> final` pipeline, exact-identity pinning and explicit business-ID bulk semantics, pinning partition semantics, client/manual ownership, and separate virtualization stay; the legacy `TableRowId`-only pin-state representation is not a preservation gate.
 - `ActionDescriptor`/`ResolvedActionState` stay unless implementation uncovers a separate proven deletion case; they are not the semantic activation runtime.
 - The renderer-neutral accessibility vocabulary stays unless an individual type demonstrably adds no domain value; only duplicate mappings/evidence are deleted.
 - `open-gpui-motion` retains execution ownership; theme supplies policy/defaults only.

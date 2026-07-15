@@ -9,7 +9,7 @@ use open_gpui_ui_components::{
 };
 use open_gpui_ui_core::{
     TableColumnId, TableColumnSizing, TableColumnVisibilityOverrides, TableExpansionState,
-    TableRowChildrenLoadState, TableState, UiPx,
+    TableRowChildrenLoadState, TableRowId, TableRowIdentity, TableState, UiPx,
 };
 use std::collections::BTreeMap;
 

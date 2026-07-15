@@ -1,6 +1,7 @@
 //! Resolved table row and row-model state contracts.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use super::columns::{TableColumn, TableColumnRegions};
 use super::faceting::{TableColumnFacets, TableGlobalFacetSummary};
@@ -9,7 +10,10 @@ use super::row_model::{TableRowModelStage, TableStageMode};
 use super::rows::{TableRow, TableRowChildrenLoadState, TableRowPinningPolicy, TableRowRegions};
 use super::selection::{TableSelectionPolicy, TableSelectionSummary};
 use super::sizing::TableResolvedColumnSizingRegions;
-use super::{TableCellValue, TableColumnId, TableRowId};
+use super::{
+    TableCellValue, TableColumnId, TableRowId, TableRowIdentity, TableRowIdentityDiagnostic,
+    TableRowIdentityKey,
+};
 
 /// Metadata for a grouped table row.
 #[derive(Debug, Clone, PartialEq)]
@@ -17,8 +21,8 @@ pub struct TableGroupRow {
     grouping_column: TableColumnId,
     grouping_value: TableCellValue,
     depth: usize,
-    parent_id: Option<TableRowId>,
-    first_leaf_row_id: TableRowId,
+    parent_identity: Option<TableRowIdentity>,
+    first_leaf_identity: TableRowIdentity,
     leaf_row_count: usize,
 }
 
@@ -27,16 +31,16 @@ impl TableGroupRow {
         grouping_column: TableColumnId,
         grouping_value: TableCellValue,
         depth: usize,
-        parent_id: Option<TableRowId>,
-        first_leaf_row_id: TableRowId,
+        parent_identity: Option<TableRowIdentity>,
+        first_leaf_identity: TableRowIdentity,
         leaf_row_count: usize,
     ) -> Self {
         Self {
             grouping_column,
             grouping_value,
             depth,
-            parent_id,
-            first_leaf_row_id,
+            parent_identity,
+            first_leaf_identity,
             leaf_row_count,
         }
     }
@@ -56,14 +60,14 @@ impl TableGroupRow {
         self.depth
     }
 
-    /// Returns the parent group row id, if present.
-    pub const fn parent_id(&self) -> Option<&TableRowId> {
-        self.parent_id.as_ref()
+    /// Returns the parent resolved row identity, if present.
+    pub const fn parent_identity(&self) -> Option<&TableRowIdentity> {
+        self.parent_identity.as_ref()
     }
 
-    /// Returns the first descendant leaf row id.
-    pub const fn first_leaf_row_id(&self) -> &TableRowId {
-        &self.first_leaf_row_id
+    /// Returns the first descendant leaf row identity.
+    pub const fn first_leaf_identity(&self) -> &TableRowIdentity {
+        &self.first_leaf_identity
     }
 
     /// Returns the descendant leaf row count.
@@ -76,7 +80,7 @@ impl TableGroupRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableTreeRow {
     depth: usize,
-    parent_id: Option<TableRowId>,
+    parent_identity: Option<TableRowIdentity>,
     has_children: bool,
     can_expand: bool,
     expanded: bool,
@@ -88,7 +92,7 @@ pub struct TableTreeRow {
 impl TableTreeRow {
     pub(super) fn new(
         depth: usize,
-        parent_id: Option<TableRowId>,
+        parent_identity: Option<TableRowIdentity>,
         has_children: bool,
         can_expand: bool,
         expanded: bool,
@@ -98,7 +102,7 @@ impl TableTreeRow {
     ) -> Self {
         Self {
             depth,
-            parent_id,
+            parent_identity,
             has_children,
             can_expand,
             expanded,
@@ -113,9 +117,9 @@ impl TableTreeRow {
         self.depth
     }
 
-    /// Returns the parent source row id, if present.
-    pub const fn parent_id(&self) -> Option<&TableRowId> {
-        self.parent_id.as_ref()
+    /// Returns the parent source row identity, if present.
+    pub const fn parent_identity(&self) -> Option<&TableRowIdentity> {
+        self.parent_identity.as_ref()
     }
 
     /// Returns whether this source row has nested children.
@@ -161,7 +165,9 @@ pub enum TableResolvedRowKind {
 /// A resolved row that carries source identity and derived metadata.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableResolvedRow {
-    id: TableRowId,
+    identity: TableRowIdentity,
+    identity_key: TableRowIdentityKey,
+    group_debug_label: Option<Arc<str>>,
     cells: BTreeMap<TableColumnId, TableCellValue>,
     source: Option<TableRow>,
     source_index: Option<usize>,
@@ -169,20 +175,26 @@ pub struct TableResolvedRow {
     kind: TableResolvedRowKind,
     tree: Option<TableTreeRow>,
     depth: usize,
-    parent_id: Option<TableRowId>,
+    parent_identity: Option<TableRowIdentity>,
 }
 
 impl TableResolvedRow {
     pub(super) fn from_row(
         row: &TableRow,
+        identity: TableRowIdentity,
         source_index: usize,
         selected: bool,
         tree: Option<TableTreeRow>,
     ) -> Self {
+        let identity_key = identity.key();
         let depth = tree.as_ref().map(TableTreeRow::depth).unwrap_or(0);
-        let parent_id = tree.as_ref().and_then(|tree| tree.parent_id().cloned());
+        let parent_identity = tree
+            .as_ref()
+            .and_then(|tree| tree.parent_identity().cloned());
         Self {
-            id: row.id().clone(),
+            identity,
+            identity_key,
+            group_debug_label: None,
             cells: row.cells().clone(),
             source: Some(row.clone()),
             source_index: Some(source_index),
@@ -190,15 +202,17 @@ impl TableResolvedRow {
             kind: TableResolvedRowKind::Leaf,
             tree,
             depth,
-            parent_id,
+            parent_identity,
         }
     }
 
     pub(super) fn from_group(
-        id: TableRowId,
+        identity: TableRowIdentity,
         group: TableGroupRow,
         aggregate_cells: BTreeMap<TableColumnId, TableCellValue>,
     ) -> Self {
+        let identity_key = identity.key();
+        let group_debug_label = Arc::from(identity.debug_label());
         let mut cells = aggregate_cells;
         cells.insert(
             group.grouping_column().clone(),
@@ -206,27 +220,50 @@ impl TableResolvedRow {
         );
 
         Self {
-            id,
+            identity,
+            identity_key,
+            group_debug_label: Some(group_debug_label),
             cells,
             source: None,
             source_index: None,
             selected: false,
             depth: group.depth(),
-            parent_id: group.parent_id().cloned(),
+            parent_identity: group.parent_identity().cloned(),
             kind: TableResolvedRowKind::Group(group),
             tree: None,
         }
     }
 
-    pub(super) fn with_parent(mut self, parent_id: TableRowId, depth: usize) -> Self {
-        self.parent_id = Some(parent_id);
+    pub(super) fn with_parent(mut self, parent_identity: TableRowIdentity, depth: usize) -> Self {
+        self.parent_identity = Some(parent_identity);
         self.depth = depth;
         self
     }
 
-    /// Returns the stable row identity.
-    pub const fn id(&self) -> &TableRowId {
-        &self.id
+    /// Returns the authoritative resolved row identity.
+    pub const fn identity(&self) -> &TableRowIdentity {
+        &self.identity
+    }
+
+    /// Returns the canonical encoded key shared by renderer projections.
+    pub const fn identity_key(&self) -> &TableRowIdentityKey {
+        &self.identity_key
+    }
+
+    /// Returns a human-readable row label for diagnostics, never identity lookup.
+    pub fn debug_label(&self) -> &str {
+        match &self.identity {
+            TableRowIdentity::Source(source) => source.row_id().as_str(),
+            TableRowIdentity::Group(_) => self
+                .group_debug_label
+                .as_deref()
+                .expect("group rows always carry one shared diagnostic label"),
+        }
+    }
+
+    /// Returns the caller-owned business row id for source-backed rows.
+    pub fn source_row_id(&self) -> Option<&TableRowId> {
+        self.identity.source_row_id()
     }
 
     /// Returns the resolved row kind.
@@ -311,9 +348,9 @@ impl TableResolvedRow {
         self.depth
     }
 
-    /// Returns the parent group row id, if present.
-    pub const fn parent_id(&self) -> Option<&TableRowId> {
-        self.parent_id.as_ref()
+    /// Returns the parent resolved row identity, if present.
+    pub const fn parent_identity(&self) -> Option<&TableRowIdentity> {
+        self.parent_identity.as_ref()
     }
 
     /// Returns whether this row id is selected.
@@ -327,14 +364,51 @@ impl TableResolvedRow {
 pub struct TableRowModel {
     stage: TableRowModelStage,
     rows: Vec<TableResolvedRow>,
-    rows_by_id: BTreeMap<TableRowId, TableResolvedRow>,
+    row_lookup: BTreeMap<TableRowIdentity, TableRowLookupEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum TableRowLookupEntry {
+    Materialized(usize),
+    Retained(TableResolvedRow),
+}
+
+impl TableRowLookupEntry {
+    fn row<'a>(&'a self, rows: &'a [TableResolvedRow]) -> &'a TableResolvedRow {
+        match self {
+            Self::Materialized(index) => &rows[*index],
+            Self::Retained(row) => row,
+        }
+    }
+
+    const fn materialized_index(&self) -> Option<usize> {
+        match self {
+            Self::Materialized(index) => Some(*index),
+            Self::Retained(_) => None,
+        }
+    }
 }
 
 impl TableRowModel {
     /// Creates a row model from rows at one stage.
     pub fn new(stage: TableRowModelStage, rows: impl Into<Vec<TableResolvedRow>>) -> Self {
         let rows = rows.into();
-        Self::new_with_lookup(stage, rows.clone(), rows)
+        let row_lookup = rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                (
+                    row.identity().clone(),
+                    TableRowLookupEntry::Materialized(index),
+                )
+            })
+            .collect();
+
+        Self {
+            stage,
+            rows,
+            row_lookup,
+        }
     }
 
     pub(super) fn new_with_lookup(
@@ -343,15 +417,22 @@ impl TableRowModel {
         lookup_rows: impl IntoIterator<Item = TableResolvedRow>,
     ) -> Self {
         let rows = rows.into();
-        let rows_by_id = lookup_rows
+        let mut row_lookup = lookup_rows
             .into_iter()
-            .map(|row| (row.id().clone(), row))
-            .collect();
+            .map(|row| (row.identity().clone(), TableRowLookupEntry::Retained(row)))
+            .collect::<BTreeMap<_, _>>();
+
+        for (index, row) in rows.iter().enumerate() {
+            row_lookup.insert(
+                row.identity().clone(),
+                TableRowLookupEntry::Materialized(index),
+            );
+        }
 
         Self {
             stage,
             rows,
-            rows_by_id,
+            row_lookup,
         }
     }
 
@@ -365,14 +446,55 @@ impl TableRowModel {
         &self.rows
     }
 
-    /// Returns the row lookup for this model.
-    pub const fn rows_by_id(&self) -> &BTreeMap<TableRowId, TableResolvedRow> {
-        &self.rows_by_id
+    /// Returns an identity's index in this stage's materialized row order.
+    ///
+    /// Unlike [`Self::row`], this excludes lookup-only rows retained from a pre-stage model.
+    pub fn row_index(&self, identity: &TableRowIdentity) -> Option<usize> {
+        self.row_lookup
+            .get(identity)
+            .and_then(TableRowLookupEntry::materialized_index)
     }
 
-    /// Returns a row by stable id.
-    pub fn row(&self, id: &TableRowId) -> Option<&TableResolvedRow> {
-        self.rows_by_id.get(id)
+    /// Returns every addressable row, including lookup-only rows retained from a pre-stage model.
+    ///
+    /// Iteration follows identity order; use [`Self::rows`] for materialized model order.
+    pub fn lookup_rows(&self) -> impl Iterator<Item = &TableResolvedRow> {
+        self.row_lookup.values().map(|entry| entry.row(&self.rows))
+    }
+
+    /// Returns a row by authoritative resolved identity.
+    pub fn row(&self, identity: &TableRowIdentity) -> Option<&TableResolvedRow> {
+        self.row_lookup
+            .get(identity)
+            .map(|entry| entry.row(&self.rows))
+    }
+
+    /// Returns an exact row only when it is materialized in this stage's row order.
+    pub(super) fn materialized_row(
+        &self,
+        identity: &TableRowIdentity,
+    ) -> Option<&TableResolvedRow> {
+        self.rows
+            .get(self.row_lookup.get(identity)?.materialized_index()?)
+    }
+
+    /// Returns all source rows matching a caller-owned business id.
+    pub fn source_rows<'a, 'b>(
+        &'a self,
+        row_id: &'b TableRowId,
+    ) -> impl Iterator<Item = &'a TableResolvedRow> + use<'a, 'b> {
+        // `Unique` is the first source-instance variant, so this starts the contiguous id range.
+        self.row_lookup
+            .range(TableRowIdentity::source(row_id.clone())..)
+            .map(|(_, entry)| entry.row(&self.rows))
+            .take_while(move |row| row.source_row_id() == Some(row_id))
+    }
+
+    /// Returns the source row only when the business id resolves uniquely.
+    pub fn unique_source_row(&self, row_id: &TableRowId) -> Option<&TableResolvedRow> {
+        let mut rows = self.source_rows(row_id);
+        let row = rows.next()?;
+        rows.next().is_none().then_some(row)
     }
 
     /// Returns the number of selected rows in this model.
@@ -388,7 +510,7 @@ pub struct TableResolvedState {
     pub(super) visible_column_regions: TableColumnRegions,
     pub(super) visible_column_sizing: TableResolvedColumnSizingRegions,
     pub(super) header_groups: TableResolvedHeaderGroupRegions,
-    pub(super) duplicate_row_ids: Vec<TableRowId>,
+    pub(super) row_identity_diagnostics: Vec<TableRowIdentityDiagnostic>,
     pub(super) faceting_mode: TableStageMode,
     pub(super) column_facets: Vec<TableColumnFacets>,
     pub(super) global_facet_summary: TableGlobalFacetSummary,
@@ -492,9 +614,9 @@ impl TableResolvedState {
         self.row_regions.bottom()
     }
 
-    /// Returns duplicate source row ids detected during resolution.
-    pub fn duplicate_row_ids(&self) -> &[TableRowId] {
-        &self.duplicate_row_ids
+    /// Returns source-row identity diagnostics detected during resolution.
+    pub fn row_identity_diagnostics(&self) -> &[TableRowIdentityDiagnostic] {
+        &self.row_identity_diagnostics
     }
 
     /// Returns the core row model.

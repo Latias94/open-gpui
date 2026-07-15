@@ -11,6 +11,7 @@ mod faceted_filter;
 mod filtering;
 mod global_filter;
 mod header;
+mod identity;
 mod interaction;
 mod layout;
 mod metrics;
@@ -20,6 +21,7 @@ mod render_plan;
 mod resize;
 mod resolve;
 mod runtime;
+mod scroll;
 mod toolbar;
 mod virtualization;
 
@@ -31,11 +33,12 @@ use crate::scroll_surface::{
 };
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, DragMoveEvent, ParentElement, RenderOnce, SharedString, Styled, Window, div, px, rgb,
+    App, DragMoveEvent, KeyDownEvent, ParentElement, RenderOnce, SharedString, Styled, Window, div,
+    px, rgb,
 };
 use open_gpui_ui_core::{
     Role, SemanticDescriptor, Sizable, Size, TableColumnResizeDirection, TableColumnResizeMode,
-    TableExpansionMode, TableRowId, TableState, UiPx, VirtualizerSnapshot,
+    TableExpansionMode, TableRowIdentity, TableState, UiPx,
 };
 pub use open_gpui_ui_core::{
     TableResolvedHeaderCell, TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions,
@@ -48,19 +51,20 @@ pub use behavior::{
     TableColumnRegionSnapshot, TableHeaderSummarySnapshot, TableRowBehaviorSnapshot,
     TableRowCountSnapshot, TableTreeSummarySnapshot, TableVisibleRowsSnapshot,
 };
-use body::render_table_body;
+use body::{TableBodyRenderInput, TableKeyboardDispatchContext, render_table_body};
 pub use column_visibility::{
     TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
     TableColumnVisibilityItemState, TableColumnVisibilityState,
 };
 use content_fit::apply_table_content_fit_widths;
-pub use editing::{TableCellEditApplyOutcome, TableCellEditChange};
+pub use editing::{TableCellEditApplyOutcome, TableCellEditChange, TableCellEditRequest};
 pub use faceted_filter::{
     TableFacetedFilter, TableFacetedFilterChange, TableFacetedFilterOptionState,
     TableFacetedFilterState,
 };
 pub use global_filter::{TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState};
 use header::render_table_header;
+pub use identity::TableDebugSelector;
 pub use interaction::{
     TableColumnOrderChange, TableColumnOrderPlacement, TableColumnSizingChange, TableHeaderAction,
     TableInputModifiers, TableRowAction, TableRowActivation, TableRowActivationKind,
@@ -75,12 +79,12 @@ pub use predicate_filter::{
 pub use range_filter::{TableRangeFilter, TableRangeFilterChange, TableRangeFilterState};
 pub(in crate::table) use render_plan::{
     TableCellRenderPlan, TableCenterColumnWindowPlan, TableColumnRegionRenderPlan,
-    TableColumnRenderPlan, TableHeaderCellRenderPlan, TablePinnedLayoutPlan, TableRenderPlan,
-    TableRowRenderPlan,
+    TableColumnRenderPlan, TableHeaderCellRenderPlan, TableRenderPlan, TableRowRenderPlan,
 };
 use resize::{TableColumnResizeDrag, TableResizeRenderConfig, handle_table_column_resize_drag};
 use runtime::TableRuntime;
 pub use toolbar::{TableToolbar, TableToolbarColors, TableToolbarState};
+pub use virtualization::{TableVirtualizerSnapshot, TableVirtualizerSnapshotItem};
 
 type TableSortHandler = Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>;
 pub(super) type TableColumnSizingHandler =
@@ -116,8 +120,8 @@ pub struct Table {
     pub(super) state: TableState,
     pub(super) metrics: TableMetrics,
     pub(super) row_measure_mode: TableRowMeasureMode,
-    pub(super) snapshot: Option<VirtualizerSnapshot>,
-    default_focused_row: Option<TableRowId>,
+    pub(super) snapshot: Option<TableVirtualizerSnapshot>,
+    default_focused_row: Option<TableRowIdentity>,
     on_sort_requested: Option<TableSortHandler>,
     on_column_order_change: Option<TableColumnOrderHandler>,
     enable_column_resizing: bool,
@@ -209,14 +213,22 @@ impl Table {
     ///
     /// The adapter applies the live `ScrollHandle` offset after restoring snapshot measurements.
     /// One-shot scroll-position restoration belongs to the runtime scroll owner.
-    pub fn virtualizer_snapshot(mut self, snapshot: VirtualizerSnapshot) -> Self {
+    pub fn virtualizer_snapshot(mut self, snapshot: TableVirtualizerSnapshot) -> Self {
         self.snapshot = Some(snapshot);
         self
     }
 
-    /// Seeds the adapter-owned focused row.
-    pub fn default_focused_row(mut self, row_id: impl Into<TableRowId>) -> Self {
-        self.default_focused_row = Some(row_id.into());
+    /// Seeds the adapter-owned focused row with one exact resolved identity.
+    ///
+    /// ```compile_fail
+    /// use open_gpui_ui_components::Table;
+    /// use open_gpui_ui_core::{TableRow, TableState};
+    ///
+    /// let state = TableState::new(std::iter::empty::<TableRow>());
+    /// let _ = Table::new("table", "Table", state).default_focused_row("row-a");
+    /// ```
+    pub fn default_focused_row(mut self, identity: TableRowIdentity) -> Self {
+        self.default_focused_row = Some(identity);
         self
     }
 
@@ -318,13 +330,16 @@ impl RenderOnce for Table {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let runtime_id = format!("table:{}:runtime", self.id);
         let default_focused_row = self.default_focused_row.clone();
-        let runtime = window.use_keyed_state(runtime_id, cx, |_, _| {
-            TableRuntime::new(default_focused_row)
+        let runtime = window.use_keyed_state(runtime_id, cx, |_, cx| {
+            TableRuntime::new(default_focused_row, cx.focus_handle())
         });
-        let runtime_snapshot = runtime.read(cx).clone();
-        let scroll_handle = scroll_surface_handle(&runtime_snapshot.scroll_surface, None);
-        let horizontal_scroll_handle =
-            scroll_surface_handle(&runtime_snapshot.horizontal_scroll_surface, None);
+        let (scroll_handle, horizontal_scroll_handle) = {
+            let runtime = runtime.read(cx);
+            (
+                scroll_surface_handle(&runtime.scroll_surface, None),
+                scroll_surface_handle(&runtime.horizontal_scroll_surface, None),
+            )
+        };
         let viewport_extent = vertical_viewport_extent(&scroll_handle);
         let scroll_offset = vertical_scroll_offset(&scroll_handle);
         let on_sort_requested = self.on_sort_requested.clone();
@@ -350,18 +365,21 @@ impl RenderOnce for Table {
                 window,
                 runtime,
             );
-            runtime.sync_rows(&plan, cx);
+            runtime.sync_rows(&plan, window, cx);
             plan
         });
-        let runtime_snapshot = runtime.read(cx).clone();
-        let current_expansion = runtime_snapshot
-            .expansion_override
-            .clone()
-            .unwrap_or_else(|| self.state.expansion().clone());
+        let (runtime_snapshot, expansion_override) = {
+            let runtime = runtime.read(cx);
+            (
+                Rc::new(runtime.render_snapshot()),
+                runtime.expansion_override.clone(),
+            )
+        };
+        let current_expansion =
+            expansion_override.unwrap_or_else(|| self.state.expansion().clone());
         let table_id = plan.table_id().to_owned();
         let label = plan.label().to_owned();
         let metrics = plan.metrics();
-        let scroll_viewport_id = format!("table:{table_id}:body-scroll");
         let selection_policy = plan.selection_policy();
         let selected_row_ids = Rc::new(
             plan.table()
@@ -369,13 +387,24 @@ impl RenderOnce for Table {
                 .rows()
                 .iter()
                 .filter(|row| row.selected())
-                .map(|row| row.id().clone())
+                .filter_map(|row| row.source_row_id().cloned())
                 .collect::<Vec<_>>(),
         );
         let on_row_activate = self.on_row_activate.clone();
         let on_row_selection_change = self.on_row_selection_change.clone();
         let on_row_expansion_request = self.on_row_expansion_request.clone();
         let on_cell_edit_change = self.on_cell_edit_change.clone();
+        let focus_proxy = runtime_snapshot.focus_proxy();
+        let proxy_rows = plan.resolved_table();
+        let proxy_scroll_handle = scroll_handle.clone();
+        let proxy_runtime = runtime.clone();
+        let proxy_expansion = current_expansion.clone();
+        let proxy_on_row_activate = on_row_activate.clone();
+        let proxy_on_row_expansion_request = on_row_expansion_request.clone();
+        let proxy_row_height = metrics.row_height();
+        let proxy_viewport_extent = metrics.viewport_extent();
+        let proxy_top_row_count = plan.top_rows().len();
+        let proxy_center_row_count = plan.virtualizer().count();
         let mut semantics = SemanticDescriptor::new(Role::Table)
             .with_label(&label)
             .with_row_count(plan.aria_row_count());
@@ -400,6 +429,25 @@ impl RenderOnce for Table {
             .text_size(gpui_px_from_ui(metrics.size().control_text_px()))
             .text_color(rgb(0x2f3845))
             .ui_semantics(&semantics)
+            .when_some(focus_proxy, |this, focus_proxy| {
+                this.track_focus(&focus_proxy).tab_stop(true).on_key_down(
+                    move |event: &KeyDownEvent, window, cx| {
+                        TableKeyboardDispatchContext {
+                            final_model: proxy_rows.final_model(),
+                            vertical_scroll_handle: proxy_scroll_handle.clone(),
+                            top_row_count: proxy_top_row_count,
+                            center_total_row_count: proxy_center_row_count,
+                            fallback_row_height: proxy_row_height,
+                            fallback_viewport_extent: proxy_viewport_extent,
+                            runtime: &proxy_runtime,
+                            current_expansion: proxy_expansion.clone(),
+                            on_row_activate: proxy_on_row_activate.clone(),
+                            on_row_expansion_request: proxy_on_row_expansion_request.clone(),
+                        }
+                        .dispatch_focus_proxy(event, window, cx);
+                    },
+                )
+            })
             .capture_scroll_wheel({
                 let scroll_handle = scroll_handle.clone();
                 move |event, window, _| {
@@ -425,19 +473,20 @@ impl RenderOnce for Table {
             })
             .child(render_table_body(
                 &plan,
-                scroll_viewport_id,
-                horizontal_scroll_handle.clone(),
-                scroll_handle.clone(),
                 plan.sticky_header_band_height(),
-                runtime.clone(),
-                runtime_snapshot,
-                current_expansion,
-                selection_policy,
-                selected_row_ids,
-                on_row_selection_change,
-                on_row_activate,
-                on_row_expansion_request,
-                on_cell_edit_change,
+                TableBodyRenderInput {
+                    horizontal_scroll_handle: horizontal_scroll_handle.clone(),
+                    vertical_scroll_handle: scroll_handle.clone(),
+                    runtime: runtime.clone(),
+                    runtime_snapshot,
+                    current_expansion,
+                    selection_policy,
+                    selected_row_ids,
+                    on_row_selection_change,
+                    on_row_activate,
+                    on_row_expansion_request,
+                    on_cell_edit_change,
+                },
             ))
             .child(render_table_header(
                 &plan,
@@ -578,14 +627,6 @@ mod tests {
         );
         assert_eq!(next.sorting(), state.sorting());
         assert_eq!(next.column_pinning(), state.column_pinning());
-        assert_eq!(
-            change.apply_to_order(state.column_order().iter().cloned()),
-            vec![
-                TableColumnId::new("name"),
-                TableColumnId::new("score"),
-                TableColumnId::new("team"),
-            ]
-        );
     }
 
     #[test]
@@ -598,24 +639,18 @@ mod tests {
         .with_columns([TableColumn::new("name", "Name")])
         .resolve();
         let rows = resolved.center_rows();
-        let duplicate_row_ids = resolved
-            .duplicate_row_ids()
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>();
         let measurements = BTreeMap::from([
-            (rows[0].id().as_str().to_owned(), ui_px(18.0)),
-            (rows[1].id().as_str().to_owned(), ui_px(28.0)),
+            (rows[0].identity().clone(), ui_px(18.0)),
+            (rows[1].identity().clone(), ui_px(28.0)),
         ]);
 
         let resolved = measured_virtualizer_state(
-            &rows,
+            rows,
             &measurements,
             ui_px(20.0),
             2,
             ui_px(0.0),
             ui_px(60.0),
-            &duplicate_row_ids,
         );
 
         assert_eq!(resolved.total_size(), ui_px(66.0));
@@ -627,6 +662,131 @@ mod tests {
         assert_eq!(resolved.measurements()[0].start(), ui_px(0.0));
         assert_eq!(resolved.measurements()[1].start(), ui_px(18.0));
         assert_eq!(resolved.measurements()[2].start(), ui_px(46.0));
+    }
+
+    #[test]
+    fn duplicate_measurements_follow_explicit_identity_across_source_reorder() {
+        let rows = || {
+            [
+                TableRow::new("duplicate")
+                    .with_instance_id("first")
+                    .with_cell("name", "First"),
+                TableRow::new("duplicate")
+                    .with_instance_id("second")
+                    .with_cell("name", "Second"),
+            ]
+        };
+        let state = TableState::new(rows()).with_columns([TableColumn::new("name", "Name")]);
+        let measurements = BTreeMap::from([
+            (
+                TableRowIdentity::source_instance("duplicate", "first"),
+                ui_px(18.0),
+            ),
+            (
+                TableRowIdentity::source_instance("duplicate", "second"),
+                ui_px(42.0),
+            ),
+        ]);
+
+        let initial = state.resolve();
+        let initial_virtualizer = measured_virtualizer_state(
+            initial.center_rows(),
+            &measurements,
+            ui_px(24.0),
+            0,
+            UiPx::ZERO,
+            ui_px(80.0),
+        );
+        assert_eq!(initial_virtualizer.measurements()[0].size(), ui_px(18.0));
+        assert_eq!(initial_virtualizer.measurements()[1].size(), ui_px(42.0));
+        assert_ne!(
+            initial_virtualizer.measurements()[0].key(),
+            initial_virtualizer.measurements()[1].key()
+        );
+
+        let [first, second] = rows();
+        let reordered = state.with_rows([second, first]).resolve();
+        let reordered_virtualizer = measured_virtualizer_state(
+            reordered.center_rows(),
+            &measurements,
+            ui_px(24.0),
+            0,
+            UiPx::ZERO,
+            ui_px(80.0),
+        );
+        assert_eq!(reordered_virtualizer.measurements()[0].size(), ui_px(42.0));
+        assert_eq!(reordered_virtualizer.measurements()[1].size(), ui_px(18.0));
+    }
+
+    #[test]
+    fn stale_occurrence_measurements_do_not_match_an_equal_source_replacement() {
+        let rows = || {
+            [
+                TableRow::new("duplicate").with_cell("name", "First"),
+                TableRow::new("duplicate").with_cell("name", "Second"),
+            ]
+        };
+        let state = TableState::new(rows()).with_columns([TableColumn::new("name", "Name")]);
+        let first = TableRowIdentity::Source(
+            state
+                .source_row_identity_at("duplicate", 0)
+                .expect("first occurrence should resolve in the initial snapshot"),
+        );
+        let second = TableRowIdentity::Source(
+            state
+                .source_row_identity_at("duplicate", 1)
+                .expect("second occurrence should resolve in the initial snapshot"),
+        );
+        let measurements = BTreeMap::from([(first, ui_px(18.0)), (second, ui_px(42.0))]);
+
+        let initial = state.clone().resolve();
+        let initial_virtualizer = measured_virtualizer_state(
+            initial.center_rows(),
+            &measurements,
+            ui_px(24.0),
+            0,
+            UiPx::ZERO,
+            ui_px(80.0),
+        );
+        assert_eq!(initial_virtualizer.measurements()[0].size(), ui_px(18.0));
+        assert_eq!(initial_virtualizer.measurements()[1].size(), ui_px(42.0));
+
+        let replacement = state.with_rows(rows()).resolve();
+        let replacement_virtualizer = measured_virtualizer_state(
+            replacement.center_rows(),
+            &measurements,
+            ui_px(24.0),
+            0,
+            UiPx::ZERO,
+            ui_px(80.0),
+        );
+        assert_eq!(
+            replacement_virtualizer.measurements()[0].size(),
+            ui_px(24.0)
+        );
+        assert_eq!(
+            replacement_virtualizer.measurements()[1].size(),
+            ui_px(24.0)
+        );
+    }
+
+    #[test]
+    fn duplicate_row_render_identity_cannot_collide_with_a_legal_source_id() {
+        let state = TableState::new([
+            TableRow::new("duplicate").with_cell("name", "First"),
+            TableRow::new("0:duplicate").with_cell("name", "Legal collision"),
+            TableRow::new("duplicate").with_cell("name", "Second"),
+        ])
+        .with_columns([TableColumn::new("name", "Name")]);
+        let plan = Table::new("identity-table", "Identity table", state)
+            .render_plan(UiPx::ZERO, ui_px(120.0));
+        let row_identities = plan
+            .rendered_rows()
+            .map(|row| row.identity().clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(row_identities.len(), 3);
+        assert_eq!(row_identities.iter().collect::<BTreeSet<_>>().len(), 3);
     }
 
     fn test_center_columns<const N: usize>(widths: [(&str, f32); N]) -> Vec<TableColumnRenderPlan> {

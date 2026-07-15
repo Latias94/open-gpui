@@ -106,21 +106,6 @@ impl TableColumnOrderChange {
 
         state.with_column_order(next_order)
     }
-
-    /// Applies this reorder request to an explicit column-order list.
-    pub fn apply_to_order<I>(&self, column_order: I) -> Vec<TableColumnId>
-    where
-        I: IntoIterator<Item = TableColumnId>,
-    {
-        let column_order = column_order.into_iter().collect::<Vec<_>>();
-        reorder_table_column_order(
-            column_order.clone(),
-            self.column_id.clone(),
-            self.target_column_id.clone(),
-            self.placement,
-        )
-        .unwrap_or(column_order)
-    }
 }
 
 /// Sort request emitted by an interactive table column header.
@@ -226,15 +211,7 @@ impl TableColumnSizingChange {
 }
 
 fn effective_table_column_order(state: &TableState) -> Vec<TableColumnId> {
-    if state.column_order().is_empty() {
-        state
-            .columns()
-            .iter()
-            .map(|column| column.id().clone())
-            .collect()
-    } else {
-        state.column_order().to_vec()
-    }
+    state.normalized_column_order()
 }
 
 fn reorder_table_column_order(

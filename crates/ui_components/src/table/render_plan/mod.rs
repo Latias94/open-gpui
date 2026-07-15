@@ -1,16 +1,17 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use open_gpui_ui_core::{
     RowWindow, TableColumnFacets, TableColumnId, TableColumnRegion, TableGlobalFacetSummary,
-    TableResolvedRow, TableResolvedState, TableRowId, TableRowRegion, TableSelectionPolicy,
-    TableSelectionSummary, TableStageMode, TableState, UiPx, VirtualizerItemKey,
-    VirtualizerItemMeasurement, VirtualizerResolvedState,
+    TableResolvedRow, TableResolvedState, TableRowRegion, TableSelectionPolicy,
+    TableSelectionSummary, TableStageMode, TableState, UiPx, VirtualizerItemMeasurement,
+    VirtualizerResolvedState,
 };
 
 use crate::table::layout::resolve_column_region_render_plans;
 
-use super::virtualization::row_render_key;
+use super::identity::table_row_virtualizer_key_from_key;
+use super::virtualization::TableRowMeasurementLookup;
 use super::{TableMetrics, TableRowMeasureMode, apply_table_content_fit_widths};
 
 mod columns;
@@ -19,7 +20,6 @@ mod rows;
 
 pub(in crate::table) use columns::{
     TableCenterColumnWindowPlan, TableColumnRegionRenderPlan, TableColumnRenderPlan,
-    TablePinnedLayoutPlan,
 };
 pub(in crate::table) use header::{TableHeaderCellRenderPlan, TableHeaderGroupRegionsRenderPlan};
 pub(in crate::table) use rows::{TableCellRenderPlan, TableRowRenderPlan};
@@ -37,7 +37,6 @@ pub(in crate::table) struct TableRenderPlan {
     columns: Vec<TableColumnRenderPlan>,
     column_regions: Vec<TableColumnRegionRenderPlan>,
     header_groups: TableHeaderGroupRegionsRenderPlan,
-    pinned_layout: Option<TablePinnedLayoutPlan>,
     center_column_window: Option<TableCenterColumnWindowPlan>,
     total_column_width: UiPx,
     filtering_mode: TableStageMode,
@@ -69,7 +68,7 @@ impl TableRenderPlan {
         content_fit_widths: BTreeMap<TableColumnId, UiPx>,
         center_scroll_offset: Option<UiPx>,
         center_viewport_extent: Option<UiPx>,
-        row_measurements: &BTreeMap<String, UiPx>,
+        row_measurements: &impl TableRowMeasurementLookup,
     ) -> Self {
         let columns =
             apply_table_content_fit_widths(columns, &content_fit_widths, state.column_sizing());
@@ -78,17 +77,11 @@ impl TableRenderPlan {
             &table_id,
             table.header_groups(),
             &columns,
-            &column_regions,
         );
         let header_row_count = header_groups.row_count().max(1);
         let total_column_width = column_regions
             .iter()
             .fold(UiPx::ZERO, |total, region| total + region.total_width());
-        let pinned_layout = TablePinnedLayoutPlan::from_column_regions(
-            &table_id,
-            &column_regions,
-            total_column_width,
-        );
         let center = column_regions
             .iter()
             .find(|plan| plan.region() == TableColumnRegion::Center);
@@ -101,11 +94,6 @@ impl TableRenderPlan {
                 metrics.overscan(),
             )
         });
-        let duplicate_row_ids = table
-            .duplicate_row_ids()
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>();
         let top_row_count = table.top_rows().len();
         let center_total_row_count = table.center_rows().len();
         let top_rows = row_render_plans(
@@ -115,7 +103,6 @@ impl TableRenderPlan {
             row_measurements,
             metrics.row_height(),
             &columns,
-            &duplicate_row_ids,
             0,
             UiPx::ZERO,
             header_row_count,
@@ -137,7 +124,6 @@ impl TableRenderPlan {
             row_measurements,
             metrics.row_height(),
             &columns,
-            &duplicate_row_ids,
             top_row_count + center_total_row_count,
             top_height + virtualizer.total_size(),
             header_row_count,
@@ -156,7 +142,6 @@ impl TableRenderPlan {
             columns,
             column_regions,
             header_groups,
-            pinned_layout,
             center_column_window,
             total_column_width,
             filtering_mode: state.filtering_mode(),
@@ -199,6 +184,10 @@ impl TableRenderPlan {
     /// Returns the resolved renderer-neutral table state.
     pub fn table(&self) -> &TableResolvedState {
         self.table.as_ref()
+    }
+
+    pub(super) fn resolved_table(&self) -> Rc<TableResolvedState> {
+        self.table.clone()
     }
 
     /// Returns whether filtering was resolved locally or supplied by the caller.
@@ -286,9 +275,11 @@ impl TableRenderPlan {
         self.metrics.header_height() * self.header_row_count() as f32
     }
 
-    /// Returns sticky pinned-column layout metadata, when a split layout is needed.
-    pub fn pinned_layout(&self) -> Option<&TablePinnedLayoutPlan> {
-        self.pinned_layout.as_ref()
+    /// Returns whether visible columns are partitioned into pinned regions.
+    pub fn has_pinned_columns(&self) -> bool {
+        self.column_regions.iter().any(|region| {
+            region.region() != TableColumnRegion::Center && !region.columns().is_empty()
+        })
     }
 
     /// Returns center-column window metadata, when the center lane exists.
@@ -384,12 +375,11 @@ fn virtualized_center_row_window(
         .into_rows()
         .into_iter()
         .map(|projected| {
-            let (index, render_key, measurement, row) = projected.into_parts();
+            let (index, _virtualizer_key, measurement, row) = projected.into_parts();
             let model_index = model_index_start + index;
             TableRowRenderPlan::new(
                 row,
                 TableRowRegion::Center,
-                render_key,
                 model_index,
                 header_row_count,
                 measurement,
@@ -409,10 +399,9 @@ fn row_render_plans(
     rows: &[TableResolvedRow],
     region: TableRowRegion,
     row_measure_mode: TableRowMeasureMode,
-    row_measurements: &BTreeMap<String, UiPx>,
+    row_measurements: &impl TableRowMeasurementLookup,
     fallback_row_height: UiPx,
     columns: &[TableColumnRenderPlan],
-    duplicate_row_ids: &BTreeSet<TableRowId>,
     model_index_start: usize,
     start_offset: UiPx,
     header_row_count: usize,
@@ -422,30 +411,24 @@ fn row_render_plans(
         .enumerate()
         .map(|(region_index, row)| {
             let row = row.clone();
-            let render_key = row_render_key(&row, duplicate_row_ids);
+            let identity = row.identity().clone();
             let model_index = model_index_start + region_index;
-            let row_height = if row_measure_mode.measured() {
-                row_measurements
-                    .get(&render_key)
-                    .copied()
-                    .unwrap_or(fallback_row_height)
-            } else {
-                fallback_row_height
-            };
-            let measured =
-                row_measure_mode.measured() && row_measurements.contains_key(&render_key);
+            let retained_measurement = row_measure_mode
+                .measured()
+                .then(|| row_measurements.row_measurement(&identity))
+                .flatten();
+            let row_height = retained_measurement.unwrap_or(fallback_row_height);
             let measurement = VirtualizerItemMeasurement::new(
                 region_index,
-                VirtualizerItemKey::new(render_key.clone()),
+                table_row_virtualizer_key_from_key(row.identity_key()),
                 cursor,
                 row_height,
-                measured,
+                retained_measurement.is_some(),
             );
             cursor = measurement.end();
             TableRowRenderPlan::new(
                 row,
                 region,
-                render_key,
                 model_index,
                 header_row_count,
                 measurement,

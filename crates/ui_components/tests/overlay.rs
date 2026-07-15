@@ -1,8 +1,10 @@
+mod support;
+
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
     Anchor, Context, FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement,
     Render, ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, Styled, VisualContext,
-    Window, actions, div, point, px,
+    Window, accesskit, actions, div, point, px,
 };
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, ButtonVariant,
@@ -27,6 +29,7 @@ use open_gpui_ui_core::{
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
+use support::a11y::{assert_exact_actions, node_with_label};
 
 actions!(overlay_tooltip_runtime_test, [TooltipRuntimeAction]);
 
@@ -402,6 +405,87 @@ fn dialog_state_records_modal_title_and_focus_policy() {
     );
     assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::Trigger);
     assert_eq!(state.colors().barrier().token(), semantic::MODAL_OVERLAY);
+}
+
+#[open_gpui::test]
+fn dialog_final_tree_projects_modal_disabled_and_exact_actions(cx: &mut open_gpui::TestAppContext) {
+    struct DialogAccessibilityProbe {
+        open: bool,
+        disabled: bool,
+    }
+
+    impl Render for DialogAccessibilityProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                Dialog::new(
+                    "semantic-dialog",
+                    "Open semantic dialog",
+                    "Semantic dialog",
+                    "Dialog body",
+                )
+                .open(self.open)
+                .disabled(self.disabled),
+            )
+        }
+    }
+
+    let (view, cx) = cx.add_window_view(|_, _| DialogAccessibilityProbe {
+        open: false,
+        disabled: false,
+    });
+    assert!(cx.activate_accessibility());
+
+    let closed_update = cx
+        .latest_accessibility_tree_update()
+        .expect("closed dialog accessibility tree should publish");
+    let (trigger_id, trigger) = node_with_label(&closed_update, "Open semantic dialog");
+    assert_eq!(trigger.role(), accesskit::Role::Button);
+    assert_eq!(trigger.is_selected(), Some(false));
+    assert_eq!(trigger.is_expanded(), Some(false));
+    assert!(!trigger.is_disabled());
+    assert_exact_actions(
+        trigger,
+        &[accesskit::Action::Click, accesskit::Action::Focus],
+    );
+
+    view.update(cx, |probe, cx| {
+        probe.open = true;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let open_update = cx
+        .latest_accessibility_tree_update()
+        .expect("open dialog accessibility tree should publish");
+    assert!(
+        open_update.nodes.iter().all(|(id, _)| *id != trigger_id),
+        "the modal tree scope must exclude its underlay trigger"
+    );
+    let (_, surface) = node_with_label(&open_update, "Semantic dialog");
+    assert_eq!(surface.role(), accesskit::Role::Window);
+    assert!(surface.is_modal());
+    assert_exact_actions(surface, &[accesskit::Action::Focus]);
+
+    view.update(cx, |probe, cx| {
+        probe.open = false;
+        probe.disabled = true;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let disabled_update = cx
+        .latest_accessibility_tree_update()
+        .expect("disabled dialog accessibility tree should publish");
+    let (disabled_trigger_id, disabled_trigger) =
+        node_with_label(&disabled_update, "Open semantic dialog");
+    assert_eq!(disabled_trigger_id, trigger_id);
+    assert_eq!(disabled_trigger.role(), accesskit::Role::Button);
+    assert_eq!(disabled_trigger.is_selected(), Some(false));
+    assert_eq!(disabled_trigger.is_expanded(), Some(false));
+    assert!(disabled_trigger.is_disabled());
+    assert_exact_actions(disabled_trigger, &[]);
 }
 
 #[test]
@@ -2525,6 +2609,68 @@ fn menu_state_records_items_roving_focus_and_overlay_policy() {
         state.colors().trigger_background().state(),
         ColorState::Selected
     );
+}
+
+#[open_gpui::test]
+fn menu_final_tree_projects_structural_roles_disabled_state_and_exact_actions(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct MenuAccessibilityProbe;
+
+    impl Render for MenuAccessibilityProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            Menu::new("semantic-menu", "Open semantic menu")
+                .default_open(true)
+                .item(MenuItem::header("file-heading", "File actions"))
+                .item(MenuItem::action("open", "Open file"))
+                .item(MenuItem::separator("file-separator"))
+                .item(MenuItem::action("delete", "Delete file").disabled(true))
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| MenuAccessibilityProbe);
+    assert!(cx.activate_accessibility());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let update = cx
+        .latest_accessibility_tree_update()
+        .expect("menu accessibility tree should publish");
+    let (_, trigger) = node_with_label(&update, "Open semantic menu");
+    assert_eq!(trigger.role(), accesskit::Role::Button);
+    assert_eq!(trigger.is_selected(), Some(true));
+    assert_eq!(trigger.is_expanded(), Some(true));
+    assert_exact_actions(
+        trigger,
+        &[accesskit::Action::Click, accesskit::Action::Focus],
+    );
+
+    let (_, header) = node_with_label(&update, "File actions");
+    assert_eq!(header.role(), accesskit::Role::Label);
+    assert_exact_actions(header, &[]);
+
+    let (_, enabled_item) = node_with_label(&update, "Open file");
+    assert_eq!(enabled_item.role(), accesskit::Role::MenuItem);
+    assert!(!enabled_item.is_disabled());
+    assert_exact_actions(enabled_item, &[accesskit::Action::Click]);
+
+    let (_, disabled_item) = node_with_label(&update, "Delete file");
+    assert_eq!(disabled_item.role(), accesskit::Role::MenuItem);
+    assert!(disabled_item.is_disabled());
+    assert_exact_actions(disabled_item, &[]);
+
+    let menu = update
+        .nodes
+        .iter()
+        .find_map(|(_, node)| (node.role() == accesskit::Role::Menu).then_some(node))
+        .expect("menu surface should publish a Menu node");
+    assert_exact_actions(menu, &[accesskit::Action::Focus]);
+    let separator = update
+        .nodes
+        .iter()
+        .find_map(|(_, node)| (node.role() == accesskit::Role::Group).then_some(node))
+        .expect("menu separator should publish the structural Group role");
+    assert_exact_actions(separator, &[]);
 }
 
 #[test]

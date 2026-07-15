@@ -1,5 +1,5 @@
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, ExitCode},
 };
 
@@ -71,18 +71,18 @@ pub fn run_from_env() -> ExitCode {
 
     let root = workspace_root();
     let result = match cli.command {
-        XtaskCommand::Verify => verify(&root),
-        XtaskCommand::DependencyHealth => dependency_health(&root),
-        XtaskCommand::RendererSmoke => renderer_smoke(&root),
-        XtaskCommand::VerifyReleaseDocs(args) => verify_release_docs(&root, &args.args),
-        XtaskCommand::ScanDocLinks => scan_doc_links(&root),
-        XtaskCommand::ScanThemeDrift => scan_theme_drift(&root),
-        XtaskCommand::ScanThemeSchema => scan_theme_schema(&root),
-        XtaskCommand::ScanImportBoundary => scan_import_boundary(&root),
-        XtaskCommand::ScanPublicApi(args) => scan_public_api(&root, &args.args),
-        XtaskCommand::ScanUiContract => scan_ui_contract(&root),
-        XtaskCommand::WebSmoke => web_smoke(&root),
-        XtaskCommand::Devtools(args) => devtools(&root, args),
+        XtaskCommand::Verify => verify(root),
+        XtaskCommand::DependencyHealth => dependency_health(root),
+        XtaskCommand::RendererSmoke => renderer_smoke(root),
+        XtaskCommand::VerifyReleaseDocs(args) => verify_release_docs(root, &args.args),
+        XtaskCommand::ScanDocLinks => scan_doc_links(root),
+        XtaskCommand::ScanThemeDrift => scan_theme_drift(root),
+        XtaskCommand::ScanThemeSchema => scan_theme_schema(root),
+        XtaskCommand::ScanImportBoundary => scan_import_boundary(root),
+        XtaskCommand::ScanPublicApi(args) => scan_public_api(root, &args.args),
+        XtaskCommand::ScanUiContract => scan_ui_contract(root),
+        XtaskCommand::WebSmoke => web_smoke(root),
+        XtaskCommand::Devtools(args) => devtools(root, args),
     };
 
     match result {
@@ -147,6 +147,10 @@ fn run_ui_component_tests(root: &Path) -> Result<(), ()> {
         run(root, "cargo", &["nextest", "run", "-p", package])?;
     }
 
+    for package in ["open-gpui-ui-core", "open-gpui-ui-components"] {
+        run(root, "cargo", &["test", "-p", package, "--doc"])?;
+    }
+
     Ok(())
 }
 
@@ -189,9 +193,8 @@ pub(crate) fn run(root: &Path, program: &str, args: &[&str]) -> Result<(), ()> {
     }
 }
 
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+pub(crate) fn workspace_root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("xtask manifest should live under the workspace root")
-        .to_path_buf()
 }

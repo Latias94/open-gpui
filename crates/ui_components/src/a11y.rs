@@ -424,7 +424,7 @@ pub fn gpui_role_from_ui(role: Role) -> GpuiRole {
         Role::AlertDialog => GpuiRole::AlertDialog,
         Role::Window => GpuiRole::Window,
         Role::ProgressIndicator => GpuiRole::ProgressIndicator,
-        Role::Separator => GpuiRole::Splitter,
+        Role::Separator => GpuiRole::Group,
         Role::SpinButton => GpuiRole::SpinButton,
         Role::Slider => GpuiRole::Slider,
         Role::Splitter => GpuiRole::Splitter,
@@ -775,8 +775,8 @@ mod tests {
     }
 
     #[test]
-    fn gpui_adapter_maps_separator_role_without_semantic_downgrade() {
-        assert_eq!(gpui_role_from_ui(Role::Separator), GpuiRole::Splitter);
+    fn gpui_adapter_downgrades_separator_role_to_group() {
+        assert_eq!(gpui_role_from_ui(Role::Separator), GpuiRole::Group);
     }
 
     #[test]

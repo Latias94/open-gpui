@@ -2,8 +2,8 @@ mod support;
 
 use open_gpui::{
     Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Render, ScrollDelta,
-    ScrollWheelEvent, StatefulInteractiveElement, Styled, VisualContext, Window, actions, div,
-    point, px,
+    ScrollWheelEvent, StatefulInteractiveElement, Styled, VisualContext, Window, accesskit,
+    actions, div, point, px,
 };
 use open_gpui_ui_components::{
     Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command,
@@ -27,7 +27,7 @@ use open_gpui_ui_core::{
 };
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use support::tokens::custom_tokens;
+use support::{a11y::assert_exact_actions, tokens::custom_tokens};
 
 actions!(
     command_palette_projection_test,
@@ -41,6 +41,19 @@ fn display_shortcut(keystrokes: &str) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn accessibility_node_with_label_and_role<'a>(
+    update: &'a accesskit::TreeUpdate,
+    label: &str,
+    role: accesskit::Role,
+) -> (accesskit::NodeId, &'a accesskit::Node) {
+    update
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some(label) && node.role() == role)
+        .map(|(id, node)| (*id, node))
+        .unwrap_or_else(|| panic!("missing {role:?} accessibility node labelled {label:?}"))
 }
 
 #[test]
@@ -633,6 +646,60 @@ fn select_state_models_disabled_empty_and_policy_overrides() {
     assert_eq!(state.initial_focus_intent(), &InitialFocusIntent::None);
     assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
     assert!(!state.overlay().should_render_deferred_layer());
+}
+
+#[open_gpui::test]
+fn select_final_tree_preserves_trigger_identity_disabled_state_and_exact_actions(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct SelectAccessibilityProbe {
+        disabled: bool,
+    }
+
+    impl Render for SelectAccessibilityProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            Select::new("semantic-select", "Semantic select")
+                .placeholder("Choose an item")
+                .disabled(self.disabled)
+                .option(ListboxOption::new("alpha", "Alpha"))
+        }
+    }
+
+    let (view, cx) = cx.add_window_view(|_, _| SelectAccessibilityProbe { disabled: false });
+    assert!(cx.activate_accessibility());
+
+    let enabled_update = cx
+        .latest_accessibility_tree_update()
+        .expect("enabled Select accessibility tree should publish");
+    let (trigger_id, trigger) = accessibility_node_with_label_and_role(
+        &enabled_update,
+        "Semantic select",
+        accesskit::Role::Button,
+    );
+    assert!(!trigger.is_disabled());
+    assert_eq!(trigger.is_selected(), Some(false));
+    assert_eq!(trigger.is_expanded(), Some(false));
+    assert_exact_actions(trigger, &[accesskit::Action::Focus]);
+
+    view.update(cx, |probe, cx| {
+        probe.disabled = true;
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    let disabled_update = cx
+        .latest_accessibility_tree_update()
+        .expect("disabled Select accessibility tree should publish");
+    let (disabled_trigger_id, disabled_trigger) = accessibility_node_with_label_and_role(
+        &disabled_update,
+        "Semantic select",
+        accesskit::Role::Button,
+    );
+    assert_eq!(disabled_trigger_id, trigger_id);
+    assert!(disabled_trigger.is_disabled());
+    assert_eq!(disabled_trigger.is_selected(), Some(false));
+    assert_eq!(disabled_trigger.is_expanded(), Some(false));
+    assert_exact_actions(disabled_trigger, &[]);
 }
 
 #[open_gpui::test]
@@ -4282,6 +4349,18 @@ fn command_runtime_virtualized_results_scroll_inside_viewport_and_reveal_keyboar
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
+    assert!(cx.activate_accessibility());
+
+    let initial_accessibility = cx
+        .latest_accessibility_tree_update()
+        .expect("virtualized Command accessibility tree should publish");
+    let (_, first_result) = accessibility_node_with_label_and_role(
+        &initial_accessibility,
+        "Item 0000",
+        accesskit::Role::ListBoxOption,
+    );
+    assert_eq!(first_result.position_in_set(), Some(1));
+    assert_eq!(first_result.size_of_set(), Some(120));
 
     assert!(
         cx.debug_bounds("command:virtualized-runtime-command:row:item-0000")
@@ -4327,6 +4406,16 @@ fn command_runtime_virtualized_results_scroll_inside_viewport_and_reveal_keyboar
             .is_some(),
         "row 10 should render after internal command scroll"
     );
+    let scrolled_accessibility = cx
+        .latest_accessibility_tree_update()
+        .expect("scrolled virtualized Command accessibility tree should publish");
+    let (_, scrolled_result) = accessibility_node_with_label_and_role(
+        &scrolled_accessibility,
+        "Item 0010",
+        accesskit::Role::ListBoxOption,
+    );
+    assert_eq!(scrolled_result.position_in_set(), Some(11));
+    assert_eq!(scrolled_result.size_of_set(), Some(120));
 
     let input = cx
         .debug_bounds("text-input:virtualized-runtime-command-input:root")

@@ -9,9 +9,9 @@ use open_gpui::{
     RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
-    DismissReason, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
-    OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, Role, Sizable, Size,
-    ThemeTokens, UiPx, ui_point, ui_px, ui_size,
+    AccessibleAction, DismissReason, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+    OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, Role,
+    SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -624,6 +624,12 @@ impl RenderOnce for Popover {
             .with_offset(ui_px(6.0)),
             overlay_adapter.snap_margin(),
         );
+        let trigger_semantics = SemanticDescriptor::new(state.trigger_role())
+            .with_label(trigger_label.as_ref())
+            .with_selected(state.trigger_selected())
+            .with_expanded(open)
+            .with_disabled(disabled)
+            .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
 
         div()
             .id(id.clone())
@@ -661,11 +667,7 @@ impl RenderOnce for Popover {
                         .line_height(gpui_px_from_ui(metrics.text_size()))
                         .focusable()
                         .tab_stop(!disabled)
-                        .ui_role(state.trigger_role())
-                        .aria_label(trigger_label.clone())
-                        .aria_selected(state.trigger_selected())
-                        .aria_expanded(open)
-                        .aria_disabled(disabled)
+                        .ui_semantics(&trigger_semantics)
                         .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                         .track_focus(overlay_binding.trigger_focus())
                         .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
@@ -724,6 +726,8 @@ fn popover_content_element(
     let border = theme.resolve(colors.border());
     let background = theme.resolve(colors.background());
     let foreground = theme.resolve(colors.foreground());
+    let content_semantics =
+        SemanticDescriptor::new(state.content_role()).with_actions(&[AccessibleAction::Focus]);
 
     window_overlay_runtime.surface(
         &overlay_binding,
@@ -750,7 +754,7 @@ fn popover_content_element(
             .tab_group()
             .focusable()
             .track_focus(overlay_binding.surface_focus())
-            .ui_role(state.content_role())
+            .ui_semantics(&content_semantics)
             .children(children_from_content(content)),
     )
 }

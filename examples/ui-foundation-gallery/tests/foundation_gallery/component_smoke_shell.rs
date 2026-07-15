@@ -252,26 +252,23 @@ fn components_gallery_smoke_focuses_every_focusable_catalog_entry(
 fn components_gallery_smoke_focused_table_scroll_stays_inside_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {
+    const TABLE_ID: &str = "component-table:release-queue";
+
+    let body_scroll_selector = TableDebugSelector::body_scroll(TABLE_ID);
+    let first_row_selector = table_source_row_selector(TABLE_ID, "release-queue-row-0000");
+    let scrolled_row_selector = table_source_row_selector(TABLE_ID, "release-queue-row-0010");
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
     scroll_page_selector_into_view(&shell, cx, "component-catalog:Table");
     click(cx, "component-catalog:Table");
     settle(cx);
-    scroll_page_selector_into_view(
-        &shell,
-        cx,
-        "scroll-area:table:component-table:release-queue:body-scroll",
-    );
+    scroll_page_selector_into_view(&shell, cx, &body_scroll_selector);
 
     let sample_before = bounds(cx, "gallery:component-table-sample:release-queue");
-    let table_viewport = bounds(
-        cx,
-        "scroll-area:table:component-table:release-queue:body-scroll",
-    );
+    let table_viewport = bounds(cx, &body_scroll_selector);
 
     assert!(
-        cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0000")
-            .is_some(),
+        cx.debug_bounds(&first_row_selector).is_some(),
         "expected the focused Table window to render the first row"
     );
 
@@ -290,13 +287,11 @@ fn components_gallery_smoke_focused_table_scroll_stays_inside_sample(
         "expected focused Table viewport wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
     );
     assert!(
-        cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0000")
-            .is_none(),
+        cx.debug_bounds(&first_row_selector).is_none(),
         "expected focused virtualized Table row 0000 to leave the rendered window after internal scroll"
     );
     assert!(
-        cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0010")
-            .is_some(),
+        cx.debug_bounds(&scrolled_row_selector).is_some(),
         "expected focused virtualized Table row 0010 to enter the rendered window after internal scroll"
     );
 }

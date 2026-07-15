@@ -12,9 +12,9 @@ use open_gpui::{
 #[cfg(test)]
 use open_gpui_ui_core::FocusTargetId;
 use open_gpui_ui_core::{
-    DismissReason, EscapeKeyPolicy, FocusRestoreIntent, FocusTargetAvailability,
-    InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind, Role, Sizable, Size, ThemeTokens,
-    UiPx, UiSize, ui_px,
+    AccessibleAction, DismissReason, EscapeKeyPolicy, FocusRestoreIntent, FocusTargetAvailability,
+    InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind, Role, SemanticDescriptor, Sizable,
+    Size, ThemeTokens, UiPx, UiSize, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -905,6 +905,12 @@ impl RenderOnce for Sheet {
             runtime.focus_targets = registered_focus_targets;
         });
         let overlay_adapter = gpui_overlay_state(state.overlay());
+        let trigger_semantics = SemanticDescriptor::new(state.trigger_role())
+            .with_label(trigger_label.as_ref())
+            .with_selected(state.trigger_selected())
+            .with_expanded(open)
+            .with_disabled(disabled)
+            .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
 
         div()
             .id(id.clone())
@@ -942,11 +948,7 @@ impl RenderOnce for Sheet {
                         .focusable()
                         .track_focus(overlay_binding.trigger_focus())
                         .tab_stop(!disabled)
-                        .ui_role(state.trigger_role())
-                        .aria_label(trigger_label.clone())
-                        .aria_selected(state.trigger_selected())
-                        .aria_expanded(open)
-                        .aria_disabled(disabled)
+                        .ui_semantics(&trigger_semantics)
                         .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                         .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                         .when(!disabled, |this| {
@@ -1004,6 +1006,10 @@ fn sheet_surface_element(
     let metrics = state.metrics();
     let colors = state.colors();
     let surface_debug_id = debug_id.clone();
+    let surface_semantics = SemanticDescriptor::new(state.content_role())
+        .with_label(state.title())
+        .with_modal(state.modal_mode() == SheetModalMode::Modal)
+        .with_actions(&[AccessibleAction::Focus]);
 
     window_overlay_runtime.surface(
         &overlay_binding,
@@ -1033,8 +1039,7 @@ fn sheet_surface_element(
             .tab_group()
             .focusable()
             .track_focus(overlay_binding.surface_focus())
-            .ui_role(state.content_role())
-            .aria_label(state.title().to_owned())
+            .ui_semantics(&surface_semantics)
             .child(
                 div()
                     .flex()
@@ -1238,6 +1243,9 @@ fn sheet_close_button(
     let close_foreground = theme.resolve(colors.close_foreground());
     let close_hover_background = theme.resolve(colors.close_hover_background());
     let close_focus_shadow = focus_ring_shadow_with_theme(focus_ring, theme);
+    let close_semantics = SemanticDescriptor::new(Role::Button)
+        .with_label("Close sheet")
+        .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
 
     div()
         .id("sheet-close")
@@ -1257,8 +1265,7 @@ fn sheet_close_button(
         .focusable()
         .track_focus(&close_focus)
         .tab_stop(true)
-        .ui_role(Role::Button)
-        .aria_label("Close sheet")
+        .ui_semantics(&close_semantics)
         .focus_visible(move |style| style.shadow(close_focus_shadow.clone()))
         .cursor_pointer()
         .hover(move |style| style.bg(close_hover_background))

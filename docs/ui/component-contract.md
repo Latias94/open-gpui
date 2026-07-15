@@ -481,9 +481,8 @@ Breaking migration notes for the 0.3 UI deepening pass:
 - Remove imports of table render-plan internals from application code, including
   the internal `TableRenderPlan`, `TableColumnRenderPlan`, `TableCellRenderPlan`,
   `TableCenterColumnWindowPlan`, `TableColumnRegionRenderPlan`, header render-plan types,
-  `TablePinnedLayoutPlan`, and `TableRowRenderPlan`. Those structures are private to the table
-  adapter implementation; algorithm coverage belongs in `crates/ui_components/src/table` module
-  tests.
+  and `TableRowRenderPlan`. Those structures are private to the table adapter implementation;
+  algorithm coverage belongs in `crates/ui_components/src/table` module tests.
 - Replace removed primitive pass-through imports under `open_gpui_ui_components::primitives` with
   their renderer-neutral owners in `open_gpui_ui_core` or with the official component/adapter API
   that owns the GPUI runtime behavior.
@@ -670,16 +669,38 @@ default path must preserve offset across reconstructed component values.
 
 ## Table and Virtualizer Contracts
 
-`TableState` describes renderer-neutral table behavior: stable row ids, nested source rows, row
-lookup, row-model stage vocabulary, selection keyed by row id, column visibility and ordering,
-pinned column regions, row pinning, sorting, filtering, grouping, built-in aggregation, expansion,
-column groups, nested headers, and pagination. The official table contract now resolves the full
-pipeline core -> filtered -> grouped -> sorted -> expanded -> paginated -> row-region split ->
-final. Source tree rows remain
-distinct from synthetic group rows: `TableRow` may own child rows, resolved source rows expose
-depth, parent id,
-branch/leaf state, descendant counts, and expansion metadata through `TableTreeRow`, and collapsed
-source descendants stay addressable by stable row id. `TableRow` can also be marked expandable
+`TableState` describes renderer-neutral table behavior: caller-owned business `TableRowId` values,
+exact `TableRowIdentity` values, nested source rows, row lookup, row-model stage vocabulary,
+selection keyed by business row id, column visibility and ordering, pinned column regions, row
+pinning, sorting, filtering, grouping, built-in aggregation, expansion, column groups, nested
+headers, and pagination. The official table contract resolves the full pipeline core -> filtered
+-> grouped -> sorted -> expanded -> paginated -> row-region split -> final without changing an
+exact row identity.
+
+`TableRowId` is not an exact source-instance identity. Source-backed exact identities use
+`TableSourceRowIdentity` with `TableSourceInstanceIdentity::Unique` when the business id is unique,
+`Explicit(TableRowInstanceId)` when the caller supplies a stable instance id, or
+`Occurrence(TableRowOccurrenceIdentity)` as a source-snapshot-local fallback for duplicates.
+Synthetic group rows use their separate typed group identity namespace. An identity built with
+`TableSourceRowIdentity::unique` resolves as `TableSourceRowLookup::Ambiguous` when duplicate
+business ids exist. `TableState::source_row_identity_at(row_id, occurrence)` produces an exact
+occurrence identity for the current snapshot, and `TableState::source_row_lookup` distinguishes
+`Found`, `Missing`, `Ambiguous`, and `StaleSnapshot`.
+
+An occurrence identity remains valid through cloned state and every row-model transform, but
+`TableState::with_rows` creates a new source snapshot, including when callers reorder equivalent
+rows. Retained occurrence identities are then stale rather than silently retargeted. Callers that
+need identity to survive source replacement or reorder must assign `TableRow::with_instance_id`
+and address the row through an explicit source-instance identity. `TableRowModel::row` accepts only
+`TableRowIdentity` and performs exact lookup, including lookup-only rows retained from an earlier
+stage; `rows()` remains the materialized order for that stage. Business-id lookup is deliberately
+separate: `source_rows(&TableRowId)` returns every matching source instance and
+`unique_source_row(&TableRowId)` returns a row only when exactly one match exists.
+
+Source tree rows remain distinct from synthetic group rows: `TableRow` may own child rows,
+resolved source rows expose depth, exact parent identity, branch/leaf state, descendant counts, and
+expansion metadata through `TableTreeRow`, and collapsed source descendants stay addressable by
+exact `TableRowIdentity` lookup rather than by `TableRowId`. `TableRow` can also be marked expandable
 before children are loaded, and `TableRowChildrenLoadState` carries caller-owned idle, loading, or
 failed child-load metadata into resolved tree rows. `TableExpansionMode::Client` keeps the normal
 client-pruned source tree behavior, while `TableExpansionMode::Manual` preserves the
@@ -687,8 +708,8 @@ caller-supplied source snapshot for ungrouped tree rows so applications can own 
 expansion, child fetches, cancellation, and cache policy. `TableStageMode` lets filtering and
 sorting stay client-owned or become manual independently, and `TablePagination` supports the same
 manual ownership mode with server-known `row_count` / `page_count` metadata. Manual row-model
-stages preserve the caller-supplied snapshot while still keeping row lookup, selection, grouping,
-expansion, and stable row ids intact; the table cache key includes those ownership modes and
+stages preserve the caller-supplied snapshot while still keeping exact identity lookup, selection,
+grouping, and expansion intact; the table cache key includes those ownership modes and
 pagination totals. Group rows may expose aggregate cells through `TableAggregation` using the
 built-in `count`, `sum`, `min`, `max`, and `average` kinds;
 the active grouping column still displays the grouping value instead of an aggregate payload.
@@ -714,13 +735,18 @@ the caller-owned committed width map keyed by `TableColumnId`. `TableState::reso
 `TableResolvedColumnSizingRegions` after visibility, ordering, and pinning have resolved so
 renderers can read per-column width, min/max bounds, region, start/after offsets, resize
 capability, and region/all-column totals without owning adapter state.
-`TableRowPinning` is caller-owned state with ordered top and bottom row ids. The default
-`TableRowPinningPolicy::KeepPinnedRows` resolves pinned rows from the expanded pre-pagination row
-model so a pinned row can remain visible while the current page changes; `PageOnly` limits pinned
-rows to ids present in the current paginated model. Unknown ids, filtered-out rows, and collapsed
-descendants are ignored, and overlapping raw top/bottom inputs resolve without duplicate final
-rows. `TableResolvedState` exposes `TableRowRegions` plus top, center, and bottom row accessors;
-the final visual model is top + center + bottom while row lookup remains stable for resolved rows.
+`TableRowPinning` is caller-owned state with ordered top and bottom `TableRowPinTarget` values.
+`Exact(TableRowIdentity)` addresses one authoritative source instance or typed group row;
+`AllSourceRows(TableRowId)` is the explicitly named bulk operation for every currently resolved
+source instance with one business row id. There is no implicit string or business-id conversion to
+exact pin state. Caller target order controls each pinned region, bulk matches retain current model
+order, and logical identity is deduplicated after target expansion with top taking precedence over
+bottom. The default `TableRowPinningPolicy::KeepPinnedRows` resolves targets from the expanded
+pre-pagination row model so a pinned row can remain visible while the current page changes;
+`PageOnly` limits targets to the current paginated model. Unknown identities, filtered-out rows,
+and collapsed descendants are ignored. `TableResolvedState` exposes `TableRowRegions` plus top,
+center, and bottom row accessors; the final visual model is top + center + bottom while exact row
+lookup and source-instance identity remain stable across pinning changes.
 
 `VirtualizerState` describes renderer-neutral viewport calculation inputs and outputs rather than a
 concrete scroll element. The neutral contract accepts item count, viewport extent, scroll offset,
@@ -741,14 +767,26 @@ remain component-specific contracts.
 
 The GPUI `Table` adapter resolves table state and virtualizer ranges before rendering. The adapter
 owns the element tree, concrete scroll viewport, wheel containment, sticky header overlay,
-body drawing, sortable header activation callbacks, row focus handles, source-tree disclosure
-affordances for loaded, unloaded, loading, and failed branches, controlled row activation /
+body drawing, sortable header activation callbacks, row focus handles, a stable Table-root focus
+proxy, and source-tree disclosure affordances for loaded, unloaded, loading, and failed branches,
+controlled row activation /
 expansion-request payloads, callback-backed column resize handles, and AccessKit mapping. Table
 accessibility metadata includes table, row, column-header, and cell roles, row and
 column position metadata, sort metadata for sortable headers, grouped-row and source-tree depth /
-parent metadata, selected state, and branch `aria-expanded` state keyed by stable row id. The
-adapter keeps row activation independent from selection and expansion; callers decide whether a
-click, double-click, Enter, Space, Left, or Right payload changes app-owned `TableState`.
+parent metadata, selected state, and branch `aria-expanded` state keyed by exact logical row
+identity. The adapter keeps row activation independent from selection and expansion; callers decide
+whether a click, double-click, Enter, Space, Left, or Right payload changes app-owned `TableState`.
+
+Logical Table focus is reconciled against the complete final row model, while only rows in the
+rendered virtual window own physical row focus handles. When a logically focused row leaves
+overscan, the same claim moves to the stable Table-root proxy: the final AccessKit tree focuses the
+Table node, publishes no stale row node or missing-row actions, and real Up, Down, Home, End,
+Enter, and Space input continues against exact final-model identities. A remounted row receives
+physical focus only while the proxy still owns that claim; focus moved elsewhere is never stolen
+back. If the exact identity leaves the complete final model, logical focus falls back to the first
+remaining final-model row, or clears when that model is empty. Physical focus and
+`TreeUpdate.focus` migrate or clear only while the Table or its proxy still owns focus.
+
 `Table::state()` returns the renderer-neutral `TableState` input as the default application-facing
 readout. `Table::behavior_snapshot(scroll_offset, viewport_extent)` is the explicit public behavior
 surface for tests, gallery readouts, and adapter debugging; it is not a layout API. The snapshot
@@ -803,11 +841,17 @@ with checkbox rows and show-all / reset actions, keeps locked identity columns d
 controlled `TableColumnVisibilityChange` payloads whose `apply_to` helper updates only visibility
 overrides while preserving the rest of `TableState`. Saved views, URL sync, persistence, and
 server-side capability negotiation remain application-owned or follow-up work.
-`TableColumnOrderChange` is the sibling official column-order recipe: it emits controlled
-before/after placement payloads through `Table::on_column_order_change`, applies only the caller-
-owned column-order slice, and keeps sorting, filtering, pinning, sizing, and row-model state
-untouched. The Components gallery uses `release-rollup` as the proof sample for that controlled
-reorder path.
+`TableState::column_order()` may contain a partial caller-owned order. Its
+`normalized_column_order()` projection emits each known explicit id once, then appends every
+unlisted source column in source order; unknown and duplicate ids are ignored. Visibility and
+pinning are later independent projections, so neither may remove a column from the canonical
+source order. `TableColumnOrderChange` is the sibling official column-order recipe: it emits
+controlled before/after placement payloads through `Table::on_column_order_change` and its
+`apply_to` helper first normalizes the complete source-column order before moving either a listed
+or previously unlisted column. The resulting `TableState` stores that full order while sorting,
+filtering, visibility, pinning, sizing, and row-model state remain untouched. The Components
+gallery uses `release-rollup` as the proof sample for the controlled reorder path; focused core and
+component tests characterize partial-order normalization under visibility and pinning.
 Nested header groups are resolved as renderer-neutral row families rather than data columns.
 `TableBehaviorSnapshot` exposes nested-header behavior as a header-row count and visible group-header
 summary, while crate-private render plans keep the left, center, and right header-row layout details
@@ -820,18 +864,31 @@ Value cell editing is the official inline-edit recipe over table column metadata
 while synthetic group rows and missing source cells stay display-only. The GPUI adapter renders
 controlled `TextInput`, `Textarea`, `Checkbox`, or fixed-option `Select` paths for those editors,
 then emits the same `TableCellEditChange` through `Table::on_cell_edit_change`; applications keep
-row data app-owned and feed back a changed `TableState`. The helper `TableCellEditChange::apply_to`
-updates the matching stable source row id while preserving unrelated row-model inputs such as
-sorting, filters, pagination, selection, pinning, expansion, faceting, and sizing. Dynamic
-row-height measurement, validation, dirty-state tracking, commit/cancel workflows, clipboard range
-editing, and server persistence remain application-owned or follow-up work.
+row data app-owned and feed back a changed `TableState`. The edit target is the exact
+`(TableRowIdentity, TableColumnId)` pair returned by `identity()` and `column_id()`;
+`source_row_id()` is only a business-id readout and is not target authority. Public construction
+uses `TableCellEditRequest::new` with one exact `TableSourceRowIdentity`, so a synthetic group row
+cannot become an editable source target. `TableCellEditChange` has no public identity-only
+constructor: it is emitted from a real resolved row and its `TableRowAction` therefore never
+fabricates `model_index`, `source_index`, selection, hierarchy, or modifier metadata.
+
+`TableCellEditRequest::apply_to` and callback-owned `TableCellEditChange::apply_to` return the next state together with
+`TableCellEditApplyOutcome::{Updated, RowNotFound, AmbiguousRowId, StaleRowIdentity, CellNotFound}`.
+A unique-assumption target against duplicate business ids returns `AmbiguousRowId`; an occurrence
+target retained across `with_rows` returns `StaleRowIdentity`. Both are inspectable no-ops that
+preserve app data and the current Table cache identity. An exact unique, explicit-instance, or
+current-snapshot occurrence target updates only its intended source row while preserving unrelated
+row-model inputs such as sorting, filters, pagination, selection, pinning, expansion, faceting,
+and sizing. Dynamic row-height measurement, validation, dirty-state tracking, commit/cancel
+workflows, clipboard range editing, and server persistence remain application-owned or follow-up
+work.
 The fixed-option select path uses the same leaf-cell contract as text and checkbox editing: it is
 adapter-owned, keeps row activation suppressed when the editor consumes the click, and preserves
-the stable `(row_id, column_id)` edit payload shape.
+the exact `(TableRowIdentity, TableColumnId)` edit payload shape.
 For row-pinned tables, `TableBehaviorSnapshot` exposes top, center, and bottom row counts plus
 rendered rows with neutral `TableRowRegion` metadata, while the vertical virtualizer consumes only
 the center region. The GPUI adapter renders top and bottom row bands outside the center body
-`ScrollArea`, keeps `table:{id}:body:{top|center|bottom}` debug selectors stable, and reuses the
+scroll surface, keeps `table:{id}:body:{top|center|bottom}` debug selectors stable, and reuses the
 normal row renderer so focus, activation, expansion, pinned-column lanes, and accessibility row
 indexes keep the same payload shape across pinned and center rows. Combined two-axis viewport
 details remain adapter-internal; public tests assert the resulting row/column behavior through
@@ -846,7 +903,10 @@ official entry, at least one `gallery:component-table-sample:{id}` rendered sele
 for row identity, grouping, source-tree expansion, row interaction payloads, and virtualizer
 behavior, and gallery runtime tests for nested scroll containment, faceted-filter row updates,
 predicate-filter row updates, single-line, multiline, and checkbox value-cell updates, and nested
-header gallery proof.
+header gallery proof. Table identity gates additionally cover explicit duplicate instances through
+every row-model stage and source reorder, occurrence invalidation, ambiguous and stale edit no-ops,
+partial column-order normalization, duplicate NodeId and measurement separation, virtual focus
+proxy keyboard behavior, no-steal remounting, and first-row or empty-model focus fallback.
 Dataset-wide exact autosizing, data-source fetch/cache orchestration, global faceting, dynamic
 editor row measurement, and deeper two-axis grid virtualization beyond the pinned center-column
 window remain follow-up capabilities.
@@ -914,6 +974,9 @@ Resolved `TextInputState` and `TextareaState` values derive an owned
 `TextControlSemanticProjection` on demand. That projection owns the policy-filtered value,
 placeholder, form-control flags, actions, and optional text selection consumed by GPUI and the
 final AccessKit tree; it is never stored as a second component state authority.
+
+The durable authority decision is recorded in
+[Semantic accessibility and final-tree authority](../knowledge/engineering/decisions/semantic-accessibility-final-tree-authority.md).
 
 Component accessibility assertions use `ComponentA11yContract` rather than a live platform
 accessibility backend. The contract records `A11yLabelSource`, `A11yDescriptionSource`, selected,
@@ -983,12 +1046,11 @@ these gates visible:
 - Splitter runtime fractions continue to share one constraint solver;
 - Tabs keep overflow and roving-focus behavior visible in the page;
 - icon-only affordances and labels keep their accessible metadata explicit;
-- final `TreeUpdate` and real AccessKit action tests own evidence for migrated semantic producers;
-  `COMPONENT_A11Y_EVIDENCE` and gallery `COMPONENT_A11Y_CLAIMS` are transitional bindings only for
-  producer families that have not yet moved to the unified projection;
+- final `TreeUpdate` and real AccessKit action tests own evidence for semantic producers; static
+  accessibility evidence rows, Gallery claims, and their consumers are not parallel authorities;
 - `cargo run -p xtask -- scan-ui-contract` keeps contract rows, default exports, docs tokens,
-  conformance evidence, a11y claims, and the theme schema artifact aligned before gallery smoke
-  tests are needed.
+  Gallery conformance metadata, and the theme schema artifact aligned before gallery smoke tests
+  are needed.
 
 Large or behavior-heavy sections must use the same lazy or virtualized rendering primitives that
 the component library exposes to applications. The Components page mounts sections through a
@@ -1038,8 +1100,9 @@ Before extraction, keep these boundary rules explicit:
 
 The current deep-module productization slice is
 `docs/plans/2026-07-02-003-refactor-ui-framework-deep-modules-plan.md`: runtime theme context,
-typed a11y evidence, removed registry history, shared overlay placement, shared row-window
-projection, gallery story contracts, and app-command descriptor projection are now the active
+ephemeral semantic projection with final-tree/action evidence, removed registry history, shared
+overlay placement, shared row-window projection, gallery story contracts, and app-command
+descriptor projection are now the active
 architecture boundary. Broad remaining-1k-line component splitting and `open-gpui-ui-headless`
 extraction are not part of that slice. The runtime theme table now covers semantic component
 colors for light, dark, high-contrast, registry-loaded snapshots, and JSON-loaded
@@ -1130,9 +1193,9 @@ nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.
 `Tabs` keeps the roving-focus contract in resolved state, and the GPUI adapter routes vertical
 tablists through the shared `ScrollArea` primitive so the rail owns its own viewport instead of
 relying on ad hoc overflow handling.
-`Table` covers stable row ids, row-model ordering, grouping, expansion, built-in group-row
-aggregate cells, source-tree branches with manual expansion and child-load metadata, pinned
-left/center/right column regions, runtime column visibility overrides, locked column hideability,
+`Table` covers exact typed row identities, row-model ordering, grouping, expansion, built-in
+group-row aggregate cells, source-tree branches with manual expansion and child-load metadata,
+pinned left/center/right column regions, runtime column visibility overrides, locked column hideability,
 manual filtering/sorting/pagination modes with pagination totals, committed column sizing state,
 clamped width resolution with region totals/offsets, row pinning with top/center/bottom regions,
 sortable header action payloads, crate-root/prelude
@@ -1142,7 +1205,7 @@ For pinned samples, the adapter renders fixed left/right lanes plus a shared hor
 backed by crate-private center-column windowing, so off-window center headers and cells are unmounted while
 spacer geometry preserves the full scrollable width. It also ships GPUI resize handles with
 controlled commit callbacks and on-end/on-change resize mode support.
-For row-pinned samples, top and bottom row bands render outside the center vertical scroll area,
+For row-pinned samples, top and bottom row bands render outside the center vertical scroll surface,
 and the center virtualizer counts only center rows.
 `VirtualizedList`, `Tree`, and the Table center row body share
 `open_gpui_ui_core::grid_viewport::RowWindow` for stable keys, measurements, visible counts,
@@ -1208,7 +1271,11 @@ accessibility roles. `VirtualizedListRowMeasureMode`
 keeps fixed rows as the default hot path and exposes measured rows as an explicit opt-in;
 `VirtualizedList::virtualizer_snapshot` seeds measured heights by stable render key, removed keys
 are dropped from emitted snapshots, and missing measurements fall back to the estimated row height
-with estimated reveal targets. `VirtualizedListItemDescriptor` is the typed row descriptor: item
+with estimated reveal targets. Render keys are opaque adapter identities for one ordered descriptor
+snapshot: unique business identity remains `VirtualizedListItemDescriptor::key()`, while duplicate
+source keys receive a collision-safe occurrence encoding. Consumers may round-trip render keys for
+measurement but must not parse, construct, or persist their representation across source reorder.
+`VirtualizedListItemDescriptor` is the typed row descriptor: item
 rows can carry primary text, secondary text, text value, disabled reason, leading/trailing metadata,
 badge, and status; section, separator, loading, empty, and error rows are non-selectable and expose
 their row kind through behavior snapshots. `VirtualizedListGpuiExt::render_row` is the custom
@@ -1255,10 +1322,11 @@ and virtualized behavior snapshots.
 submenu scroll handles for `Menu` and `ContextMenu`, keeping render assembly thin while preserving
 safe hover and local scroll ownership.
 After these family splits, the shared UI framework contract work is enforced through
-`cargo run -p xtask -- scan-ui-contract`: `component_contract` module ownership, a11y contract
-claims, gallery conformance evidence, and theme schema/loading all have an audit entry point. The
-remaining large component files should stay intact unless one of those product contracts exposes a
-concrete ownership problem.
+`cargo run -p xtask -- scan-ui-contract`: `component_contract` module ownership, Gallery
+conformance metadata, and theme schema/loading all have an audit entry point. Semantic behavior is
+instead proven at the final `TreeUpdate` and real AccessKit action boundary. The remaining large
+component files should stay intact unless one of those product contracts exposes a concrete
+ownership problem.
 `Splitter` covers panel fraction normalization, min/max constraints, collapsed-panel metadata,
 stable handle anatomy, and local pointer dragging through keyed runtime state. Keyboard resizing,
 controlled resize callbacks, persisted layouts, RTL behavior, and nested splitter arbitration

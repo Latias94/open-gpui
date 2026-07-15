@@ -16,8 +16,8 @@ use open_gpui::{
 };
 use open_gpui_command::CommandDescriptor;
 use open_gpui_ui_core::{
-    DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    Role, Sizable, Size, ThemeTokens, UiPx,
+    AccessibleAction, DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent,
+    OutsidePressPolicy, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -736,6 +736,11 @@ impl RenderOnce for Command {
             .when_some(overlay_binding.clone(), |this, overlay_binding| {
                 let trigger_label = trigger_label.clone();
                 let open = state.open();
+                let trigger_semantics = SemanticDescriptor::new(Role::Button)
+                    .with_label(trigger_label.as_ref())
+                    .with_expanded(open)
+                    .with_disabled(disabled)
+                    .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
                 this.child(
                     window_overlay_runtime.focus_target(
                         &overlay_binding,
@@ -757,10 +762,7 @@ impl RenderOnce for Command {
                             .focusable()
                             .track_focus(overlay_binding.trigger_focus())
                             .tab_stop(!disabled)
-                            .ui_role(Role::Button)
-                            .aria_label(trigger_label.clone())
-                            .aria_expanded(open)
-                            .aria_disabled(disabled)
+                            .ui_semantics(&trigger_semantics)
                             .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                             .when(!disabled, |this| {

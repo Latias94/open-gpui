@@ -1,77 +1,9 @@
-//! Typed component evidence consumed by contract tests, gallery dogfood, and drift scans.
-
-use crate::a11y::{A11yLabelSource, A11yStateEvidence, A11yValueKind};
-use open_gpui_ui_core::{AccessibleAction, Orientation, Role};
+//! Typed conformance gates consumed by contract tests and gallery dogfood.
 
 use super::{ComponentA11yEvidence, ComponentConformanceGate};
 
-/// Representative accessibility evidence owned by the component contract.
-pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[
-    ComponentA11yEvidence {
-        component: "Listbox option",
-        role: Role::ListBoxOption,
-        label_source: A11yLabelSource::VisibleText,
-        value_kind: Some(A11yValueKind::Selection),
-        orientation: None,
-        actions: &[AccessibleAction::Click],
-        state_coverage: &[
-            A11yStateEvidence::Disabled,
-            A11yStateEvidence::Selected,
-            A11yStateEvidence::Value,
-        ],
-    },
-    ComponentA11yEvidence {
-        component: "Tree item",
-        role: Role::TreeItem,
-        label_source: A11yLabelSource::VisibleText,
-        value_kind: None,
-        orientation: None,
-        actions: &[AccessibleAction::Click, AccessibleAction::Focus],
-        state_coverage: &[
-            A11yStateEvidence::Expanded,
-            A11yStateEvidence::Focusable,
-            A11yStateEvidence::Selected,
-        ],
-    },
-    ComponentA11yEvidence {
-        component: "VirtualizedList row",
-        role: Role::ListBoxOption,
-        label_source: A11yLabelSource::VisibleText,
-        value_kind: Some(A11yValueKind::Count),
-        orientation: None,
-        actions: &[AccessibleAction::Click, AccessibleAction::Focus],
-        state_coverage: &[
-            A11yStateEvidence::Focusable,
-            A11yStateEvidence::Selected,
-            A11yStateEvidence::Value,
-        ],
-    },
-    ComponentA11yEvidence {
-        component: "VirtualizedList structural row",
-        role: Role::Group,
-        label_source: A11yLabelSource::VisibleText,
-        value_kind: None,
-        orientation: None,
-        actions: &[],
-        state_coverage: &[A11yStateEvidence::NonInteractiveStructural],
-    },
-    ComponentA11yEvidence {
-        component: "Splitter handle",
-        role: Role::Splitter,
-        label_source: A11yLabelSource::Generated,
-        value_kind: None,
-        orientation: Some(Orientation::Vertical),
-        actions: &[AccessibleAction::Increment, AccessibleAction::Decrement],
-        state_coverage: &[A11yStateEvidence::Disabled, A11yStateEvidence::Focusable],
-    },
-];
-
-/// Returns the accessibility evidence for a component or component part.
-pub fn component_a11y_evidence(component: &str) -> Option<&'static ComponentA11yEvidence> {
-    COMPONENT_A11Y_EVIDENCE
-        .iter()
-        .find(|evidence| evidence.component == component)
-}
+/// Empty compatibility scaffold removed with the remaining contract surface in U10.
+pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[];
 
 /// Regression-prone component behaviors that every new slice should keep covered.
 pub const COMPONENT_CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
@@ -242,14 +174,19 @@ pub const COMPONENT_CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
     },
     ComponentConformanceGate {
         id: "a11y-labels",
-        title: "A11y claims",
-        summary: "Representative samples keep roles, label sources, value metadata, orientation, and actions aligned with renderer-neutral component contracts.",
+        title: "A11y final trees",
+        summary: "Resolved semantic projections, final AccessKit trees, and real actions stay aligned across representative component families.",
         evidence: &[
+            "SemanticDescriptor",
             "ComponentA11yContract",
-            "COMPONENT_A11Y_EVIDENCE",
-            "COMPONENT_A11Y_CLAIMS",
+            "TreeUpdate",
             "crates/ui_components/tests/a11y.rs",
+            "crates/ui_components/tests/a11y/collection_semantics.rs",
             "representative_component_a11y_contracts_are_valid",
+            "listbox_final_tree_and_click_action_follow_resolved_state",
+            "tree_final_tree_focus_click_and_expansion_follow_resolved_state",
+            "virtualized_list_final_tree_distinguishes_rows_from_structural_content_and_recycles_by_key",
+            "splitter_final_tree_actions_resize_and_disabled_state_remove_capability",
             "IconButton::new",
             "label_projects_descriptor_state_and_stable_lifecycle",
             "field_relations_follow_help_error_transitions_and_unmount",

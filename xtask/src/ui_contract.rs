@@ -1,8 +1,10 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    path::Path,
+    path::{Path, PathBuf},
 };
+
+use syn::{Expr, Item, visit_mut::VisitMut};
 
 use crate::theme_schema::theme_schema_failures;
 
@@ -14,6 +16,7 @@ struct ContractRow {
     docs_status: DocsStatus,
     docs_token: Option<String>,
     default_export: bool,
+    source_inputs: Vec<String>,
     source_home: String,
 }
 
@@ -31,36 +34,142 @@ struct Docs<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct A11yClaim {
-    component: String,
-    selector_prefix: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct A11yEvidence {
-    component: String,
-    role: String,
-    label_source: String,
-    value_kind: Option<String>,
-    orientation: Option<String>,
-    actions: BTreeSet<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 struct ConformanceGate {
     id: String,
     evidence: BTreeSet<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ExecutableTestEvidence {
+    source_path: &'static str,
+    package: &'static str,
+    test_target: &'static str,
+    test_name: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExactTestCommand {
+    program: &'static str,
+    args: Vec<String>,
+}
+
+const OLD_A11Y_EVIDENCE_IDENTIFIERS: &[&str] =
+    &["ComponentA11yEvidence", "COMPONENT_A11Y_EVIDENCE"];
+
+/// U5 runner coordinates for final-tree/action checkpoints.
+///
+/// U10 replaces these temporary coordinates with native scenario artifacts; component metadata
+/// and Gallery display evidence must not become owners of test execution.
+const U5_EXECUTABLE_A11Y_EVIDENCE: &[ExecutableTestEvidence] = &[
+    ExecutableTestEvidence {
+        source_path: "crates/ui_components/tests/a11y/collection_semantics.rs",
+        package: "open-gpui-ui-components",
+        test_target: "a11y",
+        test_name: "collection_semantics::listbox_final_tree_and_click_action_follow_resolved_state",
+    },
+    ExecutableTestEvidence {
+        source_path: "crates/ui_components/tests/a11y/collection_semantics.rs",
+        package: "open-gpui-ui-components",
+        test_target: "a11y",
+        test_name: "collection_semantics::tree_final_tree_focus_click_and_expansion_follow_resolved_state",
+    },
+    ExecutableTestEvidence {
+        source_path: "crates/ui_components/tests/a11y/collection_semantics.rs",
+        package: "open-gpui-ui-components",
+        test_target: "a11y",
+        test_name: "collection_semantics::virtualized_list_final_tree_distinguishes_rows_from_structural_content_and_recycles_by_key",
+    },
+    ExecutableTestEvidence {
+        source_path: "crates/ui_components/tests/a11y/collection_semantics.rs",
+        package: "open-gpui-ui-components",
+        test_target: "a11y",
+        test_name: "collection_semantics::splitter_final_tree_actions_resize_and_disabled_state_remove_capability",
+    },
+    ExecutableTestEvidence {
+        source_path: "crates/ui_components/tests/a11y.rs",
+        package: "open-gpui-ui-components",
+        test_target: "a11y",
+        test_name: "button_final_tree_and_actions_follow_resolved_projection",
+    },
+    ExecutableTestEvidence {
+        source_path: "crates/ui_components/tests/a11y_controls/action_controls.rs",
+        package: "open-gpui-ui-components",
+        test_target: "a11y_controls",
+        test_name: "action_controls::checkbox_final_tree_tracks_form_state_actions_and_stable_identity",
+    },
+    ExecutableTestEvidence {
+        source_path: "crates/ui_components/tests/a11y_controls/field_relations.rs",
+        package: "open-gpui-ui-components",
+        test_target: "a11y_controls",
+        test_name: "field_relations::field_relations_follow_help_error_transitions_and_unmount",
+    },
+    ExecutableTestEvidence {
+        source_path: "crates/ui_components/tests/choice.rs",
+        package: "open-gpui-ui-components",
+        test_target: "choice",
+        test_name: "select_final_tree_preserves_trigger_identity_disabled_state_and_exact_actions",
+    },
+    ExecutableTestEvidence {
+        source_path: "crates/ui_components/tests/overlay.rs",
+        package: "open-gpui-ui-components",
+        test_target: "overlay",
+        test_name: "dialog_final_tree_projects_modal_disabled_and_exact_actions",
+    },
+    ExecutableTestEvidence {
+        source_path: "crates/ui_components/tests/navigation.rs",
+        package: "open-gpui-ui-components",
+        test_target: "navigation",
+        test_name: "tabs_final_tree_relations_actions_and_node_ids_follow_runtime_selection",
+    },
+    ExecutableTestEvidence {
+        source_path: "crates/ui_components/tests/primitives.rs",
+        package: "open-gpui-ui-components",
+        test_target: "primitives",
+        test_name: "separator_final_tree_downgrades_to_group_preserves_orientation_and_omits_decorative_semantics",
+    },
+    ExecutableTestEvidence {
+        source_path: "crates/ui_components/tests/table/accessibility.rs",
+        package: "open-gpui-ui-components",
+        test_target: "table",
+        test_name: "accessibility::table_runtime_final_accessibility_tree",
+    },
+    ExecutableTestEvidence {
+        source_path: "examples/ui-foundation-gallery/tests/foundation_gallery/focus_a11y_smoke.rs",
+        package: "open-gpui-ui-foundation-gallery",
+        test_target: "foundation_gallery",
+        test_name: "focus_a11y_smoke::focus_a11y_devtools_allowlist_matches_final_tree_structure",
+    },
+];
+
 pub(crate) fn scan_ui_contract(root: &Path) -> Result<(), ()> {
     println!("==> scan UI contract");
 
     let failures = ui_contract_failures(root);
+    if !failures.is_empty() {
+        eprintln!("UI contract scan failed:");
+        for failure in failures {
+            eprintln!("  {failure}");
+        }
+        return Err(());
+    }
+
+    verify_executable_evidence(root)?;
+    println!("UI contract scan passed");
+    Ok(())
+}
+
+fn verify_executable_evidence(root: &Path) -> Result<(), ()> {
+    println!("==> run executable UI conformance evidence");
+    let failures =
+        executable_evidence_failures(root, U5_EXECUTABLE_A11Y_EVIDENCE, |root, command| {
+            let args = command.args.iter().map(String::as_str).collect::<Vec<_>>();
+            crate::commands::run(root, command.program, &args)
+        });
+
     if failures.is_empty() {
-        println!("UI contract scan passed");
         Ok(())
     } else {
-        eprintln!("UI contract scan failed:");
+        eprintln!("Executable UI conformance evidence failed:");
         for failure in failures {
             eprintln!("  {failure}");
         }
@@ -68,18 +177,226 @@ pub(crate) fn scan_ui_contract(root: &Path) -> Result<(), ()> {
     }
 }
 
+fn executable_evidence_failures(
+    root: &Path,
+    evidence: &[ExecutableTestEvidence],
+    mut execute: impl FnMut(&Path, &ExactTestCommand) -> Result<(), ()>,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+
+    for evidence in evidence {
+        if let Err(failure) = executable_test_source(root, *evidence, |path| {
+            fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))
+        }) {
+            failures.push(failure);
+            continue;
+        }
+
+        let command = exact_test_command(*evidence);
+        if execute(root, &command).is_err() {
+            failures.push(format!(
+                "{}: exact non-ignored test `{}::{}` did not run successfully",
+                evidence.source_path, evidence.test_target, evidence.test_name
+            ));
+        }
+    }
+
+    failures
+}
+
+fn exact_test_command(evidence: ExecutableTestEvidence) -> ExactTestCommand {
+    ExactTestCommand {
+        program: "cargo",
+        args: [
+            "nextest",
+            "run",
+            "--locked",
+            "-p",
+            evidence.package,
+            "--test",
+            evidence.test_target,
+            "--ignore-default-filter",
+            "--run-ignored",
+            "default",
+            "--no-tests",
+            "fail",
+            "-E",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .chain(std::iter::once(format!("test(={})", evidence.test_name)))
+        .collect(),
+    }
+}
+
+fn executable_test_source(
+    root: &Path,
+    evidence: ExecutableTestEvidence,
+    mut read_source: impl FnMut(&Path) -> Result<String, String>,
+) -> Result<PathBuf, String> {
+    let target_root = integration_test_target_root(root, evidence)?;
+    let target = syn::parse_file(&read_source(&target_root)?).map_err(|error| {
+        format!(
+            "{}: failed to parse test target `{}`: {error}",
+            evidence.source_path, evidence.test_target
+        )
+    })?;
+    let segments = evidence.test_name.split("::").collect::<Vec<_>>();
+    let (actual_path, test_items, function_name) = match segments.as_slice() {
+        [function_name] => (target_root.clone(), target.items, *function_name),
+        [module_name, function_name] => {
+            let modules = target
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    Item::Mod(item_mod) if item_mod.ident == *module_name => Some(item_mod),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let [item_mod] = modules.as_slice() else {
+                return Err(format!(
+                    "{}: test target `{}` does not declare exactly one module `{module_name}`",
+                    evidence.source_path, evidence.test_target
+                ));
+            };
+            if let Some((_, items)) = &item_mod.content {
+                (target_root.clone(), items.clone(), *function_name)
+            } else {
+                let path = test_module_path(&target_root, item_mod)?;
+                let file = syn::parse_file(&read_source(&path)?).map_err(|error| {
+                    format!(
+                        "{}: failed to parse evidence source: {error}",
+                        path.display()
+                    )
+                })?;
+                (path, file.items, *function_name)
+            }
+        }
+        _ => {
+            return Err(format!(
+                "{}: U5 executable coordinate must name a root test or one test module",
+                evidence.source_path
+            ));
+        }
+    };
+    let declared_path = lexical_path(&root.join(evidence.source_path));
+    let actual_path = lexical_path(&actual_path);
+    if actual_path != declared_path {
+        return Err(format!(
+            "{}: stale executable evidence source coordinate; `{}` is owned by {}",
+            evidence.source_path,
+            evidence.test_name,
+            repo_relative_path(root, &actual_path)
+        ));
+    }
+    let matching_tests = test_items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Fn(item_fn)
+                if item_fn.sig.ident == function_name
+                    && item_fn.attrs.iter().any(|attribute| {
+                        attribute
+                            .path()
+                            .segments
+                            .last()
+                            .is_some_and(|segment| segment.ident == "test")
+                    }) =>
+            {
+                Some(item_fn)
+            }
+            _ => None,
+        })
+        .count();
+    if matching_tests != 1 {
+        return Err(format!(
+            "{}: declared source does not own exactly one test function `{}`",
+            evidence.source_path, evidence.test_name
+        ));
+    }
+    Ok(actual_path)
+}
+
+fn integration_test_target_root(
+    root: &Path,
+    evidence: ExecutableTestEvidence,
+) -> Result<PathBuf, String> {
+    let source_path = Path::new(evidence.source_path);
+    let components = source_path.components().collect::<Vec<_>>();
+    let Some(tests_index) = components
+        .iter()
+        .rposition(|component| component.as_os_str() == "tests")
+    else {
+        return Err(format!(
+            "{}: executable evidence source must be under an integration `tests` directory",
+            evidence.source_path
+        ));
+    };
+    let mut tests_dir = PathBuf::new();
+    for component in &components[..=tests_index] {
+        tests_dir.push(component.as_os_str());
+    }
+    Ok(root
+        .join(tests_dir)
+        .join(format!("{}.rs", evidence.test_target)))
+}
+
+fn test_module_path(target_root: &Path, item_mod: &syn::ItemMod) -> Result<PathBuf, String> {
+    let path = item_mod
+        .attrs
+        .iter()
+        .find(|attribute| attribute.path().is_ident("path"))
+        .and_then(|attribute| match &attribute.meta {
+            syn::Meta::NameValue(value) => match &value.value {
+                Expr::Lit(value) => match &value.lit {
+                    syn::Lit::Str(path) => Some(PathBuf::from(path.value())),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        })
+        .unwrap_or_else(|| {
+            PathBuf::from(target_root.file_stem().unwrap_or_default())
+                .join(format!("{}.rs", item_mod.ident))
+        });
+    Ok(lexical_path(
+        &target_root
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join(path),
+    ))
+}
+
+fn lexical_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn repo_relative_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
 fn ui_contract_failures(root: &Path) -> Vec<String> {
     let mut failures = Vec::new();
     let source_dir = root.join("crates/ui_components/src");
     let evidence_path = source_dir.join("component_contract/evidence.rs");
-    let conformance_path =
-        root.join("examples/ui-foundation-gallery/src/pages/components/conformance.rs");
     let component_contract_docs_path = root.join("docs/ui/component-contract.md");
     let verification_docs_path = root.join("docs/verification.md");
 
     let row_sources = contract_row_sources(&source_dir, &mut failures);
     let evidence_source = read_to_string(&evidence_path, &mut failures);
-    let conformance_source = read_to_string(&conformance_path, &mut failures);
     let component_contract_docs = read_to_string(&component_contract_docs_path, &mut failures);
     let verification_docs = read_to_string(&verification_docs_path, &mut failures);
     let root_exports = default_reexport_tokens(&source_dir, "lib.rs", &mut failures);
@@ -91,9 +408,6 @@ fn ui_contract_failures(root: &Path) -> Vec<String> {
         return failures;
     }
     let Some(evidence_source) = evidence_source else {
-        return failures;
-    };
-    let Some(conformance_source) = conformance_source else {
         return failures;
     };
     let Some(component_contract_docs) = component_contract_docs else {
@@ -127,10 +441,8 @@ fn ui_contract_failures(root: &Path) -> Vec<String> {
         |entry| source_home_exists(&source_dir, entry),
         |name| removed_primitive_module_exists(&source_dir, name),
     ));
-    failures.extend(audit_gallery_contracts(
-        &conformance_source,
-        &evidence_source,
-    ));
+    failures.extend(audit_conformance_gates(&evidence_source));
+    failures.extend(audit_semantic_authority(root, &source_dir, &entries));
     failures.extend(theme_schema_failures(root));
 
     failures
@@ -189,6 +501,246 @@ fn read_to_string(path: &Path, failures: &mut Vec<String>) -> Option<String> {
         },
         Some,
     )
+}
+
+fn audit_semantic_authority(
+    root: &Path,
+    source_dir: &Path,
+    contract_rows: &[ContractRow],
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    let source_inputs = contract_rows
+        .iter()
+        .filter(|row| {
+            matches!(
+                row.owner.as_str(),
+                "OfficialComponent" | "OfficialComponentRecipe"
+            )
+        })
+        .flat_map(|row| row.source_inputs.iter().cloned())
+        .collect::<BTreeSet<_>>();
+
+    let producer_sources =
+        expand_official_producer_sources(source_dir, &source_inputs, &mut failures);
+    for path in producer_sources {
+        let label = repo_relative_path(root, &path);
+        if let Some(source) = read_to_string(&path, &mut failures) {
+            failures.extend(direct_semantic_assembly_failures(&label, &source));
+        }
+    }
+
+    let mut runtime_sources = BTreeSet::new();
+    for runtime_root in [
+        root.join("crates/ui_components/src"),
+        root.join("crates/devtools/src"),
+        root.join("examples/ui-foundation-gallery/src"),
+    ] {
+        collect_rust_sources(&runtime_root, &mut runtime_sources, &mut failures);
+    }
+    for path in runtime_sources {
+        let label = repo_relative_path(root, &path);
+        if let Some(source) = read_to_string(&path, &mut failures) {
+            failures.extend(old_a11y_evidence_failures(&label, &source));
+        }
+    }
+
+    failures
+}
+
+fn unwrapped_expr(mut expression: &Expr) -> &Expr {
+    loop {
+        expression = match expression {
+            Expr::Reference(reference) => &reference.expr,
+            Expr::Group(group) => &group.expr,
+            Expr::Paren(paren) => &paren.expr,
+            _ => return expression,
+        };
+    }
+}
+
+fn expand_official_producer_sources(
+    source_dir: &Path,
+    source_inputs: &BTreeSet<String>,
+    failures: &mut Vec<String>,
+) -> BTreeSet<PathBuf> {
+    let mut sources = BTreeSet::new();
+    for input in source_inputs {
+        let path = source_dir.join(input);
+        if path.is_dir() {
+            collect_rust_sources(&path, &mut sources, failures);
+        } else if path.is_file() {
+            if path.file_name().is_some_and(|name| name == "mod.rs") {
+                collect_rust_sources(path.parent().unwrap_or(source_dir), &mut sources, failures);
+            } else {
+                sources.insert(path);
+            }
+        } else {
+            failures.push(format!(
+                "crates/ui_components/src/component_contract/rows/catalog.rs: official producer source input `{input}` does not exist"
+            ));
+        }
+    }
+    sources
+}
+
+fn collect_rust_sources(
+    directory: &Path,
+    sources: &mut BTreeSet<PathBuf>,
+    failures: &mut Vec<String>,
+) {
+    let mut entries = match fs::read_dir(directory) {
+        Ok(entries) => entries.filter_map(Result::ok).collect::<Vec<_>>(),
+        Err(error) => {
+            failures.push(format!(
+                "{}: failed to read Rust source directory: {error}",
+                directory.display()
+            ));
+            return;
+        }
+    };
+    entries.sort_by_key(|entry| entry.path());
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rust_sources(&path, sources, failures);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            sources.insert(path);
+        }
+    }
+}
+
+fn direct_semantic_assembly_failures(source_path: &str, source: &str) -> Vec<String> {
+    let mut file = match syn::parse_file(source) {
+        Ok(file) => file,
+        Err(error) => {
+            return vec![format!(
+                "{source_path}: failed to parse official producer source: {error}"
+            )];
+        }
+    };
+    let mut visitor = DirectSemanticAssemblyVisitor {
+        source_path,
+        failures: Vec::new(),
+    };
+    visitor.visit_file_mut(&mut file);
+    visitor.failures
+}
+
+struct DirectSemanticAssemblyVisitor<'a> {
+    source_path: &'a str,
+    failures: Vec<String>,
+}
+
+impl VisitMut for DirectSemanticAssemblyVisitor<'_> {
+    fn visit_expr_method_call_mut(&mut self, call: &mut syn::ExprMethodCall) {
+        let method = call.method.to_string();
+        let forbidden =
+            method == "ui_role" || method.starts_with("ui_aria_") || method.starts_with("aria_");
+        if forbidden && !semantic_method_allowlisted(self.source_path, &method) {
+            self.failures.push(format!(
+                "{}: official producer directly calls semantic assembly method `.{method}(...)`; project a SemanticDescriptor through the shared adapter",
+                self.source_path
+            ));
+        }
+        syn::visit_mut::visit_expr_method_call_mut(self, call);
+    }
+}
+
+fn semantic_method_allowlisted(source_path: &str, method: &str) -> bool {
+    matches!(
+        (source_path, method),
+        (
+            "crates/ui_components/src/table/behavior/columns.rs",
+            "aria_column_count" | "aria_column_index"
+        ) | (
+            "crates/ui_components/src/table/behavior/counts.rs",
+            "aria_row_count"
+        ) | (
+            "crates/ui_components/src/table/behavior/mod.rs",
+            "aria_rows" | "aria_columns"
+        ) | (
+            "crates/ui_components/src/table/behavior/rows.rs",
+            "aria_row_index" | "aria_column_index"
+        ) | (
+            "crates/ui_components/src/table/body/rows.rs",
+            "aria_row_index"
+        ) | (
+            "crates/ui_components/src/table/cell.rs",
+            "aria_column_index"
+        ) | (
+            "crates/ui_components/src/table/header.rs",
+            "aria_column_index"
+        ) | (
+            "crates/ui_components/src/table/mod.rs",
+            "aria_row_count" | "aria_column_count"
+        ) | (
+            "crates/ui_components/src/table/render_plan/rows.rs",
+            "aria_column_index"
+        ) | ("crates/ui_components/src/table/editors.rs", "aria_label")
+    )
+}
+
+fn old_a11y_evidence_failures(source_path: &str, source: &str) -> Vec<String> {
+    let mut file = match syn::parse_file(source) {
+        Ok(file) => file,
+        Err(error) => {
+            return vec![format!(
+                "{source_path}: failed to parse runtime source for old a11y evidence audit: {error}"
+            )];
+        }
+    };
+    let mut visitor = OldA11yEvidenceVisitor::default();
+    for item in &mut file.items {
+        if !old_a11y_scaffold_item_allowed(source_path, item) {
+            visitor.visit_item_mut(item);
+        }
+    }
+    if visitor.identifiers.is_empty() {
+        Vec::new()
+    } else {
+        vec![format!(
+            "{source_path}: runtime source consumes U10-only a11y evidence scaffold {}",
+            visitor
+                .identifiers
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join(", ")
+        )]
+    }
+}
+
+#[derive(Default)]
+struct OldA11yEvidenceVisitor {
+    identifiers: BTreeSet<String>,
+}
+
+impl VisitMut for OldA11yEvidenceVisitor {
+    fn visit_ident_mut(&mut self, identifier: &mut syn::Ident) {
+        let identifier = identifier.to_string();
+        if OLD_A11Y_EVIDENCE_IDENTIFIERS.contains(&identifier.as_str()) {
+            self.identifiers.insert(identifier);
+        }
+    }
+}
+
+fn old_a11y_scaffold_item_allowed(source_path: &str, item: &Item) -> bool {
+    match (source_path, item) {
+        ("crates/ui_components/src/component_contract/types.rs", Item::Struct(item)) => {
+            item.ident == "ComponentA11yEvidence"
+        }
+        ("crates/ui_components/src/component_contract/evidence.rs", Item::Const(item)) => {
+            item.ident == "COMPONENT_A11Y_EVIDENCE"
+                && matches!(unwrapped_expr(&item.expr), Expr::Array(array) if array.elems.is_empty())
+        }
+        (
+            "crates/ui_components/src/component_contract/evidence.rs"
+            | "crates/ui_components/src/component_contract/mod.rs"
+            | "crates/ui_components/src/public_api/common.rs"
+            | "crates/ui_components/src/public_api/default.rs",
+            Item::Use(_),
+        ) => true,
+        _ => false,
+    }
 }
 
 fn audit_contract_rows(
@@ -387,6 +939,9 @@ fn contract_row_from_block(block: &str) -> Result<ContractRow, String> {
     let docs_token = optional_string_field(block, "docs_token");
     let default_export = bool_field(block, "default_export")
         .ok_or_else(|| format!("contract row `{name}` missing `default_export`"))?;
+    let source_inputs = bracketed_slice_field(block, "source_inputs")
+        .map(quoted_strings)
+        .ok_or_else(|| format!("contract row `{name}` missing `source_inputs`"))?;
     let source_home = string_field(block, "source_home")
         .ok_or_else(|| format!("contract row `{name}` missing `source_home`"))?;
 
@@ -397,6 +952,7 @@ fn contract_row_from_block(block: &str) -> Result<ContractRow, String> {
         docs_status,
         docs_token,
         default_export,
+        source_inputs,
         source_home,
     })
 }
@@ -452,156 +1008,13 @@ fn field_tail<'a>(block: &'a str, field: &str) -> Option<&'a str> {
     Some(&block[start..])
 }
 
-fn audit_gallery_contracts(conformance_source: &str, evidence_source: &str) -> Vec<String> {
+fn audit_conformance_gates(evidence_source: &str) -> Vec<String> {
     let mut failures = Vec::new();
-    let (evidence, evidence_parse_failures) = a11y_evidence_from_source(evidence_source);
-    failures.extend(evidence_parse_failures.into_iter().map(|failure| {
-        format!("crates/ui_components/src/component_contract/evidence.rs: {failure}")
-    }));
-
-    let (claims, claim_parse_failures) = a11y_claims_from_source(conformance_source);
-    failures.extend(claim_parse_failures.into_iter().map(|failure| {
-        format!("examples/ui-foundation-gallery/src/pages/components/conformance.rs: {failure}")
-    }));
-    failures.extend(audit_a11y_claims(&claims, &evidence));
-
     let (gates, gate_parse_failures) = conformance_gates_from_source(evidence_source);
     failures.extend(gate_parse_failures.into_iter().map(|failure| {
         format!("crates/ui_components/src/component_contract/evidence.rs: {failure}")
     }));
     failures.extend(audit_conformance_gate_evidence(&gates));
-
-    failures
-}
-
-fn a11y_evidence_from_source(source: &str) -> (Vec<A11yEvidence>, Vec<String>) {
-    let (blocks, block_failures) = struct_literal_blocks(source, "ComponentA11yEvidence");
-    let mut evidence = Vec::new();
-    let mut failures = block_failures;
-
-    for block in blocks {
-        match a11y_evidence_from_block(block) {
-            Ok(entry) => evidence.push(entry),
-            Err(error) => failures.push(error),
-        }
-    }
-
-    (evidence, failures)
-}
-
-fn a11y_evidence_from_block(block: &str) -> Result<A11yEvidence, String> {
-    let component = string_field(block, "component").ok_or("a11y evidence missing `component`")?;
-    let role = enum_variant_field(block, "role")
-        .ok_or_else(|| format!("a11y evidence `{component}` missing `role`"))?;
-    let label_source = enum_variant_field(block, "label_source")
-        .ok_or_else(|| format!("a11y evidence `{component}` missing `label_source`"))?;
-    let value_kind = optional_enum_variant_field(block, "value_kind")
-        .ok_or_else(|| format!("a11y evidence `{component}` missing `value_kind`"))?;
-    let orientation = optional_enum_variant_field(block, "orientation")
-        .ok_or_else(|| format!("a11y evidence `{component}` missing `orientation`"))?;
-    let actions = action_set_field(block)
-        .ok_or_else(|| format!("a11y evidence `{component}` missing `actions`"))?;
-
-    Ok(A11yEvidence {
-        component,
-        role,
-        label_source,
-        value_kind,
-        orientation,
-        actions,
-    })
-}
-
-fn a11y_claims_from_source(source: &str) -> (Vec<A11yClaim>, Vec<String>) {
-    let (blocks, block_failures) = struct_literal_blocks(source, "ComponentA11yClaim");
-    let mut claims = Vec::new();
-    let mut failures = block_failures;
-
-    for block in blocks {
-        match a11y_claim_from_block(block) {
-            Ok(claim) => claims.push(claim),
-            Err(error) => failures.push(error),
-        }
-    }
-
-    (claims, failures)
-}
-
-fn a11y_claim_from_block(block: &str) -> Result<A11yClaim, String> {
-    let component = string_field(block, "component").ok_or("a11y claim missing `component`")?;
-    let selector_prefix = string_field(block, "selector_prefix")
-        .ok_or_else(|| format!("a11y claim `{component}` missing `selector_prefix`"))?;
-
-    Ok(A11yClaim {
-        component,
-        selector_prefix,
-    })
-}
-
-fn optional_enum_variant_field(block: &str, field: &str) -> Option<Option<String>> {
-    let rest = field_value(block, field)?.trim_start();
-    if rest.starts_with("None") {
-        Some(None)
-    } else {
-        enum_variant_from_source(rest).map(Some)
-    }
-}
-
-fn action_set_field(block: &str) -> Option<BTreeSet<String>> {
-    let body = bracketed_slice_field(block, "actions")?;
-    Some(enum_variants_with_prefix(body, "AccessibleAction::"))
-}
-
-fn audit_a11y_claims(claims: &[A11yClaim], evidence: &[A11yEvidence]) -> Vec<String> {
-    let mut failures = Vec::new();
-    let mut claims_by_component = BTreeMap::new();
-    let mut evidence_by_component = BTreeMap::new();
-
-    for entry in evidence {
-        if let Some(previous) = evidence_by_component.insert(entry.component.as_str(), entry) {
-            failures.push(format!(
-                "crates/ui_components/src/component_contract/evidence.rs: duplicate COMPONENT_A11Y_EVIDENCE row `{}`; previous role `{}`, duplicate role `{}`",
-                entry.component, previous.role, entry.role
-            ));
-        }
-        if entry.label_source == "NotRequired" {
-            failures.push(format!(
-                "crates/ui_components/src/component_contract/evidence.rs: a11y evidence `{}` must name the accessible label source",
-                entry.component
-            ));
-        }
-    }
-
-    for claim in claims {
-        if let Some(previous) = claims_by_component.insert(claim.component.as_str(), claim) {
-            failures.push(format!(
-                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: duplicate COMPONENT_A11Y_CLAIMS row `{}`; previous selector `{}`, duplicate selector `{}`",
-                claim.component, previous.selector_prefix, claim.selector_prefix
-            ));
-        }
-
-        if !claim.selector_prefix.starts_with("gallery:component-") {
-            failures.push(format!(
-                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{}` selector_prefix `{}` must start with `gallery:component-`",
-                claim.component, claim.selector_prefix
-            ));
-        }
-        if !evidence_by_component.contains_key(claim.component.as_str()) {
-            failures.push(format!(
-                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{}` has no component-owned COMPONENT_A11Y_EVIDENCE row",
-                claim.component
-            ));
-        }
-    }
-
-    for expected in evidence {
-        if !claims_by_component.contains_key(expected.component.as_str()) {
-            failures.push(format!(
-                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: COMPONENT_A11Y_CLAIMS is missing selector binding for component-owned evidence `{}`",
-                expected.component
-            ));
-        }
-    }
 
     failures
 }
@@ -681,10 +1094,6 @@ fn audit_conformance_gate_evidence(gates: &[ConformanceGate]) -> Vec<String> {
             "gallery",
             "examples/ui-foundation-gallery/tests/foundation_gallery.rs",
         ),
-        ("a11y", "ComponentA11yContract"),
-        ("a11y", "COMPONENT_A11Y_EVIDENCE"),
-        ("a11y", "COMPONENT_A11Y_CLAIMS"),
-        ("a11y", "crates/ui_components/tests/a11y.rs"),
         ("theme", "crates/ui_components/src/theme/schema.rs"),
         ("theme", "crates/ui_components/tests/theme.rs"),
         ("theme", "docs/schemas/open-gpui-theme-v1.schema.json"),
@@ -870,22 +1279,6 @@ fn enum_variant_from_source(source: &str) -> Option<String> {
     (!variant.is_empty()).then_some(variant)
 }
 
-fn enum_variants_with_prefix(source: &str, prefix: &str) -> BTreeSet<String> {
-    let mut variants = BTreeSet::new();
-    let mut rest = source;
-    while let Some(index) = rest.find(prefix) {
-        rest = &rest[index + prefix.len()..];
-        let variant = rest
-            .chars()
-            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
-            .collect::<String>();
-        if !variant.is_empty() {
-            variants.insert(variant);
-        }
-    }
-    variants
-}
-
 fn quoted_strings(source: &str) -> Vec<String> {
     let mut values = Vec::new();
     let mut rest = source;
@@ -967,6 +1360,21 @@ fn matching_bracket(source: &str, open_bracket: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::workspace_root;
+    use serde::Deserialize;
+
+    #[derive(Clone, Debug, Deserialize)]
+    struct NextestEvidenceFixture {
+        tests: Vec<NextestFixtureTest>,
+    }
+
+    #[derive(Clone, Debug, Deserialize)]
+    struct NextestFixtureTest {
+        package: String,
+        test_target: String,
+        test_name: String,
+        ignored: bool,
+    }
 
     fn entry(
         name: &str,
@@ -984,6 +1392,7 @@ mod tests {
             docs_status,
             docs_token: docs_token.map(str::to_string),
             default_export,
+            source_inputs: Vec::new(),
             source_home: source_home.to_string(),
         }
     }
@@ -999,15 +1408,221 @@ mod tests {
         failures.iter().any(|failure| failure.contains(needle))
     }
 
-    fn evidence(component: &str, role: &str) -> A11yEvidence {
-        A11yEvidence {
-            component: component.to_string(),
-            role: role.to_string(),
-            label_source: "VisibleText".to_string(),
-            value_kind: None,
-            orientation: None,
-            actions: BTreeSet::from(["Click".to_string()]),
+    fn nextest_evidence_fixture() -> NextestEvidenceFixture {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ui-contract-nextest-evidence.json"
+        ))
+        .expect("nextest evidence fixture should be valid JSON")
+    }
+
+    fn fixture_executor(
+        fixture: &NextestEvidenceFixture,
+    ) -> impl FnMut(&Path, &ExactTestCommand) -> Result<(), ()> + '_ {
+        move |_root, command| {
+            let argument_after = |flag: &str| {
+                command
+                    .args
+                    .iter()
+                    .position(|argument| argument == flag)
+                    .and_then(|index| command.args.get(index + 1))
+                    .map(String::as_str)
+            };
+            let exact_name = argument_after("-E")
+                .and_then(|filter| filter.strip_prefix("test(="))
+                .and_then(|filter| filter.strip_suffix(')'));
+
+            let command_is_strict = command.program == "cargo"
+                && command
+                    .args
+                    .starts_with(&["nextest".to_string(), "run".to_string()])
+                && command.args.iter().any(|argument| argument == "--locked")
+                && argument_after("--no-tests") == Some("fail")
+                && argument_after("--run-ignored") == Some("default")
+                && !command.args.iter().any(|argument| argument == "--exact")
+                && command
+                    .args
+                    .iter()
+                    .any(|argument| argument == "--ignore-default-filter");
+            let matched = fixture.tests.iter().any(|test| {
+                argument_after("-p") == Some(test.package.as_str())
+                    && argument_after("--test") == Some(test.test_target.as_str())
+                    && exact_name == Some(test.test_name.as_str())
+                    && !test.ignored
+            });
+
+            (command_is_strict && matched).then_some(()).ok_or(())
         }
+    }
+
+    fn fixture_evidence() -> ExecutableTestEvidence {
+        U5_EXECUTABLE_A11Y_EVIDENCE[0]
+    }
+
+    fn assert_fixture_rejected(fixture: &NextestEvidenceFixture, needle: &str) {
+        let failures = executable_evidence_failures(
+            workspace_root(),
+            &[fixture_evidence()],
+            fixture_executor(fixture),
+        );
+
+        assert!(
+            has_failure(&failures, needle),
+            "expected `{needle}` in {failures:#?}"
+        );
+    }
+
+    #[test]
+    fn executable_evidence_runs_an_exact_non_ignored_test() {
+        let fixture = nextest_evidence_fixture();
+
+        let failures = executable_evidence_failures(
+            workspace_root(),
+            &[fixture_evidence()],
+            fixture_executor(&fixture),
+        );
+
+        assert_eq!(failures, Vec::<String>::new());
+    }
+
+    #[test]
+    fn executable_evidence_rejects_a_missing_source_path() {
+        let fixture = nextest_evidence_fixture();
+        let mut evidence = fixture_evidence();
+        evidence.source_path = "crates/ui_components/tests/a11y/missing.rs";
+
+        let failures =
+            executable_evidence_failures(workspace_root(), &[evidence], fixture_executor(&fixture));
+
+        assert!(has_failure(&failures, "missing.rs"));
+    }
+
+    #[test]
+    fn executable_evidence_rejects_a_missing_test() {
+        let mut fixture = nextest_evidence_fixture();
+        fixture.tests.clear();
+
+        assert_fixture_rejected(
+            &fixture,
+            "listbox_final_tree_and_click_action_follow_resolved_state",
+        );
+    }
+
+    #[test]
+    fn executable_evidence_rejects_a_test_moved_to_another_target() {
+        let mut fixture = nextest_evidence_fixture();
+        fixture.tests[0].test_target = "renamed_a11y".to_string();
+
+        assert_fixture_rejected(&fixture, "a11y");
+    }
+
+    #[test]
+    fn executable_evidence_rejects_a_renamed_test_symbol() {
+        let mut fixture = nextest_evidence_fixture();
+        fixture.tests[0].test_name = "collection_semantics::renamed_test".to_string();
+
+        assert_fixture_rejected(
+            &fixture,
+            "listbox_final_tree_and_click_action_follow_resolved_state",
+        );
+    }
+
+    #[test]
+    fn executable_evidence_rejects_an_ignored_test() {
+        let mut fixture = nextest_evidence_fixture();
+        fixture.tests[0].ignored = true;
+
+        assert_fixture_rejected(&fixture, "non-ignored");
+    }
+
+    #[test]
+    fn executable_evidence_rejects_a_stale_source_coordinate_after_path_move() {
+        let root = Path::new("fixture-workspace");
+        let target = root.join("crates/ui_components/tests/a11y.rs");
+        let stale = root.join("crates/ui_components/tests/a11y/collection_semantics.rs");
+        let moved = root.join("crates/ui_components/tests/a11y/moved.rs");
+        let sources = BTreeMap::from([
+            (
+                target,
+                "#[path = \"a11y/moved.rs\"]\nmod collection_semantics;".to_string(),
+            ),
+            (
+                stale,
+                "#[test]\nfn listbox_final_tree_and_click_action_follow_resolved_state() {}"
+                    .to_string(),
+            ),
+            (
+                moved,
+                "#[test]\nfn listbox_final_tree_and_click_action_follow_resolved_state() {}"
+                    .to_string(),
+            ),
+        ]);
+
+        let failure = executable_test_source(root, fixture_evidence(), |path| {
+            sources
+                .get(path)
+                .cloned()
+                .ok_or_else(|| "fixture source is missing".to_string())
+        })
+        .expect_err("moved test must invalidate the retained source coordinate");
+
+        assert!(failure.contains("stale executable evidence source coordinate"));
+        assert!(failure.contains("a11y/moved.rs"));
+    }
+
+    #[test]
+    fn official_producer_audit_rejects_direct_semantic_assembly_methods() {
+        for method_call in [
+            "element.ui_role(Role::Button)",
+            "element.ui_aria_disabled(true)",
+            "element.aria_label(\"label\")",
+        ] {
+            let source = format!("fn render(element: Element) {{ let _ = {method_call}; }}");
+            let failures =
+                direct_semantic_assembly_failures("crates/ui_components/src/button.rs", &source);
+
+            assert!(
+                has_failure(&failures, "directly calls semantic assembly method"),
+                "expected `{method_call}` to fail: {failures:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn official_producer_audit_keeps_narrow_semantic_input_allowances() {
+        let count_failures = direct_semantic_assembly_failures(
+            "crates/ui_components/src/table/mod.rs",
+            "fn project(plan: Plan) { let _ = plan.aria_row_count(); }",
+        );
+        let input_failures = direct_semantic_assembly_failures(
+            "crates/ui_components/src/table/editors.rs",
+            "fn editor(checkbox: Checkbox) { let _ = checkbox.aria_label(\"label\"); }",
+        );
+
+        assert!(count_failures.is_empty(), "{count_failures:#?}");
+        assert!(input_failures.is_empty(), "{input_failures:#?}");
+    }
+
+    #[test]
+    fn runtime_a11y_evidence_consumer_is_rejected_but_empty_scaffold_is_allowed() {
+        let consumer_failures = old_a11y_evidence_failures(
+            "crates/ui_components/src/button.rs",
+            "fn render() { let _ = COMPONENT_A11Y_EVIDENCE; }",
+        );
+        let scaffold_failures = old_a11y_evidence_failures(
+            "crates/ui_components/src/component_contract/evidence.rs",
+            "pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[];",
+        );
+        let scaffold_consumer_failures = old_a11y_evidence_failures(
+            "crates/ui_components/src/component_contract/evidence.rs",
+            "pub const COMPONENT_A11Y_EVIDENCE: &[ComponentA11yEvidence] = &[];\nfn render() { let _ = COMPONENT_A11Y_EVIDENCE; }",
+        );
+
+        assert!(has_failure(&consumer_failures, "runtime source consumes"));
+        assert!(scaffold_failures.is_empty(), "{scaffold_failures:#?}");
+        assert!(has_failure(
+            &scaffold_consumer_failures,
+            "runtime source consumes"
+        ));
     }
 
     #[test]
@@ -1271,63 +1886,34 @@ pub use crate::field::Field as FormField;
     }
 
     #[test]
-    fn audit_reports_missing_representative_a11y_claim() {
-        let claims = [A11yClaim {
-            component: "Button".to_string(),
-            selector_prefix: "gallery:component-button-sample".to_string(),
-        }];
-        let evidence = [
-            evidence("Button", "Button"),
-            evidence("IconButton", "Button"),
-        ];
-
-        let failures = audit_a11y_claims(&claims, &evidence);
-
-        assert!(has_failure(&failures, "selector binding"));
-    }
-
-    #[test]
-    fn audit_reports_a11y_claim_without_component_evidence() {
-        let claims = [A11yClaim {
-            component: "GalleryOnly".to_string(),
-            selector_prefix: "gallery:component-gallery-only-sample".to_string(),
-        }];
-        let evidence = [evidence("Button", "Button")];
-
-        let failures = audit_a11y_claims(&claims, &evidence);
-
-        assert!(has_failure(
-            &failures,
-            "no component-owned COMPONENT_A11Y_EVIDENCE"
-        ));
-    }
-
-    #[test]
-    fn audit_reports_a11y_evidence_without_label_source() {
-        let claims = [A11yClaim {
-            component: "Button".to_string(),
-            selector_prefix: "gallery:component-button-sample".to_string(),
-        }];
-        let mut evidence = evidence("Button", "Button");
-        evidence.label_source = "NotRequired".to_string();
-
-        let failures = audit_a11y_claims(&claims, &[evidence]);
-
-        assert!(has_failure(
-            &failures,
-            "must name the accessible label source"
-        ));
-    }
-
-    #[test]
-    fn audit_reports_missing_conformance_evidence_token() {
+    fn audit_reports_missing_non_executable_conformance_evidence_token() {
         let gates = [ConformanceGate {
-            id: "a11y-labels".to_string(),
-            evidence: BTreeSet::from(["COMPONENT_A11Y_CLAIMS".to_string()]),
+            id: "theme-schema".to_string(),
+            evidence: BTreeSet::from(["crates/ui_components/src/theme/schema.rs".to_string()]),
         }];
 
         let failures = audit_conformance_gate_evidence(&gates);
 
-        assert!(has_failure(&failures, "ComponentA11yContract"));
+        assert!(has_failure(
+            &failures,
+            "cargo run -p xtask -- scan-theme-schema"
+        ));
+    }
+
+    #[test]
+    fn audit_does_not_treat_a11y_display_tokens_as_executable_evidence() {
+        let gates = [ConformanceGate {
+            id: "a11y-labels".to_string(),
+            evidence: BTreeSet::new(),
+        }];
+
+        let failures = audit_conformance_gate_evidence(&gates);
+
+        for display_token in ["SemanticDescriptor", "ComponentA11yContract", "TreeUpdate"] {
+            assert!(
+                !has_failure(&failures, display_token),
+                "display token `{display_token}` must not substitute for executable evidence"
+            );
+        }
     }
 }

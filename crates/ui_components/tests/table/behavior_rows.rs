@@ -33,14 +33,18 @@ fn table_behavior_snapshot_uses_core_state_and_virtualizer_contracts() {
             <= snapshot.row_counts().visible_rows() + snapshot.metrics().overscan()
     );
     assert_eq!(snapshot.rows()[0].model_index(), 3);
-    assert_eq!(snapshot.rows()[0].id().as_str(), "row-0093");
+    assert_eq!(
+        snapshot.rows()[0].source_row_id().map(|id| id.as_str()),
+        Some("row-0093")
+    );
     assert_eq!(snapshot.rows()[0].role(), Role::Row);
     assert_eq!(snapshot.rows()[0].cells()[0].role(), Role::Cell);
     assert!(
-        snapshot
-            .rows()
-            .iter()
-            .any(|row| row.id().as_str() == "row-0091" && row.selected()),
+        snapshot.rows().iter().any(|row| {
+            row.source_row_id()
+                .is_some_and(|id| id.as_str() == "row-0091")
+                && row.selected()
+        }),
         "expected selection to follow row id after filtering and sorting"
     );
 
@@ -71,7 +75,7 @@ fn table_behavior_snapshot_exposes_tree_row_metadata_for_adapter_rendering() {
         TableColumn::new("status", "Status").with_width(ui_px(120.0)),
     ])
     .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
-    .with_expanded_rows(["root"])
+    .with_expanded_rows([TableRowIdentity::source("root")])
     .with_pagination(TablePagination::disabled());
     let snapshot = Table::new("tree-table", "Tree table", state)
         .row_height(ui_px(24.0))
@@ -79,11 +83,17 @@ fn table_behavior_snapshot_exposes_tree_row_metadata_for_adapter_rendering() {
         .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
     assert_eq!(snapshot.rows().len(), 2);
-    assert_eq!(snapshot.rows()[0].id().as_str(), "root");
+    assert_eq!(
+        snapshot.rows()[0].source_row_id().map(|id| id.as_str()),
+        Some("root")
+    );
     assert!(snapshot.rows()[0].is_tree_branch());
     assert_eq!(snapshot.rows()[0].tree_expanded(), Some(true));
     assert_eq!(snapshot.rows()[0].depth(), 0);
-    assert_eq!(snapshot.rows()[1].id().as_str(), "child");
+    assert_eq!(
+        snapshot.rows()[1].source_row_id().map(|id| id.as_str()),
+        Some("child")
+    );
     assert!(!snapshot.rows()[1].is_tree_branch());
     assert_eq!(snapshot.rows()[1].tree_expanded(), None);
     assert_eq!(snapshot.rows()[1].depth(), 1);
@@ -113,7 +123,7 @@ fn table_behavior_snapshot_exposes_manual_expansion_and_child_load_metadata() {
         manual_snapshot
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.source_row_id().expect("source row").as_str())
             .collect::<Vec<_>>(),
         ["root", "child"],
         "manual expansion should render the caller-supplied visible tree snapshot"
@@ -188,7 +198,7 @@ fn table_behavior_snapshot_exposes_manual_row_model_metadata() {
         snapshot
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.source_row_id().expect("source row").as_str())
             .collect::<Vec<_>>(),
         ["row-020", "row-021"],
         "manual row-model stages should render the caller-supplied page snapshot"

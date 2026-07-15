@@ -1208,6 +1208,31 @@ pub trait InteractiveElement: Sized {
         self.interactivity().focus_visible_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
+
+    /// Set the overflow x and y to scroll.
+    fn overflow_scroll(mut self) -> Self {
+        self.interactivity().base_style.overflow.x = Some(Overflow::Scroll);
+        self.interactivity().base_style.overflow.y = Some(Overflow::Scroll);
+        self
+    }
+
+    /// Set the overflow x to scroll.
+    fn overflow_x_scroll(mut self) -> Self {
+        self.interactivity().base_style.overflow.x = Some(Overflow::Scroll);
+        self
+    }
+
+    /// Set the overflow y to scroll.
+    fn overflow_y_scroll(mut self) -> Self {
+        self.interactivity().base_style.overflow.y = Some(Overflow::Scroll);
+        self
+    }
+
+    /// Track the scroll state of this element with the given handle.
+    fn track_scroll(mut self, scroll_handle: &ScrollHandle) -> Self {
+        self.interactivity().tracked_scroll_handle = Some(scroll_handle.clone());
+        self
+    }
 }
 
 /// A trait for elements that want to use the standard GPUI interactivity features
@@ -1478,31 +1503,6 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set this element to focusable.
     fn focusable(mut self) -> Self {
         self.interactivity().focusable = true;
-        self
-    }
-
-    /// Set the overflow x and y to scroll.
-    fn overflow_scroll(mut self) -> Self {
-        self.interactivity().base_style.overflow.x = Some(Overflow::Scroll);
-        self.interactivity().base_style.overflow.y = Some(Overflow::Scroll);
-        self
-    }
-
-    /// Set the overflow x to scroll.
-    fn overflow_x_scroll(mut self) -> Self {
-        self.interactivity().base_style.overflow.x = Some(Overflow::Scroll);
-        self
-    }
-
-    /// Set the overflow y to scroll.
-    fn overflow_y_scroll(mut self) -> Self {
-        self.interactivity().base_style.overflow.y = Some(Overflow::Scroll);
-        self
-    }
-
-    /// Track the scroll state of this element with the given handle.
-    fn track_scroll(mut self, scroll_handle: &ScrollHandle) -> Self {
-        self.interactivity().tracked_scroll_handle = Some(scroll_handle.clone());
         self
     }
 
@@ -4485,6 +4485,35 @@ mod tests {
         VisualContext as _, util::FluentBuilder as _,
     };
     use std::rc::Weak;
+
+    #[test]
+    fn scroll_primitives_support_unkeyed_interactive_elements() {
+        let scroll_handle = ScrollHandle::new();
+        let horizontal = div().overflow_x_scroll().track_scroll(&scroll_handle);
+        let vertical = div().overflow_y_scroll();
+        let both = div().overflow_scroll();
+
+        assert!(horizontal.interactivity.element_id.is_none());
+        assert_eq!(
+            horizontal.interactivity.base_style.overflow.x,
+            Some(Overflow::Scroll)
+        );
+        assert_eq!(horizontal.interactivity.base_style.overflow.y, None);
+        assert!(horizontal.interactivity.tracked_scroll_handle.is_some());
+        assert_eq!(vertical.interactivity.base_style.overflow.x, None);
+        assert_eq!(
+            vertical.interactivity.base_style.overflow.y,
+            Some(Overflow::Scroll)
+        );
+        assert_eq!(
+            both.interactivity.base_style.overflow.x,
+            Some(Overflow::Scroll)
+        );
+        assert_eq!(
+            both.interactivity.base_style.overflow.y,
+            Some(Overflow::Scroll)
+        );
+    }
 
     struct ExplicitTabStopProbe {
         first: FocusHandle,

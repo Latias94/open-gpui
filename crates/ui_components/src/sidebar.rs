@@ -10,7 +10,10 @@ use open_gpui::{
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
     Window, div, px,
 };
-use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{
+    AccessibleAction, Orientation, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx,
+    ui_px,
+};
 
 use crate::a11y::UiA11yElementExt;
 use crate::action::{ActionIconDescriptor, ResolvedActionIcon, ResolvedActionState};
@@ -1463,11 +1466,12 @@ impl RenderOnce for Sidebar {
                     let section_debug_id = debug_id.clone();
                     let section_label_color = theme.resolve(colors.muted_foreground());
                     let item_theme = theme.clone();
+                    let section_semantics =
+                        SemanticDescriptor::new(section.role()).with_label(section.label());
 
                     div()
                         .id(sidebar_section_id(section.value()))
-                        .ui_role(section.role())
-                        .aria_label(section.label().to_owned())
+                        .ui_semantics(&section_semantics)
                         .flex()
                         .flex_col()
                         .gap(gpui_px_from_ui(metrics.item_gap()))
@@ -1542,6 +1546,16 @@ impl RenderOnce for Sidebar {
                             let action_foreground = item_theme.resolve(colors.muted_foreground());
                             let item_focus_shadow =
                                 focus_ring_shadow_with_theme(focus_ring, &item_theme);
+                            let mut item_semantics = SemanticDescriptor::new(item.role())
+                                .with_label(&item_aria_label)
+                                .with_selected(item_selected)
+                                .with_disabled(item_disabled)
+                                .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
+                            if let Some(position) = item_position {
+                                item_semantics = item_semantics
+                                    .with_position_in_set(position)
+                                    .with_size_of_set(item_size_of_set);
+                            }
 
                             div()
                                 .id(sidebar_item_id(item.value()))
@@ -1552,14 +1566,7 @@ impl RenderOnce for Sidebar {
                                 })
                                 .focusable()
                                 .tab_stop(item_tab_stop)
-                                .ui_role(item.role())
-                                .aria_label(item_aria_label)
-                                .aria_selected(item_selected)
-                                .aria_disabled(item_disabled)
-                                .when_some(item_position, |this, position| {
-                                    this.aria_position_in_set(position)
-                                        .aria_size_of_set(item_size_of_set)
-                                })
+                                .ui_semantics(&item_semantics)
                                 .when_some(focus_handle, |this, focus_handle| {
                                     this.track_focus(&focus_handle)
                                 })
@@ -1711,6 +1718,9 @@ impl RenderOnce for Sidebar {
                                 })
                         }))
                 }));
+            let semantics = SemanticDescriptor::new(state.role())
+                .with_label(state.label())
+                .with_disabled(state.disabled());
 
             div()
                 .id(id.clone())
@@ -1718,9 +1728,7 @@ impl RenderOnce for Sidebar {
                     let debug_id = debug_id.clone();
                     move || format!("sidebar:{debug_id}")
                 })
-                .ui_role(state.role())
-                .aria_label(label.clone())
-                .aria_disabled(state.disabled())
+                .ui_semantics(&semantics)
                 .w(gpui_px_from_ui(metrics.resolved_width()))
                 .h_full()
                 .flex_none()

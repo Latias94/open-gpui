@@ -6,9 +6,9 @@ use open_gpui::{
     SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
-    DismissReason, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayAnchorInput,
-    OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, Sizable, Size,
-    ThemeTokens, rect, ui_point, ui_px, ui_size,
+    AccessibleAction, DismissReason, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+    OverlayAnchorInput, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
+    SemanticDescriptor, Sizable, Size, ThemeTokens, rect, ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -359,6 +359,12 @@ impl RenderOnce for Select {
             .with_offset(ui_px(4.0)),
             overlay_adapter.snap_margin(),
         );
+        let trigger_semantics = SemanticDescriptor::new(plan.trigger_role)
+            .with_label(state.label())
+            .with_selected(plan.trigger_selected)
+            .with_expanded(plan.open)
+            .with_disabled(plan.disabled)
+            .with_actions(&[AccessibleAction::Focus]);
 
         div()
             .id(plan.root_id.clone())
@@ -405,11 +411,7 @@ impl RenderOnce for Select {
                         .focusable()
                         .track_focus(overlay_binding.trigger_focus())
                         .tab_stop(!plan.disabled)
-                        .ui_role(plan.trigger_role)
-                        .aria_label(state.label().to_owned())
-                        .aria_selected(plan.trigger_selected)
-                        .aria_expanded(plan.open)
-                        .aria_disabled(plan.disabled)
+                        .ui_semantics(&trigger_semantics)
                         .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                         .on_key_down({
                             let window_overlay_runtime = window_overlay_runtime.clone();

@@ -6,9 +6,9 @@ use open_gpui::{
     ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
-    DismissReason, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayAnchorInput,
-    OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, Role, Sizable, Size,
-    ThemeTokens, rect, ui_point, ui_px, ui_size,
+    AccessibleAction, DismissReason, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+    OverlayAnchorInput, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
+    Role, SemanticDescriptor, Sizable, Size, ThemeTokens, rect, ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -393,6 +393,15 @@ impl RenderOnce for Combobox {
             .with_offset(ui_px(4.0)),
             overlay_adapter.snap_margin(),
         );
+        let input_semantics = SemanticDescriptor::new(plan.input_role)
+            .with_label(plan.label.as_ref())
+            .with_expanded(open)
+            .with_disabled(disabled);
+        let toggle_semantics = SemanticDescriptor::new(Role::Button)
+            .with_label("Toggle combobox popup")
+            .with_expanded(open)
+            .with_disabled(disabled)
+            .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
 
         div()
             .id(plan.root_id.clone())
@@ -420,10 +429,7 @@ impl RenderOnce for Combobox {
                         .flex()
                         .items_center()
                         .gap_1()
-                        .ui_role(plan.input_role)
-                        .aria_label(plan.label.clone())
-                        .aria_expanded(open)
-                        .aria_disabled(disabled)
+                        .ui_semantics(&input_semantics)
                         .on_key_down({
                             let runtime = runtime.clone();
                             let input_controller = input_controller.clone();
@@ -527,13 +533,10 @@ impl RenderOnce for Combobox {
                                 .border_1()
                                 .border_color(theme.resolve(plan.colors.popup_border()))
                                 .text_color(theme.resolve(plan.colors.popup_foreground()))
-                                .ui_role(Role::Button)
+                                .ui_semantics(&toggle_semantics)
                                 .focus_visible(move |style| style.shadow(toggle_focus_shadow))
                                 .focusable()
                                 .tab_stop(!disabled)
-                                .aria_label("Toggle combobox popup")
-                                .aria_expanded(open)
-                                .aria_disabled(disabled)
                                 .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                                 .when(!disabled, |this| {
                                     let input_controller = input_controller.clone();
@@ -670,6 +673,8 @@ fn combobox_content_element(
         listbox
     };
     let scroll_viewport_id = state.scroll_area().viewport_id().to_owned();
+    let content_semantics =
+        SemanticDescriptor::new(state.content_role()).with_label(label.as_ref());
 
     window_overlay_runtime.surface(
         &overlay_binding,
@@ -691,8 +696,7 @@ fn combobox_content_element(
             .text_color(theme.resolve(colors.popup_foreground()))
             .shadow_lg()
             .occlude()
-            .ui_role(state.content_role())
-            .aria_label(label)
+            .ui_semantics(&content_semantics)
             .child(
                 ScrollArea::new(scroll_viewport_id, listbox)
                     .vertical()

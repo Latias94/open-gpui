@@ -112,6 +112,12 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_faceted_filter = root::TableFacetedFilter::new("status-filter", "Status", "status");
     let root_column_visibility = root::TableColumnVisibility::new("column-visibility", "Columns")
         .columns([ui_core::TableColumn::new("status", "Status")]);
+    let root_cell_edit_request = root::TableCellEditRequest::new(
+        ui_core::TableSourceRowIdentity::unique("root-row"),
+        "status",
+        "ready",
+        "blocked",
+    );
     let root_avatar = root::Avatar::new("avatar", "Ada Lovelace");
     let root_separator = root::Separator::new("separator");
     let root_kbd = root::Kbd::new("kbd", "Ctrl+K");
@@ -204,6 +210,12 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_column_visibility_for_prelude_case =
         root::TableColumnVisibility::new("column-visibility", "Columns")
             .columns([ui_core::TableColumn::new("status", "Status")]);
+    let prelude_cell_edit_request = prelude::TableCellEditRequest::new(
+        ui_core::TableSourceRowIdentity::unique("prelude-row"),
+        "status",
+        "ready",
+        "blocked",
+    );
     let prelude_avatar = prelude::Avatar::new("avatar", "Ada Lovelace");
     let prelude_separator = prelude::Separator::new("separator");
     let prelude_kbd = prelude::Kbd::new("kbd", "Ctrl+K");
@@ -266,6 +278,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_table_toolbar.state(),
         root_faceted_filter.state(),
         root_column_visibility.state(),
+        root_cell_edit_request.source_identity(),
         root_avatar.state(),
         root_separator.state(),
         root_kbd.state(),
@@ -307,6 +320,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_table_toolbar_for_prelude_case.state(),
         root_faceted_filter_for_prelude_case.state(),
         root_column_visibility_for_prelude_case.state(),
+        prelude_cell_edit_request.source_identity(),
         prelude_avatar.state(),
         prelude_separator.state(),
         prelude_kbd.state(),

@@ -108,7 +108,7 @@ fn table_behavior_snapshot_exposes_editable_leaf_cell_kinds_for_leaf_cells_only(
     let editable_leaf = snapshot
         .rows()
         .iter()
-        .find(|row| row.id().as_str() == "row-a")
+        .find(|row| row.source_row_id().is_some_and(|id| id.as_str() == "row-a"))
         .expect("row-a should resolve");
     let editable_name = editable_leaf
         .cells()
@@ -145,7 +145,7 @@ fn table_behavior_snapshot_exposes_editable_leaf_cell_kinds_for_leaf_cells_only(
     let missing_leaf = snapshot
         .rows()
         .iter()
-        .find(|row| row.id().as_str() == "row-b")
+        .find(|row| row.source_row_id().is_some_and(|id| id.as_str() == "row-b"))
         .expect("row-b should resolve");
     let missing_name = missing_leaf
         .cells()
@@ -190,11 +190,16 @@ fn table_cell_edit_change_updates_source_row_and_preserves_table_state() {
     .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
     .with_filters([TableFilter::contains("team", "UI")])
     .with_sorting([TableSort::ascending("name")])
-    .with_expanded_rows(["root"])
+    .with_expanded_rows([TableRowIdentity::source("root")])
     .with_selected_rows(["child"])
     .with_pagination(TablePagination::new(2, 25));
 
-    let change = TableCellEditChange::for_row("child", "name", "Child", "Child Prime");
+    let change = TableCellEditRequest::new(
+        TableSourceRowIdentity::unique("child"),
+        "name",
+        "Child",
+        "Child Prime",
+    );
 
     let (next, outcome) = change.apply_to(state.clone());
     assert_eq!(outcome, TableCellEditApplyOutcome::Updated);
@@ -220,7 +225,12 @@ fn table_cell_edit_change_updates_source_row_and_preserves_table_state() {
         Some("Child Prime")
     );
 
-    let missing_column = TableCellEditChange::for_row("child", "missing", "old", "new");
+    let missing_column = TableCellEditRequest::new(
+        TableSourceRowIdentity::unique("child"),
+        "missing",
+        "old",
+        "new",
+    );
     let (missing_column_state, missing_outcome) = missing_column.apply_to(next.clone());
     assert_eq!(missing_outcome, TableCellEditApplyOutcome::CellNotFound);
     assert_eq!(missing_column_state, next);
@@ -230,7 +240,12 @@ fn table_cell_edit_change_updates_source_row_and_preserves_table_state() {
         "missing cell edits should be inspectable no-ops"
     );
 
-    let missing_row = TableCellEditChange::for_row("missing-row", "name", "old", "new");
+    let missing_row = TableCellEditRequest::new(
+        TableSourceRowIdentity::unique("missing-row"),
+        "name",
+        "old",
+        "new",
+    );
     let (missing_row_state, missing_row_outcome) = missing_row.apply_to(next.clone());
     assert_eq!(missing_row_outcome, TableCellEditApplyOutcome::RowNotFound);
     assert_eq!(missing_row_state, next);
@@ -238,6 +253,106 @@ fn table_cell_edit_change_updates_source_row_and_preserves_table_state() {
         missing_row_state.cache_key().rows_identity(),
         next.cache_key().rows_identity(),
         "missing row edits should be inspectable no-ops"
+    );
+}
+
+#[test]
+fn table_cell_edit_change_targets_grouped_duplicate_by_resolved_identity() {
+    let state = TableState::new([
+        TableRow::new("root")
+            .with_cell("team", "Root")
+            .with_cell("name", "Root")
+            .with_child(
+                TableRow::new("duplicate")
+                    .with_instance_id("nested")
+                    .with_cell("team", "Nested")
+                    .with_cell("name", "Nested duplicate"),
+            ),
+        TableRow::new("duplicate")
+            .with_instance_id("top")
+            .with_cell("team", "Top")
+            .with_cell("name", "Top duplicate"),
+    ])
+    .with_columns([
+        TableColumn::new("team", "Team"),
+        TableColumn::new("name", "Name").with_text_editable(true),
+    ])
+    .with_grouping(["team"])
+    .with_all_rows_expanded();
+    let target = TableSourceRowIdentity::explicit("duplicate", "top");
+    let change =
+        TableCellEditRequest::new(target, "name", "Top duplicate", "Updated top duplicate");
+
+    let (next, outcome) = change.apply_to(state);
+
+    assert_eq!(outcome, TableCellEditApplyOutcome::Updated);
+    assert_eq!(
+        next.rows()[0].children()[0]
+            .cell(&TableColumnId::new("name"))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("Nested duplicate")
+    );
+    assert_eq!(
+        next.rows()[1]
+            .cell(&TableColumnId::new("name"))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("Updated top duplicate")
+    );
+}
+
+#[test]
+fn ambiguous_business_id_edit_is_an_inspectable_no_op() {
+    let state = TableState::new([
+        TableRow::new("duplicate")
+            .with_instance_id("first")
+            .with_cell("name", "First"),
+        TableRow::new("duplicate")
+            .with_instance_id("second")
+            .with_cell("name", "Second"),
+    ]);
+    let change = TableCellEditRequest::new(
+        TableSourceRowIdentity::unique("duplicate"),
+        "name",
+        "First",
+        "Updated",
+    );
+
+    let (next, outcome) = change.apply_to(state.clone());
+
+    assert_eq!(outcome, TableCellEditApplyOutcome::AmbiguousRowId);
+    assert_eq!(next, state);
+    assert_eq!(
+        next.cache_key().rows_identity(),
+        state.cache_key().rows_identity(),
+        "ambiguous edits must not invalidate row or adapter caches"
+    );
+}
+
+#[test]
+fn stale_occurrence_edit_cannot_retarget_a_reordered_duplicate() {
+    let state = TableState::new([
+        TableRow::new("duplicate").with_cell("name", "First"),
+        TableRow::new("duplicate").with_cell("name", "Second"),
+    ]);
+    let target = state
+        .source_row_identity_at("duplicate", 1)
+        .expect("second duplicate should resolve in the source snapshot");
+    let change = TableCellEditRequest::new(target, "name", "Second", "Updated second");
+    let reordered = state.with_rows([
+        TableRow::new("duplicate").with_cell("name", "Second"),
+        TableRow::new("duplicate").with_cell("name", "First"),
+    ]);
+
+    let (next, outcome) = change.apply_to(reordered.clone());
+
+    assert_eq!(outcome, TableCellEditApplyOutcome::StaleRowIdentity);
+    assert_eq!(next, reordered);
+    assert_eq!(
+        next.cache_key().rows_identity(),
+        reordered.cache_key().rows_identity(),
+        "stale occurrence edits must leave the current snapshot untouched"
     );
 }
 
@@ -268,11 +383,16 @@ fn table_cell_edit_change_updates_boolean_source_row_and_preserves_table_state()
     .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
     .with_filters([TableFilter::contains("team", "UI")])
     .with_sorting([TableSort::ascending("name")])
-    .with_expanded_rows(["root"])
+    .with_expanded_rows([TableRowIdentity::source("root")])
     .with_selected_rows(["child"])
     .with_pagination(TablePagination::new(2, 25));
 
-    let change = TableCellEditChange::for_row("child", "enabled", true, false);
+    let change = TableCellEditRequest::new(
+        TableSourceRowIdentity::unique("child"),
+        "enabled",
+        true,
+        false,
+    );
 
     let (next, outcome) = change.apply_to(state.clone());
     assert_eq!(outcome, TableCellEditApplyOutcome::Updated);
@@ -299,12 +419,22 @@ fn table_cell_edit_change_updates_boolean_source_row_and_preserves_table_state()
         Some(&TableCellValue::Bool(false))
     );
 
-    let missing_column = TableCellEditChange::for_row("child", "missing", true, false);
+    let missing_column = TableCellEditRequest::new(
+        TableSourceRowIdentity::unique("child"),
+        "missing",
+        true,
+        false,
+    );
     let (missing_column_state, missing_outcome) = missing_column.apply_to(next.clone());
     assert_eq!(missing_outcome, TableCellEditApplyOutcome::CellNotFound);
     assert_eq!(missing_column_state, next);
 
-    let missing_row = TableCellEditChange::for_row("missing-row", "enabled", true, false);
+    let missing_row = TableCellEditRequest::new(
+        TableSourceRowIdentity::unique("missing-row"),
+        "enabled",
+        true,
+        false,
+    );
     let (missing_row_state, missing_row_outcome) = missing_row.apply_to(next.clone());
     assert_eq!(missing_row_outcome, TableCellEditApplyOutcome::RowNotFound);
     assert_eq!(missing_row_state, next);

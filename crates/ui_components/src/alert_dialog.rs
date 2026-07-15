@@ -9,9 +9,9 @@ use open_gpui::{
     Pixels, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use open_gpui_ui_core::{
-    DismissReason, EscapeKeyPolicy, FocusRestoreIntent, FocusTargetAvailability, FocusTargetId,
-    InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind, Role, Sizable, Size, ThemeTokens,
-    UiPx, ui_px,
+    AccessibleAction, DismissReason, EscapeKeyPolicy, FocusRestoreIntent, FocusTargetAvailability,
+    FocusTargetId, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind, Role,
+    SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -963,6 +963,12 @@ impl RenderOnce for AlertDialog {
             runtime.focus_targets = registered_focus_targets;
         });
         let overlay_adapter = gpui_overlay_state(state.overlay());
+        let trigger_semantics = SemanticDescriptor::new(state.trigger_role())
+            .with_label(trigger_label.as_ref())
+            .with_selected(state.trigger_selected())
+            .with_expanded(open)
+            .with_disabled(disabled)
+            .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
 
         div()
             .id(id.clone())
@@ -1000,11 +1006,7 @@ impl RenderOnce for AlertDialog {
                         .focusable()
                         .track_focus(overlay_binding.trigger_focus())
                         .tab_stop(!disabled)
-                        .ui_role(state.trigger_role())
-                        .aria_label(trigger_label.clone())
-                        .aria_selected(state.trigger_selected())
-                        .aria_expanded(open)
-                        .aria_disabled(disabled)
+                        .ui_semantics(&trigger_semantics)
                         .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                         .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                         .when(!disabled, |this| {
@@ -1073,6 +1075,10 @@ fn alert_dialog_layer_element(
     let muted_foreground = theme.resolve(colors.muted_foreground());
     let x = ((viewport.width - gpui_px_from_ui(metrics.width())) / 2.0).max(px(12.0));
     let y = (viewport.height / 10.0).max(px(24.0));
+    let content_semantics = SemanticDescriptor::new(state.content_role())
+        .with_label(state.title())
+        .with_modal(true)
+        .with_actions(&[AccessibleAction::Focus]);
 
     div()
         .id(content_id)
@@ -1118,8 +1124,7 @@ fn alert_dialog_layer_element(
                     .tab_group()
                     .focusable()
                     .track_focus(overlay_binding.surface_focus())
-                    .ui_role(state.content_role())
-                    .aria_label(state.title().to_owned())
+                    .ui_semantics(&content_semantics)
                     .child(
                         div()
                             .text_size(gpui_px_from_ui(metrics.title_size()))
@@ -1179,6 +1184,10 @@ fn alert_dialog_cancel_button(
     let cancel_foreground = theme.resolve(colors.cancel_foreground());
     let cancel_hover_background = theme.resolve(colors.cancel_hover_background());
     let cancel = state.cancel().clone();
+    let semantics = SemanticDescriptor::new(cancel.role())
+        .with_label(cancel.label())
+        .with_disabled(cancel.disabled())
+        .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
 
     div()
         .id("alert-dialog-cancel")
@@ -1202,9 +1211,7 @@ fn alert_dialog_cancel_button(
         })
         .track_focus(&cancel_focus)
         .tab_stop(cancel.activation_enabled())
-        .ui_role(cancel.role())
-        .aria_label(cancel.label().to_owned())
-        .aria_disabled(cancel.disabled())
+        .ui_semantics(&semantics)
         .focus_visible(move |style| style.shadow(focus_shadow.clone()))
         .when(cancel.disabled(), |this| {
             this.opacity(0.56).cursor_not_allowed()
@@ -1252,6 +1259,10 @@ fn alert_dialog_action_button(
     let action_foreground = theme.resolve(colors.action_foreground());
     let action_hover_background = theme.resolve(colors.action_hover_background());
     let action = state.action().clone();
+    let semantics = SemanticDescriptor::new(action.role())
+        .with_label(action.label())
+        .with_disabled(action.disabled())
+        .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
 
     div()
         .id("alert-dialog-action")
@@ -1275,9 +1286,7 @@ fn alert_dialog_action_button(
         })
         .track_focus(&action_focus)
         .tab_stop(action.activation_enabled())
-        .ui_role(action.role())
-        .aria_label(action.label().to_owned())
-        .aria_disabled(action.disabled())
+        .ui_semantics(&semantics)
         .focus_visible(move |style| style.shadow(focus_shadow.clone()))
         .when(action.disabled(), |this| {
             this.opacity(0.56).cursor_not_allowed()

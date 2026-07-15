@@ -2,130 +2,68 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, ClickEvent, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Pixels, ScrollHandle, StatefulInteractiveElement, Styled, div, px, rgb,
+    AnyElement, Axis, ClickEvent, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
+    Pixels, StatefulInteractiveElement, Styled, div, px, rgb,
 };
 use open_gpui_ui_core::{
-    AccessibleAction, Role, SemanticDescriptor, Sizable, TableColumnRegion, TableExpansionState,
-    TableResolvedRow, TableRowId, TableRowRegion, TableSelectionPolicy, TableTreeRow, UiPx,
+    AccessibleAction, Role, SemanticDescriptor, TableColumnRegion, TableRowRegion, UiPx,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
-use crate::scroll_area::ScrollArea;
-use crate::table::body::keyboard::handle_table_row_key_down;
+use crate::scroll_area::ScrollAreaMetrics;
+use crate::table::body::keyboard::TableKeyboardDispatchContext;
 use crate::table::body::layout::{render_table_lane_spacer, table_row_region_cells_for_window};
 use crate::table::cell::render_table_body_cell;
+use crate::table::identity::{TableDebugSelector, table_row_element_id};
 use crate::table::interaction::request_table_row_selection_change;
+use crate::table::runtime::TableRuntimeRenderSnapshot;
+use crate::table::scroll::render_table_scroll_viewport;
 use crate::table::{
-    TableCellEditHandler, TableCenterColumnWindowPlan, TableInputModifiers, TableMetrics,
-    TablePinnedLayoutPlan, TableRowAction, TableRowActivation, TableRowActivationHandler,
-    TableRowActivationKind, TableRowExpansionHandler, TableRowRenderPlan, TableRowSelectionHandler,
-    TableRuntime, TableSelectionScope,
+    TableCenterColumnWindowPlan, TableInputModifiers, TableRowAction, TableRowActivation,
+    TableRowActivationKind, TableRowRenderPlan, TableSelectionScope,
 };
 
-#[allow(clippy::too_many_arguments)]
+use super::{TableBodyRenderContext, TableRowRenderContext};
+
 pub(in crate::table::body) fn render_table_row_band(
-    table_id: &str,
+    context: Rc<TableBodyRenderContext>,
+    runtime_snapshot: &TableRuntimeRenderSnapshot,
     region: TableRowRegion,
-    metrics: TableMetrics,
     rows: Vec<TableRowRenderPlan>,
     height: UiPx,
-    pinned_layout: Option<TablePinnedLayoutPlan>,
-    center_window: Option<Rc<TableCenterColumnWindowPlan>>,
-    horizontal_scroll_handle: ScrollHandle,
-    vertical_scroll_handle: ScrollHandle,
-    runtime: Entity<TableRuntime>,
-    runtime_snapshot: TableRuntime,
-    final_rows: Rc<Vec<TableResolvedRow>>,
-    top_row_count: usize,
-    center_total_row_count: usize,
-    current_expansion: TableExpansionState,
-    selection_policy: TableSelectionPolicy,
-    selected_row_ids: Rc<Vec<TableRowId>>,
-    on_row_selection_change: Option<TableRowSelectionHandler>,
-    on_row_activate: Option<TableRowActivationHandler>,
-    on_row_expansion_request: Option<TableRowExpansionHandler>,
-    on_cell_edit_change: Option<TableCellEditHandler>,
-    measured_rows: bool,
 ) -> AnyElement {
-    let table_id = table_id.to_owned();
-    let region_name = region.as_str();
+    let table_id = context.table_id.clone();
+    let body_selector = TableDebugSelector::body_region(&table_id, region);
     div()
-        .id(format!("table:{table_id}:body:{region_name}"))
-        .debug_selector({
-            let table_id = table_id.clone();
-            move || format!("table:{table_id}:body:{region_name}")
-        })
+        .debug_selector(move || body_selector.clone())
         .relative()
         .w_full()
         .h(gpui_px_from_ui(height))
         .flex_none()
         .children(rows.into_iter().map(move |row| {
-            let table_id = table_id.clone();
-            let center_window = center_window.clone();
-            let focus_handle = runtime_snapshot.focus_handles.get(row.id()).cloned();
-            let focused = runtime_snapshot.focused_row.as_ref() == Some(row.id());
-            render_table_row(
-                table_id,
-                row,
-                metrics,
-                pinned_layout.clone(),
-                center_window,
-                horizontal_scroll_handle.clone(),
-                vertical_scroll_handle.clone(),
-                runtime.clone(),
+            let focus_handle = runtime_snapshot.focus_handle(row.identity());
+            let focused = runtime_snapshot.is_focused(row.identity());
+            render_table_row(TableRowRenderContext {
+                body: context.clone(),
+                row: Rc::new(row),
                 focus_handle,
                 focused,
-                final_rows.clone(),
-                top_row_count,
-                center_total_row_count,
-                current_expansion.clone(),
-                selection_policy,
-                selected_row_ids.clone(),
-                on_row_selection_change.clone(),
-                on_row_activate.clone(),
-                on_row_expansion_request.clone(),
-                on_cell_edit_change.clone(),
-                measured_rows,
-            )
+            })
         }))
         .into_any_element()
 }
 
-#[allow(clippy::too_many_arguments)]
-fn render_table_row(
-    table_id: String,
-    row: TableRowRenderPlan,
-    metrics: TableMetrics,
-    pinned_layout: Option<TablePinnedLayoutPlan>,
-    center_window: Option<Rc<TableCenterColumnWindowPlan>>,
-    horizontal_scroll_handle: ScrollHandle,
-    vertical_scroll_handle: ScrollHandle,
-    runtime: Entity<TableRuntime>,
-    focus_handle: Option<FocusHandle>,
-    focused: bool,
-    final_rows: Rc<Vec<TableResolvedRow>>,
-    top_row_count: usize,
-    center_total_row_count: usize,
-    current_expansion: TableExpansionState,
-    selection_policy: TableSelectionPolicy,
-    selected_row_ids: Rc<Vec<TableRowId>>,
-    on_row_selection_change: Option<TableRowSelectionHandler>,
-    on_row_activate: Option<TableRowActivationHandler>,
-    on_row_expansion_request: Option<TableRowExpansionHandler>,
-    on_cell_edit_change: Option<TableCellEditHandler>,
-    measured_rows: bool,
-) -> impl IntoElement {
-    let render_key = row.render_key().to_owned();
-    let row_id = row.id().clone();
-    let row_for_layout = row.clone();
-    let row_for_click = row.clone();
-    let row_for_key = row.clone();
-    let tree = row.row().tree().cloned();
-    let tree_depth = tree.as_ref().map(TableTreeRow::depth).unwrap_or(0);
-    let tree_branch = row.row().is_tree_branch();
-    let tree_expanded = row.row().tree_expanded().unwrap_or(false);
+fn render_table_row(context: TableRowRenderContext) -> impl IntoElement {
+    let row = context.row.as_ref();
+    let table_id = context.body.table_id.clone();
+    let metrics = context.body.metrics;
+    let measured_rows = context.body.measured_rows;
+    let center_window = context.body.center_window.clone();
+    let row_identity_key = row.row().identity_key().clone();
+    let tree_branch = row.is_tree_branch();
+    let tree_expanded = row.tree_expanded().unwrap_or(false);
+    let virtual_size = row.virtual_size();
     let row_background = if row.row().is_group() {
         rgb(0xf1f4f8)
     } else if row.selected() {
@@ -167,7 +105,7 @@ fn render_table_row(
             )
         })
         .collect::<Vec<_>>();
-    let tree_affordance_column_id = tree.as_ref().and_then(|_| {
+    let tree_affordance_column_id = row.row().tree().and_then(|_| {
         region_cells.iter().find_map(|(_, _, cells, _, _, _, _)| {
             cells.first().map(|cell| cell.column_id().clone())
         })
@@ -180,20 +118,21 @@ fn render_table_row(
         semantics = semantics.with_expanded(tree_expanded);
     }
 
-    let row_element = div()
+    let horizontal_scrollbar_width =
+        gpui_px_from_ui(ScrollAreaMetrics::from_size(metrics.size()).scrollbar_width());
+    div()
         .on_children_prepainted({
-            let runtime = runtime.clone();
-            let row_key = render_key.clone();
+            let context = context.clone();
             move |row_bounds, _window, cx| {
-                if measured_rows {
+                if context.body.measured_rows {
                     let measured_height = row_bounds
                         .iter()
                         .map(|bounds| bounds.size.height)
-                        .fold(Pixels::ZERO, Pixels::max);
-                    let measured_height = measured_height.ceil();
-                    runtime.update(cx, |runtime, cx| {
+                        .fold(Pixels::ZERO, Pixels::max)
+                        .ceil();
+                    context.body.runtime.update(cx, |runtime, cx| {
                         runtime.set_row_measurement(
-                            row_key.clone(),
+                            context.row.identity().clone(),
                             ui_px_from_gpui(measured_height),
                             cx,
                         );
@@ -201,11 +140,11 @@ fn render_table_row(
                 }
             }
         })
-        .id(format!("table:{table_id}:row:{render_key}"))
+        .id(table_row_element_id(&table_id, &row_identity_key))
         .debug_selector({
             let table_id = table_id.clone();
-            let render_key = render_key.clone();
-            move || format!("table:{table_id}:row:{render_key}")
+            let row_identity_key = row_identity_key.clone();
+            move || TableDebugSelector::row_key(&table_id, &row_identity_key)
         })
         .absolute()
         .top(gpui_px_from_ui(row.virtual_start()))
@@ -220,21 +159,29 @@ fn render_table_row(
         .hover(|this| this.bg(rgb(0xeef2f7)))
         .ui_semantics(&semantics)
         .focusable()
-        .tab_stop(focused)
-        .when_some(focus_handle.clone(), |this, focus_handle| {
-            this.track_focus(&focus_handle)
+        .tab_stop(context.focused)
+        .when_some(context.focus_handle.clone(), {
+            let context = context.clone();
+            move |this, focus_handle| {
+                let action_focus_handle = focus_handle.clone();
+                this.track_focus(&focus_handle).on_ui_a11y_action(
+                    AccessibleAction::Focus,
+                    move |_, window, cx| {
+                        context.body.runtime.update(cx, |runtime, cx| {
+                            runtime.set_focused(context.row.identity().clone(), cx);
+                        });
+                        action_focus_handle.focus(window, cx);
+                    },
+                )
+            }
         })
         .focus_visible(|style| style.border_color(rgb(0x2f80ed)))
-        .when(!tree_branch || on_row_activate.is_some(), |this| {
-            this.cursor_pointer()
-        })
+        .when(
+            !tree_branch || context.body.on_row_activate.is_some(),
+            |this| this.cursor_pointer(),
+        )
         .on_click({
-            let runtime = runtime.clone();
-            let focus_handle = focus_handle.clone();
-            let selection_policy = selection_policy;
-            let selected_row_ids = selected_row_ids.clone();
-            let on_row_selection_change = on_row_selection_change.clone();
-            let on_row_activate = on_row_activate.clone();
+            let context = context.clone();
             move |event: &ClickEvent, window, cx| {
                 if !event.standard_click() || window.default_prevented() {
                     return;
@@ -244,17 +191,17 @@ fn render_table_row(
                 window.prevent_default();
 
                 let action = TableRowAction::from_render_plan(
-                    &row_for_click,
+                    context.row.as_ref(),
                     TableInputModifiers::from_gpui(event.modifiers()),
                 );
+                let selection_policy = context.body.selection_policy;
                 if selection_policy.activation_mode().is_row_click() {
                     request_table_row_selection_change(
-                        &runtime,
                         &action,
                         selection_policy,
                         TableSelectionScope::Row,
-                        selected_row_ids.clone(),
-                        on_row_selection_change.clone(),
+                        context.body.selected_row_ids.clone(),
+                        context.body.on_row_selection_change.clone(),
                         window,
                         cx,
                     );
@@ -265,40 +212,46 @@ fn render_table_row(
                 } else {
                     TableRowActivationKind::Click
                 };
-                runtime.update(cx, |runtime, cx| {
-                    runtime.set_focused(row_id.clone(), cx);
+                context.body.runtime.update(cx, |runtime, cx| {
+                    runtime.set_focused(context.row.identity().clone(), cx);
                 });
-                if let Some(focus_handle) = focus_handle.as_ref() {
+                if let Some(focus_handle) = context.focus_handle.as_ref() {
                     focus_handle.focus(window, cx);
                 }
-                if let Some(on_row_activate) = on_row_activate.as_ref() {
+                if let Some(on_row_activate) = context.body.on_row_activate.as_ref() {
                     on_row_activate(TableRowActivation::new(action, activation_kind), window, cx);
                 }
             }
         })
         .on_key_down({
-            let runtime = runtime.clone();
-            let on_row_activate = on_row_activate.clone();
-            let on_row_expansion_request = on_row_expansion_request.clone();
-            let current_expansion_for_key = current_expansion.clone();
+            let context = context.clone();
             move |event: &KeyDownEvent, window, cx| {
-                handle_table_row_key_down(
-                    &row_for_key,
-                    final_rows.as_ref(),
-                    vertical_scroll_handle.clone(),
-                    top_row_count,
-                    center_total_row_count,
-                    &runtime,
-                    current_expansion_for_key.clone(),
-                    on_row_activate.clone(),
-                    on_row_expansion_request.clone(),
+                let Some(focus_handle) = context.focus_handle.as_ref() else {
+                    return;
+                };
+                TableKeyboardDispatchContext {
+                    final_model: context.body.resolved_table.final_model(),
+                    vertical_scroll_handle: context.body.vertical_scroll_handle.clone(),
+                    top_row_count: context.body.top_row_count,
+                    center_total_row_count: context.body.center_total_row_count,
+                    fallback_row_height: metrics.row_height(),
+                    fallback_viewport_extent: metrics.viewport_extent(),
+                    runtime: &context.body.runtime,
+                    current_expansion: context.body.current_expansion.clone(),
+                    on_row_activate: context.body.on_row_activate.clone(),
+                    on_row_expansion_request: context.body.on_row_expansion_request.clone(),
+                }
+                .dispatch_rendered_row(
+                    context.row.as_ref(),
+                    focus_handle,
                     event,
                     window,
                     cx,
                 );
             }
         })
-        .children(region_cells.into_iter().map(
+        .children(region_cells.into_iter().map({
+            let context = context.clone();
             move |(
                 region,
                 region_width,
@@ -308,52 +261,28 @@ fn render_table_row(
                 trailing_spacer_width,
                 uses_center_window,
             )| {
-                let table_id = table_id.clone();
-                let render_key = render_key.clone();
-                let region_name = region.as_str().to_owned();
-                let center_scroll_id = pinned_layout.as_ref().and_then(|layout| {
-                    (region == TableColumnRegion::Center && has_source_cells)
-                        .then(|| layout.row_center_scroll_id(&render_key))
-                });
+                let table_id = context.body.table_id.clone();
+                let row_identity_key = context.row.row().identity_key().clone();
+                let center_scroll_selector = (context.body.has_pinned_columns
+                    && region == TableColumnRegion::Center
+                    && has_source_cells)
+                    .then(|| {
+                        TableDebugSelector::row_center_scroll_key(&table_id, &row_identity_key)
+                    });
                 let mut region_children =
                     Vec::with_capacity(cells.len() + usize::from(uses_center_window) * 2);
                 if uses_center_window {
                     region_children.push(render_table_lane_spacer(leading_spacer_width));
                 }
-                let current_expansion_for_cells = current_expansion.clone();
                 region_children.extend(cells.into_iter().map({
-                    let table_id = table_id.clone();
-                    let render_key = render_key.clone();
-                    let row = row.clone();
-                    let runtime = runtime.clone();
-                    let focus_handle = focus_handle.clone();
-                    let on_row_expansion_request = on_row_expansion_request.clone();
-                    let on_cell_edit_change = on_cell_edit_change.clone();
-                    let tree = tree.clone();
+                    let context = context.clone();
                     let tree_affordance_column_id = tree_affordance_column_id.clone();
                     move |cell| {
                         let tree_affordance = tree_affordance_column_id
                             .as_ref()
                             .is_some_and(|column_id| cell.column_id() == column_id);
-                        render_table_body_cell(
-                            table_id.clone(),
-                            render_key.clone(),
-                            metrics,
-                            cell,
-                            row.clone(),
-                            tree.clone(),
-                            tree_depth,
-                            tree_branch,
-                            tree_expanded,
-                            tree_affordance,
-                            runtime.clone(),
-                            focus_handle.clone(),
-                            current_expansion_for_cells.clone(),
-                            on_row_expansion_request.clone(),
-                            on_cell_edit_change.clone(),
-                            measured_rows,
-                        )
-                        .into_any_element()
+                        render_table_body_cell(context.clone(), cell, tree_affordance)
+                            .into_any_element()
                     }
                 }));
                 if uses_center_window {
@@ -364,14 +293,13 @@ fn render_table_row(
                     .min_w(px(0.0))
                     .flex()
                     .overflow_hidden()
-                    .id(format!(
-                        "table:{table_id}:row-region:{render_key}:{region_name}"
-                    ))
                     .debug_selector({
-                        let table_id = table_id.clone();
-                        let render_key = render_key.clone();
-                        let region_name = region_name.clone();
-                        move || format!("table:{table_id}:row-region:{render_key}:{region_name}")
+                        let selector = TableDebugSelector::row_region_key(
+                            &table_id,
+                            &row_identity_key,
+                            region,
+                        );
+                        move || selector.clone()
                     })
                     .w(gpui_px_from_ui(region_width))
                     .flex_none()
@@ -385,25 +313,19 @@ fn render_table_row(
 
                 let region_lane = region_lane.into_any_element();
 
-                if let Some(center_scroll_id) = center_scroll_id {
-                    div()
-                        .min_w(px(0.0))
-                        .flex_1()
-                        .child(
-                            ScrollArea::new(center_scroll_id, region_lane)
-                                .horizontal()
-                                .scroll_handle(&horizontal_scroll_handle)
-                                .with_size(metrics.size()),
-                        )
-                        .into_any_element()
+                if let Some(center_scroll_selector) = center_scroll_selector {
+                    render_table_scroll_viewport(
+                        center_scroll_selector,
+                        Axis::Horizontal,
+                        horizontal_scrollbar_width,
+                        &context.body.horizontal_scroll_handle,
+                        region_lane,
+                    )
                 } else {
                     region_lane
                 }
-            },
-        ))
-        .when(!measured_rows, |this| {
-            this.h(gpui_px_from_ui(row_for_layout.virtual_size()))
-        })
-        .into_any_element();
-    row_element
+            }
+        }))
+        .when(!measured_rows, |this| this.h(gpui_px_from_ui(virtual_size)))
+        .into_any_element()
 }

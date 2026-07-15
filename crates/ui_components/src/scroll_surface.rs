@@ -2,7 +2,7 @@ use open_gpui::{
     ScrollHandle, ScrollViewportChangeSource, ScrollViewportProgrammaticSource, ScrollWheelEvent,
     Window, point, px,
 };
-use open_gpui_ui_core::UiPx;
+use open_gpui_ui_core::{UiPx, VirtualizerItemGeometry};
 
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 
@@ -109,10 +109,28 @@ pub(crate) fn fixed_row_scroll_target(
 
     let target_index = target_index.min(item_count - 1);
     let total_size = row_height * item_count as f32;
-    let max_scroll_offset = nonnegative_px(total_size - viewport_extent);
-    let current_scroll_offset = nonnegative_px(current_scroll_offset).min(max_scroll_offset);
     let row_start = row_height * target_index as f32;
-    let row_end = row_start + row_height;
+    row_geometry_scroll_target(
+        strategy,
+        VirtualizerItemGeometry::new(row_start, row_height),
+        total_size,
+        viewport_extent,
+        current_scroll_offset,
+    )
+}
+
+pub(crate) fn row_geometry_scroll_target(
+    strategy: ScrollSurfaceRevealStrategy,
+    geometry: VirtualizerItemGeometry,
+    total_size: UiPx,
+    viewport_extent: UiPx,
+    current_scroll_offset: UiPx,
+) -> UiPx {
+    let viewport_extent = nonnegative_px(viewport_extent);
+    let max_scroll_offset = nonnegative_px(nonnegative_px(total_size) - viewport_extent);
+    let current_scroll_offset = nonnegative_px(current_scroll_offset).min(max_scroll_offset);
+    let row_start = geometry.start();
+    let row_end = geometry.end();
     let target = match strategy {
         ScrollSurfaceRevealStrategy::Nearest => {
             let viewport_start = current_scroll_offset;
@@ -127,12 +145,40 @@ pub(crate) fn fixed_row_scroll_target(
         }
         ScrollSurfaceRevealStrategy::Top => row_start,
         ScrollSurfaceRevealStrategy::Center => {
-            row_start + row_height.half() - viewport_extent.half()
+            row_start + geometry.size().half() - viewport_extent.half()
         }
         ScrollSurfaceRevealStrategy::Bottom => row_end - viewport_extent,
     };
 
     nonnegative_px(target).min(max_scroll_offset)
+}
+
+pub(crate) fn reveal_row_geometry(
+    scroll_handle: &ScrollHandle,
+    strategy: ScrollSurfaceRevealStrategy,
+    geometry: VirtualizerItemGeometry,
+    total_size: UiPx,
+    fallback_viewport_extent: Option<UiPx>,
+) -> bool {
+    let viewport_extent =
+        resolved_vertical_viewport_extent(scroll_handle, fallback_viewport_extent);
+    if viewport_extent.as_f32() <= 0.0 {
+        return false;
+    }
+
+    let current = vertical_scroll_offset(scroll_handle);
+    let target =
+        row_geometry_scroll_target(strategy, geometry, total_size, viewport_extent, current);
+    if target == current {
+        return false;
+    }
+
+    set_vertical_scroll_offset_with_source(
+        scroll_handle,
+        target,
+        ScrollViewportChangeSource::Programmatic(ScrollViewportProgrammaticSource::Reveal),
+    );
+    true
 }
 
 pub(crate) fn reveal_fixed_row(
@@ -300,6 +346,42 @@ mod tests {
                 ui_px(0.0),
             ),
             ui_px(120.0)
+        );
+    }
+
+    #[test]
+    fn row_geometry_scroll_target_uses_variable_item_bounds() {
+        let geometry = VirtualizerItemGeometry::new(ui_px(240.0), ui_px(20.0));
+
+        assert_eq!(
+            row_geometry_scroll_target(
+                ScrollSurfaceRevealStrategy::Nearest,
+                geometry,
+                ui_px(320.0),
+                ui_px(80.0),
+                ui_px(0.0),
+            ),
+            ui_px(180.0)
+        );
+        assert_eq!(
+            row_geometry_scroll_target(
+                ScrollSurfaceRevealStrategy::Center,
+                geometry,
+                ui_px(320.0),
+                ui_px(80.0),
+                ui_px(0.0),
+            ),
+            ui_px(210.0)
+        );
+        assert_eq!(
+            row_geometry_scroll_target(
+                ScrollSurfaceRevealStrategy::Bottom,
+                geometry,
+                ui_px(250.0),
+                ui_px(80.0),
+                ui_px(0.0),
+            ),
+            ui_px(170.0)
         );
     }
 

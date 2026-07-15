@@ -2,6 +2,10 @@ use super::aggregation::numeric_values;
 use super::*;
 use crate::geometry::ui_px;
 
+mod headers;
+mod identity;
+mod pinning;
+
 #[test]
 fn multiline_text_editor_rows_are_normalized() {
     let column = TableColumn::new("notes", "Notes").with_multiline_text_editor(0);
@@ -128,7 +132,30 @@ fn text_facet_counts(facet: &TableColumnFacets) -> Vec<(String, usize)> {
 }
 
 fn row_ids(rows: &[TableResolvedRow]) -> Vec<&str> {
-    rows.iter().map(|row| row.id().as_str()).collect()
+    rows.iter().map(TableResolvedRow::debug_label).collect()
+}
+
+fn source_identity(row_id: &str) -> TableRowIdentity {
+    TableRowIdentity::source(row_id)
+}
+
+fn group_identity(column_id: &str, value: &str) -> TableRowIdentity {
+    TableRowIdentity::group(TableGroupRowIdentity::new(column_id, value))
+}
+
+fn nested_group_identity(
+    outer_column: &str,
+    outer_value: &str,
+    inner_column: &str,
+    inner_value: impl Into<TableGroupValueIdentity>,
+) -> TableRowIdentity {
+    TableRowIdentity::group(
+        TableGroupRowIdentity::new(outer_column, outer_value).child(inner_column, inner_value),
+    )
+}
+
+fn identity_label(identity: Option<&TableRowIdentity>) -> Option<String> {
+    identity.map(TableRowIdentity::debug_label)
 }
 
 #[test]
@@ -598,7 +625,7 @@ fn stable_row_ids_survive_filtering_sorting_and_pagination() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-b", "row-c"]
     );
@@ -607,7 +634,7 @@ fn stable_row_ids_survive_filtering_sorting_and_pagination() {
             .sorted_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-c", "row-b"]
     );
@@ -616,16 +643,53 @@ fn stable_row_ids_survive_filtering_sorting_and_pagination() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-c"]
     );
     assert!(
         resolved
             .core_model()
-            .row(&TableRowId::new("row-b"))
+            .unique_source_row(&TableRowId::new("row-b"))
             .is_some()
     );
+}
+
+#[test]
+fn sorting_ties_preserve_duplicate_source_order_instead_of_instance_id_order() {
+    let resolve = |instance_ids: [&str; 2]| {
+        TableState::new(instance_ids.map(|instance_id| {
+            TableRow::new("duplicate")
+                .with_instance_id(instance_id)
+                .with_cell("score", 10_usize)
+        }))
+        .with_columns([TableColumn::new("score", "Score")])
+        .with_sorting([TableSort::ascending("score")])
+        .resolve()
+    };
+    let instance_order = |resolved: &TableResolvedState| {
+        resolved
+            .sorted_model()
+            .rows()
+            .iter()
+            .map(|row| {
+                let source = row
+                    .identity()
+                    .source_identity()
+                    .expect("duplicate fixture rows should stay source-backed");
+                match source.instance() {
+                    TableSourceInstanceIdentity::Explicit(instance) => instance.as_str().to_owned(),
+                    instance => panic!("expected explicit source instance, got {instance:?}"),
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let source_z_then_a = resolve(["z", "a"]);
+    assert_eq!(instance_order(&source_z_then_a), ["z", "a"]);
+
+    let source_a_then_z = resolve(["a", "z"]);
+    assert_eq!(instance_order(&source_a_then_z), ["a", "z"]);
 }
 
 #[test]
@@ -673,7 +737,7 @@ fn global_filter_matches_globally_filterable_columns_and_normalizes_queries() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-3"],
         "global filtering should ignore columns opted out of the global scan"
@@ -683,7 +747,7 @@ fn global_filter_matches_globally_filterable_columns_and_normalizes_queries() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-3"],
         "global filtering should feed the final row model"
@@ -726,7 +790,7 @@ fn global_filter_runs_after_column_filters_before_sorting_and_pagination() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-1", "row-2"],
         "global filtering should run after column filtering"
@@ -736,7 +800,7 @@ fn global_filter_runs_after_column_filters_before_sorting_and_pagination() {
             .sorted_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-1", "row-2"],
         "sorting should still see the globally filtered row set"
@@ -746,7 +810,7 @@ fn global_filter_runs_after_column_filters_before_sorting_and_pagination() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-1"],
         "pagination should apply after global filtering and sorting"
@@ -785,7 +849,7 @@ fn categorical_filters_match_exact_tokens_and_multiple_values() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-ready", "row-blocked"],
         "categorical filters use exact facet tokens and compose with other filters"
@@ -819,7 +883,7 @@ fn text_predicate_filters_match_contains_equals_and_boundaries() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-alpha", "row-beta"],
         "contains should keep rows whose text includes the query"
@@ -834,7 +898,7 @@ fn text_predicate_filters_match_contains_equals_and_boundaries() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-alpha"],
         "starts_with should match the leading text"
@@ -849,7 +913,7 @@ fn text_predicate_filters_match_contains_equals_and_boundaries() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-alpha", "row-beta"],
         "ends_with should match trailing text"
@@ -864,7 +928,7 @@ fn text_predicate_filters_match_contains_equals_and_boundaries() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-alpha"],
         "case-insensitive equals should match exact text"
@@ -882,7 +946,7 @@ fn text_predicate_filters_match_contains_equals_and_boundaries() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-alpha"],
         "case-sensitive equals should respect the original case"
@@ -897,7 +961,7 @@ fn text_predicate_filters_match_contains_equals_and_boundaries() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-beta", "row-gamma"],
         "not_contains should remove matching rows"
@@ -916,7 +980,7 @@ fn text_predicate_filters_match_contains_equals_and_boundaries() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-beta", "row-gamma"],
         "not_equals should exclude the exact match"
@@ -943,7 +1007,7 @@ fn numeric_comparison_filters_match_single_bounds_and_reject_invalid_bounds() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-mid", "row-high"],
         "greater-than should exclude the threshold value"
@@ -959,7 +1023,7 @@ fn numeric_comparison_filters_match_single_bounds_and_reject_invalid_bounds() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-mid", "row-high"],
         "greater-than-or-equal should keep the threshold value"
@@ -973,7 +1037,7 @@ fn numeric_comparison_filters_match_single_bounds_and_reject_invalid_bounds() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-low", "row-mid"],
         "less-than should exclude the threshold value"
@@ -989,7 +1053,7 @@ fn numeric_comparison_filters_match_single_bounds_and_reject_invalid_bounds() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-low", "row-mid"],
         "less-than-or-equal should keep the threshold value"
@@ -1027,7 +1091,7 @@ fn manual_filtering_preserves_snapshot_and_global_filter_state() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-1", "row-2"],
         "manual filtering should preserve the supplied row snapshot"
@@ -1089,7 +1153,7 @@ fn empty_categorical_filters_are_noops() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-b", "row-a", "row-c"],
         "an empty categorical filter should behave like no filter"
@@ -1118,7 +1182,7 @@ fn numeric_range_filters_match_finite_number_cells_inclusively() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-min", "row-mid", "row-max"],
         "range filters are inclusive and only match finite numeric cells"
@@ -1179,7 +1243,7 @@ fn manual_row_model_modes_preserve_supplied_snapshot() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         expected
     );
@@ -1188,7 +1252,7 @@ fn manual_row_model_modes_preserve_supplied_snapshot() {
             .sorted_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         expected
     );
@@ -1197,7 +1261,7 @@ fn manual_row_model_modes_preserve_supplied_snapshot() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         expected
     );
@@ -1227,45 +1291,37 @@ fn manual_stage_modes_participate_in_cache_keys() {
 }
 
 #[test]
-fn row_pinning_state_dedupes_and_moves_rows_between_regions() {
+fn row_pinning_state_dedupes_each_caller_owned_region() {
+    let row_a = source_identity("row-a");
+    let row_b = source_identity("row-b");
+    let row_c = source_identity("row-c");
     let pinning = TableRowPinning::new()
-        .pinned_top(["row-a", "row-b", "row-a"])
-        .pinned_bottom(["row-b", "row-c", "row-c"]);
+        .pinned_top([row_a.clone(), row_b.clone(), row_a.clone()])
+        .pinned_bottom([row_b.clone(), row_c.clone(), row_c.clone()]);
 
     assert_eq!(
-        pinning
-            .top()
-            .iter()
-            .map(|row| row.as_str())
-            .collect::<Vec<_>>(),
-        ["row-a"],
-        "bottom pins remove overlapping top pins"
+        pinning.top_targets(),
+        [
+            TableRowPinTarget::exact(row_a),
+            TableRowPinTarget::exact(row_b.clone()),
+        ]
     );
     assert_eq!(
-        pinning
-            .bottom()
-            .iter()
-            .map(|row| row.as_str())
-            .collect::<Vec<_>>(),
-        ["row-b", "row-c"]
+        pinning.bottom_targets(),
+        [
+            TableRowPinTarget::exact(row_b),
+            TableRowPinTarget::exact(row_c.clone()),
+        ]
     );
 
-    let moved = pinning.pinned_top(["row-c"]);
+    let replaced = pinning.pinned_top([row_c.clone()]);
+    assert_eq!(replaced.top_targets(), [TableRowPinTarget::exact(row_c)]);
     assert_eq!(
-        moved
-            .top()
-            .iter()
-            .map(|row| row.as_str())
-            .collect::<Vec<_>>(),
-        ["row-c"]
-    );
-    assert_eq!(
-        moved
-            .bottom()
-            .iter()
-            .map(|row| row.as_str())
-            .collect::<Vec<_>>(),
-        ["row-b"]
+        replaced.bottom_targets(),
+        [
+            TableRowPinTarget::exact(source_identity("row-b")),
+            TableRowPinTarget::exact(source_identity("row-c")),
+        ]
     );
 }
 
@@ -1275,8 +1331,8 @@ fn row_pinning_keep_pinned_rows_partitions_final_model_around_page() {
         .with_pagination(TablePagination::new(1, 1))
         .with_row_pinning(
             TableRowPinning::new()
-                .pinned_top(["row-b"])
-                .pinned_bottom(["row-c"]),
+                .pinned_top([source_identity("row-b")])
+                .pinned_bottom([source_identity("row-c")]),
         )
         .resolve();
 
@@ -1300,8 +1356,8 @@ fn row_pinning_page_only_policy_ignores_rows_outside_page() {
         .with_pagination(TablePagination::new(1, 1))
         .with_row_pinning(
             TableRowPinning::new()
-                .pinned_top(["row-b"])
-                .pinned_bottom(["row-c"]),
+                .pinned_top([source_identity("row-b")])
+                .pinned_bottom([source_identity("row-c")]),
         )
         .with_row_pinning_policy(TableRowPinningPolicy::PageOnly)
         .resolve();
@@ -1322,8 +1378,8 @@ fn row_pinning_ignores_unknown_filtered_and_collapsed_rows() {
         .with_filters([TableFilter::contains("team", "ops")])
         .with_row_pinning(
             TableRowPinning::new()
-                .pinned_top(["missing", "row-a"])
-                .pinned_bottom(["row-c"]),
+                .pinned_top([source_identity("missing"), source_identity("row-a")])
+                .pinned_bottom([source_identity("row-c")]),
         )
         .with_pagination(TablePagination::disabled())
         .resolve();
@@ -1335,7 +1391,7 @@ fn row_pinning_ignores_unknown_filtered_and_collapsed_rows() {
 
     let collapsed = TableState::new(tree_rows())
         .with_columns([TableColumn::new("name", "Name")])
-        .with_row_pinning(TableRowPinning::new().pinned_top(["pkg-core-test"]))
+        .with_row_pinning(TableRowPinning::new().pinned_top([source_identity("pkg-core-test")]))
         .resolve();
 
     assert!(
@@ -1346,20 +1402,22 @@ fn row_pinning_ignores_unknown_filtered_and_collapsed_rows() {
     assert!(
         collapsed
             .final_model()
-            .row(&TableRowId::new("pkg-core-test"))
+            .unique_source_row(&TableRowId::new("pkg-core-test"))
             .is_some(),
         "collapsed descendants remain addressable through row lookup"
     );
 }
 
 #[test]
-fn row_pinning_preserves_duplicate_source_row_instances_in_visual_order() {
+fn row_pinning_business_target_preserves_duplicate_instances_in_model_order() {
     let resolved = TableState::new([
         TableRow::new("duplicate").with_cell("name", "First"),
         TableRow::new("unique").with_cell("name", "Middle"),
         TableRow::new("duplicate").with_cell("name", "Second"),
     ])
-    .with_row_pinning(TableRowPinning::new().pinned_top(["duplicate"]))
+    .with_row_pinning(
+        TableRowPinning::new().pinned_top([TableRowPinTarget::all_source_rows("duplicate")]),
+    )
     .resolve();
 
     assert_eq!(
@@ -1378,8 +1436,8 @@ fn row_pinning_preserves_duplicate_source_row_instances_in_visual_order() {
 fn overlapping_raw_row_pinning_state_resolves_without_duplicates() {
     let resolved = TableState::new(sample_rows())
         .with_row_pinning(TableRowPinning::from_raw(
-            [TableRowId::new("row-a"), TableRowId::new("row-a")],
-            [TableRowId::new("row-a"), TableRowId::new("row-c")],
+            [source_identity("row-a"), source_identity("row-a")],
+            [source_identity("row-a"), source_identity("row-c")],
         ))
         .resolve();
 
@@ -1427,7 +1485,7 @@ fn selection_policy_descendants_propagates_to_tree_children() {
         .rows()
         .iter()
         .filter(|row| row.selected())
-        .map(|row| row.id().as_str())
+        .map(|row| row.debug_label())
         .collect::<Vec<_>>();
 
     assert_eq!(selected_ids, ["pkg", "pkg-ui", "pkg-core", "pkg-core-test"]);
@@ -1478,7 +1536,7 @@ fn row_pinning_inputs_participate_in_cache_keys() {
         state.cache_key(),
         state
             .clone()
-            .with_row_pinning(TableRowPinning::new().pinned_top(["row-a"]))
+            .with_row_pinning(TableRowPinning::new().pinned_top([source_identity("row-a")]),)
             .cache_key()
     );
     assert_ne!(
@@ -1587,7 +1645,7 @@ fn client_facets_exclude_own_filter_and_ignore_pagination() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-1"],
         "pagination still limits the final row model"
@@ -1656,7 +1714,7 @@ fn richer_text_filters_compose_with_facets_and_global_query() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-1"],
         "rich text predicates should compose with the global filter"
@@ -1928,7 +1986,7 @@ fn row_lookup_does_not_depend_on_numeric_index_positions() {
 
     let row_c = resolved
         .core_model()
-        .row(&TableRowId::new("row-c"))
+        .unique_source_row(&TableRowId::new("row-c"))
         .expect("row-c should remain addressable by id");
 
     assert_eq!(row_c.source_index(), Some(2));
@@ -1937,7 +1995,7 @@ fn row_lookup_does_not_depend_on_numeric_index_positions() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["row-a", "row-b", "row-c"]
     );
@@ -1953,7 +2011,7 @@ fn selection_follows_row_ids_after_filtering_and_sorting() {
 
     let selected = resolved
         .final_model()
-        .row(&TableRowId::new("row-c"))
+        .unique_source_row(&TableRowId::new("row-c"))
         .expect("selected row should still be present");
 
     assert!(selected.selected());
@@ -1969,30 +2027,33 @@ fn nested_source_rows_resolve_parent_depth_and_lookup_metadata() {
             .core_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["pkg", "pkg-ui", "pkg-core", "pkg-core-test", "docs"]
     );
 
     let pkg = resolved
         .core_model()
-        .row(&TableRowId::new("pkg"))
+        .unique_source_row(&TableRowId::new("pkg"))
         .expect("root source row should be addressable");
     let pkg_tree = pkg.tree().expect("source row should expose tree metadata");
     assert_eq!(pkg.source_index(), Some(0));
     assert_eq!(pkg.depth(), 0);
-    assert_eq!(pkg.parent_id(), None);
+    assert_eq!(pkg.parent_identity(), None);
     assert!(pkg.is_tree_branch());
     assert_eq!(pkg.tree_expanded(), Some(false));
     assert_eq!(pkg_tree.descendant_count(), 3);
 
     let nested = resolved
         .core_model()
-        .row(&TableRowId::new("pkg-core-test"))
+        .unique_source_row(&TableRowId::new("pkg-core-test"))
         .expect("nested descendant should be addressable");
     assert_eq!(nested.source_index(), Some(3));
     assert_eq!(nested.depth(), 2);
-    assert_eq!(nested.parent_id().map(TableRowId::as_str), Some("pkg-core"));
+    assert_eq!(
+        identity_label(nested.parent_identity()),
+        Some("pkg-core".to_owned())
+    );
     assert!(!nested.is_tree_branch());
     assert_eq!(nested.descendant_count(), 0);
 }
@@ -2006,14 +2067,14 @@ fn collapsed_tree_rows_hide_descendants_but_preserve_lookup() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["pkg", "docs"]
     );
     assert!(
         resolved
             .final_model()
-            .row(&TableRowId::new("pkg-core-test"))
+            .unique_source_row(&TableRowId::new("pkg-core-test"))
             .is_some(),
         "collapsed tree descendants should remain addressable by stable row id"
     );
@@ -2022,7 +2083,10 @@ fn collapsed_tree_rows_hide_descendants_but_preserve_lookup() {
 #[test]
 fn expanded_tree_rows_show_descendants_with_parent_depth_and_selection() {
     let resolved = TableState::new(tree_rows())
-        .with_expanded_rows(["pkg", "pkg-core"])
+        .with_expanded_rows([
+            TableRowIdentity::source("pkg"),
+            TableRowIdentity::source("pkg-core"),
+        ])
         .with_selected_rows(["pkg-core-test"])
         .resolve();
 
@@ -2031,24 +2095,27 @@ fn expanded_tree_rows_show_descendants_with_parent_depth_and_selection() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["pkg", "pkg-ui", "pkg-core", "pkg-core-test", "docs"]
     );
 
     let pkg_core = resolved
         .final_model()
-        .row(&TableRowId::new("pkg-core"))
+        .unique_source_row(&TableRowId::new("pkg-core"))
         .expect("expanded branch should be addressable");
     assert_eq!(pkg_core.tree_expanded(), Some(true));
     assert_eq!(pkg_core.depth(), 1);
-    assert_eq!(pkg_core.parent_id().map(TableRowId::as_str), Some("pkg"));
+    assert_eq!(
+        identity_label(pkg_core.parent_identity()),
+        Some("pkg".to_owned())
+    );
 
     let nested = resolved
         .final_model()
         .rows()
         .iter()
-        .find(|row| row.id().as_str() == "pkg-core-test")
+        .find(|row| row.debug_label() == "pkg-core-test")
         .expect("expanded nested descendant should be visible");
     assert!(nested.selected());
     assert_eq!(resolved.final_model().selected_count(), 1);
@@ -2057,7 +2124,7 @@ fn expanded_tree_rows_show_descendants_with_parent_depth_and_selection() {
 #[test]
 fn child_expansion_does_not_bypass_collapsed_parent() {
     let resolved = TableState::new(tree_rows())
-        .with_expanded_rows(["pkg-core"])
+        .with_expanded_rows([TableRowIdentity::source("pkg-core")])
         .resolve();
 
     assert_eq!(
@@ -2065,7 +2132,7 @@ fn child_expansion_does_not_bypass_collapsed_parent() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["pkg", "docs"]
     );
@@ -2082,14 +2149,14 @@ fn all_rows_expanded_expands_source_tree_branches() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["pkg", "pkg-ui", "pkg-core", "pkg-core-test", "docs"]
     );
     assert_eq!(
         resolved
             .final_model()
-            .row(&TableRowId::new("pkg"))
+            .unique_source_row(&TableRowId::new("pkg"))
             .and_then(TableResolvedRow::tree_expanded),
         Some(true)
     );
@@ -2104,7 +2171,7 @@ fn expandable_unloaded_source_rows_resolve_as_tree_branches() {
 
     let remote = resolved
         .final_model()
-        .row(&TableRowId::new("remote-root"))
+        .unique_source_row(&TableRowId::new("remote-root"))
         .expect("expandable source row should resolve");
     let tree = remote
         .tree()
@@ -2133,11 +2200,11 @@ fn child_loading_metadata_survives_row_lookup() {
 
     let loading = resolved
         .final_model()
-        .row(&TableRowId::new("loading"))
+        .unique_source_row(&TableRowId::new("loading"))
         .expect("loading branch should resolve");
     let failed = resolved
         .final_model()
-        .row(&TableRowId::new("failed"))
+        .unique_source_row(&TableRowId::new("failed"))
         .expect("failed branch should resolve");
 
     assert!(loading.is_tree_branch());
@@ -2177,14 +2244,14 @@ fn manual_expansion_keeps_supplied_tree_descendants_visible() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["pkg", "pkg-ui", "pkg-core", "pkg-core-test", "docs"]
     );
     assert_eq!(
         resolved
             .final_model()
-            .row(&TableRowId::new("pkg"))
+            .unique_source_row(&TableRowId::new("pkg"))
             .and_then(TableResolvedRow::tree_expanded),
         Some(false)
     );
@@ -2194,7 +2261,7 @@ fn manual_expansion_keeps_supplied_tree_descendants_visible() {
 fn manual_expansion_preserves_expanded_metadata_without_pruning() {
     let resolved = TableState::new(tree_rows())
         .with_manual_expansion()
-        .with_expanded_rows(["pkg"])
+        .with_expanded_rows([TableRowIdentity::source("pkg")])
         .resolve();
 
     assert_eq!(
@@ -2202,21 +2269,21 @@ fn manual_expansion_preserves_expanded_metadata_without_pruning() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["pkg", "pkg-ui", "pkg-core", "pkg-core-test", "docs"]
     );
     assert_eq!(
         resolved
             .final_model()
-            .row(&TableRowId::new("pkg"))
+            .unique_source_row(&TableRowId::new("pkg"))
             .and_then(TableResolvedRow::tree_expanded),
         Some(true)
     );
     assert_eq!(
         resolved
             .final_model()
-            .row(&TableRowId::new("pkg-core"))
+            .unique_source_row(&TableRowId::new("pkg-core"))
             .and_then(TableResolvedRow::tree_expanded),
         Some(false)
     );
@@ -2234,7 +2301,7 @@ fn manual_expansion_does_not_bypass_grouped_row_expansion() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["group:team=ops", "group:team=design"]
     );
@@ -2251,7 +2318,7 @@ fn tree_filtering_uses_parent_to_child_policy() {
             .filtered_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["pkg", "pkg-core", "pkg-core-test"]
     );
@@ -2277,34 +2344,16 @@ fn pagination_applies_after_tree_expansion() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["pkg", "pkg-ui", "pkg-core"]
     );
     assert!(
         resolved
             .final_model()
-            .row(&TableRowId::new("pkg-core-test"))
+            .unique_source_row(&TableRowId::new("pkg-core-test"))
             .is_some(),
         "expanded-but-not-paginated tree descendants should remain addressable"
-    );
-}
-
-#[test]
-fn duplicate_row_ids_are_reported_across_nested_source_rows() {
-    let resolved = TableState::new([
-        TableRow::new("root").with_child(TableRow::new("duplicate")),
-        TableRow::new("duplicate"),
-    ])
-    .resolve();
-
-    assert_eq!(
-        resolved
-            .duplicate_row_ids()
-            .iter()
-            .map(TableRowId::as_str)
-            .collect::<Vec<_>>(),
-        ["duplicate"]
     );
 }
 
@@ -2330,14 +2379,14 @@ fn grouping_keeps_source_tree_rows_out_of_the_grouped_path() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["group:team=core", "pkg", "group:team=docs", "docs"]
     );
     assert!(
         resolved
             .final_model()
-            .row(&TableRowId::new("pkg-ui"))
+            .unique_source_row(&TableRowId::new("pkg-ui"))
             .is_none(),
         "tree plus grouping composition is deferred for a later policy slice"
     );
@@ -2354,7 +2403,7 @@ fn grouped_row_model_creates_stable_group_rows() {
             .grouped_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         [
             "group:team=ops",
@@ -2367,17 +2416,84 @@ fn grouped_row_model_creates_stable_group_rows() {
 
     let ops = resolved
         .grouped_model()
-        .row(&TableRowId::new("group:team=ops"))
+        .row(&group_identity("team", "ops"))
         .expect("ops group row should be addressable by id");
     let ops_group = ops.group().expect("ops row should be a group row");
 
     assert_eq!(ops_group.grouping_column().as_str(), "team");
     assert_eq!(ops_group.grouping_value().filter_text(), "ops");
     assert_eq!(ops_group.depth(), 0);
-    assert_eq!(ops_group.parent_id(), None);
-    assert_eq!(ops_group.first_leaf_row_id().as_str(), "row-b");
+    assert_eq!(ops_group.parent_identity(), None);
+    assert_eq!(ops_group.first_leaf_identity(), &source_identity("row-b"));
     assert_eq!(ops_group.leaf_row_count(), 2);
     assert!(ops.is_group());
+}
+
+#[test]
+fn grouped_value_identity_is_typed_and_normalizes_nan_and_signed_zero() {
+    let alternate_nan = f64::from_bits(0x7ff8_0000_0000_0001);
+    let resolved = TableState::new([
+        TableRow::new("empty").with_cell("value", TableCellValue::Empty),
+        TableRow::new("text").with_cell("value", "1"),
+        TableRow::new("number").with_cell("value", 1.0),
+        TableRow::new("bool").with_cell("value", true),
+        TableRow::new("nan-a").with_cell("value", f64::NAN),
+        TableRow::new("nan-b").with_cell("value", alternate_nan),
+        TableRow::new("zero").with_cell("value", 0.0),
+        TableRow::new("negative-zero").with_cell("value", -0.0),
+    ])
+    .with_columns([TableColumn::new("value", "Value")])
+    .with_grouping(["value"])
+    .resolve();
+
+    let groups = resolved
+        .grouped_model()
+        .rows()
+        .iter()
+        .filter(|row| row.is_group())
+        .collect::<Vec<_>>();
+    assert_eq!(groups.len(), 6);
+
+    let identity = |value| TableRowIdentity::group(TableGroupRowIdentity::new("value", value));
+    let empty = identity(TableGroupValueIdentity::Empty);
+    let text = identity(TableGroupValueIdentity::Text("1".to_owned()));
+    let number = identity(TableGroupValueIdentity::from(1.0));
+    let boolean = identity(TableGroupValueIdentity::Bool(true));
+    assert_ne!(empty, text);
+    assert_ne!(text, number);
+    assert_ne!(number, boolean);
+
+    let nan = resolved
+        .grouped_model()
+        .row(&identity(TableGroupValueIdentity::from(f64::NAN)))
+        .and_then(TableResolvedRow::group)
+        .expect("all NaN payloads should share one typed group");
+    assert_eq!(nan.leaf_row_count(), 2);
+
+    let zero = resolved
+        .grouped_model()
+        .row(&identity(TableGroupValueIdentity::from(0.0)))
+        .and_then(TableResolvedRow::group)
+        .expect("signed zero values should share one typed group");
+    assert_eq!(zero.leaf_row_count(), 2);
+    assert_eq!(
+        identity(TableGroupValueIdentity::from(0.0)),
+        identity(TableGroupValueIdentity::from(-0.0))
+    );
+
+    let canonical_nan = TableGroupNumberIdentity::new(f64::NAN);
+    let alternate_canonical_nan = TableGroupNumberIdentity::new(alternate_nan);
+    assert_eq!(canonical_nan, alternate_canonical_nan);
+    assert!(canonical_nan.value().is_nan());
+
+    let positive_zero = TableGroupNumberIdentity::new(0.0);
+    let negative_zero = TableGroupNumberIdentity::new(-0.0);
+    assert_eq!(positive_zero, negative_zero);
+    assert_eq!(positive_zero.value().to_bits(), 0.0_f64.to_bits());
+    assert_eq!(
+        TableGroupValueIdentity::Number(canonical_nan),
+        TableGroupValueIdentity::from(alternate_nan)
+    );
 }
 
 #[test]
@@ -2391,14 +2507,14 @@ fn collapsed_groups_hide_descendants_but_preserve_lookup() {
             .expanded_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["group:team=ops", "group:team=design"]
     );
     assert!(
         resolved
             .expanded_model()
-            .row(&TableRowId::new("row-c"))
+            .unique_source_row(&TableRowId::new("row-c"))
             .is_some(),
         "collapsed descendants should remain addressable in lookup metadata"
     );
@@ -2408,7 +2524,7 @@ fn collapsed_groups_hide_descendants_but_preserve_lookup() {
 fn expanded_groups_show_descendants_with_parent_depth_and_selection() {
     let resolved = TableState::new(sample_rows())
         .with_grouping(["team"])
-        .with_expanded_rows(["group:team=ops"])
+        .with_expanded_rows([group_identity("team", "ops")])
         .with_selected_rows(["row-c"])
         .resolve();
 
@@ -2417,7 +2533,7 @@ fn expanded_groups_show_descendants_with_parent_depth_and_selection() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["group:team=ops", "row-b", "row-c", "group:team=design"]
     );
@@ -2426,13 +2542,13 @@ fn expanded_groups_show_descendants_with_parent_depth_and_selection() {
         .final_model()
         .rows()
         .iter()
-        .find(|row| row.id().as_str() == "row-c")
+        .find(|row| row.debug_label() == "row-c")
         .expect("expanded descendant should be visible");
 
     assert_eq!(row_c.depth(), 1);
     assert_eq!(
-        row_c.parent_id().map(TableRowId::as_str),
-        Some("group:team=ops")
+        identity_label(row_c.parent_identity()),
+        Some("group:team=ops".to_owned())
     );
     assert!(row_c.selected());
     assert_eq!(resolved.final_model().selected_count(), 1);
@@ -2446,14 +2562,14 @@ fn multi_column_grouping_creates_nested_group_paths() {
 
     let nested = resolved
         .grouped_model()
-        .row(&TableRowId::new("group:team=ops>score=20"))
+        .row(&nested_group_identity("team", "ops", "score", 20_usize))
         .expect("nested score group should use the parent path");
     let group = nested.group().expect("nested row should be grouped");
 
     assert_eq!(group.depth(), 1);
     assert_eq!(
-        group.parent_id().map(TableRowId::as_str),
-        Some("group:team=ops")
+        identity_label(group.parent_identity()),
+        Some("group:team=ops".to_owned())
     );
     assert_eq!(group.leaf_row_count(), 1);
 }
@@ -2471,14 +2587,14 @@ fn pagination_applies_after_expansion() {
             .final_model()
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.debug_label())
             .collect::<Vec<_>>(),
         ["group:team=ops", "row-b"]
     );
     assert!(
         resolved
             .final_model()
-            .row(&TableRowId::new("row-c"))
+            .unique_source_row(&TableRowId::new("row-c"))
             .is_some(),
         "final lookup keeps expanded-but-not-paginated rows addressable"
     );
@@ -2509,7 +2625,7 @@ fn grouped_rows_expose_builtin_aggregate_cells() {
 
     let ops = resolved
         .grouped_model()
-        .row(&TableRowId::new("group:team=ops"))
+        .row(&group_identity("team", "ops"))
         .expect("ops group should resolve");
 
     assert_eq!(
@@ -2557,7 +2673,7 @@ fn grouped_rows_resolve_named_custom_aggregation_callbacks() {
     let resolved = state.resolve();
     let ops = resolved
         .grouped_model()
-        .row(&TableRowId::new("group:team=ops"))
+        .row(&group_identity("team", "ops"))
         .expect("ops group should resolve");
 
     assert_eq!(
@@ -2597,7 +2713,7 @@ fn grouping_value_overrides_aggregate_on_grouping_column() {
 
     let ops = resolved
         .grouped_model()
-        .row(&TableRowId::new("group:team=ops"))
+        .row(&group_identity("team", "ops"))
         .expect("ops group should resolve");
 
     assert_eq!(
@@ -2633,6 +2749,82 @@ fn visible_columns_respect_explicit_order_and_visibility() {
 }
 
 #[test]
+fn source_identity_is_independent_of_grouping_projection() {
+    let state = TableState::new([
+        TableRow::new("root")
+            .with_cell("team", "Root")
+            .with_child(TableRow::new("duplicate").with_cell("team", "Nested")),
+        TableRow::new("duplicate").with_cell("team", "Top level"),
+    ])
+    .with_columns([TableColumn::new("team", "Team")]);
+    let identity = TableRowIdentity::Source(
+        state
+            .source_row_identity_at("duplicate", 1)
+            .expect("top-level duplicate should resolve in the source snapshot"),
+    );
+
+    let ungrouped = state.resolve();
+    let grouped = state.with_grouping(["team"]).resolve();
+
+    assert_eq!(
+        ungrouped
+            .core_model()
+            .row(&identity)
+            .and_then(TableResolvedRow::source_index),
+        Some(2)
+    );
+    assert_eq!(
+        grouped
+            .core_model()
+            .row(&identity)
+            .and_then(TableResolvedRow::source_index),
+        Some(2),
+        "grouping must not renumber or re-key source rows that remain in the model"
+    );
+}
+
+#[test]
+fn column_order_normalizes_duplicate_unknown_and_partial_ids() {
+    let resolved = TableState::new(sample_rows())
+        .with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+            TableColumn::new("score", "Score"),
+            TableColumn::new("status", "Status"),
+        ])
+        .with_column_order(["score", "missing", "score", "name"])
+        .resolve();
+
+    assert_eq!(
+        resolved
+            .visible_columns()
+            .iter()
+            .map(|column| column.id().as_str())
+            .collect::<Vec<_>>(),
+        ["score", "name", "team", "status"],
+        "known ordered ids are emitted once and unspecified columns retain source order"
+    );
+}
+
+#[test]
+fn row_model_lookup_preserves_source_and_group_namespace_collisions() {
+    let resolved = TableState::new([
+        TableRow::new("group:team=ops").with_cell("team", "ops"),
+        TableRow::new("row-b").with_cell("team", "ops"),
+    ])
+    .with_grouping(["team"])
+    .with_all_rows_expanded()
+    .resolve();
+
+    assert_eq!(resolved.grouped_model().rows().len(), 3);
+    assert_eq!(
+        resolved.grouped_model().lookup_rows().count(),
+        resolved.grouped_model().rows().len(),
+        "a legal source id must not overwrite a synthetic group identity"
+    );
+}
+
+#[test]
 fn flat_table_resolves_a_single_header_row_per_region() {
     let resolved = TableState::new(sample_rows())
         .with_columns([
@@ -2657,7 +2849,12 @@ fn flat_table_resolves_a_single_header_row_per_region() {
         resolved.center_header_groups()[0]
             .headers()
             .iter()
-            .map(|header| header.id().to_owned())
+            .map(|header| {
+                header
+                    .source_column_id()
+                    .expect("flat headers are leaf columns")
+                    .as_str()
+            })
             .collect::<Vec<_>>(),
         ["name", "team", "status"]
     );
@@ -2695,6 +2892,13 @@ fn nested_groups_resolve_group_rows_and_placeholders() {
     assert_eq!(center_groups[0].depth(), 0);
     assert_eq!(center_groups[1].depth(), 1);
     assert_eq!(center_groups[2].depth(), 2);
+    assert_eq!(center_groups[0].identity().depth(), 0);
+    assert_eq!(center_groups[1].identity().depth(), 1);
+    assert_eq!(center_groups[2].identity().depth(), 2);
+    assert_eq!(
+        center_groups[0].headers()[0].identity().covered_leaves(),
+        [TableColumnId::new("name"), TableColumnId::new("team")]
+    );
     assert_eq!(
         center_groups[0]
             .headers()
@@ -2803,13 +3007,23 @@ fn pinned_regions_resolve_independent_header_families() {
         resolved.left_header_groups()[0].headers()[0].label(),
         "Identity"
     );
-    assert_eq!(resolved.left_header_groups()[1].headers()[0].id(), "name");
+    assert_eq!(
+        resolved.left_header_groups()[1].headers()[0]
+            .source_column_id()
+            .map(TableColumnId::as_str),
+        Some("name")
+    );
     assert_eq!(resolved.right_header_groups().len(), 2);
     assert_eq!(
         resolved.right_header_groups()[0].headers()[0].label(),
         "Metrics"
     );
-    assert_eq!(resolved.right_header_groups()[1].headers()[0].id(), "score");
+    assert_eq!(
+        resolved.right_header_groups()[1].headers()[0]
+            .source_column_id()
+            .map(TableColumnId::as_str),
+        Some("score")
+    );
 }
 
 #[test]
@@ -2998,12 +3212,11 @@ fn duplicate_row_ids_are_reported_without_panicking() {
     .resolve();
 
     assert_eq!(
-        resolved
-            .duplicate_row_ids()
-            .iter()
-            .map(TableRowId::as_str)
-            .collect::<Vec<_>>(),
-        ["row-a"]
+        resolved.row_identity_diagnostics(),
+        [TableRowIdentityDiagnostic::DuplicateRowId {
+            row_id: TableRowId::new("row-a"),
+            occurrences: 2,
+        }]
     );
 }
 

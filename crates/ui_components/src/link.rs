@@ -10,7 +10,9 @@ use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{
+    AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px,
+};
 use std::rc::Rc;
 
 /// Resolved link color intents.
@@ -305,6 +307,15 @@ impl RenderOnce for Link {
         let text_color = theme.resolve(colors.text());
         let hover_text = theme.resolve(colors.hover_text());
         let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+        let actions: &[AccessibleAction] = if self.on_activate.is_some() {
+            &[AccessibleAction::Click, AccessibleAction::Focus]
+        } else {
+            &[AccessibleAction::Focus]
+        };
+        let semantics = SemanticDescriptor::new(state.role())
+            .with_label(state.label())
+            .with_disabled(disabled)
+            .with_actions(actions);
 
         div()
             .id(self.id)
@@ -317,8 +328,7 @@ impl RenderOnce for Link {
             .underline()
             .focusable()
             .tab_stop(!disabled)
-            .ui_role(state.role())
-            .aria_label(label)
+            .ui_semantics(&semantics)
             .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| {

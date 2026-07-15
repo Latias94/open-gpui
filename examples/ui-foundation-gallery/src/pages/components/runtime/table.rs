@@ -16,10 +16,8 @@ pub struct TableSampleSizingChange {
 pub struct TableSampleRowActivation {
     /// Stable gallery sample id.
     pub sample_id: String,
-    /// Activated row id.
-    pub row_id: String,
-    /// Concrete render key used by the adapter selectors.
-    pub render_key: String,
+    /// Authoritative identity of the activated resolved row.
+    pub identity: TableRowIdentity,
     /// Stable activation kind label.
     pub kind: String,
     /// Final row-model index at activation time.
@@ -34,13 +32,20 @@ pub struct TableSampleRowActivation {
     pub selected: bool,
 }
 
+impl TableSampleRowActivation {
+    /// Returns the caller-owned business id when the activated row is source-backed.
+    pub const fn source_row_id(&self) -> Option<&TableRowId> {
+        self.identity.source_row_id()
+    }
+}
+
 /// One source-tree expansion request captured from the rendered gallery `Table` sample.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableSampleExpansionToggle {
     /// Stable gallery sample id.
     pub sample_id: String,
-    /// Toggled row id.
-    pub row_id: String,
+    /// Authoritative identity of the toggled resolved row.
+    pub identity: TableRowIdentity,
     /// Desired expanded state after the toggle.
     pub expanded: bool,
     /// Resolved hierarchy depth at toggle time.
@@ -53,13 +58,20 @@ pub struct TableSampleExpansionToggle {
     pub children_load_message: Option<String>,
 }
 
+impl TableSampleExpansionToggle {
+    /// Returns the caller-owned business id when the toggled row is source-backed.
+    pub const fn source_row_id(&self) -> Option<&TableRowId> {
+        self.identity.source_row_id()
+    }
+}
+
 /// One table-cell edit captured from the rendered gallery `Table` sample.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableSampleCellEditChange {
     /// Stable gallery sample id.
     pub sample_id: String,
-    /// Edited row id.
-    pub row_id: String,
+    /// Authoritative identity of the edited resolved row.
+    pub identity: TableRowIdentity,
     /// Edited column id.
     pub column_id: String,
     /// Source-row index carried by the edit payload, when available.
@@ -70,6 +82,13 @@ pub struct TableSampleCellEditChange {
     pub next_text: String,
     /// Result from applying the change to app-owned sample state.
     pub outcome: String,
+}
+
+impl TableSampleCellEditChange {
+    /// Returns the caller-owned business id when the edited row is source-backed.
+    pub const fn source_row_id(&self) -> Option<&TableRowId> {
+        self.identity.source_row_id()
+    }
 }
 
 /// Runtime interaction log used by gallery Table smoke tests.
@@ -432,15 +451,7 @@ pub fn current_table_sample_column_visibility_overrides(
 }
 
 fn table_state_effective_column_order(state: &TableState) -> Vec<TableColumnId> {
-    if state.column_order().is_empty() {
-        state
-            .columns()
-            .iter()
-            .map(|column| column.id().clone())
-            .collect()
-    } else {
-        state.column_order().to_vec()
-    }
+    state.normalized_column_order()
 }
 
 /// Returns the current controlled column-order state for a gallery `Table` sample.
@@ -539,14 +550,17 @@ pub fn record_table_column_order_change(
     cx: &mut App,
 ) {
     let sample_id = sample_id.into();
-    let fallback = table_state_effective_column_order(fallback);
+    let fallback_state = fallback.clone();
     let next = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
         let current = log
             .column_order_overrides
             .get(&sample_id)
             .cloned()
-            .unwrap_or_else(|| fallback.clone());
-        change.apply_to_order(current)
+            .unwrap_or_else(|| fallback_state.normalized_column_order());
+        change
+            .apply_to(fallback_state.clone().with_column_order(current))
+            .column_order()
+            .to_vec()
     });
 
     cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
@@ -576,8 +590,7 @@ pub fn record_table_row_activation(
     cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
         log.row_activations.push(TableSampleRowActivation {
             sample_id,
-            row_id: activation.row_id().as_str().to_owned(),
-            render_key: action.render_key().to_owned(),
+            identity: activation.identity().clone(),
             kind: activation.kind().as_str().to_owned(),
             model_index: action.model_index(),
             depth: action.depth(),
@@ -597,7 +610,7 @@ pub fn record_table_expansion_request(
 ) {
     let sample_id = sample_id.into();
     let fallback = fallback.clone();
-    let row_id = toggle.row_id().clone();
+    let identity = toggle.identity().clone();
     let expanded = toggle.expanded();
     let depth = toggle.action().depth();
     let loaded_child_count = toggle.loaded_child_count();
@@ -614,14 +627,19 @@ pub fn record_table_expansion_request(
     cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
         log.expansion_toggles.push(TableSampleExpansionToggle {
             sample_id: sample_id.clone(),
-            row_id: row_id.as_str().to_owned(),
+            identity: identity.clone(),
             expanded,
             depth,
             loaded_child_count,
             children_load_state,
             children_load_message,
         });
-        if sample_id == "server-tree" && row_id.as_str() == "server-workspace" && expanded {
+        if sample_id == "server-tree"
+            && identity
+                .source_row_id()
+                .is_some_and(|row_id| row_id.as_str() == "server-workspace")
+            && expanded
+        {
             log.server_tree_loaded.insert(sample_id.clone(), true);
         }
 
@@ -635,9 +653,9 @@ pub fn record_table_expansion_request(
             TableExpansionState::All => TableExpansionState::default(),
             TableExpansionState::Rows(mut rows) => {
                 if expanded {
-                    rows.insert(row_id);
+                    rows.insert(identity);
                 } else {
-                    rows.remove(&row_id);
+                    rows.remove(&identity);
                 }
                 TableExpansionState::Rows(rows)
             }
@@ -852,7 +870,7 @@ pub fn record_table_cell_edit_change(
     cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
         log.cell_edit_changes.push(TableSampleCellEditChange {
             sample_id: sample_id.clone(),
-            row_id: change.row_id().as_str().to_owned(),
+            identity: change.identity().clone(),
             column_id: change.column_id().as_str().to_owned(),
             source_index: change.source_index(),
             previous_text: change.previous_text().to_owned(),

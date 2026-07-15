@@ -74,12 +74,16 @@ for application form data; application and rendering code should consume `FormSn
 
 ## Accessibility Semantic Projection
 
-Button, Table, IconButton, Switch, Toggle, Checkbox, Slider, NumberInput, and Progress now derive an
-ephemeral `SemanticDescriptor` from their resolved render state. The descriptor is projected into
-GPUI with `UiA11yElementExt::ui_semantics`; it is not stored as a second component state model.
-Final `TreeUpdate` assertions and real AccessKit action dispatch are the executable authority for
-these producers. Do not restore their deleted `COMPONENT_A11Y_EVIDENCE` rows or Gallery
-`COMPONENT_A11Y_CLAIMS` as substitute runtime evidence.
+Official semantic producers now derive an ephemeral `SemanticDescriptor` from their resolved
+render state. The descriptor is projected into GPUI with `UiA11yElementExt::ui_semantics`; it is
+not stored as a second component state model. Final `TreeUpdate` assertions and real AccessKit
+action dispatch are the executable authority. Static `COMPONENT_A11Y_EVIDENCE` rows, Gallery
+`COMPONENT_A11Y_CLAIMS`, and their consumers were deleted rather than retained as transitional or
+substitute runtime evidence.
+
+See
+[Semantic accessibility and final-tree authority](../knowledge/engineering/decisions/semantic-accessibility-final-tree-authority.md)
+for the projection, lifecycle, executable-evidence, and DevTools redaction decision.
 
 IconButton keeps its accessible name separate from its description. Slider and NumberInput expose
 `SetValue` only when a change callback exists, consume only numeric AccessKit payloads, and reject
@@ -116,6 +120,127 @@ the actual GPUI element path. Standalone `Label` remains a visible-text semantic
 `FieldState::control_id()` is removed; the composed control continues to own its own element id.
 Custom field controls implement `open_gpui_ui_components::gpui_adapter::FieldControl` rather than
 depending on the renderer-neutral prelude.
+
+### Table Logical Identity
+
+Table row pinning, expansion, rendering, editing, callbacks, virtualization, and accessibility now
+share `TableRowIdentity` as the authoritative logical-row identity. Source rows with duplicate
+business `TableRowId` values resolve to distinct source-instance identities, and synthetic group
+rows use a separate typed namespace. Pinning and virtual-window movement no longer add region or
+slot identity, so the same logical row and cell keep their final AccessKit node ids when they move.
+
+`TableRowPinning::pinned_top` and `pinned_bottom` no longer accept strings or `TableRowId` values.
+Pass `TableRowIdentity` for one exact source instance or group row. Use
+`TableRowPinTarget::all_source_rows(row_id)` only when pinning every resolved source instance with
+the same business id is intentional. Targets retain caller order; bulk matches retain current
+model order; top wins logical overlap after target expansion. This is a clean public-contract
+replacement with no compatibility alias for the old business-id-only pin state.
+
+`Table::virtualizer_snapshot` now accepts `TableVirtualizerSnapshot` instead of the generic
+`VirtualizerSnapshot`. Build retained measurements with `TableVirtualizerSnapshotItem` and a
+`TableRowIdentity`; string keys are no longer accepted because they bypass duplicate-source and
+group-row identity rules. The Table adapter owns the private conversion to generic virtualizer
+keys, so application code should not encode row identities itself.
+
+`TableRowId` remains the application business key, but it is no longer an exact target. Choose the
+source identity form deliberately:
+
+```rust
+use open_gpui_ui_core::{
+    TableRow, TableRowIdentity, TableRowPinTarget, TableSourceRowIdentity, TableState,
+};
+
+let state = TableState::new([
+    TableRow::new("unique-row"),
+    TableRow::new("duplicate"),
+    TableRow::new("duplicate"),
+    TableRow::new("duplicate").with_instance_id("retained-instance"),
+]);
+let unique = TableSourceRowIdentity::unique("unique-row");
+let occurrence = state
+    .source_row_identity_at("duplicate", 1)
+    .expect("the current source snapshot contains a second occurrence");
+let retained = TableSourceRowIdentity::explicit("duplicate", "retained-instance");
+let exact_pin = TableRowPinTarget::exact(TableRowIdentity::source_instance(
+    "duplicate",
+    "retained-instance",
+));
+let bulk_pin = TableRowPinTarget::all_source_rows("duplicate");
+```
+
+`TableSourceRowIdentity::unique` means that the business id must be unique in the current source
+snapshot; lookup returns `TableSourceRowLookup::Ambiguous` when it is not. An occurrence returned
+by `source_row_identity_at` is valid through `TableState` clones and row-model transforms, but any
+`with_rows` replacement or reorder creates a different snapshot and lookup returns
+`TableSourceRowLookup::StaleSnapshot`. Use `TableRow::with_instance_id` and
+`TableSourceRowIdentity::explicit` for identity retained across source replacement or reorder.
+
+Cell edits now target the exact `(TableRowIdentity, TableColumnId)` pair. Construct an
+application-owned edit with `TableCellEditRequest::new(TableSourceRowIdentity, ...)`; the
+`TableCellEditChange` emitted by `Table::on_cell_edit_change` is reserved for renderer-resolved
+callbacks and therefore always carries real `TableRowAction` metadata. `source_row_id()` is a
+business-id readout, not target authority. Applying a unique-assumption request to duplicate rows returns
+`TableCellEditApplyOutcome::AmbiguousRowId`, and applying an occurrence edit to a newer source
+snapshot returns `StaleRowIdentity`. Both outcomes leave the current rows and Table cache identity
+unchanged; an exact unique, explicit-instance, or current-snapshot occurrence edit updates only the
+intended source row.
+
+The identity-sensitive accessor migration is explicit. A `source_row_id()` result is a business-key
+readout and must not be passed back as though it uniquely identified the resolved row:
+
+| Removed or changed v0.2 surface | v0.3 replacement |
+| --- | --- |
+| `TableResolvedRow::id()` | `identity()` for exact lookup and targeting; optional `source_row_id()` for source-backed display/diagnostics |
+| `TableResolvedRow::parent_id()` | `parent_identity()` |
+| `TableGroupRow::parent_id()` | `parent_identity()` |
+| `TableGroupRow::first_leaf_row_id()` | `first_leaf_identity()` |
+| `TableTreeRow::parent_id()` | `parent_identity()` |
+| `TableRowModel::rows_by_id()` | No business-id map replacement. Use `rows()` for materialized model order, `lookup_rows()` for every addressable row, or `row(&TableRowIdentity)` for one exact row. |
+| `TableRowModel::row(&TableRowId)` | `row(&TableRowIdentity)` for an exact row; `source_rows(&TableRowId)` for every matching source instance; `unique_source_row(&TableRowId)` only when exactly one match is acceptable |
+| `TableResolvedState::duplicate_row_ids()` | `row_identity_diagnostics()`, including typed `DuplicateRowId` and `DuplicateSourceInstance` diagnostics |
+| `TableRowAction::row_id()` | `identity()` for exact targeting; `source_row_id()` only for display/diagnostics |
+| `TableRowActivation::row_id()` | `identity()`; optional `source_row_id()` readout |
+| `TableRowExpansionToggle::row_id()` | `identity()`; optional `source_row_id()` readout |
+| `TableRowSelectionChange::row_id()` | `identity()`; optional `source_row_id()` readout |
+| `TableExpansionState::rows(TableRowId...)` / `is_expanded(&TableRowId)` | `rows(TableRowIdentity...)` / `is_expanded(&TableRowIdentity)` |
+| `TableCellEditChange::for_row(...)` / `for_source_identity(...)` | `TableCellEditRequest::new(TableSourceRowIdentity, ...)` for programmatic edits; runtime callbacks receive `TableCellEditChange` |
+| `TableCellEditChange::row_id()` | `identity()` for the exact callback row; optional `source_row_id()` readout |
+| `TableBehaviorSnapshot::row(&TableRowId)` | `row(&TableRowIdentity)` for one exact rendered row; `source_rows(&TableRowId)` or `unique_source_row(&TableRowId)` for rendered business-id lookup |
+| `TableRowBehaviorSnapshot::id()` | `identity()` for the exact rendered row; optional `source_row_id()` readout |
+| `TableResolvedHeaderCell::id()` | `identity()` for the typed resolved fragment; `logical_identity()` when pinning-region fragmentation must be ignored |
+| `TableResolvedHeaderCell::source_id()` | `source_column_id()` for a leaf, `source_group_path()` for a group, or inspect `logical_identity()` when handling every header kind |
+| `TableResolvedHeaderCell::placeholder_id()` | No string-id replacement. Match `TableHeaderIdentity::Placeholder` through `logical_identity()`. |
+| `TableResolvedHeaderCell::sub_header_ids()` | `sub_header_identities()` |
+| `TableResolvedHeaderGroup::id()` | `identity()` returning `TableHeaderRowIdentity`; read `region()` separately because row identity is region-independent |
+| `TableRowPinning::pinned_top(TableRowId...)` / `pinned_bottom(TableRowId...)` | Pass exact `TableRowIdentity` targets, or explicit `TableRowPinTarget::all_source_rows(TableRowId)` bulk targets. |
+| `TableRowPinning::top()` / `bottom()` | `top_targets()` / `bottom_targets()` returning ordered `TableRowPinTarget` slices |
+| `TableRowAction::render_key()` / `TableCellEditChange::render_key()` | No like-for-like string accessor. Retain `identity()` as authority, use `identity().key()` only when a typed `TableRowIdentityKey` is required, and use `TableDebugSelector` builders for official selectors. |
+| `Table::default_focused_row(TableRowId)` | `Table::default_focused_row(TableRowIdentity)` |
+| generic `VirtualizerSnapshot` string keys | `TableVirtualizerSnapshotItem::new(TableRowIdentity, size)` |
+| `TableColumnOrderChange::apply_to_order(column_order)` | `apply_to(TableState) -> TableState`; the state supplies the full source-column authority used to normalize partial order before the move |
+
+Column order no longer owns visibility. A partial `TableState::column_order()` puts its known ids
+first, and `normalized_column_order()` appends every unlisted source column in source order while
+ignoring unknown and duplicate ids. `TableColumnOrderChange::apply_to(TableState)` normalizes that
+complete source order before moving either a listed or previously unlisted column, then stores the
+full order without changing visibility or pinning.
+
+Virtual Table focus remains logical when a row leaves the rendered overscan window. The stable
+Table root becomes the physical and AccessKit focus proxy, publishes no stale row actions, and
+continues real Up, Down, Home, End, Enter, and Space behavior against the complete final model. A
+row remount reclaims physical focus only while that proxy still owns the claim. If the exact row
+leaves the final model, focus falls back to its first remaining row or clears for an empty model;
+focus already moved outside the Table is never stolen.
+
+### VirtualizedList Render Identity
+
+`VirtualizedListRowBehaviorSnapshot::render_key()` and
+`VirtualizedListRowRenderContext::render_key()` are opaque adapter identities, not domain keys.
+Use `VirtualizedListItemDescriptor::key()` for application identity. Duplicate source keys now use
+a collision-checked, length-prefixed occurrence encoding so they cannot alias any legal unique
+source key. Do not parse, format, or persist the encoding; only round-trip a render key to the
+adapter-owned measurement path for the same ordered descriptor snapshot. Reordering duplicate
+items creates a new occurrence authority.
 
 ### DevTools Semantic Probes
 

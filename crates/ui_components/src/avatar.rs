@@ -6,10 +6,10 @@ use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::FluentBuilder as _;
 use open_gpui::{
-    ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, div, px,
+    ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled,
+    div, px,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 /// Renderer-neutral avatar source metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -262,6 +262,7 @@ impl RenderOnce for Avatar {
         let debug_id = self.id.to_string();
         let label = state.accessible_label().to_owned();
         let fallback = state.fallback().to_owned();
+        let semantics = SemanticDescriptor::new(state.role()).with_label(&label);
 
         div()
             .id(self.id)
@@ -282,8 +283,7 @@ impl RenderOnce for Avatar {
             .text_color(theme.resolve(colors.foreground()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
-            .ui_role(state.role())
-            .aria_label(label)
+            .ui_semantics(&semantics)
             .child(fallback)
     }
 }
@@ -546,6 +546,7 @@ impl RenderOnce for AvatarGroupCount {
         let debug_id = self.id.to_string();
         let label = format!("+{}", state.count());
         let text_size = gpui_px_from_ui(metrics.text_size());
+        let semantics = SemanticDescriptor::new(state.role()).with_label(&label);
 
         div()
             .id(self.id)
@@ -566,8 +567,7 @@ impl RenderOnce for AvatarGroupCount {
             .text_color(theme.resolve(colors.foreground()))
             .text_size(text_size)
             .line_height(text_size)
-            .ui_role(state.role())
-            .aria_label(label.clone())
+            .ui_semantics(&semantics)
             .child(label)
     }
 }

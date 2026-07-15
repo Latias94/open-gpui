@@ -187,6 +187,17 @@ pub struct ScrollArea {
 }
 
 impl ScrollArea {
+    /// Resolves descendant global IDs in the same scope used by rendered viewport content.
+    pub(crate) fn with_content_global_id_scope<R>(
+        window: &mut Window,
+        viewport_id: &str,
+        f: impl FnOnce(&mut Window) -> R,
+    ) -> R {
+        window.with_id(std::any::type_name::<Self>(), |window| {
+            window.with_id(viewport_id.to_owned(), f)
+        })
+    }
+
     /// Creates a new scroll area viewport.
     pub fn new(id: impl Into<String>, content: impl IntoElement) -> Self {
         let viewport_id = id.into();

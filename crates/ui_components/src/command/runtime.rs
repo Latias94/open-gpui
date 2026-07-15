@@ -6,7 +6,9 @@ use open_gpui::{
     KeyDownEvent, ParentElement, Pixels, ScrollHandle, StatefulInteractiveElement, Styled, Window,
     div, px, rgba,
 };
-use open_gpui_ui_core::{Role, Sizable, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{
+    AccessibleAction, Role, SemanticDescriptor, Sizable, ThemeTokens, UiPx, ui_px,
+};
 
 use crate::a11y::UiA11yElementExt;
 use crate::choice_overlay_runtime::{
@@ -215,6 +217,13 @@ pub(super) fn command_content_element(
             on_query_change(query, window, cx);
         });
     }
+    let content_role = dialog_state
+        .as_ref()
+        .map_or_else(|| state.content_role(), |dialog| dialog.role());
+    let mut content_semantics = SemanticDescriptor::new(content_role).with_label(label.as_ref());
+    if dialog_state.is_some() {
+        content_semantics = content_semantics.with_modal(true);
+    }
 
     div()
         .id(content_id)
@@ -231,14 +240,9 @@ pub(super) fn command_content_element(
         .bg(theme.resolve(colors.surface()))
         .text_color(theme.resolve(colors.foreground()))
         .shadow_lg()
-        .when_some(dialog_state.clone(), |this, dialog_state| {
-            this.occlude().ui_role(dialog_state.role())
-        })
-        .when(dialog_state.is_none(), |this| {
-            this.ui_role(state.content_role())
-        })
+        .when(dialog_state.is_some(), |this| this.occlude())
+        .ui_semantics(&content_semantics)
         .on_scroll_wheel(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
-        .aria_label(label.clone())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             let key = command_key_down_event_key(event);
             if event.prefer_character_input {
@@ -300,12 +304,12 @@ pub(super) fn command_content_element(
             ))
         })
         .when_some(state.loading().cloned(), |this, loading| {
+            let semantics = SemanticDescriptor::new(loading.role()).with_label(loading.message());
             this.child(
                 div()
                     .id(loading_id)
                     .text_color(theme.resolve(colors.muted_foreground()))
-                    .ui_role(loading.role())
-                    .aria_label(loading.message().to_owned())
+                    .ui_semantics(&semantics)
                     .child(loading.message().to_owned()),
             )
         })
@@ -324,6 +328,7 @@ pub(super) fn command_content_element(
                             theme.resolve(command_status_foreground(item.intent(), colors, tokens));
                         let item_debug_id = debug_id.clone();
                         let message = item.message().to_owned();
+                        let semantics = SemanticDescriptor::new(item.role()).with_label(&message);
                         list.child(
                             div()
                                 .id(format!("command-status:{index}"))
@@ -337,8 +342,7 @@ pub(super) fn command_content_element(
                                 .border_color(foreground)
                                 .text_xs()
                                 .text_color(foreground)
-                                .ui_role(item.role())
-                                .aria_label(message.clone())
+                                .ui_semantics(&semantics)
                                 .child(message),
                         )
                     },
@@ -616,6 +620,9 @@ fn render_command_results_body(
     let colors = state.colors();
     let metrics = state.metrics();
     let rows = rows.to_vec();
+    let listbox_semantics = SemanticDescriptor::new(plan.role())
+        .with_label(plan.label())
+        .with_disabled(state.disabled());
 
     div()
         .id(listbox_id.clone())
@@ -631,9 +638,7 @@ fn render_command_results_body(
         .text_size(gpui_px_from_ui(state.listbox().metrics().text_size()))
         .line_height(gpui_px_from_ui(state.listbox().metrics().text_size()))
         .text_color(theme.resolve(colors.foreground()))
-        .ui_role(plan.role())
-        .aria_label(plan.label().to_owned())
-        .aria_disabled(state.disabled())
+        .ui_semantics(&listbox_semantics)
         .children(command_result_children(
             &command_id,
             &listbox_id,
@@ -760,6 +765,16 @@ fn render_command_result_row(
             || label.clone(),
             |description| format!("{label}, {description}"),
         );
+    let mut option_semantics = SemanticDescriptor::new(row.role())
+        .with_label(&option_aria_label)
+        .with_selected(selected)
+        .with_disabled(disabled)
+        .with_actions(&[AccessibleAction::Click]);
+    if let Some(position) = position {
+        option_semantics = option_semantics
+            .with_position_in_set(position)
+            .with_size_of_set(row.item().size_of_set());
+    }
 
     div()
         .id(format!("command-row:{render_key}"))
@@ -777,6 +792,7 @@ fn render_command_result_row(
         .flex()
         .flex_col()
         .when_some(group_label, |this, label| {
+            let semantics = SemanticDescriptor::new(Role::Group).with_label(label.as_ref());
             this.child(
                 div()
                     .id(format!("command-group-label:{render_key}"))
@@ -787,8 +803,7 @@ fn render_command_result_row(
                     .text_xs()
                     .font_weight(FontWeight::BOLD)
                     .text_color(group_label_color)
-                    .ui_role(Role::Group)
-                    .aria_label(label.clone())
+                    .ui_semantics(&semantics)
                     .child(label),
             )
         })
@@ -811,13 +826,7 @@ fn render_command_result_row(
                 .rounded(gpui_px_from_ui(metrics.radius()))
                 .bg(row_background)
                 .text_color(row_foreground)
-                .ui_role(row.role())
-                .aria_label(option_aria_label)
-                .aria_selected(selected)
-                .aria_disabled(disabled)
-                .when_some(position, |this, position| {
-                    this.aria_position_in_set(position)
-                })
+                .ui_semantics(&option_semantics)
                 .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                 .when(!disabled, |this| {
                     this.cursor_pointer()

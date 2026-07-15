@@ -6,10 +6,10 @@ use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
-    ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, div,
+    ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled,
+    div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 /// Semantic intent for quiet shell feedback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -261,6 +261,7 @@ impl RenderOnce for StatusCue {
         let metrics = state.metrics();
         let colors = state.colors();
         let debug_id = self.id.to_string();
+        let semantics = SemanticDescriptor::new(state.role()).with_label(state.label());
 
         div()
             .id(self.id)
@@ -278,8 +279,7 @@ impl RenderOnce for StatusCue {
             .text_color(theme.resolve(colors.foreground()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
-            .ui_role(state.role())
-            .aria_label(self.label.clone())
+            .ui_semantics(&semantics)
             .child(
                 div()
                     .w(gpui_px_from_ui(metrics.marker_size()))
@@ -492,6 +492,7 @@ impl RenderOnce for EmptyState {
         let metrics = state.metrics();
         let colors = state.colors();
         let debug_id = self.id.to_string();
+        let semantics = SemanticDescriptor::new(state.role()).with_label(state.title());
 
         div()
             .id(self.id)
@@ -508,8 +509,7 @@ impl RenderOnce for EmptyState {
             .border_color(theme.resolve(colors.border()))
             .bg(theme.resolve(colors.background()))
             .text_color(theme.resolve(colors.foreground()))
-            .ui_role(state.role())
-            .aria_label(self.title.clone())
+            .ui_semantics(&semantics)
             .child(
                 div()
                     .text_size(gpui_px_from_ui(metrics.title_size()))

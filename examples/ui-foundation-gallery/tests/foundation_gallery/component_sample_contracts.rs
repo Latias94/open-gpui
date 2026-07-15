@@ -39,7 +39,10 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         release_plan.visible_row_count()
     );
     assert_eq!(
-        release_plan.rows()[0].id().as_str(),
+        release_plan.rows()[0]
+            .source_row_id()
+            .expect("release queue row should be source-backed")
+            .as_str(),
         "release-queue-row-0000"
     );
     assert_eq!(release_plan.row_counts().pinned_center_rows(), 10_000);
@@ -62,7 +65,13 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(filter_summary.status_facet_total_count, 60);
     assert_eq!(filter_summary.score_facet_min, Some(0));
     assert_eq!(filter_summary.score_facet_max, Some(177));
-    assert_eq!(filter_plan.rows()[0].id().as_str(), "filter-board-row-177");
+    assert_eq!(
+        filter_plan.rows()[0]
+            .source_row_id()
+            .expect("filter board row should be source-backed")
+            .as_str(),
+        "filter-board-row-177"
+    );
     assert_eq!(filter_plan.row_counts().selected_rows(), 1);
     assert_eq!(filter_plan.aria_column_count(), 4);
     let filter_status_facet = filter_plan
@@ -116,7 +125,11 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         server_page_plan
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| {
+                row.source_row_id()
+                    .expect("server page row should be source-backed")
+                    .as_str()
+            })
             .collect::<Vec<_>>(),
         [
             "server-paged-row-0016",
@@ -131,12 +144,11 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         "manual modes should preserve the supplied server page snapshot"
     );
     assert_eq!(server_page_plan.row_counts().selected_rows(), 1);
-    assert!(
-        server_page_plan
-            .rows()
-            .iter()
-            .any(|row| row.id().as_str() == "server-paged-row-0018" && row.selected())
-    );
+    assert!(server_page_plan.rows().iter().any(|row| {
+        row.source_row_id()
+            .is_some_and(|id| id.as_str() == "server-paged-row-0018")
+            && row.selected()
+    }));
 
     let release_resize = table_sample(samples, "release-resize");
     let resize_plan = release_resize.behavior_snapshot();
@@ -277,7 +289,9 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert!(grouped_summary.expanded_rows < grouped_summary.grouped_rows);
 
     let ui_group = grouped_plan
-        .row(&TableRowId::new("group:team=UI"))
+        .row(&TableRowIdentity::group(TableGroupRowIdentity::new(
+            "team", "UI",
+        )))
         .expect("expanded UI group should be visible and addressable");
     assert!(ui_group.is_group());
     assert_eq!(
@@ -294,17 +308,16 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
             .text()
             .is_empty()
     );
+    assert!(grouped_plan.rows().iter().any(|row| {
+        row.source_row_id()
+            .is_some_and(|id| id.as_str() == "grouped-release-row-000")
+            && row.is_leaf()
+    }));
     assert!(
-        grouped_plan
-            .rows()
-            .iter()
-            .any(|row| row.id().as_str() == "grouped-release-row-000" && row.is_leaf())
-    );
-    assert!(
-        grouped_plan
-            .rows()
-            .iter()
-            .all(|row| row.id().as_str() != "grouped-release-row-001"),
+        grouped_plan.rows().iter().all(|row| {
+            row.source_row_id()
+                .is_none_or(|id| id.as_str() != "grouped-release-row-001")
+        }),
         "Runtime leaf row should stay hidden because that group starts collapsed"
     );
     assert_eq!(
@@ -340,7 +353,9 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(custom_summary.expanded_group_inputs, 2);
     assert_eq!(custom_plan.row_counts().final_rows(), 10);
     let custom_ui_group = custom_plan
-        .row(&TableRowId::new("group:team=UI"))
+        .row(&TableRowIdentity::group(TableGroupRowIdentity::new(
+            "team", "UI",
+        )))
         .expect("expanded UI custom group should be visible and addressable");
     assert_eq!(
         custom_ui_group
@@ -358,7 +373,9 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     );
     assert_eq!(
         custom_plan
-            .row(&TableRowId::new("group:team=Platform"))
+            .row(&TableRowIdentity::group(TableGroupRowIdentity::new(
+                "team", "Platform",
+            )))
             .expect("expanded Platform custom group should be visible and addressable")
             .cell(&TableColumnId::new("score"))
             .expect("platform custom score aggregate should be present")
@@ -445,14 +462,30 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(
         row_pinning_plan
             .rows_for_region(TableRowRegion::Top)
-            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .map(|row| {
+                (
+                    row.source_row_id()
+                        .expect("top-pinned row should be source-backed")
+                        .as_str(),
+                    row.region(),
+                    row.region_index(),
+                )
+            })
             .collect::<Vec<_>>(),
         [("row-pinning-row-003", TableRowRegion::Top, 0)]
     );
     assert_eq!(
         row_pinning_plan
             .rows_for_region(TableRowRegion::Center)
-            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .map(|row| {
+                (
+                    row.source_row_id()
+                        .expect("center row should be source-backed")
+                        .as_str(),
+                    row.region(),
+                    row.region_index(),
+                )
+            })
             .collect::<Vec<_>>(),
         [
             ("row-pinning-row-024", TableRowRegion::Center, 0),
@@ -471,7 +504,15 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(
         row_pinning_plan
             .rows_for_region(TableRowRegion::Bottom)
-            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .map(|row| {
+                (
+                    row.source_row_id()
+                        .expect("bottom-pinned row should be source-backed")
+                        .as_str(),
+                    row.region(),
+                    row.region_index(),
+                )
+            })
             .collect::<Vec<_>>(),
         [
             ("row-pinning-row-030", TableRowRegion::Bottom, 0),
@@ -504,7 +545,9 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
             .rows()
             .iter()
             .map(|row| (
-                row.id().as_str(),
+                row.source_row_id()
+                    .expect("dependency tree row should be source-backed")
+                    .as_str(),
                 row.depth(),
                 row.tree_expanded(),
                 row.is_tree_branch()
@@ -548,19 +591,23 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         server_plan
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| {
+                row.source_row_id()
+                    .expect("server tree row should be source-backed")
+                    .as_str()
+            })
             .collect::<Vec<_>>(),
         ["server-workspace", "server-cache", "server-failed"]
     );
 
     let server_workspace = server_plan
-        .row(&TableRowId::new("server-workspace"))
+        .unique_source_row(&TableRowId::new("server-workspace"))
         .expect("server workspace row should resolve");
     let server_cache = server_plan
-        .row(&TableRowId::new("server-cache"))
+        .unique_source_row(&TableRowId::new("server-cache"))
         .expect("server cache row should resolve");
     let server_failed = server_plan
-        .row(&TableRowId::new("server-failed"))
+        .unique_source_row(&TableRowId::new("server-failed"))
         .expect("server failed row should resolve");
 
     assert!(server_workspace.is_tree_branch());

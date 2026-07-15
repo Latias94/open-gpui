@@ -1,13 +1,13 @@
 use std::rc::Rc;
 
-use open_gpui::{App, Entity, Window};
+use open_gpui::{App, Window};
 use open_gpui_ui_core::{
-    TableExpansionState, TableRowChildrenLoadState, TableRowId, TableSelectionMode,
-    TableSelectionPolicy,
+    TableExpansionState, TableResolvedRow, TableRowChildrenLoadState, TableRowId, TableRowIdentity,
+    TableSelectionMode, TableSelectionPolicy,
 };
 
 use super::modifiers::TableInputModifiers;
-use crate::table::{TableRowRenderPlan, TableRowSelectionHandler, TableRuntime};
+use crate::table::{TableRowRenderPlan, TableRowSelectionHandler};
 
 /// Row activation source for table row callbacks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,8 +34,7 @@ impl TableRowActivationKind {
 /// Common row metadata carried by interactive table row callbacks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableRowAction {
-    row_id: TableRowId,
-    render_key: String,
+    identity: TableRowIdentity,
     model_index: usize,
     source_index: Option<usize>,
     depth: usize,
@@ -52,45 +51,36 @@ impl TableRowAction {
         row: &TableRowRenderPlan,
         modifiers: TableInputModifiers,
     ) -> Self {
+        Self::from_resolved_row(row.row(), row.model_index(), modifiers)
+    }
+
+    pub(in crate::table) fn from_resolved_row(
+        row: &TableResolvedRow,
+        model_index: usize,
+        modifiers: TableInputModifiers,
+    ) -> Self {
         Self {
-            row_id: row.id().clone(),
-            render_key: row.render_key().to_owned(),
-            model_index: row.model_index(),
-            source_index: row.row().source_index(),
-            depth: row.row().depth(),
+            identity: row.identity().clone(),
+            model_index,
+            source_index: row.source_index(),
+            depth: row.depth(),
             selected: row.selected(),
-            tree_branch: row.row().is_tree_branch(),
-            tree_expanded: row.row().tree_expanded(),
-            loaded_child_count: row.row().loaded_child_count(),
-            children_load_state: row.row().children_load_state().cloned(),
+            tree_branch: row.is_tree_branch(),
+            tree_expanded: row.tree_expanded(),
+            loaded_child_count: row.loaded_child_count(),
+            children_load_state: row.children_load_state().cloned(),
             modifiers,
         }
     }
 
-    pub(in crate::table) fn for_row(row_id: TableRowId) -> Self {
-        Self {
-            row_id,
-            render_key: String::new(),
-            model_index: 0,
-            source_index: None,
-            depth: 0,
-            selected: false,
-            tree_branch: false,
-            tree_expanded: None,
-            loaded_child_count: 0,
-            children_load_state: None,
-            modifiers: TableInputModifiers::default(),
-        }
+    /// Returns the authoritative resolved row identity.
+    pub const fn identity(&self) -> &TableRowIdentity {
+        &self.identity
     }
 
-    /// Returns the stable row id.
-    pub const fn row_id(&self) -> &TableRowId {
-        &self.row_id
-    }
-
-    /// Returns the unique render key used by element ids.
-    pub fn render_key(&self) -> &str {
-        &self.render_key
+    /// Returns the caller-owned business row id for source-backed rows.
+    pub const fn source_row_id(&self) -> Option<&TableRowId> {
+        self.identity.source_row_id()
     }
 
     /// Returns this row's zero-based index in the final row model.
@@ -161,9 +151,14 @@ impl TableRowActivation {
         self.kind
     }
 
-    /// Returns the activated row id.
-    pub const fn row_id(&self) -> &TableRowId {
-        self.action.row_id()
+    /// Returns the authoritative activated row identity.
+    pub const fn identity(&self) -> &TableRowIdentity {
+        self.action.identity()
+    }
+
+    /// Returns the caller-owned business id for source-backed activations.
+    pub const fn source_row_id(&self) -> Option<&TableRowId> {
+        self.action.source_row_id()
     }
 }
 
@@ -184,9 +179,14 @@ impl TableRowExpansionToggle {
         &self.action
     }
 
-    /// Returns the row id whose expansion should change.
-    pub const fn row_id(&self) -> &TableRowId {
-        self.action.row_id()
+    /// Returns the resolved row identity whose expansion should change.
+    pub const fn identity(&self) -> &TableRowIdentity {
+        self.action.identity()
+    }
+
+    /// Returns the caller-owned business id for source-backed rows.
+    pub const fn source_row_id(&self) -> Option<&TableRowId> {
+        self.action.source_row_id()
     }
 
     /// Returns the desired expanded state after the toggle.
@@ -260,9 +260,14 @@ impl TableRowSelectionChange {
         &self.action
     }
 
-    /// Returns the row id whose selection changed.
-    pub const fn row_id(&self) -> &TableRowId {
-        self.action.row_id()
+    /// Returns the resolved row identity whose selection changed.
+    pub const fn identity(&self) -> &TableRowIdentity {
+        self.action.identity()
+    }
+
+    /// Returns the caller-owned business id for the selected source row.
+    pub const fn source_row_id(&self) -> Option<&TableRowId> {
+        self.action.source_row_id()
     }
 
     /// Returns the selection mode used for this row surface.
@@ -287,7 +292,6 @@ impl TableRowSelectionChange {
 }
 
 pub(in crate::table) fn request_table_row_selection_change(
-    runtime: &Entity<TableRuntime>,
     action: &TableRowAction,
     selection_policy: TableSelectionPolicy,
     scope: TableSelectionScope,
@@ -296,6 +300,9 @@ pub(in crate::table) fn request_table_row_selection_change(
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
+    let Some(row_id) = action.source_row_id() else {
+        return false;
+    };
     let current_selected = action.selected();
     let selection_mode = selection_policy.selection_mode();
     let next_selection = if selection_mode.is_single() {
@@ -310,16 +317,16 @@ pub(in crate::table) fn request_table_row_selection_change(
 
     let next_selection_ids = if next_selection {
         if selection_mode.is_single() {
-            vec![action.row_id().clone()]
+            vec![row_id.clone()]
         } else {
             let mut next_selection_ids = selected_row_ids.as_ref().clone();
-            next_selection_ids.push(action.row_id().clone());
+            next_selection_ids.push(row_id.clone());
             next_selection_ids
         }
     } else {
         selected_row_ids
             .iter()
-            .filter(|row_id| *row_id != action.row_id())
+            .filter(|candidate| *candidate != row_id)
             .cloned()
             .collect()
     };
@@ -332,10 +339,6 @@ pub(in crate::table) fn request_table_row_selection_change(
         next_selection_ids,
     );
 
-    runtime.update(cx, |runtime, cx| {
-        runtime.set_selection_anchor(Some(action.row_id().clone()), cx);
-    });
-
     if let Some(on_row_selection_change) = on_row_selection_change.as_ref() {
         on_row_selection_change(change, window, cx);
         return true;
@@ -346,7 +349,7 @@ pub(in crate::table) fn request_table_row_selection_change(
 
 pub(in crate::table) fn toggle_table_expansion(
     expansion: TableExpansionState,
-    row_id: TableRowId,
+    identity: TableRowIdentity,
     expanded: bool,
 ) -> TableExpansionState {
     match expansion {
@@ -354,9 +357,9 @@ pub(in crate::table) fn toggle_table_expansion(
         TableExpansionState::All => TableExpansionState::default(),
         TableExpansionState::Rows(mut rows) => {
             if expanded {
-                rows.insert(row_id);
+                rows.insert(identity);
             } else {
-                rows.remove(&row_id);
+                rows.remove(&identity);
             }
             TableExpansionState::Rows(rows)
         }

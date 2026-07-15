@@ -228,7 +228,5 @@ fn table_content_fit_text_size(window: &Window) -> Pixels {
 }
 
 fn table_content_fit_row_sample_key(row: &TableResolvedRow) -> String {
-    row.source_index()
-        .map(|index| format!("{index}:{}", row.id().as_str()))
-        .unwrap_or_else(|| row.id().as_str().to_owned())
+    row.identity_key().as_str().to_owned()
 }

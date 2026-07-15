@@ -71,9 +71,11 @@ fn table_public_exports_keep_component_surface_and_core_owner_paths_explicit() {
     let _virtualizer_state: ui_core::VirtualizerResolvedState = virtualizer.resolve();
     assert_eq!(viewport.row_overscan_range().start(), 0);
 
+    let _row_pin_target: ui_core::TableRowPinTarget =
+        ui_core::TableRowPinTarget::exact(ui_core::TableRowIdentity::source("row-a"));
     let _row_pinning: ui_core::TableRowPinning = ui_core::TableRowPinning::new()
-        .pinned_top(["row-a"])
-        .pinned_bottom(["row-b"]);
+        .pinned_top([ui_core::TableRowIdentity::source("row-a")])
+        .pinned_bottom([ui_core::TableRowIdentity::source("row-b")]);
     let _row_pinning_policy: ui_core::TableRowPinningPolicy =
         ui_core::TableRowPinningPolicy::KeepPinnedRows;
     let _row_region: ui_core::TableRowRegion = ui_core::TableRowRegion::Top;

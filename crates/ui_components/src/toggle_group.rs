@@ -14,7 +14,10 @@ use open_gpui::{
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
     Window, div,
 };
-use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_px};
+use open_gpui_ui_core::{
+    AccessibleAction, Orientation, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, Toggled,
+    UiPx, ui_px,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
@@ -711,6 +714,10 @@ impl RenderOnce for ToggleGroup {
             let tab_stop_index = state.tab_stop_index();
             let item_descriptors = Rc::new(descriptors);
             let mut focusable_position = 0usize;
+            let semantics = SemanticDescriptor::new(state.role())
+                .with_label(state.label())
+                .with_orientation(orientation)
+                .with_disabled(state.disabled());
 
             div()
                 .id(id.clone())
@@ -718,10 +725,7 @@ impl RenderOnce for ToggleGroup {
                     let debug_id = id.to_string();
                     move || format!("toggle-group:{debug_id}")
                 })
-                .ui_role(state.role())
-                .aria_label(label.clone())
-                .ui_aria_orientation(orientation)
-                .aria_disabled(state.disabled())
+                .ui_semantics(&semantics)
                 .flex()
                 .gap(gpui_px_from_ui(metrics.gap()))
                 .p(gpui_px_from_ui(metrics.padding()))
@@ -771,6 +775,16 @@ impl RenderOnce for ToggleGroup {
                     });
                     let item_hover_background = theme.resolve(colors.hover_background());
                     let item_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+                    let mut item_semantics = SemanticDescriptor::new(item.role())
+                        .with_label(&item_label)
+                        .with_toggled(item.toggled())
+                        .with_disabled(item_disabled)
+                        .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
+                    if let Some(position) = item_position {
+                        item_semantics = item_semantics
+                            .with_position_in_set(position)
+                            .with_size_of_set(focusable_set_size);
+                    }
 
                     div()
                         .id(format!("toggle-group-item:{item_value}"))
@@ -781,14 +795,7 @@ impl RenderOnce for ToggleGroup {
                         })
                         .focusable()
                         .tab_stop(item_tab_stop)
-                        .ui_role(item.role())
-                        .ui_aria_toggled(item.toggled())
-                        .aria_label(item_label.clone())
-                        .aria_disabled(item_disabled)
-                        .when_some(item_position, |this, position| {
-                            this.aria_position_in_set(position)
-                                .aria_size_of_set(focusable_set_size)
-                        })
+                        .ui_semantics(&item_semantics)
                         .when_some(focus_handle, |this, focus_handle| {
                             this.track_focus(&focus_handle)
                         })

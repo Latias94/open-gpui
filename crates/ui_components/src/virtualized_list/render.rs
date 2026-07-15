@@ -5,7 +5,7 @@ use open_gpui::{
     AnyElement, App, ClickEvent, Entity, FocusHandle, InteractiveElement, IntoElement,
     ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, div, px,
 };
-use open_gpui_ui_core::{Size, UiPx};
+use open_gpui_ui_core::{AccessibleAction, SemanticDescriptor, Size, UiPx};
 
 use super::descriptor::VirtualizedListRowKind;
 use super::model::{VirtualizedListActivation, VirtualizedListSelectionMode, VirtualizedListState};
@@ -157,7 +157,8 @@ fn render_virtualized_list_row(
     let target = row.target();
     let activation = VirtualizedListActivation::from_target(target.clone(), row.selected());
     let row_kind = row.item().kind();
-    let primary_text = row.label().to_owned();
+    let row_label = row.label().to_owned();
+    let primary_text = row_label.clone();
     let secondary_text = row.item().secondary_text_ref().map(str::to_owned);
     let leading_metadata = row.item().leading_metadata_ref().map(str::to_owned);
     let trailing_metadata = row.item().trailing_metadata_ref().map(str::to_owned);
@@ -195,6 +196,24 @@ fn render_virtualized_list_row(
             cx,
         )
     };
+    let selectable = row_kind.selectable();
+    let row_actions: &[AccessibleAction] = if selectable {
+        &[AccessibleAction::Click]
+    } else {
+        &[]
+    };
+    let mut semantics = SemanticDescriptor::new(row.role())
+        .with_label(&row_label)
+        .with_disabled(row.disabled())
+        .with_actions(row_actions);
+    if selectable {
+        semantics = semantics.with_selected(row.selected());
+    }
+    if let Some(position) = row.position_in_set() {
+        semantics = semantics
+            .with_position_in_set(position)
+            .with_size_of_set(row.size_of_set());
+    }
 
     div()
         .on_children_prepainted({
@@ -241,17 +260,12 @@ fn render_virtualized_list_row(
         .border_color(theme.resolve(colors.border()))
         .bg(row_background)
         .text_color(text_color)
-        .ui_role(row.role())
-        .aria_selected(row.selected())
-        .aria_disabled(row.disabled())
-        .when_some(row.position_in_set(), |this, position| {
-            this.aria_position_in_set(position)
-        })
-        .when(!row.disabled(), |this| {
+        .ui_semantics(&semantics)
+        .when(selectable && !row.disabled(), |this| {
             this.cursor_pointer()
                 .hover(move |style| style.bg(theme.resolve(colors.row_hover_background())))
         })
-        .when(!row.disabled(), |this| {
+        .when(selectable && !row.disabled(), |this| {
             let runtime = runtime.clone();
             let focus_handle = focus_handle.clone();
             let on_activate = on_activate.clone();

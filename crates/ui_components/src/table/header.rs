@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    ClickEvent, CursorStyle, Empty, FontWeight, IntoElement, KeyDownEvent, ParentElement,
+    Axis, ClickEvent, CursorStyle, Empty, FontWeight, IntoElement, KeyDownEvent, ParentElement,
     ScrollHandle, Styled, div, px, rgb,
 };
 use open_gpui_ui_core::{
@@ -22,6 +22,8 @@ use super::{
 };
 use crate::a11y::UiA11yElementExt;
 use crate::geometry::gpui_px_from_ui;
+use crate::table::identity::TableDebugSelector;
+use crate::table::scroll::render_table_scroll_viewport;
 
 pub(super) fn render_table_header(
     plan: &TableRenderPlan,
@@ -42,8 +44,8 @@ pub(super) fn render_table_header(
             .map(|column| (column.id().clone(), column))
             .collect::<BTreeMap<_, _>>(),
     );
-    let pinned_layout = plan.pinned_layout().cloned();
-    let center_window = if pinned_layout.is_some() {
+    let has_pinned_columns = plan.has_pinned_columns();
+    let center_window = if has_pinned_columns {
         plan.center_column_window().cloned().map(Rc::new)
     } else {
         None
@@ -63,7 +65,6 @@ pub(super) fn render_table_header(
         let mut row_regions = Vec::with_capacity(regions.len());
         for region_plan in &regions {
             let region = region_plan.region();
-            let region_name = region.as_str().to_owned();
             let active_center_window = (region == TableColumnRegion::Center)
                 .then_some(center_window.as_deref())
                 .flatten();
@@ -128,19 +129,9 @@ pub(super) fn render_table_header(
             }
 
             let region_lane = div()
-                .id(format!(
-                    "table:{table_id}:header-region:{region_name}:row:{depth}"
-                ))
                 .debug_selector({
-                    let table_id = table_id.clone();
-                    let region_name = region_name.clone();
-                    move || {
-                        if depth == 0 {
-                            format!("table:{table_id}:header-region:{region_name}")
-                        } else {
-                            format!("table:{table_id}:header-region:{region_name}:row:{depth}")
-                        }
-                    }
+                    let selector = TableDebugSelector::header_region(&table_id, region, depth);
+                    move || selector.clone()
                 })
                 .relative()
                 .h_full()
@@ -151,27 +142,18 @@ pub(super) fn render_table_header(
                 .children(header_children)
                 .into_any_element();
 
-            let center_scroll_id = pinned_layout.as_ref().and_then(|layout| {
-                (region == TableColumnRegion::Center && !region_plan.columns().is_empty())
-                    .then(|| layout.header_center_scroll_id())
-            });
-            let region_element = if let Some(center_scroll_id) = center_scroll_id {
-                let center_scroll_id = if depth == 0 {
-                    center_scroll_id
-                } else {
-                    format!("{center_scroll_id}:row:{depth}")
-                };
-                div()
-                    .id(center_scroll_id.clone())
-                    .debug_selector(move || format!("scroll-area:{center_scroll_id}"))
-                    .h_full()
-                    .min_w(px(0.0))
-                    .flex_1()
-                    .overflow_x_scroll()
-                    .scrollbar_width(px(0.0))
-                    .track_scroll(&horizontal_scroll_handle)
-                    .child(region_lane)
-                    .into_any_element()
+            let center_scroll_selector = (has_pinned_columns
+                && region == TableColumnRegion::Center
+                && !region_plan.columns().is_empty())
+            .then(|| TableDebugSelector::header_center_scroll(&table_id, depth));
+            let region_element = if let Some(center_scroll_selector) = center_scroll_selector {
+                render_table_scroll_viewport(
+                    center_scroll_selector,
+                    Axis::Horizontal,
+                    px(0.0),
+                    &horizontal_scroll_handle,
+                    region_lane,
+                )
             } else {
                 region_lane
             };
@@ -202,7 +184,6 @@ pub(super) fn render_table_header(
     }
 
     div()
-        .id(format!("table:{table_id}:header-band"))
         .debug_selector({
             let table_id = table_id.clone();
             move || format!("table:{table_id}:header-band")
@@ -233,7 +214,7 @@ fn render_table_header_group_cell(
     reorder_enabled: bool,
     resize_config: TableResizeRenderConfig,
 ) -> impl IntoElement {
-    let header_id = header.id().to_owned();
+    let header_id = header.element_id().clone();
     let header_debug_selector = header.debug_selector().to_owned();
     let header_kind = header.kind();
     let header_label = header.label().to_owned();

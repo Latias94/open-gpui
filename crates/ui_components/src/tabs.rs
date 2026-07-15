@@ -10,7 +10,10 @@ use open_gpui::{
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
     Window, div,
 };
-use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{
+    AccessibleAction, Orientation, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx,
+    ui_px,
+};
 
 use crate::a11y::UiA11yElementExt;
 use crate::choice::{
@@ -689,18 +692,35 @@ impl RenderOnce for Tabs {
             );
             runtime.update(cx, |runtime, cx| runtime.sync(&state, &descriptors, cx));
 
+            let is_vertical = matches!(orientation, Orientation::Vertical);
+            let tablist_element_id: ElementId = "tablist".into();
+            let tablist_scroll_id = format!("tabs:{tabs_id}:tablist-scroll");
             let panel_node_id = window.with_global_id(panel_id.clone(), |global_id, _| {
                 global_id.accesskit_node_id()
             });
-            let tab_node_ids: Vec<_> = state
-                .items()
-                .iter()
-                .map(|item| {
-                    window.with_global_id(tabs_trigger_id(item.value()), |global_id, _| {
-                        global_id.accesskit_node_id()
-                    })
-                })
-                .collect();
+            let tab_node_ids = window.with_id(tablist_element_id.clone(), |window| {
+                let resolve_trigger_ids = |window: &mut Window| {
+                    state
+                        .items()
+                        .iter()
+                        .map(|item| {
+                            window.with_global_id(tabs_trigger_id(item.value()), |global_id, _| {
+                                global_id.accesskit_node_id()
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                };
+
+                if is_vertical {
+                    ScrollArea::with_content_global_id_scope(
+                        window,
+                        &tablist_scroll_id,
+                        resolve_trigger_ids,
+                    )
+                } else {
+                    resolve_trigger_ids(window)
+                }
+            });
 
             let selected_panel = if let Some(selected_index) = state.selected_index() {
                 items
@@ -723,10 +743,14 @@ impl RenderOnce for Tabs {
             let selected_value = state.selected_value().map(str::to_owned);
             let selected_index = state.selected_index();
             let selected_tab_node_id = selected_index.map(|index| tab_node_ids[index]);
+            let selected_tab_node_ids = selected_tab_node_id.into_iter().collect::<Vec<_>>();
+            let tablist_semantics =
+                SemanticDescriptor::new(Role::TabList).with_orientation(orientation);
+            let panel_semantics =
+                SemanticDescriptor::new(Role::TabPanel).with_labelled_by(&selected_tab_node_ids);
             let colors = state.colors();
             let metrics = state.metrics();
             let focus_ring = FocusRing::from_color(colors.focus_ring());
-            let is_vertical = matches!(orientation, Orientation::Vertical);
             let focus_handles = {
                 let runtime = runtime.read(cx);
                 state
@@ -771,6 +795,15 @@ impl RenderOnce for Tabs {
                     });
                     let tab_hover_background = theme.resolve(colors.tab_hover_background());
                     let tab_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+                    let controls = [panel_node_id];
+                    let tab_semantics = SemanticDescriptor::new(Role::Tab)
+                        .with_label(item.label())
+                        .with_selected(is_selected)
+                        .with_disabled(item.disabled())
+                        .with_controls(&controls)
+                        .with_position_in_set(item_index + 1)
+                        .with_size_of_set(state.items().len())
+                        .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
 
                     div()
                         .id(tabs_trigger_id(item.value()))
@@ -784,12 +817,7 @@ impl RenderOnce for Tabs {
                         .when_some(focus_handle, |this, focus_handle| {
                             this.track_focus(&focus_handle)
                         })
-                        .ui_role(Role::Tab)
-                        .aria_label(descriptor.label())
-                        .aria_selected(is_selected)
-                        .aria_controls(std::iter::once(panel_node_id))
-                        .aria_position_in_set(item_index + 1)
-                        .aria_size_of_set(state.items().len())
+                        .ui_semantics_with_relations(&tab_semantics, |node_id| *node_id)
                         .flex_none()
                         .min_h(gpui_px_from_ui(metrics.tab_min_height()))
                         .px(gpui_px_from_ui(metrics.tab_padding_x()))
@@ -925,13 +953,12 @@ impl RenderOnce for Tabs {
                 .collect::<Vec<AnyElement>>();
             let tablist = if is_vertical {
                 div()
-                    .id("tablist")
+                    .id(tablist_element_id.clone())
                     .debug_selector({
                         let tabs_id = tabs_id.clone();
                         move || format!("tabs:{tabs_id}:tablist")
                     })
-                    .ui_role(Role::TabList)
-                    .ui_aria_orientation(orientation)
+                    .ui_semantics(&tablist_semantics)
                     .flex()
                     .flex_col()
                     .flex_none()
@@ -941,7 +968,7 @@ impl RenderOnce for Tabs {
                     .border_color(theme.resolve(colors.shell_border()))
                     .child(
                         ScrollArea::new(
-                            format!("tabs:{tabs_id}:tablist-scroll"),
+                            tablist_scroll_id,
                             div()
                                 .flex()
                                 .flex_col()
@@ -955,13 +982,12 @@ impl RenderOnce for Tabs {
                     .into_any_element()
             } else {
                 div()
-                    .id("tablist")
+                    .id(tablist_element_id)
                     .debug_selector({
                         let tabs_id = tabs_id.clone();
                         move || format!("tabs:{tabs_id}:tablist")
                     })
-                    .ui_role(Role::TabList)
-                    .ui_aria_orientation(orientation)
+                    .ui_semantics(&tablist_semantics)
                     .flex()
                     .flex_none()
                     .gap(gpui_px_from_ui(metrics.tab_gap()))
@@ -989,7 +1015,7 @@ impl RenderOnce for Tabs {
                 .child(
                     div()
                         .id(panel_id)
-                        .ui_role(Role::TabPanel)
+                        .ui_semantics_with_relations(&panel_semantics, |node_id| *node_id)
                         .flex()
                         .flex_1()
                         .min_w(open_gpui::px(0.0))
@@ -999,9 +1025,6 @@ impl RenderOnce for Tabs {
                         .py(gpui_px_from_ui(metrics.panel_padding()))
                         .when(is_vertical, |this| this.min_w(open_gpui::px(0.0)))
                         .when(!is_vertical, |this| this.border_t_1())
-                        .when_some(selected_tab_node_id, |this, tab_node_id| {
-                            this.aria_labelled_by(std::iter::once(tab_node_id))
-                        })
                         .child(selected_panel),
                 )
         })

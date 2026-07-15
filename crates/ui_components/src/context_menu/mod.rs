@@ -13,8 +13,8 @@ use open_gpui::{
     Window, div, px,
 };
 use open_gpui_ui_core::{
-    DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    Role, Sizable, Size, ThemeTokens,
+    AccessibleAction, DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent,
+    OutsidePressPolicy, Role, SemanticDescriptor, Sizable, Size, ThemeTokens,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -296,6 +296,9 @@ impl RenderOnce for ContextMenu {
         let open_window_overlay_runtime = window_overlay_runtime.clone();
         let open_root_binding = root_binding.clone();
         let hotspot_focus_shadow = focus_ring_shadow_with_theme(state.menu().focus_ring(), &theme);
+        let hotspot_semantics = SemanticDescriptor::new(Role::Button)
+            .with_label(label.as_ref())
+            .with_actions(&[AccessibleAction::Focus]);
 
         let source = div()
             .id(id.clone())
@@ -337,8 +340,7 @@ impl RenderOnce for ContextMenu {
                         let debug_id = debug_id.clone();
                         move || format!("context-menu:{debug_id}:hotspot")
                     })
-                    .ui_role(Role::Button)
-                    .aria_label(label.clone())
+                    .ui_semantics(&hotspot_semantics)
                     .focusable()
                     .track_focus(root_binding.trigger_focus())
                     .tab_stop(true)
@@ -416,6 +418,8 @@ fn context_menu_surface(
             on_select.clone(),
             theme,
         ));
+    let surface_semantics =
+        SemanticDescriptor::new(state.content_role()).with_actions(&[AccessibleAction::Focus]);
 
     let surface = div()
         .id(surface_id)
@@ -444,7 +448,7 @@ fn context_menu_surface(
         .tab_group()
         .focusable()
         .track_focus(root_binding.surface_focus())
-        .ui_role(state.content_role())
+        .ui_semantics(&surface_semantics)
         .on_key_down({
             move |event: &KeyDownEvent, window, cx| {
                 let Some(intent) = key_state.keyboard_intent_for_key(event.keystroke.key.as_str())
@@ -543,27 +547,32 @@ fn context_menu_branch_elements(
         let child_items = item.child_items().to_vec();
         let child_states = item_state.children().to_vec();
         let element = match item_state.kind() {
-            MenuItemKind::Header => div()
-                .id(format!("context-menu-header:{}", item_state.value()))
-                .debug_selector({
-                    let header_debug_id = debug_id.clone();
-                    let header_value = item_state.value().to_owned();
-                    move || format!("context-menu:{header_debug_id}:header:{header_value}")
-                })
-                .pl(gpui_px_from_ui(
-                    metrics.item_padding_x() + metrics.submenu_indent() * item_state.depth() as f32,
-                ))
-                .pr(gpui_px_from_ui(metrics.item_padding_x()))
-                .pt_2()
-                .pb_1()
-                .text_xs()
-                .font_weight(open_gpui::FontWeight::BOLD)
-                .text_color(theme.resolve(colors.header_foreground()))
-                .aria_label(item_state.label().to_owned())
-                .child(item_state.label().to_owned())
-                .into_any_element(),
+            MenuItemKind::Header => {
+                let semantics = SemanticDescriptor::new(Role::Label).with_label(item_state.label());
+                div()
+                    .id(format!("context-menu-header:{}", item_state.value()))
+                    .debug_selector({
+                        let header_debug_id = debug_id.clone();
+                        let header_value = item_state.value().to_owned();
+                        move || format!("context-menu:{header_debug_id}:header:{header_value}")
+                    })
+                    .pl(gpui_px_from_ui(
+                        metrics.item_padding_x()
+                            + metrics.submenu_indent() * item_state.depth() as f32,
+                    ))
+                    .pr(gpui_px_from_ui(metrics.item_padding_x()))
+                    .pt_2()
+                    .pb_1()
+                    .text_xs()
+                    .font_weight(open_gpui::FontWeight::BOLD)
+                    .text_color(theme.resolve(colors.header_foreground()))
+                    .ui_semantics(&semantics)
+                    .child(item_state.label().to_owned())
+                    .into_any_element()
+            }
             MenuItemKind::Separator => {
                 let separator_color = theme.resolve(colors.separator());
+                let semantics = SemanticDescriptor::new(Role::Separator);
 
                 div()
                     .id(format!("context-menu-separator:{}", item_state.index()))
@@ -577,6 +586,7 @@ fn context_menu_branch_elements(
                     .h(gpui_px_from_ui(metrics.separator_height()))
                     .my_1()
                     .bg(separator_color)
+                    .ui_semantics(&semantics)
                     .into_any_element()
             }
             MenuItemKind::Action
@@ -629,6 +639,21 @@ fn context_menu_branch_elements(
                 } else {
                     None
                 };
+                let item_actions: &[AccessibleAction] = if child_binding.is_some() && focusable {
+                    &[AccessibleAction::Click, AccessibleAction::Focus]
+                } else {
+                    &[AccessibleAction::Click]
+                };
+                let mut semantics = SemanticDescriptor::new(Role::MenuItem)
+                    .with_label(&item_label)
+                    .with_disabled(disabled)
+                    .with_actions(item_actions);
+                if let Some(toggled) = toggled {
+                    semantics = semantics.with_toggled(toggled);
+                }
+                if has_submenu {
+                    semantics = semantics.with_expanded(submenu_open);
+                }
                 let element = div()
                     .id(format!("context-menu-item:{item_path_key}"))
                     .debug_selector({
@@ -646,9 +671,7 @@ fn context_menu_branch_elements(
                     .rounded(gpui_px_from_ui(metrics.radius()))
                     .bg(item_background)
                     .text_color(item_foreground)
-                    .ui_role(Role::MenuItem)
-                    .aria_label(item_label.clone())
-                    .aria_disabled(disabled)
+                    .ui_semantics(&semantics)
                     .when_some(
                         child_binding.clone().filter(|_| focusable),
                         |this, binding| {
@@ -657,8 +680,6 @@ fn context_menu_branch_elements(
                                 .track_focus(binding.trigger_focus())
                         },
                     )
-                    .when_some(toggled, |this, toggled| this.ui_aria_toggled(toggled))
-                    .when(has_submenu, |this| this.aria_expanded(submenu_open))
                     .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                     .when(!disabled, |this| {
                         this.cursor_pointer()
@@ -743,6 +764,8 @@ fn context_menu_branch_elements(
                 .cloned()
         {
             let branch_key = menu_path_key(&child_branch_path);
+            let branch_semantics = SemanticDescriptor::new(state.content_role())
+                .with_actions(&[AccessibleAction::Focus]);
             let branch_rows =
                 div()
                     .w_full()
@@ -772,7 +795,7 @@ fn context_menu_branch_elements(
                 .focusable()
                 .tab_stop(false)
                 .track_focus(branch_binding.surface_focus())
-                .ui_role(state.content_role())
+                .ui_semantics(&branch_semantics)
                 .child(branch_rows);
             elements.push(
                 window_overlay_runtime

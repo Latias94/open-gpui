@@ -1,21 +1,20 @@
 use open_gpui_ui_core::{
     Role, TableCellEditor, TableCellValue, TableColumnId, TableColumnRegion,
-    TableRowChildrenLoadState, TableRowId, TableRowRegion, TableSelectOption, UiPx,
+    TableRowChildrenLoadState, TableRowId, TableRowIdentity, TableRowRegion, TableSelectOption,
+    UiPx,
 };
 
 use crate::table::render_plan::{TableCellRenderPlan, TableRowRenderPlan};
 /// User-observable metadata for one rendered table row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableRowBehaviorSnapshot {
-    id: TableRowId,
+    identity: TableRowIdentity,
     region: TableRowRegion,
     model_index: usize,
     region_index: usize,
     aria_row_index: usize,
     selected: bool,
     depth: usize,
-    group: bool,
-    leaf: bool,
     tree_branch: bool,
     tree_expanded: Option<bool>,
     loaded_child_count: usize,
@@ -26,15 +25,13 @@ pub struct TableRowBehaviorSnapshot {
 impl TableRowBehaviorSnapshot {
     pub(in crate::table::behavior) fn from_plan(row: &TableRowRenderPlan) -> Self {
         Self {
-            id: row.id().clone(),
+            identity: row.identity().clone(),
             region: row.region(),
             model_index: row.model_index(),
             region_index: row.region_index(),
             aria_row_index: row.aria_row_index(),
             selected: row.selected(),
             depth: row.depth(),
-            group: row.row().is_group(),
-            leaf: row.row().is_leaf(),
             tree_branch: row.is_tree_branch(),
             tree_expanded: row.tree_expanded(),
             loaded_child_count: row.loaded_child_count(),
@@ -47,9 +44,14 @@ impl TableRowBehaviorSnapshot {
         }
     }
 
-    /// Returns the stable row id.
-    pub const fn id(&self) -> &TableRowId {
-        &self.id
+    /// Returns the authoritative resolved row identity.
+    pub const fn identity(&self) -> &TableRowIdentity {
+        &self.identity
+    }
+
+    /// Returns the caller-owned business row id for source-backed rows.
+    pub const fn source_row_id(&self) -> Option<&TableRowId> {
+        self.identity.source_row_id()
     }
 
     /// Returns the row-pinning region.
@@ -84,12 +86,12 @@ impl TableRowBehaviorSnapshot {
 
     /// Returns whether this is a grouped row.
     pub const fn is_group(&self) -> bool {
-        self.group
+        self.identity.group_identity().is_some()
     }
 
     /// Returns whether this is a source leaf row.
     pub const fn is_leaf(&self) -> bool {
-        self.leaf
+        self.identity.source_identity().is_some()
     }
 
     /// Returns whether this row is a source tree branch.

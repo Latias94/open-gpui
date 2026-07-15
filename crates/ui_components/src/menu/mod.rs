@@ -18,10 +18,10 @@ use open_gpui::{
 };
 use open_gpui_command::CommandDescriptor;
 use open_gpui_ui_core::{
-    DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    OverlayAnchorInput, OverlayLayerId, OverlayPlacementAlignment, OverlayPlacementInput,
-    OverlayPlacementSide, OverlayPresence, Rect, Role, Sizable, Size, ThemeTokens, Toggled, UiPx,
-    ui_point, ui_px, ui_size,
+    AccessibleAction, DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent,
+    OutsidePressPolicy, OverlayAnchorInput, OverlayLayerId, OverlayPlacementAlignment,
+    OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Rect, Role, SemanticDescriptor,
+    Sizable, Size, ThemeTokens, Toggled, UiPx, ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -434,27 +434,31 @@ fn menu_item_element(
     theme: &ThemeContext,
 ) -> AnyElement {
     match item_state.kind() {
-        MenuItemKind::Header => div()
-            .id(format!("{debug_prefix}-header:{}", item_state.value()))
-            .debug_selector({
-                let header_debug_id = debug_id.clone();
-                let header_value = item_state.value().to_owned();
-                move || format!("{debug_prefix}:{header_debug_id}:header:{header_value}")
-            })
-            .pl(gpui_px_from_ui(
-                metrics.item_padding_x() + metrics.submenu_indent() * item_state.depth() as f32,
-            ))
-            .pr(gpui_px_from_ui(metrics.item_padding_x()))
-            .pt_2()
-            .pb_1()
-            .text_xs()
-            .font_weight(open_gpui::FontWeight::BOLD)
-            .text_color(theme.resolve(colors.header_foreground()))
-            .aria_label(item_state.label().to_owned())
-            .child(item_state.label().to_owned())
-            .into_any_element(),
+        MenuItemKind::Header => {
+            let semantics = SemanticDescriptor::new(Role::Label).with_label(item_state.label());
+            div()
+                .id(format!("{debug_prefix}-header:{}", item_state.value()))
+                .debug_selector({
+                    let header_debug_id = debug_id.clone();
+                    let header_value = item_state.value().to_owned();
+                    move || format!("{debug_prefix}:{header_debug_id}:header:{header_value}")
+                })
+                .pl(gpui_px_from_ui(
+                    metrics.item_padding_x() + metrics.submenu_indent() * item_state.depth() as f32,
+                ))
+                .pr(gpui_px_from_ui(metrics.item_padding_x()))
+                .pt_2()
+                .pb_1()
+                .text_xs()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .text_color(theme.resolve(colors.header_foreground()))
+                .ui_semantics(&semantics)
+                .child(item_state.label().to_owned())
+                .into_any_element()
+        }
         MenuItemKind::Separator => {
             let separator_color = theme.resolve(colors.separator());
+            let semantics = SemanticDescriptor::new(Role::Separator);
 
             div()
                 .id(format!("{debug_prefix}-separator:{}", item_state.index()))
@@ -468,6 +472,7 @@ fn menu_item_element(
                 .h(gpui_px_from_ui(metrics.separator_height()))
                 .my_1()
                 .bg(separator_color)
+                .ui_semantics(&semantics)
                 .into_any_element()
         }
         MenuItemKind::Action
@@ -532,6 +537,21 @@ fn menu_item_element(
                     || item_label.clone(),
                     |description| format!("{item_label}, {description}"),
                 );
+            let item_actions: &[AccessibleAction] = if child_binding.is_some() && focusable {
+                &[AccessibleAction::Click, AccessibleAction::Focus]
+            } else {
+                &[AccessibleAction::Click]
+            };
+            let mut semantics = SemanticDescriptor::new(Role::MenuItem)
+                .with_label(&item_aria_label)
+                .with_disabled(disabled)
+                .with_actions(item_actions);
+            if let Some(toggled) = toggled {
+                semantics = semantics.with_toggled(toggled);
+            }
+            if has_submenu {
+                semantics = semantics.with_expanded(item_state.submenu_open());
+            }
 
             let element = div()
                 .id(format!("{debug_prefix}-item:{item_path_key}"))
@@ -550,9 +570,7 @@ fn menu_item_element(
                 .rounded(gpui_px_from_ui(metrics.radius()))
                 .bg(item_background)
                 .text_color(item_foreground)
-                .ui_role(Role::MenuItem)
-                .aria_label(item_aria_label)
-                .aria_disabled(disabled)
+                .ui_semantics(&semantics)
                 .when_some(
                     child_binding.clone().filter(|_| focusable),
                     |this, binding| {
@@ -561,10 +579,6 @@ fn menu_item_element(
                             .track_focus(binding.trigger_focus())
                     },
                 )
-                .when_some(toggled, |this, toggled| this.ui_aria_toggled(toggled))
-                .when(has_submenu, |this| {
-                    this.aria_expanded(item_state.submenu_open())
-                })
                 .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                 .when(!disabled, |this| {
                     this.cursor_pointer()
@@ -1227,6 +1241,12 @@ impl RenderOnce for Menu {
                 )
             })
             .collect::<Vec<_>>();
+        let trigger_semantics = SemanticDescriptor::new(state.trigger_role())
+            .with_label(trigger_label.as_ref())
+            .with_selected(state.trigger_selected())
+            .with_expanded(open)
+            .with_disabled(disabled)
+            .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
 
         div()
             .id(id.clone())
@@ -1270,11 +1290,7 @@ impl RenderOnce for Menu {
                         .line_height(gpui_px_from_ui(metrics.text_size()))
                         .focusable()
                         .tab_stop(!disabled)
-                        .ui_role(state.trigger_role())
-                        .aria_label(trigger_label.clone())
-                        .aria_selected(state.trigger_selected())
-                        .aria_expanded(open)
-                        .aria_disabled(disabled)
+                        .ui_semantics(&trigger_semantics)
                         .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                         .track_focus(root_binding.trigger_focus())
                         .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
@@ -1371,6 +1387,8 @@ fn menu_content_element(
         snap_margin,
         deferred_priority,
     );
+    let content_semantics =
+        SemanticDescriptor::new(state.content_role()).with_actions(&[AccessibleAction::Focus]);
 
     let content = div()
         .id(content_id)
@@ -1382,7 +1400,7 @@ fn menu_content_element(
         .relative()
         .tab_group()
         .track_focus(root_binding.surface_focus())
-        .ui_role(state.content_role())
+        .ui_semantics(&content_semantics)
         .text_color(theme.resolve(colors.foreground()))
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
@@ -1547,6 +1565,8 @@ fn menu_branch_surface(
     );
     let surface_id =
         surface_id.unwrap_or_else(|| format!("menu:{debug_id}:panel:{branch_key}").into());
+    let branch_semantics =
+        SemanticDescriptor::new(state.content_role()).with_actions(&[AccessibleAction::Focus]);
     let shell = div()
         .id(surface_id)
         .debug_selector({
@@ -1577,7 +1597,7 @@ fn menu_branch_surface(
             this.focusable()
                 .tab_stop(false)
                 .track_focus(binding.surface_focus())
-                .ui_role(state.content_role())
+                .ui_semantics(&branch_semantics)
         })
         .when(!branch_path.is_empty(), |this| {
             let runtime = runtime.clone();

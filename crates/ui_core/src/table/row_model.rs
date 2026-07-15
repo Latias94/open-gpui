@@ -7,7 +7,11 @@ use super::faceting::row_matches_global_filter;
 use super::filtering::TableFilter;
 use super::resolved::{TableGroupRow, TableResolvedRow, TableTreeRow};
 use super::rows::{TableRow, count_table_rows};
-use super::{TableCellValue, TableColumnId, TableRowId};
+use super::{
+    TableCellValue, TableColumnId, TableGroupRowIdentity, TableGroupValueIdentity, TableRowId,
+    TableRowIdentity, TableRowIdentityDiagnostic, TableRowInstanceId, TableSourceInstanceIdentity,
+    TableSourceRowIdentity,
+};
 
 /// Per-stage row-model ownership for client or manual control.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +33,22 @@ impl Default for TableStageMode {
     fn default() -> Self {
         Self::Client
     }
+}
+
+/// Result of resolving one source-row identity against the current source snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableSourceRowLookup {
+    /// The identity resolved to one source row at this preorder index.
+    Found {
+        /// Zero-based preorder index in caller-owned source rows.
+        source_index: usize,
+    },
+    /// No source row currently resolves to the identity.
+    Missing,
+    /// The target's caller-owned identity facts are not unique in this snapshot.
+    Ambiguous,
+    /// An occurrence identity belongs to an older caller-owned source snapshot.
+    StaleSnapshot,
 }
 
 /// Pagination state for a table row model.
@@ -163,7 +183,7 @@ pub enum TableExpansionState {
     /// Every group row is expanded.
     All,
     /// Only the listed stable row ids are expanded.
-    Rows(BTreeSet<TableRowId>),
+    Rows(BTreeSet<TableRowIdentity>),
 }
 
 impl TableExpansionState {
@@ -172,16 +192,25 @@ impl TableExpansionState {
         Self::All
     }
 
-    /// Returns an expansion state for explicit row ids.
-    pub fn rows(rows: impl IntoIterator<Item = impl Into<TableRowId>>) -> Self {
-        Self::Rows(rows.into_iter().map(Into::into).collect())
+    /// Returns an expansion state for exact resolved row identities.
+    ///
+    /// Raw business ids are intentionally rejected because they cannot identify duplicate source
+    /// rows or synthetic group rows.
+    ///
+    /// ```compile_fail
+    /// use open_gpui_ui_core::TableExpansionState;
+    ///
+    /// let _ = TableExpansionState::rows(["row-a"]);
+    /// ```
+    pub fn rows(rows: impl IntoIterator<Item = TableRowIdentity>) -> Self {
+        Self::Rows(rows.into_iter().collect())
     }
 
-    /// Returns whether the given row id should be expanded.
-    pub fn is_expanded(&self, row_id: &TableRowId) -> bool {
+    /// Returns whether the given resolved row identity should be expanded.
+    pub fn is_expanded(&self, identity: &TableRowIdentity) -> bool {
         match self {
             Self::All => true,
-            Self::Rows(rows) => rows.contains(row_id),
+            Self::Rows(rows) => rows.contains(identity),
         }
     }
 }
@@ -282,6 +311,187 @@ pub(super) struct TableRowNode {
     pub(super) children: Vec<TableRowNode>,
 }
 
+#[derive(Debug)]
+pub(super) struct TableSourceIdentityIndex {
+    source_snapshot: u64,
+    source_id_counts: BTreeMap<TableRowId, usize>,
+    explicit_instance_counts: BTreeMap<(TableRowId, TableRowInstanceId), usize>,
+    identities_by_source_index: Vec<TableSourceRowIdentity>,
+    source_index_by_identity: BTreeMap<TableSourceRowIdentity, usize>,
+    identities_by_row_id: BTreeMap<TableRowId, Vec<TableSourceRowIdentity>>,
+}
+
+impl TableSourceIdentityIndex {
+    pub(super) fn new(rows: &[TableRow], source_snapshot: u64) -> Self {
+        let mut index = Self {
+            source_snapshot,
+            source_id_counts: BTreeMap::new(),
+            explicit_instance_counts: BTreeMap::new(),
+            identities_by_source_index: Vec::with_capacity(count_table_rows(rows)),
+            source_index_by_identity: BTreeMap::new(),
+            identities_by_row_id: BTreeMap::new(),
+        };
+        index.record(rows);
+        index.record_identities(rows, &mut BTreeMap::new());
+        for (source_index, identity) in index.identities_by_source_index.iter().cloned().enumerate()
+        {
+            index
+                .identities_by_row_id
+                .entry(identity.row_id().clone())
+                .or_default()
+                .push(identity.clone());
+            index
+                .source_index_by_identity
+                .insert(identity, source_index);
+        }
+        index
+    }
+
+    pub(super) const fn source_snapshot(&self) -> u64 {
+        self.source_snapshot
+    }
+
+    pub(super) fn diagnostics(&self) -> Vec<TableRowIdentityDiagnostic> {
+        self.source_id_counts
+            .iter()
+            .filter(|(_, occurrences)| **occurrences > 1)
+            .map(
+                |(row_id, occurrences)| TableRowIdentityDiagnostic::DuplicateRowId {
+                    row_id: row_id.clone(),
+                    occurrences: *occurrences,
+                },
+            )
+            .chain(
+                self.explicit_instance_counts
+                    .iter()
+                    .filter(|(_, occurrences)| **occurrences > 1)
+                    .map(|((row_id, instance_id), occurrences)| {
+                        TableRowIdentityDiagnostic::DuplicateSourceInstance {
+                            row_id: row_id.clone(),
+                            instance_id: instance_id.clone(),
+                            occurrences: *occurrences,
+                        }
+                    }),
+            )
+            .collect()
+    }
+
+    pub(super) fn cursor(&self) -> TableSourceIdentityCursor<'_> {
+        TableSourceIdentityCursor {
+            index: self,
+            source_index: 0,
+        }
+    }
+
+    pub(super) fn lookup(&self, target: &TableSourceRowIdentity) -> TableSourceRowLookup {
+        if let TableSourceInstanceIdentity::Occurrence(occurrence) = target.instance()
+            && occurrence.source_snapshot() != self.source_snapshot
+        {
+            return TableSourceRowLookup::StaleSnapshot;
+        }
+
+        let ambiguous = match target.instance() {
+            TableSourceInstanceIdentity::Unique => self
+                .source_id_counts
+                .get(target.row_id())
+                .is_some_and(|count| *count > 1),
+            TableSourceInstanceIdentity::Explicit(instance_id) => self
+                .explicit_instance_counts
+                .get(&(target.row_id().clone(), instance_id.clone()))
+                .is_some_and(|count| *count > 1),
+            TableSourceInstanceIdentity::Occurrence(_) => false,
+        };
+        if ambiguous {
+            return TableSourceRowLookup::Ambiguous;
+        }
+
+        self.source_index_by_identity
+            .get(target)
+            .copied()
+            .map(|source_index| TableSourceRowLookup::Found { source_index })
+            .unwrap_or(TableSourceRowLookup::Missing)
+    }
+
+    pub(super) fn identity_at(
+        &self,
+        row_id: &TableRowId,
+        occurrence: usize,
+    ) -> Option<TableSourceRowIdentity> {
+        self.identities_by_row_id
+            .get(row_id)
+            .and_then(|identities| identities.get(occurrence))
+            .cloned()
+    }
+
+    fn record(&mut self, rows: &[TableRow]) {
+        for row in rows {
+            *self.source_id_counts.entry(row.id().clone()).or_default() += 1;
+            if let Some(instance_id) = row.instance_id() {
+                *self
+                    .explicit_instance_counts
+                    .entry((row.id().clone(), instance_id.clone()))
+                    .or_default() += 1;
+            }
+            self.record(row.children());
+        }
+    }
+
+    fn record_identities(
+        &mut self,
+        rows: &[TableRow],
+        occurrences: &mut BTreeMap<TableRowId, usize>,
+    ) {
+        for row in rows {
+            let occurrence = occurrences.entry(row.id().clone()).or_default();
+            let identity = self.resolve(row, *occurrence);
+            *occurrence += 1;
+            self.identities_by_source_index.push(identity);
+            self.record_identities(row.children(), occurrences);
+        }
+    }
+
+    fn resolve(&self, row: &TableRow, occurrence: usize) -> TableSourceRowIdentity {
+        match row.instance_id() {
+            Some(instance_id)
+                if self
+                    .explicit_instance_counts
+                    .get(&(row.id().clone(), instance_id.clone()))
+                    .copied()
+                    .unwrap_or(0)
+                    == 1 =>
+            {
+                TableSourceRowIdentity::explicit(row.id().clone(), instance_id.clone())
+            }
+            _ if self.source_id_counts.get(row.id()).copied().unwrap_or(0) == 1 => {
+                TableSourceRowIdentity::unique(row.id().clone())
+            }
+            _ => TableSourceRowIdentity::occurrence(
+                row.id().clone(),
+                self.source_snapshot,
+                occurrence,
+            ),
+        }
+    }
+}
+
+pub(super) struct TableSourceIdentityCursor<'a> {
+    index: &'a TableSourceIdentityIndex,
+    source_index: usize,
+}
+
+impl TableSourceIdentityCursor<'_> {
+    fn resolve(&mut self) -> (usize, TableRowIdentity) {
+        let source_index = self.source_index;
+        self.source_index += 1;
+        let identity = self.index.identities_by_source_index[source_index].clone();
+        (source_index, TableRowIdentity::Source(identity))
+    }
+
+    fn advance(&mut self, rows: &[TableRow]) {
+        self.source_index += count_table_rows(rows);
+    }
+}
+
 impl TableRowNode {
     pub(super) fn leaf(row: TableResolvedRow) -> Self {
         Self {
@@ -296,14 +506,13 @@ pub(super) fn build_source_row_nodes(
     selected_rows: &BTreeSet<TableRowId>,
     expansion: &TableExpansionState,
     include_children: bool,
-    parent_id: Option<TableRowId>,
+    identity_cursor: &mut TableSourceIdentityCursor<'_>,
+    parent_identity: Option<TableRowIdentity>,
     depth: usize,
-    source_index: &mut usize,
 ) -> Vec<TableRowNode> {
     rows.iter()
         .map(|row| {
-            let current_source_index = *source_index;
-            *source_index += 1;
+            let (current_source_index, identity) = identity_cursor.resolve();
             let loaded_child_count = row.children().len();
             let can_expand = row.can_expand();
 
@@ -313,20 +522,21 @@ pub(super) fn build_source_row_nodes(
                     selected_rows,
                     expansion,
                     include_children,
-                    Some(row.id().clone()),
+                    identity_cursor,
+                    Some(identity.clone()),
                     depth + 1,
-                    source_index,
                 )
             } else {
+                identity_cursor.advance(row.children());
                 Vec::new()
             };
-            let tree = (include_children && (parent_id.is_some() || can_expand)).then(|| {
+            let tree = (include_children && (parent_identity.is_some() || can_expand)).then(|| {
                 TableTreeRow::new(
                     depth,
-                    parent_id.clone(),
+                    parent_identity.clone(),
                     loaded_child_count > 0,
                     can_expand,
-                    expansion.is_expanded(row.id()),
+                    expansion.is_expanded(&identity),
                     count_table_rows(row.children()),
                     loaded_child_count,
                     row.children_load_state().clone(),
@@ -334,6 +544,7 @@ pub(super) fn build_source_row_nodes(
             });
             let resolved = TableResolvedRow::from_row(
                 row,
+                identity,
                 current_source_index,
                 selected_rows.contains(row.id()),
                 tree,
@@ -423,16 +634,16 @@ pub(super) fn build_group_nodes(
     aggregations: &[TableAggregation],
     aggregation_fns: &BTreeMap<String, TableAggregationFn>,
     depth: usize,
-    parent_group_id: Option<TableRowId>,
-    inherited_parent_id: Option<TableRowId>,
+    parent_group_identity: Option<TableGroupRowIdentity>,
+    inherited_parent_identity: Option<TableRowIdentity>,
 ) -> Vec<TableRowNode> {
     if grouping.is_empty() {
         return rows
             .iter()
             .cloned()
             .map(|row| {
-                let row = match inherited_parent_id.as_ref() {
-                    Some(parent_id) => row.with_parent(parent_id.clone(), depth),
+                let row = match inherited_parent_identity.as_ref() {
+                    Some(parent_identity) => row.with_parent(parent_identity.clone(), depth),
                     None => row,
                 };
                 TableRowNode::leaf(row)
@@ -441,39 +652,45 @@ pub(super) fn build_group_nodes(
     }
 
     let grouping_column = grouping[0].clone();
-    let mut buckets: Vec<(String, TableCellValue, Vec<TableResolvedRow>)> = Vec::new();
+    let mut buckets: Vec<(TableCellValue, Vec<TableResolvedRow>)> = Vec::new();
     let mut bucket_index_by_key = BTreeMap::new();
 
     for row in rows {
         let value = row.cell(&grouping_column).cloned().unwrap_or_default();
-        let key = value.filter_text();
+        let key = TableGroupValueIdentity::from_cell_value(&value);
         let index = match bucket_index_by_key.get(&key).copied() {
             Some(index) => index,
             None => {
                 let index = buckets.len();
                 bucket_index_by_key.insert(key.clone(), index);
-                buckets.push((key.clone(), value.clone(), Vec::new()));
+                buckets.push((value.clone(), Vec::new()));
                 index
             }
         };
-        buckets[index].2.push(row.clone());
+        buckets[index].1.push(row.clone());
     }
 
     let mut nodes = Vec::new();
-    for (value_text, value, bucket_rows) in buckets {
-        let group_id = build_group_row_id(parent_group_id.as_ref(), &grouping_column, &value_text);
-        let first_leaf_row_id = bucket_rows
+    for (value, bucket_rows) in buckets {
+        let group_identity = match parent_group_identity.as_ref() {
+            Some(parent) => parent
+                .clone()
+                .child_cell_value(grouping_column.clone(), &value),
+            None => TableGroupRowIdentity::from_cell_value(grouping_column.clone(), &value),
+        };
+        let resolved_identity = TableRowIdentity::group(group_identity.clone());
+        let first_leaf_identity = bucket_rows
             .first()
-            .map(|row| row.id().clone())
-            .unwrap_or_else(|| group_id.clone());
+            .map(|row| row.identity().clone())
+            .unwrap_or_else(|| resolved_identity.clone());
         let leaf_row_count = bucket_rows.len();
-        let parent_id = inherited_parent_id.clone();
+        let parent_identity = inherited_parent_identity.clone();
         let group = TableGroupRow::new(
             grouping_column.clone(),
             value,
             depth,
-            parent_id.clone(),
-            first_leaf_row_id,
+            parent_identity.clone(),
+            first_leaf_identity,
             leaf_row_count,
         );
         let children = build_group_nodes(
@@ -482,27 +699,15 @@ pub(super) fn build_group_nodes(
             aggregations,
             aggregation_fns,
             depth + 1,
-            Some(group_id.clone()),
-            Some(group_id.clone()),
+            Some(group_identity),
+            Some(resolved_identity.clone()),
         );
         let aggregate_cells = resolve_aggregate_cells(&bucket_rows, aggregations, aggregation_fns);
-        let row = TableResolvedRow::from_group(group_id, group, aggregate_cells);
+        let row = TableResolvedRow::from_group(resolved_identity, group, aggregate_cells);
         nodes.push(TableRowNode { row, children });
     }
 
     nodes
-}
-
-fn build_group_row_id(
-    parent_id: Option<&TableRowId>,
-    column: &TableColumnId,
-    value_text: &str,
-) -> TableRowId {
-    let segment = format!("{}={}", column.as_str(), value_text);
-    match parent_id {
-        Some(parent) => TableRowId::new(format!("{}>{segment}", parent.as_str())),
-        None => TableRowId::new(format!("group:{segment}")),
-    }
 }
 
 pub(super) fn push_expanded_rows(
@@ -515,7 +720,7 @@ pub(super) fn push_expanded_rows(
         return;
     }
 
-    if !expansion.is_expanded(node.row.id()) {
+    if !expansion.is_expanded(node.row.identity()) {
         return;
     }
 

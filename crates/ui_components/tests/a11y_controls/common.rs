@@ -17,7 +17,7 @@ pub(super) use open_gpui_ui_components::{
 pub(super) use open_gpui_ui_core::{Role, SemanticDescriptor, Size, Toggled};
 pub(super) use std::{cell::RefCell, rc::Rc};
 
-pub(super) use a11y_support::node_with_label as a11y_node_with_label;
+pub(super) use a11y_support::{assert_exact_actions, node_with_label as a11y_node_with_label};
 
 #[derive(IntoElement)]
 pub(super) struct ExternalFieldControl {
@@ -110,17 +110,6 @@ pub(super) fn a11y_text_run_children<'a>(
             (node.role() == accesskit::Role::TextRun).then_some((*id, node))
         })
         .collect()
-}
-
-pub(super) fn assert_exact_actions(node: &accesskit::Node, expected: &[accesskit::Action]) {
-    for &action in open_gpui::test::ACCESSKIT_ACTIONS {
-        assert_eq!(
-            node.supports_action(action),
-            expected.contains(&action),
-            "unexpected support for {action:?} on {:?}",
-            node.role()
-        );
-    }
 }
 
 pub(super) fn assert_tree_excludes_text(update: &accesskit::TreeUpdate, canary: &str) {

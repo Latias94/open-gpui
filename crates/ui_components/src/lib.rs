@@ -95,6 +95,7 @@ pub mod gpui_adapter {
         WindowOverlaySnapshot, default_deferred_priority, gpui_anchor, gpui_overlay_state,
         point_anchor_placement,
     };
+    pub use crate::table::TableDebugSelector;
     pub use crate::text_input::adapter::{TextInputController, init as init_text_input};
     pub use crate::virtualized_list::runtime::VirtualizedListGpuiExt;
 }

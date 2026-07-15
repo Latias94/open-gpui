@@ -1,45 +1,31 @@
 use open_gpui::prelude::*;
-use open_gpui::{
-    AnyElement, ClickEvent, Entity, FocusHandle, IntoElement, ParentElement, Styled, Window, div,
-    px, rgb,
-};
+use open_gpui::{AnyElement, ClickEvent, IntoElement, ParentElement, Styled, Window, div, px, rgb};
 use open_gpui_ui_core::{
-    AccessibleAction, Role, SemanticDescriptor, TableExpansionState, TableRowChildrenLoadState,
-    TableTreeRow, ui_px,
+    AccessibleAction, Role, SemanticDescriptor, TableRowChildrenLoadState, TableTreeRow, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::geometry::gpui_px_from_ui;
 
 use super::editors::render_table_cell_editor;
+use super::identity::{TableDebugSelector, table_cell_element_id, table_tree_toggle_element_id};
 use super::interaction::toggle_table_expansion;
-use super::runtime::TableRuntime;
-use super::{
-    TableCellEditHandler, TableCellRenderPlan, TableInputModifiers, TableMetrics, TableRowAction,
-    TableRowExpansionHandler, TableRowExpansionToggle, TableRowRenderPlan,
-};
+use super::{TableCellRenderPlan, TableInputModifiers, TableRowAction, TableRowExpansionToggle};
+use crate::table::body::TableRowRenderContext;
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn render_table_body_cell(
-    table_id: String,
-    render_key: String,
-    metrics: TableMetrics,
+    context: TableRowRenderContext,
     cell: TableCellRenderPlan,
-    row: TableRowRenderPlan,
-    tree: Option<TableTreeRow>,
-    tree_depth: usize,
-    tree_branch: bool,
-    tree_expanded: bool,
     tree_affordance: bool,
-    runtime: Entity<TableRuntime>,
-    focus_handle: Option<FocusHandle>,
-    current_expansion: TableExpansionState,
-    on_row_expansion_request: Option<TableRowExpansionHandler>,
-    on_cell_edit_change: Option<TableCellEditHandler>,
-    measured_rows: bool,
 ) -> impl IntoElement {
-    let column_id = cell.column_id().as_str().to_owned();
+    let row = context.row.as_ref();
+    let table_id = context.body.table_id.clone();
+    let metrics = context.body.metrics;
+    let measured_rows = context.body.measured_rows;
+    let row_identity_key = row.row().identity_key().clone();
+    let tree = row.row().tree();
     let show_tree_affordance = tree_affordance && tree.is_some();
+    let tree_depth = tree.map(TableTreeRow::depth).unwrap_or(0);
     let indent = ui_px(16.0) * tree_depth as f32;
     let mut content = Vec::new();
     if show_tree_affordance {
@@ -50,26 +36,15 @@ pub(super) fn render_table_body_cell(
                 .flex_none()
                 .into_any_element(),
         );
-        content.push(render_table_tree_toggle(
-            table_id.clone(),
-            render_key.clone(),
-            row.clone(),
-            tree_branch,
-            tree_expanded,
-            runtime,
-            focus_handle,
-            current_expansion,
-            on_row_expansion_request,
-        ));
+        content.push(render_table_tree_toggle(context.clone()));
     }
     if let Some(editor) = render_table_cell_editor(
         &table_id,
-        &render_key,
-        &column_id,
+        cell.column_id(),
         metrics,
         &cell,
-        &row,
-        on_cell_edit_change,
+        row,
+        context.body.on_cell_edit_change.clone(),
     ) {
         content.push(editor);
     } else {
@@ -90,8 +65,16 @@ pub(super) fn render_table_body_cell(
         .with_value(cell.text())
         .with_column_index(cell.aria_column_index());
     let cell = div()
-        .id(format!("table:{table_id}:cell:{render_key}:{column_id}"))
-        .debug_selector(move || format!("table:{table_id}:cell:{render_key}:{column_id}"))
+        .id(table_cell_element_id(
+            &table_id,
+            &row_identity_key,
+            cell.column_id(),
+        ))
+        .debug_selector({
+            let selector =
+                TableDebugSelector::cell_key(&table_id, &row_identity_key, cell.column_id());
+            move || selector.clone()
+        })
         .w(gpui_px_from_ui(cell.width()))
         .flex_none()
         .flex()
@@ -109,24 +92,16 @@ pub(super) fn render_table_body_cell(
     cell.into_any_element()
 }
 
-fn render_table_tree_toggle(
-    table_id: String,
-    render_key: String,
-    row: TableRowRenderPlan,
-    tree_branch: bool,
-    tree_expanded: bool,
-    runtime: Entity<TableRuntime>,
-    focus_handle: Option<FocusHandle>,
-    current_expansion: TableExpansionState,
-    on_row_expansion_request: Option<TableRowExpansionHandler>,
-) -> AnyElement {
-    if !tree_branch {
+fn render_table_tree_toggle(context: TableRowRenderContext) -> AnyElement {
+    if !context.row.is_tree_branch() {
         return div().w(px(18.0)).h(px(18.0)).flex_none().into_any_element();
     }
 
-    let row_id = row.id().clone();
-    let row_key = render_key.clone();
-    let children_load_state = row
+    let table_id = context.body.table_id.clone();
+    let row_identity_key = context.row.row().identity_key().clone();
+    let tree_expanded = context.row.tree_expanded().unwrap_or(false);
+    let children_load_state = context
+        .row
         .children_load_state()
         .cloned()
         .unwrap_or_else(TableRowChildrenLoadState::idle);
@@ -138,15 +113,20 @@ fn render_table_tree_toggle(
     };
     let aria_label = match &children_load_state {
         TableRowChildrenLoadState::Loading { .. } => {
-            format!("Loading children for row {}", row.id().as_str())
+            format!(
+                "Loading children for row {}",
+                context.row.row().debug_label()
+            )
         }
         TableRowChildrenLoadState::Failed { .. } => {
-            format!("Retry loading row {}", row.id().as_str())
+            format!("Retry loading row {}", context.row.row().debug_label())
         }
         TableRowChildrenLoadState::Idle if tree_expanded => {
-            format!("Collapse row {}", row.id().as_str())
+            format!("Collapse row {}", context.row.row().debug_label())
         }
-        TableRowChildrenLoadState::Idle => format!("Expand row {}", row.id().as_str()),
+        TableRowChildrenLoadState::Idle => {
+            format!("Expand row {}", context.row.row().debug_label())
+        }
     };
     let semantics = SemanticDescriptor::new(Role::Button)
         .with_label(&aria_label)
@@ -154,11 +134,10 @@ fn render_table_tree_toggle(
         .with_actions(&[AccessibleAction::Click]);
 
     div()
-        .id(format!("table:{table_id}:tree-toggle:{render_key}"))
+        .id(table_tree_toggle_element_id(&table_id, &row_identity_key))
         .debug_selector({
-            let table_id = table_id.clone();
-            let row_key = row_key.clone();
-            move || format!("table:{table_id}:tree-toggle:{row_key}")
+            let selector = TableDebugSelector::tree_toggle_key(&table_id, &row_identity_key);
+            move || selector.clone()
         })
         .w(px(18.0))
         .h(px(18.0))
@@ -179,18 +158,22 @@ fn render_table_tree_toggle(
             cx.stop_propagation();
             window.prevent_default();
 
-            let next_expansion =
-                toggle_table_expansion(current_expansion.clone(), row_id.clone(), !tree_expanded);
-            runtime.update(cx, |runtime, cx| {
-                runtime.set_focused(row_id.clone(), cx);
+            let row_identity = context.row.identity().clone();
+            let next_expansion = toggle_table_expansion(
+                context.body.current_expansion.clone(),
+                row_identity.clone(),
+                !tree_expanded,
+            );
+            context.body.runtime.update(cx, |runtime, cx| {
+                runtime.set_focused(row_identity.clone(), cx);
                 runtime.set_expansion_override(next_expansion.clone(), cx);
             });
-            if let Some(focus_handle) = focus_handle.as_ref() {
+            if let Some(focus_handle) = context.focus_handle.as_ref() {
                 focus_handle.focus(window, cx);
             }
-            if let Some(on_row_expansion_request) = on_row_expansion_request.as_ref() {
+            if let Some(on_row_expansion_request) = context.body.on_row_expansion_request.as_ref() {
                 let action = TableRowAction::from_render_plan(
-                    &row,
+                    context.row.as_ref(),
                     TableInputModifiers::from_gpui(event.modifiers()),
                 );
                 on_row_expansion_request(

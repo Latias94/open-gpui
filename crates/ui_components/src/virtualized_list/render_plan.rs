@@ -1,7 +1,9 @@
+use open_gpui_ui_core::virtualizer::VirtualizerGeometryCache;
 use open_gpui_ui_core::{
     Role, RowWindow, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
     VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState,
 };
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::descriptor::{
@@ -32,6 +34,16 @@ impl VirtualizedListRowMeasureMode {
             Self::Fixed => "fixed",
             Self::Measured => "measured",
         }
+    }
+}
+
+pub(super) trait VirtualizedListMeasurementLookup {
+    fn row_measurement(&self, render_key: &str) -> Option<UiPx>;
+}
+
+impl VirtualizedListMeasurementLookup for BTreeMap<String, UiPx> {
+    fn row_measurement(&self, render_key: &str) -> Option<UiPx> {
+        self.get(render_key).copied()
     }
 }
 
@@ -135,7 +147,10 @@ impl VirtualizedListRowBehaviorSnapshot {
         self.item.retry_action_label_ref()
     }
 
-    /// Returns the stable render key.
+    /// Returns the opaque render key for the current ordered item snapshot.
+    ///
+    /// Use [`VirtualizedListItemDescriptor::key`] for domain identity. Callers may round-trip this
+    /// value to adapter-owned measurement APIs, but must not parse or construct it.
     pub fn render_key(&self) -> &str {
         &self.render_key
     }
@@ -301,7 +316,10 @@ impl VirtualizedListRowRenderContext {
         self.item.retry_action_label_ref()
     }
 
-    /// Returns the stable render key used for element identity.
+    /// Returns the opaque render key used for element identity in the current ordered snapshot.
+    ///
+    /// Use [`VirtualizedListItemDescriptor::key`] for domain identity. Duplicate source keys use
+    /// a collision-safe, snapshot-local encoding that callers must not parse or construct.
     pub fn render_key(&self) -> &str {
         &self.render_key
     }
@@ -763,6 +781,59 @@ impl VirtualizedListRenderPlan {
         scroll_offset: UiPx,
         viewport_extent: UiPx,
     ) -> Self {
+        Self::resolve_with_cache(
+            list_id,
+            label,
+            state,
+            items,
+            row_measure_mode,
+            row_measurements,
+            snapshot,
+            scroll_offset,
+            viewport_extent,
+            None,
+        )
+    }
+
+    pub(super) fn resolve_cached(
+        list_id: impl Into<String>,
+        label: impl Into<String>,
+        state: VirtualizedListState,
+        items: &[VirtualizedListItemDescriptor],
+        row_measure_mode: VirtualizedListRowMeasureMode,
+        row_measurements: &impl VirtualizedListMeasurementLookup,
+        snapshot: Option<&VirtualizerSnapshot>,
+        scroll_offset: UiPx,
+        viewport_extent: UiPx,
+        geometry_cache: &mut VirtualizerGeometryCache,
+        geometry_revision: u64,
+    ) -> Self {
+        Self::resolve_with_cache(
+            list_id,
+            label,
+            state,
+            items,
+            row_measure_mode,
+            row_measurements,
+            snapshot,
+            scroll_offset,
+            viewport_extent,
+            Some((geometry_cache, geometry_revision)),
+        )
+    }
+
+    fn resolve_with_cache(
+        list_id: impl Into<String>,
+        label: impl Into<String>,
+        state: VirtualizedListState,
+        items: &[VirtualizedListItemDescriptor],
+        row_measure_mode: VirtualizedListRowMeasureMode,
+        row_measurements: &impl VirtualizedListMeasurementLookup,
+        snapshot: Option<&VirtualizerSnapshot>,
+        scroll_offset: UiPx,
+        viewport_extent: UiPx,
+        geometry_cache: Option<(&mut VirtualizerGeometryCache, u64)>,
+    ) -> Self {
         let metrics = state.metrics();
         let state_items = virtualized_list_state_items(items);
         let selected_keys = state
@@ -783,6 +854,10 @@ impl VirtualizedListRenderPlan {
         let metrics = state.metrics();
         let viewport_extent = resolve_viewport_extent(&state, viewport_extent);
         let duplicate_keys = duplicate_item_keys(items);
+        let source_keys = items
+            .iter()
+            .map(|item| item.key().to_owned())
+            .collect::<BTreeSet<_>>();
         let row_positions = virtualized_list_row_positions(items, &duplicate_keys);
         let option_count = row_positions
             .iter()
@@ -797,6 +872,8 @@ impl VirtualizedListRenderPlan {
             nonnegative_px(scroll_offset),
             viewport_extent,
             &duplicate_keys,
+            &source_keys,
+            geometry_cache,
         );
         let sticky_section = resolve_virtualized_list_sticky_section(
             items,
@@ -984,25 +1061,39 @@ fn virtualized_list_render_key(
     item: &VirtualizedListItemDescriptor,
     index: usize,
     duplicate_keys: &BTreeSet<String>,
+    source_keys: &BTreeSet<String>,
 ) -> String {
-    if duplicate_keys.contains(item.key()) {
-        format!("{index}:{}", item.key())
-    } else {
-        item.key().to_owned()
+    if !duplicate_keys.contains(item.key()) {
+        return item.key().to_owned();
     }
+
+    for discriminator in 0..=source_keys.len() {
+        let candidate = format!(
+            "#duplicate:{discriminator}:{index}:{}:{}",
+            item.key().len(),
+            item.key()
+        );
+        if !source_keys.contains(&candidate) {
+            return candidate;
+        }
+    }
+
+    unreachable!("a finite source-key set must leave one duplicate-key encoding available")
 }
 
 fn resolve_virtualized_list_virtualizer(
     items: &[VirtualizedListItemDescriptor],
     metrics: VirtualizedListMetrics,
     row_measure_mode: VirtualizedListRowMeasureMode,
-    row_measurements: &BTreeMap<String, UiPx>,
+    row_measurements: &impl VirtualizedListMeasurementLookup,
     snapshot: Option<&VirtualizerSnapshot>,
     scroll_offset: UiPx,
     viewport_extent: UiPx,
     duplicate_keys: &BTreeSet<String>,
+    source_keys: &BTreeSet<String>,
+    geometry_cache: Option<(&mut VirtualizerGeometryCache, u64)>,
 ) -> VirtualizerResolvedState {
-    let mut state = VirtualizerState::new(items.len(), metrics.row_height())
+    let state = VirtualizerState::new(items.len(), metrics.row_height())
         .with_viewport_extent(viewport_extent)
         .with_overscan(metrics.overscan_count())
         .with_scroll_offset(nonnegative_px(scroll_offset));
@@ -1010,20 +1101,42 @@ fn resolve_virtualized_list_virtualizer(
     if !row_measure_mode.measured() {
         return state.resolve_fixed_window(|index| {
             let item = &items[index];
-            VirtualizerItemKey::new(virtualized_list_render_key(item, index, duplicate_keys))
+            VirtualizerItemKey::new(virtualized_list_render_key(
+                item,
+                index,
+                duplicate_keys,
+                source_keys,
+            ))
         });
     }
 
-    if let Some(snapshot) = snapshot.cloned() {
-        state = state.with_snapshot(snapshot);
+    let snapshot_measurements = OnceCell::new();
+    let resolve = |cache: &mut VirtualizerGeometryCache, revision| {
+        state.resolve_measured_window_by_cached(cache, revision, |index| {
+            let item = &items[index];
+            let render_key = virtualized_list_render_key(item, index, duplicate_keys, source_keys);
+            let snapshot_size = || {
+                snapshot.and_then(|snapshot| {
+                    snapshot_measurements
+                        .get_or_init(|| {
+                            snapshot
+                                .measurements()
+                                .iter()
+                                .map(|item| (item.key().as_str(), item.size()))
+                                .collect::<BTreeMap<_, _>>()
+                        })
+                        .get(render_key.as_str())
+                        .copied()
+                })
+            };
+            let size = row_measurements
+                .row_measurement(&render_key)
+                .or_else(snapshot_size);
+            (VirtualizerItemKey::new(render_key), size)
+        })
+    };
+    match geometry_cache {
+        Some((cache, revision)) => resolve(cache, revision),
+        None => resolve(&mut VirtualizerGeometryCache::default(), 0),
     }
-    for (key, height) in row_measurements {
-        state = state.with_measurement(key.clone(), *height);
-    }
-    state = state.with_scroll_offset(nonnegative_px(scroll_offset));
-
-    state.resolve_measured_window(|index| {
-        let item = &items[index];
-        VirtualizerItemKey::new(virtualized_list_render_key(item, index, duplicate_keys))
-    })
 }

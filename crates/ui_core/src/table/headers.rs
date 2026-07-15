@@ -3,7 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::columns::{TableColumn, TableColumnNode, TableColumnRegion, TableColumnRegions};
-use super::identity::TableColumnId;
+use super::identity::{
+    TableColumnGroupId, TableColumnId, TableHeaderIdentity, TableHeaderRowIdentity,
+    TableResolvedHeaderIdentity,
+};
 
 /// Resolved header cell kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,54 +39,44 @@ impl TableResolvedHeaderKind {
 /// Resolved one header cell in a header row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableResolvedHeaderCell {
-    id: String,
+    identity: TableResolvedHeaderIdentity,
     region: TableColumnRegion,
     depth: usize,
     index: usize,
-    kind: TableResolvedHeaderKind,
     label: String,
-    source_id: String,
-    placeholder_id: Option<String>,
-    col_span: usize,
     row_span: usize,
-    leaf_column_ids: Vec<TableColumnId>,
-    sub_header_ids: Vec<String>,
+    sub_header_identities: Vec<TableResolvedHeaderIdentity>,
 }
 
 impl TableResolvedHeaderCell {
     fn new(
-        id: impl Into<String>,
+        identity: TableResolvedHeaderIdentity,
         region: TableColumnRegion,
         depth: usize,
         index: usize,
-        kind: TableResolvedHeaderKind,
         label: impl Into<String>,
-        source_id: impl Into<String>,
-        placeholder_id: Option<impl Into<String>>,
-        col_span: usize,
         row_span: usize,
-        leaf_column_ids: Vec<TableColumnId>,
-        sub_header_ids: Vec<String>,
+        sub_header_identities: Vec<TableResolvedHeaderIdentity>,
     ) -> Self {
         Self {
-            id: id.into(),
+            identity,
             region,
             depth,
             index,
-            kind,
             label: label.into(),
-            source_id: source_id.into(),
-            placeholder_id: placeholder_id.map(Into::into),
-            col_span,
             row_span,
-            leaf_column_ids,
-            sub_header_ids,
+            sub_header_identities,
         }
     }
 
-    /// Returns the stable header identity.
-    pub fn id(&self) -> &str {
-        &self.id
+    /// Returns this resolved header fragment's stable identity.
+    pub const fn identity(&self) -> &TableResolvedHeaderIdentity {
+        &self.identity
+    }
+
+    /// Returns the logical identity independent of pinning and fragmentation.
+    pub const fn logical_identity(&self) -> &TableHeaderIdentity {
+        self.identity.logical()
     }
 
     /// Returns the render region that owns this header cell.
@@ -103,7 +96,11 @@ impl TableResolvedHeaderCell {
 
     /// Returns the header cell kind.
     pub const fn kind(&self) -> TableResolvedHeaderKind {
-        self.kind
+        match self.logical_identity() {
+            TableHeaderIdentity::Group(_) => TableResolvedHeaderKind::Group,
+            TableHeaderIdentity::Leaf(_) => TableResolvedHeaderKind::Leaf,
+            TableHeaderIdentity::Placeholder { .. } => TableResolvedHeaderKind::Placeholder,
+        }
     }
 
     /// Returns the visible label.
@@ -111,34 +108,37 @@ impl TableResolvedHeaderCell {
         &self.label
     }
 
-    /// Returns the stable source identity behind this header cell.
-    pub fn source_id(&self) -> &str {
-        &self.source_id
+    /// Returns the source leaf-column identity for leaf headers.
+    pub const fn source_column_id(&self) -> Option<&TableColumnId> {
+        match self.logical_identity() {
+            TableHeaderIdentity::Leaf(column) => Some(column),
+            TableHeaderIdentity::Group(_) | TableHeaderIdentity::Placeholder { .. } => None,
+        }
+    }
+
+    /// Returns the source group path for structural group headers.
+    pub fn source_group_path(&self) -> Option<&[TableColumnGroupId]> {
+        self.logical_identity().group_path()
     }
 
     /// Returns whether this header is a placeholder.
     pub const fn is_placeholder(&self) -> bool {
-        self.kind.is_placeholder()
+        self.kind().is_placeholder()
     }
 
     /// Returns whether this header is a visible leaf column.
     pub const fn is_leaf(&self) -> bool {
-        self.kind.is_leaf()
+        self.kind().is_leaf()
     }
 
     /// Returns whether this header is a structural group.
     pub const fn is_group(&self) -> bool {
-        self.kind.is_group()
-    }
-
-    /// Returns the placeholder id, when this cell is a placeholder.
-    pub fn placeholder_id(&self) -> Option<&str> {
-        self.placeholder_id.as_deref()
+        self.kind().is_group()
     }
 
     /// Returns the number of visible leaf columns covered by this cell.
     pub const fn col_span(&self) -> usize {
-        self.col_span
+        self.identity.covered_leaf_count()
     }
 
     /// Returns the number of header rows spanned by this cell.
@@ -148,12 +148,12 @@ impl TableResolvedHeaderCell {
 
     /// Returns the visible leaf column ids covered by this cell.
     pub fn leaf_column_ids(&self) -> &[TableColumnId] {
-        &self.leaf_column_ids
+        self.identity.covered_leaves()
     }
 
-    /// Returns direct child header ids.
-    pub fn sub_header_ids(&self) -> &[String] {
-        &self.sub_header_ids
+    /// Returns direct child header identities.
+    pub fn sub_header_identities(&self) -> &[TableResolvedHeaderIdentity] {
+        &self.sub_header_identities
     }
 }
 
@@ -161,22 +161,15 @@ impl TableResolvedHeaderCell {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableResolvedHeaderGroup {
     region: TableColumnRegion,
-    depth: usize,
-    id: String,
+    identity: TableHeaderRowIdentity,
     headers: Vec<TableResolvedHeaderCell>,
 }
 
 impl TableResolvedHeaderGroup {
-    fn new(
-        region: TableColumnRegion,
-        depth: usize,
-        id: impl Into<String>,
-        headers: Vec<TableResolvedHeaderCell>,
-    ) -> Self {
+    fn new(region: TableColumnRegion, depth: usize, headers: Vec<TableResolvedHeaderCell>) -> Self {
         Self {
             region,
-            depth,
-            id: id.into(),
+            identity: TableHeaderRowIdentity::new(depth),
             headers,
         }
     }
@@ -188,12 +181,12 @@ impl TableResolvedHeaderGroup {
 
     /// Returns the row depth.
     pub const fn depth(&self) -> usize {
-        self.depth
+        self.identity.depth()
     }
 
-    /// Returns the stable header-row identity.
-    pub fn id(&self) -> &str {
-        &self.id
+    /// Returns the logical header-row identity independent of pinned region.
+    pub const fn identity(&self) -> TableHeaderRowIdentity {
+        self.identity
     }
 
     /// Returns header cells in this row.
@@ -285,10 +278,8 @@ struct TableHeaderPath {
 
 #[derive(Debug, Clone)]
 struct TableHeaderSlot {
-    kind: TableResolvedHeaderKind,
-    source_id: String,
+    logical_identity: TableHeaderIdentity,
     label: String,
-    placeholder_id: Option<String>,
     leaf_id: TableColumnId,
 }
 
@@ -333,14 +324,7 @@ fn resolve_table_header_groups_for_region(
     rows.into_iter()
         .enumerate()
         .filter(|(_, headers)| !headers.is_empty())
-        .map(|(depth, headers)| {
-            TableResolvedHeaderGroup::new(
-                region,
-                depth,
-                format!("table:{}:header:{}", region.as_str(), depth),
-                headers,
-            )
-        })
+        .map(|(depth, headers)| TableResolvedHeaderGroup::new(region, depth, headers))
         .collect()
 }
 
@@ -351,102 +335,54 @@ fn build_table_header_row(
     leaf_paths: &[TableHeaderPath],
 ) -> Vec<TableResolvedHeaderCell> {
     let mut cells = Vec::new();
-    let mut current_key: Option<String> = None;
-    let mut current_kind = TableResolvedHeaderKind::Placeholder;
-    let mut current_source_id = String::new();
+    let mut current_key: Option<TableHeaderIdentity> = None;
     let mut current_label = String::new();
-    let mut current_placeholder_id = None;
     let mut current_leaf_ids = Vec::new();
 
     let flush = |cells: &mut Vec<TableResolvedHeaderCell>,
-                 key: &mut Option<String>,
-                 kind: &mut TableResolvedHeaderKind,
-                 source_id: &mut String,
+                 key: &mut Option<TableHeaderIdentity>,
                  label: &mut String,
-                 placeholder_id: &mut Option<String>,
                  leaf_ids: &mut Vec<TableColumnId>| {
-        let Some(key_value) = key.take() else {
+        let Some(logical_identity) = key.take() else {
             return;
         };
-        let col_span = leaf_ids.len();
-        if col_span == 0 {
-            *kind = TableResolvedHeaderKind::Placeholder;
-            *source_id = String::new();
+        if leaf_ids.is_empty() {
             *label = String::new();
-            *placeholder_id = None;
             return;
         }
-        let first_leaf_id = leaf_ids
-            .first()
-            .expect("header segment should cover at least one leaf")
-            .clone();
-        let id = if kind.is_placeholder() {
-            placeholder_id
-                .as_ref()
-                .cloned()
-                .unwrap_or_else(|| key_value.clone())
-        } else if kind.is_leaf() && col_span == 1 {
-            source_id.clone()
-        } else {
-            format!(
-                "table:{}:header:{}:{}:{}",
-                region.as_str(),
-                depth,
-                source_id,
-                first_leaf_id.as_str()
-            )
-        };
+        let leaf_header = matches!(logical_identity, TableHeaderIdentity::Leaf(_));
         let leaf_column_ids = std::mem::take(leaf_ids);
+        let identity = TableResolvedHeaderIdentity::new(logical_identity, leaf_column_ids);
         cells.push(TableResolvedHeaderCell::new(
-            id,
+            identity,
             region,
             depth,
             cells.len(),
-            *kind,
             label.clone(),
-            source_id.clone(),
-            placeholder_id.clone(),
-            col_span,
-            if kind.is_leaf() {
+            if leaf_header {
                 max_depth.saturating_sub(depth)
             } else {
                 1
             },
-            leaf_column_ids,
             Vec::new(),
         ));
-        *kind = TableResolvedHeaderKind::Placeholder;
-        *source_id = String::new();
         *label = String::new();
-        *placeholder_id = None;
     };
 
     for path in leaf_paths {
-        let slot = header_slot_for_path(region, depth, path);
-        let slot_key = if slot.kind.is_placeholder() {
-            slot.placeholder_id
-                .clone()
-                .expect("placeholder headers always carry a placeholder id")
-        } else {
-            slot.source_id.clone()
-        };
+        let slot = header_slot_for_path(depth, path);
+        let slot_key = slot.logical_identity.clone();
 
         let should_flush = current_key.as_ref() != Some(&slot_key);
         if should_flush {
             flush(
                 &mut cells,
                 &mut current_key,
-                &mut current_kind,
-                &mut current_source_id,
                 &mut current_label,
-                &mut current_placeholder_id,
                 &mut current_leaf_ids,
             );
             current_key = Some(slot_key);
-            current_kind = slot.kind;
-            current_source_id = slot.source_id;
             current_label = slot.label;
-            current_placeholder_id = slot.placeholder_id;
         }
 
         current_leaf_ids.push(slot.leaf_id);
@@ -455,21 +391,14 @@ fn build_table_header_row(
     flush(
         &mut cells,
         &mut current_key,
-        &mut current_kind,
-        &mut current_source_id,
         &mut current_label,
-        &mut current_placeholder_id,
         &mut current_leaf_ids,
     );
 
     cells
 }
 
-fn header_slot_for_path(
-    region: TableColumnRegion,
-    depth: usize,
-    path: &TableHeaderPath,
-) -> TableHeaderSlot {
+fn header_slot_for_path(depth: usize, path: &TableHeaderPath) -> TableHeaderSlot {
     let leaf_depth = path.nodes.len().saturating_sub(1);
 
     if depth == leaf_depth {
@@ -479,10 +408,8 @@ fn header_slot_for_path(
             .and_then(TableColumnNode::as_column)
             .expect("leaf paths should end in a column node");
         return TableHeaderSlot {
-            kind: TableResolvedHeaderKind::Leaf,
-            source_id: leaf.id().as_str().to_owned(),
+            logical_identity: TableHeaderIdentity::Leaf(leaf.id().clone()),
             label: leaf.label().to_owned(),
-            placeholder_id: None,
             leaf_id: leaf.id().clone(),
         };
     }
@@ -490,31 +417,29 @@ fn header_slot_for_path(
     if let Some(node) = path.nodes.get(depth) {
         match node {
             TableColumnNode::Column(column) => TableHeaderSlot {
-                kind: TableResolvedHeaderKind::Leaf,
-                source_id: column.id().as_str().to_owned(),
+                logical_identity: TableHeaderIdentity::Leaf(column.id().clone()),
                 label: column.label().to_owned(),
-                placeholder_id: None,
                 leaf_id: path.leaf_id.clone(),
             },
             TableColumnNode::Group(group) => TableHeaderSlot {
-                kind: TableResolvedHeaderKind::Group,
-                source_id: group.id().as_str().to_owned(),
+                logical_identity: TableHeaderIdentity::Group(
+                    path.nodes[..=depth]
+                        .iter()
+                        .filter_map(TableColumnNode::as_group)
+                        .map(|group| group.id().clone())
+                        .collect(),
+                ),
                 label: group.label().to_owned(),
-                placeholder_id: None,
                 leaf_id: path.leaf_id.clone(),
             },
         }
     } else {
         TableHeaderSlot {
-            kind: TableResolvedHeaderKind::Placeholder,
-            source_id: path.leaf_id.as_str().to_owned(),
-            label: String::new(),
-            placeholder_id: Some(format!(
-                "table:{}:placeholder:{}:{}",
-                region.as_str(),
+            logical_identity: TableHeaderIdentity::Placeholder {
+                leaf_column: path.leaf_id.clone(),
                 depth,
-                path.leaf_id.as_str()
-            )),
+            },
+            label: String::new(),
             leaf_id: path.leaf_id.clone(),
         }
     }
@@ -555,7 +480,7 @@ fn attach_table_header_children(rows: &mut [Vec<TableResolvedHeaderCell>]) {
     for depth in 0..rows.len() - 1 {
         let next = rows[depth + 1]
             .iter()
-            .map(|cell| (cell.id().to_owned(), cell.leaf_column_ids().to_vec()))
+            .map(|cell| (cell.identity().clone(), cell.leaf_column_ids().to_vec()))
             .collect::<Vec<_>>();
 
         for cell in &mut rows[depth] {
@@ -563,16 +488,16 @@ fn attach_table_header_children(rows: &mut [Vec<TableResolvedHeaderCell>]) {
             let parent_leaves = parent_leaves
                 .into_iter()
                 .collect::<BTreeSet<TableColumnId>>();
-            let child_ids = next
+            let child_identities = next
                 .iter()
                 .filter(|(_, child_leaves)| {
                     child_leaves
                         .iter()
                         .any(|leaf_id| parent_leaves.contains(leaf_id))
                 })
-                .map(|(child_id, _)| child_id.clone())
+                .map(|(child_identity, _)| child_identity.clone())
                 .collect::<Vec<_>>();
-            cell.sub_header_ids = child_ids;
+            cell.sub_header_identities = child_identities;
         }
     }
 }

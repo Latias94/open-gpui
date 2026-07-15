@@ -2,7 +2,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{TableCellValue, TableColumnId, TableResolvedRow, TableRowId};
+use super::TableRowIdentity;
+use super::{
+    TableCellValue, TableColumnId, TableResolvedRow, TableRowId, TableRowInstanceId, TableRowModel,
+};
 
 /// Resolved table row lane for row-pinning-aware renderers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -47,8 +50,35 @@ impl Default for TableRowPinningPolicy {
 /// Caller-owned pinned row state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TableRowPinning {
-    top: Vec<TableRowId>,
-    bottom: Vec<TableRowId>,
+    top: Vec<TableRowPinTarget>,
+    bottom: Vec<TableRowPinTarget>,
+}
+
+/// Caller-owned target for one row-pinning region.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TableRowPinTarget {
+    /// Pin exactly one authoritative source or synthetic row identity.
+    Exact(TableRowIdentity),
+    /// Pin every currently resolved source row with one business row id.
+    AllSourceRows(TableRowId),
+}
+
+impl TableRowPinTarget {
+    /// Creates an exact logical-row target.
+    pub const fn exact(identity: TableRowIdentity) -> Self {
+        Self::Exact(identity)
+    }
+
+    /// Creates an explicit business-id bulk target.
+    pub fn all_source_rows(row_id: impl Into<TableRowId>) -> Self {
+        Self::AllSourceRows(row_id.into())
+    }
+}
+
+impl From<TableRowIdentity> for TableRowPinTarget {
+    fn from(value: TableRowIdentity) -> Self {
+        Self::Exact(value)
+    }
 }
 
 impl TableRowPinning {
@@ -59,38 +89,40 @@ impl TableRowPinning {
 
     #[cfg(test)]
     pub(super) fn from_raw(
-        top: impl IntoIterator<Item = TableRowId>,
-        bottom: impl IntoIterator<Item = TableRowId>,
+        top: impl IntoIterator<Item = impl Into<TableRowPinTarget>>,
+        bottom: impl IntoIterator<Item = impl Into<TableRowPinTarget>>,
     ) -> Self {
         Self {
-            top: top.into_iter().collect(),
-            bottom: bottom.into_iter().collect(),
+            top: top.into_iter().map(Into::into).collect(),
+            bottom: bottom.into_iter().map(Into::into).collect(),
         }
     }
 
-    /// Applies top-pinned row ids.
-    pub fn pinned_top(mut self, rows: impl IntoIterator<Item = impl Into<TableRowId>>) -> Self {
-        self.top = unique_row_ids(rows);
-        let top = self.top.iter().cloned().collect::<BTreeSet<_>>();
-        self.bottom.retain(|row| !top.contains(row));
+    /// Applies top-pinned row targets in caller-owned region order.
+    pub fn pinned_top(
+        mut self,
+        targets: impl IntoIterator<Item = impl Into<TableRowPinTarget>>,
+    ) -> Self {
+        self.top = unique_row_pin_targets(targets);
         self
     }
 
-    /// Applies bottom-pinned row ids.
-    pub fn pinned_bottom(mut self, rows: impl IntoIterator<Item = impl Into<TableRowId>>) -> Self {
-        self.bottom = unique_row_ids(rows);
-        let bottom = self.bottom.iter().cloned().collect::<BTreeSet<_>>();
-        self.top.retain(|row| !bottom.contains(row));
+    /// Applies bottom-pinned row targets in caller-owned region order.
+    pub fn pinned_bottom(
+        mut self,
+        targets: impl IntoIterator<Item = impl Into<TableRowPinTarget>>,
+    ) -> Self {
+        self.bottom = unique_row_pin_targets(targets);
         self
     }
 
-    /// Returns top-pinned row ids.
-    pub fn top(&self) -> &[TableRowId] {
+    /// Returns top-pinned row targets in caller-owned order.
+    pub fn top_targets(&self) -> &[TableRowPinTarget] {
         &self.top
     }
 
-    /// Returns bottom-pinned row ids.
-    pub fn bottom(&self) -> &[TableRowId] {
+    /// Returns bottom-pinned row targets in caller-owned order.
+    pub fn bottom_targets(&self) -> &[TableRowPinTarget] {
         &self.bottom
     }
 
@@ -110,61 +142,31 @@ pub struct TableRowRegions {
 
 impl TableRowRegions {
     pub(super) fn from_models(
-        expanded_rows: &[TableResolvedRow],
-        paginated_rows: &[TableResolvedRow],
+        expanded_model: &TableRowModel,
+        paginated_model: &TableRowModel,
         pinning: &TableRowPinning,
         policy: TableRowPinningPolicy,
     ) -> Self {
         if pinning.is_empty() {
             return Self {
                 top: Vec::new(),
-                center: paginated_rows.to_vec(),
+                center: paginated_model.rows().to_vec(),
                 bottom: Vec::new(),
             };
         }
 
-        let lookup_rows = match policy {
-            TableRowPinningPolicy::KeepPinnedRows => expanded_rows,
-            TableRowPinningPolicy::PageOnly => paginated_rows,
+        let lookup_model = match policy {
+            TableRowPinningPolicy::KeepPinnedRows => expanded_model,
+            TableRowPinningPolicy::PageOnly => paginated_model,
         };
-        let mut top_seen = BTreeSet::new();
-        let top_ids = pinning
-            .top()
+        let lookup = TableRowPinLookup::new(lookup_model, pinning);
+        let mut pinned_ids = BTreeSet::new();
+        let top = resolve_row_pin_targets(pinning.top_targets(), &lookup, &mut pinned_ids);
+        let bottom = resolve_row_pin_targets(pinning.bottom_targets(), &lookup, &mut pinned_ids);
+        let center = paginated_model
+            .rows()
             .iter()
-            .filter(|row_id| top_seen.insert((*row_id).clone()))
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        let top = lookup_rows
-            .iter()
-            .filter(|row| top_ids.contains(row.id()))
-            .cloned()
-            .collect::<Vec<_>>();
-        let top_ids = top
-            .iter()
-            .map(|row| row.id().clone())
-            .collect::<BTreeSet<_>>();
-
-        let mut bottom_seen = BTreeSet::new();
-        let bottom_ids = pinning
-            .bottom()
-            .iter()
-            .filter(|row_id| !top_ids.contains(*row_id))
-            .filter(|row_id| bottom_seen.insert((*row_id).clone()))
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        let bottom = lookup_rows
-            .iter()
-            .filter(|row| bottom_ids.contains(row.id()))
-            .cloned()
-            .collect::<Vec<_>>();
-        let pinned_ids = top
-            .iter()
-            .chain(bottom.iter())
-            .map(|row| row.id().clone())
-            .collect::<BTreeSet<_>>();
-        let center = paginated_rows
-            .iter()
-            .filter(|row| !pinned_ids.contains(row.id()))
+            .filter(|row| !pinned_ids.contains(row.identity()))
             .cloned()
             .collect();
 
@@ -294,6 +296,7 @@ impl Default for TableRowChildrenLoadState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableRow {
     id: TableRowId,
+    instance_id: Option<TableRowInstanceId>,
     cells: BTreeMap<TableColumnId, TableCellValue>,
     children: Vec<TableRow>,
     expandable: bool,
@@ -305,6 +308,7 @@ impl TableRow {
     pub fn new(id: impl Into<TableRowId>) -> Self {
         Self {
             id: id.into(),
+            instance_id: None,
             cells: BTreeMap::new(),
             children: Vec::new(),
             expandable: false,
@@ -312,9 +316,17 @@ impl TableRow {
         }
     }
 
-    /// Returns the stable row identity.
+    /// Returns the caller-owned business row id.
+    ///
+    /// Business ids may repeat. Use [`Self::with_instance_id`] to provide stable disambiguation;
+    /// exact expansion and pinning targets use the resolved [`TableRowIdentity`].
     pub const fn id(&self) -> &TableRowId {
         &self.id
+    }
+
+    /// Returns the caller-owned source-instance identity, when supplied.
+    pub const fn instance_id(&self) -> Option<&TableRowInstanceId> {
+        self.instance_id.as_ref()
     }
 
     /// Returns all cells keyed by column identity.
@@ -356,6 +368,12 @@ impl TableRow {
         value: impl Into<TableCellValue>,
     ) -> Self {
         self.cells.insert(column.into(), value.into());
+        self
+    }
+
+    /// Applies a stable source-instance identity for duplicate business row ids.
+    pub fn with_instance_id(mut self, instance_id: impl Into<TableRowInstanceId>) -> Self {
+        self.instance_id = Some(instance_id.into());
         self
     }
 
@@ -403,14 +421,74 @@ impl TableRow {
     }
 }
 
-pub(super) fn unique_row_ids(
-    rows: impl IntoIterator<Item = impl Into<TableRowId>>,
-) -> Vec<TableRowId> {
+fn unique_row_pin_targets(
+    targets: impl IntoIterator<Item = impl Into<TableRowPinTarget>>,
+) -> Vec<TableRowPinTarget> {
     let mut seen = BTreeSet::new();
-    rows.into_iter()
+    targets
+        .into_iter()
         .map(Into::into)
-        .filter(|row| seen.insert(row.clone()))
+        .filter(|target| seen.insert(target.clone()))
         .collect()
+}
+
+struct TableRowPinLookup<'a> {
+    model: &'a TableRowModel,
+    source_rows: BTreeMap<TableRowId, Vec<&'a TableResolvedRow>>,
+}
+
+impl<'a> TableRowPinLookup<'a> {
+    fn new(model: &'a TableRowModel, pinning: &TableRowPinning) -> Self {
+        let mut source_rows = pinning
+            .top_targets()
+            .iter()
+            .chain(pinning.bottom_targets())
+            .filter_map(|target| match target {
+                TableRowPinTarget::Exact(_) => None,
+                TableRowPinTarget::AllSourceRows(row_id) => Some((row_id.clone(), Vec::new())),
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        if !source_rows.is_empty() {
+            for row in model.rows() {
+                if let Some(row_id) = row.source_row_id()
+                    && let Some(rows) = source_rows.get_mut(row_id)
+                {
+                    rows.push(row);
+                }
+            }
+        }
+
+        Self { model, source_rows }
+    }
+}
+
+fn resolve_row_pin_targets(
+    targets: &[TableRowPinTarget],
+    lookup: &TableRowPinLookup<'_>,
+    seen: &mut BTreeSet<TableRowIdentity>,
+) -> Vec<TableResolvedRow> {
+    let mut resolved = Vec::new();
+    for target in targets {
+        let mut push = |row: &TableResolvedRow| {
+            if seen.insert(row.identity().clone()) {
+                resolved.push(row.clone());
+            }
+        };
+        match target {
+            TableRowPinTarget::Exact(identity) => {
+                if let Some(row) = lookup.model.materialized_row(identity) {
+                    push(row);
+                }
+            }
+            TableRowPinTarget::AllSourceRows(row_id) => {
+                if let Some(rows) = lookup.source_rows.get(row_id) {
+                    rows.iter().copied().for_each(push);
+                }
+            }
+        }
+    }
+    resolved
 }
 
 pub(super) fn count_table_rows(rows: &[TableRow]) -> usize {

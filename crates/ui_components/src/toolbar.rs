@@ -10,7 +10,10 @@ use open_gpui::{
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
     Window, div,
 };
-use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_px};
+use open_gpui_ui_core::{
+    AccessibleAction, Orientation, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, Toggled,
+    UiPx, ui_px,
+};
 
 use crate::a11y::UiA11yElementExt;
 use crate::action::{ResolvedActionIcon, ResolvedActionState};
@@ -976,6 +979,10 @@ impl RenderOnce for Toolbar {
             let focusable_set_size = state.items().iter().filter(|item| item.focusable()).count();
             let mut focusable_position = 0usize;
             let tab_stop_index = state.tab_stop_index();
+            let semantics = SemanticDescriptor::new(state.role())
+                .with_label(state.label())
+                .with_orientation(orientation)
+                .with_disabled(state.disabled());
 
             div()
                 .id(id.clone())
@@ -983,10 +990,7 @@ impl RenderOnce for Toolbar {
                     let debug_id = debug_id.clone();
                     move || format!("toolbar:{debug_id}")
                 })
-                .ui_role(state.role())
-                .aria_label(label.clone())
-                .ui_aria_orientation(orientation)
-                .aria_disabled(state.disabled())
+                .ui_semantics(&semantics)
                 .flex()
                 .gap(gpui_px_from_ui(metrics.gap()))
                 .p(gpui_px_from_ui(metrics.padding()))
@@ -1069,6 +1073,19 @@ impl RenderOnce for Toolbar {
                             })
                             .into_any_element();
                     }
+                    let mut item_semantics =
+                        SemanticDescriptor::new(item.role().unwrap_or(Role::Button))
+                            .with_label(&item_aria_label)
+                            .with_disabled(item_disabled)
+                            .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
+                    if let Some(position) = item_position {
+                        item_semantics = item_semantics
+                            .with_position_in_set(position)
+                            .with_size_of_set(focusable_set_size);
+                    }
+                    if let Some(toggled) = item.toggled() {
+                        item_semantics = item_semantics.with_toggled(toggled);
+                    }
 
                     div()
                         .id(toolbar_item_id(item.value()))
@@ -1079,16 +1096,7 @@ impl RenderOnce for Toolbar {
                         })
                         .focusable()
                         .tab_stop(item_tab_stop)
-                        .ui_role(item.role().unwrap_or(Role::Button))
-                        .aria_label(item_aria_label)
-                        .aria_disabled(item_disabled)
-                        .when_some(item_position, |this, position| {
-                            this.aria_position_in_set(position)
-                                .aria_size_of_set(focusable_set_size)
-                        })
-                        .when_some(item.toggled(), |this, toggled| {
-                            this.ui_aria_toggled(toggled)
-                        })
+                        .ui_semantics(&item_semantics)
                         .when_some(focus_handle, |this, focus_handle| {
                             this.track_focus(&focus_handle)
                         })

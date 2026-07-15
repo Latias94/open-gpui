@@ -29,18 +29,24 @@ pub use headers::{
     TableResolvedHeaderCell, TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions,
     TableResolvedHeaderKind,
 };
-pub use identity::{TableColumnGroupId, TableColumnId, TableRowId};
+pub use identity::{
+    TableColumnGroupId, TableColumnId, TableGroupNumberIdentity, TableGroupRowIdentity,
+    TableGroupRowSegment, TableGroupValueIdentity, TableHeaderIdentity, TableHeaderRowIdentity,
+    TableResolvedHeaderIdentity, TableRowId, TableRowIdentity, TableRowIdentityDiagnostic,
+    TableRowIdentityKey, TableRowInstanceId, TableRowOccurrenceIdentity,
+    TableSourceInstanceIdentity, TableSourceRowIdentity,
+};
 pub use resolved::{
     TableGroupRow, TableResolvedRow, TableResolvedRowKind, TableResolvedState, TableRowModel,
     TableTreeRow,
 };
 pub use row_model::{
     TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableExpansionMode, TableExpansionState,
-    TablePagination, TableRowModelStage, TableStageMode,
+    TablePagination, TableRowModelStage, TableSourceRowLookup, TableStageMode,
 };
 pub use rows::{
-    TableRow, TableRowChildrenLoadState, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
-    TableRowRegions,
+    TableRow, TableRowChildrenLoadState, TableRowPinTarget, TableRowPinning, TableRowPinningPolicy,
+    TableRowRegion, TableRowRegions,
 };
 pub use selection::{
     TableSelectionActivationMode, TableSelectionMode, TableSelectionPolicy, TableSelectionSummary,
@@ -63,17 +69,21 @@ pub mod prelude {
         TableColumnResizeState, TableColumnResizeUpdate, TableColumnSizing,
         TableColumnVisibilityOverrides, TableColumnWidthPolicy, TableExpansionMode,
         TableExpansionState, TableFacetRange, TableFacetValueCount, TableFilter, TableFilterKind,
-        TableGlobalFacetSummary, TableGroupRow, TableNumericFilterBound,
-        TableNumericFilterOperator, TablePagination, TableResolvedColumnSizing,
-        TableResolvedColumnSizingRegions, TableResolvedHeaderCell, TableResolvedHeaderGroup,
-        TableResolvedHeaderGroupRegions, TableResolvedHeaderKind, TableResolvedRow,
-        TableResolvedRowKind, TableResolvedState, TableRow, TableRowChildrenLoadState, TableRowId,
-        TableRowModel, TableRowModelStage, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
-        TableRowRegions, TableSelectOption, TableSelectionActivationMode, TableSelectionMode,
-        TableSelectionPolicy, TableSelectionSummary, TableSelectionSummaryState, TableSort,
-        TableSortDirection, TableStageMode, TableState, TableStateCacheKey,
-        TableSubRowSelectionPolicy, TableTextFilterOperator, TableTreeRow,
-        drag_table_column_resize, end_table_column_resize,
+        TableGlobalFacetSummary, TableGroupRow, TableGroupRowIdentity, TableGroupRowSegment,
+        TableGroupValueIdentity, TableHeaderIdentity, TableHeaderRowIdentity,
+        TableNumericFilterBound, TableNumericFilterOperator, TablePagination,
+        TableResolvedColumnSizing, TableResolvedColumnSizingRegions, TableResolvedHeaderCell,
+        TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions, TableResolvedHeaderIdentity,
+        TableResolvedHeaderKind, TableResolvedRow, TableResolvedRowKind, TableResolvedState,
+        TableRow, TableRowChildrenLoadState, TableRowId, TableRowIdentity,
+        TableRowIdentityDiagnostic, TableRowIdentityKey, TableRowInstanceId, TableRowModel,
+        TableRowModelStage, TableRowOccurrenceIdentity, TableRowPinTarget, TableRowPinning,
+        TableRowPinningPolicy, TableRowRegion, TableRowRegions, TableSelectOption,
+        TableSelectionActivationMode, TableSelectionMode, TableSelectionPolicy,
+        TableSelectionSummary, TableSelectionSummaryState, TableSort, TableSortDirection,
+        TableSourceInstanceIdentity, TableSourceRowIdentity, TableSourceRowLookup, TableStageMode,
+        TableState, TableStateCacheKey, TableSubRowSelectionPolicy, TableTextFilterOperator,
+        TableTreeRow, drag_table_column_resize, end_table_column_resize,
     };
 }
 
@@ -87,8 +97,9 @@ use columns::normalize_table_column_tree;
 use faceting::{resolve_client_column_facets, resolve_client_global_column_facets};
 use filtering::normalize_table_global_filter_query;
 use row_model::{
-    TableRowNode, build_group_nodes, build_source_row_nodes, filter_source_row_nodes,
-    filter_source_row_nodes_by_global_query, flatten_nodes, push_expanded_rows,
+    TableRowNode, TableSourceIdentityIndex, build_group_nodes, build_source_row_nodes,
+    filter_source_row_nodes, filter_source_row_nodes_by_global_query, flatten_nodes,
+    push_expanded_rows,
 };
 use rows::count_table_rows;
 
@@ -275,7 +286,7 @@ pub struct TableState {
     row_pinning: TableRowPinning,
     row_pinning_policy: TableRowPinningPolicy,
     rows: Arc<[TableRow]>,
-    rows_identity: u64,
+    source_identities: Arc<TableSourceIdentityIndex>,
     sorting: Vec<TableSort>,
     sorting_mode: TableStageMode,
     filters: Vec<TableFilter>,
@@ -326,6 +337,8 @@ impl TableState {
     /// Creates table state from row descriptors.
     pub fn new(rows: impl IntoIterator<Item = TableRow>) -> Self {
         let rows = rows.into_iter().collect::<Vec<_>>();
+        let rows_identity = next_table_rows_identity();
+        let source_identities = Arc::new(TableSourceIdentityIndex::new(&rows, rows_identity));
 
         Self {
             column_tree: Vec::new(),
@@ -337,7 +350,7 @@ impl TableState {
             row_pinning: TableRowPinning::default(),
             row_pinning_policy: TableRowPinningPolicy::default(),
             rows: rows.into(),
-            rows_identity: next_table_rows_identity(),
+            source_identities,
             sorting: Vec::new(),
             sorting_mode: TableStageMode::default(),
             filters: Vec::new(),
@@ -378,8 +391,10 @@ impl TableState {
 
     /// Replaces source rows while preserving the rest of the table configuration.
     pub fn with_rows(mut self, rows: impl IntoIterator<Item = TableRow>) -> Self {
-        self.rows = rows.into_iter().collect::<Vec<_>>().into();
-        self.rows_identity = next_table_rows_identity();
+        let rows = rows.into_iter().collect::<Vec<_>>();
+        let rows_identity = next_table_rows_identity();
+        self.source_identities = Arc::new(TableSourceIdentityIndex::new(&rows, rows_identity));
+        self.rows = rows.into();
         self
     }
 
@@ -547,10 +562,17 @@ impl TableState {
         self
     }
 
-    /// Applies explicit expanded group row ids.
+    /// Applies exact expanded row identities.
+    ///
+    /// ```compile_fail
+    /// use open_gpui_ui_core::{TableRow, TableState};
+    ///
+    /// let state = TableState::new(std::iter::empty::<TableRow>());
+    /// let _ = state.with_expanded_rows(["row-a"]);
+    /// ```
     pub fn with_expanded_rows(
         mut self,
-        expanded_rows: impl IntoIterator<Item = impl Into<TableRowId>>,
+        expanded_rows: impl IntoIterator<Item = TableRowIdentity>,
     ) -> Self {
         self.expansion = TableExpansionState::rows(expanded_rows);
         self
@@ -643,6 +665,33 @@ impl TableState {
         &self.column_order
     }
 
+    /// Returns the complete canonical source-column order.
+    ///
+    /// Known explicit ids are emitted once, followed by every unlisted source column in source
+    /// order. Unknown ids and duplicates are ignored. Visibility and pinning are independent
+    /// projections and do not remove columns from this order.
+    pub fn normalized_column_order(&self) -> Vec<TableColumnId> {
+        let mut remaining = self
+            .columns
+            .iter()
+            .map(|column| column.id().clone())
+            .collect::<BTreeSet<_>>();
+        let mut normalized = Vec::with_capacity(self.columns.len());
+
+        for id in &self.column_order {
+            if remaining.remove(id) {
+                normalized.push(id.clone());
+            }
+        }
+        for column in &self.columns {
+            if remaining.remove(column.id()) {
+                normalized.push(column.id().clone());
+            }
+        }
+
+        normalized
+    }
+
     /// Returns runtime column visibility overrides.
     pub const fn column_visibility(&self) -> &TableColumnVisibilityOverrides {
         &self.column_visibility
@@ -651,6 +700,25 @@ impl TableState {
     /// Returns source rows.
     pub fn rows(&self) -> &[TableRow] {
         self.rows.as_ref()
+    }
+
+    /// Resolves one source-row identity against the current caller-owned source snapshot.
+    pub fn source_row_lookup(&self, identity: &TableSourceRowIdentity) -> TableSourceRowLookup {
+        self.source_identities.lookup(identity)
+    }
+
+    /// Resolves the zero-based business-id occurrence to its exact current-snapshot identity.
+    ///
+    /// The returned identity is stable through row-model transformations and cloned table state,
+    /// but becomes stale after [`Self::with_rows`]. Use caller-owned instance ids for retention
+    /// across source replacement or reorder.
+    pub fn source_row_identity_at(
+        &self,
+        row_id: impl Into<TableRowId>,
+        occurrence: usize,
+    ) -> Option<TableSourceRowIdentity> {
+        let row_id = row_id.into();
+        self.source_identities.identity_at(&row_id, occurrence)
     }
 
     /// Returns sort specifications.
@@ -759,7 +827,7 @@ impl TableState {
     /// constructed states get a new identity even when their row contents match.
     pub fn cache_key(&self) -> TableStateCacheKey {
         TableStateCacheKey {
-            rows_identity: self.rows_identity,
+            rows_identity: self.source_identities.source_snapshot(),
             row_count: count_table_rows(&self.rows),
             column_tree: self.column_tree.clone(),
             columns: self.columns.clone(),
@@ -801,48 +869,35 @@ impl TableState {
     }
 
     fn ordered_visible_columns(&self) -> Vec<TableColumn> {
-        if self.column_order.is_empty() {
-            return self
-                .columns
-                .iter()
-                .filter(|column| self.column_visibility.is_visible(column))
-                .cloned()
-                .collect();
-        }
-
-        let columns_by_id: BTreeMap<_, _> = self
+        let mut columns_by_id: BTreeMap<_, _> = self
             .columns
             .iter()
             .map(|column| (column.id().clone(), column.clone()))
             .collect();
-
-        self.column_order
-            .iter()
-            .filter_map(|id| columns_by_id.get(id))
+        self.normalized_column_order()
+            .into_iter()
+            .filter_map(|id| columns_by_id.remove(&id))
             .filter(|column| self.column_visibility.is_visible(column))
-            .cloned()
             .collect()
     }
 
     /// Resolves row models from the input state.
     pub fn resolve(&self) -> TableResolvedState {
-        let mut duplicate_row_ids = BTreeSet::new();
-        let mut seen_row_ids = BTreeSet::new();
-        record_source_row_ids(&self.rows, &mut seen_row_ids, &mut duplicate_row_ids);
+        let row_identity_diagnostics = self.source_identities.diagnostics();
         let include_source_children = self.grouping.is_empty();
         let global_filterable_columns = self.global_filterable_column_ids();
         let selected_rows = self
             .selection_policy
             .resolve_selected_rows(&self.rows, &self.selected_rows);
-        let mut source_index = 0;
+        let mut source_identity_cursor = self.source_identities.cursor();
         let source_nodes = build_source_row_nodes(
             &self.rows,
             &selected_rows,
             &self.expansion,
             include_source_children,
+            &mut source_identity_cursor,
             None,
             0,
-            &mut source_index,
         );
         let core_rows = flatten_nodes(&source_nodes);
         let column_filtered_nodes = if self.filtering_mode.is_manual() {
@@ -896,15 +951,15 @@ impl TableState {
             self.pagination.apply(expanded_model.rows()),
         );
         let row_regions = TableRowRegions::from_models(
-            expanded_model.rows(),
-            paginated_model.rows(),
+            &expanded_model,
+            &paginated_model,
             &self.row_pinning,
             self.row_pinning_policy,
         );
         let final_model = TableRowModel::new_with_lookup(
             TableRowModelStage::Final,
             row_regions.flattened(),
-            expanded_model.rows_by_id().values().cloned(),
+            expanded_model.lookup_rows().cloned(),
         );
 
         let visible_column_regions = self.visible_column_regions();
@@ -922,7 +977,7 @@ impl TableState {
             visible_column_regions,
             visible_column_sizing,
             header_groups,
-            duplicate_row_ids: duplicate_row_ids.into_iter().collect(),
+            row_identity_diagnostics,
             faceting_mode: self.faceting_mode,
             column_facets,
             global_facet_summary,
@@ -958,7 +1013,13 @@ impl TableState {
             }
         }
 
-        left.id().cmp(right.id())
+        match (left.identity(), right.identity()) {
+            (TableRowIdentity::Source(left), TableRowIdentity::Source(right)) => {
+                left.row_id().cmp(right.row_id())
+            }
+            (TableRowIdentity::Group(left), TableRowIdentity::Group(right)) => left.cmp(right),
+            _ => left.identity().cmp(right.identity()),
+        }
     }
 
     fn group_nodes(&self, rows: &[TableResolvedRow]) -> Vec<TableRowNode> {
@@ -1118,19 +1179,6 @@ fn count_table_row_nodes(nodes: &[TableRowNode]) -> usize {
         .iter()
         .map(|node| 1 + count_table_row_nodes(&node.children))
         .sum()
-}
-
-fn record_source_row_ids(
-    rows: &[TableRow],
-    seen: &mut BTreeSet<TableRowId>,
-    duplicates: &mut BTreeSet<TableRowId>,
-) {
-    for row in rows {
-        if !seen.insert(row.id().clone()) {
-            duplicates.insert(row.id().clone());
-        }
-        record_source_row_ids(row.children(), seen, duplicates);
-    }
 }
 
 #[cfg(test)]

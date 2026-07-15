@@ -1,6 +1,7 @@
 use open_gpui_ui_core::{
     TableCellEditor, TableCellValue, TableColumnId, TableColumnRegion, TableResolvedRow,
-    TableRowChildrenLoadState, TableRowRegion, TableSelectOption, UiPx, VirtualizerItemMeasurement,
+    TableRowChildrenLoadState, TableRowIdentity, TableRowRegion, TableSelectOption, UiPx,
+    VirtualizerItemMeasurement,
 };
 
 use super::columns::TableColumnRenderPlan;
@@ -122,7 +123,6 @@ fn resolved_table_cell_text(
 pub(in crate::table) struct TableRowRenderPlan {
     row: TableResolvedRow,
     region: TableRowRegion,
-    render_key: String,
     model_index: usize,
     aria_row_index: usize,
     measurement: VirtualizerItemMeasurement,
@@ -133,7 +133,6 @@ impl TableRowRenderPlan {
     pub(in crate::table) fn new(
         row: TableResolvedRow,
         region: TableRowRegion,
-        render_key: String,
         model_index: usize,
         header_row_count: usize,
         measurement: VirtualizerItemMeasurement,
@@ -147,7 +146,6 @@ impl TableRowRenderPlan {
         Self {
             row,
             region,
-            render_key,
             model_index,
             aria_row_index: model_index + header_row_count + 1,
             measurement,
@@ -160,19 +158,14 @@ impl TableRowRenderPlan {
         &self.row
     }
 
-    /// Returns the stable row id.
-    pub const fn id(&self) -> &open_gpui_ui_core::TableRowId {
-        self.row.id()
+    /// Returns the authoritative resolved row identity.
+    pub const fn identity(&self) -> &TableRowIdentity {
+        self.row.identity()
     }
 
     /// Returns the row-pinning render region.
     pub const fn region(&self) -> TableRowRegion {
         self.region
-    }
-
-    /// Returns the unique render key used by element ids and virtualizer items.
-    pub fn render_key(&self) -> &str {
-        &self.render_key
     }
 
     /// Returns this row's index in the final row model.

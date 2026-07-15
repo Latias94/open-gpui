@@ -305,7 +305,7 @@ fn build_table_samples() -> Vec<TableSample> {
     let release_queue = TableSample {
         id: "release-queue",
         title: "Release queue",
-        summary: "Ten thousand stable rows sorted by score with a local virtualized viewport.",
+        summary: "Ten thousand exact row identities with a local virtualized viewport and root-proxy keyboard continuity.",
         badge: "10k rows",
         state: TableState::new(release_queue_rows)
             .with_columns(table_columns())
@@ -408,7 +408,7 @@ fn build_table_samples() -> Vec<TableSample> {
     let editable_release = TableSample {
         id: "editable-release",
         title: "Editable release cells",
-        summary: "Text-cell editors emit controlled row/column payloads while app-owned rows feed updated values back into Table.",
+        summary: "Text-cell editors emit exact logical-row and column identity payloads while app-owned rows feed updates back into Table.",
         badge: "cell edit",
         state: TableState::new(editable_release_rows)
             .with_columns(editable_table_columns())
@@ -431,7 +431,7 @@ fn build_table_samples() -> Vec<TableSample> {
     let toggle_release = TableSample {
         id: "toggle-release",
         title: "Toggle release cells",
-        summary: "Checkbox cell editors emit controlled bool payloads while app-owned rows feed updated values back into Table.",
+        summary: "Checkbox cell editors preserve exact row and column identity while app-owned rows feed bool updates back into Table.",
         badge: "checkbox cells",
         state: TableState::new(toggle_release_rows)
             .with_columns(toggle_release_table_columns())
@@ -454,7 +454,7 @@ fn build_table_samples() -> Vec<TableSample> {
     let select_release = TableSample {
         id: "select-release",
         title: "Select release cells",
-        summary: "Fixed-option select editors emit controlled choice payloads while app-owned rows feed updated values back into Table.",
+        summary: "Fixed-option select editors preserve exact row and column identity while app-owned rows feed choices back into Table.",
         badge: "select cells",
         state: TableState::new(select_release_rows)
             .with_columns(select_release_table_columns())
@@ -477,7 +477,7 @@ fn build_table_samples() -> Vec<TableSample> {
     let multiline_release = TableSample {
         id: "multiline-release",
         title: "Multiline release notes",
-        summary: "Fixed-height textarea cell editors preserve newline edits while app-owned rows feed updated values back into Table.",
+        summary: "Textarea cell editors preserve exact row and column identity plus newlines while app-owned rows feed updates back into Table.",
         badge: "textarea cells",
         state: TableState::new(multiline_release_rows)
             .with_columns(multiline_edit_table_columns())
@@ -500,7 +500,7 @@ fn build_table_samples() -> Vec<TableSample> {
     let grouped_release = TableSample {
         id: "release-rollup",
         title: "Release rollup",
-        summary: "Grouped release rows keep left and right lanes fixed while the wide center lane scrolls horizontally.",
+        summary: "Normalized caller-owned column reorders keep every source column while fixed lanes frame the scrolling center.",
         badge: "sticky pinned",
         state: TableState::new(grouped_release_rows)
             .with_columns(sticky_pinned_table_columns())
@@ -511,7 +511,10 @@ fn build_table_samples() -> Vec<TableSample> {
                     .pinned_right(["status"]),
             )
             .with_grouping(["team"])
-            .with_expanded_rows(["group:team=UI", "group:team=Platform"])
+            .with_expanded_rows([
+                TableRowIdentity::group(TableGroupRowIdentity::new("team", "UI")),
+                TableRowIdentity::group(TableGroupRowIdentity::new("team", "Platform")),
+            ])
             .with_aggregations([
                 TableAggregation::count("name"),
                 TableAggregation::sum("score"),
@@ -539,7 +542,10 @@ fn build_table_samples() -> Vec<TableSample> {
                     .pinned_right(["status"]),
             )
             .with_grouping(["team"])
-            .with_expanded_rows(["group:team=UI", "group:team=Platform"])
+            .with_expanded_rows([
+                TableRowIdentity::group(TableGroupRowIdentity::new("team", "UI")),
+                TableRowIdentity::group(TableGroupRowIdentity::new("team", "Platform")),
+            ])
             .with_aggregations([
                 TableAggregation::count("name"),
                 TableAggregation::named("score", "score_plus_one"),
@@ -597,8 +603,11 @@ fn build_table_samples() -> Vec<TableSample> {
             )
             .with_row_pinning(
                 TableRowPinning::new()
-                    .pinned_top(["row-pinning-row-003"])
-                    .pinned_bottom(["row-pinning-row-030", "row-pinning-row-070"]),
+                    .pinned_top([TableRowIdentity::source("row-pinning-row-003")])
+                    .pinned_bottom([
+                        TableRowIdentity::source("row-pinning-row-030"),
+                        TableRowIdentity::source("row-pinning-row-070"),
+                    ]),
             )
             .with_selected_rows(["row-pinning-row-030"])
             .with_pagination(TablePagination::new(2, 12)),
@@ -631,7 +640,7 @@ fn build_table_samples() -> Vec<TableSample> {
                     .with_width("score", ui_px(92.0))
                     .with_width("status", ui_px(132.0)),
             )
-            .with_expanded_rows(["dependency-workspace"])
+            .with_expanded_rows([TableRowIdentity::source("dependency-workspace")])
             .with_selected_rows(["dependency-ui"])
             .with_pagination(TablePagination::disabled()),
         size: Size::Small,

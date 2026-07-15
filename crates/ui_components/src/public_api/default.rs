@@ -53,7 +53,7 @@ pub use crate::command::{
 };
 pub use crate::component_contract::{
     COMPONENT_A11Y_EVIDENCE, COMPONENT_CONFORMANCE_GATES, ComponentA11yEvidence,
-    ComponentConformanceGate, component_a11y_evidence,
+    ComponentConformanceGate,
 };
 pub use crate::context_menu::{ContextMenu, ContextMenuState};
 pub use crate::dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
@@ -129,7 +129,7 @@ pub use crate::splitter::{
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use crate::table::{
     Table, TableBehaviorSnapshot, TableCellBehaviorSnapshot, TableCellEditApplyOutcome,
-    TableCellEditChange, TableColumnBehaviorSnapshot, TableColumnOrderChange,
+    TableCellEditChange, TableCellEditRequest, TableColumnBehaviorSnapshot, TableColumnOrderChange,
     TableColumnOrderPlacement, TableColumnRegionSnapshot, TableColumnSizingChange,
     TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
     TableColumnVisibilityItemState, TableColumnVisibilityState, TableFacetedFilter,
@@ -142,7 +142,7 @@ pub use crate::table::{
     TableRowActivationKind, TableRowBehaviorSnapshot, TableRowCountSnapshot,
     TableRowExpansionToggle, TableRowMeasureMode, TableRowSelectionChange, TableSelectionScope,
     TableToolbar, TableToolbarColors, TableToolbarState, TableTreeSummarySnapshot,
-    TableVisibleRowsSnapshot,
+    TableVirtualizerSnapshot, TableVirtualizerSnapshotItem, TableVisibleRowsSnapshot,
 };
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

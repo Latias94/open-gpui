@@ -1,7 +1,9 @@
 use crate::choice::{normalize_query, normalized_text_starts_with};
 use crate::roving_focus::paged_navigation_target;
-use crate::scroll_surface::{ScrollSurfaceRevealStrategy, fixed_row_scroll_target};
-use open_gpui_ui_core::{Size, UiPx, VirtualizerSnapshot};
+use crate::scroll_surface::{
+    ScrollSurfaceRevealStrategy, fixed_row_scroll_target, row_geometry_scroll_target,
+};
+use open_gpui_ui_core::{Size, UiPx, VirtualizerItemGeometry, VirtualizerSnapshot};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -841,7 +843,6 @@ fn virtualized_list_measured_scroll_target(
     snapshot: &VirtualizerSnapshot,
 ) -> (UiPx, bool) {
     let estimated_row_height = nonnegative_px(estimated_row_height);
-    let viewport_extent = nonnegative_px(viewport_extent);
     if items.is_empty() {
         return (UiPx::ZERO, true);
     }
@@ -850,7 +851,7 @@ fn virtualized_list_measured_scroll_target(
     let measurements_by_key = snapshot
         .measurements()
         .iter()
-        .map(|item| (item.key().as_str().to_owned(), nonnegative_px(item.size())))
+        .map(|item| (item.key().as_str(), nonnegative_px(item.size())))
         .collect::<BTreeMap<_, _>>();
     let mut cursor = UiPx::ZERO;
     let mut estimated = false;
@@ -872,30 +873,15 @@ fn virtualized_list_measured_scroll_target(
         cursor = cursor + size;
     }
 
-    let total_size = cursor;
-    let max_scroll_offset = nonnegative_px(total_size - viewport_extent);
-    let current_scroll_offset = nonnegative_px(current_scroll_offset).min(max_scroll_offset);
-    let target_end = target_start + target_size;
-    let target = match scroll_surface_reveal_strategy(strategy) {
-        ScrollSurfaceRevealStrategy::Nearest => {
-            let viewport_start = current_scroll_offset;
-            let viewport_end = viewport_start + viewport_extent;
-            if target_start < viewport_start {
-                target_start
-            } else if target_end > viewport_end {
-                target_end - viewport_extent
-            } else {
-                viewport_start
-            }
-        }
-        ScrollSurfaceRevealStrategy::Top => target_start,
-        ScrollSurfaceRevealStrategy::Center => {
-            target_start + target_size.half() - viewport_extent.half()
-        }
-        ScrollSurfaceRevealStrategy::Bottom => target_end - viewport_extent,
-    };
+    let target = row_geometry_scroll_target(
+        scroll_surface_reveal_strategy(strategy),
+        VirtualizerItemGeometry::new(target_start, target_size),
+        cursor,
+        viewport_extent,
+        current_scroll_offset,
+    );
 
-    (nonnegative_px(target).min(max_scroll_offset), estimated)
+    (target, estimated)
 }
 
 const fn scroll_surface_reveal_strategy(

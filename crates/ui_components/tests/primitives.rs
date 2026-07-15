@@ -1,10 +1,12 @@
+#[path = "support/a11y.rs"]
+mod a11y_support;
 mod support;
 
-use open_gpui::{Context, IntoElement, ParentElement, Render, Styled, Window, div};
+use open_gpui::{Context, IntoElement, ParentElement, Render, Styled, Window, accesskit, div};
 use open_gpui_ui_components::{
     Avatar, AvatarGroup, AvatarGroupCount, Badge, BadgeVariant, Button, ButtonVariant, Checkbox,
-    ColorState, DEFAULT_FOCUS_RING_WIDTH, IconButton, Kbd, Label, Progress, ProgressVisualMode,
-    Separator, Skeleton, Switch, Toggle, ToggleVariant, Tooltip,
+    ColorState, DEFAULT_FOCUS_RING_WIDTH, IconButton, Kbd, Label, Link, Progress,
+    ProgressVisualMode, Separator, Skeleton, Switch, Toggle, ToggleVariant, Tooltip,
 };
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, Toggled, semantic, ui_px};
 use std::cell::RefCell;
@@ -317,6 +319,130 @@ fn separator_state_exposes_orientation_role_and_decorative_mode() {
 
     assert!(decorative.decorative());
     assert_eq!(decorative.role(), None);
+}
+
+#[open_gpui::test]
+fn separator_final_tree_downgrades_to_group_preserves_orientation_and_omits_decorative_semantics(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(Separator::new("semantic-horizontal-separator"))
+                .child(Separator::new("semantic-vertical-separator").vertical())
+                .child(Separator::new("decorative-separator").decorative(true))
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    assert!(cx.activate_accessibility());
+    let update = cx
+        .latest_accessibility_tree_update()
+        .expect("separator accessibility tree should publish");
+    let separators = update
+        .nodes
+        .iter()
+        .filter(|(_, node)| node.role() == accesskit::Role::Group && node.orientation().is_some())
+        .map(|(_, node)| node)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        separators.len(),
+        2,
+        "the decorative separator must not publish separator semantics"
+    );
+    assert!(
+        separators
+            .iter()
+            .any(|node| node.orientation() == Some(accesskit::Orientation::Horizontal))
+    );
+    assert!(
+        separators
+            .iter()
+            .any(|node| node.orientation() == Some(accesskit::Orientation::Vertical))
+    );
+    for separator in separators {
+        assert_eq!(separator.numeric_value(), None);
+        assert_eq!(separator.min_numeric_value(), None);
+        assert_eq!(separator.max_numeric_value(), None);
+        let mut without_actions = separator.clone();
+        without_actions.clear_actions();
+        assert_eq!(
+            separator, &without_actions,
+            "display-only separators must not publish accessibility actions"
+        );
+    }
+}
+
+#[open_gpui::test]
+fn disabled_link_final_tree_suppresses_actions_and_dispatch_is_a_no_op(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        activations: Rc<RefCell<Vec<&'static str>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let enabled_activations = self.activations.clone();
+            let disabled_activations = self.activations.clone();
+
+            div()
+                .size_full()
+                .child(Link::new("enabled-link", "Open docs", "/docs").on_activate(
+                    move |_, _, _, _| enabled_activations.borrow_mut().push("enabled"),
+                ))
+                .child(
+                    Link::new("disabled-link", "Unavailable docs", "/unavailable")
+                        .disabled(true)
+                        .on_activate(move |_, _, _, _| {
+                            disabled_activations.borrow_mut().push("disabled");
+                        }),
+                )
+        }
+    }
+
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        activations: activations.clone(),
+    });
+    assert!(cx.activate_accessibility());
+    let update = cx
+        .latest_accessibility_tree_update()
+        .expect("link accessibility tree should publish");
+    let (enabled_id, enabled) = a11y_support::node_with_label(&update, "Open docs");
+    let (disabled_id, disabled) = a11y_support::node_with_label(&update, "Unavailable docs");
+
+    assert_eq!(enabled.role(), accesskit::Role::Link);
+    assert!(enabled.supports_action(accesskit::Action::Click));
+    assert!(enabled.supports_action(accesskit::Action::Focus));
+    assert!(!enabled.is_disabled());
+    assert!(disabled.is_disabled());
+    assert!(!disabled.supports_action(accesskit::Action::Click));
+    assert!(!disabled.supports_action(accesskit::Action::Focus));
+
+    assert!(cx.dispatch_accessibility_action(accesskit::ActionRequest {
+        action: accesskit::Action::Click,
+        target_tree: accesskit::TreeId::ROOT,
+        target_node: enabled_id,
+        data: None,
+    }));
+    assert_eq!(activations.borrow().as_slice(), &["enabled"]);
+
+    assert!(cx.dispatch_accessibility_action(accesskit::ActionRequest {
+        action: accesskit::Action::Click,
+        target_tree: accesskit::TreeId::ROOT,
+        target_node: disabled_id,
+        data: None,
+    }));
+    assert_eq!(
+        activations.borrow().as_slice(),
+        &["enabled"],
+        "disabled accessibility dispatch must not invoke the link handler"
+    );
 }
 
 #[test]

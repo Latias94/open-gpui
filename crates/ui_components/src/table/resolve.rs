@@ -1,18 +1,19 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use open_gpui::{ScrollHandle, Window};
 use open_gpui_ui_core::{
     TableColumnRegion, TableExpansionState, TableResolvedState, TableState, UiPx,
-    VirtualizerItemKey, VirtualizerResolvedState, VirtualizerState, ui_px,
+    VirtualizerResolvedState, VirtualizerState, ui_px,
 };
 
 use super::content_fit::{content_fit_measure_key, table_content_fit_rendered_rows};
+use super::identity::table_row_virtualizer_key_from_key;
 use super::runtime::{TableResolvedCache, TableRuntime};
-use super::virtualization::{measured_virtualizer_state, row_render_key};
+use super::virtualization::measured_virtualizer_state;
 use super::{
     Table, TableBehaviorSnapshot, TableColumnRenderPlan, TableMetrics, TableRenderPlan,
-    nonnegative_px,
+    TableVirtualizerSnapshot, nonnegative_px,
 };
 use crate::geometry::ui_px_from_gpui;
 
@@ -26,23 +27,25 @@ impl Table {
         let metrics = self.metrics_for_viewport(viewport_extent);
         let table = Rc::new(self.state.resolve());
         let columns = self.resolve_columns(&table);
-        let duplicate_row_ids = table
-            .duplicate_row_ids()
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>();
+        let snapshot_measurements = if self.row_measure_mode.measured() {
+            self.snapshot
+                .as_ref()
+                .map(TableVirtualizerSnapshot::effective_measurement_map)
+                .unwrap_or_default()
+        } else {
+            BTreeMap::new()
+        };
         let virtualizer = if self.row_measure_mode.measured() {
             measured_virtualizer_state(
                 table.center_rows(),
-                &BTreeMap::new(),
+                &snapshot_measurements,
                 metrics.row_height(),
                 metrics.overscan(),
                 nonnegative_px(scroll_offset),
                 metrics.viewport_extent(),
-                &duplicate_row_ids,
             )
         } else {
-            self.resolve_virtualizer(&table, metrics, scroll_offset)
+            Self::resolve_fixed_virtualizer(&table, metrics, scroll_offset)
         };
 
         TableRenderPlan::resolve(
@@ -57,7 +60,7 @@ impl Table {
             BTreeMap::new(),
             None,
             None,
-            &BTreeMap::new(),
+            &snapshot_measurements,
         )
     }
 
@@ -93,9 +96,10 @@ impl Table {
             .map(|cache| cache.key != cache_key)
             .unwrap_or(true);
         if needs_resolve {
+            runtime.advance_resolved_model_revision();
             let table = Rc::new(state.resolve());
             let columns = self.resolve_columns(&table);
-            runtime.clear_row_measurements();
+            runtime.reconcile_row_measurements(&table);
             runtime.resolved = Some(TableResolvedCache {
                 key: cache_key,
                 table,
@@ -103,23 +107,43 @@ impl Table {
             });
         }
 
-        let cache = runtime
-            .resolved
-            .as_ref()
-            .expect("table runtime cache should be initialized");
+        if self.row_measure_mode.measured()
+            && runtime.apply_virtualizer_snapshot(self.snapshot.as_ref())
+        {
+            let table = runtime
+                .resolved
+                .as_ref()
+                .expect("table runtime cache should be initialized")
+                .table
+                .clone();
+            runtime.reconcile_row_measurements(&table);
+        }
+
         let virtualizer = if self.row_measure_mode.measured() {
-            measured_virtualizer_state(
-                cache.table.center_rows(),
-                &runtime.row_measurements,
+            let table = runtime
+                .resolved
+                .as_ref()
+                .expect("table runtime cache should be initialized")
+                .table
+                .clone();
+            runtime.resolve_measured_virtualizer(
+                table.center_rows(),
                 metrics.row_height(),
                 metrics.overscan(),
                 nonnegative_px(scroll_offset),
                 metrics.viewport_extent(),
-                &cache.table.duplicate_row_ids().iter().cloned().collect(),
             )
         } else {
-            self.resolve_virtualizer(&cache.table, metrics, scroll_offset)
+            let cache = runtime
+                .resolved
+                .as_ref()
+                .expect("table runtime cache should be initialized");
+            Self::resolve_fixed_virtualizer(&cache.table, metrics, scroll_offset)
         };
+        let cache = runtime
+            .resolved
+            .as_ref()
+            .expect("table runtime cache should be initialized");
         let rendered_rows = table_content_fit_rendered_rows(&cache.table, &virtualizer);
         let center_scroll_offset =
             ui_px((-ui_px_from_gpui(horizontal_scroll_handle.offset().x).as_f32()).max(0.0));
@@ -156,7 +180,7 @@ impl Table {
             content_fit_widths,
             center_scroll_offset,
             center_viewport_extent,
-            &runtime.row_measurements,
+            runtime,
         )
     }
 
@@ -169,37 +193,20 @@ impl Table {
         metrics
     }
 
-    fn resolve_virtualizer(
-        &self,
+    fn resolve_fixed_virtualizer(
         table: &TableResolvedState,
         metrics: TableMetrics,
         scroll_offset: UiPx,
     ) -> VirtualizerResolvedState {
         let center_rows = table.center_rows();
-        let duplicate_row_ids = table
-            .duplicate_row_ids()
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>();
         let virtualizer = VirtualizerState::new(center_rows.len(), metrics.row_height())
             .with_viewport_extent(metrics.viewport_extent())
             .with_overscan(metrics.overscan())
             .with_scroll_offset(nonnegative_px(scroll_offset));
 
-        if let Some(snapshot) = self.snapshot.clone() {
-            let row_keys = center_rows
-                .iter()
-                .map(|row| row_render_key(row, &duplicate_row_ids));
-            return virtualizer
-                .with_item_keys(row_keys)
-                .with_snapshot(snapshot)
-                .with_scroll_offset(nonnegative_px(scroll_offset))
-                .resolve();
-        }
-
         virtualizer.resolve_fixed_window(|index| {
             let row = &center_rows[index];
-            VirtualizerItemKey::new(row_render_key(row, &duplicate_row_ids))
+            table_row_virtualizer_key_from_key(row.identity_key())
         })
     }
 

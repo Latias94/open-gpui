@@ -718,7 +718,7 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "Table",
         "data",
         "TableState",
-        "exports / gallery / virtualized scroll and resize smoke",
+        "typed identity / normalized reorder / virtual focus / gallery scroll and resize",
         "gallery:component-table-sample:release-queue",
     ),
     ComponentCatalogEntry::contract_sample(
@@ -876,9 +876,22 @@ const TEXT_STORY_PROBES: &[StoryProbeContract] = &[
 ];
 
 const TABLE_STORY_PROBES: &[StoryProbeContract] = &[
-    StoryProbeContract::new(Scroll, "body viewport", "stable sample position"),
-    StoryProbeContract::new(Select, "row or cell", "row activation or cell payload"),
-    StoryProbeContract::new(Edit, "cell editor", "cell edit payload"),
+    StoryProbeContract::new(Scroll, "Table-owned body surface", "stable sample position"),
+    StoryProbeContract::new(
+        Focus,
+        "row or Table-root proxy",
+        "exact final-model identity",
+    ),
+    StoryProbeContract::new(
+        Select,
+        "row or cell",
+        "exact row activation or cell payload",
+    ),
+    StoryProbeContract::new(
+        Edit,
+        "cell editor",
+        "exact TableRowIdentity and TableColumnId payload",
+    ),
     StoryProbeContract::new(Open, "table filter or select editor", "popup surface"),
     StoryProbeContract::new(ReadPublicPayload, "runtime log", "table callback payload"),
 ];

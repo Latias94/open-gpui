@@ -150,6 +150,8 @@ fn component_contract_rows_are_split_by_responsibility() {
     let evidence = read_source_file(&contract_dir.join("evidence.rs"));
     assert!(evidence.contains("COMPONENT_A11Y_EVIDENCE"));
     assert!(evidence.contains("COMPONENT_CONFORMANCE_GATES"));
+    assert!(!evidence.contains("ComponentA11yEvidence {"));
+    assert!(!evidence.contains("component_a11y_evidence"));
 }
 
 #[test]

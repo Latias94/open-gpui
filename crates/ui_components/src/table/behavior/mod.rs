@@ -6,8 +6,8 @@ mod tree;
 
 use open_gpui_ui_core::{
     Role, TableColumnFacets, TableColumnId, TableColumnRegion, TableGlobalFacetSummary,
-    TableResolvedState, TableRowId, TableRowRegion, TableSelectionPolicy, TableSelectionSummary,
-    TableStageMode, TableState, UiPx,
+    TableResolvedState, TableRowId, TableRowIdentity, TableRowRegion, TableSelectionPolicy,
+    TableSelectionSummary, TableStageMode, TableState, UiPx,
 };
 
 use super::render_plan::TableRenderPlan;
@@ -270,9 +270,27 @@ impl TableBehaviorSnapshot {
         &self.rows
     }
 
-    /// Returns a currently rendered row by stable row id.
-    pub fn row(&self, id: &TableRowId) -> Option<&TableRowBehaviorSnapshot> {
-        self.rows.iter().find(|row| row.id() == id)
+    /// Returns a currently rendered row by authoritative resolved identity.
+    pub fn row(&self, identity: &TableRowIdentity) -> Option<&TableRowBehaviorSnapshot> {
+        self.rows.iter().find(|row| row.identity() == identity)
+    }
+
+    /// Returns rendered source rows matching a caller-owned business id.
+    pub fn source_rows<'a>(
+        &'a self,
+        row_id: &TableRowId,
+    ) -> impl Iterator<Item = &'a TableRowBehaviorSnapshot> + 'a {
+        let row_id = row_id.clone();
+        self.rows
+            .iter()
+            .filter(move |row| row.source_row_id() == Some(&row_id))
+    }
+
+    /// Returns a rendered source row only when its business id is unique.
+    pub fn unique_source_row(&self, row_id: &TableRowId) -> Option<&TableRowBehaviorSnapshot> {
+        let mut rows = self.source_rows(row_id);
+        let row = rows.next()?;
+        rows.next().is_none().then_some(row)
     }
 
     /// Returns currently rendered rows from one pinning region.
@@ -364,18 +382,18 @@ fn resolved_expansion_inputs(
         open_gpui_ui_core::TableExpansionState::Rows(rows) => (
             false,
             rows.iter()
-                .filter(|row_id| {
+                .filter(|identity| {
                     table
                         .grouped_model()
-                        .row(row_id)
+                        .row(identity)
                         .is_some_and(|row| row.is_group())
                 })
                 .count(),
             rows.iter()
-                .filter(|row_id| {
+                .filter(|identity| {
                     table
                         .core_model()
-                        .row(row_id)
+                        .row(identity)
                         .is_some_and(|row| row.is_tree_branch())
                 })
                 .count(),

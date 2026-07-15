@@ -10,7 +10,7 @@ use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens};
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
@@ -467,11 +467,12 @@ impl RenderOnce for Accordion {
         let open_values = state.open_values().to_vec();
         let on_open_change = self.on_open_change;
         let id_prefix = self.id.to_string();
+        let semantics = SemanticDescriptor::new(state.role());
 
         div()
             .id(self.id)
             .debug_selector(move || format!("accordion:{id_prefix}:root"))
-            .ui_role(state.role())
+            .ui_semantics(&semantics)
             .flex()
             .flex_col()
             .gap_2()
@@ -508,6 +509,17 @@ impl RenderOnce for Accordion {
                         let item_foreground = theme.resolve(item_colors.foreground());
                         let item_hover_background = theme.resolve(item_colors.hover_background());
                         let content_background = theme.resolve(item_colors.background());
+                        let trigger_actions: &[AccessibleAction] = if item_on_change.is_some() {
+                            &[AccessibleAction::Click, AccessibleAction::Focus]
+                        } else {
+                            &[AccessibleAction::Focus]
+                        };
+                        let trigger_semantics = SemanticDescriptor::new(item_state.trigger_role())
+                            .with_label(&label)
+                            .with_disabled(disabled)
+                            .with_expanded(open)
+                            .with_actions(trigger_actions);
+                        let content_semantics = SemanticDescriptor::new(item_state.content_role());
 
                         div()
                             .id(format!("accordion:{value}"))
@@ -533,9 +545,7 @@ impl RenderOnce for Accordion {
                                     .line_height(gpui_px_from_ui(metrics.text_size()))
                                     .focusable()
                                     .tab_stop(!disabled)
-                                    .ui_role(item_state.trigger_role())
-                                    .aria_label(label.clone())
-                                    .aria_expanded(open)
+                                    .ui_semantics(&trigger_semantics)
                                     .focus_visible(move |style| {
                                         style.shadow(item_focus_shadow.clone())
                                     })
@@ -560,7 +570,7 @@ impl RenderOnce for Accordion {
                                 this.child(
                                     div()
                                         .id(format!("accordion:{value}:content"))
-                                        .ui_role(item_state.content_role())
+                                        .ui_semantics(&content_semantics)
                                         .rounded(gpui_px_from_ui(metrics.radius()))
                                         .border_1()
                                         .border_color(item_border)

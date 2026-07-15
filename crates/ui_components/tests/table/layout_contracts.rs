@@ -77,8 +77,11 @@ fn table_behavior_snapshot_exposes_row_pinning_regions() {
         .with_pagination(TablePagination::new(1, 4))
         .with_row_pinning(
             TableRowPinning::new()
-                .pinned_top(["row-0001"])
-                .pinned_bottom(["row-0005", "row-0010"]),
+                .pinned_top([table_source_row_identity("row-0001")])
+                .pinned_bottom([
+                    table_source_row_identity("row-0005"),
+                    table_source_row_identity("row-0010"),
+                ]),
         );
     let snapshot = Table::new("row-pinning-table", "Row pinning table", state)
         .row_height(ui_px(24.0))
@@ -89,14 +92,26 @@ fn table_behavior_snapshot_exposes_row_pinning_regions() {
     assert_eq!(
         snapshot
             .rows_for_region(TableRowRegion::Top)
-            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .map(|row| {
+                (
+                    row.source_row_id().expect("source row").as_str(),
+                    row.region(),
+                    row.region_index(),
+                )
+            })
             .collect::<Vec<_>>(),
         [("row-0001", TableRowRegion::Top, 0)]
     );
     assert_eq!(
         snapshot
             .rows_for_region(TableRowRegion::Center)
-            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .map(|row| {
+                (
+                    row.source_row_id().expect("source row").as_str(),
+                    row.region(),
+                    row.region_index(),
+                )
+            })
             .collect::<Vec<_>>(),
         [
             ("row-0004", TableRowRegion::Center, 0),
@@ -108,7 +123,13 @@ fn table_behavior_snapshot_exposes_row_pinning_regions() {
     assert_eq!(
         snapshot
             .rows_for_region(TableRowRegion::Bottom)
-            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .map(|row| {
+                (
+                    row.source_row_id().expect("source row").as_str(),
+                    row.region(),
+                    row.region_index(),
+                )
+            })
             .collect::<Vec<_>>(),
         [
             ("row-0005", TableRowRegion::Bottom, 0),
@@ -119,7 +140,7 @@ fn table_behavior_snapshot_exposes_row_pinning_regions() {
         snapshot
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.source_row_id().expect("source row").as_str())
             .collect::<Vec<_>>(),
         [
             "row-0001", "row-0004", "row-0006", "row-0007", "row-0005", "row-0010",
@@ -137,8 +158,11 @@ fn table_behavior_snapshot_respects_page_only_row_pinning_policy() {
         .with_pagination(TablePagination::new(1, 4))
         .with_row_pinning(
             TableRowPinning::new()
-                .pinned_top(["row-0001"])
-                .pinned_bottom(["row-0005", "row-0010"]),
+                .pinned_top([table_source_row_identity("row-0001")])
+                .pinned_bottom([
+                    table_source_row_identity("row-0005"),
+                    table_source_row_identity("row-0010"),
+                ]),
         )
         .with_row_pinning_policy(TableRowPinningPolicy::PageOnly);
     let snapshot = Table::new(
@@ -155,7 +179,7 @@ fn table_behavior_snapshot_respects_page_only_row_pinning_policy() {
     assert_eq!(
         snapshot
             .rows_for_region(TableRowRegion::Center)
-            .map(|row| row.id().as_str())
+            .map(|row| row.source_row_id().expect("source row").as_str())
             .collect::<Vec<_>>(),
         ["row-0004", "row-0006", "row-0007"],
         "outside-page pinned rows should be omitted under page-only policy"
@@ -163,7 +187,7 @@ fn table_behavior_snapshot_respects_page_only_row_pinning_policy() {
     assert_eq!(
         snapshot
             .rows_for_region(TableRowRegion::Bottom)
-            .map(|row| row.id().as_str())
+            .map(|row| row.source_row_id().expect("source row").as_str())
             .collect::<Vec<_>>(),
         ["row-0005"]
     );
@@ -201,16 +225,14 @@ fn table_behavior_snapshot_exposes_center_column_summary_without_window_internal
 }
 
 #[test]
-fn table_behavior_snapshot_keeps_virtualized_visible_range_stable_with_snapshot() {
-    let snapshot = VirtualizerSnapshot::new(
-        ui_px(0.0),
-        [VirtualizerSnapshotItem::new(
-            VirtualizerItemKey::new("row-0005"),
-            ui_px(48.0),
-        )],
-    );
+fn table_behavior_snapshot_consumes_measurements_in_measured_mode() {
+    let snapshot = TableVirtualizerSnapshot::new([TableVirtualizerSnapshotItem::new(
+        TableRowIdentity::source("row-0005"),
+        ui_px(48.0),
+    )]);
     let table = Table::new("snapshot-table", "Snapshot table", sample_table_state(30))
         .row_height(ui_px(24.0))
+        .row_measure_mode(TableRowMeasureMode::Measured)
         .viewport_extent(ui_px(96.0))
         .virtualizer_snapshot(snapshot);
     let snapshot = table.behavior_snapshot(ui_px(120.0), ui_px(96.0));
@@ -223,7 +245,86 @@ fn table_behavior_snapshot_keeps_virtualized_visible_range_stable_with_snapshot(
         *snapshot.visible_rows().overscan_range(),
         VirtualizerRange::new(2, 11)
     );
-    assert_eq!(snapshot.rows()[0].id().as_str(), "row-0002");
+    assert_eq!(
+        snapshot.rows()[0].source_row_id().map(|id| id.as_str()),
+        Some("row-0002")
+    );
+}
+
+#[test]
+fn table_behavior_snapshot_ignores_measurements_in_fixed_mode() {
+    let snapshot = TableVirtualizerSnapshot::new([TableVirtualizerSnapshotItem::new(
+        TableRowIdentity::source("row-0000"),
+        ui_px(96.0),
+    )]);
+    let snapshot = Table::new(
+        "fixed-snapshot-table",
+        "Fixed table",
+        sample_table_state(20),
+    )
+    .row_height(ui_px(24.0))
+    .row_measure_mode(TableRowMeasureMode::Fixed)
+    .viewport_extent(ui_px(48.0))
+    .overscan(0)
+    .virtualizer_snapshot(snapshot)
+    .behavior_snapshot(ui_px(120.0), ui_px(48.0));
+
+    assert_eq!(
+        *snapshot.visible_rows().visible_range(),
+        VirtualizerRange::new(5, 7)
+    );
+    assert_eq!(
+        snapshot
+            .rows()
+            .iter()
+            .map(|row| row.source_row_id().expect("source row").as_str())
+            .collect::<Vec<_>>(),
+        ["row-0005", "row-0006"]
+    );
+}
+
+#[test]
+fn table_behavior_snapshot_drops_snapshot_geometry_when_switching_to_fixed_mode() {
+    let snapshot = || {
+        TableVirtualizerSnapshot::new([TableVirtualizerSnapshotItem::new(
+            TableRowIdentity::source("row-0000"),
+            ui_px(96.0),
+        )])
+    };
+    let table = |mode| {
+        Table::new(
+            "mode-transition-table",
+            "Mode transition",
+            sample_table_state(20),
+        )
+        .row_height(ui_px(24.0))
+        .row_measure_mode(mode)
+        .viewport_extent(ui_px(48.0))
+        .overscan(0)
+        .virtualizer_snapshot(snapshot())
+    };
+
+    let measured = table(TableRowMeasureMode::Measured).behavior_snapshot(ui_px(48.0), ui_px(48.0));
+    assert_eq!(
+        *measured.visible_rows().visible_range(),
+        VirtualizerRange::new(0, 1),
+        "measured mode should consume the retained row size"
+    );
+
+    let fixed = table(TableRowMeasureMode::Fixed).behavior_snapshot(ui_px(48.0), ui_px(48.0));
+    assert_eq!(
+        *fixed.visible_rows().visible_range(),
+        VirtualizerRange::new(2, 4),
+        "switching to fixed mode should restore uniform row geometry"
+    );
+    assert_eq!(
+        fixed
+            .rows()
+            .iter()
+            .map(|row| row.source_row_id().expect("source row").as_str())
+            .collect::<Vec<_>>(),
+        ["row-0002", "row-0003"]
+    );
 }
 
 #[test]
@@ -244,9 +345,14 @@ fn table_behavior_snapshot_preserves_duplicate_row_id_visibility() {
         snapshot
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| row.source_row_id().expect("source row").as_str())
             .collect::<Vec<_>>(),
         ["duplicate", "duplicate", "unique"]
+    );
+    assert_ne!(
+        snapshot.rows()[0].identity(),
+        snapshot.rows()[1].identity(),
+        "duplicate business ids must retain distinct resolved identities"
     );
     assert_eq!(snapshot.row_counts().rendered_rows(), 3);
 }

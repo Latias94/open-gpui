@@ -177,12 +177,12 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(gates[9].id, "choice-surfaces");
     assert_eq!(gates[10].id, "a11y-labels");
     assert!(gates[10].evidence.contains(&"ComponentA11yContract"));
-    assert!(gates[10].evidence.contains(&"COMPONENT_A11Y_EVIDENCE"));
-    assert!(gates[10].evidence.contains(&"COMPONENT_A11Y_CLAIMS"));
+    assert!(gates[10].evidence.contains(&"SemanticDescriptor"));
+    assert!(gates[10].evidence.contains(&"TreeUpdate"));
     assert!(
         gates[10]
             .evidence
-            .contains(&"crates/ui_components/tests/a11y.rs")
+            .contains(&"crates/ui_components/tests/a11y/collection_semantics.rs")
     );
     assert!(
         gates[10]
@@ -205,37 +205,6 @@ fn components_page_samples_expose_component_metadata() {
             .evidence
             .contains(&"cargo run -p xtask -- scan-theme-drift")
     );
-
-    let a11y_claims = pages::components::COMPONENT_A11Y_CLAIMS;
-    assert_eq!(a11y_claims.len(), 5);
-    assert!(a11y_claims.iter().all(|claim| {
-        claim.selector_prefix.starts_with("gallery:component-")
-            && claim.evidence().label_source.provides_name()
-    }));
-    let claim_names = a11y_claims
-        .iter()
-        .map(|claim| claim.component)
-        .collect::<std::collections::BTreeSet<_>>();
-    for expected in [
-        "Listbox option",
-        "Tree item",
-        "VirtualizedList row",
-        "VirtualizedList structural row",
-        "Splitter handle",
-    ] {
-        assert!(
-            claim_names.contains(expected),
-            "expected `{expected}` in component a11y claims"
-        );
-    }
-    assert!(a11y_claims.iter().any(|claim| {
-        let evidence = claim.evidence();
-        claim.component == "Splitter handle"
-            && evidence.role == Role::Splitter
-            && evidence.orientation == Some(Orientation::Vertical)
-            && evidence.actions.contains(&AccessibleAction::Increment)
-            && evidence.actions.contains(&AccessibleAction::Decrement)
-    }));
 
     assert_eq!(buttons.len(), 6);
     assert_eq!(buttons[0].id, "default");
@@ -1118,7 +1087,11 @@ fn components_page_samples_expose_component_metadata() {
         server_page_plan
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| {
+                row.source_row_id()
+                    .expect("server page row should be source-backed")
+                    .as_str()
+            })
             .collect::<Vec<_>>(),
         [
             "server-paged-row-0016",
@@ -1327,14 +1300,22 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(
         row_pinning_plan
             .rows_for_region(TableRowRegion::Top)
-            .map(|row| row.id().as_str())
+            .map(|row| {
+                row.source_row_id()
+                    .expect("top-pinned row should be source-backed")
+                    .as_str()
+            })
             .collect::<Vec<_>>(),
         ["row-pinning-row-003"]
     );
     assert_eq!(
         row_pinning_plan
             .rows_for_region(TableRowRegion::Center)
-            .map(|row| row.id().as_str())
+            .map(|row| {
+                row.source_row_id()
+                    .expect("center row should be source-backed")
+                    .as_str()
+            })
             .collect::<Vec<_>>(),
         [
             "row-pinning-row-024",
@@ -1353,7 +1334,11 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(
         row_pinning_plan
             .rows_for_region(TableRowRegion::Bottom)
-            .map(|row| row.id().as_str())
+            .map(|row| {
+                row.source_row_id()
+                    .expect("bottom-pinned row should be source-backed")
+                    .as_str()
+            })
             .collect::<Vec<_>>(),
         ["row-pinning-row-030", "row-pinning-row-070"]
     );
@@ -1378,7 +1363,11 @@ fn components_page_samples_expose_component_metadata() {
         tree_plan
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| {
+                row.source_row_id()
+                    .expect("dependency tree row should be source-backed")
+                    .as_str()
+            })
             .collect::<Vec<_>>(),
         [
             "dependency-workspace",
@@ -1389,7 +1378,7 @@ fn components_page_samples_expose_component_metadata() {
     );
     assert_eq!(
         tree_plan
-            .row(&TableRowId::new("dependency-ui"))
+            .unique_source_row(&TableRowId::new("dependency-ui"))
             .and_then(|row| row.tree_expanded()),
         Some(false)
     );
@@ -1421,7 +1410,11 @@ fn components_page_samples_expose_component_metadata() {
         server_plan
             .rows()
             .iter()
-            .map(|row| row.id().as_str())
+            .map(|row| {
+                row.source_row_id()
+                    .expect("server tree row should be source-backed")
+                    .as_str()
+            })
             .collect::<Vec<_>>(),
         ["server-workspace", "server-cache", "server-failed"]
     );
@@ -1646,7 +1639,10 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(catalog_source.contains("ComponentCatalogEntry::contract_sample("));
     assert!(catalog_source.contains("ComponentCatalogEntry::state_contract("));
     assert!(conformance_source.contains("COMPONENT_CONFORMANCE_GATES, ComponentConformanceGate"));
+    assert!(!conformance_source.contains("ComponentA11yClaim"));
+    assert!(!conformance_source.contains("COMPONENT_A11Y_CLAIMS"));
     assert!(component_evidence_source.contains("pub const COMPONENT_CONFORMANCE_GATES"));
+    assert!(!component_evidence_source.contains("ComponentA11yEvidence {"));
     for module_path in [
         "#[path = \"runtime/table.rs\"]",
         "#[path = \"runtime/tree.rs\"]",

@@ -553,10 +553,14 @@ expansion lookup behavior, expandable unloaded branches, built-in group-row aggr
 pinned-column region splitting, center-column virtual windows, top/center/bottom row regions,
 keep-pinned versus page-only policies, manual filtering/sorting/pagination cache keys, pagination
 row/page totals, per-column facet metadata, manual facet payload cache keys, and on-end/on-change
-resize deltas. `open-gpui-ui-components` tests prove adapter exports, state metadata, manual
-row-model render-plan metadata, faceting render-plan metadata, row-pinning render-plan metadata,
+resize deltas. The same core gate proves exact source/group identity through every row-model stage,
+snapshot-scoped occurrence invalidation, explicit duplicate instances across source reorder, and
+canonical completion of partial column order. `open-gpui-ui-components` tests prove adapter exports,
+state metadata, manual row-model render-plan metadata, faceting render-plan metadata, row-pinning
+render-plan metadata,
 expansion payload metadata, resize callback wiring, center-window header/body mounting, fixed
-row-pinned bands, and scroll ownership; gallery smokes prove long table scroll input stays inside
+row-pinned bands, exact edit outcomes, duplicate NodeId and measurement separation, virtual focus
+proxy behavior, and scroll ownership; gallery smokes prove long table scroll input stays inside
 the table viewport, `release-resize` column dragging updates the controlled sample without moving
 the outer Components page, wide center lanes scroll independently from fixed left/right pinned
 lanes, `row-pinning` keeps top/bottom row bands fixed while the center body scrolls, `server-paged`
@@ -604,21 +608,21 @@ row window changes without moving the outer Components page.
 
 `components_gallery_smoke_editable_table_cell_updates_sample_rows` is the focused text-cell editing
 proof: it enters the Table family view, targets the `editable-release` sample, edits a rendered
-`name` cell through the nested `TextInput`, verifies `TableCellEditChange` targets the stable
-`(row_id, column_id)` pair, confirms the gallery applies the change to its app-owned `TableState`,
-and proves a read-only `status` cell does not mount an editor.
+`name` cell through the nested `TextInput`, verifies `TableCellEditChange` targets the exact
+`(TableRowIdentity, TableColumnId)` pair, confirms the gallery applies the change to its app-owned
+`TableState`, and proves a read-only `status` cell does not mount an editor.
 
 `components_gallery_smoke_checkbox_table_cell_updates_sample_rows` is the focused checkbox editing
 proof: it enters the Table family view, targets the `toggle-release` sample, toggles a rendered
-`enabled` cell through the nested `Checkbox`, verifies `TableCellEditChange` targets the stable
-`(row_id, column_id)` pair, confirms the gallery applies the bool change to its app-owned
-`TableState`, and proves the checkbox cell does not mount a text editor.
+`enabled` cell through the nested `Checkbox`, verifies `TableCellEditChange` targets the exact
+`(TableRowIdentity, TableColumnId)` pair, confirms the gallery applies the bool change to its
+app-owned `TableState`, and proves the checkbox cell does not mount a text editor.
 
 `components_gallery_smoke_multiline_table_cell_updates_sample_rows` is the focused multiline
 cell-editing proof: it enters the Table family view, targets the `multiline-release` sample, edits
-a rendered `notes` cell through the nested `Textarea`, verifies the same `TableCellEditChange`
-payload preserves newlines, confirms the gallery applies the change to its app-owned
-`TableState`, and proves non-multiline/read-only cells do not mount the wrong editor.
+a rendered `notes` cell through the nested `Textarea`, verifies the same exact identity pair and
+newline-preserving `TableCellEditChange` payload, confirms the gallery applies the change to its
+app-owned `TableState`, and proves non-multiline/read-only cells do not mount the wrong editor.
 
 `components_gallery_smoke_content_fit_table_cell_edit_widens_name_column` is the focused
 content-fit proof: it enters the Table family view, targets the `content-fit-release` sample,
@@ -632,15 +636,29 @@ measurement cache settles.
 
 `components_gallery_smoke_select_table_cell_updates_sample_rows` is the focused select-edit
 proof: it enters the Table family view, targets the `select-release` sample, opens a fixed-option
-`Select` editor, picks `blocked`, verifies `TableCellEditChange` targets the stable
-`(row_id, column_id)` pair, confirms the gallery applies the text change to its app-owned
-`TableState`, and proves the select cell does not activate or select the row.
+`Select` editor, picks `blocked`, verifies `TableCellEditChange` targets the exact
+`(TableRowIdentity, TableColumnId)` pair, confirms the gallery applies the text change to its
+app-owned `TableState`, and proves the select cell does not activate or select the row.
 
 `open-gpui-ui-components` table tests also cover the select editor adapter path directly:
 `table_behavior_snapshot_exposes_editable_leaf_cell_kinds_for_leaf_cells_only`,
 `table_runtime_select_cell_edit_emits_change_without_row_interaction`, and the other table cell
 edit gates prove the fixed-option `Select` editor stays a leaf-cell recipe rather than a new row
 interaction path.
+The focused U5 identity gates are
+`occurrence_identity_is_scoped_to_the_source_snapshot`,
+`explicit_duplicate_identity_survives_every_row_model_stage`,
+`column_order_normalizes_duplicate_unknown_and_partial_ids`,
+`partial_column_order_reorder_normalizes_source_order_before_visibility_and_pinning`,
+`ambiguous_business_id_edit_is_an_inspectable_no_op`,
+`stale_occurrence_edit_cannot_retarget_a_reordered_duplicate`,
+`duplicate_measurements_follow_explicit_identity_across_source_reorder`,
+`duplicate_source_rows_publish_distinct_stable_accessibility_nodes`,
+`table_virtual_focus_proxy_preserves_keyboard_claim_without_stealing_focus`, and
+`table_focus_falls_back_only_when_identity_leaves_the_final_model`. Together they prove that
+occurrence identity cannot retarget a newer snapshot, explicit instances survive reorder, partial
+order retains unlisted source columns, duplicate edit/measurement/node paths remain disjoint, and
+offscreen logical focus stays keyboard-actionable without reclaiming focus moved outside Table.
 The Table modules are now verified by ownership layer. `open-gpui-ui-core` owns renderer-neutral
 row-model, column, header, filtering, faceting, aggregation, sizing, selection, and virtualizer
 contracts. `open-gpui-ui-components` owns the `Table` facade, behavior snapshots, crate-private
@@ -657,6 +675,7 @@ cargo check -p open-gpui-ui-core --tests
 cargo check -p open-gpui-ui-components --tests
 cargo nextest run -p open-gpui-ui-core table
 cargo nextest run -p open-gpui-ui-components --test table --no-fail-fast
+cargo test -p open-gpui-ui-core -p open-gpui-ui-components --doc --locked
 cargo nextest run -p open-gpui-ui-foundation-gallery table
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_focused_table_scroll_stays_inside_sample components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample
@@ -842,12 +861,13 @@ continue to prove role, orientation, toggled-state, and action mapping into GPUI
 cargo nextest run -p open-gpui-ui-components a11y --no-fail-fast
 ```
 
-That gate keeps the renderer-neutral validation vocabulary covered. Migrated Button, IconButton,
-Switch, Toggle, Checkbox, Slider, NumberInput, and Progress producers are additionally asserted in
-the final GPUI `TreeUpdate` with real Focus, Click, Increment, Decrement, and SetValue dispatch;
-Table has its own multi-node final-tree target. `COMPONENT_A11Y_EVIDENCE` and Gallery
-`COMPONENT_A11Y_CLAIMS` remain only for producers that have not yet migrated. Their row count is not
-a completion signal and deleted rows must not be restored in place of final-tree tests.
+That gate keeps the renderer-neutral validation vocabulary covered. Official semantic producers
+are additionally asserted in the final GPUI `TreeUpdate` with real Focus, Click, Increment,
+Decrement, SetValue, selection, and text dispatch; Table has its own multi-node final-tree target.
+Static accessibility evidence rows, Gallery claims, and their consumers are absent. They must not
+be recreated in place of final-tree and action tests.
+The authority and privacy boundary is recorded in
+[Semantic accessibility and final-tree authority](knowledge/engineering/decisions/semantic-accessibility-final-tree-authority.md).
 
 Theme portability is guarded by the theme focused gate:
 
@@ -918,16 +938,22 @@ visible rows plus overscan, scroll input stays inside the table viewport, sortab
 emit state-update payloads, controlled column resize callbacks carry stable sizing payloads,
 categorical faceted filters emit controlled exact-token updates, numeric range filters emit
 controlled finite-bound updates, predicate filters emit controlled operator/value updates, column
-visibility emits controlled hide/show payloads, editable text cells emit controlled stable
-row/column change payloads without
-triggering row interaction callbacks, row activation and expansion request payloads stay controlled,
-source-tree row
-models keep nested descendants addressable by stable row id, manual source-tree snapshots expose
+visibility emits controlled hide/show payloads, editable text cells emit controlled exact
+`(TableRowIdentity, TableColumnId)` change payloads without triggering row interaction callbacks;
+row activation and expansion request payloads stay controlled; source-tree row models keep nested
+descendants addressable through exact `TableRowIdentity` lookup; manual source-tree snapshots expose
 unloaded/loading/failed child metadata, row-pinning regions split top/center/bottom rows with
 keep-pinned and page-only policies, and grouped / expanded row models keep collapsed descendants
-addressable by stable row id, controlled column order changes emit stable before/after placement
-payloads, and the reorder helpers keep the rest of `TableState` untouched. The Components gallery
-now carries `release-rollup`, a grouped Table sample that mixes expanded and collapsed team groups,
+addressable through `TableRowModel::row(&TableRowIdentity)`. `TableRowModel::source_rows` and
+`unique_source_row` provide explicitly non-exact business-`TableRowId` lookup. Exact source
+identities distinguish unique, explicit-instance, and occurrence rows; occurrence identity is
+source-snapshot-local, while a caller-owned instance identity survives source replacement and
+reorder. Ambiguous or stale edits are inspectable no-ops; controlled
+column order changes normalize the complete source order before moving a listed or unlisted column
+without taking ownership of visibility or pinning. Virtual focus tests prove the Table-root proxy,
+real keyboard continuation, no-steal remounting, and first-row or empty-model fallback. The
+Components gallery now carries `release-rollup`, a grouped Table sample that mixes expanded and
+collapsed team groups,
 exposes aggregate count and score cells, pins the identifier and status columns, and has its own
 sticky-header plus inner-scroll smoke. It also carries
 `server-paged`, a manual filtering/sorting/pagination sample that renders only the current
@@ -950,14 +976,16 @@ visibility overrides to the sample-owned `TableState`, proves hiding a metric co
 header and cells, proves show-all restores the column, and confirms popup wheel input stays local.
 `release-rollup` now also proves controlled column-order changes: the sample runtime log records
 `TableColumnOrderChange` payloads, applies the app-owned override to the sample `TableState`, and
-shows the score column re-rendering before team while the sample card stays anchored.
+shows the score column re-rendering before team while the sample card stays anchored. The focused
+component partial-order gate separately starts from an incomplete order, moves an initially
+unlisted column under visibility and pinning, and asserts the resulting full source-column order.
 `components_gallery_smoke_grouped_table_scroll_stays_inside_sample` is the focused vertical
 sticky-header proof: it enters the Table family view, wheels the `release-rollup` body, and
 asserts the header band stays fixed while the body row window advances.
 `editable-release` is the text-cell editing proof: it renders editable `name` and `team` columns,
-keeps `status` read-only, records `TableCellEditChange` payloads in the sample runtime log, applies
-changes to a sample-owned `TableState` override, and proves the changed row text re-renders through
-the normal Table pipeline.
+keeps `status` read-only, records each `TableCellEditChange` exact logical-row identity, column id,
+and apply outcome in the sample runtime log, applies the updated sample-owned `TableState` override,
+and proves the changed row text re-renders through the normal Table pipeline.
 `release-matrix` is the wide center-column virtualization and column-visibility sample: it pins the
 identity and status lanes, exposes fourteen center metrics, locks identity/status visibility, and
 has focused smokes that prove off-window center columns unmount/remount, hide/show visibility
@@ -983,9 +1011,14 @@ with safe empty fallback for unknown names. Core and component tests assert that
 left, center, and right regions after visibility/order resolution, ignores unknown or invisible
 pinned ids, removes moved columns from their previous pinned side, and exposes matching
 header/body region metadata and debug selectors. They also assert `TableRowPinning` deduplicates
-ordered top/bottom ids, ignores unknown/filtered/collapsed rows, preserves pinned rows outside the
+each caller-owned target list, preserves target order, resolves exact source/group identities,
+expands explicit business-id bulk targets in model order, gives top logical identities precedence
+over bottom overlaps, ignores unknown/filtered/collapsed rows, preserves pinned rows outside the
 current page by default, supports page-only behavior, feeds only center rows into the vertical
-virtualizer, and renders fixed row-pinned bands around the scrollable center body.
+virtualizer, and renders fixed row-pinned bands around the scrollable center body. Final AccessKit
+tests additionally prove row, cell, and header `NodeId` stability through column and row pinning,
+duplicate source-instance separation, old-node action dispatch, and identity restoration after a
+virtual row or column leaves and re-enters the window.
 The official Tree gate requires `Tree`, `TreeState`, `TreeMetrics`, tree/tree-item role signals,
 and at least one `gallery:component-tree-sample:{id}` selector. Component runtime tests verify
 expansion, reveal, and selection payloads; gallery smokes verify keyboard expansion/selection
@@ -1163,9 +1196,10 @@ Command register with the per-window authority and preserve focus plus open-chan
 after selection, Escape dismissal, outside-press dismissal, and controlled refusal.
 
 For the deep UI framework module refactor, run the focused ownership gates below before the full
-workspace gate. They cover runtime theme context, typed a11y evidence, removed registry history,
-shared overlay placement, `open_gpui_ui_core::grid_viewport::RowWindow`, gallery story-contract
-projection, and `open_gpui_command::CommandDescriptor` projection:
+workspace gate. They cover runtime theme context, ephemeral semantic projection with final-tree and
+action evidence, removed registry history, shared overlay placement,
+`open_gpui_ui_core::grid_viewport::RowWindow`, gallery story-contract projection, and
+`open_gpui_command::CommandDescriptor` projection:
 
 ```powershell
 cargo fmt --all
@@ -1223,8 +1257,9 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_exp
 ```
 
 `scan-ui-contract` checks the component contract tables, default root/prelude exports, source
-homes, docs tokens, removed primitive targets, gallery conformance evidence, remaining transitional
-`COMPONENT_A11Y_EVIDENCE`, Gallery `COMPONENT_A11Y_CLAIMS`, and the committed theme schema artifact.
+homes, docs tokens, removed primitive targets, Gallery conformance metadata, and the committed
+theme schema artifact. Semantic behavior is verified at the final `TreeUpdate` and real AccessKit
+action boundary rather than inferred from static claim rows.
 Use the narrower
 `scan-theme-schema`, `scan-theme-drift`, and focused nextest commands when investigating a specific
 failure.

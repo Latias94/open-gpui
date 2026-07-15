@@ -112,7 +112,7 @@ fn table_runtime_header_drag_emits_controlled_column_order_change(
             TableColumn::new("team", "Team"),
             TableColumn::new("score", "Score"),
         ])
-        .with_column_order(["name", "team", "score"])
+        .with_column_order(["name"])
         .with_pagination(TablePagination::disabled()),
     ));
     let (_, cx) = cx.add_window_view(|_, _| TestView {
@@ -183,6 +183,50 @@ fn table_runtime_header_drag_emits_controlled_column_order_change(
     );
 }
 
+#[test]
+fn partial_column_order_reorder_normalizes_source_order_before_visibility_and_pinning() {
+    let state = TableState::new([TableRow::new("row-a")])
+        .with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+            TableColumn::new("score", "Score"),
+            TableColumn::new("status", "Status"),
+        ])
+        .with_column_order(["score"])
+        .with_column_visibility(TableColumnVisibilityOverrides::new().hide("status"))
+        .with_column_pinning(TableColumnPinning::new().pinned_left(["name", "team"]));
+
+    let next =
+        TableColumnOrderChange::move_after("name", "team", TableColumnRegion::Left).apply_to(state);
+
+    assert_eq!(
+        next.column_order()
+            .iter()
+            .map(TableColumnId::as_str)
+            .collect::<Vec<_>>(),
+        ["score", "team", "name", "status"],
+        "the callback state must carry one normalized full source-column order"
+    );
+    let regions = next.visible_column_regions();
+    assert_eq!(
+        regions
+            .left()
+            .iter()
+            .map(|column| column.id().as_str())
+            .collect::<Vec<_>>(),
+        ["team", "name"]
+    );
+    assert_eq!(
+        regions
+            .center()
+            .iter()
+            .map(|column| column.id().as_str())
+            .collect::<Vec<_>>(),
+        ["score"]
+    );
+    assert!(regions.right().is_empty());
+}
+
 #[open_gpui::test]
 fn table_runtime_exposes_pinned_region_debug_selectors(cx: &mut open_gpui::TestAppContext) {
     struct TestView;
@@ -222,31 +266,42 @@ fn table_runtime_exposes_pinned_region_debug_selectors(cx: &mut open_gpui::TestA
         window.draw(cx).clear();
     });
 
-    for region in ["left", "center", "right"] {
+    for region in TableColumnRegion::ALL {
+        let region_label = region.as_str();
         assert!(
-            cx.debug_bounds(&format!(
-                "table:pinned-runtime-table:header-region:{region}"
+            cx.debug_bounds(&TableDebugSelector::header_region(
+                "pinned-runtime-table",
+                region,
+                0,
             ))
             .is_some(),
-            "expected header {region} region selector to render"
+            "expected header {region_label} region selector to render"
         );
         assert!(
-            cx.debug_bounds(&format!(
-                "table:pinned-runtime-table:row-region:row-a:{region}"
+            cx.debug_bounds(&table_source_row_region_selector(
+                "pinned-runtime-table",
+                "row-a",
+                region,
             ))
             .is_some(),
-            "expected body {region} region selector to render"
+            "expected body {region_label} region selector to render"
         );
     }
 
     assert!(
-        cx.debug_bounds("scroll-area:table:pinned-runtime-table:header-center-scroll")
-            .is_some(),
+        cx.debug_bounds(&TableDebugSelector::header_center_scroll(
+            "pinned-runtime-table",
+            0,
+        ))
+        .is_some(),
         "expected pinned header center region to render a horizontal scroll viewport"
     );
     assert!(
-        cx.debug_bounds("scroll-area:table:pinned-runtime-table:row-center-scroll:row-a")
-            .is_some(),
+        cx.debug_bounds(&table_source_row_center_scroll_selector(
+            "pinned-runtime-table",
+            "row-a",
+        ))
+        .is_some(),
         "expected pinned body center region to render a horizontal scroll viewport"
     );
 }
@@ -282,16 +337,31 @@ fn table_runtime_pinned_center_scrolls_without_moving_fixed_lanes(
         .debug_bounds("table:pinned-scroll-runtime-table:header:team")
         .expect("center header should render before horizontal scrolling");
     let body_center_before = cx
-        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:team")
+        .debug_bounds(&table_source_cell_selector(
+            "pinned-scroll-runtime-table",
+            "row-a",
+            "team",
+        ))
         .expect("center body cell should render before horizontal scrolling");
     let left_before = cx
-        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:score")
+        .debug_bounds(&table_source_cell_selector(
+            "pinned-scroll-runtime-table",
+            "row-a",
+            "score",
+        ))
         .expect("left pinned body cell should render before horizontal scrolling");
     let right_before = cx
-        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:status")
+        .debug_bounds(&table_source_cell_selector(
+            "pinned-scroll-runtime-table",
+            "row-a",
+            "status",
+        ))
         .expect("right pinned body cell should render before horizontal scrolling");
     let body_center_viewport = cx
-        .debug_bounds("scroll-area:table:pinned-scroll-runtime-table:row-center-scroll:row-a")
+        .debug_bounds(&table_source_row_center_scroll_selector(
+            "pinned-scroll-runtime-table",
+            "row-a",
+        ))
         .expect("body center lane should expose a horizontal scroll viewport");
 
     cx.simulate_event(ScrollWheelEvent {
@@ -307,13 +377,25 @@ fn table_runtime_pinned_center_scrolls_without_moving_fixed_lanes(
         .debug_bounds("table:pinned-scroll-runtime-table:header:team")
         .expect("center header should remain rendered after horizontal scrolling");
     let body_center_after = cx
-        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:team")
+        .debug_bounds(&table_source_cell_selector(
+            "pinned-scroll-runtime-table",
+            "row-a",
+            "team",
+        ))
         .expect("center body cell should remain rendered after horizontal scrolling");
     let left_after = cx
-        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:score")
+        .debug_bounds(&table_source_cell_selector(
+            "pinned-scroll-runtime-table",
+            "row-a",
+            "score",
+        ))
         .expect("left pinned body cell should remain rendered after horizontal scrolling");
     let right_after = cx
-        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:status")
+        .debug_bounds(&table_source_cell_selector(
+            "pinned-scroll-runtime-table",
+            "row-a",
+            "status",
+        ))
         .expect("right pinned body cell should remain rendered after horizontal scrolling");
 
     assert!(
@@ -373,8 +455,12 @@ fn table_runtime_center_column_window_mounts_only_rendered_center_cells(
         "expected the first center header to render before horizontal scrolling"
     );
     assert!(
-        cx.debug_bounds("table:center-window-runtime-table:cell:row-0000:metric_00")
-            .is_some(),
+        cx.debug_bounds(&table_source_cell_selector(
+            "center-window-runtime-table",
+            "row-0000",
+            "metric_00",
+        ))
+        .is_some(),
         "expected the first center body cell to render before horizontal scrolling"
     );
     assert!(
@@ -383,19 +469,34 @@ fn table_runtime_center_column_window_mounts_only_rendered_center_cells(
         "far-right center headers should stay unmounted before horizontal scrolling"
     );
     assert!(
-        cx.debug_bounds("table:center-window-runtime-table:cell:row-0000:metric_05")
-            .is_none(),
+        cx.debug_bounds(&table_source_cell_selector(
+            "center-window-runtime-table",
+            "row-0000",
+            "metric_05",
+        ))
+        .is_none(),
         "far-right center body cells should stay unmounted before horizontal scrolling"
     );
 
     let left_before = cx
-        .debug_bounds("table:center-window-runtime-table:cell:row-0000:name")
+        .debug_bounds(&table_source_cell_selector(
+            "center-window-runtime-table",
+            "row-0000",
+            "name",
+        ))
         .expect("left pinned cell should render before horizontal scrolling");
     let right_before = cx
-        .debug_bounds("table:center-window-runtime-table:cell:row-0000:status")
+        .debug_bounds(&table_source_cell_selector(
+            "center-window-runtime-table",
+            "row-0000",
+            "status",
+        ))
         .expect("right pinned cell should render before horizontal scrolling");
     let body_center_viewport = cx
-        .debug_bounds("scroll-area:table:center-window-runtime-table:row-center-scroll:row-0000")
+        .debug_bounds(&table_source_row_center_scroll_selector(
+            "center-window-runtime-table",
+            "row-0000",
+        ))
         .expect("body center lane should expose a horizontal scroll viewport");
 
     cx.simulate_event(ScrollWheelEvent {
@@ -413,8 +514,12 @@ fn table_runtime_center_column_window_mounts_only_rendered_center_cells(
         "leftmost center headers should unmount after the center window advances"
     );
     assert!(
-        cx.debug_bounds("table:center-window-runtime-table:cell:row-0000:metric_00")
-            .is_none(),
+        cx.debug_bounds(&table_source_cell_selector(
+            "center-window-runtime-table",
+            "row-0000",
+            "metric_00",
+        ))
+        .is_none(),
         "leftmost center cells should unmount after the center window advances"
     );
     assert!(
@@ -423,16 +528,28 @@ fn table_runtime_center_column_window_mounts_only_rendered_center_cells(
         "far-right center headers should render after horizontal scrolling"
     );
     assert!(
-        cx.debug_bounds("table:center-window-runtime-table:cell:row-0000:metric_05")
-            .is_some(),
+        cx.debug_bounds(&table_source_cell_selector(
+            "center-window-runtime-table",
+            "row-0000",
+            "metric_05",
+        ))
+        .is_some(),
         "far-right center cells should render after horizontal scrolling"
     );
 
     let left_after = cx
-        .debug_bounds("table:center-window-runtime-table:cell:row-0000:name")
+        .debug_bounds(&table_source_cell_selector(
+            "center-window-runtime-table",
+            "row-0000",
+            "name",
+        ))
         .expect("left pinned cell should remain rendered after horizontal scrolling");
     let right_after = cx
-        .debug_bounds("table:center-window-runtime-table:cell:row-0000:status")
+        .debug_bounds(&table_source_cell_selector(
+            "center-window-runtime-table",
+            "row-0000",
+            "status",
+        ))
         .expect("right pinned cell should remain rendered after horizontal scrolling");
     assert_eq!(
         left_after.left(),
@@ -487,9 +604,10 @@ fn table_runtime_center_column_window_still_emits_sort_for_rendered_center_heade
     });
 
     let body_center_viewport = cx
-        .debug_bounds(
-            "scroll-area:table:center-window-sort-runtime-table:row-center-scroll:row-0000",
-        )
+        .debug_bounds(&table_source_row_center_scroll_selector(
+            "center-window-sort-runtime-table",
+            "row-0000",
+        ))
         .expect("body center lane should expose a horizontal scroll viewport");
     cx.simulate_event(ScrollWheelEvent {
         position: body_center_viewport.center(),
@@ -595,9 +713,10 @@ fn table_runtime_center_column_window_keeps_row_virtualizer_independent(
     });
 
     let body_center_viewport = cx
-        .debug_bounds(
-            "scroll-area:table:center-window-rows-runtime-table:row-center-scroll:row-0000",
-        )
+        .debug_bounds(&table_source_row_center_scroll_selector(
+            "center-window-rows-runtime-table",
+            "row-0000",
+        ))
         .expect("body center lane should expose a horizontal scroll viewport");
     cx.simulate_event(ScrollWheelEvent {
         position: body_center_viewport.center(),
@@ -608,13 +727,21 @@ fn table_runtime_center_column_window_keeps_row_virtualizer_independent(
         window.draw(cx).clear();
     });
     assert!(
-        cx.debug_bounds("table:center-window-rows-runtime-table:cell:row-0000:metric_05")
-            .is_some(),
+        cx.debug_bounds(&table_source_cell_selector(
+            "center-window-rows-runtime-table",
+            "row-0000",
+            "metric_05",
+        ))
+        .is_some(),
         "horizontal center window should reveal far-right cells before vertical scrolling"
     );
 
     let first_row_pinned_cell = cx
-        .debug_bounds("table:center-window-rows-runtime-table:cell:row-0000:name")
+        .debug_bounds(&table_source_cell_selector(
+            "center-window-rows-runtime-table",
+            "row-0000",
+            "name",
+        ))
         .expect("left pinned cell should remain reachable before vertical scrolling");
     cx.simulate_event(ScrollWheelEvent {
         position: first_row_pinned_cell.center(),
@@ -626,23 +753,37 @@ fn table_runtime_center_column_window_keeps_row_virtualizer_independent(
     });
 
     assert!(
-        cx.debug_bounds("table:center-window-rows-runtime-table:row:row-0000")
-            .is_none(),
+        cx.debug_bounds(&table_source_row_selector(
+            "center-window-rows-runtime-table",
+            "row-0000",
+        ))
+        .is_none(),
         "vertical scrolling should still advance the row virtualizer"
     );
     assert!(
-        cx.debug_bounds("table:center-window-rows-runtime-table:row:row-0010")
-            .is_some(),
+        cx.debug_bounds(&table_source_row_selector(
+            "center-window-rows-runtime-table",
+            "row-0010",
+        ))
+        .is_some(),
         "row 10 should render after vertical scrolling"
     );
     assert!(
-        cx.debug_bounds("table:center-window-rows-runtime-table:cell:row-0010:metric_05")
-            .is_some(),
+        cx.debug_bounds(&table_source_cell_selector(
+            "center-window-rows-runtime-table",
+            "row-0010",
+            "metric_05",
+        ))
+        .is_some(),
         "newly rendered rows should consume the current center column window"
     );
     assert!(
-        cx.debug_bounds("table:center-window-rows-runtime-table:cell:row-0010:metric_00")
-            .is_none(),
+        cx.debug_bounds(&table_source_cell_selector(
+            "center-window-rows-runtime-table",
+            "row-0010",
+            "metric_00",
+        ))
+        .is_none(),
         "off-window center cells should remain unmounted on newly rendered rows"
     );
 }
@@ -704,24 +845,36 @@ fn table_runtime_pinned_body_scrolls_without_moving_parent(cx: &mut open_gpui::T
     });
 
     let first_row_before = cx
-        .debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0000")
+        .debug_bounds(&table_source_row_selector(
+            "pinned-body-scroll-runtime-table",
+            "row-0000",
+        ))
         .expect("first pinned body row should render before vertical scrolling");
     let header_before = cx
         .debug_bounds("table:pinned-body-scroll-runtime-table:header-row")
         .expect("pinned table header should render before vertical scrolling");
     assert!(
-        cx.debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0010")
-            .is_none(),
+        cx.debug_bounds(&table_source_row_selector(
+            "pinned-body-scroll-runtime-table",
+            "row-0010",
+        ))
+        .is_none(),
         "row 10 should start outside the initial pinned body window"
     );
     let parent_bottom_before = cx
         .debug_bounds("table-parent-bottom")
         .expect("parent bottom should be rendered before table scrolling");
     let viewport = cx
-        .debug_bounds("scroll-area:table:pinned-body-scroll-runtime-table:body-scroll")
+        .debug_bounds(&TableDebugSelector::body_scroll(
+            "pinned-body-scroll-runtime-table",
+        ))
         .expect("pinned table body viewport should expose a stable scroll selector");
     let first_row_cell = cx
-        .debug_bounds("table:pinned-body-scroll-runtime-table:cell:row-0000:name")
+        .debug_bounds(&table_source_cell_selector(
+            "pinned-body-scroll-runtime-table",
+            "row-0000",
+            "name",
+        ))
         .expect("first pinned body row cell should render before vertical scrolling");
 
     cx.simulate_event(ScrollWheelEvent {
@@ -750,13 +903,19 @@ fn table_runtime_pinned_body_scrolls_without_moving_parent(cx: &mut open_gpui::T
         "expected the table header to stay fixed while the body scrolls; before={header_before:?} after={header_after:?}"
     );
     assert!(
-        cx.debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0000")
-            .is_none(),
+        cx.debug_bounds(&table_source_row_selector(
+            "pinned-body-scroll-runtime-table",
+            "row-0000",
+        ))
+        .is_none(),
         "expected first pinned row to unmount after the virtual window advances"
     );
     assert!(
-        cx.debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0010")
-            .is_some(),
+        cx.debug_bounds(&table_source_row_selector(
+            "pinned-body-scroll-runtime-table",
+            "row-0010",
+        ))
+        .is_some(),
         "expected row 10 to render after scrolling the pinned table body"
     );
     assert!(
@@ -775,8 +934,8 @@ fn table_runtime_row_pinning_keeps_bands_fixed_while_center_scrolls(
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let state = sample_center_window_table_state_with_rows(80).with_row_pinning(
                 TableRowPinning::new()
-                    .pinned_top(["row-0000"])
-                    .pinned_bottom(["row-0079"]),
+                    .pinned_top([table_source_row_identity("row-0000")])
+                    .pinned_bottom([table_source_row_identity("row-0079")]),
             );
             let table = Table::new(
                 "row-pinning-runtime-table",
@@ -829,34 +988,56 @@ fn table_runtime_row_pinning_keeps_bands_fixed_while_center_scrolls(
     });
 
     assert!(
-        cx.debug_bounds("table:row-pinning-runtime-table:body:top")
-            .is_some(),
+        cx.debug_bounds(&TableDebugSelector::body_region(
+            "row-pinning-runtime-table",
+            TableRowRegion::Top,
+        ))
+        .is_some(),
         "top row-pinning band should expose a stable debug selector"
     );
     assert!(
-        cx.debug_bounds("table:row-pinning-runtime-table:body:center")
-            .is_some(),
+        cx.debug_bounds(&TableDebugSelector::body_region(
+            "row-pinning-runtime-table",
+            TableRowRegion::Center,
+        ))
+        .is_some(),
         "center row-pinning band should expose a stable debug selector"
     );
     assert!(
-        cx.debug_bounds("table:row-pinning-runtime-table:body:bottom")
-            .is_some(),
+        cx.debug_bounds(&TableDebugSelector::body_region(
+            "row-pinning-runtime-table",
+            TableRowRegion::Bottom,
+        ))
+        .is_some(),
         "bottom row-pinning band should expose a stable debug selector"
     );
     let top_row_before = cx
-        .debug_bounds("table:row-pinning-runtime-table:row:row-0000")
+        .debug_bounds(&table_source_row_selector(
+            "row-pinning-runtime-table",
+            "row-0000",
+        ))
         .expect("top pinned row should render before scrolling");
     let bottom_row_before = cx
-        .debug_bounds("table:row-pinning-runtime-table:row:row-0079")
+        .debug_bounds(&table_source_row_selector(
+            "row-pinning-runtime-table",
+            "row-0079",
+        ))
         .expect("bottom pinned row should render before scrolling");
     let parent_bottom_before = cx
         .debug_bounds("row-pinning-parent-bottom")
         .expect("parent bottom should render before table scrolling");
     let top_name_before = cx
-        .debug_bounds("table:row-pinning-runtime-table:cell:row-0000:name")
+        .debug_bounds(&table_source_cell_selector(
+            "row-pinning-runtime-table",
+            "row-0000",
+            "name",
+        ))
         .expect("top pinned row left-pinned cell should render before horizontal scrolling");
     let top_center_viewport = cx
-        .debug_bounds("scroll-area:table:row-pinning-runtime-table:row-center-scroll:row-0000")
+        .debug_bounds(&table_source_row_center_scroll_selector(
+            "row-pinning-runtime-table",
+            "row-0000",
+        ))
         .expect("top pinned row should expose a horizontal center lane");
 
     cx.simulate_event(ScrollWheelEvent {
@@ -869,7 +1050,11 @@ fn table_runtime_row_pinning_keeps_bands_fixed_while_center_scrolls(
     });
 
     let top_name_after_horizontal = cx
-        .debug_bounds("table:row-pinning-runtime-table:cell:row-0000:name")
+        .debug_bounds(&table_source_cell_selector(
+            "row-pinning-runtime-table",
+            "row-0000",
+            "name",
+        ))
         .expect("top pinned row left-pinned cell should stay mounted after horizontal scrolling");
     assert_eq!(
         top_name_after_horizontal.left(),
@@ -877,15 +1062,25 @@ fn table_runtime_row_pinning_keeps_bands_fixed_while_center_scrolls(
         "left-pinned cells inside pinned rows should not move with the center lane"
     );
     assert!(
-        cx.debug_bounds("table:row-pinning-runtime-table:cell:row-0000:metric_05")
-            .is_some(),
+        cx.debug_bounds(&table_source_cell_selector(
+            "row-pinning-runtime-table",
+            "row-0000",
+            "metric_05",
+        ))
+        .is_some(),
         "horizontally scrolled pinned rows should reveal far-right center cells"
     );
     let _center_viewport = cx
-        .debug_bounds("scroll-area:table:row-pinning-runtime-table:body-scroll")
+        .debug_bounds(&TableDebugSelector::body_scroll(
+            "row-pinning-runtime-table",
+        ))
         .expect("center body should expose the vertical scroll viewport");
     let center_row_cell = cx
-        .debug_bounds("table:row-pinning-runtime-table:cell:row-0001:name")
+        .debug_bounds(&table_source_cell_selector(
+            "row-pinning-runtime-table",
+            "row-0001",
+            "name",
+        ))
         .expect("first center row left-pinned cell should render before center scrolling");
 
     cx.simulate_event(ScrollWheelEvent {
@@ -898,10 +1093,16 @@ fn table_runtime_row_pinning_keeps_bands_fixed_while_center_scrolls(
     });
 
     let top_row_after = cx
-        .debug_bounds("table:row-pinning-runtime-table:row:row-0000")
+        .debug_bounds(&table_source_row_selector(
+            "row-pinning-runtime-table",
+            "row-0000",
+        ))
         .expect("top pinned row should remain mounted after center scrolling");
     let bottom_row_after = cx
-        .debug_bounds("table:row-pinning-runtime-table:row:row-0079")
+        .debug_bounds(&table_source_row_selector(
+            "row-pinning-runtime-table",
+            "row-0079",
+        ))
         .expect("bottom pinned row should remain mounted after center scrolling");
     let parent_bottom_after = cx
         .debug_bounds("row-pinning-parent-bottom")
@@ -922,13 +1123,20 @@ fn table_runtime_row_pinning_keeps_bands_fixed_while_center_scrolls(
         "vertical wheel input inside row-pinned Table should not move the outer page"
     );
     assert!(
-        cx.debug_bounds("table:row-pinning-runtime-table:row:row-0011")
-            .is_some(),
+        cx.debug_bounds(&table_source_row_selector(
+            "row-pinning-runtime-table",
+            "row-0011",
+        ))
+        .is_some(),
         "center rows should advance independently between pinned bands"
     );
     assert!(
-        cx.debug_bounds("table:row-pinning-runtime-table:cell:row-0011:metric_05")
-            .is_some(),
+        cx.debug_bounds(&table_source_cell_selector(
+            "row-pinning-runtime-table",
+            "row-0011",
+            "metric_05",
+        ))
+        .is_some(),
         "new center rows should consume the current horizontal center window"
     );
 }
@@ -941,8 +1149,9 @@ fn table_runtime_row_pinning_keyboard_navigation_scrolls_to_unrendered_center_ro
 
     impl Render for TestView {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            let state = sample_center_window_table_state_with_rows(80)
-                .with_row_pinning(TableRowPinning::new().pinned_top(["row-0000"]));
+            let state = sample_center_window_table_state_with_rows(80).with_row_pinning(
+                TableRowPinning::new().pinned_top([table_source_row_identity("row-0000")]),
+            );
             let table = Table::new(
                 "row-pinning-keyboard-table",
                 "Row pinning keyboard table",
@@ -969,11 +1178,17 @@ fn table_runtime_row_pinning_keyboard_navigation_scrolls_to_unrendered_center_ro
     });
 
     let top_row_before = cx
-        .debug_bounds("table:row-pinning-keyboard-table:row:row-0000")
+        .debug_bounds(&table_source_row_selector(
+            "row-pinning-keyboard-table",
+            "row-0000",
+        ))
         .expect("top pinned row should render before keyboard navigation");
     assert!(
-        cx.debug_bounds("table:row-pinning-keyboard-table:row:row-0079")
-            .is_none(),
+        cx.debug_bounds(&table_source_row_selector(
+            "row-pinning-keyboard-table",
+            "row-0079",
+        ))
+        .is_none(),
         "far center row should start outside the rendered virtual window"
     );
 
@@ -987,7 +1202,10 @@ fn table_runtime_row_pinning_keyboard_navigation_scrolls_to_unrendered_center_ro
     });
 
     let top_row_after = cx
-        .debug_bounds("table:row-pinning-keyboard-table:row:row-0000")
+        .debug_bounds(&table_source_row_selector(
+            "row-pinning-keyboard-table",
+            "row-0000",
+        ))
         .expect("top pinned row should remain mounted after keyboard navigation");
     assert_eq!(
         top_row_after.top(),
@@ -995,8 +1213,11 @@ fn table_runtime_row_pinning_keyboard_navigation_scrolls_to_unrendered_center_ro
         "keyboard navigation into the center region should not move the top pinned band"
     );
     assert!(
-        cx.debug_bounds("table:row-pinning-keyboard-table:row:row-0079")
-            .is_some(),
+        cx.debug_bounds(&table_source_row_selector(
+            "row-pinning-keyboard-table",
+            "row-0079",
+        ))
+        .is_some(),
         "End should scroll an unrendered center row into the center virtual window"
     );
 }
@@ -1036,10 +1257,16 @@ fn table_runtime_pinned_headers_still_sort_after_center_scroll(cx: &mut open_gpu
     });
 
     let body_center_viewport = cx
-        .debug_bounds("scroll-area:table:pinned-sort-runtime-table:row-center-scroll:row-a")
+        .debug_bounds(&table_source_row_center_scroll_selector(
+            "pinned-sort-runtime-table",
+            "row-a",
+        ))
         .expect("body center lane should expose a horizontal scroll viewport");
     let header_center_viewport = cx
-        .debug_bounds("scroll-area:table:pinned-sort-runtime-table:header-center-scroll")
+        .debug_bounds(&TableDebugSelector::header_center_scroll(
+            "pinned-sort-runtime-table",
+            0,
+        ))
         .expect("header center lane should expose a horizontal scroll viewport");
     cx.simulate_event(ScrollWheelEvent {
         position: body_center_viewport.center(),
@@ -1135,7 +1362,10 @@ fn table_runtime_pinned_header_drag_emits_controlled_column_order_change(
     });
 
     let center_viewport = cx
-        .debug_bounds("scroll-area:table:pinned-order-runtime-table:header-center-scroll")
+        .debug_bounds(&TableDebugSelector::header_center_scroll(
+            "pinned-order-runtime-table",
+            0,
+        ))
         .expect("center header should expose a horizontal scroll viewport");
     cx.simulate_event(ScrollWheelEvent {
         position: center_viewport.center(),
@@ -1379,12 +1609,12 @@ fn table_runtime_virtualized_body_scrolls_without_moving_parent(
     });
 
     assert!(
-        cx.debug_bounds("table:runtime-table:row:row-0000")
+        cx.debug_bounds(&table_source_row_selector("runtime-table", "row-0000"))
             .is_some(),
         "expected first table row to render before scrolling"
     );
     assert!(
-        cx.debug_bounds("table:runtime-table:row:row-0010")
+        cx.debug_bounds(&table_source_row_selector("runtime-table", "row-0010"))
             .is_none(),
         "expected row 10 to stay outside the initial overscan window"
     );
@@ -1392,7 +1622,7 @@ fn table_runtime_virtualized_body_scrolls_without_moving_parent(
         .debug_bounds("table-parent-bottom")
         .expect("parent bottom should be rendered before table scrolling");
     let viewport = cx
-        .debug_bounds("scroll-area:table:runtime-table:body-scroll")
+        .debug_bounds(&TableDebugSelector::body_scroll("runtime-table"))
         .expect("table body viewport should expose a stable scroll selector");
 
     cx.simulate_event(ScrollWheelEvent {
@@ -1413,12 +1643,12 @@ fn table_runtime_virtualized_body_scrolls_without_moving_parent(
         "expected wheel input inside Table to stay inside the table body; before={parent_bottom_before:?} after={parent_bottom_after:?}"
     );
     assert!(
-        cx.debug_bounds("table:runtime-table:row:row-0000")
+        cx.debug_bounds(&table_source_row_selector("runtime-table", "row-0000"))
             .is_none(),
         "expected row 0 to unmount after the virtual window advances"
     );
     assert!(
-        cx.debug_bounds("table:runtime-table:row:row-0010")
+        cx.debug_bounds(&table_source_row_selector("runtime-table", "row-0010"))
             .is_some(),
         "expected row 10 to render after scrolling the table body"
     );
@@ -1452,13 +1682,19 @@ fn table_runtime_cache_invalidates_when_table_state_changes(cx: &mut open_gpui::
     });
 
     assert!(
-        cx.debug_bounds("table:cache-runtime-table:row:row-0000")
-            .is_some(),
+        cx.debug_bounds(&table_source_row_selector(
+            "cache-runtime-table",
+            "row-0000",
+        ))
+        .is_some(),
         "expected unsorted table to render row 0 first"
     );
     assert!(
-        cx.debug_bounds("table:cache-runtime-table:row:row-0019")
-            .is_none(),
+        cx.debug_bounds(&table_source_row_selector(
+            "cache-runtime-table",
+            "row-0019",
+        ))
+        .is_none(),
         "expected last row to stay outside the initial unsorted window"
     );
 
@@ -1471,13 +1707,19 @@ fn table_runtime_cache_invalidates_when_table_state_changes(cx: &mut open_gpui::
     });
 
     assert!(
-        cx.debug_bounds("table:cache-runtime-table:row:row-0019")
-            .is_some(),
+        cx.debug_bounds(&table_source_row_selector(
+            "cache-runtime-table",
+            "row-0019",
+        ))
+        .is_some(),
         "expected cache invalidation to expose the descending first row"
     );
     assert!(
-        cx.debug_bounds("table:cache-runtime-table:row:row-0000")
-            .is_none(),
+        cx.debug_bounds(&table_source_row_selector(
+            "cache-runtime-table",
+            "row-0000",
+        ))
+        .is_none(),
         "expected stale unsorted row window to be replaced"
     );
 }
@@ -1520,7 +1762,11 @@ fn table_runtime_content_fit_widths_follow_visible_content(cx: &mut open_gpui::T
         .debug_bounds("table:content-fit-runtime-table:header:status")
         .expect("status header should render before content growth");
     let status_cell_before = cx
-        .debug_bounds("table:content-fit-runtime-table:cell:row-a:status")
+        .debug_bounds(&table_source_cell_selector(
+            "content-fit-runtime-table",
+            "row-a",
+            "status",
+        ))
         .expect("status cell should render before content growth");
     assert_eq!(status_header_before.left(), status_cell_before.left());
     assert_eq!(status_header_before.right(), status_cell_before.right());
@@ -1537,7 +1783,11 @@ fn table_runtime_content_fit_widths_follow_visible_content(cx: &mut open_gpui::T
         .debug_bounds("table:content-fit-runtime-table:header:status")
         .expect("status header should still render after content growth");
     let status_cell_after = cx
-        .debug_bounds("table:content-fit-runtime-table:cell:row-a:status")
+        .debug_bounds(&table_source_cell_selector(
+            "content-fit-runtime-table",
+            "row-a",
+            "status",
+        ))
         .expect("status cell should still render after content growth");
     assert_eq!(status_header_after.left(), status_cell_after.left());
     assert_eq!(status_header_after.right(), status_cell_after.right());
@@ -1546,11 +1796,13 @@ fn table_runtime_content_fit_widths_follow_visible_content(cx: &mut open_gpui::T
             > (status_header_before.right() - status_header_before.left()),
         "expected the content-fit column to widen when a longer visible value appears"
     );
+    let name_cell_selector =
+        table_source_cell_selector("content-fit-runtime-table", "row-a", "name");
     assert_eq!(
-        cx.debug_bounds("table:content-fit-runtime-table:cell:row-a:name")
+        cx.debug_bounds(&name_cell_selector)
             .expect("fixed-width name cell should stay rendered")
             .right()
-            - cx.debug_bounds("table:content-fit-runtime-table:cell:row-a:name")
+            - cx.debug_bounds(&name_cell_selector)
                 .expect("fixed-width name cell should stay rendered")
                 .left(),
         px(140.0)
@@ -1594,10 +1846,16 @@ fn table_runtime_measured_row_height_reflows_after_paint(cx: &mut open_gpui::Tes
     });
 
     let row_a_after = cx
-        .debug_bounds("table:measured-row-runtime-table:row:row-a")
+        .debug_bounds(&table_source_row_selector(
+            "measured-row-runtime-table",
+            "row-a",
+        ))
         .expect("measured row A should remain rendered after repaint");
     let row_b_after = cx
-        .debug_bounds("table:measured-row-runtime-table:row:row-b")
+        .debug_bounds(&table_source_row_selector(
+            "measured-row-runtime-table",
+            "row-b",
+        ))
         .expect("measured row B should remain rendered after repaint");
     assert!(
         row_a_after.bottom() - row_a_after.top() > px(24.0),

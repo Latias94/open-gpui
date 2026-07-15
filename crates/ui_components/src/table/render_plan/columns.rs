@@ -199,52 +199,6 @@ impl TableColumnRegionRenderPlan {
     }
 }
 
-/// Adapter layout metadata for sticky pinned table column regions.
-#[derive(Debug, Clone, PartialEq)]
-pub(in crate::table) struct TablePinnedLayoutPlan {
-    table_id: String,
-    center_width: UiPx,
-}
-
-impl TablePinnedLayoutPlan {
-    pub(super) fn from_column_regions(
-        table_id: &str,
-        regions: &[TableColumnRegionRenderPlan],
-        _total_width: UiPx,
-    ) -> Option<Self> {
-        let region_plan = |region| regions.iter().find(|plan| plan.region() == region);
-        let left = region_plan(TableColumnRegion::Left);
-        let center = region_plan(TableColumnRegion::Center);
-        let right = region_plan(TableColumnRegion::Right);
-        let has_pinned_columns = left
-            .map(|region| !region.columns().is_empty())
-            .unwrap_or(false)
-            || right
-                .map(|region| !region.columns().is_empty())
-                .unwrap_or(false);
-        if !has_pinned_columns {
-            return None;
-        }
-
-        Some(Self {
-            table_id: table_id.to_owned(),
-            center_width: center
-                .map(TableColumnRegionRenderPlan::total_width)
-                .unwrap_or(UiPx::ZERO),
-        })
-    }
-
-    /// Returns the stable adapter id for the header center scroll viewport.
-    pub fn header_center_scroll_id(&self) -> String {
-        format!("table:{}:header-center-scroll", self.table_id)
-    }
-
-    /// Returns the stable adapter id for one body-row center scroll viewport.
-    pub fn row_center_scroll_id(&self, row_render_key: &str) -> String {
-        format!("table:{}:row-center-scroll:{row_render_key}", self.table_id)
-    }
-}
-
 /// Resolved render metadata for the virtualized center column lane.
 #[derive(Debug, Clone, PartialEq)]
 pub(in crate::table) struct TableCenterColumnWindowPlan {
@@ -274,13 +228,10 @@ impl TableCenterColumnWindowPlan {
             .with_viewport_extent(nonnegative_px(viewport_extent))
             .with_scroll_offset(nonnegative_px(scroll_offset))
             .with_overscan(overscan)
-            .resolve_known_size_window(|index| {
-                let column = &columns[index];
-                (
-                    VirtualizerItemKey::new(column.id().as_str().to_owned()),
-                    column.width(),
-                )
-            });
+            .resolve_known_size_window_by(
+                |index| columns[index].width(),
+                |index| VirtualizerItemKey::new(columns[index].id().as_str().to_owned()),
+            );
         let rendered_columns = virtualizer
             .items()
             .iter()

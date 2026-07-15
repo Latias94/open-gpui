@@ -1,23 +1,35 @@
 use super::*;
 
+fn table_leaf_header_identity(column_id: impl Into<TableColumnId>) -> TableResolvedHeaderIdentity {
+    TableResolvedHeaderIdentity::leaf(column_id)
+}
+
+fn table_row_center_scroll_selector(table_id: &str, identity: &TableRowIdentity) -> String {
+    TableDebugSelector::row_center_scroll(table_id, identity)
+}
+
 #[open_gpui::test]
 fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {
+    const TABLE_ID: &str = "component-table:release-rollup";
+
     let sample = pages::components::table_samples(ThemeTokens::default())
         .iter()
         .find(|sample| sample.id == "release-rollup")
         .expect("release-rollup table sample should exist");
     let plan = sample.behavior_snapshot();
     let later_row_index = plan.visible_row_count() + sample.overscan + 5;
-    let first_row_id = plan.rows()[0].id().as_str().to_owned();
+    let first_row_identity = plan.rows()[0].identity().clone();
+    let first_row_label = first_row_identity.debug_label();
     let resolved = sample.state.resolve();
-    let later_row_id = resolved.final_model().rows()[later_row_index]
-        .id()
-        .as_str()
-        .to_owned();
-    let first_row_selector = format!("table:component-table:release-rollup:row:{first_row_id}");
-    let later_row_selector = format!("table:component-table:release-rollup:row:{later_row_id}");
+    let later_row_identity = resolved.final_model().rows()[later_row_index]
+        .identity()
+        .clone();
+    let later_row_label = later_row_identity.debug_label();
+    let first_row_selector = table_row_selector(TABLE_ID, &first_row_identity);
+    let later_row_selector = table_row_selector(TABLE_ID, &later_row_identity);
+    let body_scroll_selector = TableDebugSelector::body_scroll(TABLE_ID);
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     let table_entry = pages::components::COMPONENT_CATALOG
@@ -25,17 +37,10 @@ fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
         .find(|entry| entry.name == "Table")
         .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
     focus_components_catalog_entry(&shell, cx, table_entry);
-    scroll_page_selector_into_view(
-        &shell,
-        cx,
-        "scroll-area:table:component-table:release-rollup:body-scroll",
-    );
+    scroll_page_selector_into_view(&shell, cx, &body_scroll_selector);
     let sample_before = bounds(cx, "gallery:component-table-sample:release-rollup");
     let header_before = bounds(cx, "table:component-table:release-rollup:header-row");
-    let body_viewport = bounds(
-        cx,
-        "scroll-area:table:component-table:release-rollup:body-scroll",
-    );
+    let body_viewport = bounds(cx, &body_scroll_selector);
     let page_viewport = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
     let scroll_target_top = body_viewport.top().max(page_viewport.top());
     let scroll_target_bottom = body_viewport.bottom().min(page_viewport.bottom());
@@ -46,12 +51,12 @@ fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
 
     assert!(
         cx.debug_bounds(&first_row_selector).is_some(),
-        "expected grouped Table row `{first_row_id}` to render in the initial window"
+        "expected grouped Table row `{first_row_label}` to render in the initial window"
     );
     let first_row_before = bounds(cx, &first_row_selector);
     assert!(
         cx.debug_bounds(&later_row_selector).is_none(),
-        "expected grouped Table row `{later_row_id}` to start outside the rendered window"
+        "expected grouped Table row `{later_row_label}` to start outside the rendered window"
     );
 
     cx.simulate_event(ScrollWheelEvent {
@@ -77,12 +82,12 @@ fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
     if let Some(first_row_after) = cx.debug_bounds(&first_row_selector) {
         assert!(
             first_row_after.top() < first_row_before.top(),
-            "expected grouped Table row `{first_row_id}` to move up after internal scroll; before={first_row_before:?} after={first_row_after:?}"
+            "expected grouped Table row `{first_row_label}` to move up after internal scroll; before={first_row_before:?} after={first_row_after:?}"
         );
     }
     assert!(
         cx.debug_bounds(&later_row_selector).is_some(),
-        "expected grouped Table row `{later_row_id}` to enter the rendered window after internal scroll"
+        "expected grouped Table row `{later_row_label}` to enter the rendered window after internal scroll"
     );
 }
 
@@ -90,6 +95,8 @@ fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
 fn components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {
+    const TABLE_ID: &str = "component-table:release-rollup";
+
     let sample = pages::components::table_samples(ThemeTokens::default())
         .iter()
         .find(|sample| sample.id == "release-rollup")
@@ -104,7 +111,14 @@ fn components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_samp
         .iter()
         .find(|row| row.is_leaf())
         .unwrap_or(&plan.rows()[0]);
-    let first_row_key = first_rendered_row.id().as_str().to_owned();
+    let first_row_identity = first_rendered_row.identity().clone();
+    let name_cell_selector = table_cell_selector(TABLE_ID, &first_row_identity, "name");
+    let team_cell_selector = table_cell_selector(TABLE_ID, &first_row_identity, "team");
+    let status_cell_selector = table_cell_selector(TABLE_ID, &first_row_identity, "status");
+    let team_header_selector = table_header_selector(TABLE_ID, &table_leaf_header_identity("team"));
+    let row_center_scroll_selector =
+        table_row_center_scroll_selector(TABLE_ID, &first_row_identity);
+    let header_center_scroll_selector = TableDebugSelector::header_center_scroll(TABLE_ID, 0);
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     let table_entry = pages::components::COMPONENT_CATALOG
@@ -112,41 +126,21 @@ fn components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_samp
         .find(|entry| entry.name == "Table")
         .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
     focus_components_catalog_entry(&shell, cx, table_entry);
-    scroll_page_selector_into_view(
-        &shell,
-        cx,
-        "scroll-area:table:component-table:release-rollup:header-center-scroll",
-    );
+    scroll_page_selector_into_view(&shell, cx, &header_center_scroll_selector);
 
     let sample_before = bounds(cx, "gallery:component-table-sample:release-rollup");
-    let left_before = bounds(
-        cx,
-        &format!("table:component-table:release-rollup:cell:{first_row_key}:name"),
-    );
-    let center_header_before = bounds(cx, "table:component-table:release-rollup:header:team");
-    let center_cell_before = bounds(
-        cx,
-        &format!("table:component-table:release-rollup:cell:{first_row_key}:team"),
-    );
-    let right_before = bounds(
-        cx,
-        &format!("table:component-table:release-rollup:cell:{first_row_key}:status"),
-    );
+    let left_before = bounds(cx, &name_cell_selector);
+    let center_header_before = bounds(cx, &team_header_selector);
+    let center_cell_before = bounds(cx, &team_cell_selector);
+    let right_before = bounds(cx, &status_cell_selector);
     assert!(
-        cx.debug_bounds(&format!(
-            "scroll-area:table:component-table:release-rollup:row-center-scroll:{first_row_key}"
-        ))
-        .is_some(),
+        cx.debug_bounds(&row_center_scroll_selector).is_some(),
         "expected release-rollup body center lane to expose the shared horizontal viewport"
     );
-    let center_viewport = bounds(
-        cx,
-        "scroll-area:table:component-table:release-rollup:header-center-scroll",
-    );
+    let center_viewport = bounds(cx, &header_center_scroll_selector);
 
     assert!(
-        cx.debug_bounds("scroll-area:table:component-table:release-rollup:header-center-scroll")
-            .is_some(),
+        cx.debug_bounds(&header_center_scroll_selector).is_some(),
         "expected release-rollup header center lane to expose the shared horizontal viewport"
     );
 
@@ -158,19 +152,10 @@ fn components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_samp
     redraw(cx);
 
     let sample_after = bounds(cx, "gallery:component-table-sample:release-rollup");
-    let left_after = bounds(
-        cx,
-        &format!("table:component-table:release-rollup:cell:{first_row_key}:name"),
-    );
-    let center_header_after = bounds(cx, "table:component-table:release-rollup:header:team");
-    let center_cell_after = bounds(
-        cx,
-        &format!("table:component-table:release-rollup:cell:{first_row_key}:team"),
-    );
-    let right_after = bounds(
-        cx,
-        &format!("table:component-table:release-rollup:cell:{first_row_key}:status"),
-    );
+    let left_after = bounds(cx, &name_cell_selector);
+    let center_header_after = bounds(cx, &team_header_selector);
+    let center_cell_after = bounds(cx, &team_cell_selector);
+    let right_after = bounds(cx, &status_cell_selector);
 
     assert_eq!(
         sample_after.top(),
@@ -201,8 +186,13 @@ fn components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_samp
 fn components_gallery_smoke_grouped_table_column_reorder_updates_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {
+    const TABLE_ID: &str = "component-table:release-rollup";
     const SAMPLE: &str = "gallery:component-table-sample:release-rollup";
-    const SCORE: &str = "table:component-table:release-rollup:header:score";
+
+    let score_header_selector =
+        table_header_selector(TABLE_ID, &table_leaf_header_identity("score"));
+    let team_header_selector = table_header_selector(TABLE_ID, &table_leaf_header_identity("team"));
+    let header_center_scroll_selector = TableDebugSelector::header_center_scroll(TABLE_ID, 0);
 
     let sample = pages::components::table_samples(ThemeTokens::default())
         .iter()
@@ -216,10 +206,7 @@ fn components_gallery_smoke_grouped_table_column_reorder_updates_sample(
         .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
     focus_components_catalog_entry(&shell, cx, table_entry);
     scroll_page_selector_into_view(&shell, cx, SAMPLE);
-    let center_viewport = bounds(
-        cx,
-        "scroll-area:table:component-table:release-rollup:header-center-scroll",
-    );
+    let center_viewport = bounds(cx, &header_center_scroll_selector);
     cx.simulate_event(ScrollWheelEvent {
         position: center_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(-180.0), px(0.0))),
@@ -228,8 +215,8 @@ fn components_gallery_smoke_grouped_table_column_reorder_updates_sample(
     redraw(cx);
 
     let sample_before = bounds(cx, SAMPLE);
-    let score_before = bounds(cx, SCORE);
-    let team_before = bounds(cx, "table:component-table:release-rollup:header:team");
+    let score_before = bounds(cx, &score_header_selector);
+    let team_before = bounds(cx, &team_header_selector);
     let change = TableColumnOrderChange::move_before("score", "team", TableColumnRegion::Center);
     cx.update(|_, app| {
         pages::components::record_table_column_order_change(
@@ -243,8 +230,8 @@ fn components_gallery_smoke_grouped_table_column_reorder_updates_sample(
     redraw(cx);
 
     let sample_after = bounds(cx, SAMPLE);
-    let score_after = bounds(cx, SCORE);
-    let team_after = bounds(cx, "table:component-table:release-rollup:header:team");
+    let score_after = bounds(cx, &score_header_selector);
+    let team_after = bounds(cx, &team_header_selector);
     let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
         log.column_order_changes().to_vec()
     });
@@ -277,6 +264,8 @@ fn components_gallery_smoke_grouped_table_column_reorder_updates_sample(
 fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {
+    const TABLE_ID: &str = "component-table:release-matrix";
+
     let sample = pages::components::table_samples(ThemeTokens::default())
         .iter()
         .find(|sample| sample.id == "release-matrix")
@@ -286,12 +275,34 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
         plan.uses_split_pinned_columns(),
         "release-matrix should exercise sticky pinned table lanes"
     );
-    let first_row_key = plan.rows()[0].id().as_str().to_owned();
-    let far_header = "table:component-table:release-matrix:header:metric_13";
-    let far_cell = format!("table:component-table:release-matrix:cell:{first_row_key}:metric_13");
-    let left_group = "table:component-table:release-matrix:header-group:left:1:identity";
-    let metrics_group = "table:component-table:release-matrix:header-group:center:1:metrics";
-    let right_group = "table:component-table:release-matrix:header-group:right:1:delivery";
+    let first_row_identity = plan.rows()[0].identity().clone();
+    let far_header = table_header_selector(TABLE_ID, &table_leaf_header_identity("metric_13"));
+    let first_metric_header =
+        table_header_selector(TABLE_ID, &table_leaf_header_identity("metric_00"));
+    let far_cell = table_cell_selector(TABLE_ID, &first_row_identity, "metric_13");
+    let name_cell_selector = table_cell_selector(TABLE_ID, &first_row_identity, "name");
+    let status_cell_selector = table_cell_selector(TABLE_ID, &first_row_identity, "status");
+    let row_center_scroll_selector =
+        table_row_center_scroll_selector(TABLE_ID, &first_row_identity);
+    let resolved = sample.state.resolve();
+    let group_header_identity = |group_id: &str| {
+        resolved
+            .header_groups()
+            .all()
+            .flat_map(|row| row.headers())
+            .find(|header| {
+                header
+                    .source_group_path()
+                    .is_some_and(|path| path.last().is_some_and(|group| group.as_str() == group_id))
+            })
+            .unwrap_or_else(|| panic!("expected resolved `{group_id}` table header group"))
+            .identity()
+            .clone()
+    };
+    let left_group = table_header_selector(TABLE_ID, &group_header_identity("identity"));
+    let metrics_group = table_header_selector(TABLE_ID, &group_header_identity("metrics"));
+    let right_group = table_header_selector(TABLE_ID, &group_header_identity("delivery"));
+    let header_center_scroll_selector = TableDebugSelector::header_center_scroll(TABLE_ID, 0);
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     let table_entry = pages::components::COMPONENT_CATALOG
@@ -299,41 +310,30 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
         .find(|entry| entry.name == "Table")
         .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
     focus_components_catalog_entry(&shell, cx, table_entry);
-    scroll_page_selector_into_view(
-        &shell,
-        cx,
-        "scroll-area:table:component-table:release-matrix:header-center-scroll",
-    );
+    scroll_page_selector_into_view(&shell, cx, &header_center_scroll_selector);
 
     let sample_before = bounds(cx, "gallery:component-table-sample:release-matrix");
-    let left_before = bounds(
-        cx,
-        &format!("table:component-table:release-matrix:cell:{first_row_key}:name"),
-    );
-    let right_before = bounds(
-        cx,
-        &format!("table:component-table:release-matrix:cell:{first_row_key}:status"),
-    );
-    let left_group_before = bounds(cx, left_group);
+    let left_before = bounds(cx, &name_cell_selector);
+    let right_before = bounds(cx, &status_cell_selector);
+    let left_group_before = bounds(cx, &left_group);
     assert!(
-        cx.debug_bounds(metrics_group).is_some(),
+        cx.debug_bounds(&metrics_group).is_some(),
         "expected release-matrix metrics group header to render before horizontal scrolling"
     );
     assert!(
-        cx.debug_bounds(right_group).is_some(),
+        cx.debug_bounds(&right_group).is_some(),
         "expected release-matrix delivery group header to render before horizontal scrolling"
     );
     assert!(
-        cx.debug_bounds(left_group).is_some(),
+        cx.debug_bounds(&left_group).is_some(),
         "expected release-matrix identity group header to render before horizontal scrolling"
     );
     assert!(
-        cx.debug_bounds("table:component-table:release-matrix:header:metric_00")
-            .is_some(),
+        cx.debug_bounds(&first_metric_header).is_some(),
         "expected the initial center column window to mount the first metric"
     );
     assert!(
-        cx.debug_bounds(far_header).is_none(),
+        cx.debug_bounds(&far_header).is_none(),
         "expected the far metric header to stay unmounted before horizontal scrolling"
     );
     assert!(
@@ -341,19 +341,13 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
         "expected the far metric cell to stay unmounted before horizontal scrolling"
     );
     assert!(
-        cx.debug_bounds(&format!(
-            "scroll-area:table:component-table:release-matrix:row-center-scroll:{first_row_key}"
-        ))
-        .is_some(),
+        cx.debug_bounds(&row_center_scroll_selector).is_some(),
         "expected release-matrix body center lane to expose the shared horizontal viewport"
     );
-    let center_viewport = bounds(
-        cx,
-        "scroll-area:table:component-table:release-matrix:header-center-scroll",
-    );
+    let center_viewport = bounds(cx, &header_center_scroll_selector);
 
     for _ in 0..6 {
-        if cx.debug_bounds(far_header).is_some() && cx.debug_bounds(&far_cell).is_some() {
+        if cx.debug_bounds(&far_header).is_some() && cx.debug_bounds(&far_cell).is_some() {
             break;
         }
 
@@ -366,15 +360,9 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
     }
 
     let sample_after = bounds(cx, "gallery:component-table-sample:release-matrix");
-    let left_after = bounds(
-        cx,
-        &format!("table:component-table:release-matrix:cell:{first_row_key}:name"),
-    );
-    let left_group_after = bounds(cx, left_group);
-    let right_after = bounds(
-        cx,
-        &format!("table:component-table:release-matrix:cell:{first_row_key}:status"),
-    );
+    let left_after = bounds(cx, &name_cell_selector);
+    let left_group_after = bounds(cx, &left_group);
+    let right_after = bounds(cx, &status_cell_selector);
 
     assert_eq!(
         sample_after.top(),
@@ -397,15 +385,15 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
         "expected matrix Table right pinned lane to keep its screen-space x position"
     );
     assert!(
-        cx.debug_bounds(far_header).is_some(),
+        cx.debug_bounds(&far_header).is_some(),
         "expected the far metric header to enter the rendered center window after horizontal scrolling"
     );
     assert!(
-        cx.debug_bounds(metrics_group).is_some(),
+        cx.debug_bounds(&metrics_group).is_some(),
         "expected the metrics group header to stay mounted while the center window scrolls"
     );
     assert!(
-        cx.debug_bounds(right_group).is_some(),
+        cx.debug_bounds(&right_group).is_some(),
         "expected the delivery group header to stay mounted while the center window scrolls"
     );
     assert!(
@@ -418,6 +406,7 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
 fn components_gallery_smoke_column_visibility_updates_release_matrix(
     cx: &mut open_gpui::TestAppContext,
 ) {
+    const TABLE_ID: &str = "component-table:release-matrix";
     const SAMPLE_ID: &str = "release-matrix";
     const SAMPLE: &str = "gallery:component-table-sample:release-matrix";
     const TOOLBAR: &str = "table-toolbar:component-table-toolbar:release-matrix:root";
@@ -428,15 +417,14 @@ fn components_gallery_smoke_column_visibility_updates_release_matrix(
         "table-column-visibility:component-table-column-visibility:release-matrix:column:metric_03";
     const SHOW_ALL: &str =
         "table-column-visibility:component-table-column-visibility:release-matrix:show-all";
-    const METRIC_HEADER: &str = "table:component-table:release-matrix:header:metric_03";
 
     let table_samples = pages::components::table_samples(ThemeTokens::default());
     let sample = table_sample(&table_samples, SAMPLE_ID);
     let plan = sample.behavior_snapshot();
     assert_eq!(plan.aria_column_count(), 16);
-    let first_row_key = plan.rows()[0].id().as_str().to_owned();
-    let metric_cell =
-        format!("table:component-table:release-matrix:cell:{first_row_key}:metric_03");
+    let first_row_identity = plan.rows()[0].identity().clone();
+    let metric_header = table_header_selector(TABLE_ID, &table_leaf_header_identity("metric_03"));
+    let metric_cell = table_cell_selector(TABLE_ID, &first_row_identity, "metric_03");
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     cx.set_global(pages::components::TableSampleRuntimeLog::default());
@@ -453,7 +441,7 @@ fn components_gallery_smoke_column_visibility_updates_release_matrix(
         "expected release-matrix controls to render inside the table toolbar recipe"
     );
     assert!(
-        cx.debug_bounds(METRIC_HEADER).is_some(),
+        cx.debug_bounds(&metric_header).is_some(),
         "expected metric_03 header to render before hiding the column"
     );
     assert!(
@@ -486,7 +474,7 @@ fn components_gallery_smoke_column_visibility_updates_release_matrix(
     });
     assert_eq!(metric_hidden, Some(false));
     assert!(
-        cx.debug_bounds(METRIC_HEADER).is_none(),
+        cx.debug_bounds(&metric_header).is_none(),
         "expected metric_03 header to unmount after hiding the column"
     );
     assert!(
@@ -529,7 +517,7 @@ fn components_gallery_smoke_column_visibility_updates_release_matrix(
     assert_eq!(last.visible_columns, 16);
     assert_eq!(last.hidden_columns, 0);
     assert!(
-        cx.debug_bounds(METRIC_HEADER).is_some(),
+        cx.debug_bounds(&metric_header).is_some(),
         "expected metric_03 header to return after show-all"
     );
     assert!(
@@ -549,6 +537,8 @@ fn components_gallery_smoke_column_visibility_updates_release_matrix(
 fn components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {
+    const TABLE_ID: &str = "component-table:row-pinning";
+
     let sample = pages::components::table_samples(ThemeTokens::default())
         .iter()
         .find(|sample| sample.id == "row-pinning")
@@ -562,28 +552,27 @@ fn components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample(
         "row-pinning should combine row-pinned bands with pinned column lanes"
     );
 
-    let top_row_key = plan
+    let top_row_identity = plan
         .rows_for_region(TableRowRegion::Top)
         .next()
         .expect("row-pinning should render a top-pinned row")
-        .id()
-        .as_str()
-        .to_owned();
-    let bottom_row_key = plan
+        .identity()
+        .clone();
+    let bottom_row_identity = plan
         .rows_for_region(TableRowRegion::Bottom)
         .nth(1)
         .expect("row-pinning should render two bottom-pinned rows")
-        .id()
-        .as_str()
-        .to_owned();
+        .identity()
+        .clone();
+    let top_row_selector = table_row_selector(TABLE_ID, &top_row_identity);
+    let bottom_row_selector = table_row_selector(TABLE_ID, &bottom_row_identity);
+    let top_name_selector = table_cell_selector(TABLE_ID, &top_row_identity, "name");
+    let top_body_selector = TableDebugSelector::body_region(TABLE_ID, TableRowRegion::Top);
+    let center_body_selector = TableDebugSelector::body_region(TABLE_ID, TableRowRegion::Center);
+    let bottom_body_selector = TableDebugSelector::body_region(TABLE_ID, TableRowRegion::Bottom);
     let center_cell_selectors = plan
         .rows_for_region(TableRowRegion::Center)
-        .map(|row| {
-            format!(
-                "table:component-table:row-pinning:cell:{}:name",
-                row.id().as_str()
-            )
-        })
+        .map(|row| table_cell_selector(TABLE_ID, row.identity(), "name"))
         .collect::<Vec<_>>();
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
@@ -595,18 +584,15 @@ fn components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample(
     scroll_page_selector_into_view(&shell, cx, "gallery:component-table-sample:row-pinning");
 
     assert!(
-        cx.debug_bounds("table:component-table:row-pinning:body:top")
-            .is_some(),
+        cx.debug_bounds(&top_body_selector).is_some(),
         "expected row-pinning top band to render"
     );
     assert!(
-        cx.debug_bounds("table:component-table:row-pinning:body:center")
-            .is_some(),
+        cx.debug_bounds(&center_body_selector).is_some(),
         "expected row-pinning center band to render"
     );
     assert!(
-        cx.debug_bounds("table:component-table:row-pinning:body:bottom")
-            .is_some(),
+        cx.debug_bounds(&bottom_body_selector).is_some(),
         "expected row-pinning bottom band to render"
     );
     let collect_center_cells = |cx: &mut VisualTestContext| {
@@ -628,18 +614,9 @@ fn components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample(
     let interaction_target = scroll_page_selector_into_view(&shell, cx, &center_rows_before[0].1);
 
     let sample_before = bounds(cx, "gallery:component-table-sample:row-pinning");
-    let top_row_before = bounds(
-        cx,
-        &format!("table:component-table:row-pinning:row:{top_row_key}"),
-    );
-    let bottom_row_before = bounds(
-        cx,
-        &format!("table:component-table:row-pinning:row:{bottom_row_key}"),
-    );
-    let top_name_before = bounds(
-        cx,
-        &format!("table:component-table:row-pinning:cell:{top_row_key}:name"),
-    );
+    let top_row_before = bounds(cx, &top_row_selector);
+    let bottom_row_before = bounds(cx, &bottom_row_selector);
+    let top_name_before = bounds(cx, &top_name_selector);
     let center_rows_before = collect_center_cells(cx);
     cx.simulate_event(ScrollWheelEvent {
         position: interaction_target.center(),
@@ -649,14 +626,8 @@ fn components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample(
     redraw(cx);
 
     let sample_after = bounds(cx, "gallery:component-table-sample:row-pinning");
-    let top_row_after = bounds(
-        cx,
-        &format!("table:component-table:row-pinning:row:{top_row_key}"),
-    );
-    let bottom_row_after = bounds(
-        cx,
-        &format!("table:component-table:row-pinning:row:{bottom_row_key}"),
-    );
+    let top_row_after = bounds(cx, &top_row_selector);
+    let bottom_row_after = bounds(cx, &bottom_row_selector);
     let center_rows_after = collect_center_cells(cx);
     assert!(
         !center_rows_after.is_empty(),
@@ -679,11 +650,7 @@ fn components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample(
         "bottom pinned row band should stay fixed while center rows scroll"
     );
     assert_eq!(
-        bounds(
-            cx,
-            &format!("table:component-table:row-pinning:cell:{top_row_key}:name"),
-        )
-        .left(),
+        bounds(cx, &top_name_selector).left(),
         top_name_before.left(),
         "left-pinned cells inside pinned rows should stay fixed while center rows scroll"
     );
@@ -708,12 +675,12 @@ fn components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample(
 
 #[open_gpui::test]
 fn components_gallery_smoke_tree_table_expands_and_activates(cx: &mut open_gpui::TestAppContext) {
+    const TABLE_ID: &str = "component-table:dependency-tree";
     const SAMPLE: &str = "gallery:component-table-sample:dependency-tree";
-    const ROOT_TOGGLE: &str =
-        "table:component-table:dependency-tree:tree-toggle:dependency-workspace";
-    const UI_TOGGLE: &str = "table:component-table:dependency-tree:tree-toggle:dependency-ui";
-    const CHILD_ROW: &str = "table:component-table:dependency-tree:row:dependency-ui-table";
-    const CHILD_CELL: &str = "table:component-table:dependency-tree:cell:dependency-ui-table:name";
+    let root_toggle_selector = table_source_tree_toggle_selector(TABLE_ID, "dependency-workspace");
+    let ui_toggle_selector = table_source_tree_toggle_selector(TABLE_ID, "dependency-ui");
+    let child_row_selector = table_source_row_selector(TABLE_ID, "dependency-ui-table");
+    let child_cell_selector = table_source_cell_selector(TABLE_ID, "dependency-ui-table", "name");
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     cx.set_global(pages::components::TableSampleRuntimeLog::default());
@@ -723,20 +690,20 @@ fn components_gallery_smoke_tree_table_expands_and_activates(cx: &mut open_gpui:
         .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
     focus_components_catalog_entry(&shell, cx, table_entry);
     scroll_page_selector_into_view(&shell, cx, SAMPLE);
-    scroll_page_selector_into_view(&shell, cx, UI_TOGGLE);
+    scroll_page_selector_into_view(&shell, cx, &ui_toggle_selector);
 
     assert!(
-        cx.debug_bounds(CHILD_ROW).is_none(),
+        cx.debug_bounds(&child_row_selector).is_none(),
         "expected dependency-ui children to start collapsed"
     );
-    let root_toggle = bounds(cx, ROOT_TOGGLE);
-    let ui_toggle = bounds(cx, UI_TOGGLE);
+    let root_toggle = bounds(cx, &root_toggle_selector);
+    let ui_toggle = bounds(cx, &ui_toggle_selector);
     assert!(
         ui_toggle.left() > root_toggle.left(),
         "expected nested tree table toggle to be indented; root={root_toggle:?} ui={ui_toggle:?}"
     );
 
-    click(cx, UI_TOGGLE);
+    click(cx, &ui_toggle_selector);
     settle(cx);
     let toggles = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
         log.expansion_toggles()
@@ -744,7 +711,9 @@ fn components_gallery_smoke_tree_table_expands_and_activates(cx: &mut open_gpui:
             .map(|toggle| {
                 (
                     toggle.sample_id.clone(),
-                    toggle.row_id.clone(),
+                    toggle
+                        .source_row_id()
+                        .map(|row_id| row_id.as_str().to_owned()),
                     toggle.expanded,
                     toggle.depth,
                 )
@@ -752,14 +721,14 @@ fn components_gallery_smoke_tree_table_expands_and_activates(cx: &mut open_gpui:
             .collect::<Vec<_>>()
     });
     assert!(
-        cx.debug_bounds(CHILD_ROW).is_some(),
+        cx.debug_bounds(&child_row_selector).is_some(),
         "expected dependency-ui child row to render after expansion; toggles={toggles:?}"
     );
     assert_eq!(
         toggles,
         vec![(
             "dependency-tree".to_owned(),
-            "dependency-ui".to_owned(),
+            Some("dependency-ui".to_owned()),
             true,
             1
         )]
@@ -773,12 +742,12 @@ fn components_gallery_smoke_tree_table_expands_and_activates(cx: &mut open_gpui:
         "expected tree disclosure clicks to avoid row activation"
     );
 
-    click(cx, CHILD_ROW);
+    click(cx, &child_row_selector);
     assert!(
-        cx.debug_selector_is_focused(CHILD_ROW),
+        cx.debug_selector_is_focused(&child_row_selector),
         "expected clicking a tree table row to focus it for keyboard activation; focused={:?} child={:?}",
         cx.focused_debug_selector(),
-        bounds(cx, CHILD_CELL)
+        bounds(cx, &child_cell_selector)
     );
     let click_activations =
         cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
@@ -786,7 +755,12 @@ fn components_gallery_smoke_tree_table_expands_and_activates(cx: &mut open_gpui:
         });
     assert_eq!(click_activations.len(), 1);
     assert_eq!(click_activations[0].sample_id, "dependency-tree");
-    assert_eq!(click_activations[0].row_id, "dependency-ui-table");
+    assert_eq!(
+        click_activations[0]
+            .source_row_id()
+            .map(|row_id| row_id.as_str()),
+        Some("dependency-ui-table")
+    );
     assert_eq!(click_activations[0].kind, "click");
     assert_eq!(click_activations[0].depth, 2);
     assert!(!click_activations[0].tree_branch);
@@ -799,7 +773,10 @@ fn components_gallery_smoke_tree_table_expands_and_activates(cx: &mut open_gpui:
     });
     assert_eq!(activations.len(), 2);
     assert_eq!(activations[1].sample_id, "dependency-tree");
-    assert_eq!(activations[1].row_id, "dependency-ui-table");
+    assert_eq!(
+        activations[1].source_row_id().map(|row_id| row_id.as_str()),
+        Some("dependency-ui-table")
+    );
     assert_eq!(activations[1].kind, "keyboard");
     assert_eq!(activations[1].depth, 2);
 }
@@ -808,11 +785,12 @@ fn components_gallery_smoke_tree_table_expands_and_activates(cx: &mut open_gpui:
 fn components_gallery_smoke_table_server_tree_loads_children_from_expansion_request(
     cx: &mut open_gpui::TestAppContext,
 ) {
+    const TABLE_ID: &str = "component-table:server-tree";
     const SAMPLE: &str = "gallery:component-table-sample:server-tree";
-    const WORKSPACE_TOGGLE: &str = "table:component-table:server-tree:tree-toggle:server-workspace";
-    const CACHE_TOGGLE: &str = "table:component-table:server-tree:tree-toggle:server-cache";
-    const FAILED_TOGGLE: &str = "table:component-table:server-tree:tree-toggle:server-failed";
-    const CHILD_ROW: &str = "table:component-table:server-tree:row:server-api";
+    let workspace_toggle_selector = table_source_tree_toggle_selector(TABLE_ID, "server-workspace");
+    let cache_toggle_selector = table_source_tree_toggle_selector(TABLE_ID, "server-cache");
+    let failed_toggle_selector = table_source_tree_toggle_selector(TABLE_ID, "server-failed");
+    let child_row_selector = table_source_row_selector(TABLE_ID, "server-api");
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     cx.set_global(pages::components::TableSampleRuntimeLog::default());
@@ -822,33 +800,36 @@ fn components_gallery_smoke_table_server_tree_loads_children_from_expansion_requ
         .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
     focus_components_catalog_entry(&shell, cx, table_entry);
     scroll_page_selector_into_view(&shell, cx, SAMPLE);
-    scroll_page_selector_into_view(&shell, cx, WORKSPACE_TOGGLE);
+    scroll_page_selector_into_view(&shell, cx, &workspace_toggle_selector);
 
     assert!(
-        cx.debug_bounds(CHILD_ROW).is_none(),
+        cx.debug_bounds(&child_row_selector).is_none(),
         "expected server children to start app-unloaded"
     );
     assert!(
-        cx.debug_bounds(CACHE_TOGGLE).is_some(),
+        cx.debug_bounds(&cache_toggle_selector).is_some(),
         "expected loading server branch to render a disclosure affordance"
     );
     assert!(
-        cx.debug_bounds(FAILED_TOGGLE).is_some(),
+        cx.debug_bounds(&failed_toggle_selector).is_some(),
         "expected failed server branch to render a disclosure affordance"
     );
 
-    click(cx, WORKSPACE_TOGGLE);
+    click(cx, &workspace_toggle_selector);
     settle(cx);
     let toggles = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
         log.expansion_toggles().to_vec()
     });
     assert!(
-        cx.debug_bounds(CHILD_ROW).is_some(),
+        cx.debug_bounds(&child_row_selector).is_some(),
         "expected server child row to render after the app supplies loaded children; toggles={toggles:?}"
     );
     assert_eq!(toggles.len(), 1);
     assert_eq!(toggles[0].sample_id, "server-tree");
-    assert_eq!(toggles[0].row_id, "server-workspace");
+    assert_eq!(
+        toggles[0].source_row_id().map(|row_id| row_id.as_str()),
+        Some("server-workspace")
+    );
     assert!(toggles[0].expanded);
     assert_eq!(toggles[0].depth, 0);
     assert_eq!(toggles[0].loaded_child_count, 0);

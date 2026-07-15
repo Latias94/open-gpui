@@ -1,11 +1,12 @@
 //! Splitter component.
 
+use crate::a11y::UiA11yElementExt;
 use crate::geometry::gpui_px_from_ui;
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, AnyView, App, Context, CursorStyle, DefiniteLength, DragMoveEvent, ElementId,
-    Empty, Entity, IntoElement, ParentElement, Pixels, Point, Render, RenderOnce, Styled, Window,
-    div, px, relative, rgb,
+    Empty, Entity, IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render, RenderOnce,
+    Styled, Window, div, px, relative, rgb,
 };
 use open_gpui_motion::{
     MotionFrameDemand, MotionFrameDriver, MotionFrameDriverUpdate, MotionFrameReason,
@@ -19,11 +20,16 @@ use open_gpui_ui_core::split::{
     SplitterLayoutTransition, SplitterLayoutTransitionSample, SplitterPanelTransitionSample,
     SplitterTransitionIntent,
 };
-use open_gpui_ui_core::{Orientation, Sizable, Size, UiRect, ui_point, ui_px, ui_rect, ui_size};
+use open_gpui_ui_core::{
+    AccessibleAction, Orientation, Role, SemanticDescriptor, Sizable, Size, UiRect, ui_point,
+    ui_px, ui_rect, ui_size,
+};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 const EPSILON: f32 = 0.000_1;
+const ACCESSIBLE_RESIZE_STEP: f32 = 0.05;
 const TRANSITION_SCENE_EXTENT: f32 = 1000.0;
 
 pub use open_gpui_ui_core::{
@@ -649,10 +655,9 @@ impl RenderOnce for Splitter {
         }
         let runtime_snapshot = runtime.read(cx).clone();
         let layout_sample = runtime_snapshot.layout_transition_sample(now);
-        let state = base_state.with_panel_fractions(&runtime_snapshot.panel_fractions);
+        let state = Rc::new(base_state.with_panel_fractions(&runtime_snapshot.panel_fractions));
         let is_vertical = matches!(state.orientation(), Orientation::Vertical);
         let metrics = state.metrics();
-        let handles = state.handles().to_vec();
         let panels = self.panels;
         let mut panel_slots = panels.into_iter().map(Some).collect::<Vec<_>>();
         let panel_index_by_id = state
@@ -663,7 +668,7 @@ impl RenderOnce for Splitter {
             .collect::<HashMap<_, _>>();
         let overlay_panel_ids = transition_overlay_panel_ids(&layout_sample);
         let runtime_for_drag = runtime.clone();
-        let drag_state = state.clone();
+        let drag_state = Rc::clone(&state);
 
         let mut children = Vec::new();
         for (index, panel_slot) in panel_slots.iter_mut().enumerate() {
@@ -674,9 +679,9 @@ impl RenderOnce for Splitter {
                 children.push(render_panel(panel_state, panel, is_vertical));
             }
 
-            if let Some(handle) = handles.get(index) {
+            if let Some(handle) = state.handles().get(index) {
                 children.push(render_handle(
-                    state.clone(),
+                    Rc::clone(&state),
                     handle.clone(),
                     runtime.clone(),
                     metrics,
@@ -896,12 +901,14 @@ fn relative_fraction(value: f32) -> DefiniteLength {
 }
 
 fn render_handle(
-    splitter_state: SplitterState,
+    splitter_state: Rc<SplitterState>,
     state: SplitterHandleState,
     runtime: Entity<SplitterRuntime>,
     metrics: SplitterMetrics,
     is_vertical: bool,
 ) -> AnyElement {
+    let handle_index = state.index();
+    let disabled = state.disabled();
     let cursor = if state.disabled() {
         CursorStyle::OperationNotAllowed
     } else if is_vertical {
@@ -909,12 +916,28 @@ fn render_handle(
     } else {
         CursorStyle::ResizeColumn
     };
+    let label = format!("Resize {} and {}", state.before_id(), state.after_id());
+    let actions: &[AccessibleAction] = &[
+        AccessibleAction::Focus,
+        AccessibleAction::Increment,
+        AccessibleAction::Decrement,
+    ];
+    let mut semantics = SemanticDescriptor::new(Role::Splitter)
+        .with_label(&label)
+        .with_orientation(splitter_state.orientation())
+        .with_disabled(disabled)
+        .with_actions(actions);
+    if let Some((value, min, max)) = splitter_handle_range(&splitter_state, handle_index) {
+        semantics = semantics
+            .with_numeric_value(value)
+            .with_min_numeric_value(min)
+            .with_max_numeric_value(max);
+    }
 
     div()
-        .id(format!("splitter-handle:{}", state.index()))
+        .id(format!("splitter-handle:{handle_index}"))
         .debug_selector({
             let group_id = splitter_state.group_id().to_owned();
-            let handle_index = state.index();
             move || format!("splitter:{group_id}:handle:{handle_index}")
         })
         .flex_none()
@@ -922,12 +945,62 @@ fn render_handle(
         .items_center()
         .justify_center()
         .cursor(cursor)
-        .when(state.disabled(), |this| this.opacity(0.48))
-        .when(!state.disabled(), |this| {
+        .focusable()
+        .tab_stop(!disabled)
+        .focus_visible(|style| style.bg(rgb(0xe8ede6)))
+        .ui_semantics(&semantics)
+        .when(disabled, |this| this.opacity(0.48))
+        .when(!disabled, |this| {
+            let key_runtime = runtime.clone();
+            let key_state = Rc::clone(&splitter_state);
+            this.on_key_down(move |event: &KeyDownEvent, window, cx| {
+                if event.keystroke.modifiers.modified() {
+                    return;
+                }
+                let delta = match (key_state.orientation(), event.keystroke.key.as_str()) {
+                    (Orientation::Horizontal, "left") | (Orientation::Vertical, "up") => {
+                        -ACCESSIBLE_RESIZE_STEP
+                    }
+                    (Orientation::Horizontal, "right") | (Orientation::Vertical, "down") => {
+                        ACCESSIBLE_RESIZE_STEP
+                    }
+                    _ => return,
+                };
+                resize_splitter_handle(&key_runtime, &key_state, handle_index, delta, window, cx);
+                window.prevent_default();
+                cx.stop_propagation();
+            })
+        })
+        .when(!disabled, |this| {
+            let increment_runtime = runtime.clone();
+            let increment_state = Rc::clone(&splitter_state);
+            let decrement_runtime = runtime.clone();
+            let decrement_state = Rc::clone(&splitter_state);
+            this.on_ui_a11y_action(AccessibleAction::Increment, move |_, window, cx| {
+                resize_splitter_handle(
+                    &increment_runtime,
+                    &increment_state,
+                    handle_index,
+                    ACCESSIBLE_RESIZE_STEP,
+                    window,
+                    cx,
+                );
+            })
+            .on_ui_a11y_action(AccessibleAction::Decrement, move |_, window, cx| {
+                resize_splitter_handle(
+                    &decrement_runtime,
+                    &decrement_state,
+                    handle_index,
+                    -ACCESSIBLE_RESIZE_STEP,
+                    window,
+                    cx,
+                );
+            })
+        })
+        .when(!disabled, |this| {
             let drag_runtime = runtime.clone();
-            let drag_state = splitter_state.clone();
+            let drag_state = Rc::clone(&splitter_state);
             let group_id = splitter_state.group_id().to_owned();
-            let handle_index = state.index();
 
             this.on_drag(
                 SplitterDrag {
@@ -962,6 +1035,78 @@ fn render_handle(
                 }),
         )
         .into_any_element()
+}
+
+fn splitter_handle_range(state: &SplitterState, handle_index: usize) -> Option<(f64, f64, f64)> {
+    let before = state.panels().get(handle_index)?;
+    let after = state.panels().get(handle_index + 1)?;
+    let pair_sum = before.fraction() + after.fraction();
+    let value = before.fraction();
+    let min = before
+        .min_fraction()
+        .max(pair_sum - after.max_fraction())
+        .min(value);
+    let max = before
+        .max_fraction()
+        .min(pair_sum - after.min_fraction())
+        .max(value);
+
+    Some((
+        f64::from(value * 100.0),
+        f64::from(min * 100.0),
+        f64::from(max * 100.0),
+    ))
+}
+
+fn discrete_resize_delta(state: &SplitterState, handle_index: usize, requested_delta: f32) -> f32 {
+    let Some(before) = state.panels().get(handle_index) else {
+        return requested_delta;
+    };
+    let Some(after) = state.panels().get(handle_index + 1) else {
+        return requested_delta;
+    };
+
+    if requested_delta > 0.0 && before.collapsed() {
+        let restore_delta =
+            before.min_fraction().max(before.collapsed_fraction()) - before.fraction();
+        requested_delta.max(restore_delta)
+    } else if requested_delta < 0.0 && after.collapsed() {
+        let restore_delta = after.min_fraction().max(after.collapsed_fraction()) - after.fraction();
+        -(-requested_delta).max(restore_delta)
+    } else {
+        requested_delta
+    }
+}
+
+fn resize_splitter_handle(
+    runtime: &Entity<SplitterRuntime>,
+    state: &SplitterState,
+    handle_index: usize,
+    delta_fraction: f32,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    let changed = runtime.update(cx, |runtime, _| {
+        runtime.sync_drag_state(state);
+        let current = state.with_panel_fractions(&runtime.panel_fractions);
+        let delta_fraction = discrete_resize_delta(&current, handle_index, delta_fraction);
+        let resized = current.resize_by(handle_index, delta_fraction);
+        if resized.outcome() == SplitterResizeOutcome::Rejected {
+            return false;
+        }
+
+        runtime.panel_fractions = resized
+            .state()
+            .panels()
+            .iter()
+            .map(SplitterPanelState::fraction)
+            .collect();
+        true
+    });
+    if changed {
+        window.refresh();
+    }
+    changed
 }
 
 #[cfg(test)]

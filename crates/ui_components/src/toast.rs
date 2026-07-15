@@ -10,7 +10,9 @@ use open_gpui::{
     App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
     SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
+use open_gpui_ui_core::{
+    AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px,
+};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -716,6 +718,8 @@ impl RenderOnce for ToastStack {
         let debug_id = self.id.to_string();
         let on_action = self.on_action.clone();
         let on_dismiss = self.on_dismiss.clone();
+        let label = self.label;
+        let stack_semantics = SemanticDescriptor::new(state.role()).with_label(label.as_ref());
 
         div()
             .id(self.id)
@@ -723,8 +727,7 @@ impl RenderOnce for ToastStack {
                 let debug_id = debug_id.clone();
                 move || format!("toast-stack:{debug_id}:root")
             })
-            .ui_role(state.role())
-            .aria_label(self.label)
+            .ui_semantics(&stack_semantics)
             .flex()
             .flex_col()
             .items_end()
@@ -743,6 +746,17 @@ impl RenderOnce for ToastStack {
                 let title = toast.title().to_owned();
                 let description = toast.description().map(str::to_owned);
                 let action_label = toast.action_label().map(str::to_owned);
+                let toast_semantics = SemanticDescriptor::new(toast.role()).with_label(&title);
+                let action_actions: &[AccessibleAction] = if on_action.is_some() {
+                    &[AccessibleAction::Click, AccessibleAction::Focus]
+                } else {
+                    &[AccessibleAction::Focus]
+                };
+                let dismiss_actions: &[AccessibleAction] = if on_dismiss.is_some() {
+                    &[AccessibleAction::Click, AccessibleAction::Focus]
+                } else {
+                    &[AccessibleAction::Focus]
+                };
 
                 div()
                     .id(format!("toast:{toast_id}"))
@@ -762,8 +776,7 @@ impl RenderOnce for ToastStack {
                     .border_color(theme.resolve(colors.border()))
                     .bg(theme.resolve(colors.background()))
                     .text_color(theme.resolve(colors.foreground()))
-                    .ui_role(toast.role())
-                    .aria_label(title.clone())
+                    .ui_semantics(&toast_semantics)
                     .child(
                         div()
                             .mt(gpui_px_from_ui(ui_px(3.0)))
@@ -795,6 +808,9 @@ impl RenderOnce for ToastStack {
                                 )
                             })
                             .when_some(action_label.zip(action), |this, (label, action)| {
+                                let action_semantics = SemanticDescriptor::new(toast.action_role())
+                                    .with_label(&label)
+                                    .with_actions(action_actions);
                                 this.child(
                                     div()
                                         .id(format!("toast-action:{toast_id}"))
@@ -809,8 +825,7 @@ impl RenderOnce for ToastStack {
                                         .border_color(theme.resolve(colors.border()))
                                         .focusable()
                                         .tab_stop(true)
-                                        .ui_role(Role::Button)
-                                        .aria_label(label.clone())
+                                        .ui_semantics(&action_semantics)
                                         .focus_visible(move |style| {
                                             style.shadow(action_focus_shadow.clone())
                                         })
@@ -826,6 +841,9 @@ impl RenderOnce for ToastStack {
                             }),
                     )
                     .when_some(dismiss, |this, dismiss| {
+                        let dismiss_semantics = SemanticDescriptor::new(toast.dismiss_role())
+                            .with_label("Dismiss notification")
+                            .with_actions(dismiss_actions);
                         this.child(
                             div()
                                 .id(format!("toast-dismiss:{toast_id}"))
@@ -836,8 +854,7 @@ impl RenderOnce for ToastStack {
                                 .rounded(gpui_px_from_ui(metrics.radius()))
                                 .focusable()
                                 .tab_stop(true)
-                                .ui_role(Role::Button)
-                                .aria_label("Dismiss notification")
+                                .ui_semantics(&dismiss_semantics)
                                 .focus_visible(move |style| {
                                     style.shadow(dismiss_focus_shadow.clone())
                                 })

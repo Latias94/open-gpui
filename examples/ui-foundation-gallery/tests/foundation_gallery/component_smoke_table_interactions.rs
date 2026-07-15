@@ -2,23 +2,20 @@ use super::*;
 
 #[open_gpui::test]
 fn components_gallery_smoke_table_scroll_stays_inside_sample(cx: &mut open_gpui::TestAppContext) {
+    const TABLE_ID: &str = "component-table:release-queue";
+
+    let body_scroll_selector = TableDebugSelector::body_scroll(TABLE_ID);
+    let first_row = table_source_row_selector(TABLE_ID, "release-queue-row-0000");
+    let scrolled_row = table_source_row_selector(TABLE_ID, "release-queue-row-0010");
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
     jump_components_directory_to(cx, "gallery:component-page-jump:table");
-    scroll_page_selector_into_view(
-        &shell,
-        cx,
-        "scroll-area:table:component-table:release-queue:body-scroll",
-    );
+    scroll_page_selector_into_view(&shell, cx, &body_scroll_selector);
     let sample_before = bounds(cx, "gallery:component-table-sample:release-queue");
-    let table_viewport = bounds(
-        cx,
-        "scroll-area:table:component-table:release-queue:body-scroll",
-    );
+    let table_viewport = bounds(cx, &body_scroll_selector);
 
     assert!(
-        cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0000")
-            .is_some(),
+        cx.debug_bounds(&first_row).is_some(),
         "expected the initial release queue table window to render the first row"
     );
 
@@ -37,13 +34,11 @@ fn components_gallery_smoke_table_scroll_stays_inside_sample(cx: &mut open_gpui:
         "expected Table viewport wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
     );
     assert!(
-        cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0000")
-            .is_none(),
+        cx.debug_bounds(&first_row).is_none(),
         "expected virtualized Table row 0000 to leave the rendered window after internal scroll"
     );
     assert!(
-        cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0010")
-            .is_some(),
+        cx.debug_bounds(&scrolled_row).is_some(),
         "expected virtualized Table row 0010 to enter the rendered window after internal scroll"
     );
 }
@@ -52,6 +47,11 @@ fn components_gallery_smoke_table_scroll_stays_inside_sample(cx: &mut open_gpui:
 fn components_gallery_smoke_resizable_table_resize_updates_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {
+    let name_cell = table_source_cell_selector(
+        "component-table:release-resize",
+        "release-resize-row-000",
+        "name",
+    );
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     cx.set_global(pages::components::TableSampleRuntimeLog::default());
 
@@ -63,10 +63,7 @@ fn components_gallery_smoke_resizable_table_resize_updates_sample(
     );
     let sample_before = bounds(cx, "gallery:component-table-sample:release-resize");
     let header_before = bounds(cx, "table:component-table:release-resize:header:name");
-    let cell_before = bounds(
-        cx,
-        "table:component-table:release-resize:cell:release-resize-row-000:name",
-    );
+    let cell_before = bounds(cx, &name_cell);
     let resize_handle = bounds(cx, "table:component-table:release-resize:resize:name");
 
     assert_eq!(header_before.size.width, cell_before.size.width);
@@ -87,10 +84,7 @@ fn components_gallery_smoke_resizable_table_resize_updates_sample(
 
     let sample_after = bounds(cx, "gallery:component-table-sample:release-resize");
     let header_after = bounds(cx, "table:component-table:release-resize:header:name");
-    let cell_after = bounds(
-        cx,
-        "table:component-table:release-resize:cell:release-resize-row-000:name",
-    );
+    let cell_after = bounds(cx, &name_cell);
     let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
         log.sizing_changes().to_vec()
     });
@@ -122,8 +116,10 @@ fn components_gallery_smoke_faceted_filter_updates_table_rows(cx: &mut open_gpui
         "table-faceted-filter:component-table-faceted-filter:filter-board:status:content";
     const DONE_OPTION: &str =
         "table-faceted-filter:component-table-faceted-filter:filter-board:status:option:Done";
-    const INITIAL_ROW: &str = "table:component-table:filter-board:row:filter-board-row-177";
-    const FILTERED_ROW: &str = "table:component-table:filter-board:row:filter-board-row-171";
+    let initial_row =
+        table_source_row_selector("component-table:filter-board", "filter-board-row-177");
+    let filtered_row =
+        table_source_row_selector("component-table:filter-board", "filter-board-row-171");
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     cx.set_global(pages::components::TableSampleRuntimeLog::default());
@@ -136,7 +132,7 @@ fn components_gallery_smoke_faceted_filter_updates_table_rows(cx: &mut open_gpui
 
     let sample_before = bounds(cx, SAMPLE);
     assert!(
-        cx.debug_bounds(INITIAL_ROW).is_some(),
+        cx.debug_bounds(&initial_row).is_some(),
         "expected the initial filtered board row to render before selecting a status facet"
     );
 
@@ -176,11 +172,11 @@ fn components_gallery_smoke_faceted_filter_updates_table_rows(cx: &mut open_gpui
     assert_eq!(changes[0].filtered_rows, 15);
     assert_eq!(changes[0].final_rows, 15);
     assert!(
-        cx.debug_bounds(INITIAL_ROW).is_none(),
+        cx.debug_bounds(&initial_row).is_none(),
         "expected the Doing row to leave the rendered window after selecting Done"
     );
     assert!(
-        cx.debug_bounds(FILTERED_ROW).is_some(),
+        cx.debug_bounds(&filtered_row).is_some(),
         "expected the highest-scoring Done row to render after selecting Done"
     );
 
@@ -201,7 +197,7 @@ fn components_gallery_smoke_faceted_filter_updates_table_rows(cx: &mut open_gpui
     assert_eq!(changes[1].filtered_rows, 60);
     assert_eq!(changes[1].final_rows, 24);
     assert!(
-        cx.debug_bounds(INITIAL_ROW).is_some(),
+        cx.debug_bounds(&initial_row).is_some(),
         "expected clearing the status facet to restore the original filtered board rows"
     );
 }
@@ -212,8 +208,10 @@ fn components_gallery_smoke_global_filter_updates_table_rows(cx: &mut open_gpui:
     const SAMPLE: &str = "gallery:component-table-sample:filter-board";
     const TOOLBAR: &str = "table-toolbar:component-table-toolbar:filter-board:root";
     const INPUT: &str = "text-input:component-table-global-filter:filter-board-input:root";
-    const INITIAL_ROW: &str = "table:component-table:filter-board:row:filter-board-row-177";
-    const FILTERED_ROW: &str = "table:component-table:filter-board:row:filter-board-row-012";
+    let initial_row =
+        table_source_row_selector("component-table:filter-board", "filter-board-row-177");
+    let filtered_row =
+        table_source_row_selector("component-table:filter-board", "filter-board-row-012");
 
     let table_samples = pages::components::table_samples(ThemeTokens::default());
     let sample = table_sample(&table_samples, SAMPLE_ID);
@@ -237,7 +235,7 @@ fn components_gallery_smoke_global_filter_updates_table_rows(cx: &mut open_gpui:
         "expected filter-board controls to render inside the table toolbar recipe"
     );
     assert!(
-        cx.debug_bounds(INITIAL_ROW).is_some(),
+        cx.debug_bounds(&initial_row).is_some(),
         "expected the initial filtered board row to render before applying a global search"
     );
 
@@ -272,11 +270,11 @@ fn components_gallery_smoke_global_filter_updates_table_rows(cx: &mut open_gpui:
     });
     assert_eq!(persisted.as_deref(), Some("012"));
     assert!(
-        cx.debug_bounds(INITIAL_ROW).is_none(),
+        cx.debug_bounds(&initial_row).is_none(),
         "expected the initial board row to leave the rendered window after applying global search"
     );
     assert!(
-        cx.debug_bounds(FILTERED_ROW).is_some(),
+        cx.debug_bounds(&filtered_row).is_some(),
         "expected the matching board row to render after applying global search"
     );
 }
@@ -289,8 +287,10 @@ fn components_gallery_smoke_predicate_filter_updates_table_rows(
     const SAMPLE: &str = "gallery:component-table-sample:filter-board";
     const TOOLBAR: &str = "table-toolbar:component-table-toolbar:filter-board:root";
     const INPUT: &str = "text-input:component-table-predicate-filter:filter-board:name-value:root";
-    const INITIAL_ROW: &str = "table:component-table:filter-board:row:filter-board-row-177";
-    const FILTERED_ROW: &str = "table:component-table:filter-board:row:filter-board-row-012";
+    let initial_row =
+        table_source_row_selector("component-table:filter-board", "filter-board-row-177");
+    let filtered_row =
+        table_source_row_selector("component-table:filter-board", "filter-board-row-012");
 
     let table_samples = pages::components::table_samples(ThemeTokens::default());
     let sample = table_sample(&table_samples, SAMPLE_ID);
@@ -319,7 +319,7 @@ fn components_gallery_smoke_predicate_filter_updates_table_rows(
         "expected filter-board controls to render inside the table toolbar recipe"
     );
     assert!(
-        cx.debug_bounds(INITIAL_ROW).is_some(),
+        cx.debug_bounds(&initial_row).is_some(),
         "expected the initial filtered board row to render before applying a name predicate"
     );
 
@@ -371,11 +371,11 @@ fn components_gallery_smoke_predicate_filter_updates_table_rows(
         Some((TableTextFilterOperator::Contains, "012".to_owned()))
     );
     assert!(
-        cx.debug_bounds(INITIAL_ROW).is_none(),
+        cx.debug_bounds(&initial_row).is_none(),
         "expected the initial board row to leave the rendered window after applying name predicate"
     );
     assert!(
-        cx.debug_bounds(FILTERED_ROW).is_some(),
+        cx.debug_bounds(&filtered_row).is_some(),
         "expected the matching board row to render after applying name predicate"
     );
 }
@@ -398,22 +398,22 @@ fn components_gallery_smoke_range_filter_updates_table_rows(cx: &mut open_gpui::
     let expected = expected_state.resolve();
     let expected_filtered_rows = expected.filtered_model().rows().len();
     let expected_final_rows = expected.final_model().rows().len();
-    let expected_page_row_ids = expected
+    let expected_page_row_identities = expected
         .final_model()
         .rows()
         .iter()
-        .map(|row| row.id().clone())
+        .map(|row| row.identity().clone())
         .collect::<Vec<_>>();
-    let removed_row_id = baseline
+    let removed_row_identity = baseline
         .final_model()
         .rows()
         .iter()
-        .find(|row| !expected_page_row_ids.contains(row.id()))
+        .find(|row| !expected_page_row_identities.contains(row.identity()))
         .unwrap_or_else(|| panic!("expected score range to remove at least one initial page row"))
-        .id()
-        .as_str()
-        .to_owned();
-    let removed_row_selector = format!("table:component-table:filter-board:row:{removed_row_id}");
+        .identity()
+        .clone();
+    let removed_row_selector =
+        TableDebugSelector::row("component-table:filter-board", &removed_row_identity);
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     cx.set_global(pages::components::TableSampleRuntimeLog::default());
@@ -499,8 +499,10 @@ fn components_gallery_smoke_editable_table_cell_updates_sample_rows(
 ) {
     const SAMPLE_ID: &str = "editable-release";
     const SAMPLE: &str = "gallery:component-table-sample:editable-release";
-    const NAME_INPUT: &str = "text-input:table:component-table:editable-release:cell:editable-release-row-000:name:editor:root";
-    const STATUS_INPUT: &str = "text-input:table:component-table:editable-release:cell:editable-release-row-000:status:editor:root";
+    const TABLE_ID: &str = "component-table:editable-release";
+    const SOURCE_ROW_ID: &str = "editable-release-row-000";
+    let name_input = table_source_text_input_editor_selector(TABLE_ID, SOURCE_ROW_ID, "name");
+    let status_input = table_source_text_input_editor_selector(TABLE_ID, SOURCE_ROW_ID, "status");
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     cx.set_global(pages::components::TableSampleRuntimeLog::default());
@@ -509,14 +511,14 @@ fn components_gallery_smoke_editable_table_cell_updates_sample_rows(
         .find(|entry| entry.name == "Table")
         .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
     focus_components_catalog_entry(&shell, cx, table_entry);
-    scroll_page_selector_into_view(&shell, cx, NAME_INPUT);
+    scroll_page_selector_into_view(&shell, cx, &name_input);
 
     assert!(
-        cx.debug_bounds(STATUS_INPUT).is_none(),
+        cx.debug_bounds(&status_input).is_none(),
         "read-only status column should not mount a text input"
     );
     let sample_before = bounds(cx, SAMPLE);
-    let input = bounds(cx, NAME_INPUT);
+    let input = bounds(cx, &name_input);
     cx.simulate_click(
         point(input.right() - px(8.0), input.center().y),
         Default::default(),
@@ -532,7 +534,7 @@ fn components_gallery_smoke_editable_table_cell_updates_sample_rows(
         "editing a table cell should not move the sample card"
     );
     assert!(
-        cx.debug_bounds(NAME_INPUT).is_some(),
+        cx.debug_bounds(&name_input).is_some(),
         "editable input should remain mounted after app-owned state feedback"
     );
 
@@ -547,7 +549,10 @@ fn components_gallery_smoke_editable_table_cell_updates_sample_rows(
         .last()
         .unwrap_or_else(|| panic!("expected at least one edit change"));
     assert_eq!(last.sample_id, SAMPLE_ID);
-    assert_eq!(last.row_id, "editable-release-row-000");
+    assert_eq!(
+        last.source_row_id().map(|id| id.as_str()),
+        Some(SOURCE_ROW_ID)
+    );
     assert_eq!(last.column_id, "name");
     assert_eq!(last.outcome, "updated");
     assert!(last.next_text.contains("Prime"));
@@ -567,7 +572,10 @@ fn components_gallery_smoke_checkbox_table_cell_updates_sample_rows(
 ) {
     const SAMPLE_ID: &str = "toggle-release";
     const SAMPLE: &str = "gallery:component-table-sample:toggle-release";
-    const ENABLED_CHECKBOX: &str = "checkbox:table:component-table:toggle-release:cell:toggle-release-row-000:enabled:editor:root";
+    const TABLE_ID: &str = "component-table:toggle-release";
+    const SOURCE_ROW_ID: &str = "toggle-release-row-000";
+    let enabled_checkbox =
+        table_source_checkbox_editor_selector(TABLE_ID, SOURCE_ROW_ID, "enabled");
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     cx.set_global(pages::components::TableSampleRuntimeLog::default());
@@ -576,10 +584,10 @@ fn components_gallery_smoke_checkbox_table_cell_updates_sample_rows(
         .find(|entry| entry.name == "Table")
         .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
     focus_components_catalog_entry(&shell, cx, table_entry);
-    scroll_page_selector_into_view(&shell, cx, ENABLED_CHECKBOX);
+    scroll_page_selector_into_view(&shell, cx, &enabled_checkbox);
 
     let sample_before = bounds(cx, SAMPLE);
-    let checkbox = bounds(cx, ENABLED_CHECKBOX);
+    let checkbox = bounds(cx, &enabled_checkbox);
     cx.simulate_click(checkbox.center(), Default::default());
     settle(cx);
 
@@ -602,7 +610,10 @@ fn components_gallery_smoke_checkbox_table_cell_updates_sample_rows(
         .last()
         .unwrap_or_else(|| panic!("expected at least one checkbox edit change"));
     assert_eq!(last.sample_id, SAMPLE_ID);
-    assert_eq!(last.row_id, "toggle-release-row-000");
+    assert_eq!(
+        last.source_row_id().map(|id| id.as_str()),
+        Some(SOURCE_ROW_ID)
+    );
     assert_eq!(last.column_id, "enabled");
     assert_eq!(last.outcome, "updated");
     assert_eq!(last.previous_text, "true");
@@ -623,9 +634,13 @@ fn components_gallery_smoke_select_table_cell_updates_sample_rows(
 ) {
     const SAMPLE_ID: &str = "select-release";
     const SAMPLE: &str = "gallery:component-table-sample:select-release";
-    const STATUS_SELECT: &str = "select:table:component-table:select-release:cell:select-release-row-000:status:editor:trigger";
+    const TABLE_ID: &str = "component-table:select-release";
+    const SOURCE_ROW_ID: &str = "select-release-row-000";
     const STATUS_CONTENT: &str =
         "select:Edit status for row select-release-row-000:select-content-scroll:content";
+    let status_select = table_source_select_editor_selector(TABLE_ID, SOURCE_ROW_ID, "status");
+    let blocked_option =
+        table_source_select_option_selector(TABLE_ID, SOURCE_ROW_ID, "status", "blocked");
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     cx.set_global(pages::components::TableSampleRuntimeLog::default());
@@ -634,10 +649,10 @@ fn components_gallery_smoke_select_table_cell_updates_sample_rows(
         .find(|entry| entry.name == "Table")
         .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
     focus_components_catalog_entry(&shell, cx, table_entry);
-    scroll_page_selector_into_view(&shell, cx, STATUS_SELECT);
+    scroll_page_selector_into_view(&shell, cx, &status_select);
 
     let sample_before = bounds(cx, SAMPLE);
-    let trigger = bounds(cx, STATUS_SELECT);
+    let trigger = bounds(cx, &status_select);
     cx.simulate_click(trigger.center(), Default::default());
     settle(cx);
     cx.update(|window, cx| {
@@ -656,10 +671,7 @@ fn components_gallery_smoke_select_table_cell_updates_sample_rows(
         cx.debug_bounds(STATUS_CONTENT).is_some(),
         "select content should open from the table trigger"
     );
-    let blocked = bounds(
-        cx,
-        "listbox:table:component-table:select-release:cell:select-release-row-000:status:editor-listbox:option:blocked",
-    );
+    let blocked = bounds(cx, &blocked_option);
     cx.simulate_click(blocked.center(), Default::default());
     settle(cx);
 
@@ -682,7 +694,10 @@ fn components_gallery_smoke_select_table_cell_updates_sample_rows(
         .last()
         .unwrap_or_else(|| panic!("expected at least one select edit change"));
     assert_eq!(last.sample_id, SAMPLE_ID);
-    assert_eq!(last.row_id, "select-release-row-000");
+    assert_eq!(
+        last.source_row_id().map(|id| id.as_str()),
+        Some(SOURCE_ROW_ID)
+    );
     assert_eq!(last.column_id, "status");
     assert_eq!(last.outcome, "updated");
     assert_eq!(last.previous_text, "ready");
@@ -703,9 +718,12 @@ fn components_gallery_smoke_multiline_table_cell_updates_sample_rows(
 ) {
     const SAMPLE_ID: &str = "multiline-release";
     const SAMPLE: &str = "gallery:component-table-sample:multiline-release";
-    const NOTES_INPUT: &str = "textarea:table:component-table:multiline-release:cell:multiline-release-row-000:notes:editor:root";
-    const NOTES_TEXT_INPUT: &str = "text-input:table:component-table:multiline-release:cell:multiline-release-row-000:notes:editor:root";
-    const STATUS_TEXTAREA: &str = "textarea:table:component-table:multiline-release:cell:multiline-release-row-000:status:editor:root";
+    const TABLE_ID: &str = "component-table:multiline-release";
+    const SOURCE_ROW_ID: &str = "multiline-release-row-000";
+    let notes_input = table_source_textarea_editor_selector(TABLE_ID, SOURCE_ROW_ID, "notes");
+    let notes_text_input =
+        table_source_text_input_editor_selector(TABLE_ID, SOURCE_ROW_ID, "notes");
+    let status_textarea = table_source_textarea_editor_selector(TABLE_ID, SOURCE_ROW_ID, "status");
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     cx.set_global(pages::components::TableSampleRuntimeLog::default());
@@ -714,18 +732,18 @@ fn components_gallery_smoke_multiline_table_cell_updates_sample_rows(
         .find(|entry| entry.name == "Table")
         .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
     focus_components_catalog_entry(&shell, cx, table_entry);
-    scroll_page_selector_into_view(&shell, cx, NOTES_INPUT);
+    scroll_page_selector_into_view(&shell, cx, &notes_input);
 
     assert!(
-        cx.debug_bounds(NOTES_TEXT_INPUT).is_none(),
+        cx.debug_bounds(&notes_text_input).is_none(),
         "multiline notes column should not mount a single-line text input"
     );
     assert!(
-        cx.debug_bounds(STATUS_TEXTAREA).is_none(),
+        cx.debug_bounds(&status_textarea).is_none(),
         "read-only status column should not mount a textarea"
     );
     let sample_before = bounds(cx, SAMPLE);
-    let input = bounds(cx, NOTES_INPUT);
+    let input = bounds(cx, &notes_input);
     cx.simulate_click(
         point(input.right() - px(8.0), input.bottom() - px(12.0)),
         Default::default(),
@@ -741,7 +759,7 @@ fn components_gallery_smoke_multiline_table_cell_updates_sample_rows(
         "editing a multiline table cell should not move the sample card"
     );
     assert!(
-        cx.debug_bounds(NOTES_INPUT).is_some(),
+        cx.debug_bounds(&notes_input).is_some(),
         "multiline textarea should remain mounted after app-owned state feedback"
     );
 
@@ -756,7 +774,10 @@ fn components_gallery_smoke_multiline_table_cell_updates_sample_rows(
         .last()
         .unwrap_or_else(|| panic!("expected at least one multiline edit change"));
     assert_eq!(last.sample_id, SAMPLE_ID);
-    assert_eq!(last.row_id, "multiline-release-row-000");
+    assert_eq!(
+        last.source_row_id().map(|id| id.as_str()),
+        Some(SOURCE_ROW_ID)
+    );
     assert_eq!(last.column_id, "notes");
     assert_eq!(last.outcome, "updated");
     assert!(last.next_text.contains("QA note"));
@@ -785,12 +806,12 @@ fn components_gallery_smoke_content_fit_table_cell_edit_widens_name_column(
 ) {
     const SAMPLE_ID: &str = "content-fit-release";
     const SAMPLE: &str = "gallery:component-table-sample:content-fit-release";
-    const NAME_INPUT: &str = "text-input:table:component-table:content-fit-release:cell:editable-release-row-000:name:editor:root";
+    const TABLE_ID: &str = "component-table:content-fit-release";
+    const SOURCE_ROW_ID: &str = "editable-release-row-000";
     const NAME_HEADER: &str = "table:component-table:content-fit-release:header:name";
-    const NAME_CELL: &str =
-        "table:component-table:content-fit-release:cell:editable-release-row-000:name";
-    const SCORE_CELL: &str =
-        "table:component-table:content-fit-release:cell:editable-release-row-000:score";
+    let name_input = table_source_text_input_editor_selector(TABLE_ID, SOURCE_ROW_ID, "name");
+    let name_cell = table_source_cell_selector(TABLE_ID, SOURCE_ROW_ID, "name");
+    let score_cell = table_source_cell_selector(TABLE_ID, SOURCE_ROW_ID, "score");
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     cx.set_global(pages::components::TableSampleRuntimeLog::default());
@@ -799,13 +820,13 @@ fn components_gallery_smoke_content_fit_table_cell_edit_widens_name_column(
         .find(|entry| entry.name == "Table")
         .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
     focus_components_catalog_entry(&shell, cx, table_entry);
-    scroll_page_selector_into_view(&shell, cx, NAME_INPUT);
+    scroll_page_selector_into_view(&shell, cx, &name_input);
 
     let sample_before = bounds(cx, SAMPLE);
     let header_before = bounds(cx, NAME_HEADER);
-    let cell_before = bounds(cx, NAME_CELL);
-    let score_before = bounds(cx, SCORE_CELL);
-    let input = bounds(cx, NAME_INPUT);
+    let cell_before = bounds(cx, &name_cell);
+    let score_before = bounds(cx, &score_cell);
+    let input = bounds(cx, &name_input);
 
     assert_eq!(header_before.size.width, cell_before.size.width);
     assert_eq!(
@@ -830,8 +851,8 @@ fn components_gallery_smoke_content_fit_table_cell_edit_widens_name_column(
 
     let sample_after = bounds(cx, SAMPLE);
     let header_after = bounds(cx, NAME_HEADER);
-    let cell_after = bounds(cx, NAME_CELL);
-    let score_after = bounds(cx, SCORE_CELL);
+    let cell_after = bounds(cx, &name_cell);
+    let score_after = bounds(cx, &score_cell);
 
     assert_eq!(
         sample_after.top(),
@@ -849,7 +870,10 @@ fn components_gallery_smoke_content_fit_table_cell_edit_widens_name_column(
         .last()
         .unwrap_or_else(|| panic!("expected at least one edit change"));
     assert_eq!(last.sample_id, SAMPLE_ID);
-    assert_eq!(last.row_id, "editable-release-row-000");
+    assert_eq!(
+        last.source_row_id().map(|id| id.as_str()),
+        Some(SOURCE_ROW_ID)
+    );
     assert_eq!(last.column_id, "name");
     assert_eq!(last.outcome, "updated");
     assert!(last.next_text.contains("Prime"));
