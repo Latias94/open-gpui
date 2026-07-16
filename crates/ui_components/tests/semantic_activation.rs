@@ -71,5 +71,7 @@ mod link;
 mod tabs;
 #[path = "semantic_activation/toggle_group.rs"]
 mod toggle_group;
+#[path = "semantic_activation/toolbar.rs"]
+mod toolbar;
 #[path = "semantic_activation/value_controls.rs"]
 mod value_controls;

@@ -1,0 +1,423 @@
+use std::collections::BTreeMap;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use open_gpui::prelude::FluentBuilder;
+use open_gpui::{
+    App, Context, ElementId, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
+    ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
+};
+use open_gpui_ui_core::{AccessibleAction, Orientation, Role, SemanticDescriptor};
+
+use super::{
+    Toolbar, ToolbarActivation, ToolbarColors, ToolbarItem, ToolbarItemKind, ToolbarItemState,
+    ToolbarState, toolbar_activation_key_policy, toolbar_navigation_target,
+};
+use crate::a11y::UiA11yElementExt;
+use crate::activation::ActivationBinding;
+use crate::button::ButtonVariant;
+use crate::color::ColorIntent;
+use crate::focus::focus_ring_shadow_with_theme;
+use crate::geometry::gpui_px_from_ui;
+use crate::theme::ThemeResolver;
+use crate::tooltip::Tooltip;
+
+impl RenderOnce for Toolbar {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
+        let Toolbar {
+            id,
+            label,
+            orientation,
+            focused_value,
+            disabled,
+            size,
+            tokens,
+            items,
+            on_activate,
+            mut activation_handles,
+        } = self;
+
+        window.with_id(id.clone(), |window| {
+            let debug_id = id.to_string();
+            let focused_seed = focused_value.clone();
+            let runtime = window.use_keyed_state("runtime", cx, |_, _| ToolbarRuntime {
+                focused_value: focused_seed,
+                focus_handles: BTreeMap::new(),
+            });
+            let runtime_snapshot = runtime.read(cx).focused_value.clone();
+            let state = ToolbarState::resolve(
+                orientation,
+                size,
+                disabled,
+                label.to_string(),
+                runtime_snapshot.as_deref(),
+                items.iter().map(ToolbarItem::descriptor),
+                tokens,
+            );
+            let item_render_identities = state
+                .items()
+                .iter()
+                .map(|item| ToolbarItemRenderIdentity::new(&debug_id, item))
+                .collect::<Vec<_>>();
+            let physically_focused = window.focused(cx);
+            let fallback_focus_handle = runtime.update(cx, |runtime, cx| {
+                runtime.sync(&state, physically_focused.as_ref(), cx)
+            });
+            if let Some(focus_handle) = fallback_focus_handle {
+                focus_handle.focus(window, cx);
+            }
+
+            let disabled_items = Rc::new(state.disabled_map());
+            let navigation_values = Rc::new(
+                state
+                    .items()
+                    .iter()
+                    .map(|item| item.value().to_owned())
+                    .collect::<Vec<_>>(),
+            );
+            let metrics = state.metrics();
+            let colors = state.colors();
+            let pressed_colors = ThemeResolver::button_colors(tokens, ButtonVariant::Ghost, true);
+            let focus_ring = state.focus_ring();
+            let is_vertical = matches!(orientation, Orientation::Vertical);
+            let item_border = theme.resolve(colors.border());
+            let item_foreground = theme.resolve(colors.foreground());
+            let item_hover_background = theme.resolve(colors.hover_background());
+            let item_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+            let focus_handles = {
+                let runtime = runtime.read(cx);
+                state
+                    .items()
+                    .iter()
+                    .map(|item| runtime.focus_handles.get(item.value()).cloned())
+                    .collect::<Vec<_>>()
+            };
+            let activation_bindings = Rc::new(
+                state
+                    .items()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, item)| {
+                        let key_policy = toolbar_activation_key_policy(item.kind())?;
+                        let activation = ToolbarActivation::for_item(item);
+                        let activation_runtime = runtime.clone();
+                        let activation_handler = items[index]
+                            .on_activate
+                            .clone()
+                            .or_else(|| on_activate.clone());
+                        let activation_handle = activation_handles.remove(item.value());
+
+                        Some(
+                            ActivationBinding::new(
+                                window,
+                                cx,
+                                item_render_identities[index].activation_state_key.clone(),
+                                item.activation_enabled(),
+                                key_policy,
+                                move |input, window, cx| {
+                                    let focus_handle = activation_runtime
+                                        .update(cx, |runtime, cx| {
+                                            runtime.set_focused(activation.value(), cx)
+                                        });
+
+                                    if let Some(focus_handle) = focus_handle {
+                                        focus_handle.focus(window, cx);
+                                    }
+                                    if let Some(handler) = activation_handler.clone() {
+                                        handler(activation.clone(), input, window, cx);
+                                    }
+                                },
+                            )
+                            .with_programmatic_handle(activation_handle),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            let focusable_set_size = state.items().iter().filter(|item| item.focusable()).count();
+            let mut focusable_position = 0usize;
+            let tab_stop_index = state.tab_stop_index();
+            let semantics = SemanticDescriptor::new(state.role())
+                .with_label(state.label())
+                .with_orientation(orientation)
+                .with_disabled(state.disabled());
+
+            div()
+                .id(id.clone())
+                .debug_selector({
+                    let debug_id = debug_id.clone();
+                    move || format!("toolbar:{debug_id}")
+                })
+                .ui_semantics(&semantics)
+                .flex()
+                .gap(gpui_px_from_ui(metrics.gap()))
+                .p(gpui_px_from_ui(metrics.padding()))
+                .rounded(gpui_px_from_ui(metrics.radius()))
+                .border_1()
+                .border_color(theme.resolve(colors.border()))
+                .bg(theme.resolve(colors.background()))
+                .when(is_vertical, |this| this.flex_col().items_stretch())
+                .when(!is_vertical, |this| {
+                    this.flex_row().items_center().flex_wrap()
+                })
+                .children(state.items().iter().enumerate().map(|(index, item)| {
+                    let activation = activation_bindings[index].clone();
+                    let item_selector = item_render_identities[index].debug_selector.clone();
+                    let item_id = item_render_identities[index].element_id.clone();
+                    let Some(activation) = activation else {
+                        return div()
+                            .id(item_id)
+                            .debug_selector(move || item_selector.clone())
+                            .flex_none()
+                            .bg(item_border)
+                            .when(is_vertical, |this| {
+                                this.w_full()
+                                    .h(gpui_px_from_ui(metrics.separator_thickness()))
+                            })
+                            .when(!is_vertical, |this| {
+                                this.w(gpui_px_from_ui(metrics.separator_thickness()))
+                                    .h(gpui_px_from_ui(metrics.separator_length()))
+                            })
+                            .into_any_element();
+                    };
+
+                    let visible_label = items[index]
+                        .visible_label
+                        .clone()
+                        .or_else(|| item.icon_label().map(SharedString::from));
+                    let item_tooltip = items[index].tooltip.clone();
+                    let item_tooltip_text = item.tooltip().map(str::to_owned);
+                    let navigation_values = navigation_values.clone();
+                    let disabled_items = disabled_items.clone();
+                    let focus_handle = focus_handles[index].clone();
+                    let key_runtime = runtime.clone();
+                    let item_index = index;
+                    let item_kind = item.kind();
+                    let item_disabled = item.disabled();
+                    let item_focusable = item.focusable();
+                    let item_tab_stop = Some(index) == tab_stop_index;
+                    let item_pressed = item.pressed();
+                    let item_accessibility_description =
+                        item.accessibility_description().map(str::to_owned);
+                    let item_disabled_reason = item.disabled_reason_ref().map(str::to_owned);
+                    let item_aria_label = item_accessibility_description
+                        .as_ref()
+                        .or(item_disabled_reason.as_ref())
+                        .map_or_else(
+                            || item.label().to_owned(),
+                            |description| format!("{}, {description}", item.label()),
+                        );
+                    let item_position = if item.focusable() {
+                        focusable_position += 1;
+                        Some(focusable_position)
+                    } else {
+                        None
+                    };
+                    let item_background = theme.resolve(toolbar_item_background(
+                        colors,
+                        pressed_colors,
+                        item_kind,
+                        item_pressed,
+                    ));
+                    let item_focus_shadow = item_focus_shadow.clone();
+                    let item_actions: &[AccessibleAction] = if item_focusable {
+                        &[AccessibleAction::Click, AccessibleAction::Focus]
+                    } else {
+                        &[]
+                    };
+                    let mut item_semantics =
+                        SemanticDescriptor::new(item.role().unwrap_or(Role::Button))
+                            .with_label(&item_aria_label)
+                            .with_disabled(item_disabled)
+                            .with_actions(item_actions);
+                    if let Some(position) = item_position {
+                        item_semantics = item_semantics
+                            .with_position_in_set(position)
+                            .with_size_of_set(focusable_set_size);
+                    }
+                    if let Some(toggled) = item.toggled() {
+                        item_semantics = item_semantics.with_toggled(toggled);
+                    }
+
+                    activation
+                        .bind(
+                            div()
+                                .id(item_id)
+                                .debug_selector(move || item_selector.clone())
+                                .when(item_focusable, |this| {
+                                    this.focusable().tab_stop(item_tab_stop)
+                                })
+                                .ui_semantics(&item_semantics)
+                                .when_some(focus_handle, |this, focus_handle| {
+                                    this.track_focus(&focus_handle)
+                                })
+                                .min_h(gpui_px_from_ui(metrics.item().height()))
+                                .px(gpui_px_from_ui(metrics.item().padding_x()))
+                                .py(gpui_px_from_ui(metrics.item().padding_y()))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .gap_2()
+                                .rounded(gpui_px_from_ui(metrics.item().radius()))
+                                .border_1()
+                                .border_color(item_border)
+                                .bg(item_background)
+                                .text_size(gpui_px_from_ui(metrics.item().text_size()))
+                                .line_height(gpui_px_from_ui(metrics.item().text_size()))
+                                .text_color(item_foreground)
+                                .focus_visible(move |style| style.shadow(item_focus_shadow.clone()))
+                                .when(!item_disabled, |this| {
+                                    this.cursor_pointer()
+                                        .hover(move |style| style.bg(item_hover_background))
+                                })
+                                .when(item_disabled, |this| {
+                                    this.opacity(0.56).cursor_not_allowed()
+                                })
+                                .on_key_down({
+                                    let disabled_items = disabled_items.clone();
+                                    move |event: &KeyDownEvent, window, cx| {
+                                        if item_disabled
+                                            || event.keystroke.modifiers.modified()
+                                            || window.default_prevented()
+                                        {
+                                            return;
+                                        }
+
+                                        let Some(target_index) = toolbar_navigation_target(
+                                            orientation,
+                                            event.keystroke.key.as_str(),
+                                            item_index,
+                                            &disabled_items,
+                                        ) else {
+                                            return;
+                                        };
+
+                                        let target_value = &navigation_values[target_index];
+                                        let focus_handle = key_runtime.update(cx, |runtime, cx| {
+                                            runtime.set_focused(target_value, cx)
+                                        });
+                                        if let Some(focus_handle) = focus_handle {
+                                            focus_handle.focus(window, cx);
+                                        }
+
+                                        cx.stop_propagation();
+                                    }
+                                })
+                                .when_some(item_tooltip, |this, tooltip| {
+                                    this.tooltip(move |window, cx| tooltip(window, cx))
+                                })
+                                .when_some(item_tooltip_text, |this, tooltip| {
+                                    this.tooltip(Tooltip::text(tooltip))
+                                })
+                                .child(visible_label.unwrap_or_else(|| item.label().into())),
+                        )
+                        .into_any_element()
+                }))
+        })
+    }
+}
+
+#[derive(Debug, Default)]
+struct ToolbarRuntime {
+    focused_value: Option<String>,
+    focus_handles: BTreeMap<String, FocusHandle>,
+}
+
+impl ToolbarRuntime {
+    fn sync(
+        &mut self,
+        state: &ToolbarState,
+        physically_focused: Option<&FocusHandle>,
+        cx: &mut Context<Self>,
+    ) -> Option<FocusHandle> {
+        let value_remains_focusable = |value: &str| {
+            state
+                .items()
+                .iter()
+                .any(|item| item.value() == value && item.focusable())
+        };
+        let focused_toolbar_item_was_removed = physically_focused.is_some_and(|focused| {
+            self.focus_handles
+                .iter()
+                .any(|(value, handle)| handle == focused && !value_remains_focusable(value))
+        });
+
+        self.focus_handles
+            .retain(|value, _| value_remains_focusable(value));
+
+        for item in state.items().iter().filter(|item| item.focusable()) {
+            self.focus_handles
+                .entry(item.value().to_owned())
+                .or_insert_with(|| cx.focus_handle());
+        }
+
+        if self.focused_value.as_deref() != state.focused_value() {
+            self.focused_value = state.focused_value().map(str::to_owned);
+        }
+
+        focused_toolbar_item_was_removed
+            .then(|| state.focused_value())
+            .flatten()
+            .and_then(|value| self.focus_handles.get(value).cloned())
+    }
+
+    fn set_focused(&mut self, value: &str, cx: &mut Context<Self>) -> Option<FocusHandle> {
+        if self.focused_value.as_deref() != Some(value) {
+            self.focused_value = Some(value.to_owned());
+            cx.notify();
+        }
+        self.focus_handles.get(value).cloned()
+    }
+}
+
+#[derive(Debug)]
+struct ToolbarItemRenderIdentity {
+    element_id: ElementId,
+    debug_selector: String,
+    activation_state_key: ElementId,
+}
+
+impl ToolbarItemRenderIdentity {
+    fn new(toolbar_id: &str, item: &ToolbarItemState) -> Self {
+        let element_id = if item.duplicate_value() {
+            ElementId::named_usize(format!("toolbar-item-{}", item.value()), item.index())
+        } else {
+            format!("toolbar-item-{}", item.value()).into()
+        };
+        let debug_selector = if item.duplicate_value() {
+            format!(
+                "toolbar:{toolbar_id}:duplicate-item:{}:{}",
+                item.index(),
+                item.value()
+            )
+        } else {
+            format!("toolbar:{toolbar_id}:item:{}", item.value())
+        };
+        let activation_identity = ElementId::NamedChild(
+            Arc::new(element_id.clone()),
+            SharedString::new_static("activation"),
+        );
+        let activation_state_key = ElementId::NamedChild(
+            Arc::new(activation_identity),
+            SharedString::new_static(item.kind().as_str()),
+        );
+
+        Self {
+            element_id,
+            debug_selector,
+            activation_state_key,
+        }
+    }
+}
+
+fn toolbar_item_background(
+    colors: ToolbarColors,
+    pressed_colors: ToolbarColors,
+    kind: ToolbarItemKind,
+    pressed: bool,
+) -> ColorIntent {
+    match kind {
+        ToolbarItemKind::Toggle if pressed => pressed_colors.background(),
+        _ => colors.background(),
+    }
+}

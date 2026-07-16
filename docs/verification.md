@@ -1454,8 +1454,8 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    keys, Home/End, Enter, and Space to confirm focus movement and activation behavior. The vertical
     sample should keep its tab rail scrollable inside the constrained gallery card. The Toolbar
     samples should expose horizontal and vertical command groups; use arrow keys plus Home/End to
-    confirm roving focus skips disabled items and separators, and use Enter/Space to activate
-    action/toggle items. The component runtime smoke now verifies the rendered Toolbar keyboard path
+    confirm roving focus skips disabled items and separators. Use Enter or Space to activate action
+    items, and Space only to activate toggle items. The component runtime smoke now verifies the rendered Toolbar keyboard path
     for disabled-item/separator skipping and activation payloads. The Sidebar samples should expose
    expanded, icon-collapsed, and long scrollable navigation; icon collapse should hide visible labels
    while keeping item labels

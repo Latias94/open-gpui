@@ -609,9 +609,15 @@ node. The repair layer is a crash barrier, not a substitute for correct IDs.
 foundation size, disabled state, action/toggle/separator items, resolved action icon facts,
 shortcut, disabled reason, tooltip, accessibility description, pressed toggle metadata, focused
 item, tab stop, shared button metrics, and focus-ring/color intents. Separators are visual only and
-must not participate in roving focus or activation.
+must not participate in roving focus or activation. Item values are stable identities and must be
+unique within one Toolbar; duplicate values remain visible but fail closed as disabled,
+non-activatable items so focus, element, and programmatic-handle identity cannot alias.
 
-The GPUI `Toolbar` adapter owns focus handles, keyboard/click dispatch, and concrete item rendering.
+The GPUI `Toolbar` adapter owns focus handles, semantic activation binding, and concrete item
+rendering. Action items accept Enter and Space on key-up; toggle items accept Space only. Pointer,
+keyboard, AccessKit, and programmatic activation share one transaction and report the caller-owned
+pressed value from before activation. An item-level handler overrides the toolbar-level fallback,
+so one activation invokes one domain callback.
 It should expose `Role::Toolbar`, `aria_orientation`, explicit item labels, button roles for action
 and toggle items, and toggled metadata for pressed toggle items. It should reuse the shared
 roving-focus helpers so arrow keys, Home, and End skip disabled items and separators consistently

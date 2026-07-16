@@ -1,28 +1,19 @@
 //! Toolbar component.
 
-use crate::geometry::gpui_px_from_ui;
+mod render;
+
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use open_gpui::prelude::FluentBuilder;
-use open_gpui::{
-    AnyView, App, ClickEvent, Context, ElementId, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
-    Window, div,
-};
-use open_gpui_ui_core::{
-    AccessibleAction, Orientation, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, Toggled,
-    UiPx, ui_px,
-};
+use open_gpui::{AnyView, App, ElementId, IntoElement, SharedString, Window};
+use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_px};
 
-use crate::a11y::UiA11yElementExt;
 use crate::action::{ResolvedActionIcon, ResolvedActionState};
+use crate::activation::{Activation, ActivationHandle, ActivationKeyPolicy};
 use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
 use crate::choice::{ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
-use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
+use crate::focus::FocusRing;
 use crate::theme::ThemeResolver;
-use crate::tooltip::Tooltip;
 
 /// Item kind for a toolbar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,6 +314,7 @@ pub struct ToolbarItemState {
     kind: ToolbarItemKind,
     disabled: bool,
     disabled_reason: Option<String>,
+    duplicate_value: bool,
     pressed: bool,
     focused: bool,
     shortcut: Option<String>,
@@ -369,6 +361,14 @@ impl ToolbarItemState {
     /// Returns the optional disabled reason.
     pub fn disabled_reason_ref(&self) -> Option<&str> {
         self.disabled_reason.as_deref()
+    }
+
+    /// Returns whether this item shares its stable value with another item.
+    ///
+    /// Duplicate values fail closed because value-addressed focus and programmatic activation
+    /// would otherwise be ambiguous.
+    pub const fn duplicate_value(&self) -> bool {
+        self.duplicate_value
     }
 
     /// Returns whether the item can receive roving focus.
@@ -426,7 +426,7 @@ impl ToolbarItemState {
 
 /// Resolved toolbar activation payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolbarSelection {
+pub struct ToolbarActivation {
     index: usize,
     value: String,
     label: String,
@@ -434,16 +434,20 @@ pub struct ToolbarSelection {
     pressed: bool,
 }
 
-impl ToolbarSelection {
-    /// Creates a selection payload from an item state.
-    pub fn from_item(item: &ToolbarItemState) -> Option<Self> {
-        item.activation_enabled().then(|| Self {
+impl ToolbarActivation {
+    fn for_item(item: &ToolbarItemState) -> Self {
+        Self {
             index: item.index,
             value: item.value.clone(),
             label: item.label.clone(),
             kind: item.kind,
             pressed: item.pressed,
-        })
+        }
+    }
+
+    /// Creates an activation payload from an item state.
+    pub fn from_item(item: &ToolbarItemState) -> Option<Self> {
+        item.activation_enabled().then(|| Self::for_item(item))
     }
 
     /// Returns the activated item index.
@@ -466,7 +470,7 @@ impl ToolbarSelection {
         self.kind
     }
 
-    /// Returns the current pressed state for toggle items.
+    /// Returns the caller-owned pressed state before activation for toggle items.
     pub const fn pressed(&self) -> bool {
         self.pressed
     }
@@ -498,9 +502,25 @@ impl ToolbarState {
         tokens: ThemeTokens,
     ) -> Self {
         let descriptors: Vec<ToolbarItemDescriptor> = items.into_iter().collect();
+        let duplicate_values = {
+            let value_counts = descriptors
+                .iter()
+                .fold(BTreeMap::new(), |mut counts, item| {
+                    *counts.entry(item.value()).or_insert(0usize) += 1;
+                    counts
+                });
+            descriptors
+                .iter()
+                .map(|item| {
+                    value_counts
+                        .get(item.value())
+                        .is_some_and(|count| *count > 1)
+                })
+                .collect::<Vec<_>>()
+        };
         let collection = ChoiceCollection::resolve(
             disabled,
-            toolbar_choice_items(disabled, &descriptors),
+            toolbar_choice_items(disabled, descriptors, duplicate_values),
             None,
             focused_value,
             ChoiceInteractionPolicy::roving(orientation),
@@ -508,11 +528,13 @@ impl ToolbarState {
         let focused_index = collection.active_index();
         let colors = ThemeResolver::button_colors(tokens, ButtonVariant::Outline, false);
 
-        let items = descriptors
+        let items = collection
+            .into_items()
             .into_iter()
-            .enumerate()
-            .map(|(index, descriptor)| {
-                let item_disabled = disabled || descriptor.disabled;
+            .map(|projection| {
+                let index = projection.source_index();
+                let item_disabled = !projection.enabled();
+                let (descriptor, duplicate_value) = projection.into_item();
                 let focused = Some(index) == focused_index;
 
                 ToolbarItemState {
@@ -523,6 +545,7 @@ impl ToolbarState {
                     kind: descriptor.kind,
                     disabled: item_disabled,
                     disabled_reason: descriptor.disabled_reason,
+                    duplicate_value,
                     pressed: descriptor.pressed,
                     focused,
                     shortcut: descriptor.shortcut,
@@ -606,14 +629,11 @@ impl ToolbarState {
     }
 
     /// Resolves an activation payload for an APG-style activation key.
-    pub fn activation_for_key(&self, key: &str) -> Option<ToolbarSelection> {
-        if !matches!(key, "enter" | "space") {
-            return None;
-        }
-
-        self.focused_index
-            .and_then(|index| self.items.get(index))
-            .and_then(ToolbarSelection::from_item)
+    pub fn activation_for_key(&self, key: &str) -> Option<ToolbarActivation> {
+        let item = self.focused_index.and_then(|index| self.items.get(index))?;
+        let policy = toolbar_activation_key_policy(item.kind())?;
+        (policy.accepts(key) && item.activation_enabled())
+            .then(|| ToolbarActivation::for_item(item))
     }
 
     /// Returns resolved toolbar metrics.
@@ -648,24 +668,35 @@ pub fn toolbar_navigation_target(
 
 fn toolbar_choice_items(
     disabled: bool,
-    items: &[ToolbarItemDescriptor],
-) -> Vec<ChoiceItemProjection<()>> {
+    items: Vec<ToolbarItemDescriptor>,
+    duplicate_values: Vec<bool>,
+) -> Vec<ChoiceItemProjection<(ToolbarItemDescriptor, bool)>> {
     items
-        .iter()
+        .into_iter()
+        .zip(duplicate_values)
         .enumerate()
-        .map(|(index, item)| {
+        .map(|(index, (item, duplicate_value))| {
+            let value = item.value().to_owned();
             let label = item.label().to_owned();
             ChoiceItemProjection::new(
                 index,
                 None,
-                item.value(),
+                value,
                 label.clone(),
-                disabled || !item.focusable(),
-                (),
+                disabled || !item.focusable() || duplicate_value,
+                (item, duplicate_value),
             )
             .text_value(label)
         })
         .collect()
+}
+
+fn toolbar_activation_key_policy(kind: ToolbarItemKind) -> Option<ActivationKeyPolicy> {
+    match kind {
+        ToolbarItemKind::Action => Some(ActivationKeyPolicy::EnterOrSpace),
+        ToolbarItemKind::Toggle => Some(ActivationKeyPolicy::Space),
+        ToolbarItemKind::Separator => None,
+    }
 }
 
 /// A concrete GPUI toolbar item.
@@ -673,9 +704,11 @@ fn toolbar_choice_items(
 pub struct ToolbarItem {
     descriptor: ToolbarItemDescriptor,
     visible_label: Option<SharedString>,
-    on_select: Option<Rc<dyn Fn(ToolbarSelection, &mut Window, &mut App)>>,
+    on_activate: Option<ToolbarActivationHandler>,
     tooltip: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
 }
+
+type ToolbarActivationHandler = Rc<dyn Fn(ToolbarActivation, Activation, &mut Window, &mut App)>;
 
 impl ToolbarItem {
     /// Creates an action item.
@@ -684,7 +717,7 @@ impl ToolbarItem {
         Self {
             descriptor: ToolbarItemDescriptor::action(value, label.to_string()),
             visible_label: Some(label),
-            on_select: None,
+            on_activate: None,
             tooltip: None,
         }
     }
@@ -694,7 +727,7 @@ impl ToolbarItem {
         Self {
             descriptor: ToolbarItemDescriptor::from_resolved_action(action),
             visible_label: action.icon_label().map(SharedString::from),
-            on_select: None,
+            on_activate: None,
             tooltip: None,
         }
     }
@@ -708,7 +741,7 @@ impl ToolbarItem {
         Self {
             descriptor: ToolbarItemDescriptor::action(value, label),
             visible_label: Some(icon.into()),
-            on_select: None,
+            on_activate: None,
             tooltip: None,
         }
     }
@@ -722,7 +755,7 @@ impl ToolbarItem {
         Self {
             descriptor: ToolbarItemDescriptor::toggle(value, label),
             visible_label: Some(icon.into()),
-            on_select: None,
+            on_activate: None,
             tooltip: None,
         }
     }
@@ -733,7 +766,7 @@ impl ToolbarItem {
         Self {
             descriptor: ToolbarItemDescriptor::toggle(value, label.to_string()),
             visible_label: Some(label),
-            on_select: None,
+            on_activate: None,
             tooltip: None,
         }
     }
@@ -743,7 +776,7 @@ impl ToolbarItem {
         Self {
             descriptor: ToolbarItemDescriptor::separator(value),
             visible_label: None,
-            on_select: None,
+            on_activate: None,
             tooltip: None,
         }
     }
@@ -779,12 +812,15 @@ impl ToolbarItem {
         self
     }
 
-    /// Registers an item selection handler.
-    pub fn on_select(
+    /// Registers this item's activation handler.
+    ///
+    /// An item handler takes precedence over the toolbar-level fallback so one activation invokes
+    /// exactly one domain callback.
+    pub fn on_activate(
         mut self,
-        handler: impl Fn(ToolbarSelection, &mut Window, &mut App) + 'static,
+        handler: impl Fn(ToolbarActivation, Activation, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_select = Some(Rc::new(handler));
+        self.on_activate = Some(Rc::new(handler));
         self
     }
 
@@ -812,12 +848,6 @@ impl ToolbarItem {
     pub fn descriptor(&self) -> ToolbarItemDescriptor {
         self.descriptor.clone()
     }
-
-    pub(crate) fn select_handler(
-        &self,
-    ) -> Option<Rc<dyn Fn(ToolbarSelection, &mut Window, &mut App)>> {
-        self.on_select.clone()
-    }
 }
 
 /// A concrete GPUI toolbar component.
@@ -831,7 +861,8 @@ pub struct Toolbar {
     size: Size,
     tokens: ThemeTokens,
     items: Vec<ToolbarItem>,
-    on_select: Option<Rc<dyn Fn(ToolbarSelection, &mut Window, &mut App)>>,
+    on_activate: Option<ToolbarActivationHandler>,
+    activation_handles: BTreeMap<String, ActivationHandle>,
 }
 
 impl Toolbar {
@@ -846,7 +877,8 @@ impl Toolbar {
             size: Size::Medium,
             tokens: ThemeTokens::default(),
             items: Vec::new(),
-            on_select: None,
+            on_activate: None,
+            activation_handles: BTreeMap::new(),
         }
     }
 
@@ -886,12 +918,22 @@ impl Toolbar {
         self
     }
 
-    /// Registers a toolbar-level selection handler.
-    pub fn on_select(
+    /// Registers the fallback activation handler for items without their own handler.
+    pub fn on_activate(
         mut self,
-        handler: impl Fn(ToolbarSelection, &mut Window, &mut App) + 'static,
+        handler: impl Fn(ToolbarActivation, Activation, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_select = Some(Rc::new(handler));
+        self.on_activate = Some(Rc::new(handler));
+        self
+    }
+
+    /// Binds an application-owned activation handle to one stable item value.
+    pub fn activation_handle(
+        mut self,
+        value: impl Into<String>,
+        handle: &ActivationHandle,
+    ) -> Self {
+        self.activation_handles.insert(value.into(), handle.clone());
         self
     }
 
@@ -914,367 +956,4 @@ impl Sizable for Toolbar {
         self.size = size;
         self
     }
-}
-
-impl RenderOnce for Toolbar {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
-        let Toolbar {
-            id,
-            label,
-            orientation,
-            focused_value,
-            disabled,
-            size,
-            tokens,
-            items,
-            on_select,
-        } = self;
-
-        window.with_id(id.clone(), |window| {
-            let debug_id = id.to_string();
-            let descriptors: Vec<ToolbarItemDescriptor> =
-                items.iter().map(ToolbarItem::descriptor).collect();
-            let focused_seed = focused_value.clone();
-            let runtime = window.use_keyed_state("runtime", cx, |_, _| ToolbarRuntime {
-                focused_value: focused_seed,
-                focus_handles: BTreeMap::new(),
-            });
-            let runtime_snapshot = {
-                let runtime = runtime.read(cx);
-                runtime.focused_value.clone()
-            };
-            let state = ToolbarState::resolve(
-                orientation,
-                size,
-                disabled,
-                label.to_string(),
-                runtime_snapshot.as_deref(),
-                descriptors.clone(),
-                tokens,
-            );
-            runtime.update(cx, |runtime, cx| runtime.sync(&state, &descriptors, cx));
-
-            let item_descriptors = Rc::new(descriptors);
-            let disabled_items = Rc::new(
-                state
-                    .items()
-                    .iter()
-                    .map(|item| !item.focusable())
-                    .collect::<Vec<_>>(),
-            );
-            let metrics = state.metrics();
-            let colors = state.colors();
-            let pressed_colors = ThemeResolver::button_colors(tokens, ButtonVariant::Ghost, true);
-            let focus_ring = state.focus_ring();
-            let is_vertical = matches!(orientation, Orientation::Vertical);
-            let focus_handles = {
-                let runtime = runtime.read(cx);
-                state
-                    .items()
-                    .iter()
-                    .map(|item| runtime.focus_handles.get(item.value()).cloned())
-                    .collect::<Vec<_>>()
-            };
-            let focusable_set_size = state.items().iter().filter(|item| item.focusable()).count();
-            let mut focusable_position = 0usize;
-            let tab_stop_index = state.tab_stop_index();
-            let semantics = SemanticDescriptor::new(state.role())
-                .with_label(state.label())
-                .with_orientation(orientation)
-                .with_disabled(state.disabled());
-
-            div()
-                .id(id.clone())
-                .debug_selector({
-                    let debug_id = debug_id.clone();
-                    move || format!("toolbar:{debug_id}")
-                })
-                .ui_semantics(&semantics)
-                .flex()
-                .gap(gpui_px_from_ui(metrics.gap()))
-                .p(gpui_px_from_ui(metrics.padding()))
-                .rounded(gpui_px_from_ui(metrics.radius()))
-                .border_1()
-                .border_color(theme.resolve(colors.border()))
-                .bg(theme.resolve(colors.background()))
-                .when(is_vertical, |this| this.flex_col().items_stretch())
-                .when(!is_vertical, |this| {
-                    this.flex_row().items_center().flex_wrap()
-                })
-                .children(state.items().iter().enumerate().map(|(index, item)| {
-                    let descriptor = item_descriptors[index].clone();
-                    let visible_label = items[index]
-                        .visible_label
-                        .clone()
-                        .or_else(|| item.icon_label().map(SharedString::from));
-                    let item_tooltip = items[index].tooltip.clone();
-                    let item_tooltip_text = item.tooltip().map(str::to_owned);
-                    let click_item_handler = items[index].select_handler();
-                    let key_item_handler = click_item_handler.clone();
-                    let click_toolbar_handler = on_select.clone();
-                    let key_toolbar_handler = click_toolbar_handler.clone();
-                    let key_item_descriptors = item_descriptors.clone();
-                    let disabled_items = disabled_items.clone();
-                    let focus_handle = focus_handles[index].clone();
-                    let key_runtime = runtime.clone();
-                    let click_runtime = runtime.clone();
-                    let item_index = index;
-                    let item_kind = item.kind();
-                    let item_disabled = item.disabled();
-                    let item_tab_stop = Some(index) == tab_stop_index;
-                    let item_pressed = item.pressed();
-                    let item_value = item.value().to_owned();
-                    let item_accessibility_description =
-                        item.accessibility_description().map(str::to_owned);
-                    let item_disabled_reason = item.disabled_reason_ref().map(str::to_owned);
-                    let item_aria_label = item_accessibility_description
-                        .as_ref()
-                        .or(item_disabled_reason.as_ref())
-                        .map_or_else(
-                            || descriptor.label().to_owned(),
-                            |description| format!("{}, {description}", descriptor.label()),
-                        );
-                    let item_position = if item.focusable() {
-                        focusable_position += 1;
-                        Some(focusable_position)
-                    } else {
-                        None
-                    };
-                    let separator_color = theme.resolve(colors.border());
-                    let item_border = separator_color;
-                    let item_background = theme.resolve(toolbar_item_background(
-                        colors,
-                        pressed_colors,
-                        item_kind,
-                        item_pressed,
-                    ));
-                    let item_foreground = theme.resolve(colors.foreground());
-                    let item_hover_background = theme.resolve(colors.hover_background());
-                    let item_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
-
-                    if item.kind() == ToolbarItemKind::Separator {
-                        return div()
-                            .id(toolbar_item_id(item.value()))
-                            .debug_selector({
-                                let debug_id = debug_id.clone();
-                                let item_value = item_value.clone();
-                                move || format!("toolbar:{debug_id}:item:{item_value}")
-                            })
-                            .flex_none()
-                            .bg(separator_color)
-                            .when(is_vertical, |this| {
-                                this.w_full()
-                                    .h(gpui_px_from_ui(metrics.separator_thickness()))
-                            })
-                            .when(!is_vertical, |this| {
-                                this.w(gpui_px_from_ui(metrics.separator_thickness()))
-                                    .h(gpui_px_from_ui(metrics.separator_length()))
-                            })
-                            .into_any_element();
-                    }
-                    let mut item_semantics =
-                        SemanticDescriptor::new(item.role().unwrap_or(Role::Button))
-                            .with_label(&item_aria_label)
-                            .with_disabled(item_disabled)
-                            .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
-                    if let Some(position) = item_position {
-                        item_semantics = item_semantics
-                            .with_position_in_set(position)
-                            .with_size_of_set(focusable_set_size);
-                    }
-                    if let Some(toggled) = item.toggled() {
-                        item_semantics = item_semantics.with_toggled(toggled);
-                    }
-
-                    div()
-                        .id(toolbar_item_id(item.value()))
-                        .debug_selector({
-                            let debug_id = debug_id.clone();
-                            let item_value = item_value.clone();
-                            move || format!("toolbar:{debug_id}:item:{item_value}")
-                        })
-                        .focusable()
-                        .tab_stop(item_tab_stop)
-                        .ui_semantics(&item_semantics)
-                        .when_some(focus_handle, |this, focus_handle| {
-                            this.track_focus(&focus_handle)
-                        })
-                        .min_h(gpui_px_from_ui(metrics.item().height()))
-                        .px(gpui_px_from_ui(metrics.item().padding_x()))
-                        .py(gpui_px_from_ui(metrics.item().padding_y()))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .gap_2()
-                        .rounded(gpui_px_from_ui(metrics.item().radius()))
-                        .border_1()
-                        .border_color(item_border)
-                        .bg(item_background)
-                        .text_size(gpui_px_from_ui(metrics.item().text_size()))
-                        .line_height(gpui_px_from_ui(metrics.item().text_size()))
-                        .text_color(item_foreground)
-                        .focus_visible(move |style| style.shadow(item_focus_shadow.clone()))
-                        .when(!item_disabled, |this| {
-                            this.cursor_pointer()
-                                .hover(move |style| style.bg(item_hover_background))
-                        })
-                        .when(item_disabled, |this| {
-                            this.opacity(0.56).cursor_not_allowed()
-                        })
-                        .on_click({
-                            let descriptor = descriptor.clone();
-                            move |_event: &ClickEvent, window, cx| {
-                                if disabled || descriptor.disabled_state() {
-                                    return;
-                                }
-
-                                cx.stop_propagation();
-                                let focus_handle = click_runtime.update(cx, |runtime, cx| {
-                                    runtime.set_focused(descriptor.value(), cx)
-                                });
-
-                                if let Some(selection) =
-                                    ToolbarSelection::from_descriptor(item_index, &descriptor)
-                                {
-                                    if let Some(handler) = click_item_handler.clone() {
-                                        handler(selection.clone(), window, cx);
-                                    }
-                                    if let Some(handler) = click_toolbar_handler.clone() {
-                                        handler(selection, window, cx);
-                                    }
-                                }
-
-                                if let Some(focus_handle) = focus_handle {
-                                    focus_handle.focus(window, cx);
-                                }
-                            }
-                        })
-                        .on_key_down({
-                            let descriptor = descriptor.clone();
-                            let disabled_items = disabled_items.clone();
-                            move |event: &KeyDownEvent, window, cx| {
-                                if disabled || descriptor.disabled_state() {
-                                    return;
-                                }
-                                if event.keystroke.modifiers.modified() {
-                                    return;
-                                }
-
-                                let key = event.keystroke.key.as_str();
-                                let Some(target_index) = toolbar_navigation_target(
-                                    orientation,
-                                    key,
-                                    item_index,
-                                    &disabled_items,
-                                ) else {
-                                    if !matches!(key, "space" | "enter") {
-                                        return;
-                                    }
-
-                                    if let Some(selection) =
-                                        ToolbarSelection::from_descriptor(item_index, &descriptor)
-                                    {
-                                        if let Some(handler) = key_item_handler.clone() {
-                                            handler(selection.clone(), window, cx);
-                                        }
-                                        if let Some(handler) = key_toolbar_handler.clone() {
-                                            handler(selection, window, cx);
-                                        }
-                                    }
-                                    cx.stop_propagation();
-                                    return;
-                                };
-
-                                let target = &key_item_descriptors[target_index];
-                                let target_value = target.value().to_owned();
-                                let focus_handle = key_runtime.update(cx, |runtime, cx| {
-                                    runtime.set_focused(&target_value, cx)
-                                });
-
-                                if let Some(focus_handle) = focus_handle {
-                                    focus_handle.focus(window, cx);
-                                }
-
-                                cx.stop_propagation();
-                            }
-                        })
-                        .when_some(item_tooltip, |this, tooltip| {
-                            this.tooltip(move |window, cx| tooltip(window, cx))
-                        })
-                        .when_some(item_tooltip_text, |this, tooltip| {
-                            this.tooltip(Tooltip::text(tooltip))
-                        })
-                        .child(visible_label.unwrap_or_else(|| descriptor.label().into()))
-                        .into_any_element()
-                }))
-        })
-    }
-}
-
-#[derive(Debug, Default)]
-struct ToolbarRuntime {
-    focused_value: Option<String>,
-    focus_handles: BTreeMap<String, FocusHandle>,
-}
-
-impl ToolbarRuntime {
-    fn sync(
-        &mut self,
-        state: &ToolbarState,
-        items: &[ToolbarItemDescriptor],
-        cx: &mut Context<Self>,
-    ) {
-        self.focus_handles.retain(|value, _| {
-            items
-                .iter()
-                .any(|item| item.value() == value && item.focusable())
-        });
-
-        for item in items.iter().filter(|item| item.focusable()) {
-            self.focus_handles
-                .entry(item.value().to_owned())
-                .or_insert_with(|| cx.focus_handle());
-        }
-
-        self.focused_value = state.focused_value().map(str::to_owned);
-    }
-
-    fn set_focused(&mut self, value: &str, cx: &mut Context<Self>) -> Option<FocusHandle> {
-        let value = value.to_owned();
-        let changed = self.focused_value.as_deref() != Some(value.as_str());
-        self.focused_value = Some(value.clone());
-        if changed {
-            cx.notify();
-        }
-        self.focus_handles.get(&value).cloned()
-    }
-}
-
-fn toolbar_item_background(
-    colors: ToolbarColors,
-    pressed_colors: ToolbarColors,
-    kind: ToolbarItemKind,
-    pressed: bool,
-) -> ColorIntent {
-    match kind {
-        ToolbarItemKind::Toggle if pressed => pressed_colors.background(),
-        _ => colors.background(),
-    }
-}
-
-impl ToolbarSelection {
-    fn from_descriptor(index: usize, descriptor: &ToolbarItemDescriptor) -> Option<Self> {
-        descriptor.focusable().then(|| Self {
-            index,
-            value: descriptor.value.clone(),
-            label: descriptor.label.clone(),
-            kind: descriptor.kind,
-            pressed: descriptor.pressed,
-        })
-    }
-}
-
-fn toolbar_item_id(value: &str) -> ElementId {
-    format!("toolbar-item-{value}").into()
 }

@@ -13,8 +13,8 @@ use open_gpui_ui_components::{
     MenuItemDescriptor, ResolvedActionIcon, Sidebar, SidebarCollapseMode, SidebarItemDescriptor,
     SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Tabs,
     TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsSelectionAuthority,
-    TabsState, ToggleGroup, ToggleGroupItem, Toolbar, ToolbarItemDescriptor, ToolbarItemKind,
-    ToolbarSelection, ToolbarState, Tooltip,
+    TabsState, ToggleGroup, ToggleGroupItem, Toolbar, ToolbarActivation, ToolbarItemDescriptor,
+    ToolbarItemKind, ToolbarState, Tooltip,
     sidebar::SidebarItem,
     sidebar_navigation_target,
     tabs::{active_index_from_str_keys, first_enabled, last_enabled, next_enabled},
@@ -649,7 +649,7 @@ fn toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items(
     cx: &mut open_gpui::TestAppContext,
 ) {
     struct TestView {
-        selections: Rc<RefCell<Vec<ToolbarSelection>>>,
+        selections: Rc<RefCell<Vec<ToolbarActivation>>>,
     }
 
     impl Render for TestView {
@@ -665,7 +665,7 @@ fn toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items(
                     .item(ToolbarItem::separator("history-separator"))
                     .item(ToolbarItem::toggle_icon("bold", "B", "Bold").pressed(true))
                     .item(ToolbarItem::toggle_icon("italic", "I", "Italic"))
-                    .on_select(move |selection, _, _| {
+                    .on_activate(move |selection, _, _, _| {
                         selections.borrow_mut().push(selection);
                     }),
             )
@@ -688,7 +688,9 @@ fn toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items(
         window.draw(cx).clear();
     });
 
-    cx.simulate_keystrokes("right enter");
+    cx.simulate_keystrokes("right");
+    cx.simulate_event(key_down("space"));
+    cx.simulate_event(key_up("space"));
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
@@ -699,7 +701,9 @@ fn toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items(
     assert_eq!(after_right[1].value(), "bold");
     assert_eq!(after_right[1].kind(), ToolbarItemKind::Toggle);
 
-    cx.simulate_keystrokes("right enter");
+    cx.simulate_keystrokes("right");
+    cx.simulate_event(key_down("space"));
+    cx.simulate_event(key_up("space"));
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
@@ -707,8 +711,11 @@ fn toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items(
     assert_eq!(after_second_right.len(), 3);
     assert_eq!(after_second_right[2].value(), "italic");
     assert_eq!(after_second_right[2].kind(), ToolbarItemKind::Toggle);
+    assert!(!after_second_right[2].pressed());
 
-    cx.simulate_keystrokes("home enter");
+    cx.simulate_keystrokes("home");
+    cx.simulate_event(key_down("enter"));
+    cx.simulate_event(key_up("enter"));
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
@@ -1043,6 +1050,20 @@ fn toolbar_builder_state_skips_disabled_and_separator_items() {
         ),
         Some(3)
     );
+}
+
+#[test]
+fn toolbar_duplicate_values_fail_closed() {
+    let state = Toolbar::new("duplicate-tools", "Duplicate tools")
+        .item(ToolbarItem::action("duplicate", "Duplicate action"))
+        .item(ToolbarItem::toggle("duplicate", "Duplicate toggle"))
+        .state();
+
+    assert_eq!(state.focused_value(), None);
+    assert!(state.items().iter().all(|item| item.duplicate_value()));
+    assert!(state.items().iter().all(|item| item.disabled()));
+    assert!(state.activation_for_key("enter").is_none());
+    assert!(state.activation_for_key("space").is_none());
 }
 
 #[test]

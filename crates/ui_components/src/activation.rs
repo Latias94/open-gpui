@@ -79,6 +79,10 @@ impl ActivationKeyPolicy {
             _ => None,
         }
     }
+
+    pub(crate) fn accepts(self, key: &str) -> bool {
+        self.resolve(key).is_some()
+    }
 }
 
 type ActivationTransaction = dyn Fn(Activation, &mut Window, &mut App);

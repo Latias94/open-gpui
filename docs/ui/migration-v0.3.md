@@ -72,6 +72,39 @@ free-form errors. It emits typed redaction markers, counts, lifecycle facts, and
 opaque field identities before a `DevtoolsCapture` is constructed. Do not parse DevTools payloads
 for application form data; application and rendering code should consume `FormSnapshot` directly.
 
+## Semantic Activation Authority
+
+Official controls normalize pointer, allowed key-up, AccessKit Click, and programmatic requests
+through one activation transaction. `Activation` carries the typed source, while domain payloads
+carry only the item or value facts required by the callback. Use an `ActivationHandle` for
+application-driven activation instead of synthesizing pointer coordinates or key events.
+
+### Toolbar Activation
+
+`ToolbarSelection` and both `Toolbar::on_select` and `ToolbarItem::on_select` are deleted. Replace
+them with `ToolbarActivation` and `on_activate`, whose callback also receives `Activation`:
+
+```rust
+use open_gpui_ui_components::{ActivationHandle, Toolbar};
+use open_gpui_ui_components::toolbar::ToolbarItem;
+
+let save = ActivationHandle::new();
+let toolbar = Toolbar::new("editor-toolbar", "Editor actions")
+    .item(ToolbarItem::action("save", "Save"))
+    .activation_handle("save", &save)
+    .on_activate(|item, input, window, cx| {
+        dispatch_toolbar_action(item.value(), input.source(), window, cx);
+    });
+```
+
+Action items activate on unmodified Enter or Space key-up. Toggle items activate on Space key-up
+only, and their `pressed()` payload is the caller-owned state from before activation; Toolbar does
+not mutate it. Disabled items share the same gate for every source. An item-level `on_activate`
+handler overrides the toolbar-level fallback, so registering both does not execute an action twice.
+Roving Arrow/Home/End navigation remains a separate focus transaction. Item values must be unique
+within one Toolbar. Duplicate values remain visible but fail closed as disabled and reject every
+activation source rather than letting render order choose a programmatic target.
+
 ## Accessibility Semantic Projection
 
 Official semantic producers now derive an ephemeral `SemanticDescriptor` from their resolved

@@ -171,8 +171,8 @@ pub use crate::toggle_group::{
     ToggleGroupState, toggle_group_navigation_target,
 };
 pub use crate::toolbar::{
-    Toolbar, ToolbarColors, ToolbarItemDescriptor, ToolbarItemKind, ToolbarItemState,
-    ToolbarMetrics, ToolbarSelection, ToolbarState, toolbar_navigation_target,
+    Toolbar, ToolbarActivation, ToolbarColors, ToolbarItemDescriptor, ToolbarItemKind,
+    ToolbarItemState, ToolbarMetrics, ToolbarState, toolbar_navigation_target,
 };
 pub use crate::tooltip::{
     Tooltip, TooltipColors, TooltipContentKind, TooltipDelayPolicy, TooltipMetrics,
