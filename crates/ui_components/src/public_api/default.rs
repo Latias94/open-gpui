@@ -149,7 +149,7 @@ pub use crate::table::{
 };
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
-    TabsSelection, TabsState,
+    TabsSelection, TabsSelectionAuthority, TabsState,
 };
 pub use crate::tag::{Tag, TagColors, TagMetrics, TagRemove, TagState, TagVariant};
 pub use crate::text_input::{

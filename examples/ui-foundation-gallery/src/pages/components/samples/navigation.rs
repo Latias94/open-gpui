@@ -688,7 +688,7 @@ fn tabs_state(
         orientation,
         activation_mode,
         size,
-        Some(selected),
+        TabsSelectionAuthority::Uncontrolled(Some(selected)),
         None,
         items
             .iter()

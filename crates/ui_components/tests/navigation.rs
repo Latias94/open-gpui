@@ -4,16 +4,17 @@ mod a11y_support;
 mod radio;
 
 use open_gpui::{
-    Context, InteractiveElement, IntoElement, ParentElement, Render, ScrollDelta, ScrollWheelEvent,
-    Styled, Window, accesskit, div, point, px,
+    Context, InteractiveElement, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+    ParentElement, Render, ScrollDelta, ScrollWheelEvent, Styled, Window, accesskit, div, point,
+    px,
 };
 use open_gpui_ui_components::{
     ActionDescriptor, Button, CommandItemDescriptor, IconButton, Menu, MenuItem,
     MenuItemDescriptor, ResolvedActionIcon, Sidebar, SidebarCollapseMode, SidebarItemDescriptor,
     SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Tabs,
-    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, ToggleGroup,
-    ToggleGroupItem, Toolbar, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection,
-    ToolbarState, Tooltip,
+    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsSelectionAuthority,
+    TabsState, ToggleGroup, ToggleGroupItem, Toolbar, ToolbarItemDescriptor, ToolbarItemKind,
+    ToolbarSelection, ToolbarState, Tooltip,
     sidebar::SidebarItem,
     sidebar_navigation_target,
     tabs::{active_index_from_str_keys, first_enabled, last_enabled, next_enabled},
@@ -23,6 +24,28 @@ use open_gpui_ui_components::{
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, Toggled, ui_px};
 use std::cell::RefCell;
 use std::rc::Rc;
+
+fn key_down(key: &str) -> KeyDownEvent {
+    KeyDownEvent {
+        keystroke: Keystroke {
+            modifiers: Modifiers::none(),
+            key: key.to_owned(),
+            key_char: None,
+        },
+        is_held: false,
+        prefer_character_input: false,
+    }
+}
+
+fn key_up(key: &str) -> KeyUpEvent {
+    KeyUpEvent {
+        keystroke: Keystroke {
+            modifiers: Modifiers::none(),
+            key: key.to_owned(),
+            key_char: None,
+        },
+    }
+}
 
 use a11y_support::node_with_label as a11y_node_with_label;
 
@@ -159,7 +182,7 @@ fn tabs_state_resolution_tracks_selected_focus_and_tab_stop() {
         Orientation::Vertical,
         TabsActivationMode::Manual,
         Size::Small,
-        Some("security"),
+        TabsSelectionAuthority::Uncontrolled(Some("security")),
         Some("billing"),
         [
             TabsItemDescriptor::new("profile", "Profile"),
@@ -573,7 +596,8 @@ fn tabs_runtime_manual_keyboard_activation_preserves_selected_seed_and_payloads(
         "manual activation should keep the selected panel until Enter or Space"
     );
 
-    cx.simulate_keystrokes("enter");
+    cx.simulate_event(key_down("enter"));
+    cx.simulate_event(key_up("enter"));
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
@@ -587,7 +611,9 @@ fn tabs_runtime_manual_keyboard_activation_preserves_selected_seed_and_payloads(
         "Enter should activate the focused tab after keyboard navigation skips disabled tabs"
     );
 
-    cx.simulate_keystrokes("home enter");
+    cx.simulate_keystrokes("home");
+    cx.simulate_event(key_down("enter"));
+    cx.simulate_event(key_up("enter"));
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
@@ -601,7 +627,9 @@ fn tabs_runtime_manual_keyboard_activation_preserves_selected_seed_and_payloads(
         "Home plus Enter should activate the first enabled tab in manual mode"
     );
 
-    cx.simulate_keystrokes("end space");
+    cx.simulate_keystrokes("end");
+    cx.simulate_event(key_down("space"));
+    cx.simulate_event(key_up("space"));
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });

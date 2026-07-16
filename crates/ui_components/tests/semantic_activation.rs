@@ -67,5 +67,7 @@ mod domain_actions;
 mod handles;
 #[path = "semantic_activation/link.rs"]
 mod link;
+#[path = "semantic_activation/tabs.rs"]
+mod tabs;
 #[path = "semantic_activation/value_controls.rs"]
 mod value_controls;

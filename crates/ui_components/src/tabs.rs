@@ -1,31 +1,21 @@
 //! Tabs component.
 
-use crate::geometry::gpui_px_from_ui;
+mod render;
+
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use open_gpui::prelude::*;
-use open_gpui::{
-    AnyElement, App, ClickEvent, Context, ElementId, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
-    Window, div,
-};
-use open_gpui_ui_core::{
-    AccessibleAction, Orientation, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx,
-    ui_px,
-};
+use open_gpui::{AnyElement, App, ElementId, IntoElement, SharedString, Window};
+use open_gpui_ui_core::{Orientation, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
-use crate::a11y::UiA11yElementExt;
+use crate::activation::ActivationHandle;
 use crate::choice::{
     ChoiceActivationMode, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection,
 };
 use crate::color::{ColorIntent, ColorState};
-use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 pub use crate::roving_focus::{
     active_index_from_str_keys, first_enabled, last_enabled, next_enabled,
 };
-use crate::scroll_area::ScrollArea;
-use crate::theme::ThemeResolver;
 
 const DEFAULT_SURFACE: u32 = 0xffffff;
 const DEFAULT_GHOST_SURFACE: u32 = 0xf1f5ee;
@@ -353,28 +343,81 @@ pub struct TabsState {
     focused_index: Option<usize>,
 }
 
+/// Selection ownership passed to [`TabsState::resolve`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabsSelectionAuthority<'a> {
+    /// Preserve the caller-owned value exactly, including no or unavailable selection.
+    Controlled(Option<&'a str>),
+    /// Resolve an adapter-owned default, falling back according to the tabs policy.
+    Uncontrolled(Option<&'a str>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+enum TabsSelectionControl {
+    #[default]
+    Uncontrolled,
+    Controlled(Option<String>),
+}
+
+impl TabsSelectionControl {
+    fn authority<'a>(
+        &'a self,
+        default_selected_value: Option<&'a str>,
+    ) -> TabsSelectionAuthority<'a> {
+        match self {
+            Self::Uncontrolled => TabsSelectionAuthority::Uncontrolled(default_selected_value),
+            Self::Controlled(value) => TabsSelectionAuthority::Controlled(value.as_deref()),
+        }
+    }
+
+    const fn controlled(&self) -> bool {
+        matches!(self, Self::Controlled(_))
+    }
+
+    fn initial_value(&self, default_selected_value: Option<&String>) -> Option<String> {
+        match self {
+            Self::Uncontrolled => default_selected_value.cloned(),
+            Self::Controlled(value) => value.clone(),
+        }
+    }
+}
+
 impl TabsState {
     /// Resolves the public state for tabs.
     pub fn resolve(
         orientation: Orientation,
         activation_mode: TabsActivationMode,
         size: Size,
-        selected_value: Option<&str>,
+        selection: TabsSelectionAuthority<'_>,
         focused_value: Option<&str>,
         items: impl IntoIterator<Item = TabsItemDescriptor>,
         tokens: ThemeTokens,
     ) -> Self {
         let descriptors: Vec<TabsItemDescriptor> = items.into_iter().collect();
         let policy = tabs_choice_policy(orientation, activation_mode);
+        let selected_value = match selection {
+            TabsSelectionAuthority::Controlled(value)
+            | TabsSelectionAuthority::Uncontrolled(value) => value,
+        };
+        let selected_fallback_value = match selection {
+            TabsSelectionAuthority::Controlled(_) => None,
+            TabsSelectionAuthority::Uncontrolled(_) => focused_value,
+        };
         let collection = ChoiceCollection::resolve_with_selected_fallback(
             false,
             tabs_choice_items(&descriptors),
             selected_value,
-            focused_value,
+            selected_fallback_value,
             focused_value,
             policy,
         );
-        let selected_index = collection.selected_index();
+        let selected_index = match selection {
+            TabsSelectionAuthority::Controlled(Some(value)) => descriptors
+                .iter()
+                .position(|descriptor| descriptor.value() == value),
+            TabsSelectionAuthority::Controlled(None) => None,
+            TabsSelectionAuthority::Uncontrolled(_) => collection.selected_index(),
+        };
         let focused_index = collection.active_index();
         let metrics = TabsMetrics::from_size(size);
         let colors = TabsColors::from_tokens(tokens);
@@ -567,11 +610,13 @@ pub struct Tabs {
     id: ElementId,
     orientation: Orientation,
     activation_mode: TabsActivationMode,
-    selected_value: Option<String>,
+    selection: TabsSelectionControl,
+    default_selected_value: Option<String>,
     size: Size,
     tokens: ThemeTokens,
     items: Vec<TabsItem>,
     on_selection_change: Option<Rc<dyn Fn(TabsSelection, &mut Window, &mut App)>>,
+    activation_handles: BTreeMap<String, ActivationHandle>,
 }
 
 impl Tabs {
@@ -581,11 +626,13 @@ impl Tabs {
             id: id.into(),
             orientation: Orientation::Horizontal,
             activation_mode: TabsActivationMode::Automatic,
-            selected_value: None,
+            selection: TabsSelectionControl::default(),
+            default_selected_value: None,
             size: Size::Medium,
             tokens: ThemeTokens::default(),
             items: Vec::new(),
             on_selection_change: None,
+            activation_handles: BTreeMap::new(),
         }
     }
 
@@ -601,9 +648,15 @@ impl Tabs {
         self
     }
 
+    /// Applies the caller-owned selected tab value.
+    pub fn selected(mut self, value: Option<String>) -> Self {
+        self.selection = TabsSelectionControl::Controlled(value);
+        self
+    }
+
     /// Applies the default selected tab value for adapter-owned runtime state.
     pub fn default_selected(mut self, value: impl Into<String>) -> Self {
-        self.selected_value = Some(value.into());
+        self.default_selected_value = Some(value.into());
         self
     }
 
@@ -628,13 +681,24 @@ impl Tabs {
         self
     }
 
+    /// Binds an application-owned activation handle to one stable tab value.
+    pub fn activation_handle(
+        mut self,
+        value: impl Into<String>,
+        handle: &ActivationHandle,
+    ) -> Self {
+        self.activation_handles.insert(value.into(), handle.clone());
+        self
+    }
+
     /// Returns the resolved state.
     pub fn state(&self) -> TabsState {
         TabsState::resolve(
             self.orientation,
             self.activation_mode,
             self.size,
-            self.selected_value.as_deref(),
+            self.selection
+                .authority(self.default_selected_value.as_deref()),
             None,
             self.items.iter().map(TabsItem::descriptor),
             self.tokens,
@@ -647,441 +711,6 @@ impl Sizable for Tabs {
         self.size = size;
         self
     }
-}
-
-impl RenderOnce for Tabs {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
-        let Tabs {
-            id,
-            orientation,
-            activation_mode,
-            selected_value,
-            size,
-            tokens,
-            items,
-            on_selection_change,
-        } = self;
-        let tabs_id = id.to_string();
-        let panel_id = tabs_panel_id();
-
-        window.with_id(id.clone(), |window| {
-            let descriptors: Vec<TabsItemDescriptor> =
-                items.iter().map(TabsItem::descriptor).collect();
-            let selected_seed = selected_value.clone();
-            let runtime = window.use_keyed_state("runtime", cx, |_, _| TabsRuntime {
-                selected_value: selected_seed.clone(),
-                focused_value: selected_seed,
-                focus_handles: BTreeMap::new(),
-            });
-            let runtime_snapshot = {
-                let runtime = runtime.read(cx);
-                (
-                    runtime.selected_value.clone(),
-                    runtime.focused_value.clone(),
-                )
-            };
-            let state = TabsState::resolve(
-                orientation,
-                activation_mode,
-                size,
-                runtime_snapshot.0.as_deref(),
-                runtime_snapshot.1.as_deref(),
-                descriptors.clone(),
-                tokens,
-            );
-            runtime.update(cx, |runtime, cx| runtime.sync(&state, &descriptors, cx));
-
-            let is_vertical = matches!(orientation, Orientation::Vertical);
-            let tablist_element_id: ElementId = "tablist".into();
-            let tablist_scroll_id = format!("tabs:{tabs_id}:tablist-scroll");
-            let panel_node_id = window.with_global_id(panel_id.clone(), |global_id, _| {
-                global_id.accesskit_node_id()
-            });
-            let tab_node_ids = window.with_id(tablist_element_id.clone(), |window| {
-                let resolve_trigger_ids = |window: &mut Window| {
-                    state
-                        .items()
-                        .iter()
-                        .map(|item| {
-                            window.with_global_id(tabs_trigger_id(item.value()), |global_id, _| {
-                                global_id.accesskit_node_id()
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                };
-
-                if is_vertical {
-                    ScrollArea::with_content_global_id_scope(
-                        window,
-                        &tablist_scroll_id,
-                        resolve_trigger_ids,
-                    )
-                } else {
-                    resolve_trigger_ids(window)
-                }
-            });
-
-            let selected_panel = if let Some(selected_index) = state.selected_index() {
-                items
-                    .into_iter()
-                    .enumerate()
-                    .find_map(|(index, item)| (index == selected_index).then_some(item.panel))
-                    .unwrap_or_else(|| div().into_any_element())
-            } else {
-                div().into_any_element()
-            };
-
-            let item_descriptors = Rc::new(descriptors);
-            let disabled = Rc::new(
-                state
-                    .items()
-                    .iter()
-                    .map(TabsItemState::disabled)
-                    .collect::<Vec<_>>(),
-            );
-            let selected_value = state.selected_value().map(str::to_owned);
-            let selected_index = state.selected_index();
-            let selected_tab_node_id = selected_index.map(|index| tab_node_ids[index]);
-            let selected_tab_node_ids = selected_tab_node_id.into_iter().collect::<Vec<_>>();
-            let tablist_semantics =
-                SemanticDescriptor::new(Role::TabList).with_orientation(orientation);
-            let panel_semantics =
-                SemanticDescriptor::new(Role::TabPanel).with_labelled_by(&selected_tab_node_ids);
-            let colors = state.colors();
-            let metrics = state.metrics();
-            let focus_ring = FocusRing::from_color(colors.focus_ring());
-            let focus_handles = {
-                let runtime = runtime.read(cx);
-                state
-                    .items()
-                    .iter()
-                    .map(|item| runtime.focus_handles.get(item.value()).cloned())
-                    .collect::<Vec<_>>()
-            };
-            let tab_stop_index = state.tab_stop_index();
-            let tab_triggers = state
-                .items()
-                .iter()
-                .enumerate()
-                .map(|(index, item)| {
-                    let descriptor = item_descriptors[index].clone();
-                    let disabled = disabled.clone();
-                    let click_runtime = runtime.clone();
-                    let click_on_selection_change = on_selection_change.clone();
-                    let click_selected_value = selected_value.clone();
-                    let key_runtime = runtime.clone();
-                    let key_on_selection_change = on_selection_change.clone();
-                    let key_selected_value = selected_value.clone();
-                    let key_item_descriptors = item_descriptors.clone();
-                    let item_index = index;
-                    let is_selected = item.selected();
-                    let is_tab_stop = Some(index) == tab_stop_index;
-                    let focus_handle = focus_handles[index].clone();
-                    let tab_border = theme.resolve(if is_selected {
-                        colors.tab_border_selected()
-                    } else {
-                        colors.tab_border()
-                    });
-                    let tab_background = theme.resolve(if is_selected {
-                        colors.tab_background_selected()
-                    } else {
-                        colors.tab_background()
-                    });
-                    let tab_text = theme.resolve(if is_selected {
-                        colors.tab_text()
-                    } else {
-                        colors.tab_text_muted()
-                    });
-                    let tab_hover_background = theme.resolve(colors.tab_hover_background());
-                    let tab_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
-                    let controls = [panel_node_id];
-                    let tab_semantics = SemanticDescriptor::new(Role::Tab)
-                        .with_label(item.label())
-                        .with_selected(is_selected)
-                        .with_disabled(item.disabled())
-                        .with_controls(&controls)
-                        .with_position_in_set(item_index + 1)
-                        .with_size_of_set(state.items().len())
-                        .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
-
-                    div()
-                        .id(tabs_trigger_id(item.value()))
-                        .debug_selector({
-                            let tabs_id = tabs_id.clone();
-                            let value = descriptor.value().to_owned();
-                            move || format!("tabs:{tabs_id}:trigger:{value}")
-                        })
-                        .focusable()
-                        .tab_stop(is_tab_stop)
-                        .when_some(focus_handle, |this, focus_handle| {
-                            this.track_focus(&focus_handle)
-                        })
-                        .ui_semantics_with_relations(&tab_semantics, |node_id| *node_id)
-                        .flex_none()
-                        .min_h(gpui_px_from_ui(metrics.tab_min_height()))
-                        .px(gpui_px_from_ui(metrics.tab_padding_x()))
-                        .py(gpui_px_from_ui(metrics.tab_padding_y()))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(gpui_px_from_ui(metrics.radius()))
-                        .border_1()
-                        .border_color(tab_border)
-                        .bg(tab_background)
-                        .text_size(gpui_px_from_ui(metrics.text_size()))
-                        .line_height(gpui_px_from_ui(metrics.text_size()))
-                        .text_color(tab_text)
-                        .font_weight(if is_selected {
-                            open_gpui::FontWeight::BOLD
-                        } else {
-                            open_gpui::FontWeight::NORMAL
-                        })
-                        .focus_visible(move |style| style.shadow(tab_focus_shadow.clone()))
-                        .when(!item.disabled(), |this| {
-                            this.cursor_pointer()
-                                .hover(move |style| style.bg(tab_hover_background))
-                        })
-                        .when(item.disabled(), |this| {
-                            this.opacity(0.56).cursor_not_allowed()
-                        })
-                        .on_click({
-                            let descriptor = descriptor.clone();
-                            move |_event: &ClickEvent, window, cx| {
-                                if descriptor.disabled_state() {
-                                    return;
-                                }
-
-                                cx.stop_propagation();
-                                let changed =
-                                    click_selected_value.as_deref() != Some(descriptor.value());
-                                let focus_handle = click_runtime.update(cx, |runtime, cx| {
-                                    runtime.set_active(descriptor.value(), cx)
-                                });
-
-                                if changed && let Some(handler) = click_on_selection_change.clone()
-                                {
-                                    handler(
-                                        TabsSelection::from_descriptor(item_index, &descriptor),
-                                        window,
-                                        cx,
-                                    );
-                                }
-
-                                if let Some(focus_handle) = focus_handle {
-                                    focus_handle.focus(window, cx);
-                                }
-                            }
-                        })
-                        .on_key_down({
-                            let descriptor = descriptor.clone();
-                            let disabled = disabled.clone();
-                            move |event: &KeyDownEvent, window, cx| {
-                                if descriptor.disabled_state() {
-                                    return;
-                                }
-                                if event.keystroke.modifiers.modified() {
-                                    return;
-                                }
-
-                                let key = event.keystroke.key.as_str();
-                                let Some(target_index) =
-                                    tabs_choice_policy(orientation, activation_mode)
-                                        .navigation_target_index(key, item_index, &disabled)
-                                else {
-                                    if !matches!(key, "space" | "enter") {
-                                        return;
-                                    }
-
-                                    let changed =
-                                        key_selected_value.as_deref() != Some(descriptor.value());
-                                    let focus_handle = key_runtime.update(cx, |runtime, cx| {
-                                        runtime.set_active(descriptor.value(), cx)
-                                    });
-
-                                    if changed
-                                        && let Some(handler) = key_on_selection_change.clone()
-                                    {
-                                        handler(
-                                            TabsSelection::from_descriptor(item_index, &descriptor),
-                                            window,
-                                            cx,
-                                        );
-                                    }
-
-                                    if let Some(focus_handle) = focus_handle {
-                                        focus_handle.focus(window, cx);
-                                    }
-                                    cx.stop_propagation();
-                                    return;
-                                };
-
-                                let target = &key_item_descriptors[target_index];
-                                let target_value = target.value().to_owned();
-                                let target_selection =
-                                    TabsSelection::from_descriptor(target_index, target);
-                                let activate = tabs_choice_policy(orientation, activation_mode)
-                                    .activation_mode()
-                                    == ChoiceActivationMode::Automatic;
-                                let changed = if activate {
-                                    key_selected_value.as_deref() != Some(target.value())
-                                } else {
-                                    false
-                                };
-                                let focus_handle = key_runtime.update(cx, |runtime, cx| {
-                                    if activate {
-                                        runtime.set_active(&target_value, cx)
-                                    } else {
-                                        runtime.set_focused_only(&target_value, cx)
-                                    }
-                                });
-
-                                if changed && let Some(handler) = key_on_selection_change.clone() {
-                                    handler(target_selection, window, cx);
-                                }
-
-                                if let Some(focus_handle) = focus_handle {
-                                    focus_handle.focus(window, cx);
-                                }
-
-                                cx.stop_propagation();
-                            }
-                        })
-                        .child(descriptor.label().to_string())
-                        .into_any_element()
-                })
-                .collect::<Vec<AnyElement>>();
-            let tablist = if is_vertical {
-                div()
-                    .id(tablist_element_id.clone())
-                    .debug_selector({
-                        let tabs_id = tabs_id.clone();
-                        move || format!("tabs:{tabs_id}:tablist")
-                    })
-                    .ui_semantics(&tablist_semantics)
-                    .flex()
-                    .flex_col()
-                    .flex_none()
-                    .h_full()
-                    .min_h(open_gpui::px(0.0))
-                    .border_r_1()
-                    .border_color(theme.resolve(colors.shell_border()))
-                    .child(
-                        ScrollArea::new(
-                            tablist_scroll_id,
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(gpui_px_from_ui(metrics.tab_gap()))
-                                .p_1()
-                                .children(tab_triggers),
-                        )
-                        .vertical()
-                        .with_size(size),
-                    )
-                    .into_any_element()
-            } else {
-                div()
-                    .id(tablist_element_id)
-                    .debug_selector({
-                        let tabs_id = tabs_id.clone();
-                        move || format!("tabs:{tabs_id}:tablist")
-                    })
-                    .ui_semantics(&tablist_semantics)
-                    .flex()
-                    .flex_none()
-                    .gap(gpui_px_from_ui(metrics.tab_gap()))
-                    .p_1()
-                    .border_color(theme.resolve(colors.shell_border()))
-                    .flex_row()
-                    .flex_wrap()
-                    .border_b_1()
-                    .children(tab_triggers)
-                    .into_any_element()
-            };
-
-            div()
-                .id(id.clone())
-                .w_full()
-                .flex()
-                .rounded(gpui_px_from_ui(metrics.radius()))
-                .border_1()
-                .border_color(theme.resolve(colors.shell_border()))
-                .bg(theme.resolve(colors.shell_background()))
-                .overflow_hidden()
-                .when(is_vertical, |this| this.flex_row().h_full())
-                .when(!is_vertical, |this| this.flex_col())
-                .child(tablist)
-                .child(
-                    div()
-                        .id(panel_id)
-                        .ui_semantics_with_relations(&panel_semantics, |node_id| *node_id)
-                        .flex()
-                        .flex_1()
-                        .min_w(open_gpui::px(0.0))
-                        .border_color(theme.resolve(colors.shell_border()))
-                        .bg(theme.resolve(colors.panel_background()))
-                        .px(gpui_px_from_ui(metrics.panel_padding()))
-                        .py(gpui_px_from_ui(metrics.panel_padding()))
-                        .when(is_vertical, |this| this.min_w(open_gpui::px(0.0)))
-                        .when(!is_vertical, |this| this.border_t_1())
-                        .child(selected_panel),
-                )
-        })
-    }
-}
-
-#[derive(Debug, Default)]
-struct TabsRuntime {
-    selected_value: Option<String>,
-    focused_value: Option<String>,
-    focus_handles: BTreeMap<String, FocusHandle>,
-}
-
-impl TabsRuntime {
-    fn sync(&mut self, state: &TabsState, items: &[TabsItemDescriptor], cx: &mut Context<Self>) {
-        self.focus_handles
-            .retain(|value, _| items.iter().any(|item| item.value() == value));
-
-        for item in items {
-            self.focus_handles
-                .entry(item.value().to_owned())
-                .or_insert_with(|| cx.focus_handle());
-        }
-
-        self.selected_value = state.selected_value().map(str::to_owned);
-        self.focused_value = state.focused_value().map(str::to_owned);
-    }
-
-    fn set_active(&mut self, value: &str, cx: &mut Context<Self>) -> Option<FocusHandle> {
-        let value = value.to_owned();
-        let changed = self.selected_value.as_deref() != Some(value.as_str())
-            || self.focused_value.as_deref() != Some(value.as_str());
-        self.selected_value = Some(value.clone());
-        self.focused_value = Some(value.clone());
-        if changed {
-            cx.notify();
-        }
-        self.focus_handles.get(&value).cloned()
-    }
-
-    fn set_focused_only(&mut self, value: &str, cx: &mut Context<Self>) -> Option<FocusHandle> {
-        let value = value.to_owned();
-        let changed = self.focused_value.as_deref() != Some(value.as_str());
-        self.focused_value = Some(value.clone());
-        if changed {
-            cx.notify();
-        }
-        self.focus_handles.get(&value).cloned()
-    }
-}
-
-fn tabs_panel_id() -> ElementId {
-    "panel".into()
-}
-
-fn tabs_trigger_id(value: &str) -> ElementId {
-    format!("tab-{value}").into()
 }
 
 #[cfg(test)]
@@ -1105,7 +734,7 @@ mod tests {
             Orientation::Horizontal,
             TabsActivationMode::Manual,
             Size::Medium,
-            Some("details"),
+            TabsSelectionAuthority::Uncontrolled(Some("details")),
             Some("history"),
             [
                 TabsItemDescriptor::new("overview", "Overview"),
@@ -1122,5 +751,35 @@ mod tests {
         assert!(state.items()[1].selected());
         assert!(state.items()[1].focused());
         assert_eq!(state.tab_stop_index(), Some(1));
+    }
+
+    #[test]
+    fn controlled_tabs_preserve_empty_or_unavailable_selection() {
+        let items = || {
+            [
+                TabsItemDescriptor::new("overview", "Overview"),
+                TabsItemDescriptor::new("managed", "Managed").disabled(true),
+            ]
+        };
+
+        for selection in [
+            TabsSelectionAuthority::Controlled(None),
+            TabsSelectionAuthority::Controlled(Some("missing")),
+        ] {
+            let state = TabsState::resolve(
+                Orientation::Horizontal,
+                TabsActivationMode::Manual,
+                Size::Medium,
+                selection,
+                None,
+                items(),
+                ThemeTokens::default(),
+            );
+
+            assert_eq!(state.selected_value(), None);
+            assert_eq!(state.focused_value(), Some("overview"));
+            assert_eq!(state.tab_stop_index(), Some(0));
+            assert!(state.items().iter().all(|item| !item.selected()));
+        }
     }
 }

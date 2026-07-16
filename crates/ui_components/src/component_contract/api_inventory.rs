@@ -463,7 +463,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Tabs",
-        controlled_inputs: &[],
+        controlled_inputs: &["selected"],
         default_seeds: &[DefaultSeedApi {
             builder: "default_selected",
             runtime_value: "selected",
@@ -1186,7 +1186,7 @@ pub fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "invalid",
             "busy",
         ],
-        "Tabs" => &["item"],
+        "Tabs" => &["item", "activation_handle"],
         "Splitter" => &["disabled", "motion_preference", "panel"],
         "Table" => &[
             "label",
@@ -1706,10 +1706,12 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "new",
             "orientation",
             "activation_mode",
+            "selected",
             "default_selected",
             "tokens",
             "item",
             "on_selection_change",
+            "activation_handle",
             "state",
         ],
         "ScrollArea" => &[
