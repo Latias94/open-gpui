@@ -220,7 +220,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
                 runtime_value: "focused",
             },
         ],
-        policy_hints: &["orientation", "mode", "selection_required", "item"],
+        policy_hints: &["orientation", "mode", "selection_required"],
         callbacks: &[CallbackApi {
             name: "on_change",
             payload: "ToggleGroupSelectionChange",
@@ -1098,6 +1098,7 @@ pub fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "activation_handle",
         ],
         "Toggle" => &["variant", "disabled", "read_only", "activation_handle"],
+        "ToggleGroup" => &["disabled", "item", "items", "activation_handle"],
         "Toolbar" => &["disabled", "item", "items"],
         "Sidebar" => &["disabled", "section", "sections"],
         "Tree" => &[
@@ -1503,6 +1504,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "item",
             "items",
             "on_change",
+            "activation_handle",
             "state",
         ],
         "Toolbar" => &[

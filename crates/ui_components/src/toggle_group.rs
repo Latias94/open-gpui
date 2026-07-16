@@ -1,25 +1,19 @@
 //! Toggle group component.
 
-use crate::a11y::UiA11yElementExt;
+mod render;
+
 use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
 use crate::choice::{
     self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection, ChoiceSelectionMode,
 };
-use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
-use crate::geometry::gpui_px_from_ui;
+use crate::focus::FocusRing;
 use crate::theme::ThemeResolver;
-use open_gpui::prelude::*;
-use open_gpui::{
-    App, ClickEvent, Context, ElementId, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
-    Window, div,
-};
-use open_gpui_ui_core::{
-    AccessibleAction, Orientation, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, Toggled,
-    UiPx, ui_px,
-};
+use open_gpui::{App, ElementId, IntoElement, SharedString, Window};
+use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_px};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
+
+use crate::activation::ActivationHandle;
 
 /// Selection mode for a toggle group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -187,7 +181,10 @@ impl ToggleGroupItemState {
     }
 }
 
-/// Toggle group selection change payload.
+/// Toggle group selection transition.
+///
+/// The item snapshot describes the activated item before the transition, while
+/// [`Self::selected_values`] contains the next selected stable values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToggleGroupSelectionChange {
     item: ToggleGroupItemState,
@@ -195,15 +192,14 @@ pub struct ToggleGroupSelectionChange {
 }
 
 impl ToggleGroupSelectionChange {
-    /// Creates a selection change payload.
-    pub fn new(item: ToggleGroupItemState, selected_values: Vec<String>) -> Self {
+    fn new(item: ToggleGroupItemState, selected_values: Vec<String>) -> Self {
         Self {
             item,
             selected_values,
         }
     }
 
-    /// Returns the activated item state.
+    /// Returns the activated item's pre-transition state.
     pub const fn item(&self) -> &ToggleGroupItemState {
         &self.item
     }
@@ -374,19 +370,17 @@ impl ToggleGroupState {
             .iter()
             .find(|item| item.value() == value && item.focusable())?
             .clone();
-        let next_selected = choice::next_selected_values(
-            toggle_group_choice_selection_mode(self.mode),
+        resolve_toggle_group_selection_change(
+            self.mode,
             self.selection_required,
             &self.selected_values,
-            item.value(),
-        );
-
-        Some(ToggleGroupSelectionChange::new(item, next_selected))
+            item,
+        )
     }
 
     /// Resolves a selection change for the currently focused item.
     pub fn selection_change_for_key(&self, key: &str) -> Option<ToggleGroupSelectionChange> {
-        if !matches!(key, "enter" | "space") {
+        if key != "space" {
             return None;
         }
 
@@ -434,6 +428,25 @@ fn toggle_group_choice_selection_mode(mode: ToggleGroupSelectionMode) -> ChoiceS
         ToggleGroupSelectionMode::Single => ChoiceSelectionMode::Single,
         ToggleGroupSelectionMode::Multiple => ChoiceSelectionMode::Multiple,
     }
+}
+
+fn resolve_toggle_group_selection_change(
+    mode: ToggleGroupSelectionMode,
+    selection_required: bool,
+    selected_values: &[String],
+    item: ToggleGroupItemState,
+) -> Option<ToggleGroupSelectionChange> {
+    if !item.focusable() {
+        return None;
+    }
+
+    let next_selected = choice::next_selected_values(
+        toggle_group_choice_selection_mode(mode),
+        selection_required,
+        selected_values,
+        item.value(),
+    );
+    (next_selected != selected_values).then(|| ToggleGroupSelectionChange::new(item, next_selected))
 }
 
 fn toggle_group_choice_policy(
@@ -514,6 +527,7 @@ pub struct ToggleGroup {
     tokens: ThemeTokens,
     items: Vec<ToggleGroupItem>,
     on_change: Option<Rc<dyn Fn(ToggleGroupSelectionChange, &mut Window, &mut App)>>,
+    activation_handles: BTreeMap<String, ActivationHandle>,
 }
 
 impl ToggleGroup {
@@ -533,6 +547,7 @@ impl ToggleGroup {
             tokens: ThemeTokens::default(),
             items: Vec::new(),
             on_change: None,
+            activation_handles: BTreeMap::new(),
         }
     }
 
@@ -611,6 +626,16 @@ impl ToggleGroup {
         self
     }
 
+    /// Binds an application-owned activation handle to one stable item value.
+    pub fn activation_handle(
+        mut self,
+        value: impl Into<String>,
+        handle: &ActivationHandle,
+    ) -> Self {
+        self.activation_handles.insert(value.into(), handle.clone());
+        self
+    }
+
     /// Returns the resolved toggle group state.
     pub fn state(&self) -> ToggleGroupState {
         ToggleGroupState::resolve(
@@ -634,360 +659,6 @@ impl Sizable for ToggleGroup {
     fn with_size(mut self, size: Size) -> Self {
         self.size = size;
         self
-    }
-}
-
-impl RenderOnce for ToggleGroup {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
-        let ToggleGroup {
-            id,
-            label,
-            orientation,
-            mode,
-            selected_values,
-            default_selected_values,
-            focused_value,
-            selection_required,
-            disabled,
-            size,
-            tokens,
-            items,
-            on_change,
-        } = self;
-
-        window.with_id(id.clone(), |window| {
-            let label_text = label.to_string();
-            let descriptors: Vec<ToggleGroupItemDescriptor> =
-                items.iter().map(ToggleGroupItem::descriptor).collect();
-            let selected_seed = selected_values
-                .clone()
-                .unwrap_or_else(|| default_selected_values.clone());
-            let focused_seed = focused_value.clone();
-            let runtime = window.use_keyed_state("runtime", cx, |_, _| ToggleGroupRuntime {
-                selected_values: selected_seed,
-                focused_value: focused_seed,
-                focus_handles: BTreeMap::new(),
-            });
-            let (runtime_selected, runtime_focused) = {
-                let runtime = runtime.read(cx);
-                (
-                    runtime.selected_values.clone(),
-                    runtime.focused_value.clone(),
-                )
-            };
-            let state = ToggleGroupState::resolve(
-                orientation,
-                mode,
-                selection_required,
-                disabled,
-                label_text.clone(),
-                selected_values.clone().unwrap_or(runtime_selected),
-                runtime_focused.as_deref(),
-                descriptors.clone(),
-                size,
-                tokens,
-            );
-            runtime.update(cx, |runtime, cx| runtime.sync(&state, &descriptors, cx));
-
-            let metrics = state.metrics();
-            let colors = state.colors();
-            let selected_colors = state.selected_colors();
-            let focus_ring = state.focus_ring();
-            let is_vertical = matches!(orientation, Orientation::Vertical);
-            let disabled_items = Rc::new(
-                state
-                    .items()
-                    .iter()
-                    .map(|item| !item.focusable())
-                    .collect::<Vec<_>>(),
-            );
-            let focus_handles = {
-                let runtime = runtime.read(cx);
-                state
-                    .items()
-                    .iter()
-                    .map(|item| runtime.focus_handles.get(item.value()).cloned())
-                    .collect::<Vec<_>>()
-            };
-            let focusable_set_size = state.items().iter().filter(|item| item.focusable()).count();
-            let tab_stop_index = state.tab_stop_index();
-            let item_descriptors = Rc::new(descriptors);
-            let mut focusable_position = 0usize;
-            let semantics = SemanticDescriptor::new(state.role())
-                .with_label(state.label())
-                .with_orientation(orientation)
-                .with_disabled(state.disabled());
-
-            div()
-                .id(id.clone())
-                .debug_selector({
-                    let debug_id = id.to_string();
-                    move || format!("toggle-group:{debug_id}")
-                })
-                .ui_semantics(&semantics)
-                .flex()
-                .gap(gpui_px_from_ui(metrics.gap()))
-                .p(gpui_px_from_ui(metrics.padding()))
-                .rounded(gpui_px_from_ui(metrics.radius()))
-                .border_1()
-                .border_color(theme.resolve(colors.border()))
-                .bg(theme.resolve(colors.background()))
-                .when(is_vertical, |this| this.flex_col().items_stretch())
-                .when(!is_vertical, |this| this.flex_row().items_center())
-                .children(state.items().iter().enumerate().map(|(index, item)| {
-                    let descriptor = item_descriptors[index].clone();
-                    let click_runtime = runtime.clone();
-                    let key_runtime = runtime.clone();
-                    let click_descriptors = item_descriptors.clone();
-                    let key_descriptors = item_descriptors.clone();
-                    let disabled_items = disabled_items.clone();
-                    let on_click_change = on_change.clone();
-                    let on_key_change = on_change.clone();
-                    let focus_handle = focus_handles[index].clone();
-                    let item_tab_stop = Some(index) == tab_stop_index;
-                    let item_disabled = item.disabled();
-                    let item_selected = item.selected();
-                    let item_label = item.label().to_owned();
-                    let item_value = item.value().to_owned();
-                    let click_label = label_text.clone();
-                    let key_label = label_text.clone();
-                    let item_position = if item.focusable() {
-                        focusable_position += 1;
-                        Some(focusable_position)
-                    } else {
-                        None
-                    };
-                    let item_border = theme.resolve(if item_selected {
-                        selected_colors.border()
-                    } else {
-                        colors.border()
-                    });
-                    let item_background = theme.resolve(if item_selected {
-                        selected_colors.background()
-                    } else {
-                        colors.background()
-                    });
-                    let item_foreground = theme.resolve(if item_selected {
-                        selected_colors.foreground()
-                    } else {
-                        colors.foreground()
-                    });
-                    let item_hover_background = theme.resolve(colors.hover_background());
-                    let item_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
-                    let mut item_semantics = SemanticDescriptor::new(item.role())
-                        .with_label(&item_label)
-                        .with_toggled(item.toggled())
-                        .with_disabled(item_disabled)
-                        .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
-                    if let Some(position) = item_position {
-                        item_semantics = item_semantics
-                            .with_position_in_set(position)
-                            .with_size_of_set(focusable_set_size);
-                    }
-
-                    div()
-                        .id(format!("toggle-group-item:{item_value}"))
-                        .debug_selector({
-                            let group_id = id.to_string();
-                            let item_value = item_value.clone();
-                            move || format!("toggle-group:{group_id}:item:{item_value}")
-                        })
-                        .focusable()
-                        .tab_stop(item_tab_stop)
-                        .ui_semantics(&item_semantics)
-                        .when_some(focus_handle, |this, focus_handle| {
-                            this.track_focus(&focus_handle)
-                        })
-                        .min_h(gpui_px_from_ui(metrics.item().height()))
-                        .px(gpui_px_from_ui(metrics.item().padding_x()))
-                        .py(gpui_px_from_ui(metrics.item().padding_y()))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(gpui_px_from_ui(metrics.item().radius()))
-                        .border_1()
-                        .border_color(item_border)
-                        .bg(item_background)
-                        .text_color(item_foreground)
-                        .text_size(gpui_px_from_ui(metrics.item().text_size()))
-                        .line_height(gpui_px_from_ui(metrics.item().text_size()))
-                        .focus_visible(move |style| style.shadow(item_focus_shadow.clone()))
-                        .when(!item_disabled, |this| {
-                            this.cursor_pointer()
-                                .hover(move |style| style.bg(item_hover_background))
-                        })
-                        .when(item_disabled, |this| {
-                            this.opacity(0.56).cursor_not_allowed()
-                        })
-                        .on_click({
-                            let descriptor = descriptor.clone();
-                            move |_event: &ClickEvent, window, cx| {
-                                if disabled || descriptor.disabled_state() {
-                                    return;
-                                }
-
-                                cx.stop_propagation();
-                                let change = click_runtime.update(cx, |runtime, cx| {
-                                    runtime.activate(
-                                        orientation,
-                                        mode,
-                                        selection_required,
-                                        disabled,
-                                        size,
-                                        tokens,
-                                        click_label.clone(),
-                                        &descriptor,
-                                        &click_descriptors,
-                                        cx,
-                                    )
-                                });
-                                if let Some((change, focus_handle)) = change {
-                                    if let Some(handler) = on_click_change.clone() {
-                                        handler(change, window, cx);
-                                    }
-                                    if let Some(focus_handle) = focus_handle {
-                                        focus_handle.focus(window, cx);
-                                    }
-                                }
-                            }
-                        })
-                        .on_key_down({
-                            let descriptor = descriptor.clone();
-                            move |event: &KeyDownEvent, window, cx| {
-                                if disabled || descriptor.disabled_state() {
-                                    return;
-                                }
-                                if event.keystroke.modifiers.modified() {
-                                    return;
-                                }
-
-                                let key = event.keystroke.key.as_str();
-                                let Some(target_index) = toggle_group_navigation_target(
-                                    orientation,
-                                    key,
-                                    index,
-                                    &disabled_items,
-                                ) else {
-                                    if !matches!(key, "space" | "enter") {
-                                        return;
-                                    }
-
-                                    let change = key_runtime.update(cx, |runtime, cx| {
-                                        runtime.activate(
-                                            orientation,
-                                            mode,
-                                            selection_required,
-                                            disabled,
-                                            size,
-                                            tokens,
-                                            key_label.clone(),
-                                            &descriptor,
-                                            &key_descriptors,
-                                            cx,
-                                        )
-                                    });
-                                    if let Some((change, _)) = change {
-                                        if let Some(handler) = on_key_change.clone() {
-                                            handler(change, window, cx);
-                                        }
-                                    }
-                                    cx.stop_propagation();
-                                    return;
-                                };
-
-                                let target = &key_descriptors[target_index];
-                                let target_value = target.value().to_owned();
-                                let focus_handle = key_runtime.update(cx, |runtime, cx| {
-                                    runtime.set_focused(&target_value, cx)
-                                });
-
-                                if let Some(focus_handle) = focus_handle {
-                                    focus_handle.focus(window, cx);
-                                }
-
-                                cx.stop_propagation();
-                            }
-                        })
-                        .child(item_label)
-                }))
-        })
-    }
-}
-
-#[derive(Debug, Default)]
-struct ToggleGroupRuntime {
-    selected_values: Vec<String>,
-    focused_value: Option<String>,
-    focus_handles: BTreeMap<String, FocusHandle>,
-}
-
-impl ToggleGroupRuntime {
-    fn sync(
-        &mut self,
-        state: &ToggleGroupState,
-        items: &[ToggleGroupItemDescriptor],
-        cx: &mut Context<Self>,
-    ) {
-        self.focus_handles.retain(|value, _| {
-            items
-                .iter()
-                .any(|item| item.value() == value && !item.disabled_state())
-        });
-
-        for item in items.iter().filter(|item| !item.disabled_state()) {
-            self.focus_handles
-                .entry(item.value().to_owned())
-                .or_insert_with(|| cx.focus_handle());
-        }
-
-        self.selected_values = state.selected_values().to_vec();
-        self.focused_value = state.focused_value().map(str::to_owned);
-    }
-
-    fn set_focused(&mut self, value: &str, cx: &mut Context<Self>) -> Option<FocusHandle> {
-        self.focused_value = Some(value.to_owned());
-        self.focus_handles
-            .entry(value.to_owned())
-            .or_insert_with(|| cx.focus_handle())
-            .clone()
-            .into()
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn activate(
-        &mut self,
-        orientation: Orientation,
-        mode: ToggleGroupSelectionMode,
-        selection_required: bool,
-        disabled: bool,
-        size: Size,
-        tokens: ThemeTokens,
-        label: String,
-        descriptor: &ToggleGroupItemDescriptor,
-        items: &[ToggleGroupItemDescriptor],
-        cx: &mut Context<Self>,
-    ) -> Option<(ToggleGroupSelectionChange, Option<FocusHandle>)> {
-        if disabled || descriptor.disabled_state() {
-            return None;
-        }
-
-        let state = ToggleGroupState::resolve(
-            orientation,
-            mode,
-            selection_required,
-            disabled,
-            label,
-            self.selected_values.clone(),
-            Some(descriptor.value()),
-            items.iter().cloned(),
-            size,
-            tokens,
-        );
-        let change = state.selection_change_for_item(descriptor.value())?;
-        self.selected_values = change.selected_values().to_vec();
-        let focus_handle = self.set_focused(descriptor.value(), cx);
-        Some((change, focus_handle))
     }
 }
 
@@ -1049,6 +720,14 @@ mod tests {
 
         let deselect = state.selection_change_for_item("right").unwrap();
         assert!(deselect.selected_values().is_empty());
+        assert!(state.selection_change_for_key("enter").is_none());
+        assert_eq!(
+            state
+                .selection_change_for_key("space")
+                .expect("Space should activate the focused toggle")
+                .selected_values(),
+            deselect.selected_values()
+        );
 
         let select = state.selection_change_for_item("left").unwrap();
         assert_eq!(select.selected_values(), &["left".to_owned()]);
@@ -1078,14 +757,14 @@ mod tests {
     }
 
     #[test]
-    fn selection_required_keeps_last_value() {
+    fn selection_required_suppresses_noop_change() {
         let state = ToggleGroup::new("align", "Alignment")
             .items(sample_items())
             .selected_values(["right"])
             .selection_required(true)
             .state();
 
-        let change = state.selection_change_for_item("right").unwrap();
-        assert_eq!(change.selected_values(), &["right".to_owned()]);
+        assert!(state.selection_change_for_item("right").is_none());
+        assert!(state.selection_change_for_key("space").is_none());
     }
 }
