@@ -57,6 +57,10 @@ fn action_request(
 
 #[path = "semantic_activation/button.rs"]
 mod button;
+#[path = "semantic_activation/disclosure_navigation.rs"]
+mod disclosure_navigation;
+#[path = "semantic_activation/disclosure_ownership.rs"]
+mod disclosure_ownership;
 #[path = "semantic_activation/domain_actions.rs"]
 mod domain_actions;
 #[path = "semantic_activation/handles.rs"]

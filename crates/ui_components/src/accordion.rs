@@ -1,17 +1,18 @@
 //! Accordion component.
 
 use crate::a11y::UiA11yElementExt;
+use crate::activation::{ActivationBinding, ActivationHandle, ActivationKeyPolicy};
 use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
+    App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 /// Accordion selection behavior.
@@ -361,17 +362,43 @@ impl AccordionState {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+enum AccordionOpenControl {
+    #[default]
+    Uncontrolled,
+    Controlled(Vec<String>),
+}
+
+impl AccordionOpenControl {
+    const fn controlled(&self) -> bool {
+        matches!(self, Self::Controlled(_))
+    }
+
+    fn values<'a>(&'a self, default_open_values: &'a [String]) -> &'a [String] {
+        match self {
+            Self::Uncontrolled => default_open_values,
+            Self::Controlled(values) => values,
+        }
+    }
+
+    fn initial_values(&self, default_open_values: &[String]) -> Vec<String> {
+        self.values(default_open_values).to_vec()
+    }
+}
+
 /// A concrete GPUI accordion component.
 #[derive(IntoElement)]
 pub struct Accordion {
     id: ElementId,
     mode: AccordionMode,
     collapsible: bool,
-    open_values: Vec<String>,
+    open_control: AccordionOpenControl,
+    default_open_values: Vec<String>,
     size: Size,
     tokens: ThemeTokens,
     items: Vec<AccordionItem>,
-    on_open_change: Option<Rc<dyn Fn(AccordionOpenChange, &ClickEvent, &mut Window, &mut App)>>,
+    on_open_change: Option<Rc<dyn Fn(AccordionOpenChange, &mut Window, &mut App)>>,
+    activation_handles: BTreeMap<String, ActivationHandle>,
 }
 
 impl Accordion {
@@ -381,11 +408,13 @@ impl Accordion {
             id: id.into(),
             mode: AccordionMode::Single,
             collapsible: false,
-            open_values: Vec::new(),
+            open_control: AccordionOpenControl::default(),
+            default_open_values: Vec::new(),
             size: Size::Medium,
             tokens: ThemeTokens::default(),
             items: Vec::new(),
             on_open_change: None,
+            activation_handles: BTreeMap::new(),
         }
     }
 
@@ -403,7 +432,8 @@ impl Accordion {
 
     /// Sets controlled open values.
     pub fn open_values(mut self, values: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.open_values = values.into_iter().map(Into::into).collect();
+        self.open_control =
+            AccordionOpenControl::Controlled(values.into_iter().map(Into::into).collect());
         self
     }
 
@@ -412,7 +442,7 @@ impl Accordion {
         mut self,
         values: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
-        self.open_values = values.into_iter().map(Into::into).collect();
+        self.default_open_values = values.into_iter().map(Into::into).collect();
         self
     }
 
@@ -431,9 +461,19 @@ impl Accordion {
     /// Registers an open-values change handler.
     pub fn on_open_change(
         mut self,
-        handler: impl Fn(AccordionOpenChange, &ClickEvent, &mut Window, &mut App) + 'static,
+        handler: impl Fn(AccordionOpenChange, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_open_change = Some(Rc::new(handler));
+        self
+    }
+
+    /// Binds an application-owned activation handle to one stable item value.
+    pub fn activation_handle(
+        mut self,
+        value: impl Into<String>,
+        handle: &ActivationHandle,
+    ) -> Self {
+        self.activation_handles.insert(value.into(), handle.clone());
         self
     }
 
@@ -442,7 +482,10 @@ impl Accordion {
         AccordionState::resolve(
             self.mode,
             self.collapsible,
-            self.open_values.iter().map(String::as_str),
+            self.open_control
+                .values(&self.default_open_values)
+                .iter()
+                .map(String::as_str),
             self.items.iter().map(|item| item.descriptor.clone()),
             self.size,
             self.tokens,
@@ -458,26 +501,116 @@ impl Sizable for Accordion {
 }
 
 impl RenderOnce for Accordion {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let Accordion {
+            id,
+            mode,
+            collapsible,
+            open_control,
+            default_open_values,
+            size,
+            tokens,
+            items,
+            on_open_change,
+            activation_handles,
+        } = self;
+        let controlled = open_control.controlled();
+        let initial_open_values = open_control.initial_values(&default_open_values);
+        let runtime = window.use_keyed_state((id.clone(), "open-runtime"), cx, move |_, _| {
+            AccordionRuntime {
+                open_values: initial_open_values,
+            }
+        });
+        let open_values = if controlled {
+            open_control.values(&default_open_values).to_vec()
+        } else {
+            runtime.read(cx).open_values.clone()
+        };
+        let state = AccordionState::resolve(
+            mode,
+            collapsible,
+            open_values.iter().map(String::as_str),
+            items.iter().map(|item| item.descriptor.clone()),
+            size,
+            tokens,
+        );
+        runtime.update(cx, |runtime, _| runtime.sync(&state));
+
         let theme = ThemeResolver::current(cx);
-        let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
         let open_values = state.open_values().to_vec();
-        let on_open_change = self.on_open_change;
-        let id_prefix = self.id.to_string();
+        let activation_owner_id = id.clone();
+        let id_prefix = id.to_string();
+        let root_debug_id = id_prefix.clone();
         let semantics = SemanticDescriptor::new(state.role());
+        let activation_bindings = Rc::new(
+            state
+                .items()
+                .iter()
+                .map(|item| {
+                    if controlled && on_open_change.is_none() {
+                        return None;
+                    }
+
+                    let value = item.value().to_owned();
+                    let rendered_change = AccordionOpenChange::resolve(
+                        state.mode(),
+                        state.collapsible(),
+                        open_values.iter().map(String::as_str),
+                        item,
+                    );
+                    let activation_handle = activation_handles.get(&value).cloned();
+                    let activation_runtime = runtime.clone();
+                    let activation_handler = on_open_change.clone();
+                    let activation_item = item.clone();
+                    let activation_mode = state.mode();
+                    let activation_collapsible = state.collapsible();
+
+                    Some(
+                        ActivationBinding::new(
+                            window,
+                            cx,
+                            (
+                                activation_owner_id.clone(),
+                                format!("item:{value}:activation"),
+                            ),
+                            !item.disabled(),
+                            ActivationKeyPolicy::EnterOrSpace,
+                            move |_, window, cx| {
+                                let change = if controlled {
+                                    rendered_change.clone()
+                                } else {
+                                    activation_runtime.update(cx, |runtime, cx| {
+                                        runtime.toggle(
+                                            activation_mode,
+                                            activation_collapsible,
+                                            &activation_item,
+                                            cx,
+                                        )
+                                    })
+                                };
+                                if let Some(handler) = activation_handler.clone() {
+                                    handler(change, window, cx);
+                                }
+                            },
+                        )
+                        .with_programmatic_handle(activation_handle),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
 
         div()
-            .id(self.id)
-            .debug_selector(move || format!("accordion:{id_prefix}:root"))
+            .id(id)
+            .debug_selector(move || format!("accordion:{root_debug_id}:root"))
             .ui_semantics(&semantics)
             .flex()
             .flex_col()
             .gap_2()
             .children(
-                self.items
+                items
                     .into_iter()
                     .enumerate()
                     .map(move |(index, item)| {
@@ -489,15 +622,11 @@ impl RenderOnce for Accordion {
                         let disabled = item_state.disabled();
                         let open = item_state.open();
                         let value = item_state.value().to_owned();
-                        let change = AccordionOpenChange::resolve(
-                            state.mode(),
-                            state.collapsible(),
-                            open_values.iter().map(String::as_str),
-                            &item_state,
-                        );
+                        let activation = activation_bindings[index].clone();
+                        let trigger_debug_id = id_prefix.clone();
+                        let trigger_debug_value = value.clone();
                         let item_focus_ring = focus_ring;
                         let item_colors = colors;
-                        let item_on_change = on_open_change.clone();
                         let item_focus_shadow =
                             focus_ring_shadow_with_theme(item_focus_ring, &theme);
                         let item_border = theme.resolve(item_colors.border());
@@ -509,7 +638,8 @@ impl RenderOnce for Accordion {
                         let item_foreground = theme.resolve(item_colors.foreground());
                         let item_hover_background = theme.resolve(item_colors.hover_background());
                         let content_background = theme.resolve(item_colors.background());
-                        let trigger_actions: &[AccessibleAction] = if item_on_change.is_some() {
+                        let trigger_actions: &[AccessibleAction] =
+                            if activation.is_some() && !disabled {
                             &[AccessibleAction::Click, AccessibleAction::Focus]
                         } else {
                             &[AccessibleAction::Focus]
@@ -529,6 +659,11 @@ impl RenderOnce for Accordion {
                             .child(
                                 div()
                                     .id(format!("accordion:{value}:trigger"))
+                                    .debug_selector(move || {
+                                        format!(
+                                            "accordion:{trigger_debug_id}:item:{trigger_debug_value}:trigger"
+                                        )
+                                    })
                                     .min_h(gpui_px_from_ui(metrics.height()))
                                     .px(gpui_px_from_ui(metrics.padding_x()))
                                     .py(gpui_px_from_ui(metrics.padding_y()))
@@ -554,14 +689,8 @@ impl RenderOnce for Accordion {
                                         this.cursor_pointer()
                                             .hover(move |style| style.bg(item_hover_background))
                                     })
-                                    .when_some(item_on_change.filter(|_| !disabled), {
-                                        let change = change.clone();
-                                        move |this, on_open_change| {
-                                            this.on_click(move |event, window, cx| {
-                                                cx.stop_propagation();
-                                                on_open_change(change.clone(), event, window, cx);
-                                            })
-                                        }
+                                    .when_some(activation, |this, activation| {
+                                        activation.bind(this)
                                     })
                                     .child(div().flex_1().child(label))
                                     .child(if open { "v" } else { ">" }),
@@ -582,6 +711,46 @@ impl RenderOnce for Accordion {
                             .into_any_element()
                     }),
             )
+    }
+}
+
+#[derive(Debug)]
+struct AccordionRuntime {
+    open_values: Vec<String>,
+}
+
+impl AccordionRuntime {
+    fn sync(&mut self, state: &AccordionState) {
+        self.open_values = state.open_values().to_vec();
+    }
+
+    fn commit(&mut self, open_values: &[String], cx: &mut open_gpui::Context<Self>) {
+        if self.open_values.as_slice() != open_values {
+            self.open_values = open_values.to_vec();
+            cx.notify();
+        }
+    }
+
+    fn toggle(
+        &mut self,
+        mode: AccordionMode,
+        collapsible: bool,
+        item: &AccordionItemState,
+        cx: &mut open_gpui::Context<Self>,
+    ) -> AccordionOpenChange {
+        let mut live_item = item.clone();
+        live_item.open = self
+            .open_values
+            .iter()
+            .any(|value| value == live_item.value());
+        let change = AccordionOpenChange::resolve(
+            mode,
+            collapsible,
+            self.open_values.iter().map(String::as_str),
+            &live_item,
+        );
+        self.commit(change.open_values(), cx);
+        change
     }
 }
 

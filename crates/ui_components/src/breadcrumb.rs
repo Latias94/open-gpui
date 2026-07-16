@@ -1,18 +1,20 @@
 //! Breadcrumb navigation component.
 
 use crate::a11y::UiA11yElementExt;
+use crate::activation::{Activation, ActivationBinding, ActivationHandle, ActivationKeyPolicy};
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
+    App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
     AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 /// Pure descriptor for one breadcrumb item.
@@ -397,7 +399,8 @@ pub struct Breadcrumb {
     size: Size,
     tokens: ThemeTokens,
     items: Vec<BreadcrumbItemDescriptor>,
-    on_activate: Option<Rc<dyn Fn(BreadcrumbActivation, &ClickEvent, &mut Window, &mut App)>>,
+    on_activate: Option<Rc<dyn Fn(BreadcrumbActivation, Activation, &mut Window, &mut App)>>,
+    activation_handles: BTreeMap<String, ActivationHandle>,
 }
 
 impl Breadcrumb {
@@ -411,6 +414,7 @@ impl Breadcrumb {
             tokens: ThemeTokens::default(),
             items: Vec::new(),
             on_activate: None,
+            activation_handles: BTreeMap::new(),
         }
     }
 
@@ -441,9 +445,19 @@ impl Breadcrumb {
     /// Registers an activation handler.
     pub fn on_activate(
         mut self,
-        handler: impl Fn(BreadcrumbActivation, &ClickEvent, &mut Window, &mut App) + 'static,
+        handler: impl Fn(BreadcrumbActivation, Activation, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_activate = Some(Rc::new(handler));
+        self
+    }
+
+    /// Binds an application-owned activation handle to one stable item value.
+    pub fn activation_handle(
+        mut self,
+        value: impl Into<String>,
+        handle: &ActivationHandle,
+    ) -> Self {
+        self.activation_handles.insert(value.into(), handle.clone());
         self
     }
 
@@ -467,19 +481,24 @@ impl Sizable for Breadcrumb {
 }
 
 impl RenderOnce for Breadcrumb {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
         let on_activate = self.on_activate.clone();
+        let activation_owner_id = self.id.clone();
+        let activation_handles = self.activation_handles;
+        let debug_id = self.id.to_string();
+        let root_debug_id = debug_id.clone();
         let semantics = SemanticDescriptor::new(state.role())
             .with_label(state.label())
             .with_disabled(state.disabled());
 
         div()
             .id(self.id)
+            .debug_selector(move || format!("breadcrumb:{root_debug_id}:root"))
             .ui_semantics(&semantics)
             .flex()
             .items_center()
@@ -497,12 +516,21 @@ impl RenderOnce for Breadcrumb {
                     );
                 }
 
-                let activation = item.activation();
                 let disabled = item.disabled();
                 let current = item.current();
+                let activation_enabled = item.activation_enabled();
+                let item_activation = item.activation();
+                let activation_handle = activation_handles.get(item.value()).cloned();
+                let activation_state_key: ElementId = (
+                    activation_owner_id.clone(),
+                    format!("item:{}:activation", item.value()),
+                )
+                    .into();
                 let label = item.label().to_owned();
                 let item_role = item.role();
                 let on_activate = on_activate.clone();
+                let item_debug_id = debug_id.clone();
+                let item_debug_value = item.value().to_owned();
                 let item_text = theme.resolve(if current {
                     colors.current_text()
                 } else {
@@ -511,7 +539,7 @@ impl RenderOnce for Breadcrumb {
                 let item_hover_text = theme.resolve(colors.current_text());
                 let item_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
                 let item_actions: &[AccessibleAction] =
-                    if on_activate.is_some() && activation.is_some() {
+                    if on_activate.is_some() && activation_enabled {
                         &[AccessibleAction::Click, AccessibleAction::Focus]
                     } else {
                         &[AccessibleAction::Focus]
@@ -524,6 +552,9 @@ impl RenderOnce for Breadcrumb {
                 elements.push(
                     div()
                         .id(format!("breadcrumb-item:{}", item.value()))
+                        .debug_selector(move || {
+                            format!("breadcrumb:{item_debug_id}:item:{item_debug_value}")
+                        })
                         .px(gpui_px_from_ui(metrics.padding_x()))
                         .py(gpui_px_from_ui(metrics.padding_y()))
                         .rounded(gpui_px_from_ui(metrics.radius()))
@@ -540,15 +571,22 @@ impl RenderOnce for Breadcrumb {
                                 .hover(move |style| style.text_color(item_hover_text))
                         })
                         .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
-                        .when_some(
-                            on_activate.zip(activation),
-                            |this, (on_activate, activation)| {
-                                this.on_click(move |event, window, cx| {
-                                    cx.stop_propagation();
-                                    on_activate(activation.clone(), event, window, cx);
-                                })
-                            },
-                        )
+                        .when_some(on_activate, |this, on_activate| {
+                            ActivationBinding::new(
+                                window,
+                                cx,
+                                activation_state_key,
+                                activation_enabled,
+                                ActivationKeyPolicy::Enter,
+                                move |activation, window, cx| {
+                                    if let Some(item_activation) = item_activation.clone() {
+                                        on_activate(item_activation, activation, window, cx);
+                                    }
+                                },
+                            )
+                            .with_programmatic_handle(activation_handle)
+                            .bind(this)
+                        })
                         .child(label)
                         .into_any_element(),
                 );

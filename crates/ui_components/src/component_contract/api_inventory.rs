@@ -77,7 +77,7 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         policy_hints: &["item", "disabled"],
         callbacks: &[CallbackApi {
             name: "on_activate",
-            payload: "BreadcrumbActivation",
+            payload: "(BreadcrumbActivation, Activation)",
         }],
         renderer_neutral_state: true,
         no_interaction_note: None,
@@ -1320,6 +1320,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "item",
             "tokens",
             "on_open_change",
+            "activation_handle",
             "state",
         ],
         "Button" => &[
@@ -1348,6 +1349,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "content",
             "tokens",
             "on_open_change",
+            "activation_handle",
             "state",
         ],
         "Link" => &[
@@ -1366,6 +1368,7 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "items",
             "tokens",
             "on_activate",
+            "activation_handle",
             "state",
         ],
         "Tag" => &[

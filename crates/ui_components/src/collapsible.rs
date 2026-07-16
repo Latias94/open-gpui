@@ -1,13 +1,14 @@
 //! Collapsible disclosure component.
 
 use crate::a11y::UiA11yElementExt;
+use crate::activation::{ActivationBinding, ActivationHandle, ActivationKeyPolicy};
 use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
+    AnyElement, App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{AccessibleAction, Role, SemanticDescriptor, Sizable, Size, ThemeTokens};
@@ -109,17 +110,39 @@ impl CollapsibleState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum CollapsibleOpenControl {
+    #[default]
+    Uncontrolled,
+    Controlled(bool),
+}
+
+impl CollapsibleOpenControl {
+    const fn controlled(self) -> bool {
+        matches!(self, Self::Controlled(_))
+    }
+
+    const fn value(self, default_open: bool) -> bool {
+        match self {
+            Self::Uncontrolled => default_open,
+            Self::Controlled(open) => open,
+        }
+    }
+}
+
 /// A concrete GPUI collapsible disclosure.
 #[derive(IntoElement)]
 pub struct Collapsible {
     id: ElementId,
     label: SharedString,
-    open: bool,
+    open_control: CollapsibleOpenControl,
+    default_open: bool,
     disabled: bool,
     size: Size,
     tokens: ThemeTokens,
     content: Option<AnyElement>,
-    on_open_change: Option<Rc<dyn Fn(bool, &ClickEvent, &mut Window, &mut App)>>,
+    on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
+    activation_handle: Option<ActivationHandle>,
 }
 
 impl Collapsible {
@@ -128,24 +151,26 @@ impl Collapsible {
         Self {
             id: id.into(),
             label: label.into(),
-            open: false,
+            open_control: CollapsibleOpenControl::default(),
+            default_open: false,
             disabled: false,
             size: Size::Medium,
             tokens: ThemeTokens::default(),
             content: None,
             on_open_change: None,
+            activation_handle: None,
         }
     }
 
     /// Sets the controlled open state.
     pub fn open(mut self, open: bool) -> Self {
-        self.open = open;
+        self.open_control = CollapsibleOpenControl::Controlled(open);
         self
     }
 
     /// Seeds the initial open state for uncontrolled callers.
     pub fn default_open(mut self, open: bool) -> Self {
-        self.open = open;
+        self.default_open = open;
         self
     }
 
@@ -170,9 +195,15 @@ impl Collapsible {
     /// Registers an open-state change handler.
     pub fn on_open_change(
         mut self,
-        handler: impl Fn(bool, &ClickEvent, &mut Window, &mut App) + 'static,
+        handler: impl Fn(bool, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_open_change = Some(Rc::new(handler));
+        self
+    }
+
+    /// Binds an application-owned programmatic activation handle.
+    pub fn activation_handle(mut self, handle: &ActivationHandle) -> Self {
+        self.activation_handle = Some(handle.clone());
         self
     }
 
@@ -180,7 +211,7 @@ impl Collapsible {
     pub fn state(&self) -> CollapsibleState {
         CollapsibleState::resolve(
             self.label.to_string(),
-            self.open,
+            self.open_control.value(self.default_open),
             self.disabled,
             self.size,
             self.tokens,
@@ -196,24 +227,70 @@ impl Sizable for Collapsible {
 }
 
 impl RenderOnce for Collapsible {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let Collapsible {
+            id,
+            label,
+            open_control,
+            default_open,
+            disabled,
+            size,
+            tokens,
+            content,
+            on_open_change,
+            activation_handle,
+        } = self;
+        let controlled = open_control.controlled();
+        let initial_open = open_control.value(default_open);
+        let runtime = window.use_keyed_state((id.clone(), "open-runtime"), cx, move |_, _| {
+            CollapsibleRuntime { open: initial_open }
+        });
+        let open = if controlled {
+            open_control.value(default_open)
+        } else {
+            runtime.read(cx).open
+        };
+        let state = CollapsibleState::resolve(label.to_string(), open, disabled, size, tokens);
+        runtime.update(cx, |runtime, _| runtime.sync(&state));
+
         let theme = ThemeResolver::current(cx);
-        let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
         let open = state.open();
         let next_open = state.next_open();
-        let label = self.label.clone();
-        let content_id = format!("{}:content", self.id);
-        let debug_id = self.id.to_string();
+        let content_id = format!("{id}:content");
+        let debug_id = id.to_string();
+        let root_debug_id = debug_id.clone();
         let border_color = theme.resolve(colors.border());
         let background = theme.resolve(colors.background());
         let foreground = theme.resolve(colors.foreground());
         let hover_background = theme.resolve(colors.hover_background());
         let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
-        let trigger_actions: &[AccessibleAction] = if self.on_open_change.is_some() {
+        let activation = (!controlled || on_open_change.is_some()).then(|| {
+            let activation_runtime = runtime.clone();
+            let activation_handler = on_open_change.clone();
+            ActivationBinding::new(
+                window,
+                cx,
+                (id.clone(), "activation"),
+                !disabled,
+                ActivationKeyPolicy::EnterOrSpace,
+                move |_, window, cx| {
+                    let requested_open = if controlled {
+                        next_open
+                    } else {
+                        activation_runtime.update(cx, CollapsibleRuntime::toggle)
+                    };
+                    if let Some(handler) = activation_handler.clone() {
+                        handler(requested_open, window, cx);
+                    }
+                },
+            )
+            .with_programmatic_handle(activation_handle)
+        });
+        let trigger_actions: &[AccessibleAction] = if activation.is_some() && !disabled {
             &[AccessibleAction::Click, AccessibleAction::Focus]
         } else {
             &[AccessibleAction::Focus]
@@ -226,14 +303,18 @@ impl RenderOnce for Collapsible {
         let content_semantics = SemanticDescriptor::new(state.content_role());
 
         div()
-            .id(self.id)
-            .debug_selector(move || format!("collapsible:{debug_id}:root"))
+            .id(id)
+            .debug_selector(move || format!("collapsible:{root_debug_id}:root"))
             .flex()
             .flex_col()
             .gap_2()
             .child(
                 div()
                     .id(format!("{content_id}:trigger"))
+                    .debug_selector({
+                        let debug_id = debug_id.clone();
+                        move || format!("collapsible:{debug_id}:trigger")
+                    })
                     .min_h(gpui_px_from_ui(metrics.height()))
                     .px(gpui_px_from_ui(metrics.padding_x()))
                     .py(gpui_px_from_ui(metrics.padding_y()))
@@ -257,19 +338,11 @@ impl RenderOnce for Collapsible {
                         this.cursor_pointer()
                             .hover(move |style| style.bg(hover_background))
                     })
-                    .when_some(
-                        self.on_open_change.filter(|_| !disabled),
-                        |this, on_change| {
-                            this.on_click(move |event, window, cx| {
-                                cx.stop_propagation();
-                                on_change(next_open, event, window, cx);
-                            })
-                        },
-                    )
+                    .when_some(activation, |this, activation| activation.bind(this))
                     .child(div().flex_1().child(label))
                     .child(if open { "v" } else { ">" }),
             )
-            .when_some(self.content.filter(|_| open), move |this, content| {
+            .when_some(content.filter(|_| open), move |this, content| {
                 this.child(
                     div()
                         .id(content_id)
@@ -282,6 +355,30 @@ impl RenderOnce for Collapsible {
                         .child(content),
                 )
             })
+    }
+}
+
+#[derive(Debug)]
+struct CollapsibleRuntime {
+    open: bool,
+}
+
+impl CollapsibleRuntime {
+    fn sync(&mut self, state: &CollapsibleState) {
+        self.open = state.open();
+    }
+
+    fn commit(&mut self, open: bool, cx: &mut open_gpui::Context<Self>) {
+        if self.open != open {
+            self.open = open;
+            cx.notify();
+        }
+    }
+
+    fn toggle(&mut self, cx: &mut open_gpui::Context<Self>) -> bool {
+        let open = !self.open;
+        self.commit(open, cx);
+        open
     }
 }
 
