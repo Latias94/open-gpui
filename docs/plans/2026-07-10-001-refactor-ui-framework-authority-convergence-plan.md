@@ -758,7 +758,7 @@ The complete Theme v1 replaces the old color-only payload and schema with an imm
 - breaking migration documentation for workspace call sites
 - existing theme xtask scanners
 - `docs/ui/migration-v0.3.md`
-- `docs/knowledge/engineering/decisions/` for amending the Theme Scope ADR with v2/revision/compatibility decisions
+- `docs/knowledge/engineering/decisions/` for amending the Theme Scope ADR with complete-v1 revision and clean-break decisions
 
 **Behavioral work**
 
@@ -782,7 +782,7 @@ The complete Theme v1 replaces the old color-only payload and schema with an imm
 
 **Deletion/replacement**
 
-- Delete color-only in-memory authority and production-only fallback paths superseded by v2.
+- Delete color-only in-memory authority and production-only fallback paths superseded by the complete replacement v1.
 - Remove stable cross-family magic metrics only when recipes consume the replacement token.
 - Delete the old color-only schema/model, obsolete fixtures, and any compatibility parsing branch.
 - Do not move motion execution out of `open-gpui-motion`.
@@ -865,7 +865,8 @@ Narrow typed authorities own facts at their natural lifecycle: `COMPONENT_CONTRA
 - Derive only shared product metadata in Gallery/DevTools from contract rows; their runtime selectors, probes, and inspection data remain locally owned.
 - Split common public exports from explicit extended/diagnostic modules.
 - Characterize Table consumers; keep `Table`, core state/resolved state, engine, and adapter public. Move diagnostic-only behavior snapshots out of root/common prelude only when the census confirms no intended common API use.
-- Calibrate Table characterization against the local TanStack reference boundary and the completed post-U5 contract: preserve `core -> filtered -> grouped -> sorted -> expanded -> paginated -> final` ordering, stable typed row/column IDs across transforms, client/manual ownership for the stages Open GPUI exposes, exact row-identity pinning plus explicitly named business-ID bulk targets, caller-owned pinned-region order, pinning as a partition of logical rows/columns rather than new identities, and the Table/Virtualizer ownership split. Unsupported TanStack features, pre-U5 implicit identity behavior, and full API parity remain out of scope.
+- Calibrate Table characterization against the local TanStack reference boundary and the completed post-U5/U6 contract: preserve `core -> filtered -> grouped -> sorted -> expanded -> paginated -> final` ordering, stable typed row/column IDs across transforms, client/manual ownership for the stages Open GPUI exposes, exact source-identity selection and callbacks, controlled expansion refusal, exact row-identity pinning plus explicitly named business-ID bulk targets, caller-owned pinned-region order, pinning as a partition of logical rows/columns rather than new identities, and the Table/Virtualizer ownership split. Unsupported TanStack features, pre-U5 implicit identity behavior, atoms/plugin registries, and full API parity remain out of scope.
+- Keep `TableVirtualizerSnapshot` public as a real restoration input. Move `TableBehaviorSnapshot` and `TableStateCacheKey` out of root/common exports only when the consumer census confirms their diagnostic/owner-module roles; do not delete their underlying contracts merely to shrink an export list.
 - Update conformance migration notes and the relevant ADR 0014 amendment/reaffirmation in this unit.
 
 **Test scenarios**
@@ -874,8 +875,9 @@ Narrow typed authorities own facts at their natural lifecycle: `COMPONENT_CONTRA
 - A final-tree role or activation matrix mismatch fails an executable probe; changing evidence text cannot repair it.
 - Comments, aliases, grouped exports, formatting, and braces cannot affect structured checks.
 - Gallery and DevTools receive the same contract ID/revision/family metadata without moving their runtime-specific facts into the component contract.
-- Table filter/sort/group/expand/paginate/pin/virtualize/edit outputs, logical identities, partial-order behavior, and exposed client/manual stage ownership remain behaviorally identical to the post-U5 checkpoint through export cleanup.
+- Table filter/sort/group/expand/paginate/pin/virtualize/edit outputs, logical identities, partial-order behavior, and exposed client/manual stage ownership remain behaviorally identical to the post-U5/U6 checkpoint through export cleanup.
 - Duplicate Table source row IDs remain explicitly diagnosed and stably disambiguated by source-instance identity; no duplicate may collide in virtualizer keys or final accessibility nodes.
+- Exact selection state and `TableRowSelectionChange::current_selection` distinguish duplicate source instances, descendant propagation follows the exact selected parent, and a refused pointer/keyboard expansion request cannot create hidden adapter state.
 - Exact pin targets distinguish duplicate source instances and typed group rows; explicit business-ID bulk targets expand in current model order and caller target order controls each pinned region. Top targets resolve first, and identities claimed by top are excluded from bottom.
 
 **Deletion/replacement**
@@ -884,6 +886,7 @@ Narrow typed authorities own facts at their natural lifecycle: `COMPONENT_CONTRA
 - Delete only the empty `COMPONENT_A11Y_EVIDENCE` type/export and conformance-gate scaffolding left after U5; reopening semantic-claim or consumer deletion belongs to U5 rather than delayed U10 cleanup.
 - Delete shallow source mapping/owner tables and source-string parsers once structured owner/export facts can be queried directly.
 - Delete duplicate default/common re-export lists where one public API owner can generate or structurally validate them.
+- Delete unused row-model version-label constants or `implemented_in_v0` flags that merely restate the executable stage pipeline.
 - Do not recreate ADR 0014's deleted JSON registry/scaffold product.
 - Preserve native nextest isolation, Table engine, neutral a11y vocabulary, and Action presentation authority.
 
