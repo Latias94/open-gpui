@@ -313,13 +313,23 @@ impl ActivationBinding {
         self.dispatch(ActivationSource::Programmatic, window, cx)
     }
 
+    /// Binds only the programmatic request seam and retains it with the rendered element.
+    pub(crate) fn bind_programmatic<E>(self, element: E) -> E
+    where
+        E: StatefulInteractiveElement + Sized,
+    {
+        if self.bind_programmatic_handle() {
+            element.retain_for_frame(self.dispatcher)
+        } else {
+            element
+        }
+    }
+
     pub(crate) fn bind<E>(self, element: E) -> E
     where
         E: StatefulInteractiveElement + Sized,
     {
-        if let Some(handle) = self.programmatic_handle.as_ref() {
-            handle.bind(self.window_id, &self.dispatcher);
-        }
+        self.bind_programmatic_handle();
 
         let pointer = self.clone();
         let pointer_down = self.clone();
@@ -425,6 +435,14 @@ impl ActivationBinding {
             .on_ui_a11y_action(AccessibleAction::Click, move |_, window, cx| {
                 accessibility.dispatch(ActivationSource::Accessibility, window, cx);
             })
+    }
+
+    fn bind_programmatic_handle(&self) -> bool {
+        let Some(handle) = self.programmatic_handle.as_ref() else {
+            return false;
+        };
+        handle.bind(self.window_id, &self.dispatcher);
+        true
     }
 }
 

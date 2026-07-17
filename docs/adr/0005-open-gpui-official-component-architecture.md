@@ -3,6 +3,13 @@
 **Status**: Proposed
 **Date**: 2026-06-15
 
+> **Partially superseded (2026-07-16):** The callback payload, role-specific keyboard policy,
+> activation-source normalization, and exactly-once transaction shape proposed by this ADR are now
+> governed by [Semantic activation authority](../knowledge/engineering/decisions/semantic-activation-authority.md).
+> That decision intentionally replaces generic click-shaped official APIs with typed semantic
+> activation and value intent. This ADR's adapter-first, headless-ready architecture and the
+> remaining component contract stay in force.
+
 ## Context
 
 ADR 0004 decided that Open GPUI should have an official component ecosystem outside the core

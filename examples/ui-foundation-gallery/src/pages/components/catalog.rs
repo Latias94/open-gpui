@@ -498,6 +498,7 @@ fn official_story_state_readout_selector(name: &'static str) -> Option<&'static 
         "Select" => Some("gallery:component-select-sample:priority-select:state"),
         "Combobox" => Some("gallery:component-combobox-sample:framework-combobox:state"),
         "Command" => Some("gallery:component-command-sample:ranked-search:state"),
+        "Sidebar" => Some("gallery:component-sidebar-sample:workspace-sidebar:runtime"),
         _ => None,
     }
 }
@@ -627,7 +628,7 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "Sidebar",
         "shell",
         "SidebarState",
-        "exports / gallery / scroll smoke",
+        "exports / gallery / activation runtime / duplicate smoke",
         "gallery:component-sidebar-sample:workspace-sidebar",
     ),
     ComponentCatalogEntry::contract_sample(
@@ -869,6 +870,17 @@ const CHOICE_STORY_PROBES: &[StoryProbeContract] = &[
     StoryProbeContract::new(ReadPublicPayload, "state", "resolved choice state"),
 ];
 
+const SIDEBAR_STORY_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Activate, "navigation item", "typed activation runtime log"),
+    StoryProbeContract::new(Focus, "active item", "roving focus"),
+    StoryProbeContract::new(Scroll, "navigation viewport", "stable sample position"),
+    StoryProbeContract::new(
+        ReadPublicPayload,
+        "runtime readout",
+        "SidebarActivation and ActivationSource",
+    ),
+];
+
 const TEXT_STORY_PROBES: &[StoryProbeContract] = &[
     StoryProbeContract::new(Edit, "input", "edited text"),
     StoryProbeContract::new(Focus, "input", "input focus"),
@@ -930,8 +942,9 @@ fn component_story_probes(entry: &ComponentCatalogEntry) -> &'static [StoryProbe
     match entry.status {
         ComponentCatalogStatus::StateContract => STATE_CONTRACT_STORY_PROBES,
         ComponentCatalogStatus::Official => match entry.name {
+            "Sidebar" => SIDEBAR_STORY_PROBES,
             "Listbox" | "Select" | "Combobox" | "Command" | "RadioGroup" | "ToggleGroup"
-            | "Tabs" | "Toolbar" | "Sidebar" => CHOICE_STORY_PROBES,
+            | "Tabs" | "Toolbar" => CHOICE_STORY_PROBES,
             "TextInput" | "Textarea" | "Field" | "NumberInput" | "Slider" => TEXT_STORY_PROBES,
             "Table" => TABLE_STORY_PROBES,
             "Tree" => TREE_STORY_PROBES,

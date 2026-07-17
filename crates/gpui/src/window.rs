@@ -3299,6 +3299,7 @@ impl Window {
         PrepaintStateIndex {
             hitboxes_index: self.next_frame.hitboxes.len(),
             pointer_capture_bindings_index: self.next_frame.pointer_capture_bindings.len(),
+            retained_resources_index: self.next_frame.retained_resources.len(),
             prepaint_commits_index: self.next_frame.prepaint_commits.len(),
             tooltips_index: self.next_frame.tooltip_requests.len(),
             deferred_draws_index: self.next_frame.deferred_draws.len(),
@@ -3329,6 +3330,12 @@ impl Window {
             );
             self.next_frame.pointer_capture_bindings.push(binding);
         }
+        self.next_frame.retained_resources.extend(
+            self.rendered_frame.retained_resources
+                [range.start.retained_resources_index..range.end.retained_resources_index]
+                .iter()
+                .cloned(),
+        );
         self.next_frame.prepaint_commits.extend(
             self.rendered_frame.prepaint_commits
                 [range.start.prepaint_commits_index..range.end.prepaint_commits_index]
@@ -3621,6 +3628,9 @@ impl Window {
             self.next_frame
                 .pointer_capture_bindings
                 .truncate(index.pointer_capture_bindings_index);
+            self.next_frame
+                .retained_resources
+                .truncate(index.retained_resources_index);
             self.next_frame
                 .prepaint_commits
                 .truncate(index.prepaint_commits_index);

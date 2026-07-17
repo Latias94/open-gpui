@@ -644,6 +644,18 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Retains an arbitrary resource for the lifetime of this element's rendered frame.
+    ///
+    /// This keeps non-event state alive without registering an inert input listener. Cached
+    /// subtrees retain the resource through their prepaint journal, and failed prepaint
+    /// transactions discard it with the rest of the subtree.
+    fn retain_for_frame<T: 'static>(mut self, resource: T) -> Self {
+        self.interactivity()
+            .retained_resources
+            .push(Rc::new(resource));
+        self
+    }
+
     /// Assign this element an ID, so that it can be used with interactivity
     fn id(mut self, id: impl Into<ElementId>) -> Stateful<Self> {
         self.interactivity().element_id = Some(id.into());
@@ -2291,6 +2303,7 @@ pub struct Interactivity {
     pub(crate) tracked_focus_handle: Option<FocusHandle>,
     pub(crate) tracked_pointer_capture_handle: Option<PointerCaptureHandle>,
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
+    pub(crate) retained_resources: Vec<Rc<dyn Any>>,
     pub(crate) scroll_anchor: Option<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) group: Option<SharedString>,
@@ -2441,6 +2454,10 @@ impl Interactivity {
         f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut Window, &mut App) -> R,
     ) -> R {
         self.content_size = content_size;
+        window
+            .next_frame
+            .retained_resources
+            .append(&mut self.retained_resources);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         window.with_inspector_state(
@@ -4484,7 +4501,83 @@ mod tests {
         AppContext as _, Context, InputEvent, MouseMoveEvent, ScrollDelta, TestAppContext,
         VisualContext as _, util::FluentBuilder as _,
     };
-    use std::rc::Weak;
+    use std::{cell::Cell, rc::Weak};
+
+    struct RetainedResourceDropProbe(Rc<Cell<usize>>);
+
+    impl Drop for RetainedResourceDropProbe {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    struct RetainedResourceChild {
+        renders: Rc<Cell<usize>>,
+        drops: Rc<Cell<usize>>,
+    }
+
+    impl Render for RetainedResourceChild {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div()
+                .size_full()
+                .retain_for_frame(RetainedResourceDropProbe(self.drops.clone()))
+        }
+    }
+
+    struct RetainedResourceRoot {
+        child: Entity<RetainedResourceChild>,
+        show_child: bool,
+    }
+
+    impl Render for RetainedResourceRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().when(self.show_child, |root| {
+                root.child(
+                    AnyView::from(self.child.clone())
+                        .cached(StyleRefinement::default().size_full()),
+                )
+            })
+        }
+    }
+
+    #[test]
+    fn retained_frame_resources_survive_cached_prepaint_and_release_after_unmount() {
+        let mut test_app = TestAppContext::single();
+        let renders = Rc::new(Cell::new(0));
+        let drops = Rc::new(Cell::new(0));
+        let (root, cx) = test_app.add_window_view({
+            let renders = renders.clone();
+            let drops = drops.clone();
+            move |_, cx| RetainedResourceRoot {
+                child: cx.new(|_| RetainedResourceChild { renders, drops }),
+                show_child: true,
+            }
+        });
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert_eq!(renders.get(), 1);
+        assert_eq!(drops.get(), 0);
+
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert_eq!(renders.get(), 1, "the child should reuse cached prepaint");
+        assert_eq!(
+            drops.get(),
+            0,
+            "cached prepaint must retain the resource into the next frame"
+        );
+
+        root.update(cx, |root, cx| {
+            root.show_child = false;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert_eq!(
+            drops.get(),
+            1,
+            "unmount should release the old frame resource"
+        );
+    }
 
     #[test]
     fn scroll_primitives_support_unkeyed_interactive_elements() {

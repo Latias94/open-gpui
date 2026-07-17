@@ -1,5 +1,7 @@
 //! Shared helpers for stable-value choice surfaces.
 
+use std::collections::BTreeMap;
+
 use open_gpui_ui_core::Orientation;
 
 use crate::roving_focus::{first_enabled, last_enabled, next_enabled};
@@ -13,6 +15,7 @@ pub(crate) struct ChoiceItemProjection<T> {
     label: String,
     text_value: Option<String>,
     disabled: bool,
+    ambiguous_value: bool,
     item: T,
 }
 
@@ -33,6 +36,7 @@ impl<T> ChoiceItemProjection<T> {
             label: label.into(),
             text_value: None,
             disabled,
+            ambiguous_value: false,
             item,
         }
     }
@@ -71,6 +75,11 @@ impl<T> ChoiceItemProjection<T> {
     /// Returns whether this item can be focused or selected.
     pub(crate) const fn enabled(&self) -> bool {
         !self.disabled
+    }
+
+    /// Returns whether this value occurs more than once in a uniqueness-enforcing collection.
+    pub(crate) const fn ambiguous_value(&self) -> bool {
+        self.ambiguous_value
     }
 
     /// Returns the original item payload.
@@ -243,6 +252,10 @@ impl ChoiceInteractionPolicy {
     }
 
     fn item_addressable<T>(self, item: &ChoiceItemProjection<T>) -> bool {
+        if item.ambiguous_value() {
+            return false;
+        }
+
         match self.disabled_item_strategy {
             ChoiceDisabledItemStrategy::Skip => item.enabled(),
             ChoiceDisabledItemStrategy::Include => true,
@@ -310,6 +323,22 @@ impl<T> ChoiceCollection<T> {
             policy,
         );
         Self::from_resolved(disabled, items, selection, policy)
+    }
+
+    /// Resolves a collection whose stable values must be globally unique.
+    ///
+    /// Every occurrence of an ambiguous value remains present but fails closed for selection,
+    /// focus, and activation. Callers may inspect [`ChoiceItemProjection::ambiguous_value`] to
+    /// project diagnostics without reimplementing value counting.
+    pub(crate) fn resolve_unique(
+        disabled: bool,
+        mut items: Vec<ChoiceItemProjection<T>>,
+        selected_value: Option<&str>,
+        active_value: Option<&str>,
+        policy: ChoiceInteractionPolicy,
+    ) -> Self {
+        mark_ambiguous_values(&mut items);
+        Self::resolve(disabled, items, selected_value, active_value, policy)
     }
 
     /// Resolves a collection with a secondary selected-value candidate.
@@ -413,6 +442,20 @@ impl<T> ChoiceCollection<T> {
         }
 
         typeahead_target_with_policy(self.items(), self.active_index(), query, self.policy)
+    }
+}
+
+fn mark_ambiguous_values<T>(items: &mut [ChoiceItemProjection<T>]) {
+    let value_counts = items.iter().fold(BTreeMap::new(), |mut counts, item| {
+        *counts.entry(item.value.clone()).or_insert(0usize) += 1;
+        counts
+    });
+
+    for item in items {
+        item.ambiguous_value = value_counts
+            .get(item.value())
+            .is_some_and(|count| *count > 1);
+        item.disabled |= item.ambiguous_value;
     }
 }
 
@@ -818,6 +861,50 @@ mod tests {
             Some("alpha")
         );
         assert_eq!(collection.disabled_map(), vec![false, true, false]);
+    }
+
+    #[test]
+    fn unique_collection_keeps_ambiguous_values_visible_but_unaddressable() {
+        let collection = ChoiceCollection::resolve_unique(
+            false,
+            vec![
+                ChoiceItemProjection::new(0, Some(0), "shared", "First", false, ()),
+                ChoiceItemProjection::new(1, Some(1), "shared", "Second", false, ()),
+                ChoiceItemProjection::new(2, Some(1), "unique", "Unique", false, ()),
+            ],
+            Some("shared"),
+            Some("shared"),
+            ChoiceInteractionPolicy::single_optional(Orientation::Vertical),
+        );
+
+        assert_eq!(collection.selected_value(), None);
+        assert_eq!(collection.active_value(), Some("unique"));
+        assert_eq!(collection.disabled_map(), vec![true, true, false]);
+        assert!(collection.items()[0].ambiguous_value());
+        assert!(collection.items()[1].ambiguous_value());
+        assert!(!collection.items()[2].ambiguous_value());
+    }
+
+    #[test]
+    fn unique_collection_never_includes_ambiguous_values_as_disabled_targets() {
+        let collection = ChoiceCollection::resolve_unique(
+            false,
+            vec![
+                ChoiceItemProjection::new(0, Some(0), "shared", "First", false, ()),
+                ChoiceItemProjection::new(1, Some(1), "shared", "Second", false, ()),
+                ChoiceItemProjection::new(2, Some(1), "unique", "Unique", false, ()),
+            ],
+            Some("shared"),
+            Some("shared"),
+            ChoiceInteractionPolicy::single_optional(Orientation::Vertical)
+                .with_typeahead(true)
+                .with_disabled_item_strategy(ChoiceDisabledItemStrategy::Include),
+        );
+
+        assert_eq!(collection.selected_value(), None);
+        assert_eq!(collection.active_value(), Some("unique"));
+        assert_eq!(collection.disabled_map(), vec![true, true, false]);
+        assert!(collection.typeahead_target("first").is_none());
     }
 
     #[test]

@@ -835,12 +835,41 @@ fn sidebar_state_exposes_shell_navigation_contract() {
         state.navigation_target("down").map(|item| item.value()),
         Some("settings")
     );
-    assert_eq!(
-        state
-            .activation_for_key("enter")
-            .map(|selection| selection.value().to_owned()),
-        Some("projects".to_string())
+}
+
+#[test]
+fn sidebar_state_fails_closed_for_duplicate_values() {
+    let state = SidebarState::resolve(
+        SidebarSide::Left,
+        SidebarVariant::Docked,
+        SidebarCollapseMode::Icon,
+        false,
+        false,
+        "Duplicate navigation",
+        Some("duplicate"),
+        Some("duplicate"),
+        [SidebarSectionDescriptor::new("main", "Main").items([
+            SidebarItemDescriptor::new("duplicate", "Duplicate first"),
+            SidebarItemDescriptor::new("duplicate", "Duplicate second"),
+            SidebarItemDescriptor::new("unique", "Unique"),
+        ])],
+        Size::Medium,
+        ThemeTokens::default(),
     );
+
+    assert_eq!(state.selected_value(), None);
+    assert_eq!(state.focused_value(), Some("unique"));
+    assert_eq!(state.focused_index(), Some(2));
+    assert_eq!(state.items()[2].position_in_set(), Some(1));
+    assert_eq!(state.items()[2].size_of_set(), 1);
+
+    for duplicate in &state.items()[..2] {
+        assert!(duplicate.duplicate_value());
+        assert!(!duplicate.focusable());
+        assert!(!duplicate.activation_enabled());
+        assert_eq!(duplicate.position_in_set(), None);
+        assert_eq!(duplicate.size_of_set(), 0);
+    }
 }
 
 #[test]
@@ -898,7 +927,6 @@ fn sidebar_offcanvas_collapse_removes_items_from_roving_focus() {
     assert_eq!(state.focused_index(), None);
     assert!(!state.scrollable());
     assert!(!state.items()[0].focusable());
-    assert!(state.activation_for_key("space").is_none());
 }
 
 #[open_gpui::test]
@@ -934,7 +962,7 @@ fn sidebar_long_navigation_scrolls_inside_shared_scroll_area(cx: &mut open_gpui:
         .debug_bounds("sidebar:long-sidebar")
         .expect("sidebar shell should be rendered");
     let sidebar_viewport = cx
-        .debug_bounds("scroll-area:long-sidebar-scroll")
+        .debug_bounds("scroll-area:sidebar:long-sidebar:scroll")
         .expect("long Sidebar should use the shared ScrollArea viewport");
 
     assert!(

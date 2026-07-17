@@ -633,8 +633,11 @@ application responsibilities; toolbar items render resolved action facts supplie
 effective collapsed state, accessible label, sections, flattened navigation items, disabled state,
 resolved action icon facts, shortcut, disabled reason, tooltip, accessibility description,
 selected item, focused item, tab stop, scrollability, metrics, colors, and focus-ring intent. It
-keeps selection app-owned; activating an item produces a `SidebarSelection` payload but does not
-own routing or persistent preferences.
+keeps selection app-owned; activating an item produces a `SidebarActivation` payload plus the
+normalized `Activation` input but does not own routing or persistent preferences. Selected and
+focused projection is resolved by the shared `ChoiceCollection` single-optional vertical policy.
+Stable item values must be unique across every section. Duplicate values remain visible but fail
+closed as disabled, non-focusable, and non-addressable items.
 
 Icon collapse keeps navigation items visible and focusable while hiding visible text; item labels
 remain explicit accessibility labels. Offcanvas collapse removes items from roving focus by making
@@ -642,10 +645,17 @@ them invisible and non-focusable. `SidebarCollapseMode::None` ignores collapsed 
 expanded width. Disabled items are skipped by the shared vertical roving-focus helper and cannot
 produce activation payloads.
 
-The GPUI `Sidebar` adapter owns focus handles, click and keyboard dispatch, concrete rendering,
-scroll handles through `ScrollArea`, and AccessKit mapping. It should expose `Role::Navigation` on
-the container, `Role::Section` for groups, explicit item labels, selected and disabled metadata,
-and set-position metadata for focusable items.
+The GPUI `Sidebar` adapter owns focus handles, concrete rendering, scroll handles through
+`ScrollArea`, and AccessKit mapping. Pointer, unmodified Enter/Space key-up, AccessKit Click, and
+`ActivationHandle` requests converge through one `ActivationBinding`; Arrow/Home/End remain focus
+navigation only. An item-level `SidebarItem::on_activate` handler replaces the Sidebar fallback so
+one intent invokes exactly one domain callback. Disabled, duplicate, whole-Sidebar-disabled, and
+offcanvas items reject every activation source through the same gate. It should expose
+`Role::Navigation` on the container, `Role::Section` for groups, explicit item labels, selected and
+disabled metadata, and set-position metadata only for focusable items. Structured occurrence
+identities keep duplicate section and item nodes disjoint without colliding with legal values. A
+redraw transfers physical focus to the resolved fallback only when a previously focused Sidebar
+handle became invalid; external window focus is preserved.
 Long Sidebar navigation uses the shared local scroll primitive so wheel input stays inside the
 sidebar viewport instead of leaking to the outer Components page.
 

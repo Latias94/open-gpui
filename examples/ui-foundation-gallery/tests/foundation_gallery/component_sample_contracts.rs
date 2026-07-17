@@ -661,13 +661,27 @@ fn components_page_sidebar_samples_expose_navigation_contract() {
         workspace.navigation_target("down").map(|item| item.value()),
         Some("inbox")
     );
-    assert_eq!(
-        workspace
-            .activation_for_key("enter")
-            .map(|selection| selection.value().to_owned()),
-        Some("projects".to_string())
-    );
     assert!(workspace.items().iter().any(|item| item.disabled()));
+    let duplicate_items = workspace
+        .items()
+        .iter()
+        .filter(|item| item.duplicate_value())
+        .collect::<Vec<_>>();
+    assert_eq!(duplicate_items.len(), 2);
+    assert!(duplicate_items.iter().all(|item| !item.focusable()));
+    assert!(
+        duplicate_items
+            .iter()
+            .all(|item| !item.activation_enabled())
+    );
+    let authored_duplicates = samples[0]
+        .sections
+        .iter()
+        .flat_map(|section| &section.items)
+        .filter(|item| item.value == "duplicate-probe")
+        .collect::<Vec<_>>();
+    assert_eq!(authored_duplicates.len(), 2);
+    assert!(authored_duplicates.iter().all(|item| !item.disabled));
 
     assert_eq!(
         icon.metrics().resolved_width(),

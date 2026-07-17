@@ -107,6 +107,10 @@ pub(super) fn render_components_section(
                                 .map(|sample| {
                                     let state = sample.state.clone();
                                     let title = state.label().to_owned();
+                                    let last_activation = cx.read_global::<
+                                        pages::components::SidebarSampleRuntimeLog,
+                                        _,
+                                    >(|log, _| log.last_for(sample.id).cloned());
                                     let mut sidebar = Sidebar::new(
                                         format!("component-sidebar:{}", sample.id),
                                         state.label(),
@@ -123,31 +127,40 @@ pub(super) fn render_components_section(
                                     if let Some(focused) = state.focused_value() {
                                         sidebar = sidebar.default_focused(focused);
                                     }
-                                    for section in state.sections() {
+                                    for section in &sample.sections {
                                         let mut sidebar_section =
-                                            SidebarSection::new(section.value(), section.label());
-                                        for item in state
-                                            .items()
-                                            .iter()
-                                            .filter(|item| item.section_index() == section.index())
-                                        {
+                                            SidebarSection::new(section.value, section.label);
+                                        for item in &section.items {
                                             let mut sidebar_item =
-                                                SidebarItem::new(item.value(), item.label());
-                                            if let Some(icon) = item.icon_label() {
+                                                SidebarItem::new(item.value, item.label);
+                                            if !item.icon.is_empty() {
+                                                let icon = item.icon;
                                                 sidebar_item = sidebar_item.icon(icon);
                                             }
-                                            if let Some(badge) = item.badge_label() {
+                                            if let Some(badge) = item.badge {
                                                 sidebar_item = sidebar_item.badge(badge);
                                             }
-                                            if let Some(action_label) = item.action_label_text() {
+                                            if let Some(action_label) = item.action_label {
                                                 sidebar_item =
                                                     sidebar_item.action_label(action_label);
                                             }
                                             sidebar_section = sidebar_section
-                                                .item(sidebar_item.disabled(item.disabled()));
+                                                .item(sidebar_item.disabled(item.disabled));
                                         }
                                         sidebar = sidebar.section(sidebar_section);
                                     }
+                                    let sample_id = sample.id;
+                                    sidebar = sidebar.on_activate(
+                                        move |activation, input, window, cx| {
+                                            pages::components::record_sidebar_activation(
+                                                sample_id,
+                                                activation,
+                                                input.source(),
+                                                cx,
+                                            );
+                                            window.refresh();
+                                        },
+                                    );
 
                                     div()
                                         .id(format!("component-sidebar-sample:{}", sample.id))
@@ -199,7 +212,11 @@ pub(super) fn render_components_section(
                                                 })
                                                 .child(sidebar),
                                         )
-                                        .child(component_sidebar_state_row(&state))
+                                        .child(component_sidebar_state_row(
+                                            sample.id,
+                                            &state,
+                                            last_activation.as_ref(),
+                                        ))
                                 }),
                         ),
                     ),

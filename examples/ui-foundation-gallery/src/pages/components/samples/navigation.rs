@@ -174,6 +174,8 @@ pub struct SidebarSample {
     pub id: &'static str,
     /// Sample summary.
     pub summary: &'static str,
+    /// Authored sections used to exercise the component's own resolution path.
+    pub sections: Vec<SidebarSectionSample>,
     /// Resolved state.
     pub state: SidebarState,
 }
@@ -482,6 +484,14 @@ pub fn sidebar_samples(tokens: ThemeTokens) -> [SidebarSample; 3] {
                     action_label: None,
                     disabled: true,
                 },
+                SidebarItemSample {
+                    value: "duplicate-probe",
+                    label: "Duplicate workspace",
+                    icon: "W",
+                    badge: None,
+                    action_label: None,
+                    disabled: false,
+                },
             ],
         },
         SidebarSectionSample {
@@ -502,6 +512,14 @@ pub fn sidebar_samples(tokens: ThemeTokens) -> [SidebarSample; 3] {
                     icon: "B",
                     badge: None,
                     action_label: Some("new"),
+                    disabled: false,
+                },
+                SidebarItemSample {
+                    value: "duplicate-probe",
+                    label: "Duplicate account",
+                    icon: "A",
+                    badge: None,
+                    action_label: None,
                     disabled: false,
                 },
             ],
@@ -627,7 +645,8 @@ pub fn sidebar_samples(tokens: ThemeTokens) -> [SidebarSample; 3] {
     [
         SidebarSample {
             id: "workspace-sidebar",
-            summary: "Expanded docked navigation with sections, badges, and one disabled item.",
+            summary: "Expanded navigation with one explicit disabled item and a cross-section duplicate pair that fails closed.",
+            sections: workspace_sections.clone(),
             state: sidebar_state(
                 SidebarSide::Left,
                 SidebarVariant::Docked,
@@ -644,6 +663,7 @@ pub fn sidebar_samples(tokens: ThemeTokens) -> [SidebarSample; 3] {
         SidebarSample {
             id: "icon-sidebar",
             summary: "Icon collapse hides visible text while preserving explicit item labels.",
+            sections: icon_sections.clone(),
             state: sidebar_state(
                 SidebarSide::Left,
                 SidebarVariant::Inset,
@@ -660,6 +680,7 @@ pub fn sidebar_samples(tokens: ThemeTokens) -> [SidebarSample; 3] {
         SidebarSample {
             id: "long-sidebar",
             summary: "Constrained long navigation remains scrollable and skips disabled items.",
+            sections: long_sections.clone(),
             state: sidebar_state(
                 SidebarSide::Right,
                 SidebarVariant::Floating,

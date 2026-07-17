@@ -10,7 +10,11 @@ use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use open_gpui_collections::FxHashMap;
 use smallvec::SmallVec;
-use std::{any::TypeId, ops::Range, rc::Rc};
+use std::{
+    any::{Any, TypeId},
+    ops::Range,
+    rc::Rc,
+};
 
 use super::{
     AnyMouseListener, AnyPointerCancelListener, ContentMask, CursorStyleRequest, ElementStateBox,
@@ -53,6 +57,7 @@ pub(crate) struct Frame {
     pub(crate) image_paint_diagnostics: Vec<ImagePaintDiagnostic>,
     pub(crate) hitboxes: Vec<Hitbox>,
     pub(crate) pointer_capture_bindings: Vec<(PointerCaptureId, HitboxId)>,
+    pub(crate) retained_resources: Vec<Rc<dyn Any>>,
     pub(crate) prepaint_commits: Vec<Rc<dyn Fn(u64, &mut App)>>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
@@ -74,6 +79,7 @@ pub(crate) struct Frame {
 pub(crate) struct PrepaintStateIndex {
     pub(super) hitboxes_index: usize,
     pub(super) pointer_capture_bindings_index: usize,
+    pub(super) retained_resources_index: usize,
     pub(super) prepaint_commits_index: usize,
     pub(super) tooltips_index: usize,
     pub(super) deferred_draws_index: usize,
@@ -112,6 +118,7 @@ impl Frame {
             image_paint_diagnostics: Vec::new(),
             hitboxes: Vec::new(),
             pointer_capture_bindings: Vec::new(),
+            retained_resources: Vec::new(),
             prepaint_commits: Vec::new(),
             window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
@@ -148,6 +155,7 @@ impl Frame {
         self.cursor_styles.clear();
         self.hitboxes.clear();
         self.pointer_capture_bindings.clear();
+        self.retained_resources.clear();
         self.prepaint_commits.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();

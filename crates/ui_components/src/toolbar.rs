@@ -502,25 +502,9 @@ impl ToolbarState {
         tokens: ThemeTokens,
     ) -> Self {
         let descriptors: Vec<ToolbarItemDescriptor> = items.into_iter().collect();
-        let duplicate_values = {
-            let value_counts = descriptors
-                .iter()
-                .fold(BTreeMap::new(), |mut counts, item| {
-                    *counts.entry(item.value()).or_insert(0usize) += 1;
-                    counts
-                });
-            descriptors
-                .iter()
-                .map(|item| {
-                    value_counts
-                        .get(item.value())
-                        .is_some_and(|count| *count > 1)
-                })
-                .collect::<Vec<_>>()
-        };
-        let collection = ChoiceCollection::resolve(
+        let collection = ChoiceCollection::resolve_unique(
             disabled,
-            toolbar_choice_items(disabled, descriptors, duplicate_values),
+            toolbar_choice_items(disabled, descriptors),
             None,
             focused_value,
             ChoiceInteractionPolicy::roving(orientation),
@@ -534,7 +518,8 @@ impl ToolbarState {
             .map(|projection| {
                 let index = projection.source_index();
                 let item_disabled = !projection.enabled();
-                let (descriptor, duplicate_value) = projection.into_item();
+                let duplicate_value = projection.ambiguous_value();
+                let descriptor = projection.into_item();
                 let focused = Some(index) == focused_index;
 
                 ToolbarItemState {
@@ -669,13 +654,11 @@ pub fn toolbar_navigation_target(
 fn toolbar_choice_items(
     disabled: bool,
     items: Vec<ToolbarItemDescriptor>,
-    duplicate_values: Vec<bool>,
-) -> Vec<ChoiceItemProjection<(ToolbarItemDescriptor, bool)>> {
+) -> Vec<ChoiceItemProjection<ToolbarItemDescriptor>> {
     items
         .into_iter()
-        .zip(duplicate_values)
         .enumerate()
-        .map(|(index, (item, duplicate_value))| {
+        .map(|(index, item)| {
             let value = item.value().to_owned();
             let label = item.label().to_owned();
             ChoiceItemProjection::new(
@@ -683,8 +666,8 @@ fn toolbar_choice_items(
                 None,
                 value,
                 label.clone(),
-                disabled || !item.focusable() || duplicate_value,
-                (item, duplicate_value),
+                disabled || !item.focusable(),
+                item,
             )
             .text_value(label)
         })

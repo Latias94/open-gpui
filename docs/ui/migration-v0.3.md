@@ -104,6 +104,41 @@ handler overrides the toolbar-level fallback, so registering both does not execu
 Roving Arrow/Home/End navigation remains a separate focus transaction. Item values must be unique
 within one Toolbar. Duplicate values remain visible but fail closed as disabled and reject every
 activation source rather than letting render order choose a programmatic target.
+Diagnostic selectors for duplicate occurrences end in `:snapshot:<opaque-token>`. Treat them as
+current-snapshot probes: do not construct or persist the token, and reacquire the selector after an
+authored item reorder.
+Custom view tooltip closures are not mounted for duplicate Toolbar values because closure contents
+cannot provide stable authored identity. Use a text tooltip or unique item values instead.
+
+### Sidebar Activation
+
+`SidebarSelection`, `Sidebar::on_selection_change`, and `SidebarItem::on_select` are deleted.
+Replace them with `SidebarActivation` and `on_activate`; bind application-driven activation by
+stable item value:
+
+```rust
+use open_gpui_ui_components::{ActivationHandle, Sidebar, SidebarSection};
+use open_gpui_ui_components::sidebar::SidebarItem;
+
+let settings = ActivationHandle::new();
+let sidebar = Sidebar::new("app-sidebar", "Application navigation")
+    .section(
+        SidebarSection::new("account", "Account")
+            .item(SidebarItem::new("settings", "Settings")),
+    )
+    .activation_handle("settings", &settings)
+    .on_activate(|item, input, window, cx| {
+        navigate(item.value(), input.source(), window, cx);
+    });
+```
+
+Pointer, Enter/Space key-up, AccessKit Click, and programmatic requests now share one transaction.
+The callback observes caller-owned `selected()` state from before activation. Item-level handlers
+override the Sidebar fallback. Item values must be globally unique across sections; duplicates stay
+visible but are disabled, non-focusable, and blocked for programmatic activation. Offcanvas and
+disabled Sidebars bind handles as blocked rather than dispatching or selecting an arbitrary item.
+Duplicate section and item selectors likewise carry an opaque current-snapshot suffix so a stale
+selector, AccessKit node id, or activation state key cannot silently retarget after reorder.
 
 ## Accessibility Semantic Projection
 

@@ -1,28 +1,18 @@
 //! Sidebar component.
 
-use crate::geometry::gpui_px_from_ui;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use open_gpui::prelude::FluentBuilder;
-use open_gpui::{
-    App, ClickEvent, Context, ElementId, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
-    Window, div, px,
-};
-use open_gpui_ui_core::{
-    AccessibleAction, Orientation, Role, SemanticDescriptor, Sizable, Size, ThemeTokens, UiPx,
-    ui_px,
-};
+use open_gpui::{App, ElementId, IntoElement, SharedString, Window};
+use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
-use crate::a11y::UiA11yElementExt;
 use crate::action::{ActionIconDescriptor, ResolvedActionIcon, ResolvedActionState};
+use crate::activation::{Activation, ActivationHandle};
+use crate::choice::{ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
 use crate::color::{ColorIntent, ColorState};
-use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
-use crate::roving_focus::roving_navigation_target;
-use crate::scroll_area::ScrollArea;
-use crate::theme::ThemeResolver;
-use crate::tooltip::Tooltip;
+use crate::focus::FocusRing;
+
+mod render;
 
 const DEFAULT_SURFACE: u32 = 0xffffff;
 const DEFAULT_FLOATING_SURFACE: u32 = 0xf8faf6;
@@ -632,6 +622,7 @@ pub struct SidebarItemState {
     action_label: Option<String>,
     disabled: bool,
     disabled_reason: Option<String>,
+    duplicate_value: bool,
     shortcut: Option<String>,
     tooltip: Option<String>,
     accessibility_description: Option<String>,
@@ -697,6 +688,14 @@ impl SidebarItemState {
         self.disabled_reason.as_deref()
     }
 
+    /// Returns whether this item shares its stable value with another sidebar item.
+    ///
+    /// Duplicate values fail closed because value-addressed focus and programmatic activation
+    /// would otherwise be ambiguous across sections.
+    pub const fn duplicate_value(&self) -> bool {
+        self.duplicate_value
+    }
+
     /// Returns the display shortcut label.
     pub fn shortcut(&self) -> Option<&str> {
         self.shortcut.as_deref()
@@ -748,53 +747,25 @@ impl SidebarItemState {
     }
 }
 
-/// Resolved sidebar selection payload.
+/// Resolved sidebar activation payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SidebarSelection {
-    index: usize,
-    section_index: usize,
-    item_index: usize,
+pub struct SidebarActivation {
     value: String,
-    label: String,
     selected: bool,
 }
 
-impl SidebarSelection {
-    /// Creates a selection payload from a resolved item.
-    pub fn from_item(item: &SidebarItemState) -> Option<Self> {
-        item.activation_enabled().then(|| Self {
-            index: item.index,
-            section_index: item.section_index,
-            item_index: item.item_index,
+impl SidebarActivation {
+    /// Creates an activation payload from a resolved item.
+    fn for_item(item: &SidebarItemState) -> Self {
+        Self {
             value: item.value.clone(),
-            label: item.label.clone(),
             selected: item.selected,
-        })
+        }
     }
 
-    /// Returns the flattened item index.
-    pub const fn index(&self) -> usize {
-        self.index
-    }
-
-    /// Returns the zero-based section index.
-    pub const fn section_index(&self) -> usize {
-        self.section_index
-    }
-
-    /// Returns the zero-based item index within the section.
-    pub const fn item_index(&self) -> usize {
-        self.item_index
-    }
-
-    /// Returns the selected item value.
+    /// Returns the activated item value.
     pub fn value(&self) -> &str {
         &self.value
-    }
-
-    /// Returns the selected item label.
-    pub fn label(&self) -> &str {
-        &self.label
     }
 
     /// Returns whether the item was already selected when activated.
@@ -840,23 +811,53 @@ impl SidebarState {
         let collapsed = collapsed && collapse_mode != SidebarCollapseMode::None;
         let offcanvas_collapsed = collapsed && collapse_mode == SidebarCollapseMode::Offcanvas;
         let section_descriptors: Vec<SidebarSectionDescriptor> = sections.into_iter().collect();
+        let collection_disabled = disabled || offcanvas_collapsed;
+        let collection = ChoiceCollection::resolve_unique(
+            collection_disabled,
+            sidebar_choice_items(collection_disabled, &section_descriptors),
+            selected_value,
+            focused_value,
+            ChoiceInteractionPolicy::single_optional(Orientation::Vertical),
+        );
+        let selected_index = collection.selected_index();
+        let focused_index = collection.active_index();
+        let focusable_set_size = collection
+            .items()
+            .iter()
+            .filter(|item| item.enabled())
+            .count();
         let mut section_states = Vec::with_capacity(section_descriptors.len());
-        let mut item_states = Vec::new();
+        let mut item_start = 0usize;
 
-        for (section_index, section) in section_descriptors.into_iter().enumerate() {
-            let item_start = item_states.len();
+        for (section_index, section) in section_descriptors.iter().enumerate() {
             let item_count = section.items.len();
             section_states.push(SidebarSectionState {
                 index: section_index,
-                value: section.value,
-                label: section.label,
+                value: section.value.clone(),
+                label: section.label.clone(),
                 item_start,
                 item_count,
             });
+            item_start += item_count;
+        }
 
-            for (item_index, item) in section.items.into_iter().enumerate() {
-                let index = item_states.len();
-                item_states.push(SidebarItemState {
+        let mut focusable_position = 0usize;
+        let item_states = collection
+            .into_items()
+            .into_iter()
+            .map(|projection| {
+                let index = projection.source_index();
+                let item_disabled = !projection.enabled();
+                let duplicate_value = projection.ambiguous_value();
+                let (section_index, item_index, item) = projection.into_item();
+                let position_in_set = if item_disabled {
+                    None
+                } else {
+                    focusable_position += 1;
+                    Some(focusable_position)
+                };
+
+                SidebarItemState {
                     index,
                     section_index,
                     item_index,
@@ -865,56 +866,19 @@ impl SidebarState {
                     icon: item.icon,
                     badge: item.badge,
                     action_label: item.action_label,
-                    disabled: disabled || item.disabled,
+                    disabled: item_disabled,
                     disabled_reason: item.disabled_reason,
+                    duplicate_value,
                     shortcut: item.shortcut,
                     tooltip: item.tooltip,
                     accessibility_description: item.accessibility_description,
-                    selected: false,
-                    focused: false,
-                    position_in_set: None,
-                    size_of_set: 0,
-                });
-            }
-        }
-
-        let disabled_map: Vec<bool> = item_states
-            .iter()
-            .map(|item| offcanvas_collapsed || item.disabled)
+                    selected: Some(index) == selected_index,
+                    focused: Some(index) == focused_index,
+                    position_in_set,
+                    size_of_set: position_in_set.map_or(0, |_| focusable_set_size),
+                }
+            })
             .collect();
-        let values: Vec<String> = item_states.iter().map(|item| item.value.clone()).collect();
-        let selected_index = selected_value.and_then(|selected| {
-            values
-                .iter()
-                .position(|value| value == selected)
-                .filter(|index| !disabled_map.get(*index).copied().unwrap_or(true))
-        });
-        let selected_seed = selected_index
-            .and_then(|index| values.get(index))
-            .map(String::as_str);
-        let focused_index = if !offcanvas_collapsed && !disabled {
-            crate::roving_focus::selection_index_from_str_keys(
-                &values,
-                &disabled_map,
-                focused_value,
-                selected_seed,
-            )
-        } else {
-            None
-        };
-        let focusable_set_size = disabled_map.iter().filter(|disabled| !**disabled).count();
-        let mut focusable_position = 0usize;
-
-        for item in &mut item_states {
-            item.selected = Some(item.index) == selected_index;
-            item.focused = Some(item.index) == focused_index;
-
-            if !disabled_map[item.index] {
-                focusable_position += 1;
-                item.position_in_set = Some(focusable_position);
-                item.size_of_set = focusable_set_size;
-            }
-        }
 
         let metrics = SidebarMetrics::from_size(size, collapse_mode, collapsed);
         let colors = SidebarColors::from_tokens(tokens);
@@ -1063,33 +1027,61 @@ impl SidebarState {
         sidebar_navigation_target(key, current, &disabled).and_then(|index| self.items.get(index))
     }
 
-    /// Resolves an activation payload for Enter or Space.
-    pub fn activation_for_key(&self, key: &str) -> Option<SidebarSelection> {
-        if !matches!(key, "enter" | "space") {
-            return None;
-        }
-
-        self.focused_index
-            .and_then(|index| self.items.get(index))
-            .and_then(SidebarSelection::from_item)
-    }
-
     fn disabled_map(&self) -> Vec<bool> {
         self.items.iter().map(|item| !item.focusable()).collect()
     }
 }
 
+type SidebarChoiceItem = (usize, usize, SidebarItemDescriptor);
+
+fn sidebar_choice_items(
+    disabled: bool,
+    sections: &[SidebarSectionDescriptor],
+) -> Vec<ChoiceItemProjection<SidebarChoiceItem>> {
+    sections
+        .iter()
+        .enumerate()
+        .flat_map(|(section_index, section)| {
+            section
+                .items
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(move |(item_index, item)| (section_index, item_index, item))
+        })
+        .enumerate()
+        .map(|(index, (section_index, item_index, item))| {
+            let value = item.value().to_owned();
+            let label = item.label().to_owned();
+            let item_disabled = disabled || item.disabled_state();
+
+            ChoiceItemProjection::new(
+                index,
+                Some(section_index),
+                value,
+                label.clone(),
+                item_disabled,
+                (section_index, item_index, item),
+            )
+            .text_value(label)
+        })
+        .collect()
+}
+
 /// Resolves a sidebar roving-focus target from an APG-style key name.
 pub fn sidebar_navigation_target(key: &str, current: usize, disabled: &[bool]) -> Option<usize> {
-    roving_navigation_target(Orientation::Vertical, key, current, disabled)
+    ChoiceInteractionPolicy::single_optional(Orientation::Vertical)
+        .navigation_target_index(key, current, disabled)
 }
 
 /// A concrete GPUI sidebar navigation item.
 #[derive(Clone)]
 pub struct SidebarItem {
     descriptor: SidebarItemDescriptor,
-    on_select: Option<Rc<dyn Fn(SidebarSelection, &mut Window, &mut App)>>,
+    on_activate: Option<SidebarActivationHandler>,
 }
+
+type SidebarActivationHandler = Rc<dyn Fn(SidebarActivation, Activation, &mut Window, &mut App)>;
 
 impl SidebarItem {
     /// Creates a sidebar navigation item.
@@ -1097,7 +1089,7 @@ impl SidebarItem {
         let label = label.into();
         Self {
             descriptor: SidebarItemDescriptor::new(value, label.to_string()),
-            on_select: None,
+            on_activate: None,
         }
     }
 
@@ -1105,7 +1097,7 @@ impl SidebarItem {
     pub fn from_resolved_action(action: &ResolvedActionState) -> Self {
         Self {
             descriptor: SidebarItemDescriptor::from_resolved_action(action),
-            on_select: None,
+            on_activate: None,
         }
     }
 
@@ -1165,22 +1157,21 @@ impl SidebarItem {
         self
     }
 
-    /// Registers an item selection handler.
-    pub fn on_select(
+    /// Registers this item's activation handler.
+    ///
+    /// An item handler takes precedence over the sidebar-level fallback so one activation invokes
+    /// exactly one domain callback.
+    pub fn on_activate(
         mut self,
-        handler: impl Fn(SidebarSelection, &mut Window, &mut App) + 'static,
+        handler: impl Fn(SidebarActivation, Activation, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_select = Some(Rc::new(handler));
+        self.on_activate = Some(Rc::new(handler));
         self
     }
 
     /// Returns a pure descriptor for this item.
     pub fn descriptor(&self) -> SidebarItemDescriptor {
         self.descriptor.clone()
-    }
-
-    fn select_handler(&self) -> Option<Rc<dyn Fn(SidebarSelection, &mut Window, &mut App)>> {
-        self.on_select.clone()
     }
 }
 
@@ -1244,7 +1235,8 @@ pub struct Sidebar {
     size: Size,
     tokens: ThemeTokens,
     sections: Vec<SidebarSection>,
-    on_selection_change: Option<Rc<dyn Fn(SidebarSelection, &mut Window, &mut App)>>,
+    on_activate: Option<SidebarActivationHandler>,
+    activation_handles: BTreeMap<String, ActivationHandle>,
 }
 
 impl Sidebar {
@@ -1263,7 +1255,8 @@ impl Sidebar {
             size: Size::Medium,
             tokens: ThemeTokens::default(),
             sections: Vec::new(),
-            on_selection_change: None,
+            on_activate: None,
+            activation_handles: BTreeMap::new(),
         }
     }
 
@@ -1340,12 +1333,22 @@ impl Sidebar {
         self
     }
 
-    /// Registers a selection-change handler.
-    pub fn on_selection_change(
+    /// Registers the fallback activation handler for items without their own handler.
+    pub fn on_activate(
         mut self,
-        handler: impl Fn(SidebarSelection, &mut Window, &mut App) + 'static,
+        handler: impl Fn(SidebarActivation, Activation, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_selection_change = Some(Rc::new(handler));
+        self.on_activate = Some(Rc::new(handler));
+        self
+    }
+
+    /// Binds an application-owned activation handle to one stable item value.
+    pub fn activation_handle(
+        mut self,
+        value: impl Into<String>,
+        handle: &ActivationHandle,
+    ) -> Self {
+        self.activation_handles.insert(value.into(), handle.clone());
         self
     }
 
@@ -1374,448 +1377,11 @@ impl Sizable for Sidebar {
     }
 }
 
-impl RenderOnce for Sidebar {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
-        let Sidebar {
-            id,
-            label,
-            side,
-            variant,
-            collapse_mode,
-            collapsed,
-            disabled,
-            selected_value,
-            focused_value,
-            size,
-            tokens,
-            sections,
-            on_selection_change,
-        } = self;
-
-        window.with_id(id.clone(), |window| {
-            let debug_id = id.to_string();
-            let descriptors: Vec<SidebarSectionDescriptor> =
-                sections.iter().map(SidebarSection::descriptor).collect();
-            let item_models: Vec<SidebarItem> = sections
-                .iter()
-                .flat_map(|section| section.item_models().iter().cloned())
-                .collect();
-            let focused_seed = focused_value.clone();
-            let runtime = window.use_keyed_state("runtime", cx, |_, _| SidebarRuntime {
-                focused_value: focused_seed,
-                focus_handles: BTreeMap::new(),
-            });
-            let runtime_snapshot = {
-                let runtime = runtime.read(cx);
-                runtime.focused_value.clone()
-            };
-            let state = SidebarState::resolve(
-                side,
-                variant,
-                collapse_mode,
-                collapsed,
-                disabled,
-                label.to_string(),
-                selected_value.as_deref(),
-                runtime_snapshot.as_deref(),
-                descriptors.clone(),
-                size,
-                tokens,
-            );
-            runtime.update(cx, |runtime, cx| runtime.sync(&state, cx));
-
-            let metrics = state.metrics();
-            let colors = state.colors();
-            let focus_ring = state.focus_ring();
-            let disabled_items = Rc::new(
-                state
-                    .items()
-                    .iter()
-                    .map(|item| !item.focusable())
-                    .collect::<Vec<_>>(),
-            );
-            let focus_handles = {
-                let runtime = runtime.read(cx);
-                state
-                    .items()
-                    .iter()
-                    .map(|item| runtime.focus_handles.get(item.value()).cloned())
-                    .collect::<Vec<_>>()
-            };
-            let icon_collapsed = state.icon_collapsed();
-            let item_states = Rc::new(state.items().to_vec());
-            let section_states = state.sections().to_vec();
-            let sections_content = div()
-                .flex()
-                .flex_col()
-                .gap(gpui_px_from_ui(metrics.section_gap()))
-                .p(gpui_px_from_ui(metrics.padding()))
-                .children(section_states.into_iter().map(|section| {
-                    let section_items = item_states
-                        .iter()
-                        .filter(|item| item.section_index() == section.index())
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    let item_models = item_models.clone();
-                    let on_selection_change = on_selection_change.clone();
-                    let focus_handles = focus_handles.clone();
-                    let runtime = runtime.clone();
-                    let disabled_items = disabled_items.clone();
-                    let item_states_for_section = item_states.clone();
-                    let section_debug_id = debug_id.clone();
-                    let section_label_color = theme.resolve(colors.muted_foreground());
-                    let item_theme = theme.clone();
-                    let section_semantics =
-                        SemanticDescriptor::new(section.role()).with_label(section.label());
-
-                    div()
-                        .id(sidebar_section_id(section.value()))
-                        .ui_semantics(&section_semantics)
-                        .flex()
-                        .flex_col()
-                        .gap(gpui_px_from_ui(metrics.item_gap()))
-                        .when(!icon_collapsed, |this| {
-                            this.child(
-                                div()
-                                    .px(gpui_px_from_ui(metrics.item_padding_x()))
-                                    .text_xs()
-                                    .line_height(gpui_px_from_ui(metrics.text_size()))
-                                    .text_color(section_label_color)
-                                    .child(section.label().to_owned()),
-                            )
-                        })
-                        .children(section_items.into_iter().map(move |item| {
-                            let item_index = item.index();
-                            let model = item_models[item_index].clone();
-                            let click_item_handler = model.select_handler();
-                            let key_item_handler = click_item_handler.clone();
-                            let click_sidebar_handler = on_selection_change.clone();
-                            let key_sidebar_handler = click_sidebar_handler.clone();
-                            let selection = SidebarSelection::from_item(&item);
-                            let click_selection = selection.clone();
-                            let key_selection = selection.clone();
-                            let focus_handle = focus_handles[item_index].clone();
-                            let key_runtime = runtime.clone();
-                            let click_runtime = runtime.clone();
-                            let disabled_items = disabled_items.clone();
-                            let key_item_states = item_states_for_section.clone();
-                            let item_value = item.value().to_owned();
-                            let key_item_value = item_value.clone();
-                            let item_disabled = item.disabled();
-                            let item_selected = item.selected();
-                            let item_tab_stop = item.focused();
-                            let item_icon = item
-                                .icon_label()
-                                .map(SharedString::from)
-                                .unwrap_or_else(|| fallback_icon_label(item.label()));
-                            let item_label = item.label().to_owned();
-                            let item_badge = item.badge_label().map(str::to_owned);
-                            let item_action = item
-                                .action_label_text()
-                                .map(str::to_owned)
-                                .or_else(|| item.shortcut().map(str::to_owned));
-                            let item_tooltip = item.tooltip().map(str::to_owned);
-                            let item_accessibility_description =
-                                item.accessibility_description().map(str::to_owned);
-                            let item_disabled_reason =
-                                item.disabled_reason_ref().map(str::to_owned);
-                            let item_aria_label = item_accessibility_description
-                                .as_ref()
-                                .or(item_disabled_reason.as_ref())
-                                .map_or_else(
-                                    || item.label().to_owned(),
-                                    |description| format!("{}, {description}", item.label()),
-                                );
-                            let item_position = item.position_in_set();
-                            let item_size_of_set = item.size_of_set();
-                            let item_background = item_theme.resolve(if item_selected {
-                                colors.item_selected_background()
-                            } else {
-                                colors.item_background()
-                            });
-                            let item_foreground = item_theme.resolve(if item_disabled {
-                                colors.item_disabled_foreground()
-                            } else {
-                                colors.foreground()
-                            });
-                            let item_hover_background =
-                                item_theme.resolve(colors.item_hover_background());
-                            let badge_background = item_theme.resolve(colors.badge_background());
-                            let badge_foreground = item_theme.resolve(colors.badge_foreground());
-                            let action_foreground = item_theme.resolve(colors.muted_foreground());
-                            let item_focus_shadow =
-                                focus_ring_shadow_with_theme(focus_ring, &item_theme);
-                            let mut item_semantics = SemanticDescriptor::new(item.role())
-                                .with_label(&item_aria_label)
-                                .with_selected(item_selected)
-                                .with_disabled(item_disabled)
-                                .with_actions(&[AccessibleAction::Click, AccessibleAction::Focus]);
-                            if let Some(position) = item_position {
-                                item_semantics = item_semantics
-                                    .with_position_in_set(position)
-                                    .with_size_of_set(item_size_of_set);
-                            }
-
-                            div()
-                                .id(sidebar_item_id(item.value()))
-                                .debug_selector({
-                                    let debug_id = section_debug_id.clone();
-                                    let item_value = item.value().to_owned();
-                                    move || format!("sidebar:{debug_id}:item:{item_value}")
-                                })
-                                .focusable()
-                                .tab_stop(item_tab_stop)
-                                .ui_semantics(&item_semantics)
-                                .when_some(focus_handle, |this, focus_handle| {
-                                    this.track_focus(&focus_handle)
-                                })
-                                .min_h(gpui_px_from_ui(metrics.item_height()))
-                                .px(gpui_px_from_ui(if icon_collapsed {
-                                    ui_px(0.0)
-                                } else {
-                                    metrics.item_padding_x()
-                                }))
-                                .py(gpui_px_from_ui(metrics.item_padding_y()))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .gap_2()
-                                .rounded(gpui_px_from_ui(metrics.radius()))
-                                .bg(item_background)
-                                .text_size(gpui_px_from_ui(metrics.text_size()))
-                                .line_height(gpui_px_from_ui(metrics.text_size()))
-                                .text_color(item_foreground)
-                                .focus_visible(move |style| style.shadow(item_focus_shadow.clone()))
-                                .when(!item_disabled, |this| {
-                                    this.cursor_pointer()
-                                        .hover(move |style| style.bg(item_hover_background))
-                                })
-                                .when(item_disabled, |this| {
-                                    this.opacity(0.56).cursor_not_allowed()
-                                })
-                                .on_click({
-                                    let item_value = item_value.clone();
-                                    move |_event: &ClickEvent, window, cx| {
-                                        if item_disabled {
-                                            return;
-                                        }
-
-                                        cx.stop_propagation();
-                                        let focus_handle = click_runtime
-                                            .update(cx, |runtime, cx| {
-                                                runtime.set_focused(&item_value, cx)
-                                            });
-
-                                        if let Some(selection) = click_selection.clone() {
-                                            if let Some(handler) = click_item_handler.clone() {
-                                                handler(selection.clone(), window, cx);
-                                            }
-                                            if let Some(handler) = click_sidebar_handler.clone() {
-                                                handler(selection, window, cx);
-                                            }
-                                        }
-
-                                        if let Some(focus_handle) = focus_handle {
-                                            focus_handle.focus(window, cx);
-                                        }
-                                    }
-                                })
-                                .on_key_down({
-                                    move |event: &KeyDownEvent, window, cx| {
-                                        if item_disabled {
-                                            return;
-                                        }
-                                        if event.keystroke.modifiers.modified() {
-                                            return;
-                                        }
-
-                                        let key = event.keystroke.key.as_str();
-                                        let Some(target_index) = sidebar_navigation_target(
-                                            key,
-                                            item_index,
-                                            &disabled_items,
-                                        ) else {
-                                            if !matches!(key, "space" | "enter") {
-                                                return;
-                                            }
-
-                                            key_runtime.update(cx, |runtime, cx| {
-                                                runtime.set_focused(&key_item_value, cx)
-                                            });
-                                            if let Some(selection) = key_selection.clone() {
-                                                if let Some(handler) = key_item_handler.clone() {
-                                                    handler(selection.clone(), window, cx);
-                                                }
-                                                if let Some(handler) = key_sidebar_handler.clone() {
-                                                    handler(selection, window, cx);
-                                                }
-                                            }
-                                            cx.stop_propagation();
-                                            return;
-                                        };
-
-                                        let target_value =
-                                            key_item_states[target_index].value().to_owned();
-                                        let focus_handle = key_runtime.update(cx, |runtime, cx| {
-                                            runtime.set_focused(&target_value, cx)
-                                        });
-
-                                        if let Some(focus_handle) = focus_handle {
-                                            focus_handle.focus(window, cx);
-                                        }
-
-                                        cx.stop_propagation();
-                                    }
-                                })
-                                .child(
-                                    div()
-                                        .min_w(gpui_px_from_ui(metrics.icon_size()))
-                                        .text_size(gpui_px_from_ui(metrics.icon_size()))
-                                        .line_height(gpui_px_from_ui(metrics.icon_size()))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .child(item_icon),
-                                )
-                                .when(!icon_collapsed, |this| {
-                                    this.child(
-                                        div()
-                                            .flex_1()
-                                            .min_w(px(0.0))
-                                            .overflow_hidden()
-                                            .child(item_label),
-                                    )
-                                    .when_some(item_badge, |this, badge| {
-                                        this.child(
-                                            div()
-                                                .min_h(gpui_px_from_ui(metrics.badge_min_height()))
-                                                .px(gpui_px_from_ui(ui_px(7.0)))
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .rounded(gpui_px_from_ui(ui_px(999.0)))
-                                                .bg(badge_background)
-                                                .text_color(badge_foreground)
-                                                .text_xs()
-                                                .child(badge),
-                                        )
-                                    })
-                                    .when_some(
-                                        item_action,
-                                        |this, action| {
-                                            this.child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(action_foreground)
-                                                    .child(action),
-                                            )
-                                        },
-                                    )
-                                })
-                                .when_some(item_tooltip, |this, tooltip| {
-                                    this.tooltip(Tooltip::text(tooltip))
-                                })
-                        }))
-                }));
-            let semantics = SemanticDescriptor::new(state.role())
-                .with_label(state.label())
-                .with_disabled(state.disabled());
-
-            div()
-                .id(id.clone())
-                .debug_selector({
-                    let debug_id = debug_id.clone();
-                    move || format!("sidebar:{debug_id}")
-                })
-                .ui_semantics(&semantics)
-                .w(gpui_px_from_ui(metrics.resolved_width()))
-                .h_full()
-                .flex_none()
-                .flex()
-                .flex_col()
-                .overflow_hidden()
-                .border_color(theme.resolve(colors.border()))
-                .bg(theme.resolve(match variant {
-                    SidebarVariant::Docked => colors.surface(),
-                    SidebarVariant::Floating | SidebarVariant::Inset => colors.floating_surface(),
-                }))
-                .text_color(theme.resolve(colors.foreground()))
-                .when(
-                    variant == SidebarVariant::Docked && side == SidebarSide::Left,
-                    |this| this.border_r_1(),
-                )
-                .when(
-                    variant == SidebarVariant::Docked && side == SidebarSide::Right,
-                    |this| this.border_l_1(),
-                )
-                .when(variant != SidebarVariant::Docked, |this| {
-                    this.border_1().rounded(gpui_px_from_ui(metrics.radius()))
-                })
-                .when(!state.offcanvas_collapsed(), |this| {
-                    this.child(
-                        ScrollArea::new(format!("{id}-scroll"), sections_content)
-                            .vertical()
-                            .with_size(size),
-                    )
-                })
-        })
-    }
-}
-
-#[derive(Debug, Default)]
-struct SidebarRuntime {
-    focused_value: Option<String>,
-    focus_handles: BTreeMap<String, FocusHandle>,
-}
-
-impl SidebarRuntime {
-    fn sync(&mut self, state: &SidebarState, cx: &mut Context<Self>) {
-        self.focus_handles
-            .retain(|value, _| state.items().iter().any(|item| item.value() == value));
-
-        for item in state.items().iter().filter(|item| item.focusable()) {
-            self.focus_handles
-                .entry(item.value().to_owned())
-                .or_insert_with(|| cx.focus_handle());
-        }
-
-        self.focused_value = state.focused_value().map(str::to_owned);
-    }
-
-    fn set_focused(&mut self, value: &str, cx: &mut Context<Self>) -> Option<FocusHandle> {
-        let value = value.to_owned();
-        let changed = self.focused_value.as_deref() != Some(value.as_str());
-        self.focused_value = Some(value.clone());
-        if changed {
-            cx.notify();
-        }
-        self.focus_handles.get(&value).cloned()
-    }
-}
-
-fn fallback_icon_label(label: &str) -> SharedString {
-    label
-        .chars()
-        .next()
-        .map(|ch| ch.to_string())
-        .unwrap_or_default()
-        .into()
-}
-
-fn sidebar_section_id(value: &str) -> ElementId {
-    format!("sidebar-section-{value}").into()
-}
-
-fn sidebar_item_id(value: &str) -> ElementId {
-    format!("sidebar-item-{value}").into()
-}
-
 impl From<SidebarItemDescriptor> for SidebarItem {
     fn from(descriptor: SidebarItemDescriptor) -> Self {
         Self {
             descriptor,
-            on_select: None,
+            on_activate: None,
         }
     }
 }

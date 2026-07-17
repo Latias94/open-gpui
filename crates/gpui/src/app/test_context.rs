@@ -1276,6 +1276,21 @@ impl VisualTestContext {
         self.update(|window, _| window.rendered_frame.debug_bounds.get(selector).copied())
     }
 
+    /// Returns rendered debug selectors that begin with the given prefix.
+    pub fn debug_selectors_with_prefix(&mut self, prefix: &str) -> Vec<String> {
+        self.update(|window, _| {
+            let mut selectors = window
+                .rendered_frame
+                .debug_bounds
+                .keys()
+                .filter(|selector| selector.starts_with(prefix))
+                .cloned()
+                .collect::<Vec<_>>();
+            selectors.sort_unstable();
+            selectors
+        })
+    }
+
     /// Returns whether the element with the given debug selector owns the current focus.
     pub fn debug_selector_is_focused(&mut self, selector: &str) -> bool {
         self.update(|window, _| {
@@ -1679,6 +1694,15 @@ mod tests {
         prepaints: Rc<Cell<usize>>,
         commits: Rc<RefCell<Vec<u64>>>,
         discarded_commits: Rc<Cell<usize>>,
+        discarded_resources: Rc<Cell<usize>>,
+    }
+
+    struct PrepaintResourceDropProbe(Rc<Cell<usize>>);
+
+    impl Drop for PrepaintResourceDropProbe {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
     }
 
     impl Render for PrepaintCommitRoot {
@@ -1695,14 +1719,19 @@ mod tests {
             let prepaints = self.prepaints.clone();
             let commits = self.commits.clone();
             let discarded_commits = self.discarded_commits.clone();
+            let discarded_resources = self.discarded_resources.clone();
             canvas(
                 move |_, window, _| {
                     prepaints.set(prepaints.get() + 1);
                     let discarded_commits = discarded_commits.clone();
+                    let discarded_resources_for_drop = discarded_resources.clone();
                     let rejected: std::result::Result<(), ()> = window.transact(|window| {
                         window.record_prepaint_commit(move |_, _| {
                             discarded_commits.set(discarded_commits.get() + 1);
                         });
+                        window.next_frame.retained_resources.push(Rc::new(
+                            PrepaintResourceDropProbe(discarded_resources_for_drop),
+                        ));
                         Err(())
                     });
                     debug_assert!(rejected.is_err());
@@ -1775,17 +1804,20 @@ mod tests {
         let prepaints = Rc::new(Cell::new(0));
         let commits = Rc::new(RefCell::new(Vec::new()));
         let discarded_commits = Rc::new(Cell::new(0));
+        let discarded_resources = Rc::new(Cell::new(0));
         let (_view, cx) = cx.add_window_view({
             let renders = renders.clone();
             let prepaints = prepaints.clone();
             let commits = commits.clone();
             let discarded_commits = discarded_commits.clone();
+            let discarded_resources = discarded_resources.clone();
             move |_, cx| PrepaintCommitRoot {
                 child: cx.new(|_| PrepaintCommitProbe {
                     renders,
                     prepaints,
                     commits,
                     discarded_commits,
+                    discarded_resources,
                 }),
             }
         });
@@ -1803,6 +1835,7 @@ mod tests {
         assert_eq!(prepaints.get(), fresh_prepaints);
         assert_eq!(commits.borrow().as_slice(), &[second_revision]);
         assert_eq!(discarded_commits.get(), 0);
+        assert_eq!(discarded_resources.get(), 1);
 
         let third_revision = cx.update(|window, cx| {
             window.draw(cx).clear();
@@ -1815,6 +1848,11 @@ mod tests {
             &[second_revision, third_revision]
         );
         assert_eq!(discarded_commits.get(), 0);
+        assert_eq!(
+            discarded_resources.get(),
+            1,
+            "cached prepaint must not replay rejected transaction resources"
+        );
     }
 
     #[open_gpui::test]

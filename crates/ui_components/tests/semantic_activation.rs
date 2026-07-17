@@ -43,6 +43,19 @@ fn node_with_label(update: &accesskit::TreeUpdate, label: &str) -> accesskit::No
         .unwrap_or_else(|| panic!("missing accessibility node labelled `{label}`"))
 }
 
+fn sole_debug_selector_with_prefix(cx: &mut open_gpui::VisualTestContext, prefix: &str) -> String {
+    let selectors = cx.debug_selectors_with_prefix(prefix);
+    assert_eq!(
+        selectors.len(),
+        1,
+        "expected exactly one debug selector beginning with `{prefix}`, found {selectors:?}"
+    );
+    selectors
+        .into_iter()
+        .next()
+        .expect("the asserted selector should exist")
+}
+
 fn action_request(
     action: accesskit::Action,
     target: accesskit::NodeId,
@@ -67,6 +80,8 @@ mod domain_actions;
 mod handles;
 #[path = "semantic_activation/link.rs"]
 mod link;
+#[path = "semantic_activation/sidebar.rs"]
+mod sidebar;
 #[path = "semantic_activation/tabs.rs"]
 mod tabs;
 #[path = "semantic_activation/toggle_group.rs"]

@@ -144,6 +144,7 @@ impl GalleryShell {
     fn build(selected_page: GalleryPage, cx: &mut Context<Self>) -> Self {
         cx.set_global(pages::components::TableSampleRuntimeLog::default());
         cx.set_global(pages::components::TreeSampleRuntimeLog::default());
+        cx.set_global(pages::components::SidebarSampleRuntimeLog::default());
         let initial_snapshot = foundation_snapshot(DEFAULT_GALLERY_WIDTH, selected_page);
         let devtools_facts = Self::devtools_live_facts(initial_snapshot);
         let devtools_workbench = pages::devtools::GalleryDevtoolsWorkbench::new(devtools_facts);

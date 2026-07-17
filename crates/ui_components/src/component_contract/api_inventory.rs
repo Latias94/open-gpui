@@ -252,8 +252,8 @@ pub const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         }],
         policy_hints: &["side", "variant", "collapse_mode"],
         callbacks: &[CallbackApi {
-            name: "on_selection_change",
-            payload: "SidebarSelection",
+            name: "on_activate",
+            payload: "(SidebarActivation, Activation)",
         }],
         renderer_neutral_state: true,
         no_interaction_note: None,
@@ -1100,7 +1100,7 @@ pub fn component_render_inputs(component: &str) -> &'static [&'static str] {
         "Toggle" => &["variant", "disabled", "read_only", "activation_handle"],
         "ToggleGroup" => &["disabled", "item", "items", "activation_handle"],
         "Toolbar" => &["disabled", "item", "items", "activation_handle"],
-        "Sidebar" => &["disabled", "section", "sections"],
+        "Sidebar" => &["disabled", "section", "sections", "activation_handle"],
         "Tree" => &[
             "item",
             "items",
@@ -1533,7 +1533,8 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
             "tokens",
             "section",
             "sections",
-            "on_selection_change",
+            "on_activate",
+            "activation_handle",
             "state",
         ],
         "Tree" => &[

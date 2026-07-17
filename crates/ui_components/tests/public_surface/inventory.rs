@@ -416,6 +416,7 @@ fn component_api_inventory_keeps_regression_sentinels_for_stateful_components() 
     assert_inventory_contains_controlled_input("RadioGroup", "selected");
     assert_inventory_contains_default_seed("Toolbar", "default_focused", "focused");
     assert_inventory_contains_default_seed("Sidebar", "default_focused", "focused");
+    assert_inventory_contains_callback("Sidebar", "on_activate", "(SidebarActivation, Activation)");
     assert_inventory_contains_default_seed("Tree", "default_selected", "selected");
     assert_inventory_contains_default_seed("Tree", "default_focused", "focused");
     assert_inventory_contains_callback("Tree", "on_toggle", "TreeToggle");

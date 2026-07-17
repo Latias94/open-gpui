@@ -1458,9 +1458,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     items, and Space only to activate toggle items. The component runtime smoke now verifies the rendered Toolbar keyboard path
     for disabled-item/separator skipping and activation payloads. The Sidebar samples should expose
    expanded, icon-collapsed, and long scrollable navigation; icon collapse should hide visible labels
-   while keeping item labels
-   explicit, disabled items should be skipped, and the long sidebar should scroll inside its sample
-   frame. The component smoke now verifies the shared `ScrollArea` viewport directly through
+   while keeping item labels explicit, disabled and duplicate values should fail closed, and the long
+   sidebar should scroll inside its sample frame. Semantic activation coverage verifies pointer,
+   Enter/Space key-up, AccessKit, and programmatic parity, item-handler override, and focus repair
+   without stealing external focus. The component smoke verifies the shared `ScrollArea` viewport through
    `sidebar_long_navigation_scrolls_inside_shared_scroll_area`, and the gallery smoke verifies the
    long sidebar's internal viewport moves relative to its sample card. The Listbox samples should
    expose

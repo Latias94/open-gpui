@@ -1,11 +1,9 @@
-use std::collections::BTreeMap;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
-    App, Context, ElementId, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    App, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, RenderOnce, SharedString,
+    StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{AccessibleAction, Orientation, Role, SemanticDescriptor};
 
@@ -17,8 +15,13 @@ use crate::a11y::UiA11yElementExt;
 use crate::activation::ActivationBinding;
 use crate::button::ButtonVariant;
 use crate::color::ColorIntent;
+use crate::debug_selector::{
+    AuthoredSnapshot, AuthoredSnapshotFingerprint, StableValueItemRenderIdentity,
+    StableValueRenderIdentity, StableValueRenderIdentityInput, debug_selector_element_id,
+};
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::gpui_px_from_ui;
+use crate::stable_value_focus::StableValueFocusRuntime;
 use crate::theme::ThemeResolver;
 use crate::tooltip::Tooltip;
 
@@ -39,30 +42,57 @@ impl RenderOnce for Toolbar {
         } = self;
 
         window.with_id(id.clone(), |window| {
-            let debug_id = id.to_string();
+            let debug_id = debug_selector_element_id(&id);
             let focused_seed = focused_value.clone();
-            let runtime = window.use_keyed_state("runtime", cx, |_, _| ToolbarRuntime {
-                focused_value: focused_seed,
-                focus_handles: BTreeMap::new(),
+            let runtime = window.use_keyed_state("runtime", cx, |_, _| {
+                StableValueFocusRuntime::new(focused_seed)
             });
-            let runtime_snapshot = runtime.read(cx).focused_value.clone();
+            let physically_focused = window.focused(cx);
+            let runtime_snapshot = runtime
+                .read(cx)
+                .resolved_value(physically_focused.as_ref())
+                .map(str::to_owned);
+            let descriptors = items
+                .iter()
+                .map(ToolbarItem::descriptor)
+                .collect::<Vec<_>>();
             let state = ToolbarState::resolve(
                 orientation,
                 size,
                 disabled,
                 label.to_string(),
                 runtime_snapshot.as_deref(),
-                items.iter().map(ToolbarItem::descriptor),
+                descriptors.iter().cloned(),
                 tokens,
             );
-            let item_render_identities = state
-                .items()
-                .iter()
-                .map(|item| ToolbarItemRenderIdentity::new(&debug_id, item))
-                .collect::<Vec<_>>();
-            let physically_focused = window.focused(cx);
+            let item_render_identities = StableValueRenderIdentity::resolve(
+                "toolbar",
+                &debug_id,
+                "item",
+                items.iter().zip(&descriptors).map(|(item, descriptor)| {
+                    StableValueRenderIdentityInput::new(
+                        descriptor.value(),
+                        toolbar_item_authored_snapshot(item, descriptor),
+                    )
+                }),
+            )
+            .into_iter()
+            .zip(state.items())
+            .map(|(identity, item)| {
+                StableValueItemRenderIdentity::from_render_identity(identity, item.kind().as_str())
+            })
+            .collect::<Vec<_>>();
             let fallback_focus_handle = runtime.update(cx, |runtime, cx| {
-                runtime.sync(&state, physically_focused.as_ref(), cx)
+                runtime.sync(
+                    state
+                        .items()
+                        .iter()
+                        .filter(|item| item.focusable())
+                        .map(ToolbarItemState::value),
+                    state.focused_value(),
+                    physically_focused.as_ref(),
+                    cx,
+                )
             });
             if let Some(focus_handle) = fallback_focus_handle {
                 focus_handle.focus(window, cx);
@@ -90,7 +120,7 @@ impl RenderOnce for Toolbar {
                 state
                     .items()
                     .iter()
-                    .map(|item| runtime.focus_handles.get(item.value()).cloned())
+                    .map(|item| runtime.focus_handle(item.value()))
                     .collect::<Vec<_>>()
             };
             let activation_bindings = Rc::new(
@@ -185,7 +215,8 @@ impl RenderOnce for Toolbar {
                         .visible_label
                         .clone()
                         .or_else(|| item.icon_label().map(SharedString::from));
-                    let item_tooltip = items[index].tooltip.clone();
+                    let item_tooltip =
+                        toolbar_custom_tooltip(&items[index], item.duplicate_value());
                     let item_tooltip_text = item.tooltip().map(str::to_owned);
                     let navigation_values = navigation_values.clone();
                     let disabled_items = disabled_items.clone();
@@ -317,99 +348,6 @@ impl RenderOnce for Toolbar {
     }
 }
 
-#[derive(Debug, Default)]
-struct ToolbarRuntime {
-    focused_value: Option<String>,
-    focus_handles: BTreeMap<String, FocusHandle>,
-}
-
-impl ToolbarRuntime {
-    fn sync(
-        &mut self,
-        state: &ToolbarState,
-        physically_focused: Option<&FocusHandle>,
-        cx: &mut Context<Self>,
-    ) -> Option<FocusHandle> {
-        let value_remains_focusable = |value: &str| {
-            state
-                .items()
-                .iter()
-                .any(|item| item.value() == value && item.focusable())
-        };
-        let focused_toolbar_item_was_removed = physically_focused.is_some_and(|focused| {
-            self.focus_handles
-                .iter()
-                .any(|(value, handle)| handle == focused && !value_remains_focusable(value))
-        });
-
-        self.focus_handles
-            .retain(|value, _| value_remains_focusable(value));
-
-        for item in state.items().iter().filter(|item| item.focusable()) {
-            self.focus_handles
-                .entry(item.value().to_owned())
-                .or_insert_with(|| cx.focus_handle());
-        }
-
-        if self.focused_value.as_deref() != state.focused_value() {
-            self.focused_value = state.focused_value().map(str::to_owned);
-        }
-
-        focused_toolbar_item_was_removed
-            .then(|| state.focused_value())
-            .flatten()
-            .and_then(|value| self.focus_handles.get(value).cloned())
-    }
-
-    fn set_focused(&mut self, value: &str, cx: &mut Context<Self>) -> Option<FocusHandle> {
-        if self.focused_value.as_deref() != Some(value) {
-            self.focused_value = Some(value.to_owned());
-            cx.notify();
-        }
-        self.focus_handles.get(value).cloned()
-    }
-}
-
-#[derive(Debug)]
-struct ToolbarItemRenderIdentity {
-    element_id: ElementId,
-    debug_selector: String,
-    activation_state_key: ElementId,
-}
-
-impl ToolbarItemRenderIdentity {
-    fn new(toolbar_id: &str, item: &ToolbarItemState) -> Self {
-        let element_id = if item.duplicate_value() {
-            ElementId::named_usize(format!("toolbar-item-{}", item.value()), item.index())
-        } else {
-            format!("toolbar-item-{}", item.value()).into()
-        };
-        let debug_selector = if item.duplicate_value() {
-            format!(
-                "toolbar:{toolbar_id}:duplicate-item:{}:{}",
-                item.index(),
-                item.value()
-            )
-        } else {
-            format!("toolbar:{toolbar_id}:item:{}", item.value())
-        };
-        let activation_identity = ElementId::NamedChild(
-            Arc::new(element_id.clone()),
-            SharedString::new_static("activation"),
-        );
-        let activation_state_key = ElementId::NamedChild(
-            Arc::new(activation_identity),
-            SharedString::new_static(item.kind().as_str()),
-        );
-
-        Self {
-            element_id,
-            debug_selector,
-            activation_state_key,
-        }
-    }
-}
-
 fn toolbar_item_background(
     colors: ToolbarColors,
     pressed_colors: ToolbarColors,
@@ -419,5 +357,47 @@ fn toolbar_item_background(
     match kind {
         ToolbarItemKind::Toggle if pressed => pressed_colors.background(),
         _ => colors.background(),
+    }
+}
+
+fn toolbar_item_authored_snapshot(
+    item: &ToolbarItem,
+    descriptor: &super::ToolbarItemDescriptor,
+) -> AuthoredSnapshotFingerprint {
+    AuthoredSnapshot::new()
+        .field(descriptor.value())
+        .field(descriptor.label())
+        .field(descriptor.kind().as_str())
+        .resolved_icon(descriptor.icon_ref())
+        .optional_field(item.visible_label.as_deref())
+        .optional_field(descriptor.disabled_reason_ref())
+        .optional_field(descriptor.shortcut_ref())
+        .optional_field(descriptor.tooltip_ref())
+        .optional_field(descriptor.accessibility_description_ref())
+        .finish()
+}
+
+fn toolbar_custom_tooltip(
+    item: &ToolbarItem,
+    ambiguous: bool,
+) -> Option<Rc<dyn Fn(&mut Window, &mut App) -> open_gpui::AnyView>> {
+    if ambiguous {
+        None
+    } else {
+        item.tooltip.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ambiguous_toolbar_items_do_not_bind_unstable_custom_tooltips() {
+        let item =
+            ToolbarItem::action("duplicate", "Duplicate").tooltip(Tooltip::text("Custom tooltip"));
+
+        assert!(toolbar_custom_tooltip(&item, false).is_some());
+        assert!(toolbar_custom_tooltip(&item, true).is_none());
     }
 }

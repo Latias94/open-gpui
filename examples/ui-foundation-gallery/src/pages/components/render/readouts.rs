@@ -717,12 +717,36 @@ pub(crate) fn component_splitter_state_row(state: &SplitterState) -> impl IntoEl
         ))
 }
 
-pub(crate) fn component_sidebar_state_row(state: &SidebarState) -> impl IntoElement {
+pub(crate) fn component_sidebar_state_row(
+    sample_id: &'static str,
+    state: &SidebarState,
+    last_activation: Option<&pages::components::SidebarSampleActivation>,
+) -> impl IntoElement {
     let selected = state.selected_value().unwrap_or("none");
     let focused = state.focused_value().unwrap_or("none");
     let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
+    let (activation_value, activation_selected, activation_source) =
+        last_activation.map_or(("none", false, "none"), |entry| {
+            let source = match entry.source() {
+                ActivationSource::Pointer => "pointer",
+                ActivationSource::Keyboard(ActivationKey::Enter) => "keyboard-enter",
+                ActivationSource::Keyboard(ActivationKey::Space) => "keyboard-space",
+                ActivationSource::Accessibility => "accessibility",
+                ActivationSource::Programmatic => "programmatic",
+            };
+            (
+                entry.activation().value(),
+                entry.activation().selected(),
+                source,
+            )
+        });
+    let debug_selector = format!("gallery:component-sidebar-sample:{sample_id}:runtime");
+    let value_selector = format!("{debug_selector}:last-value:{activation_value}");
+    let selected_selector = format!("{debug_selector}:last-selected:{activation_selected}");
+    let source_selector = format!("{debug_selector}:last-source:{activation_source}");
 
     div()
+        .debug_selector(move || debug_selector.clone())
         .flex()
         .flex_col()
         .gap_1()
@@ -743,6 +767,26 @@ pub(crate) fn component_sidebar_state_row(state: &SidebarState) -> impl IntoElem
             disabled_count,
             format_px(state.metrics().resolved_width())
         ))
+        .child(
+            div()
+                .flex()
+                .gap_1()
+                .child(
+                    div()
+                        .debug_selector(move || value_selector.clone())
+                        .child(format!("last activation {activation_value}")),
+                )
+                .child(
+                    div()
+                        .debug_selector(move || selected_selector.clone())
+                        .child(format!("/ selected {activation_selected}")),
+                )
+                .child(
+                    div()
+                        .debug_selector(move || source_selector.clone())
+                        .child(format!("/ source {activation_source}")),
+                ),
+        )
 }
 
 pub(crate) fn component_toolbar_state_row(state: &ToolbarState) -> impl IntoElement {

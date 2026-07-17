@@ -74,14 +74,13 @@ fn toolbar_action_routes_every_activation_source_through_one_transaction(
     let duplicate_action_node = node_with_label(&initial, "Duplicate action");
     let duplicate_toggle_node = node_with_label(&initial, "Duplicate toggle");
     assert_ne!(duplicate_action_node, duplicate_toggle_node);
-    assert!(
-        cx.debug_bounds("toolbar:semantic-toolbar:duplicate-item:2:duplicate")
-            .is_some()
-    );
-    assert!(
-        cx.debug_bounds("toolbar:semantic-toolbar:duplicate-item:3:duplicate")
-            .is_some()
-    );
+    for prefix in [
+        "toolbar:semantic-toolbar:duplicate-item:2:duplicate",
+        "toolbar:semantic-toolbar:duplicate-item:3:duplicate",
+    ] {
+        let selector = sole_debug_selector_with_prefix(cx, prefix);
+        assert!(cx.debug_bounds(&selector).is_some());
+    }
     let disabled = initial
         .nodes
         .iter()
@@ -294,6 +293,58 @@ fn toolbar_toggle_is_space_only_and_item_handler_overrides_toolbar_fallback(
 }
 
 #[open_gpui::test]
+fn toolbar_accesskit_focus_adopts_the_roving_tab_stop_after_redraw(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct Probe;
+
+    impl Render for Probe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            Toolbar::new("focus-sync-toolbar", "Focus sync")
+                .default_focused("a")
+                .item(ToolbarItem::action("a", "Alpha"))
+                .item(ToolbarItem::action("b", "Beta"))
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| Probe);
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(cx.activate_accessibility());
+
+    let initial = cx
+        .latest_accessibility_tree_update()
+        .expect("focus-sync toolbar should publish a final accessibility tree");
+    let beta = node_with_label(&initial, "Beta");
+    assert!(cx.dispatch_accessibility_action(action_request(accesskit::Action::Focus, beta,)));
+
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(cx.debug_selector_is_focused("toolbar:focus-sync-toolbar:item:b"));
+    assert_eq!(
+        cx.latest_accessibility_tree_update()
+            .expect("AccessKit focus should reach the final tree")
+            .focus,
+        beta
+    );
+
+    cx.update(|window, cx| {
+        window.focus_next(cx);
+        window.draw(cx).clear();
+    });
+    cx.run_until_parked();
+
+    assert!(
+        cx.debug_selector_is_focused("toolbar:focus-sync-toolbar:item:b"),
+        "the physically focused item must become the sole roving tab stop"
+    );
+    assert_eq!(
+        cx.latest_accessibility_tree_update()
+            .expect("tab traversal focus should reach the final tree")
+            .focus,
+        beta
+    );
+}
+
+#[open_gpui::test]
 fn toolbar_reentrant_activation_keeps_the_newest_focus_claim(cx: &mut open_gpui::TestAppContext) {
     struct Probe {
         trace: Rc<RefCell<Vec<String>>>,
@@ -455,17 +506,90 @@ fn toolbar_duplicate_identity_namespace_cannot_collide_with_reserved_looking_uni
     assert_ne!(duplicate_toggle, unique_colon);
     assert_ne!(unique_hyphen, unique_colon);
 
-    for selector in [
+    for prefix in [
         "toolbar:identity-collision-toolbar:duplicate-item:0:foo",
         "toolbar:identity-collision-toolbar:duplicate-item:1:foo",
-        "toolbar:identity-collision-toolbar:item:foo-occurrence-1",
-        "toolbar:identity-collision-toolbar:item:foo:occurrence:1",
     ] {
+        let selector = sole_debug_selector_with_prefix(cx, prefix);
         assert!(
-            cx.debug_bounds(selector).is_some(),
+            cx.debug_bounds(&selector).is_some(),
             "toolbar item should expose the disjoint selector `{selector}`"
         );
     }
+    for selector in [
+        "toolbar:identity-collision-toolbar:item:foo-occurrence-1",
+        "toolbar:identity-collision-toolbar:item:foo%3Aoccurrence%3A1",
+    ] {
+        assert!(cx.debug_bounds(selector).is_some());
+    }
+}
+
+#[open_gpui::test]
+fn toolbar_duplicate_reorder_invalidates_snapshot_local_identity(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct Probe {
+        reversed: bool,
+    }
+
+    impl Render for Probe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let alpha = ToolbarItem::action("duplicate", "Duplicate")
+                .accessibility_description("Alpha identity");
+            let beta = ToolbarItem::action("duplicate", "Duplicate")
+                .accessibility_description("Beta identity");
+            let toolbar = Toolbar::new("snapshot-reorder-toolbar", "Snapshot reorder toolbar");
+            if self.reversed {
+                toolbar.item(beta).item(alpha)
+            } else {
+                toolbar.item(alpha).item(beta)
+            }
+        }
+    }
+
+    let (view, cx) = cx.add_window_view(|_, _| Probe { reversed: false });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(cx.activate_accessibility());
+    let initial = cx
+        .latest_accessibility_tree_update()
+        .expect("initial duplicate toolbar should publish a final tree");
+    let old_nodes = [
+        node_with_label(&initial, "Duplicate, Alpha identity"),
+        node_with_label(&initial, "Duplicate, Beta identity"),
+    ];
+    let old_selectors =
+        cx.debug_selectors_with_prefix("toolbar:snapshot-reorder-toolbar:duplicate-item:");
+    assert_eq!(old_selectors.len(), 2);
+
+    view.update(cx, |probe, cx| {
+        probe.reversed = true;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    let reordered = cx
+        .latest_accessibility_tree_update()
+        .expect("reordered duplicate toolbar should publish a final tree");
+    let new_nodes = [
+        node_with_label(&reordered, "Duplicate, Alpha identity"),
+        node_with_label(&reordered, "Duplicate, Beta identity"),
+    ];
+    assert!(old_nodes.iter().all(|old| !new_nodes.contains(old)));
+    assert!(
+        old_nodes
+            .iter()
+            .all(|old| { !reordered.nodes.iter().any(|(current, _)| current == old) })
+    );
+
+    let new_selectors =
+        cx.debug_selectors_with_prefix("toolbar:snapshot-reorder-toolbar:duplicate-item:");
+    assert_eq!(new_selectors.len(), 2);
+    assert!(
+        old_selectors
+            .iter()
+            .all(|old| !new_selectors.contains(old) && cx.debug_bounds(old).is_none())
+    );
 }
 
 #[open_gpui::test]
@@ -547,13 +671,14 @@ fn toolbar_unique_to_duplicate_redraw_transfers_focus_and_skips_duplicate_items(
     cx.update(|window, cx| window.draw(cx).clear());
     cx.run_until_parked();
 
-    for selector in [
+    for prefix in [
         "toolbar:duplicate-redraw-toolbar:duplicate-item:1:middle-b",
         "toolbar:duplicate-redraw-toolbar:duplicate-item:2:middle-b",
     ] {
-        assert!(cx.debug_bounds(selector).is_some());
+        let selector = sole_debug_selector_with_prefix(cx, prefix);
+        assert!(cx.debug_bounds(&selector).is_some());
         assert!(
-            !cx.debug_selector_is_focused(selector),
+            !cx.debug_selector_is_focused(&selector),
             "fail-closed duplicate item `{selector}` must not retain physical focus"
         );
     }
@@ -583,11 +708,12 @@ fn toolbar_unique_to_duplicate_redraw_transfers_focus_and_skips_duplicate_items(
     cx.update(|window, cx| window.draw(cx).clear());
 
     assert!(cx.debug_selector_is_focused("toolbar:duplicate-redraw-toolbar:item:right"));
-    for selector in [
+    for prefix in [
         "toolbar:duplicate-redraw-toolbar:duplicate-item:1:middle-b",
         "toolbar:duplicate-redraw-toolbar:duplicate-item:2:middle-b",
     ] {
-        assert!(!cx.debug_selector_is_focused(selector));
+        let selector = sole_debug_selector_with_prefix(cx, prefix);
+        assert!(!cx.debug_selector_is_focused(&selector));
     }
     let navigated = cx
         .latest_accessibility_tree_update()

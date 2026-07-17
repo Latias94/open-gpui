@@ -123,6 +123,134 @@ fn components_gallery_smoke_vertical_tabs_scroll_inside_sample(cx: &mut open_gpu
 }
 
 #[open_gpui::test]
+fn components_gallery_smoke_sidebar_reports_typed_activation_and_blocks_duplicates(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::SidebarSampleRuntimeLog::default());
+
+    jump_components_directory_to(cx, "gallery:component-page-jump:sidebar");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "gallery:component-sidebar-sample:workspace-sidebar",
+    );
+
+    let projects = "sidebar:component-sidebar%3Aworkspace-sidebar:item:projects";
+    let viewport_selector = "scroll-area:sidebar:component-sidebar%3Aworkspace-sidebar:scroll";
+    let viewport = bounds(cx, viewport_selector);
+    scroll_until_visible(
+        cx,
+        viewport_selector,
+        projects,
+        12,
+        point(px(0.0), px(36.0)),
+        viewport.center(),
+        |container, target| container.contains(&target.center()),
+        "expected the Projects Sidebar item to be visible before activation".to_owned(),
+    );
+    scroll_page_selector_into_view(&shell, cx, projects);
+    let projects_point = visible_page_interaction_point(cx, projects);
+    click_point(cx, projects_point);
+    settle(cx);
+
+    let pointer = cx.read_global::<pages::components::SidebarSampleRuntimeLog, _>(|log, _| {
+        log.activations().to_vec()
+    });
+    assert_eq!(pointer.len(), 1);
+    assert_eq!(pointer[0].sample_id(), "workspace-sidebar");
+    assert_eq!(pointer[0].activation().value(), "projects");
+    assert!(pointer[0].activation().selected());
+    assert_eq!(
+        pointer[0].source(),
+        open_gpui_ui_components::ActivationSource::Pointer
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-sidebar-sample:workspace-sidebar:runtime")
+            .is_some(),
+        "Sidebar story should expose its typed runtime readout"
+    );
+    for selector in [
+        "gallery:component-sidebar-sample:workspace-sidebar:runtime:last-value:projects",
+        "gallery:component-sidebar-sample:workspace-sidebar:runtime:last-selected:true",
+        "gallery:component-sidebar-sample:workspace-sidebar:runtime:last-source:pointer",
+    ] {
+        assert!(
+            cx.debug_bounds(selector).is_some(),
+            "Sidebar readout should refresh the visible field `{selector}`"
+        );
+    }
+
+    let enter = open_gpui::Keystroke {
+        modifiers: open_gpui::Modifiers::none(),
+        key: "enter".to_owned(),
+        key_char: None,
+    };
+    cx.simulate_event(open_gpui::KeyDownEvent {
+        keystroke: enter.clone(),
+        is_held: false,
+        prefer_character_input: false,
+    });
+    cx.simulate_event(open_gpui::KeyUpEvent { keystroke: enter });
+    settle(cx);
+    let keyboard = cx.read_global::<pages::components::SidebarSampleRuntimeLog, _>(|log, _| {
+        log.activations().to_vec()
+    });
+    assert_eq!(keyboard.len(), 2);
+    assert_eq!(keyboard[1].activation().value(), "projects");
+    assert_eq!(
+        keyboard[1].source(),
+        open_gpui_ui_components::ActivationSource::Keyboard(
+            open_gpui_ui_components::ActivationKey::Enter,
+        )
+    );
+    assert!(
+        cx.debug_bounds(
+            "gallery:component-sidebar-sample:workspace-sidebar:runtime:last-source:keyboard-enter"
+        )
+        .is_some(),
+        "Sidebar readout should refresh after keyboard activation"
+    );
+
+    let viewport = bounds(cx, viewport_selector);
+    for duplicate_prefix in [
+        "sidebar:component-sidebar%3Aworkspace-sidebar:duplicate-item:4:duplicate-probe",
+        "sidebar:component-sidebar%3Aworkspace-sidebar:duplicate-item:7:duplicate-probe",
+    ] {
+        let matches = cx.debug_selectors_with_prefix(duplicate_prefix);
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected one duplicate Sidebar selector for `{duplicate_prefix}`, found {matches:?}"
+        );
+        let duplicate = matches
+            .first()
+            .expect("the asserted duplicate selector should exist");
+        scroll_until_visible(
+            cx,
+            viewport_selector,
+            duplicate,
+            24,
+            point(px(0.0), px(-36.0)),
+            viewport.center(),
+            |container, target| container.contains(&target.center()),
+            format!("expected duplicate Sidebar item `{duplicate}` to become visible"),
+        );
+        click(cx, duplicate);
+        settle(cx);
+    }
+
+    let after_duplicates =
+        cx.read_global::<pages::components::SidebarSampleRuntimeLog, _>(|log, _| {
+            log.activations().to_vec()
+        });
+    assert_eq!(
+        after_duplicates, keyboard,
+        "duplicate Sidebar values must fail closed without emitting callbacks"
+    );
+}
+
+#[open_gpui::test]
 fn components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -133,12 +261,14 @@ fn components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample(
     scroll_page_selector_into_view(
         &shell,
         cx,
-        "scroll-area:component-sidebar:long-sidebar-scroll",
+        "scroll-area:sidebar:component-sidebar%3Along-sidebar:scroll",
     );
     let sample_before = bounds(cx, "gallery:component-sidebar-sample:long-sidebar");
-    let segments_before = bounds(cx, "sidebar:component-sidebar:long-sidebar:item:segments");
-    let sidebar_position =
-        visible_page_interaction_point(cx, "scroll-area:component-sidebar:long-sidebar-scroll");
+    let segments_before = bounds(cx, "sidebar:component-sidebar%3Along-sidebar:item:segments");
+    let sidebar_position = visible_page_interaction_point(
+        cx,
+        "scroll-area:sidebar:component-sidebar%3Along-sidebar:scroll",
+    );
 
     cx.simulate_event(ScrollWheelEvent {
         position: sidebar_position,
@@ -148,7 +278,7 @@ fn components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample(
     redraw(cx);
 
     let sample_after = bounds(cx, "gallery:component-sidebar-sample:long-sidebar");
-    let segments_after = bounds(cx, "sidebar:component-sidebar:long-sidebar:item:segments");
+    let segments_after = bounds(cx, "sidebar:component-sidebar%3Along-sidebar:item:segments");
     let segments_offset_before = segments_before.top() - sample_before.top();
     let segments_offset_after = segments_after.top() - sample_after.top();
     assert!(

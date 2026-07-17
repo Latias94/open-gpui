@@ -119,9 +119,9 @@ pub use crate::sheet::{
     SheetSide, SheetState,
 };
 pub use crate::sidebar::{
-    Sidebar, SidebarCollapseMode, SidebarColors, SidebarItemDescriptor, SidebarItemState,
-    SidebarMetrics, SidebarSection, SidebarSectionDescriptor, SidebarSectionState,
-    SidebarSelection, SidebarSide, SidebarState, SidebarVariant, sidebar_navigation_target,
+    Sidebar, SidebarActivation, SidebarCollapseMode, SidebarColors, SidebarItemDescriptor,
+    SidebarItemState, SidebarMetrics, SidebarSection, SidebarSectionDescriptor,
+    SidebarSectionState, SidebarSide, SidebarState, SidebarVariant, sidebar_navigation_target,
 };
 pub use crate::skeleton::{Skeleton, SkeletonColors, SkeletonMetrics, SkeletonState};
 pub use crate::slider::{Slider, SliderChange, SliderColors, SliderMetrics, SliderState};

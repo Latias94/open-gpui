@@ -201,7 +201,7 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentCatalog,
         docs_token: Some("Sidebar"),
         default_export: true,
-        source_inputs: &["sidebar.rs"],
+        source_inputs: &["sidebar.rs", "sidebar/render.rs"],
         source_home: "sidebar.rs",
     },
     ComponentContractEntry {
@@ -1384,7 +1384,7 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentContract,
         docs_token: Some("SidebarItem"),
         default_export: false,
-        source_inputs: &["sidebar.rs"],
+        source_inputs: &["sidebar.rs", "sidebar/render.rs"],
         source_home: "sidebar.rs",
     },
     ComponentContractEntry {

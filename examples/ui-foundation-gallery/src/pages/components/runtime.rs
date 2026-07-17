@@ -56,6 +56,8 @@ impl<T> SampleRuntimeLog<T> {
 mod form;
 #[path = "runtime/resource.rs"]
 mod resource;
+#[path = "runtime/sidebar.rs"]
+mod sidebar;
 #[path = "runtime/table.rs"]
 mod table;
 #[path = "runtime/tree.rs"]
@@ -70,6 +72,7 @@ pub use form::{
 pub use resource::{
     ResourceSampleRuntimeEvent, ResourceSampleRuntimeLog, resource_sample_runtime_log,
 };
+pub use sidebar::{SidebarSampleActivation, SidebarSampleRuntimeLog, record_sidebar_activation};
 pub use table::{
     TableSampleCellEditChange, TableSampleColumnOrderChange, TableSampleColumnVisibilityChange,
     TableSampleExpansionToggle, TableSampleFacetedFilterChange, TableSampleGlobalFilterChange,

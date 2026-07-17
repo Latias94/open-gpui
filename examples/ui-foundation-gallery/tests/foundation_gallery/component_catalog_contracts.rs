@@ -434,6 +434,15 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(sidebars[0].state.sections()[0].role(), Role::Section);
     assert_eq!(sidebars[0].state.items()[1].badge_label(), Some("12"));
     assert!(!sidebars[0].state.items()[3].activation_enabled());
+    assert_eq!(
+        sidebars[0]
+            .state
+            .items()
+            .iter()
+            .filter(|item| item.duplicate_value())
+            .count(),
+        2
+    );
     assert!(sidebars[1].state.icon_collapsed());
     assert_eq!(sidebars[1].state.items()[0].label(), "Home");
     assert_eq!(sidebars[2].state.side().as_str(), "right");
@@ -1602,6 +1611,7 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     let render_sections_source = include_str!("../../src/pages/components/render/sections.rs");
     let render_support_source = include_str!("../../src/pages/components/render/support.rs");
     let runtime_source = include_str!("../../src/pages/components/runtime.rs");
+    let runtime_sidebar_source = include_str!("../../src/pages/components/runtime/sidebar.rs");
     let runtime_table_source = include_str!("../../src/pages/components/runtime/table.rs");
     let runtime_tree_source = include_str!("../../src/pages/components/runtime/tree.rs");
     let runtime_virtualized_list_source =
@@ -1644,6 +1654,7 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(component_evidence_source.contains("pub const COMPONENT_CONFORMANCE_GATES"));
     assert!(!component_evidence_source.contains("ComponentA11yEvidence {"));
     for module_path in [
+        "#[path = \"runtime/sidebar.rs\"]",
         "#[path = \"runtime/table.rs\"]",
         "#[path = \"runtime/tree.rs\"]",
         "#[path = \"runtime/virtualized_list.rs\"]",
@@ -1653,9 +1664,11 @@ fn components_catalog_metadata_is_separate_from_rendering() {
             "runtime facade should declare owner module `{module_path}`"
         );
     }
+    assert!(runtime_sidebar_source.contains("pub struct SidebarSampleRuntimeLog"));
     assert!(runtime_table_source.contains("pub struct TableSampleRuntimeLog"));
     assert!(runtime_tree_source.contains("pub struct TreeSampleRuntimeLog"));
     assert!(runtime_virtualized_list_source.contains("pub struct VirtualizedListSampleRuntimeLog"));
+    assert!(!runtime_source.contains("pub struct SidebarSampleRuntimeLog"));
     assert!(!runtime_source.contains("pub struct TableSampleRuntimeLog"));
     assert!(!runtime_source.contains("pub struct TreeSampleRuntimeLog"));
     assert!(!runtime_source.contains("pub struct VirtualizedListSampleRuntimeLog"));
@@ -2229,6 +2242,24 @@ fn gallery_story_contracts_cover_components_state_readouts_and_overlays() {
     assert!(table_story.has_operation(StoryProbeOperation::Scroll));
     assert!(table_story.has_operation(StoryProbeOperation::Edit));
     assert!(table_story.has_operation(StoryProbeOperation::Open));
+
+    let sidebar_story = component_stories
+        .iter()
+        .find(|story| story.owner_name() == "Sidebar")
+        .expect("Sidebar story contract should exist");
+    for operation in [
+        StoryProbeOperation::Activate,
+        StoryProbeOperation::Focus,
+        StoryProbeOperation::Scroll,
+        StoryProbeOperation::ReadPublicPayload,
+    ] {
+        assert!(sidebar_story.has_operation(operation));
+    }
+    assert!(!sidebar_story.has_operation(StoryProbeOperation::Open));
+    assert_eq!(
+        sidebar_story.selectors().state_readout_selector(),
+        Some("gallery:component-sidebar-sample:workspace-sidebar:runtime")
+    );
 
     let tree_state_story = component_stories
         .iter()
