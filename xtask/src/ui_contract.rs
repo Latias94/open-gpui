@@ -55,6 +55,7 @@ struct ExactTestCommand {
 
 const OLD_A11Y_EVIDENCE_IDENTIFIERS: &[&str] =
     &["ComponentA11yEvidence", "COMPONENT_A11Y_EVIDENCE"];
+const PUBLIC_CLICK_EVENT_API_ALLOWLIST: &[(&str, &str)] = &[];
 
 /// U5 runner coordinates for final-tree/action checkpoints.
 ///
@@ -540,6 +541,9 @@ fn audit_semantic_authority(
     for path in runtime_sources {
         let label = repo_relative_path(root, &path);
         if let Some(source) = read_to_string(&path, &mut failures) {
+            if path.starts_with(source_dir) {
+                failures.extend(public_click_event_api_failures(&label, &source));
+            }
             failures.extend(old_a11y_evidence_failures(&label, &source));
         }
     }
@@ -678,6 +682,362 @@ fn semantic_method_allowlisted(source_path: &str, method: &str) -> bool {
             "aria_column_index"
         ) | ("crates/ui_components/src/table/editors.rs", "aria_label")
     )
+}
+
+fn public_click_event_api_failures(source_path: &str, source: &str) -> Vec<String> {
+    let mut file = match syn::parse_file(source) {
+        Ok(file) => file,
+        Err(error) => {
+            return vec![format!(
+                "{source_path}: failed to parse UI Components public API: {error}"
+            )];
+        }
+    };
+    let forbidden_types = click_event_type_identifiers(&file);
+    let mut visitor = PublicClickEventApiVisitor {
+        source_path,
+        forbidden_types: &forbidden_types,
+        impl_owner: None,
+        public_trait_owner: None,
+        failures: Vec::new(),
+    };
+    visitor.visit_file_mut(&mut file);
+    visitor.failures
+}
+
+struct PublicClickEventApiVisitor<'a> {
+    source_path: &'a str,
+    forbidden_types: &'a BTreeSet<String>,
+    impl_owner: Option<String>,
+    public_trait_owner: Option<String>,
+    failures: Vec<String>,
+}
+
+impl PublicClickEventApiVisitor<'_> {
+    fn reject(&mut self, api: String) {
+        if PUBLIC_CLICK_EVENT_API_ALLOWLIST
+            .iter()
+            .any(|&(path, allowed_api)| path == self.source_path && allowed_api == api)
+        {
+            return;
+        }
+
+        self.failures.push(format!(
+            "{}: public API `{api}` exposes `ClickEvent`; use typed semantic activation or value intent instead of a physical-click callback",
+            self.source_path
+        ));
+    }
+}
+
+impl VisitMut for PublicClickEventApiVisitor<'_> {
+    fn visit_item_fn_mut(&mut self, item: &mut syn::ItemFn) {
+        if visibility_is_public(&item.vis)
+            && signature_mentions_click_event(&item.sig, self.forbidden_types)
+        {
+            self.reject(item.sig.ident.to_string());
+        }
+    }
+
+    fn visit_item_impl_mut(&mut self, item: &mut syn::ItemImpl) {
+        let owner = type_owner_name(&item.self_ty);
+        let previous = self.impl_owner.replace(owner);
+        syn::visit_mut::visit_item_impl_mut(self, item);
+        self.impl_owner = previous;
+    }
+
+    fn visit_impl_item_fn_mut(&mut self, item: &mut syn::ImplItemFn) {
+        if visibility_is_public(&item.vis)
+            && signature_mentions_click_event(&item.sig, self.forbidden_types)
+        {
+            let owner = self.impl_owner.as_deref().unwrap_or("<impl>");
+            self.reject(format!("{owner}::{}", item.sig.ident));
+        }
+    }
+
+    fn visit_item_trait_mut(&mut self, item: &mut syn::ItemTrait) {
+        let is_public = visibility_is_public(&item.vis);
+        if is_public
+            && (generics_mention_click_event(&item.generics, self.forbidden_types)
+                || bounds_mention_click_event(&item.supertraits, self.forbidden_types))
+        {
+            self.reject(item.ident.to_string());
+        }
+        let owner = is_public.then(|| item.ident.to_string());
+        let previous = std::mem::replace(&mut self.public_trait_owner, owner);
+        syn::visit_mut::visit_item_trait_mut(self, item);
+        self.public_trait_owner = previous;
+    }
+
+    fn visit_trait_item_fn_mut(&mut self, item: &mut syn::TraitItemFn) {
+        if signature_mentions_click_event(&item.sig, self.forbidden_types) {
+            if let Some(owner) = self.public_trait_owner.clone() {
+                self.reject(format!("{owner}::{}", item.sig.ident));
+            }
+        }
+    }
+
+    fn visit_trait_item_type_mut(&mut self, item: &mut syn::TraitItemType) {
+        let exposes_click_event =
+            generics_mention_click_event(&item.generics, self.forbidden_types)
+                || bounds_mention_click_event(&item.bounds, self.forbidden_types)
+                || item
+                    .default
+                    .as_ref()
+                    .is_some_and(|(_, ty)| type_mentions_click_event(ty, self.forbidden_types));
+        if exposes_click_event {
+            if let Some(owner) = self.public_trait_owner.clone() {
+                self.reject(format!("{owner}::{}", item.ident));
+            }
+        }
+    }
+
+    fn visit_trait_item_const_mut(&mut self, item: &mut syn::TraitItemConst) {
+        if type_mentions_click_event(&item.ty, self.forbidden_types) {
+            if let Some(owner) = self.public_trait_owner.clone() {
+                self.reject(format!("{owner}::{}", item.ident));
+            }
+        }
+    }
+
+    fn visit_item_type_mut(&mut self, item: &mut syn::ItemType) {
+        if visibility_is_public(&item.vis)
+            && (generics_mention_click_event(&item.generics, self.forbidden_types)
+                || type_mentions_click_event(&item.ty, self.forbidden_types))
+        {
+            self.reject(item.ident.to_string());
+        }
+    }
+
+    fn visit_item_struct_mut(&mut self, item: &mut syn::ItemStruct) {
+        if visibility_is_public(&item.vis) {
+            if generics_mention_click_event(&item.generics, self.forbidden_types) {
+                self.reject(item.ident.to_string());
+            }
+            for (index, field) in item.fields.iter().enumerate() {
+                if visibility_is_public(&field.vis)
+                    && type_mentions_click_event(&field.ty, self.forbidden_types)
+                {
+                    let field = field
+                        .ident
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| index.to_string());
+                    self.reject(format!("{}::{field}", item.ident));
+                }
+            }
+        }
+    }
+
+    fn visit_item_enum_mut(&mut self, item: &mut syn::ItemEnum) {
+        if visibility_is_public(&item.vis) {
+            if generics_mention_click_event(&item.generics, self.forbidden_types) {
+                self.reject(item.ident.to_string());
+            }
+            for variant in &item.variants {
+                if variant
+                    .fields
+                    .iter()
+                    .any(|field| type_mentions_click_event(&field.ty, self.forbidden_types))
+                {
+                    self.reject(format!("{}::{}", item.ident, variant.ident));
+                }
+            }
+        }
+    }
+
+    fn visit_item_union_mut(&mut self, item: &mut syn::ItemUnion) {
+        if visibility_is_public(&item.vis) {
+            if generics_mention_click_event(&item.generics, self.forbidden_types) {
+                self.reject(item.ident.to_string());
+            }
+            for field in &item.fields.named {
+                if visibility_is_public(&field.vis)
+                    && type_mentions_click_event(&field.ty, self.forbidden_types)
+                {
+                    let field = field
+                        .ident
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| "<field>".to_owned());
+                    self.reject(format!("{}::{field}", item.ident));
+                }
+            }
+        }
+    }
+
+    fn visit_item_const_mut(&mut self, item: &mut syn::ItemConst) {
+        if visibility_is_public(&item.vis)
+            && type_mentions_click_event(&item.ty, self.forbidden_types)
+        {
+            self.reject(item.ident.to_string());
+        }
+    }
+
+    fn visit_item_static_mut(&mut self, item: &mut syn::ItemStatic) {
+        if visibility_is_public(&item.vis)
+            && type_mentions_click_event(&item.ty, self.forbidden_types)
+        {
+            self.reject(item.ident.to_string());
+        }
+    }
+}
+
+fn visibility_is_public(visibility: &syn::Visibility) -> bool {
+    matches!(visibility, syn::Visibility::Public(_))
+}
+
+fn signature_mentions_click_event(
+    signature: &syn::Signature,
+    forbidden_types: &BTreeSet<String>,
+) -> bool {
+    let mut signature = signature.clone();
+    let mut visitor = ClickEventTypeVisitor::new(forbidden_types);
+    visitor.visit_signature_mut(&mut signature);
+    visitor.found
+}
+
+fn type_mentions_click_event(ty: &syn::Type, forbidden_types: &BTreeSet<String>) -> bool {
+    let mut ty = ty.clone();
+    let mut visitor = ClickEventTypeVisitor::new(forbidden_types);
+    visitor.visit_type_mut(&mut ty);
+    visitor.found
+}
+
+fn generics_mention_click_event(
+    generics: &syn::Generics,
+    forbidden_types: &BTreeSet<String>,
+) -> bool {
+    let mut generics = generics.clone();
+    let mut visitor = ClickEventTypeVisitor::new(forbidden_types);
+    visitor.visit_generics_mut(&mut generics);
+    visitor.found
+}
+
+fn bounds_mention_click_event(
+    bounds: &syn::punctuated::Punctuated<syn::TypeParamBound, syn::token::Plus>,
+    forbidden_types: &BTreeSet<String>,
+) -> bool {
+    bounds.iter().any(|bound| {
+        let mut bound = bound.clone();
+        let mut visitor = ClickEventTypeVisitor::new(forbidden_types);
+        visitor.visit_type_param_bound_mut(&mut bound);
+        visitor.found
+    })
+}
+
+fn type_owner_name(ty: &syn::Type) -> String {
+    match ty {
+        syn::Type::Path(path) => path
+            .path
+            .segments
+            .last()
+            .map(|segment| segment.ident.to_string())
+            .unwrap_or_else(|| "<impl>".to_owned()),
+        _ => "<impl>".to_owned(),
+    }
+}
+
+fn click_event_type_identifiers(file: &syn::File) -> BTreeSet<String> {
+    let mut identifiers = BTreeSet::from(["ClickEvent".to_owned()]);
+    collect_click_event_import_aliases(&file.items, &mut identifiers);
+
+    loop {
+        let previous_len = identifiers.len();
+        collect_click_event_type_aliases(&file.items, &mut identifiers);
+        if identifiers.len() == previous_len {
+            return identifiers;
+        }
+    }
+}
+
+fn collect_click_event_import_aliases(items: &[Item], identifiers: &mut BTreeSet<String>) {
+    for item in items {
+        match item {
+            Item::Use(item) => collect_click_event_use_aliases(&item.tree, false, identifiers),
+            Item::Mod(item) => {
+                if let Some((_, items)) = &item.content {
+                    collect_click_event_import_aliases(items, identifiers);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_click_event_use_aliases(
+    tree: &syn::UseTree,
+    click_event_path: bool,
+    identifiers: &mut BTreeSet<String>,
+) {
+    match tree {
+        syn::UseTree::Path(path) => collect_click_event_use_aliases(
+            &path.tree,
+            click_event_path || path.ident == "ClickEvent",
+            identifiers,
+        ),
+        syn::UseTree::Name(name) => {
+            if click_event_path || name.ident == "ClickEvent" {
+                identifiers.insert(name.ident.to_string());
+            }
+        }
+        syn::UseTree::Rename(rename) => {
+            if click_event_path || rename.ident == "ClickEvent" {
+                identifiers.insert(rename.rename.to_string());
+            }
+        }
+        syn::UseTree::Group(group) => {
+            for tree in &group.items {
+                collect_click_event_use_aliases(tree, click_event_path, identifiers);
+            }
+        }
+        syn::UseTree::Glob(_) => {}
+    }
+}
+
+fn collect_click_event_type_aliases(items: &[Item], identifiers: &mut BTreeSet<String>) {
+    for item in items {
+        match item {
+            Item::Type(item)
+                if generics_mention_click_event(&item.generics, identifiers)
+                    || type_mentions_click_event(&item.ty, identifiers) =>
+            {
+                identifiers.insert(item.ident.to_string());
+            }
+            Item::Mod(item) => {
+                if let Some((_, items)) = &item.content {
+                    collect_click_event_type_aliases(items, identifiers);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+struct ClickEventTypeVisitor<'a> {
+    forbidden_types: &'a BTreeSet<String>,
+    found: bool,
+}
+
+impl<'a> ClickEventTypeVisitor<'a> {
+    fn new(forbidden_types: &'a BTreeSet<String>) -> Self {
+        Self {
+            forbidden_types,
+            found: false,
+        }
+    }
+}
+
+impl VisitMut for ClickEventTypeVisitor<'_> {
+    fn visit_path_segment_mut(&mut self, segment: &mut syn::PathSegment) {
+        if self
+            .forbidden_types
+            .iter()
+            .any(|identifier| segment.ident == identifier.as_str())
+        {
+            self.found = true;
+        }
+        syn::visit_mut::visit_path_segment_mut(self, segment);
+    }
 }
 
 fn old_a11y_evidence_failures(source_path: &str, source: &str) -> Vec<String> {
@@ -1600,6 +1960,225 @@ mod tests {
 
         assert!(count_failures.is_empty(), "{count_failures:#?}");
         assert!(input_failures.is_empty(), "{input_failures:#?}");
+    }
+
+    #[test]
+    fn public_click_event_audit_rejects_public_surface_shapes() {
+        let cases = [
+            (
+                "builder method",
+                r#"
+use open_gpui::ClickEvent;
+pub struct Control;
+impl Control {
+    pub fn on_click(self, handler: impl Fn(&ClickEvent)) -> Self {
+        let _ = handler;
+        self
+    }
+}
+"#,
+                "Control::on_click",
+            ),
+            (
+                "free function",
+                r#"
+use open_gpui::ClickEvent;
+pub fn dispatch_raw(event: &ClickEvent) {
+    let _ = event;
+}
+"#,
+                "dispatch_raw",
+            ),
+            (
+                "callback alias",
+                r#"
+use open_gpui::ClickEvent;
+pub type RawClickHandler = Box<dyn Fn(&ClickEvent)>;
+"#,
+                "RawClickHandler",
+            ),
+            (
+                "public field",
+                r#"
+use open_gpui::ClickEvent;
+pub struct CallbackSlot {
+    pub handler: Box<dyn Fn(&ClickEvent)>,
+}
+"#,
+                "CallbackSlot::handler",
+            ),
+            (
+                "public enum variant",
+                r#"
+use open_gpui::ClickEvent;
+pub enum CallbackMessage {
+    Raw(Box<dyn Fn(&ClickEvent)>),
+}
+"#,
+                "CallbackMessage::Raw",
+            ),
+            (
+                "public trait method bound",
+                r#"
+use open_gpui::ClickEvent;
+pub trait RawActivation {
+    fn subscribe<F>(&self, handler: F)
+    where
+        F: Fn(&ClickEvent);
+}
+"#,
+                "RawActivation::subscribe",
+            ),
+            (
+                "renamed import",
+                r#"
+use open_gpui::ClickEvent as RawClick;
+pub fn dispatch_renamed(event: &RawClick) {
+    let _ = event;
+}
+"#,
+                "dispatch_renamed",
+            ),
+            (
+                "private alias chain",
+                r#"
+use open_gpui::ClickEvent;
+type RawClick = ClickEvent;
+type RawHandler = Box<dyn Fn(&RawClick)>;
+pub fn subscribe(handler: RawHandler) {
+    let _ = handler;
+}
+"#,
+                "subscribe",
+            ),
+            (
+                "return type",
+                r#"
+use open_gpui::ClickEvent;
+pub fn raw_event() -> ClickEvent {
+    todo!()
+}
+"#,
+                "raw_event",
+            ),
+            (
+                "public generic bound",
+                r#"
+use open_gpui::ClickEvent;
+pub struct GenericCallbackSlot<F: Fn(&ClickEvent)> {
+    handler: F,
+}
+"#,
+                "GenericCallbackSlot",
+            ),
+            (
+                "trait supertrait",
+                r#"
+use open_gpui::ClickEvent;
+pub trait RawSupertrait: Fn(&ClickEvent) {}
+"#,
+                "RawSupertrait",
+            ),
+            (
+                "trait associated type",
+                r#"
+use open_gpui::ClickEvent;
+pub trait RawAssociatedType {
+    type Handler: Fn(&ClickEvent);
+}
+"#,
+                "RawAssociatedType::Handler",
+            ),
+            (
+                "trait associated const",
+                r#"
+use open_gpui::ClickEvent;
+pub trait RawAssociatedConst {
+    const HANDLER: fn(&ClickEvent);
+}
+"#,
+                "RawAssociatedConst::HANDLER",
+            ),
+            (
+                "public const",
+                r#"
+use open_gpui::ClickEvent;
+pub const RAW_HANDLER: fn(&ClickEvent) = |_| {};
+"#,
+                "RAW_HANDLER",
+            ),
+            (
+                "public static",
+                r#"
+use open_gpui::ClickEvent;
+pub static RAW_HANDLER: fn(&ClickEvent) = |_| {};
+"#,
+                "RAW_HANDLER",
+            ),
+            (
+                "public tuple field",
+                r#"
+use open_gpui::ClickEvent;
+pub struct RawTuple(pub fn(&ClickEvent));
+"#,
+                "RawTuple::0",
+            ),
+            (
+                "public union field",
+                r#"
+use open_gpui::ClickEvent;
+pub union RawUnion {
+    pub handler: fn(&ClickEvent),
+}
+"#,
+                "RawUnion::handler",
+            ),
+        ];
+
+        for (case, source, api) in cases {
+            let failures =
+                public_click_event_api_failures("crates/ui_components/src/fixture.rs", source);
+            assert!(
+                has_failure(&failures, api),
+                "{case} should reject `{api}`: {failures:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn public_click_event_audit_allows_internal_render_input() {
+        let source = r#"
+use open_gpui::ClickEvent;
+
+type PrivateRawClick = ClickEvent;
+type PrivateRawHandler = Box<dyn Fn(&PrivateRawClick)>;
+
+fn private_callback(handler: impl Fn(&ClickEvent)) {
+    let _ = handler;
+}
+
+fn private_alias_callback(handler: PrivateRawHandler) {
+    let _ = handler;
+}
+
+pub(crate) fn crate_callback(handler: impl Fn(&ClickEvent)) {
+    let _ = handler;
+}
+
+fn render() {
+    div().on_click(|_event: &ClickEvent, _window, _cx| {});
+}
+"#;
+
+        let failures =
+            public_click_event_api_failures("crates/ui_components/src/fixture.rs", source);
+
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    #[test]
+    fn public_click_event_raw_api_allowlist_is_empty() {
+        assert!(PUBLIC_CLICK_EVENT_API_ALLOWLIST.is_empty());
     }
 
     #[test]

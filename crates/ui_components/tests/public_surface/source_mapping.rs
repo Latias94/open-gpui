@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn semantic_activation_source_mappings_track_split_render_owners() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mappings = [
+        ("RadioGroup", ["radio.rs", "radio/render.rs"]),
+        ("ToastStack", ["toast.rs", "toast/render.rs"]),
+        ("Tabs", ["tabs.rs", "tabs/render.rs"]),
+        ("ToggleGroup", ["toggle_group.rs", "toggle_group/render.rs"]),
+        ("Toolbar", ["toolbar.rs", "toolbar/render.rs"]),
+        ("Sidebar", ["sidebar.rs", "sidebar/render.rs"]),
+    ];
+
+    for (component, owners) in mappings {
+        assert_eq!(
+            component_source_inputs(component),
+            owners,
+            "{component} must expose every split source owner to structural scanners"
+        );
+
+        for owner in owners {
+            assert!(
+                source_dir.join(owner).is_file(),
+                "split {component} source owner `{owner}` should exist"
+            );
+        }
+    }
+}
+
+#[test]
 fn table_component_source_mapping_tracks_split_render_owners() {
     let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
 

@@ -91,7 +91,7 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentCatalog,
         docs_token: Some("ToastStack"),
         default_export: true,
-        source_inputs: &["toast.rs"],
+        source_inputs: &["toast.rs", "toast/render.rs"],
         source_home: "toast.rs",
     },
     ComponentContractEntry {
@@ -157,7 +157,7 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentCatalog,
         docs_token: Some("RadioGroup"),
         default_export: true,
-        source_inputs: &["radio.rs"],
+        source_inputs: &["radio.rs", "radio/render.rs"],
         source_home: "radio.rs",
     },
     ComponentContractEntry {
@@ -179,7 +179,7 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentCatalog,
         docs_token: Some("ToggleGroup"),
         default_export: true,
-        source_inputs: &["toggle_group.rs"],
+        source_inputs: &["toggle_group.rs", "toggle_group/render.rs"],
         source_home: "toggle_group.rs",
     },
     ComponentContractEntry {
@@ -190,7 +190,7 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentCatalog,
         docs_token: Some("Toolbar"),
         default_export: true,
-        source_inputs: &["toolbar.rs"],
+        source_inputs: &["toolbar.rs", "toolbar/render.rs"],
         source_home: "toolbar.rs",
     },
     ComponentContractEntry {
@@ -394,7 +394,7 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentCatalog,
         docs_token: Some("Tabs"),
         default_export: true,
-        source_inputs: &["tabs.rs"],
+        source_inputs: &["tabs.rs", "tabs/render.rs"],
         source_home: "tabs.rs",
     },
     ComponentContractEntry {
@@ -1373,7 +1373,7 @@ pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentContract,
         docs_token: Some("ToolbarItem"),
         default_export: false,
-        source_inputs: &["toolbar.rs"],
+        source_inputs: &["toolbar.rs", "toolbar/render.rs"],
         source_home: "toolbar.rs",
     },
     ComponentContractEntry {
