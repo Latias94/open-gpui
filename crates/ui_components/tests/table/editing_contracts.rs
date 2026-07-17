@@ -191,7 +191,7 @@ fn table_cell_edit_change_updates_source_row_and_preserves_table_state() {
     .with_filters([TableFilter::contains("team", "UI")])
     .with_sorting([TableSort::ascending("name")])
     .with_expanded_rows([TableRowIdentity::source("root")])
-    .with_selected_rows(["child"])
+    .with_selected_rows([table_source_selection_identity("child")])
     .with_pagination(TablePagination::new(2, 25));
 
     let change = TableCellEditRequest::new(
@@ -208,7 +208,10 @@ fn table_cell_edit_change_updates_source_row_and_preserves_table_state() {
     assert_eq!(next.filters()[0].query(), "UI");
     assert_eq!(next.sorting()[0].column().as_str(), "name");
     assert_eq!(next.expansion(), state.expansion());
-    assert!(next.selected_rows().contains(&TableRowId::new("child")));
+    assert!(
+        next.selected_rows()
+            .contains(&table_source_selection_identity("child"))
+    );
     assert_eq!(next.pagination().page_index(), 2);
 
     let updated = next
@@ -384,7 +387,7 @@ fn table_cell_edit_change_updates_boolean_source_row_and_preserves_table_state()
     .with_filters([TableFilter::contains("team", "UI")])
     .with_sorting([TableSort::ascending("name")])
     .with_expanded_rows([TableRowIdentity::source("root")])
-    .with_selected_rows(["child"])
+    .with_selected_rows([table_source_selection_identity("child")])
     .with_pagination(TablePagination::new(2, 25));
 
     let change = TableCellEditRequest::new(
@@ -405,7 +408,10 @@ fn table_cell_edit_change_updates_boolean_source_row_and_preserves_table_state()
     assert_eq!(next.filters()[0].query(), "UI");
     assert_eq!(next.sorting()[0].column().as_str(), "name");
     assert_eq!(next.expansion(), state.expansion());
-    assert!(next.selected_rows().contains(&TableRowId::new("child")));
+    assert!(
+        next.selected_rows()
+            .contains(&table_source_selection_identity("child"))
+    );
     assert_eq!(next.pagination().page_index(), 2);
 
     let updated = next

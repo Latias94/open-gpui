@@ -1,11 +1,12 @@
 //! Listbox component and shared collection navigation state.
 
 use crate::geometry::gpui_px_from_ui;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, IntoElement, KeyDownEvent,
+    AnyElement, App, Context, ElementId, Entity, FocusHandle, IntoElement, KeyDownEvent,
     ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
@@ -13,12 +14,21 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::choice::{self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
+use crate::activation::{ActivationBinding, ActivationHandle, ActivationKeyPolicy};
+use crate::choice::{
+    self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection,
+    SingleChoiceSelectionControl,
+};
 use crate::color::ColorIntent;
+use crate::debug_selector::{
+    AuthoredSnapshot, StableValueItemRenderIdentity, StableValueItemRenderIdentityInput,
+    debug_selector_element_id,
+};
 use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::theme::{ThemeContext, ThemeResolver};
 
 type ListboxSelectHandler = Rc<dyn Fn(ListboxSelection, &mut Window, &mut App)>;
+type ListboxSelectionTransaction = Rc<dyn Fn(ListboxSelectionIntent, &mut Window, &mut App)>;
 
 /// Listbox option anatomy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -350,6 +360,7 @@ pub struct ListboxOptionState {
     label: String,
     kind: ListboxOptionKind,
     disabled: bool,
+    ambiguous_value: bool,
     selected: bool,
     active: bool,
     position_in_set: Option<usize>,
@@ -460,6 +471,27 @@ impl ListboxSelection {
     }
 }
 
+pub(crate) struct ListboxSelectionIntent {
+    selection: ListboxSelection,
+    handler: Option<ListboxSelectHandler>,
+}
+
+impl ListboxSelectionIntent {
+    fn new(selection: ListboxSelection, handler: Option<ListboxSelectHandler>) -> Self {
+        Self { selection, handler }
+    }
+
+    pub(crate) const fn selection(&self) -> &ListboxSelection {
+        &self.selection
+    }
+
+    pub(crate) fn deliver(self, window: &mut Window, cx: &mut App) {
+        if let Some(handler) = self.handler.as_ref() {
+            handler(self.selection, window, cx);
+        }
+    }
+}
+
 /// Resolved listbox state used by tests, demos, and rendering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListboxState {
@@ -517,7 +549,7 @@ impl ListboxState {
                     .count(),
             })
             .collect::<Vec<_>>();
-        let collection = ChoiceCollection::resolve(
+        let collection = ChoiceCollection::resolve_unique(
             disabled,
             flatten_listbox_options(&group_descriptors, standalone_options),
             selected_value,
@@ -540,6 +572,8 @@ impl ListboxState {
             .enumerate()
             .map(|(index, option)| {
                 let group_index = option.group_index();
+                let disabled = disabled || !option.enabled();
+                let ambiguous_value = option.ambiguous_value();
                 let descriptor = option.into_item();
                 let kind = descriptor.kind();
                 let position_in_set = if kind == ListboxOptionKind::Option {
@@ -557,7 +591,8 @@ impl ListboxState {
                     value: descriptor.value,
                     label: descriptor.label,
                     kind,
-                    disabled: disabled || descriptor.disabled,
+                    disabled,
+                    ambiguous_value,
                     selected,
                     active,
                     position_in_set,
@@ -848,6 +883,46 @@ struct ListboxRuntime {
     selected_value: Option<String>,
 }
 
+impl ListboxRuntime {
+    fn sync(&mut self, selection: &SingleChoiceSelectionControl, state: &ListboxState) {
+        if selection.is_controlled() {
+            let selected_value = selection.value().as_deref();
+            if self.selected_value.as_deref() != selected_value {
+                self.selected_value = selected_value.map(str::to_owned);
+            }
+        }
+
+        if !state.disabled() {
+            let active_value = state.active_value();
+            if self.active_value.as_deref() != active_value {
+                self.active_value = active_value.map(str::to_owned);
+            }
+        }
+    }
+
+    fn set_active(&mut self, value: String, cx: &mut Context<Self>) {
+        if self.active_value.as_ref() != Some(&value) {
+            self.active_value = Some(value);
+            cx.notify();
+        }
+    }
+
+    fn activate(&mut self, selection: &ListboxSelection, controlled: bool, cx: &mut Context<Self>) {
+        let value = selection.value().to_owned();
+        let selected_changed = self.selected_value.as_ref() != Some(&value);
+        let active_changed = self.active_value.as_ref() != Some(&value);
+        if selected_changed && !controlled {
+            self.selected_value = Some(value.clone());
+        }
+        if active_changed {
+            self.active_value = Some(value);
+        }
+        if (selected_changed && !controlled) || active_changed {
+            cx.notify();
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum ListboxFocusOwner {
     #[default]
@@ -867,12 +942,14 @@ pub struct Listbox {
     embedded: bool,
     focus_owner: ListboxFocusOwner,
     active_focus: Option<FocusHandle>,
-    selected_value: Option<String>,
+    selection: SingleChoiceSelectionControl,
     active_value: Option<String>,
     typeahead_query: Option<String>,
     empty_label: SharedString,
     tokens: ThemeTokens,
     on_select: Option<ListboxSelectHandler>,
+    selection_transaction: Option<ListboxSelectionTransaction>,
+    activation_handles: BTreeMap<String, ActivationHandle>,
 }
 
 impl Listbox {
@@ -888,12 +965,14 @@ impl Listbox {
             embedded: false,
             focus_owner: ListboxFocusOwner::Listbox,
             active_focus: None,
-            selected_value: None,
+            selection: SingleChoiceSelectionControl::uncontrolled(None),
             active_value: None,
             typeahead_query: None,
             empty_label: "No options".into(),
             tokens: ThemeTokens::default(),
             on_select: None,
+            selection_transaction: None,
+            activation_handles: BTreeMap::new(),
         }
     }
 
@@ -944,9 +1023,18 @@ impl Listbox {
         self
     }
 
-    /// Applies selected option value.
-    pub fn selected(mut self, value: impl Into<String>) -> Self {
-        self.selected_value = Some(value.into());
+    /// Applies the caller-owned selected option value.
+    pub fn selected(mut self, value: Option<String>) -> Self {
+        self.selection = SingleChoiceSelectionControl::controlled(value);
+        self
+    }
+
+    /// Applies the default selected option value for adapter-owned runtime state.
+    pub fn default_selected(mut self, value: impl Into<String>) -> Self {
+        let value = value.into();
+        if !self.selection.is_controlled() {
+            self.selection = SingleChoiceSelectionControl::uncontrolled(Some(value));
+        }
         self
     }
 
@@ -983,13 +1071,31 @@ impl Listbox {
         self
     }
 
+    pub(crate) fn selection_transaction(
+        mut self,
+        transaction: impl Fn(ListboxSelectionIntent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.selection_transaction = Some(Rc::new(transaction));
+        self
+    }
+
+    /// Binds an application-owned activation handle to one stable option value.
+    pub fn activation_handle(
+        mut self,
+        value: impl Into<String>,
+        handle: &ActivationHandle,
+    ) -> Self {
+        self.activation_handles.insert(value.into(), handle.clone());
+        self
+    }
+
     /// Returns resolved listbox state.
     pub fn state(&self) -> ListboxState {
         ListboxState::resolve(
             self.size,
             self.disabled,
             self.label.to_string(),
-            self.selected_value.as_deref(),
+            self.selection.value().as_deref(),
             self.active_value.as_deref(),
             self.typeahead_query.as_deref(),
             self.empty_label.to_string(),
@@ -1009,173 +1115,281 @@ impl Sizable for Listbox {
 
 impl RenderOnce for Listbox {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ThemeResolver::current(cx);
-        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| ListboxRuntime {
-            active_value: self.active_value.clone(),
-            selected_value: self.selected_value.clone(),
-        });
-        let runtime_state = runtime.read(cx).clone();
-        let selected_value = self
-            .selected_value
-            .as_deref()
-            .or(runtime_state.selected_value.as_deref());
-        let active_value = self
-            .active_value
-            .as_deref()
-            .or(runtime_state.active_value.as_deref());
-        let state = ListboxState::resolve(
-            self.size,
-            self.disabled,
-            self.label.to_string(),
-            selected_value,
-            active_value,
-            self.typeahead_query.as_deref(),
-            self.empty_label.to_string(),
-            self.groups.iter().map(ListboxGroup::descriptor),
-            self.options.iter().map(ListboxOption::descriptor),
-            self.tokens,
-        );
-        let id = self.id;
-        let debug_id = id.to_string();
-        let colors = state.colors();
-        let metrics = state.metrics();
-        let focus_ring = state.focus_ring();
-        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
-        let key_state = state.clone();
-        let key_runtime = runtime.clone();
-        let key_select = self.on_select.clone();
-        let key_option_handlers = Rc::new(
-            self.options
-                .iter()
-                .map(ListboxOption::select_handler)
-                .chain(self.groups.iter().flat_map(|group| {
-                    group
-                        .options_ref()
-                        .iter()
-                        .map(ListboxOption::select_handler)
-                }))
-                .collect::<Vec<_>>(),
-        );
-        let focus_owner = self.focus_owner;
-        let active_focus = self.active_focus.clone();
-        let root_focus = active_focus
-            .clone()
-            .filter(|_| state.active_value().is_none());
-        let root_label = state.label().to_owned();
-        let root_actions: &[AccessibleAction] =
-            if focus_owner == ListboxFocusOwner::Listbox && !state.empty() {
-                &[AccessibleAction::Focus]
+        let scope_id = self.id.clone();
+        window.with_id(scope_id, |window| {
+            let theme = ThemeResolver::current(cx);
+            let selection_controlled = self.selection.is_controlled();
+            let runtime = window.use_keyed_state("runtime", cx, |_, _| ListboxRuntime {
+                active_value: self.active_value.clone(),
+                selected_value: self.selection.value().clone(),
+            });
+            let runtime_state = runtime.read(cx).clone();
+            let selected_value = if selection_controlled {
+                self.selection.value().clone()
             } else {
-                &[]
+                runtime_state.selected_value
             };
-        let root_semantics = SemanticDescriptor::new(state.role())
-            .with_label(&root_label)
-            .with_disabled(state.disabled())
-            .with_actions(root_actions);
+            let active_value = self
+                .active_value
+                .as_deref()
+                .or(runtime_state.active_value.as_deref());
+            let state = ListboxState::resolve(
+                self.size,
+                self.disabled,
+                self.label.to_string(),
+                selected_value.as_deref(),
+                active_value,
+                self.typeahead_query.as_deref(),
+                self.empty_label.to_string(),
+                self.groups.iter().map(ListboxGroup::descriptor),
+                self.options.iter().map(ListboxOption::descriptor),
+                self.tokens,
+            );
+            runtime.update(cx, |runtime, _| runtime.sync(&self.selection, &state));
+            let id = self.id;
+            let debug_id = debug_selector_element_id(&id);
+            let colors = state.colors();
+            let metrics = state.metrics();
+            let focus_ring = state.focus_ring();
+            let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+            let option_handlers = Rc::new(
+                self.options
+                    .iter()
+                    .map(ListboxOption::select_handler)
+                    .chain(self.groups.iter().flat_map(|group| {
+                        group
+                            .options_ref()
+                            .iter()
+                            .map(ListboxOption::select_handler)
+                    }))
+                    .collect::<Vec<_>>(),
+            );
+            let render_identities = Rc::new(listbox_render_identities(&debug_id, &state));
+            let activation_bindings = Rc::new(listbox_activation_bindings(
+                window,
+                cx,
+                &state,
+                runtime.clone(),
+                option_handlers,
+                self.on_select.clone(),
+                self.selection_transaction.clone(),
+                &self.activation_handles,
+                &render_identities,
+                selection_controlled,
+            ));
+            let focus_owner = self.focus_owner;
+            let active_focus = self.active_focus.clone();
+            let root_focus = active_focus
+                .clone()
+                .filter(|_| state.active_value().is_none());
+            let root_label = state.label().to_owned();
+            let root_actions: &[AccessibleAction] =
+                if focus_owner == ListboxFocusOwner::Listbox && !state.empty() {
+                    &[AccessibleAction::Focus]
+                } else {
+                    &[]
+                };
+            let root_semantics = SemanticDescriptor::new(state.role())
+                .with_label(&root_label)
+                .with_disabled(state.disabled())
+                .with_actions(root_actions);
+            let active_keyboard_binding = (focus_owner == ListboxFocusOwner::Listbox)
+                .then(|| state.active_index())
+                .flatten()
+                .and_then(|index| activation_bindings.get(index))
+                .cloned()
+                .flatten();
+            let key_state = state.clone();
+            let key_runtime = runtime.clone();
 
-        div()
-            .id(id.clone())
-            .debug_selector({
-                let debug_id = debug_id.clone();
-                move || format!("listbox:{debug_id}")
-            })
-            .min_w(gpui_px_from_ui(metrics.min_width()))
-            .when(!self.embedded, |this| {
-                this.max_h(gpui_px_from_ui(metrics.max_height()))
-                    .overflow_y_scroll()
-                    .scrollbar_width(gpui_px_from_ui(ui_px(8.0)))
-            })
-            .when(self.embedded, |this| this.w_full())
-            .p(gpui_px_from_ui(metrics.surface_padding()))
-            .flex()
-            .flex_col()
-            .gap_1()
-            .rounded(gpui_px_from_ui(metrics.radius()))
-            .when(!self.embedded, |this| {
-                this.border_1()
-                    .border_color(theme.resolve(colors.border()))
-                    .bg(theme.resolve(colors.surface()))
-            })
-            .text_color(theme.resolve(colors.foreground()))
-            .text_size(gpui_px_from_ui(metrics.text_size()))
-            .line_height(gpui_px_from_ui(metrics.text_size()))
-            .ui_semantics(&root_semantics)
-            .when(focus_owner == ListboxFocusOwner::Listbox, |this| {
-                this.focusable()
-                    .tab_group()
-                    .tab_stop(!state.disabled() && !state.empty())
-                    .focus_visible(move |style| style.shadow(focus_shadow.clone()))
-                    .on_key_down(move |event: &KeyDownEvent, window, cx| {
-                        handle_listbox_key_down(
-                            &key_state,
-                            key_runtime.clone(),
-                            key_option_handlers.clone(),
-                            key_select.clone(),
-                            event,
-                            window,
-                            cx,
-                        );
-                    })
-            })
-            .when_some(root_focus, |this, focus| this.track_focus(&focus))
-            .children(listbox_children(
-                debug_id,
-                self.options,
-                self.groups,
-                state,
-                runtime,
-                self.on_select,
-                focus_owner,
-                active_focus,
-                &theme,
-            ))
+            div()
+                .id(id.clone())
+                .debug_selector({
+                    let debug_id = debug_id.clone();
+                    move || format!("listbox:{debug_id}")
+                })
+                .min_w(gpui_px_from_ui(metrics.min_width()))
+                .when(!self.embedded, |this| {
+                    this.max_h(gpui_px_from_ui(metrics.max_height()))
+                        .overflow_y_scroll()
+                        .scrollbar_width(gpui_px_from_ui(ui_px(8.0)))
+                })
+                .when(self.embedded, |this| this.w_full())
+                .p(gpui_px_from_ui(metrics.surface_padding()))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .rounded(gpui_px_from_ui(metrics.radius()))
+                .when(!self.embedded, |this| {
+                    this.border_1()
+                        .border_color(theme.resolve(colors.border()))
+                        .bg(theme.resolve(colors.surface()))
+                })
+                .text_color(theme.resolve(colors.foreground()))
+                .text_size(gpui_px_from_ui(metrics.text_size()))
+                .line_height(gpui_px_from_ui(metrics.text_size()))
+                .ui_semantics(&root_semantics)
+                .when(focus_owner == ListboxFocusOwner::Listbox, |this| {
+                    this.focusable()
+                        .tab_group()
+                        .tab_stop(!state.disabled() && !state.empty())
+                        .focus_visible(move |style| style.shadow(focus_shadow.clone()))
+                        .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                            handle_listbox_navigation_key_down(
+                                &key_state,
+                                key_runtime.clone(),
+                                event,
+                                window,
+                                cx,
+                            );
+                        })
+                })
+                .when_some(active_keyboard_binding, |this, activation| {
+                    activation.bind_keyboard(this)
+                })
+                .when_some(root_focus, |this, focus| this.track_focus(&focus))
+                .children(listbox_children(
+                    debug_id,
+                    state,
+                    render_identities,
+                    activation_bindings,
+                    focus_owner,
+                    active_focus,
+                    &theme,
+                ))
+        })
     }
 }
 
-fn handle_listbox_key_down(
+fn listbox_render_identities(
+    debug_id: &str,
+    state: &ListboxState,
+) -> Vec<Option<StableValueItemRenderIdentity>> {
+    let option_states = state
+        .options()
+        .iter()
+        .filter(|option| option.kind() == ListboxOptionKind::Option)
+        .collect::<Vec<_>>();
+    let resolved = StableValueItemRenderIdentity::resolve_known_ambiguity(
+        "listbox",
+        debug_id,
+        "option",
+        "select",
+        option_states.iter().map(|option| {
+            let group_value = option
+                .group_index()
+                .and_then(|index| state.groups().get(index))
+                .map(ListboxGroupState::value);
+            if option.ambiguous_value {
+                StableValueItemRenderIdentityInput::ambiguous(
+                    option.value(),
+                    AuthoredSnapshot::new()
+                        .field(option.kind().as_str())
+                        .field(option.label())
+                        .field(option.disabled().to_string())
+                        .optional_field(group_value)
+                        .finish(),
+                )
+            } else {
+                StableValueItemRenderIdentityInput::unique(option.value())
+            }
+        }),
+    );
+    let mut identities = vec![None; state.options().len()];
+    for (option, identity) in option_states.into_iter().zip(resolved) {
+        identities[option.index()] = Some(identity);
+    }
+    identities
+}
+
+#[allow(clippy::too_many_arguments)]
+fn listbox_activation_bindings(
+    window: &mut Window,
+    cx: &mut App,
     state: &ListboxState,
     runtime: Entity<ListboxRuntime>,
     option_handlers: Rc<Vec<Option<ListboxSelectHandler>>>,
     on_select: Option<ListboxSelectHandler>,
+    selection_transaction: Option<ListboxSelectionTransaction>,
+    activation_handles: &BTreeMap<String, ActivationHandle>,
+    render_identities: &[Option<StableValueItemRenderIdentity>],
+    selection_controlled: bool,
+) -> Vec<Option<ActivationBinding>> {
+    state
+        .options()
+        .iter()
+        .enumerate()
+        .map(|(index, option)| {
+            if option.kind() != ListboxOptionKind::Option {
+                return None;
+            }
+
+            let selection = ListboxSelection::from_option(option);
+            let activation_runtime = runtime.clone();
+            let handler = option_handlers
+                .get(index)
+                .cloned()
+                .flatten()
+                .or_else(|| on_select.clone());
+            let identity = render_identities[index]
+                .as_ref()
+                .expect("selectable listbox options must have render identity");
+            let activation_handle = activation_handles.get(option.value()).cloned();
+            let selection_transaction = selection_transaction.clone();
+
+            Some(
+                ActivationBinding::new(
+                    window,
+                    cx,
+                    identity.activation_state_key.clone(),
+                    option.activation_enabled(),
+                    ActivationKeyPolicy::EnterOrSpace,
+                    move |_, window, cx| {
+                        let Some(selection) = selection.clone() else {
+                            return;
+                        };
+                        activation_runtime.update(cx, |runtime, cx| {
+                            runtime.activate(&selection, selection_controlled, cx);
+                        });
+                        let intent = ListboxSelectionIntent::new(selection, handler.clone());
+                        if let Some(selection_transaction) = selection_transaction.as_ref() {
+                            selection_transaction(intent, window, cx);
+                        } else {
+                            intent.deliver(window, cx);
+                        }
+                    },
+                )
+                .with_programmatic_handle(activation_handle),
+            )
+        })
+        .collect()
+}
+
+fn handle_listbox_navigation_key_down(
+    state: &ListboxState,
+    runtime: Entity<ListboxRuntime>,
     event: &KeyDownEvent,
     window: &mut Window,
     cx: &mut App,
 ) {
+    if event.keystroke.modifiers.modified() || window.default_prevented() {
+        return;
+    }
+
     let key = event.keystroke.key.as_str();
     if let Some(target) = state.navigation_target(key) {
         cx.stop_propagation();
         window.prevent_default();
         let value = target.value().to_owned();
-        runtime.update(cx, |runtime, _| {
-            runtime.active_value = Some(value);
-        });
-        return;
-    }
-
-    if let Some(selection) = state.activation_for_key(key) {
-        cx.stop_propagation();
-        window.prevent_default();
-        let option_handler = option_handlers.get(selection.index()).cloned().flatten();
-        runtime.update(cx, |runtime, _| {
-            runtime.selected_value = Some(selection.value().to_owned());
-            runtime.active_value = Some(selection.value().to_owned());
-        });
-        if let Some(option_handler) = option_handler.as_ref() {
-            option_handler(selection.clone(), window, cx);
-        }
-        if let Some(on_select) = on_select.as_ref() {
-            on_select(selection, window, cx);
-        }
+        runtime.update(cx, |runtime, cx| runtime.set_active(value, cx));
     }
 }
 
 fn listbox_children(
     debug_id: String,
-    options: Vec<ListboxOption>,
-    groups: Vec<ListboxGroup>,
     state: ListboxState,
-    runtime: Entity<ListboxRuntime>,
-    on_select: Option<ListboxSelectHandler>,
+    render_identities: Rc<Vec<Option<StableValueItemRenderIdentity>>>,
+    activation_bindings: Rc<Vec<Option<ActivationBinding>>>,
     focus_owner: ListboxFocusOwner,
     active_focus: Option<FocusHandle>,
     theme: &ThemeContext,
@@ -1205,12 +1419,11 @@ fn listbox_children(
     if !standalone_states.is_empty() {
         children.extend(listbox_option_elements(
             debug_id.clone(),
-            options,
             standalone_states,
             state.metrics(),
             state.colors(),
-            runtime.clone(),
-            on_select.clone(),
+            render_identities.clone(),
+            activation_bindings.clone(),
             focus_owner,
             active_focus.clone(),
             theme,
@@ -1239,26 +1452,23 @@ fn listbox_children(
                 .into_any_element(),
         );
 
-        if let Some(group) = groups.get(group_state.index()) {
-            let states = state
-                .options()
-                .iter()
-                .filter(|option| option.group_index() == Some(group_state.index()))
-                .cloned()
-                .collect::<Vec<_>>();
-            children.extend(listbox_option_elements(
-                debug_id.clone(),
-                group.options_ref().to_vec(),
-                states,
-                state.metrics(),
-                state.colors(),
-                runtime.clone(),
-                on_select.clone(),
-                focus_owner,
-                active_focus.clone(),
-                theme,
-            ));
-        }
+        let states = state
+            .options()
+            .iter()
+            .filter(|option| option.group_index() == Some(group_state.index()))
+            .cloned()
+            .collect::<Vec<_>>();
+        children.extend(listbox_option_elements(
+            debug_id.clone(),
+            states,
+            state.metrics(),
+            state.colors(),
+            render_identities.clone(),
+            activation_bindings.clone(),
+            focus_owner,
+            active_focus.clone(),
+            theme,
+        ));
     }
 
     children
@@ -1266,20 +1476,18 @@ fn listbox_children(
 
 fn listbox_option_elements(
     debug_id: String,
-    options: Vec<ListboxOption>,
     states: Vec<ListboxOptionState>,
     metrics: ListboxMetrics,
     colors: ListboxColors,
-    runtime: Entity<ListboxRuntime>,
-    on_select: Option<ListboxSelectHandler>,
+    render_identities: Rc<Vec<Option<StableValueItemRenderIdentity>>>,
+    activation_bindings: Rc<Vec<Option<ActivationBinding>>>,
     focus_owner: ListboxFocusOwner,
     active_focus: Option<FocusHandle>,
     theme: &ThemeContext,
 ) -> Vec<AnyElement> {
-    options
+    states
         .into_iter()
-        .zip(states)
-        .map(|(option, state)| match state.kind() {
+        .map(|state| match state.kind() {
             ListboxOptionKind::Separator => {
                 let option_value = state.value().to_owned();
                 let semantics = SemanticDescriptor::new(Role::Separator);
@@ -1298,14 +1506,17 @@ fn listbox_option_elements(
                     .into_any_element()
             }
             ListboxOptionKind::Option => {
-                let selection = ListboxSelection::from_option(&state);
-                let option_handler = option.select_handler();
-                let global_handler = on_select.clone();
-                let runtime = runtime.clone();
                 let disabled = state.disabled();
                 let active = state.active();
-                let option_value = state.value().to_owned();
                 let option_label = state.label().to_owned();
+                let identity = render_identities[state.index()]
+                    .clone()
+                    .expect("selectable listbox options must have render identity");
+                let activation = activation_bindings[state.index()]
+                    .clone()
+                    .expect("selectable listbox options must have activation binding");
+                let option_element_id = identity.element_id;
+                let option_debug_selector = identity.debug_selector;
                 let option_focus = active_focus
                     .clone()
                     .filter(|_| focus_owner == ListboxFocusOwner::Listbox && active);
@@ -1317,60 +1528,48 @@ fn listbox_option_elements(
                     colors.foreground()
                 });
                 let option_hover_background = theme.resolve(colors.option_hover_background());
+                let option_actions: &[AccessibleAction] = if disabled {
+                    &[]
+                } else {
+                    &[AccessibleAction::Click]
+                };
                 let mut semantics = SemanticDescriptor::new(Role::ListBoxOption)
                     .with_label(&option_label)
                     .with_selected(state.selected())
                     .with_disabled(disabled)
-                    .with_actions(&[AccessibleAction::Click]);
+                    .with_actions(option_actions);
                 if let Some(position) = state.position_in_set() {
                     semantics = semantics
                         .with_position_in_set(position)
                         .with_size_of_set(state.size_of_set());
                 }
 
-                div()
-                    .id(format!("listbox-option:{}", state.value()))
-                    .debug_selector({
-                        let debug_id = debug_id.clone();
-                        let option_value = option_value.clone();
-                        move || format!("listbox:{debug_id}:option:{option_value}")
-                    })
-                    .min_h(gpui_px_from_ui(metrics.option_height()))
-                    .px(gpui_px_from_ui(metrics.option_padding_x()))
-                    .py(gpui_px_from_ui(metrics.option_padding_y()))
-                    .flex()
-                    .items_center()
-                    .rounded(gpui_px_from_ui(metrics.radius()))
-                    .bg(option_background_color)
-                    .text_color(option_foreground)
-                    .ui_semantics(&semantics)
-                    .when(focus_owner == ListboxFocusOwner::Listbox, |this| {
-                        this.focusable()
-                            .tab_stop(active)
-                            .when_some(option_focus, |this, focus| this.track_focus(&focus))
-                    })
-                    .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
-                    .when(!disabled, |this| {
-                        this.cursor_pointer()
-                            .hover(move |style| style.bg(option_hover_background))
-                            .on_click(move |_event: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                let Some(selection) = selection.clone() else {
-                                    return;
-                                };
-                                runtime.update(cx, |runtime, _| {
-                                    runtime.selected_value = Some(selection.value().to_owned());
-                                    runtime.active_value = Some(selection.value().to_owned());
-                                });
-                                if let Some(option_handler) = option_handler.as_ref() {
-                                    option_handler(selection.clone(), window, cx);
-                                }
-                                if let Some(global_handler) = global_handler.as_ref() {
-                                    global_handler(selection, window, cx);
-                                }
+                activation
+                    .bind_pointer_and_accessibility(
+                        div()
+                            .id(option_element_id)
+                            .debug_selector(move || option_debug_selector.clone())
+                            .min_h(gpui_px_from_ui(metrics.option_height()))
+                            .px(gpui_px_from_ui(metrics.option_padding_x()))
+                            .py(gpui_px_from_ui(metrics.option_padding_y()))
+                            .flex()
+                            .items_center()
+                            .rounded(gpui_px_from_ui(metrics.radius()))
+                            .bg(option_background_color)
+                            .text_color(option_foreground)
+                            .ui_semantics(&semantics)
+                            .when(focus_owner == ListboxFocusOwner::Listbox, |this| {
+                                this.focusable()
+                                    .tab_stop(active)
+                                    .when_some(option_focus, |this, focus| this.track_focus(&focus))
                             })
-                    })
-                    .child(option_label.clone())
+                            .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
+                            .when(!disabled, |this| {
+                                this.cursor_pointer()
+                                    .hover(move |style| style.bg(option_hover_background))
+                            })
+                            .child(option_label.clone()),
+                    )
                     .into_any_element()
             }
         })
@@ -1394,36 +1593,40 @@ fn flatten_listbox_options(
     let mut flattened = standalone_options
         .into_iter()
         .enumerate()
-        .map(|(source_index, descriptor)| {
-            let text_value = descriptor.label.clone();
-            ChoiceItemProjection::new(
-                source_index,
-                None,
-                descriptor.value.clone(),
-                text_value.clone(),
-                !descriptor.focusable(),
-                descriptor,
-            )
-            .text_value(text_value)
-        })
+        .map(|(source_index, descriptor)| listbox_choice_projection(source_index, None, descriptor))
         .collect::<Vec<_>>();
 
     for (group_index, group) in groups.iter().enumerate() {
         flattened.extend(group.options.iter().cloned().enumerate().map(
             |(source_index, descriptor)| {
-                let text_value = descriptor.label.clone();
-                ChoiceItemProjection::new(
-                    source_index,
-                    Some(group_index),
-                    descriptor.value.clone(),
-                    text_value.clone(),
-                    !descriptor.focusable(),
-                    descriptor,
-                )
-                .text_value(text_value)
+                listbox_choice_projection(source_index, Some(group_index), descriptor)
             },
         ));
     }
 
     flattened
+}
+
+fn listbox_choice_projection(
+    source_index: usize,
+    group_index: Option<usize>,
+    descriptor: ListboxOptionDescriptor,
+) -> ChoiceItemProjection<ListboxOptionDescriptor> {
+    let text_value = descriptor.label.clone();
+    let structural = descriptor.kind() == ListboxOptionKind::Separator;
+    let projection = ChoiceItemProjection::new(
+        source_index,
+        group_index,
+        descriptor.value.clone(),
+        text_value.clone(),
+        !descriptor.focusable(),
+        descriptor,
+    )
+    .text_value(text_value);
+
+    if structural {
+        projection.structural()
+    } else {
+        projection
+    }
 }

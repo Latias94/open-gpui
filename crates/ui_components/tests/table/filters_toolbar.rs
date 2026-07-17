@@ -540,7 +540,7 @@ fn table_column_visibility_change_updates_visibility_and_preserves_table_state()
             .expect("finite score range should be valid"),
     ])
     .with_sorting([TableSort::descending("score")])
-    .with_selected_rows(["row-a"])
+    .with_selected_rows([table_source_selection_identity("row-a")])
     .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
     .with_row_pinning(TableRowPinning::new().pinned_top([table_source_row_identity("row-a")]))
     .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(180.0)))
@@ -690,7 +690,7 @@ fn table_global_filter_change_updates_state_and_resets_pagination() {
         .with_filters([TableFilter::contains("team", "UI")])
         .with_sorting([TableSort::ascending("name")])
         .with_selection_mode(TableSelectionMode::Multiple)
-        .with_selected_rows(["row-0001"])
+        .with_selected_rows([table_source_selection_identity("row-0001")])
         .with_global_filter("old")
         .with_pagination(TablePagination::new(3, 25));
 
@@ -841,7 +841,7 @@ fn table_predicate_filter_change_updates_only_target_predicate_filters() {
     ])
     .with_sorting([TableSort::descending("score")])
     .with_selection_mode(TableSelectionMode::Multiple)
-    .with_selected_rows(["row-a"])
+    .with_selected_rows([table_source_selection_identity("row-a")])
     .with_column_pinning(TableColumnPinning::new().pinned_left(["team"]))
     .with_row_pinning(TableRowPinning::new().pinned_top([table_source_row_identity("row-a")]))
     .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(180.0)))

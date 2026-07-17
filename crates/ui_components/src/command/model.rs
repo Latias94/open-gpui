@@ -1,5 +1,7 @@
 //! Renderer-neutral command descriptors, state, and behavior inputs.
 
+use std::collections::BTreeSet;
+
 use super::descriptor::{
     CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
     CommandLoadingState, CommandMatchRank, CommandMatchSource, CommandOpenMode, CommandQueryMode,
@@ -696,20 +698,31 @@ impl CommandState {
                 .sum::<usize>();
         let raw_choice_items = command_choice_items(&raw_groups, &raw_items);
         let selection_mode_policy = command_choice_selection_mode(selection_mode);
-        let raw_collection = ChoiceCollection::resolve(
+        let raw_collection = ChoiceCollection::resolve_unique(
             false,
             raw_choice_items.clone(),
             selected_value,
             active_value,
             ChoiceInteractionPolicy::listbox().with_selection_mode(selection_mode_policy),
         );
+        let globally_ambiguous_values = raw_collection
+            .items()
+            .iter()
+            .filter(|item| item.ambiguous_value())
+            .map(|item| item.value().to_owned())
+            .collect::<BTreeSet<_>>();
         let selected_value = raw_collection.selected_value().map(str::to_owned);
-        let selected_values = choice::resolve_projected_selected_values(
-            selection_mode_policy,
-            &raw_choice_items,
-            selected_value.as_deref(),
-            selected_values,
-        );
+        let selected_values = if selection_mode.is_multiple() {
+            choice::resolve_projected_selected_values(
+                selection_mode_policy,
+                raw_collection.items(),
+                selected_value.as_deref(),
+                selected_values,
+            )
+        } else {
+            selected_values.into_iter().map(Into::into).for_each(drop);
+            Vec::new()
+        };
         let listbox_selected_value = (!selection_mode.is_multiple())
             .then_some(selected_value.as_deref())
             .flatten();
@@ -803,7 +816,14 @@ impl CommandState {
             });
             filtered_item_descriptors = standalone_items
                 .iter()
-                .map(|item| item.descriptor.to_listbox_descriptor())
+                .map(|item| {
+                    let descriptor = item.descriptor.to_listbox_descriptor();
+                    if globally_ambiguous_values.contains(item.descriptor.value()) {
+                        descriptor.disabled(true)
+                    } else {
+                        descriptor
+                    }
+                })
                 .collect::<Vec<_>>();
             for item in &mut standalone_items {
                 item.group_index = Some(group_index);
@@ -823,10 +843,14 @@ impl CommandState {
             });
             filtered_group_descriptors.push(
                 ListboxGroupDescriptor::new(group.value.clone(), group.label.clone()).options(
-                    group
-                        .items
-                        .iter()
-                        .map(|item| item.descriptor.to_listbox_descriptor()),
+                    group.items.iter().map(|item| {
+                        let descriptor = item.descriptor.to_listbox_descriptor();
+                        if globally_ambiguous_values.contains(item.descriptor.value()) {
+                            descriptor.disabled(true)
+                        } else {
+                            descriptor
+                        }
+                    }),
                 ),
             );
             flattened.extend(group.items.into_iter().map(|mut item| {
@@ -868,7 +892,7 @@ impl CommandState {
                     icon: item.descriptor.icon,
                     shortcut: item.descriptor.shortcut,
                     when: item.descriptor.when,
-                    disabled: item.descriptor.disabled,
+                    disabled: option.disabled(),
                     disabled_reason: item.descriptor.disabled_reason,
                     tooltip: item.descriptor.tooltip,
                     accessibility_description: item.descriptor.accessibility_description,

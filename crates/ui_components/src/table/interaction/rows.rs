@@ -1,9 +1,9 @@
-use std::rc::Rc;
+use std::collections::BTreeSet;
 
 use open_gpui::{App, Window};
 use open_gpui_ui_core::{
-    TableExpansionState, TableResolvedRow, TableRowChildrenLoadState, TableRowId, TableRowIdentity,
-    TableSelectionMode, TableSelectionPolicy,
+    TableResolvedRow, TableResolvedState, TableRowChildrenLoadState, TableRowId, TableRowIdentity,
+    TableSelectionMode, TableSelectionPolicy, TableSourceRowIdentity,
 };
 
 use super::modifiers::TableInputModifiers;
@@ -205,37 +205,13 @@ impl TableRowExpansionToggle {
     }
 }
 
-/// Selection scope used by table selection requests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TableSelectionScope {
-    /// Only the current row changes.
-    #[default]
-    Row,
-    /// Every selectable row in the model changes.
-    AllRows,
-    /// Every selectable row in the current page changes.
-    PageRows,
-}
-
-impl TableSelectionScope {
-    /// Returns a stable label for the scope.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Row => "row",
-            Self::AllRows => "all-rows",
-            Self::PageRows => "page-rows",
-        }
-    }
-}
-
 /// Controlled payload emitted when a table row selection changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableRowSelectionChange {
     action: TableRowAction,
     selection_mode: TableSelectionMode,
     selected: bool,
-    scope: TableSelectionScope,
-    current_selection: Vec<TableRowId>,
+    current_selection: Vec<TableSourceRowIdentity>,
 }
 
 impl TableRowSelectionChange {
@@ -243,14 +219,12 @@ impl TableRowSelectionChange {
         action: TableRowAction,
         selection_mode: TableSelectionMode,
         selected: bool,
-        scope: TableSelectionScope,
-        current_selection: impl IntoIterator<Item = impl Into<TableRowId>>,
+        current_selection: impl IntoIterator<Item = impl Into<TableSourceRowIdentity>>,
     ) -> Self {
         Self {
             action,
             selection_mode,
             selected,
-            scope,
             current_selection: current_selection.into_iter().map(Into::into).collect(),
         }
     }
@@ -280,13 +254,12 @@ impl TableRowSelectionChange {
         self.selected
     }
 
-    /// Returns the requested selection scope.
-    pub const fn scope(&self) -> TableSelectionScope {
-        self.scope
-    }
-
-    /// Returns the current selected row ids after the change.
-    pub fn current_selection(&self) -> &[TableRowId] {
+    /// Returns caller-owned explicit selection roots in source-model order after the change.
+    ///
+    /// Under descendant propagation, derived selected descendants are not written back as
+    /// explicit roots. Canceling an inherited descendant removes the explicit ancestor that
+    /// selected it so committing this payload makes the requested row unselected.
+    pub fn current_selection(&self) -> &[TableSourceRowIdentity] {
         &self.current_selection
     }
 }
@@ -294,13 +267,13 @@ impl TableRowSelectionChange {
 pub(in crate::table) fn request_table_row_selection_change(
     action: &TableRowAction,
     selection_policy: TableSelectionPolicy,
-    scope: TableSelectionScope,
-    selected_row_ids: Rc<Vec<TableRowId>>,
+    resolved_table: &TableResolvedState,
+    explicit_selected_rows: &BTreeSet<TableSourceRowIdentity>,
     on_row_selection_change: Option<TableRowSelectionHandler>,
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
-    let Some(row_id) = action.source_row_id() else {
+    let Some(row_identity) = action.identity().source_identity().cloned() else {
         return false;
     };
     let current_selected = action.selected();
@@ -315,19 +288,31 @@ pub(in crate::table) fn request_table_row_selection_change(
         return false;
     }
 
-    let next_selection_ids = if next_selection {
-        if selection_mode.is_single() {
-            vec![row_id.clone()]
-        } else {
-            let mut next_selection_ids = selected_row_ids.as_ref().clone();
-            next_selection_ids.push(row_id.clone());
-            next_selection_ids
-        }
+    let next_selection_ids = if selection_mode.is_single() {
+        vec![row_identity.clone()]
     } else {
-        selected_row_ids
+        let mut next_explicit_rows = explicit_selected_rows.clone();
+        if next_selection {
+            next_explicit_rows.insert(row_identity.clone());
+        } else {
+            let removes_related_rows = selection_policy.sub_row_policy().propagates_descendants();
+            next_explicit_rows.retain(|candidate| {
+                candidate != &row_identity
+                    && (!removes_related_rows
+                        || (!source_row_is_ancestor(resolved_table, candidate, &row_identity)
+                            && !source_row_is_ancestor(resolved_table, &row_identity, candidate)))
+            });
+        }
+        resolved_table
+            .core_model()
+            .rows()
             .iter()
-            .filter(|candidate| *candidate != row_id)
-            .cloned()
+            .filter_map(|row| {
+                let candidate = row.identity().source_identity()?;
+                next_explicit_rows
+                    .contains(candidate)
+                    .then(|| candidate.clone())
+            })
             .collect()
     };
 
@@ -335,7 +320,6 @@ pub(in crate::table) fn request_table_row_selection_change(
         action.clone(),
         selection_mode,
         next_selection,
-        scope,
         next_selection_ids,
     );
 
@@ -347,21 +331,25 @@ pub(in crate::table) fn request_table_row_selection_change(
     false
 }
 
-pub(in crate::table) fn toggle_table_expansion(
-    expansion: TableExpansionState,
-    identity: TableRowIdentity,
-    expanded: bool,
-) -> TableExpansionState {
-    match expansion {
-        TableExpansionState::All if expanded => TableExpansionState::All,
-        TableExpansionState::All => TableExpansionState::default(),
-        TableExpansionState::Rows(mut rows) => {
-            if expanded {
-                rows.insert(identity);
-            } else {
-                rows.remove(&identity);
-            }
-            TableExpansionState::Rows(rows)
+fn source_row_is_ancestor(
+    resolved_table: &TableResolvedState,
+    ancestor: &TableSourceRowIdentity,
+    descendant: &TableSourceRowIdentity,
+) -> bool {
+    let core_model = resolved_table.core_model();
+    let descendant_identity = TableRowIdentity::Source(descendant.clone());
+    let mut parent = core_model
+        .row(&descendant_identity)
+        .and_then(TableResolvedRow::parent_identity);
+
+    while let Some(parent_identity) = parent {
+        if parent_identity.source_identity() == Some(ancestor) {
+            return true;
         }
+        parent = core_model
+            .row(parent_identity)
+            .and_then(TableResolvedRow::parent_identity);
     }
+
+    false
 }

@@ -143,9 +143,9 @@ pub use crate::table::{
     TablePredicateFilterOperatorOptionState, TablePredicateFilterState, TableRangeFilter,
     TableRangeFilterChange, TableRangeFilterState, TableRowAction, TableRowActivation,
     TableRowActivationKind, TableRowBehaviorSnapshot, TableRowCountSnapshot,
-    TableRowExpansionToggle, TableRowMeasureMode, TableRowSelectionChange, TableSelectionScope,
-    TableToolbar, TableToolbarColors, TableToolbarState, TableTreeSummarySnapshot,
-    TableVirtualizerSnapshot, TableVirtualizerSnapshotItem, TableVisibleRowsSnapshot,
+    TableRowExpansionToggle, TableRowMeasureMode, TableRowSelectionChange, TableToolbar,
+    TableToolbarColors, TableToolbarState, TableTreeSummarySnapshot, TableVirtualizerSnapshot,
+    TableVirtualizerSnapshotItem, TableVisibleRowsSnapshot,
 };
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

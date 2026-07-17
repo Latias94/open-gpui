@@ -119,8 +119,8 @@ pub use crate::table::{
     TableColumnRegionSnapshot, TableHeaderAction, TableHeaderSummarySnapshot, TableInputModifiers,
     TableMetrics, TableRowAction, TableRowActivation, TableRowActivationKind,
     TableRowBehaviorSnapshot, TableRowCountSnapshot, TableRowExpansionToggle, TableRowMeasureMode,
-    TableSelectionScope, TableTreeSummarySnapshot, TableVirtualizerSnapshot,
-    TableVirtualizerSnapshotItem, TableVisibleRowsSnapshot,
+    TableTreeSummarySnapshot, TableVirtualizerSnapshot, TableVirtualizerSnapshotItem,
+    TableVisibleRowsSnapshot,
 };
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

@@ -793,7 +793,7 @@ fn default_theme_resolves_all_current_component_color_intents() {
     ];
     let listboxes = [
         Listbox::new("listbox", "Choices")
-            .selected("one")
+            .selected(Some("one".to_owned()))
             .option(ListboxOption::new("one", "One"))
             .option(ListboxOption::new("two", "Two").disabled(true))
             .state(),
@@ -802,7 +802,7 @@ fn default_theme_resolves_all_current_component_color_intents() {
     let selects = [
         Select::new("select", "Choice")
             .open(true)
-            .selected("one")
+            .selected(Some("one".to_owned()))
             .option(ListboxOption::new("one", "One"))
             .state(),
         Select::new("closed-select", "Choice").state(),

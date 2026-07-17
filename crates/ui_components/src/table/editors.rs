@@ -117,7 +117,7 @@ pub(super) fn render_table_cell_editor(
             Select::new(editor_id, editor_label)
                 .full_width(true)
                 .placeholder(cell_text.clone())
-                .selected(selected_value)
+                .selected(Some(selected_value))
                 .options(select_options)
                 .on_select(move |selection, window, cx| {
                     if let Some(on_change) = on_change.as_ref() {

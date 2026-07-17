@@ -328,7 +328,7 @@ fn representative_component_a11y_contracts_are_valid() {
 
     let listbox = Listbox::new("choices", "Choices")
         .option(ListboxOption::new("alpha", "Alpha"))
-        .selected("alpha")
+        .selected(Some("alpha".to_owned()))
         .state();
     let option = listbox
         .selected_option()

@@ -838,9 +838,7 @@ impl LayerLifecycle {
     }
 
     fn rebind_presence(&mut self, presence: OverlayPresence) {
-        if presence == OverlayPresence::open()
-            && matches!(&self.state, LayerLifecycleState::CloseRequested { .. })
-        {
+        if presence == self.presence() {
             return;
         }
         self.state = match presence {
@@ -948,6 +946,7 @@ struct LayerEntry {
     lifecycle: LayerLifecycle,
     generation: OverlayLayerGeneration,
     registration_revision: u64,
+    open_change_revision: u64,
     focus_active: bool,
     focus_entered: bool,
     scope_id: Option<FocusScopeId>,
@@ -1062,9 +1061,11 @@ struct OpenChangeDispatch {
     lease_token: u64,
     generation: OverlayLayerGeneration,
     registration_revision: u64,
+    open_change_revision: u64,
+    ownership: OverlayOwnership,
     focus_transition: FocusTransition,
     uncontrolled_commit: Option<UncontrolledCommitCallback>,
-    on_open_change: Option<OpenChangeCallback>,
+    notify_open_change: bool,
     intent: Option<OpenIntentDispatch>,
     changed: bool,
 }
@@ -1088,9 +1089,11 @@ impl OpenChangeDispatch {
             lease_token,
             generation,
             registration_revision,
+            open_change_revision: 0,
+            ownership: OverlayOwnership::Uncontrolled,
             focus_transition: FocusTransition::None,
             uncontrolled_commit: None,
-            on_open_change: None,
+            notify_open_change: false,
             intent: None,
             changed: false,
         }

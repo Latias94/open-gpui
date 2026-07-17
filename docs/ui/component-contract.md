@@ -226,8 +226,14 @@ or navigation.
 standalone option descriptors, separator rows, disabled option state, selected value, active
 descendant value, tab-stop value, APG-style Up/Down/Home/End navigation, Enter/Space activation
 payloads, typeahead target metadata, resolved metrics, token intents, and listbox/listbox-option
-roles. It does not own popup state, selection persistence outside the adapter runtime, scroll
-handles, focus handles, callbacks, or GPUI element ids.
+roles. It does not own popup state, adapter selection storage, scroll handles, focus handles,
+callbacks, or GPUI element ids. The GPUI adapter treats `selected(Option<String>)` as a
+caller-owned render-frame value and `default_selected` as an uncontrolled runtime seed. Pointer,
+unmodified Enter/Space key-up, AccessKit Click, and `activation_handle(value, handle)` requests
+enter one selection transaction. An option handler replaces the Listbox public fallback, while an
+embedding Select or Combobox owner transaction still commits selection, input, and overlay state
+before that one chosen callback is delivered. Duplicate selectable values fail closed; structural
+rows do not participate in domain-value uniqueness.
 
 `SelectState` composes a trigger, non-modal dismissible overlay, scroll viewport metadata, and a
 nested `ListboxState`. It records controlled versus uncontrolled open mode, default-open state,
@@ -236,7 +242,8 @@ outside-press policy, initial focus intent, focus restoration intent, resolved m
 intents, and the listbox content role. `SelectState::resolve` takes a `SelectStateRequest` so
 callers group overlay policy, selection inputs, descriptors, and theme tokens explicitly. The GPUI
 `Select` adapter owns trigger/content rendering, keyed runtime open/selected/active state,
-callbacks, and deferred anchored rendering. Its window runtime binding owns outside/Escape
+callbacks, and deferred anchored rendering. `selected(Option<String>)` is caller-owned and
+`default_selected` seeds adapter-owned selection. Its window runtime binding owns outside/Escape
 arbitration, the popup layer, trigger/surface focus handles, controlled refusal, and restoration.
 
 `choice.rs` owns the shared stable-value seam for the choice family. It projects flat item
@@ -259,6 +266,9 @@ inputs, overlay policy, and theme tokens stay grouped at the module interface. T
 owns the `TextInputController`, keyed runtime query/open/selection state, callbacks, outside-press
 and Escape policy inputs, deferred anchored rendering, and scroll handles. Its window runtime
 binding owns popup arbitration and preserves the editor focus/active-descendant authority.
+`Combobox::selected(Option<String>)` is caller-owned and `default_selected` seeds adapter-owned
+selection. A controlled selection intent cannot change runtime selection or editor text until the
+owner supplies a later selected prop.
 
 `CommandState` composes a search text input, ranked grouped command results, optional dialog
 wrapper, loading metadata, selected chips, a virtualized result window, and nested `ListboxState`.
@@ -286,6 +296,16 @@ deferred dialog rendering, and scroll handles; its window runtime binding owns t
 outside/Escape arbitration, modal focus handles, controlled refusal, and restoration. Inline mode
 does not register an overlay. The renderer-neutral state owns ranking, selection projection,
 snapshot metadata, and the virtualized result render plan.
+`Command::selected(Option<String>)` and `selected_values(...)` are caller-owned;
+`default_selected` and `default_selected_values` seed their adapter-owned counterparts.
+Multi-select change payloads toggle the raw caller/runtime selection set, preserving values that
+are currently missing, disabled, or filtered out; only chips and semantic selection projection
+filter that set against the current command collection.
+Command value uniqueness is resolved against the full unfiltered collection. A duplicate value
+remains ambiguous and disabled even when ranking or query filtering leaves only one occurrence
+visible; surface-disabled and ambiguous rows expose neither pointer activation nor an AccessKit
+Click action. Uncontrolled single and multi-selection transactions notify their keyed runtime so
+inline selected state and chips do not wait for an unrelated redraw.
 The reusable command ecosystem boundary is documented in
 [`docs/ui/command-ecosystem.md`](command-ecosystem.md): `open_gpui` owns action/keymap execution,
 `open_gpui_command` owns command metadata, deterministic registry snapshots, scoped registration,
@@ -362,7 +382,9 @@ Callbacks should use a small semantic vocabulary: `on_change` for scalar value c
 state, `on_select` for committed item selection or action-like choice, `on_activate` for activation
 without persistent selection ownership, and `on_toggle` for expansion or tri-state toggle payloads.
 Seed-shaped runtime builders must stay explicit in the API inventory. Current examples include
-`Tabs::default_selected`, `RadioGroup::default_selected`, `Toolbar::default_focused`,
+`Listbox::default_selected`, `Select::default_selected`, `Combobox::default_selected`,
+`Command::default_selected`, `Command::default_selected_values`, `Tabs::default_selected`,
+`RadioGroup::default_selected`, `Toolbar::default_focused`,
 `Sidebar::default_focused`, `Tree::default_selected`, `Tree::default_focused`,
 `VirtualizedList::default_active_key`, `VirtualizedList::default_selected_key`,
 `VirtualizedList::default_selected_keys`,
@@ -687,7 +709,7 @@ default path must preserve offset across reconstructed component values.
 
 `TableState` describes renderer-neutral table behavior: caller-owned business `TableRowId` values,
 exact `TableRowIdentity` values, nested source rows, row lookup, row-model stage vocabulary,
-selection keyed by business row id, column visibility and ordering, pinned column regions, row
+selection keyed by exact `TableSourceRowIdentity`, column visibility and ordering, pinned column regions, row
 pinning, sorting, filtering, grouping, built-in aggregation, expansion, column groups, nested
 headers, and pagination. The official table contract resolves the full pipeline core -> filtered
 -> grouped -> sorted -> expanded -> paginated -> row-region split -> final without changing an
@@ -712,6 +734,16 @@ and address the row through an explicit source-instance identity. `TableRowModel
 stage; `rows()` remains the materialized order for that stage. Business-id lookup is deliberately
 separate: `source_rows(&TableRowId)` returns every matching source instance and
 `unique_source_row(&TableRowId)` returns a row only when exactly one match exists.
+
+`TableState::with_selected_rows` and `selected_rows` use exact `TableSourceRowIdentity` values.
+Duplicate business ids therefore do not alias selected state, descendant propagation, or
+`TableRowSelectionChange::current_selection`. The callback projects caller-owned explicit roots in
+source-model order rather than promoting derived selected descendants into state. Under descendant
+propagation, canceling a parent removes its explicit subtree, while canceling an inherited child
+removes the explicit ancestor that covers it so the committed payload cannot immediately reselect
+the child. Selection remains source-row-only; there is no implicit business-id bulk target or
+speculative selection scope. A future bulk operation must use an explicitly named target, following
+`TableRowPinTarget::AllSourceRows` rather than weakening the exact state contract.
 
 Source tree rows remain distinct from synthetic group rows: `TableRow` may own child rows,
 resolved source rows expose depth, exact parent identity, branch/leaf state, descendant counts, and
@@ -792,6 +824,8 @@ column position metadata, sort metadata for sortable headers, grouped-row and so
 parent metadata, selected state, and branch `aria-expanded` state keyed by exact logical row
 identity. The adapter keeps row activation independent from selection and expansion; callers decide
 whether a click, double-click, Enter, Space, Left, or Right payload changes app-owned `TableState`.
+Expansion requests never write an adapter-owned override: pointer and keyboard paths keep focus and
+emit the next intent, while the rendered branch remains on caller state until a later commit.
 
 Logical Table focus is reconciled against the complete final row model, while only rows in the
 rendered virtual window own physical row focus handles. When a logically focused row leaves

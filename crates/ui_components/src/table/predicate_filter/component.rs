@@ -251,7 +251,7 @@ impl RenderOnce for TablePredicateFilter {
             .child(
                 Select::new(select_id, select_label)
                     .with_size(size)
-                    .selected(state.operator().as_str())
+                    .selected(Some(state.operator().as_str().to_owned()))
                     .options(
                         state
                             .operator_options()

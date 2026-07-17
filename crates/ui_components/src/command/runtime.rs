@@ -11,9 +11,11 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::choice_overlay_runtime::{
-    ChoiceOverlayRuntimeState, commit_registered_choice_overlay_single_value,
+use crate::choice::{
+    self, ChoiceSelectionMode as ChoiceSelectionCardinality, ChoiceSelectionOwnership,
+    MultiChoiceSelectionControl, SingleChoiceSelectionControl,
 };
+use crate::choice_overlay_runtime::request_registered_choice_selection;
 use crate::color::{ColorIntent, ColorState};
 use crate::geometry::gpui_px_from_ui;
 use crate::overlay::{
@@ -44,6 +46,8 @@ pub(super) struct CommandRuntime {
     pub(super) active_value: Option<String>,
     pub(super) selected_value: Option<String>,
     pub(super) selected_values: Vec<String>,
+    selection_ownership: ChoiceSelectionOwnership,
+    multi_selection_ownership: ChoiceSelectionOwnership,
     pub(super) scroll_surface: ScrollSurfaceRuntime,
     pub(super) overlay_binding: Option<OverlayLayerBinding>,
 }
@@ -54,22 +58,69 @@ impl CommandRuntime {
         active_value: Option<String>,
         selected_value: Option<String>,
         selected_values: Vec<String>,
+        selection_ownership: ChoiceSelectionOwnership,
+        multi_selection_ownership: ChoiceSelectionOwnership,
     ) -> Self {
         Self {
             open,
             active_value,
             selected_value,
             selected_values,
+            selection_ownership,
+            multi_selection_ownership,
             scroll_surface: ScrollSurfaceRuntime::new(None),
             overlay_binding: None,
         }
     }
-}
 
-impl ChoiceOverlayRuntimeState for CommandRuntime {
-    fn commit_single_value(&mut self, value: String) {
-        self.selected_value = Some(value.clone());
+    pub(super) fn sync_selection(
+        &mut self,
+        selection: &SingleChoiceSelectionControl,
+        multi_selection: &MultiChoiceSelectionControl,
+    ) {
+        if selection.is_controlled() && self.selected_value.as_ref() != selection.value().as_ref() {
+            self.selected_value = selection.value().clone();
+        }
+        if multi_selection.is_controlled()
+            && self.selected_values.as_slice() != multi_selection.value().as_slice()
+        {
+            self.selected_values = multi_selection.value().clone();
+        }
+        self.selection_ownership =
+            ChoiceSelectionOwnership::from_controlled(selection.is_controlled());
+        self.multi_selection_ownership =
+            ChoiceSelectionOwnership::from_controlled(multi_selection.is_controlled());
+    }
+
+    fn commit_single_value(&mut self, value: String, cx: &mut Context<Self>) {
+        let mut changed = self.active_value.as_ref() != Some(&value);
+        if !self.selection_ownership.caller_owned() {
+            changed |= self.selected_value.as_ref() != Some(&value);
+            self.selected_value = Some(value.clone());
+        }
         self.active_value = Some(value);
+        if changed {
+            cx.notify();
+        }
+    }
+
+    fn commit_multi_selection(
+        &mut self,
+        selection: CommandSelection,
+        cx: &mut Context<Self>,
+    ) -> CommandSelectionChange {
+        let change = command_selection_change_after_toggle(&self.selected_values, selection);
+        let active_value = change.toggled().value();
+        let mut changed = self.active_value.as_deref() != Some(active_value);
+        self.active_value = Some(active_value.to_owned());
+        if !self.multi_selection_ownership.caller_owned() {
+            changed |= self.selected_values.as_slice() != change.values();
+            self.selected_values = change.values().to_vec();
+        }
+        if changed {
+            cx.notify();
+        }
+        change
     }
 }
 
@@ -178,7 +229,6 @@ pub(super) fn command_content_element(
     let colors = state.colors();
     let query = state.query().to_owned();
     let label = state.label().to_owned();
-    let selected_values = state.selected_values().to_vec();
     let selection_mode = state.selection_mode();
     let dialog_state = state.dialog().cloned();
     let scroll_viewport_id = state.scroll_area().viewport_id().to_owned();
@@ -200,7 +250,6 @@ pub(super) fn command_content_element(
     let key_runtime = runtime.clone();
     let key_on_select = on_select.clone();
     let key_on_selected_values_change = on_selected_values_change.clone();
-    let key_selected_values = selected_values.clone();
     let key_selection_mode = selection_mode;
     let key_scroll_handle = scroll_handle.clone();
     let key_registered_overlay = registered_overlay.clone();
@@ -266,7 +315,6 @@ pub(super) fn command_content_element(
                         key_registered_overlay.clone(),
                         key_runtime.clone(),
                         key_selection_mode,
-                        &key_selected_values,
                         key_on_select.clone(),
                         key_on_selected_values_change.clone(),
                         selection,
@@ -369,7 +417,6 @@ pub(super) fn command_content_element(
                             registered_overlay.clone(),
                             runtime.clone(),
                             selection_mode,
-                            selected_values.clone(),
                             on_select,
                             on_selected_values_change,
                             theme,
@@ -609,7 +656,6 @@ fn render_command_results_body(
     registered_overlay: Option<CommandRegisteredOverlay>,
     runtime: Entity<CommandRuntime>,
     selection_mode: CommandSelectionMode,
-    selected_values: Vec<String>,
     on_select: Option<CommandSelectionHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     theme: &ThemeContext,
@@ -649,7 +695,6 @@ fn render_command_results_body(
             registered_overlay,
             runtime,
             selection_mode,
-            selected_values,
             on_select,
             on_selected_values_change,
             theme,
@@ -667,7 +712,6 @@ fn command_result_children(
     registered_overlay: Option<CommandRegisteredOverlay>,
     runtime: Entity<CommandRuntime>,
     selection_mode: CommandSelectionMode,
-    selected_values: Vec<String>,
     on_select: Option<CommandSelectionHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     theme: &ThemeContext,
@@ -706,7 +750,6 @@ fn command_result_children(
                 registered_overlay.clone(),
                 runtime.clone(),
                 selection_mode,
-                selected_values.clone(),
                 on_select.clone(),
                 on_selected_values_change.clone(),
                 theme,
@@ -726,7 +769,6 @@ fn render_command_result_row(
     registered_overlay: Option<CommandRegisteredOverlay>,
     runtime: Entity<CommandRuntime>,
     selection_mode: CommandSelectionMode,
-    selected_values: Vec<String>,
     on_select: Option<CommandSelectionHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     theme: &ThemeContext,
@@ -768,8 +810,10 @@ fn render_command_result_row(
     let mut option_semantics = SemanticDescriptor::new(row.role())
         .with_label(&option_aria_label)
         .with_selected(selected)
-        .with_disabled(disabled)
-        .with_actions(&[AccessibleAction::Click]);
+        .with_disabled(disabled);
+    if !disabled {
+        option_semantics = option_semantics.with_actions(&[AccessibleAction::Click]);
+    }
     if let Some(position) = position {
         option_semantics = option_semantics
             .with_position_in_set(position)
@@ -841,7 +885,6 @@ fn render_command_result_row(
                                 registered_overlay.clone(),
                                 runtime.clone(),
                                 selection_mode,
-                                &selected_values,
                                 on_select.clone(),
                                 on_selected_values_change.clone(),
                                 selection,
@@ -881,7 +924,6 @@ fn handle_command_selection(
     registered_overlay: Option<CommandRegisteredOverlay>,
     runtime: Entity<CommandRuntime>,
     selection_mode: CommandSelectionMode,
-    selected_values: &[String],
     on_select: Option<CommandSelectionHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     selection: CommandSelection,
@@ -892,23 +934,24 @@ fn handle_command_selection(
         CommandSelectionMode::Single => {
             if let Some(registered_overlay) = registered_overlay {
                 let selected_value = selection.value().to_owned();
-                commit_registered_choice_overlay_single_value(
+                let effect_runtime = runtime.clone();
+                request_registered_choice_selection(
                     &registered_overlay.window_runtime,
                     &registered_overlay.binding,
-                    runtime.clone(),
-                    selected_value,
                     window,
                     cx,
                     move |window, cx| {
+                        effect_runtime.update(cx, |runtime, cx| {
+                            runtime.commit_single_value(selected_value, cx);
+                        });
                         if let Some(on_select) = on_select.as_ref() {
                             on_select(selection, window, cx);
                         }
                     },
                 );
             } else {
-                runtime.update(cx, |runtime, _| {
-                    runtime.selected_value = Some(selection.value().to_owned());
-                    runtime.active_value = Some(selection.value().to_owned());
+                runtime.update(cx, |runtime, cx| {
+                    runtime.commit_single_value(selection.value().to_owned(), cx);
                 });
                 if let Some(on_select) = on_select.as_ref() {
                     on_select(selection, window, cx);
@@ -916,10 +959,8 @@ fn handle_command_selection(
             }
         }
         CommandSelectionMode::Multiple => {
-            let change = command_selection_change_after_toggle(selected_values, selection);
-            runtime.update(cx, |runtime, _| {
-                runtime.active_value = Some(change.toggled().value().to_owned());
-                runtime.selected_values = change.values().to_vec();
+            let change = runtime.update(cx, |runtime, cx| {
+                runtime.commit_multi_selection(selection, cx)
             });
             if let Some(on_selected_values_change) = on_selected_values_change.as_ref() {
                 on_selected_values_change(change, window, cx);
@@ -1010,14 +1051,15 @@ fn command_selection_change_after_toggle(
     selected_values: &[String],
     selection: CommandSelection,
 ) -> CommandSelectionChange {
-    let mut values = selected_values.to_vec();
-    let selected = if let Some(index) = values.iter().position(|value| value == selection.value()) {
-        values.remove(index);
-        false
-    } else {
-        values.push(selection.value().to_owned());
-        true
-    };
+    let selected = !selected_values
+        .iter()
+        .any(|value| value == selection.value());
+    let values = choice::next_selected_values(
+        ChoiceSelectionCardinality::Multiple,
+        false,
+        selected_values,
+        selection.value(),
+    );
 
     CommandSelectionChange::new(values, selection, selected)
 }
@@ -1035,7 +1077,7 @@ mod tests {
             .open(true)
             .disabled(disabled)
             .default_query("file")
-            .selected("new-file")
+            .selected(Some("new-file".to_owned()))
             .item(CommandItem::new("open-file", "Open File").shortcut("Ctrl+O"))
             .group(
                 CommandGroup::new("file", "File")
@@ -1049,7 +1091,7 @@ mod tests {
         Command::new("paged-palette", "Command palette")
             .open(true)
             .row_height(ui_px(20.0))
-            .selected(selected)
+            .selected(Some(selected.to_owned()))
             .item(CommandItem::new("open-file", "Open File"))
             .item(CommandItem::new("disabled-one", "Disabled One").disabled(true))
             .item(CommandItem::new("disabled-two", "Disabled Two").disabled(true))
@@ -1083,7 +1125,7 @@ mod tests {
         let base = Command::new("palette", "Command palette")
             .open(true)
             .default_query("file")
-            .selected("open-file")
+            .selected(Some("open-file".to_owned()))
             .active("open-file")
             .item(CommandItem::new("open-file", "Open File"))
             .item(CommandItem::new("close-file", "Close File"))
@@ -1091,7 +1133,7 @@ mod tests {
         let selection_changed = Command::new("palette", "Command palette")
             .open(true)
             .default_query("file")
-            .selected("close-file")
+            .selected(Some("close-file".to_owned()))
             .active("close-file")
             .item(CommandItem::new("open-file", "Open File"))
             .item(CommandItem::new("close-file", "Close File"))
@@ -1099,7 +1141,7 @@ mod tests {
         let query_changed = Command::new("palette", "Command palette")
             .open(true)
             .default_query("close")
-            .selected("close-file")
+            .selected(Some("close-file".to_owned()))
             .active("close-file")
             .item(CommandItem::new("open-file", "Open File"))
             .item(CommandItem::new("close-file", "Close File"))
@@ -1113,6 +1155,17 @@ mod tests {
             command_scroll_reset_key(&base),
             command_scroll_reset_key(&query_changed)
         );
+    }
+
+    #[test]
+    fn multi_selection_toggle_removes_every_duplicate_of_the_toggled_value() {
+        let change = command_selection_change_after_toggle(
+            &["alpha".to_owned(), "beta".to_owned(), "alpha".to_owned()],
+            CommandSelection::new(0, "alpha", "Alpha", None),
+        );
+
+        assert_eq!(change.values(), &["beta".to_owned()]);
+        assert!(!change.selected());
     }
 
     #[test]
@@ -1184,7 +1237,7 @@ mod tests {
         let bounded_last = Command::new("bounded-palette", "Command palette")
             .open(true)
             .loop_navigation(false)
-            .selected("close-window")
+            .selected(Some("close-window".to_owned()))
             .item(CommandItem::new("open-file", "Open File"))
             .item(CommandItem::new("disabled-one", "Disabled One").disabled(true))
             .item(CommandItem::new("close-window", "Close Window"))
@@ -1204,7 +1257,7 @@ mod tests {
         let bounded_first = Command::new("bounded-palette", "Command palette")
             .open(true)
             .loop_navigation(false)
-            .selected("open-file")
+            .selected(Some("open-file".to_owned()))
             .item(CommandItem::new("open-file", "Open File"))
             .item(CommandItem::new("close-window", "Close Window"))
             .state();

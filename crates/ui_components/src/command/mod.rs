@@ -22,6 +22,9 @@ use open_gpui_ui_core::{
 
 use crate::a11y::UiA11yElementExt;
 use crate::action::{ResolvedActionIcon, ResolvedActionState};
+use crate::choice::{
+    ChoiceSelectionOwnership, MultiChoiceSelectionControl, SingleChoiceSelectionControl,
+};
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::overlay::{
     OverlayLayerRegistration, OverlayOpenIntent, OverlayOwnership, WindowOverlayRuntime,
@@ -80,8 +83,8 @@ pub struct Command {
     query: Option<String>,
     default_query: String,
     selection_mode: CommandSelectionMode,
-    selected_value: Option<String>,
-    selected_values: Option<Vec<String>>,
+    selection: SingleChoiceSelectionControl,
+    multi_selection: MultiChoiceSelectionControl,
     active_value: Option<String>,
     viewport_item_count: usize,
     metrics: CommandMetrics,
@@ -122,8 +125,8 @@ impl Command {
             query: None,
             default_query: String::new(),
             selection_mode: CommandSelectionMode::Single,
-            selected_value: None,
-            selected_values: None,
+            selection: SingleChoiceSelectionControl::uncontrolled(None),
+            multi_selection: MultiChoiceSelectionControl::uncontrolled(Vec::new()),
             active_value: None,
             viewport_item_count: DEFAULT_COMMAND_VIEWPORT_ITEM_COUNT,
             metrics: CommandMetrics::from_size(size),
@@ -297,16 +300,39 @@ impl Command {
         self
     }
 
-    /// Applies selected item value.
-    pub fn selected(mut self, value: impl Into<String>) -> Self {
-        self.selected_value = Some(value.into());
+    /// Applies the caller-owned selected item value.
+    pub fn selected(mut self, value: Option<String>) -> Self {
+        self.selection = SingleChoiceSelectionControl::controlled(value);
+        self
+    }
+
+    /// Applies the default selected item value for adapter-owned runtime state.
+    pub fn default_selected(mut self, value: impl Into<String>) -> Self {
+        let value = value.into();
+        if !self.selection.is_controlled() {
+            self.selection = SingleChoiceSelectionControl::uncontrolled(Some(value));
+        }
         self
     }
 
     /// Applies controlled selected values for multi-selection.
     pub fn selected_values(mut self, values: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.selection_mode = CommandSelectionMode::Multiple;
-        self.selected_values = Some(values.into_iter().map(Into::into).collect());
+        self.multi_selection =
+            MultiChoiceSelectionControl::controlled(values.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Applies default selected values for adapter-owned multi-selection state.
+    pub fn default_selected_values(
+        mut self,
+        values: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.selection_mode = CommandSelectionMode::Multiple;
+        let values = values.into_iter().map(Into::into).collect();
+        if !self.multi_selection.is_controlled() {
+            self.multi_selection = MultiChoiceSelectionControl::uncontrolled(values);
+        }
         self
     }
 
@@ -447,14 +473,12 @@ impl Command {
             CommandQueryMode::Uncontrolled
         };
         let query = self.query.as_deref().unwrap_or(self.default_query.as_str());
-        let selected_values = self.selected_values.clone().unwrap_or_default().into_iter();
-
         self.resolve_state_with_inputs(
             self.open,
             query,
             query_mode,
-            self.selected_value.as_deref(),
-            selected_values,
+            self.selection.value().as_deref(),
+            self.multi_selection.value().iter().cloned(),
             self.active_value.as_deref(),
         )
     }
@@ -555,31 +579,49 @@ impl Sizable for Command {
 impl RenderOnce for Command {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = ThemeResolver::current(cx);
-        let initial_query = self
-            .query
-            .clone()
-            .unwrap_or_else(|| self.default_query.clone());
-        let initial_selected_values = self
-            .selected_values
-            .clone()
-            .unwrap_or_else(|| self.selected_value.iter().cloned().collect());
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| {
             CommandRuntime::new(
                 self.default_open,
                 self.active_value.clone(),
-                self.selected_value.clone(),
-                initial_selected_values.clone(),
+                self.selection.value().clone(),
+                self.multi_selection.value().clone(),
+                ChoiceSelectionOwnership::from_controlled(self.selection.is_controlled()),
+                ChoiceSelectionOwnership::from_controlled(self.multi_selection.is_controlled()),
             )
         });
         let input_state_key: ElementId = (self.id.clone(), "input-state").into();
         let input_controller = window.use_keyed_state(input_state_key, cx, |_, cx| {
-            let mut input = TextInputController::with_value(initial_query.clone(), cx);
+            let initial_query = self
+                .query
+                .clone()
+                .unwrap_or_else(|| self.default_query.clone());
+            let mut input = TextInputController::with_value(initial_query, cx);
             input.set_placeholder(self.placeholder.clone(), cx);
             input
         });
-        let runtime_state = runtime.read(cx).clone();
-        let scroll_handle = scroll_surface_handle(&runtime_state.scroll_surface, None);
-        let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
+        runtime.update(cx, |runtime, _| {
+            runtime.sync_selection(&self.selection, &self.multi_selection);
+        });
+        let (
+            runtime_open,
+            runtime_active_value,
+            selected_value,
+            selected_values,
+            scroll_surface,
+            existing_binding,
+        ) = {
+            let runtime = runtime.read(cx);
+            (
+                runtime.open,
+                runtime.active_value.clone(),
+                runtime.selected_value.clone(),
+                runtime.selected_values.clone(),
+                runtime.scroll_surface.clone(),
+                runtime.overlay_binding.clone(),
+            )
+        };
+        let scroll_handle = scroll_surface_handle(&scroll_surface, None);
+        let open_state = resolve_overlay_open_state(self.open, runtime_open);
         let resolved_open = open_state.open();
         if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
@@ -598,29 +640,22 @@ impl RenderOnce for Command {
             .as_deref()
             .unwrap_or(controller_query.as_str())
             .to_owned();
-        let selected_value = self
-            .selected_value
-            .as_deref()
-            .or(runtime_state.selected_value.as_deref());
-        let selected_values = self
-            .selected_values
-            .clone()
-            .unwrap_or_else(|| runtime_state.selected_values.clone());
+        let selected_value = selected_value.as_deref();
         let active_value = self
             .active_value
             .as_deref()
-            .or(runtime_state.active_value.as_deref())
+            .or(runtime_active_value.as_deref())
             .or(selected_value);
         let state = self.resolve_state_with_inputs(
             Some(resolved_open),
             query.as_str(),
             query_mode,
             selected_value,
-            selected_values.iter().cloned(),
+            selected_values,
             active_value,
         );
         let scroll_reset_key = command_scroll_reset_key(&state);
-        let previous_scroll_reset_key = runtime_state.scroll_surface.reset_key();
+        let previous_scroll_reset_key = scroll_surface.reset_key();
         let reset_key_changed = previous_scroll_reset_key != Some(scroll_reset_key.as_str());
         if should_reset_scroll_surface(
             true,
@@ -662,7 +697,6 @@ impl RenderOnce for Command {
         let dialog_state = state.dialog().cloned();
         let dialog_open = dialog_state.clone().filter(|_| state.open());
         let window_overlay_runtime = WindowOverlayRuntime::for_window(window, cx);
-        let existing_binding = runtime_state.overlay_binding.clone();
         let overlay_binding = if let Some(dialog_state) = dialog_state.as_ref() {
             let ownership = if open_state.controlled() {
                 OverlayOwnership::Controlled
@@ -972,7 +1006,7 @@ mod tests {
         Command::new("palette", "Command palette")
             .open(true)
             .default_query("file")
-            .selected("new-file")
+            .selected(Some("new-file".to_owned()))
             .item(CommandItem::new("open-file", "Open File").shortcut("Ctrl+O"))
             .group(
                 CommandGroup::new("file", "File")

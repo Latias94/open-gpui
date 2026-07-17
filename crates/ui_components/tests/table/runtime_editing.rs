@@ -637,13 +637,15 @@ fn table_runtime_select_cell_edit_emits_change_without_row_interaction(
         "select content should open from the table trigger"
     );
 
+    let blocked_selector = required_table_source_select_option_selector(
+        cx,
+        "select-edit-runtime-table",
+        "row-a",
+        "status",
+        "blocked",
+    );
     let blocked = cx
-        .debug_bounds(&table_source_select_option_selector(
-            "select-edit-runtime-table",
-            "row-a",
-            "status",
-            "blocked",
-        ))
+        .debug_bounds(&blocked_selector)
         .expect("blocked option should be rendered in the table select popup");
     cx.simulate_click(blocked.center(), Default::default());
     cx.update(|window, cx| {

@@ -3,8 +3,7 @@ use std::rc::Rc;
 
 use open_gpui::{ScrollHandle, Window};
 use open_gpui_ui_core::{
-    TableColumnRegion, TableExpansionState, TableResolvedState, TableState, UiPx,
-    VirtualizerResolvedState, VirtualizerState, ui_px,
+    TableColumnRegion, TableResolvedState, UiPx, VirtualizerResolvedState, VirtualizerState, ui_px,
 };
 
 use super::content_fit::{content_fit_measure_key, table_content_fit_rendered_rows};
@@ -83,12 +82,7 @@ impl Table {
         runtime: &mut TableRuntime,
     ) -> TableRenderPlan {
         let metrics = self.metrics_for_viewport(viewport_extent);
-        let state = runtime
-            .expansion_override
-            .as_ref()
-            .cloned()
-            .map(|expansion| apply_table_expansion(self.state.clone(), expansion))
-            .unwrap_or_else(|| self.state.clone());
+        let state = self.state.clone();
         let cache_key = state.cache_key();
         let needs_resolve = runtime
             .resolved
@@ -239,15 +233,5 @@ impl Table {
         }
 
         columns
-    }
-}
-
-pub(super) fn apply_table_expansion(
-    state: TableState,
-    expansion: TableExpansionState,
-) -> TableState {
-    match expansion {
-        TableExpansionState::All => state.with_all_rows_expanded(),
-        TableExpansionState::Rows(rows) => state.with_expanded_rows(rows),
     }
 }

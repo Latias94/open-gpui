@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use super::{TableRow, TableRowId};
+use super::TableSourceRowIdentity;
 
 /// Row-selection cardinality for a table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -118,26 +118,14 @@ impl TableSelectionPolicy {
         self
     }
 
-    pub(super) fn resolve_selected_rows(
-        self,
-        rows: &[TableRow],
-        selected_rows: &BTreeSet<TableRowId>,
-    ) -> BTreeSet<TableRowId> {
-        let mut resolved = self.normalize_selected_rows(selected_rows.iter().cloned());
-        if self.selection_mode.is_single() {
-            return resolved;
-        }
-        if self.sub_row_policy.propagates_descendants() {
-            collect_descendant_selected_rows(rows, selected_rows, &mut resolved);
-        }
-
-        resolved
+    pub(super) const fn propagates_descendant_selection(self) -> bool {
+        self.selection_mode.is_multiple() && self.sub_row_policy.propagates_descendants()
     }
 
     pub(super) fn normalize_selected_rows(
         self,
-        selected_rows: impl IntoIterator<Item = impl Into<TableRowId>>,
-    ) -> BTreeSet<TableRowId> {
+        selected_rows: impl IntoIterator<Item = impl Into<TableSourceRowIdentity>>,
+    ) -> BTreeSet<TableSourceRowIdentity> {
         let selected_rows = selected_rows
             .into_iter()
             .map(Into::into)
@@ -247,27 +235,5 @@ impl TableSelectionSummary {
     /// Returns whether the scope has every row selected.
     pub const fn is_all_selected(self) -> bool {
         self.state().is_all()
-    }
-}
-
-fn collect_descendant_selected_rows(
-    rows: &[TableRow],
-    selected_rows: &BTreeSet<TableRowId>,
-    resolved: &mut BTreeSet<TableRowId>,
-) {
-    for row in rows {
-        if selected_rows.contains(row.id()) {
-            collect_all_descendant_rows(row.children(), resolved);
-            continue;
-        }
-
-        collect_descendant_selected_rows(row.children(), selected_rows, resolved);
-    }
-}
-
-fn collect_all_descendant_rows(rows: &[TableRow], resolved: &mut BTreeSet<TableRowId>) {
-    for row in rows {
-        resolved.insert(row.id().clone());
-        collect_all_descendant_rows(row.children(), resolved);
     }
 }

@@ -4,7 +4,7 @@ use super::*;
 fn table_behavior_snapshot_uses_core_state_and_virtualizer_contracts() {
     let state = sample_table_state(100)
         .with_sorting([TableSort::new("score", TableSortDirection::Descending)])
-        .with_selected_rows(["row-0091"])
+        .with_selected_rows([table_source_selection_identity("row-0091")])
         .with_filters([TableFilter::contains("team", "UI")])
         .with_pagination(TablePagination::disabled());
     let table = Table::new("contracts-table", "Contracts", state)

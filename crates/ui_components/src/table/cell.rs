@@ -9,7 +9,6 @@ use crate::geometry::gpui_px_from_ui;
 
 use super::editors::render_table_cell_editor;
 use super::identity::{TableDebugSelector, table_cell_element_id, table_tree_toggle_element_id};
-use super::interaction::toggle_table_expansion;
 use super::{TableCellRenderPlan, TableInputModifiers, TableRowAction, TableRowExpansionToggle};
 use crate::table::body::TableRowRenderContext;
 
@@ -159,14 +158,8 @@ fn render_table_tree_toggle(context: TableRowRenderContext) -> AnyElement {
             window.prevent_default();
 
             let row_identity = context.row.identity().clone();
-            let next_expansion = toggle_table_expansion(
-                context.body.current_expansion.clone(),
-                row_identity.clone(),
-                !tree_expanded,
-            );
             context.body.runtime.update(cx, |runtime, cx| {
                 runtime.set_focused(row_identity.clone(), cx);
-                runtime.set_expansion_override(next_expansion.clone(), cx);
             });
             if let Some(focus_handle) = context.focus_handle.as_ref() {
                 focus_handle.focus(window, cx);

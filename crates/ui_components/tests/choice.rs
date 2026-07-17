@@ -1,9 +1,9 @@
 mod support;
 
 use open_gpui::{
-    Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Render, ScrollDelta,
-    ScrollWheelEvent, StatefulInteractiveElement, Styled, VisualContext, Window, accesskit,
-    actions, div, point, px,
+    Context, InteractiveElement, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+    MouseButton, ParentElement, Render, ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement,
+    Styled, VisualContext, Window, accesskit, actions, div, point, px,
 };
 use open_gpui_ui_components::{
     Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command,
@@ -41,6 +41,56 @@ fn display_shortcut(keystrokes: &str) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn key_down_event(key: &str) -> KeyDownEvent {
+    KeyDownEvent {
+        keystroke: Keystroke {
+            modifiers: Modifiers::none(),
+            key: key.to_owned(),
+            key_char: None,
+        },
+        is_held: false,
+        prefer_character_input: false,
+    }
+}
+
+fn key_up_event(key: &str) -> KeyUpEvent {
+    KeyUpEvent {
+        keystroke: Keystroke {
+            modifiers: Modifiers::none(),
+            key: key.to_owned(),
+            key_char: None,
+        },
+    }
+}
+
+fn nested_listbox_option_selector(
+    cx: &mut open_gpui::VisualTestContext,
+    owner_id: &str,
+    value: &str,
+) -> Option<String> {
+    let suffix = format!(":option:{value}");
+    let mut matches = cx
+        .debug_selectors_with_prefix("listbox:")
+        .into_iter()
+        .filter(|selector| selector.contains(owner_id) && selector.ends_with(&suffix))
+        .collect::<Vec<_>>();
+    assert!(
+        matches.len() <= 1,
+        "nested Listbox option selector must be unique for owner {owner_id:?} and value {value:?}: {matches:?}"
+    );
+    matches.pop()
+}
+
+fn required_nested_listbox_option_selector(
+    cx: &mut open_gpui::VisualTestContext,
+    owner_id: &str,
+    value: &str,
+) -> String {
+    nested_listbox_option_selector(cx, owner_id, value).unwrap_or_else(|| {
+        panic!("missing nested Listbox option for owner {owner_id:?} and value {value:?}")
+    })
 }
 
 fn accessibility_node_with_label_and_role<'a>(
@@ -135,7 +185,7 @@ fn choice_surfaces_share_stable_value_resolution_and_query_normalization() {
 
     let select = Select::new("shared-select", "Shared choices")
         .placeholder("Pick one")
-        .selected("disabled")
+        .selected(Some("disabled".to_owned()))
         .option(ListboxOption::new("alpha", "Alpha"))
         .option(ListboxOption::new("disabled", "Disabled").disabled(true))
         .group(ListboxGroup::new("group", "Group").option(ListboxOption::new("grouped", "Grouped")))
@@ -143,7 +193,7 @@ fn choice_surfaces_share_stable_value_resolution_and_query_normalization() {
 
     let combobox = Combobox::new("shared-combobox", "Shared choices")
         .default_query("  AL ")
-        .selected("disabled")
+        .selected(Some("disabled".to_owned()))
         .option(ComboboxOption::new("alpha", "Alpha"))
         .option(ComboboxOption::new("disabled", "Disabled").disabled(true))
         .group(
@@ -153,7 +203,7 @@ fn choice_surfaces_share_stable_value_resolution_and_query_normalization() {
 
     let command = Command::new("shared-command", "Shared choices")
         .default_query("  AL ")
-        .selected("disabled")
+        .selected(Some("disabled".to_owned()))
         .item(CommandItem::new("alpha", "Alpha"))
         .item(CommandItem::new("disabled", "Disabled").disabled(true))
         .group(CommandGroup::new("group", "Group").item(CommandItem::new("grouped", "Grouped")))
@@ -234,7 +284,7 @@ fn listbox_select_and_combobox_project_equivalent_choice_semantics() {
     );
     let select = Select::new("shared-select-semantics", "Shared choices")
         .placeholder("Pick one")
-        .selected("bravo")
+        .selected(Some("bravo".to_owned()))
         .active("charlie")
         .option(ListboxOption::new("alpha", "Alpha"))
         .option(ListboxOption::new("bravo", "Bravo"))
@@ -243,7 +293,7 @@ fn listbox_select_and_combobox_project_equivalent_choice_semantics() {
         .state();
     let combobox = Combobox::new("shared-combobox-semantics", "Shared choices")
         .placeholder("Search choices")
-        .selected("bravo")
+        .selected(Some("bravo".to_owned()))
         .active("charlie")
         .option(ComboboxOption::new("alpha", "Alpha"))
         .option(ComboboxOption::new("bravo", "Bravo"))
@@ -392,7 +442,7 @@ fn listbox_builder_state_models_empty_disabled_and_tokens() {
         .state();
     let disabled = Listbox::new("disabled-listbox", "Disabled")
         .disabled(true)
-        .selected("one")
+        .default_selected("one")
         .option(ListboxOption::new("one", "One"))
         .state();
 
@@ -403,6 +453,180 @@ fn listbox_builder_state_models_empty_disabled_and_tokens() {
     assert_eq!(disabled.selected_value(), None);
     assert_eq!(disabled.active_value(), None);
     assert_eq!(disabled.activation_for_key("space"), None);
+}
+
+#[test]
+fn listbox_separator_identity_cannot_collide_with_an_option_value() {
+    let separator_shaped_value = "\0separator:standalone:1:divider";
+    let state = Listbox::new("separator-identity-listbox", "Separator identity")
+        .default_selected(separator_shaped_value)
+        .option(ListboxOption::new(
+            separator_shaped_value,
+            "Sentinel-shaped option",
+        ))
+        .option(ListboxOption::separator("divider"))
+        .state();
+
+    assert_eq!(state.selected_value(), Some(separator_shaped_value));
+    assert_eq!(state.active_value(), Some(separator_shaped_value));
+    assert!(!state.options()[0].disabled());
+}
+
+#[test]
+fn choice_defaults_seed_only_adapter_owned_selection_state() {
+    let late_default_listbox = Listbox::new("late-default-listbox", "Controlled listbox")
+        .selected(None)
+        .default_selected("alpha")
+        .option(ListboxOption::new("alpha", "Alpha"))
+        .state();
+    assert_eq!(late_default_listbox.selected_value(), None);
+
+    let seeded_select = Select::new("seeded-select", "Seeded select")
+        .default_selected("alpha")
+        .option(ListboxOption::new("alpha", "Alpha"))
+        .state();
+    let controlled_empty_select = Select::new("controlled-empty-select", "Controlled select")
+        .default_selected("alpha")
+        .selected(None)
+        .option(ListboxOption::new("alpha", "Alpha"))
+        .state();
+    let late_default_select = Select::new("late-default-select", "Controlled select")
+        .selected(None)
+        .default_selected("alpha")
+        .option(ListboxOption::new("alpha", "Alpha"))
+        .state();
+    assert_eq!(seeded_select.selected_value(), Some("alpha"));
+    assert_eq!(controlled_empty_select.selected_value(), None);
+    assert_eq!(late_default_select.selected_value(), None);
+
+    let seeded_combobox = Combobox::new("seeded-combobox", "Seeded combobox")
+        .default_selected("alpha")
+        .option(ComboboxOption::new("alpha", "Alpha"))
+        .state();
+    let controlled_empty_combobox =
+        Combobox::new("controlled-empty-combobox", "Controlled combobox")
+            .default_selected("alpha")
+            .selected(None)
+            .option(ComboboxOption::new("alpha", "Alpha"))
+            .state();
+    let late_default_combobox = Combobox::new("late-default-combobox", "Controlled combobox")
+        .selected(None)
+        .default_selected("alpha")
+        .option(ComboboxOption::new("alpha", "Alpha"))
+        .state();
+    assert_eq!(seeded_combobox.selected_value(), Some("alpha"));
+    assert_eq!(seeded_combobox.selected_label(), Some("Alpha"));
+    assert_eq!(controlled_empty_combobox.selected_value(), None);
+    assert_eq!(controlled_empty_combobox.selected_label(), None);
+    assert_eq!(late_default_combobox.selected_value(), None);
+    assert_eq!(late_default_combobox.selected_label(), None);
+
+    let seeded_command = Command::new("seeded-command", "Seeded command")
+        .default_selected("alpha")
+        .item(CommandItem::new("alpha", "Alpha"))
+        .state();
+    let controlled_empty_command = Command::new("controlled-empty-command", "Controlled command")
+        .default_selected("alpha")
+        .selected(None)
+        .item(CommandItem::new("alpha", "Alpha"))
+        .state();
+    let late_default_command = Command::new("late-default-command", "Controlled command")
+        .selected(None)
+        .default_selected("alpha")
+        .item(CommandItem::new("alpha", "Alpha"))
+        .state();
+    assert_eq!(seeded_command.selected_value(), Some("alpha"));
+    assert_eq!(controlled_empty_command.selected_value(), None);
+    assert_eq!(late_default_command.selected_value(), None);
+
+    let seeded_multi_command = Command::new("seeded-multi-command", "Seeded multi command")
+        .default_selected_values(["alpha"])
+        .item(CommandItem::new("alpha", "Alpha"))
+        .state();
+    let controlled_empty_multi_command =
+        Command::new("controlled-empty-multi-command", "Controlled multi command")
+            .default_selected_values(["alpha"])
+            .selected_values(Vec::<String>::new())
+            .item(CommandItem::new("alpha", "Alpha"))
+            .state();
+    let late_default_multi_command =
+        Command::new("late-default-multi-command", "Controlled multi command")
+            .selected_values(Vec::<String>::new())
+            .default_selected_values(["alpha"])
+            .item(CommandItem::new("alpha", "Alpha"))
+            .state();
+    assert_eq!(
+        seeded_multi_command.selected_values(),
+        &["alpha".to_owned()]
+    );
+    assert!(controlled_empty_multi_command.selected_values().is_empty());
+    assert!(late_default_multi_command.selected_values().is_empty());
+}
+
+#[open_gpui::test]
+fn select_item_handler_replaces_public_fallback_without_bypassing_owner_transaction(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct Probe {
+        events: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for Probe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let item_events = self.events.clone();
+            let fallback_events = self.events.clone();
+            let open_events = self.events.clone();
+            Select::new("item-handler-select", "Item handler select")
+                .option(ListboxOption::new("alpha", "Item Alpha").on_select(
+                    move |selection, _, _| {
+                        item_events
+                            .borrow_mut()
+                            .push(format!("item:{}", selection.value()));
+                    },
+                ))
+                .option(ListboxOption::new("beta", "Item Beta"))
+                .on_select(move |selection, _, _| {
+                    fallback_events
+                        .borrow_mut()
+                        .push(format!("fallback:{}", selection.value()));
+                })
+                .on_open_change(move |intent, _, _| {
+                    open_events
+                        .borrow_mut()
+                        .push(format!("open:{}", intent.desired_open()));
+                })
+        }
+    }
+
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| Probe {
+        events: events.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let trigger = cx
+        .debug_bounds("select:item-handler-select:trigger")
+        .expect("Select trigger should render");
+    cx.simulate_click(trigger.center(), Modifiers::none());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let option_selector =
+        required_nested_listbox_option_selector(cx, "item-handler-select", "alpha");
+    let option = cx
+        .debug_bounds(&option_selector)
+        .expect("Select option should render");
+    cx.simulate_click(option.center(), Modifiers::none());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        &["open:true", "item:alpha", "open:false"]
+    );
+    assert!(
+        cx.debug_bounds("select:Item handler select:select-content-scroll:content")
+            .is_none(),
+        "item-specific callbacks must not bypass selection commit and overlay close"
+    );
 }
 
 #[open_gpui::test]
@@ -427,7 +651,7 @@ fn listbox_runtime_click_and_keyboard_selection_skip_disabled_items(
 
             div().size_full().child(
                 Listbox::new("runtime-listbox", "Runtime listbox")
-                    .selected("alpha")
+                    .default_selected("alpha")
                     .option(ListboxOption::new("alpha", "Alpha").on_select(
                         move |selection, _, _| {
                             alpha_events.borrow_mut().push(SelectionEvent {
@@ -517,12 +741,10 @@ fn listbox_runtime_click_and_keyboard_selection_skip_disabled_items(
         window.draw(cx).clear();
     });
     let after_alpha_click = events.borrow().clone();
-    assert_eq!(after_alpha_click.len(), 3);
+    assert_eq!(after_alpha_click.len(), 2);
     assert_eq!(after_alpha_click[1].source, "option:alpha");
     assert_eq!(after_alpha_click[1].selection.index(), 0);
     assert_eq!(after_alpha_click[1].selection.value(), "alpha");
-    assert_eq!(after_alpha_click[2].source, "listbox");
-    assert_eq!(after_alpha_click[2].selection.value(), "alpha");
 
     cx.simulate_keystrokes("down");
     cx.update(|window, cx| {
@@ -530,22 +752,22 @@ fn listbox_runtime_click_and_keyboard_selection_skip_disabled_items(
     });
     assert_eq!(
         events.borrow().len(),
-        3,
+        2,
         "arrow navigation should move active option without selecting"
     );
 
-    cx.simulate_keystrokes("enter");
+    cx.simulate_event(key_down_event("enter"));
+    assert_eq!(events.borrow().len(), 2, "Enter activates on key-up");
+    cx.simulate_event(key_up_event("enter"));
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
     let after_enter = events.borrow().clone();
-    assert_eq!(after_enter.len(), 5);
-    assert_eq!(after_enter[3].source, "option:charlie");
-    assert_eq!(after_enter[3].selection.index(), 3);
-    assert_eq!(after_enter[3].selection.value(), "charlie");
-    assert_eq!(after_enter[3].selection.label(), "Charlie");
-    assert_eq!(after_enter[4].source, "listbox");
-    assert_eq!(after_enter[4].selection.value(), "charlie");
+    assert_eq!(after_enter.len(), 3);
+    assert_eq!(after_enter[2].source, "option:charlie");
+    assert_eq!(after_enter[2].selection.index(), 3);
+    assert_eq!(after_enter[2].selection.value(), "charlie");
+    assert_eq!(after_enter[2].selection.label(), "Charlie");
 
     cx.simulate_keystrokes("up");
     cx.update(|window, cx| {
@@ -553,22 +775,22 @@ fn listbox_runtime_click_and_keyboard_selection_skip_disabled_items(
     });
     assert_eq!(
         events.borrow().len(),
-        5,
+        3,
         "arrow navigation after selection should still move active option without selecting"
     );
 
-    cx.simulate_keystrokes("space");
+    cx.simulate_event(key_down_event("space"));
+    assert_eq!(events.borrow().len(), 3, "Space activates on key-up");
+    cx.simulate_event(key_up_event("space"));
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
     let after_space = events.borrow().clone();
-    assert_eq!(after_space.len(), 7);
-    assert_eq!(after_space[5].source, "option:alpha");
-    assert_eq!(after_space[5].selection.index(), 0);
-    assert_eq!(after_space[5].selection.value(), "alpha");
-    assert_eq!(after_space[5].selection.label(), "Alpha");
-    assert_eq!(after_space[6].source, "listbox");
-    assert_eq!(after_space[6].selection.value(), "alpha");
+    assert_eq!(after_space.len(), 4);
+    assert_eq!(after_space[3].source, "option:alpha");
+    assert_eq!(after_space[3].selection.index(), 0);
+    assert_eq!(after_space[3].selection.value(), "alpha");
+    assert_eq!(after_space[3].selection.label(), "Alpha");
 }
 
 #[test]
@@ -576,7 +798,7 @@ fn select_state_records_popup_listbox_overlay_and_scroll_contract() {
     let state = Select::new("priority-select", "Priority")
         .placeholder("Choose priority")
         .open(true)
-        .selected("high")
+        .selected(Some("high".to_owned()))
         .placement(OverlayPlacementSide::Right, OverlayPlacementAlignment::End)
         .option(ListboxOption::new("low", "Low"))
         .option(ListboxOption::new("medium", "Medium").disabled(true))
@@ -797,13 +1019,15 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
         .find(|layer| layer.id().as_str() == "select:runtime-select")
         .expect("open Select should own one window registration");
     assert_eq!(opened.phase(), OverlayLayerPhase::Open);
+    let alpha_selector = required_nested_listbox_option_selector(cx, "runtime-select", "alpha");
     assert!(
-        cx.debug_selector_is_focused("listbox:runtime-select-listbox:option:alpha"),
+        cx.debug_selector_is_focused(&alpha_selector),
         "opening Select should focus its first enabled active option"
     );
 
+    let bravo_selector = required_nested_listbox_option_selector(cx, "runtime-select", "bravo");
     let disabled_bravo = cx
-        .debug_bounds("listbox:runtime-select-listbox:option:bravo")
+        .debug_bounds(&bravo_selector)
         .expect("disabled Bravo option should be rendered in the popup listbox");
     cx.simulate_click(disabled_bravo.center(), Default::default());
     cx.update(|window, cx| {
@@ -815,8 +1039,9 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
         "disabled popup option click should not emit selection callbacks or close the popup"
     );
 
+    let alpha_selector = required_nested_listbox_option_selector(cx, "runtime-select", "alpha");
     let alpha = cx
-        .debug_bounds("listbox:runtime-select-listbox:option:alpha")
+        .debug_bounds(&alpha_selector)
         .expect("Alpha option should be rendered in the popup listbox");
     cx.simulate_click(alpha.center(), Default::default());
     cx.update(|window, cx| {
@@ -873,8 +1098,9 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
         "select content should reopen from the trigger after a prior selection"
     );
 
+    let alpha_selector = required_nested_listbox_option_selector(cx, "runtime-select", "alpha");
     let alpha = cx
-        .debug_bounds("listbox:runtime-select-listbox:option:alpha")
+        .debug_bounds(&alpha_selector)
         .expect("Alpha option should be rendered after reopening");
     cx.simulate_mouse_down(alpha.center(), MouseButton::Left, Default::default());
     cx.update(|window, cx| {
@@ -911,7 +1137,9 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
         "arrow navigation in the popup listbox should not select"
     );
 
-    cx.simulate_keystrokes("enter");
+    cx.simulate_event(key_down_event("enter"));
+    assert_eq!(events.borrow().len(), 4, "Enter activates on key-up");
+    cx.simulate_event(key_up_event("enter"));
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
@@ -964,8 +1192,10 @@ fn controlled_select_escape_refusal_keeps_runtime_authority_until_owner_commit(
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear());
 
+    let controlled_alpha =
+        required_nested_listbox_option_selector(cx, "controlled-select", "alpha");
     assert!(
-        cx.debug_selector_is_focused("listbox:controlled-select-listbox:option:alpha"),
+        cx.debug_selector_is_focused(&controlled_alpha),
         "controlled Select should focus its first enabled option while open"
     );
     cx.simulate_keystrokes("escape escape");
@@ -1000,8 +1230,10 @@ fn controlled_select_escape_refusal_keeps_runtime_authority_until_owner_commit(
             .is_some(),
         "controlled refusal should keep the Select surface mounted"
     );
+    let controlled_alpha =
+        required_nested_listbox_option_selector(cx, "controlled-select", "alpha");
     assert!(
-        cx.debug_selector_is_focused("listbox:controlled-select-listbox:option:alpha"),
+        cx.debug_selector_is_focused(&controlled_alpha),
         "controlled refusal should preserve popup focus authority"
     );
 
@@ -1066,6 +1298,8 @@ fn controlled_select_selection_refusal_preserves_surface_focus_and_callback_orde
 ) {
     struct TestView {
         open: bool,
+        selection_controlled: bool,
+        selected_value: String,
         events: Rc<RefCell<Vec<String>>>,
     }
 
@@ -1073,41 +1307,53 @@ fn controlled_select_selection_refusal_preserves_surface_focus_and_callback_orde
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let select_events = self.events.clone();
             let open_events = self.events.clone();
-            Select::new("controlled-selection-select", "Controlled selection select")
+            let select = Select::new("controlled-selection-select", "Controlled selection select")
                 .open(self.open)
                 .option(ListboxOption::new("alpha", "Alpha"))
                 .option(ListboxOption::new("bravo", "Bravo"))
-                .on_select(move |selection, _, _| {
+                .on_select(move |selection, window, cx| {
                     select_events
                         .borrow_mut()
                         .push(format!("select:{}", selection.value()));
+                    window.draw(cx).clear();
                 })
                 .on_open_change(move |intent, _, _| {
                     open_events
                         .borrow_mut()
                         .push(format!("open:{}", intent.desired_open()));
-                })
+                });
+
+            if self.selection_controlled {
+                select.selected(Some(self.selected_value.clone()))
+            } else {
+                select
+            }
         }
     }
 
     let events = Rc::new(RefCell::new(Vec::new()));
     let (view, cx) = cx.add_window_view(|_, _| TestView {
         open: true,
+        selection_controlled: true,
+        selected_value: "alpha".to_owned(),
         events: events.clone(),
     });
     cx.update(|window, cx| window.draw(cx).clear());
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear());
+    assert!(cx.activate_accessibility());
 
-    let alpha = cx
-        .debug_bounds("listbox:controlled-selection-select-listbox:option:alpha")
+    let bravo_selector =
+        required_nested_listbox_option_selector(cx, "controlled-selection-select", "bravo");
+    let bravo = cx
+        .debug_bounds(&bravo_selector)
         .expect("controlled Select option should render");
-    cx.simulate_click(alpha.center(), Default::default());
+    cx.simulate_click(bravo.center(), Default::default());
     cx.update(|window, cx| window.draw(cx).clear());
 
     assert_eq!(
         events.borrow().as_slice(),
-        ["select:alpha", "open:false"],
+        ["select:bravo", "open:false"],
         "selection effects must run before registered close observers"
     );
     let snapshot = cx.update(|window, cx| {
@@ -1128,11 +1374,50 @@ fn controlled_select_selection_refusal_preserves_surface_focus_and_callback_orde
         cx.debug_bounds("select:Controlled selection select:select-content-scroll:content")
             .is_some()
     );
-    assert!(
-        cx.debug_selector_is_focused("listbox:controlled-selection-select-listbox:option:alpha")
+    let refused_tree = cx
+        .latest_accessibility_tree_update()
+        .expect("controlled Select refusal should publish the retained selection");
+    let (_, alpha) = accessibility_node_with_label_and_role(
+        &refused_tree,
+        "Alpha",
+        accesskit::Role::ListBoxOption,
     );
+    let (_, bravo) = accessibility_node_with_label_and_role(
+        &refused_tree,
+        "Bravo",
+        accesskit::Role::ListBoxOption,
+    );
+    assert_eq!(alpha.is_selected(), Some(true));
+    assert_eq!(bravo.is_selected(), Some(false));
 
     cx.update_window_entity(&view, |view, _, cx| {
+        view.selection_controlled = false;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let released_tree = cx
+        .latest_accessibility_tree_update()
+        .expect("released Select ownership should publish its adapter state");
+    let (_, alpha) = accessibility_node_with_label_and_role(
+        &released_tree,
+        "Alpha",
+        accesskit::Role::ListBoxOption,
+    );
+    let (_, bravo) = accessibility_node_with_label_and_role(
+        &released_tree,
+        "Bravo",
+        accesskit::Role::ListBoxOption,
+    );
+    assert_eq!(
+        alpha.is_selected(),
+        Some(true),
+        "a rejected controlled intent must not overwrite the last owner projection"
+    );
+    assert_eq!(bravo.is_selected(), Some(false));
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.selection_controlled = true;
+        view.selected_value = "bravo".to_owned();
         view.open = false;
         cx.notify();
     });
@@ -1151,7 +1436,74 @@ fn controlled_select_selection_refusal_preserves_surface_focus_and_callback_orde
         .find(|layer| layer.id().as_str() == "select:controlled-selection-select")
         .expect("hidden Select registration should remain reusable");
     assert_eq!(committed.phase(), OverlayLayerPhase::Hidden);
-    assert!(cx.debug_selector_is_focused("select:controlled-selection-select:trigger"));
+}
+
+#[open_gpui::test]
+fn uncontrolled_select_reentrant_selection_draw_delivers_close_observer_once(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        events: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let select_events = self.events.clone();
+            let open_events = self.events.clone();
+            Select::new(
+                "reentrant-uncontrolled-select",
+                "Reentrant uncontrolled select",
+            )
+            .option(ListboxOption::new("alpha", "Alpha"))
+            .on_select(move |selection, window, cx| {
+                select_events
+                    .borrow_mut()
+                    .push(format!("select:{}", selection.value()));
+                window.draw(cx).clear();
+            })
+            .on_open_change(move |intent, _, _| {
+                open_events
+                    .borrow_mut()
+                    .push(format!("open:{}", intent.desired_open()));
+            })
+        }
+    }
+
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        events: events.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let trigger = cx
+        .debug_bounds("select:reentrant-uncontrolled-select:trigger")
+        .expect("uncontrolled Select trigger should render");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let alpha_selector =
+        required_nested_listbox_option_selector(cx, "reentrant-uncontrolled-select", "alpha");
+    let alpha = cx
+        .debug_bounds(&alpha_selector)
+        .expect("uncontrolled Select option should render");
+    cx.simulate_click(alpha.center(), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        ["open:true", "select:alpha", "open:false"]
+    );
+    let snapshot = cx.update(|window, cx| {
+        WindowOverlayRuntime::for_window(window, cx)
+            .snapshot(window, cx)
+            .expect("uncontrolled Select snapshot should resolve")
+    });
+    let layer = snapshot
+        .layers()
+        .iter()
+        .find(|layer| layer.id().as_str() == "select:reentrant-uncontrolled-select")
+        .expect("uncontrolled Select registration should remain reusable");
+    assert_eq!(layer.phase(), OverlayLayerPhase::Hidden);
 }
 
 #[test]
@@ -1160,7 +1512,7 @@ fn combobox_state_filters_query_without_clearing_selection() {
         .placeholder("Search frameworks")
         .open(true)
         .default_query("re")
-        .selected("solid")
+        .selected(Some("solid".to_owned()))
         .option(ComboboxOption::new("react", "React").keyword("library"))
         .option(ComboboxOption::new("solid", "Solid"))
         .option(ComboboxOption::new("ember", "Ember").disabled(true))
@@ -1199,13 +1551,13 @@ fn combobox_state_filters_query_without_clearing_selection() {
 fn combobox_filtering_matches_value_label_and_keyword_without_clearing_selected_identity() {
     let by_value = Combobox::new("value-combobox", "Framework")
         .default_query("solid-js")
-        .selected("react")
+        .selected(Some("react".to_owned()))
         .option(ComboboxOption::new("solid-js", "Solid"))
         .option(ComboboxOption::new("react", "React"))
         .state();
     let by_label = Combobox::new("label-combobox", "Framework")
         .default_query("relay")
-        .selected("react")
+        .selected(Some("react".to_owned()))
         .option(ComboboxOption::new("react", "React"))
         .group(
             ComboboxGroup::new("meta", "Meta")
@@ -1214,7 +1566,7 @@ fn combobox_filtering_matches_value_label_and_keyword_without_clearing_selected_
         .state();
     let by_keyword = Combobox::new("keyword-combobox", "Framework")
         .default_query("graphql")
-        .selected("react")
+        .selected(Some("react".to_owned()))
         .option(ComboboxOption::new("react", "React"))
         .group(
             ComboboxGroup::new("meta", "Meta")
@@ -1241,6 +1593,26 @@ fn combobox_filtering_matches_value_label_and_keyword_without_clearing_selected_
     assert_eq!(by_keyword.filtered_option_count(), 1);
     assert_eq!(by_keyword.active_value(), Some("relay"));
     assert_eq!(by_keyword.listbox().options()[0].value(), "relay");
+}
+
+#[test]
+fn combobox_duplicate_values_fail_closed_before_query_filtering() {
+    let state = Combobox::new("duplicate-combobox", "Duplicate combobox")
+        .default_query("alpha")
+        .selected(Some("duplicate".to_owned()))
+        .option(ComboboxOption::new("duplicate", "Alpha"))
+        .group(
+            ComboboxGroup::new("secondary", "Secondary")
+                .option(ComboboxOption::new("duplicate", "Beta")),
+        )
+        .state();
+
+    assert_eq!(state.selected_value(), None);
+    assert_eq!(state.selected_label(), None);
+    assert_eq!(state.listbox().options().len(), 1);
+    assert!(state.listbox().options()[0].disabled());
+    assert_eq!(state.listbox().selected_value(), None);
+    assert_eq!(state.listbox().active_value(), None);
 }
 
 #[test]
@@ -1318,6 +1690,277 @@ fn combobox_disabled_empty_state_blocks_popup_and_input() {
         OutsidePressPolicy::DismissAndPassThrough
     );
     assert!(!state.overlay().should_render_deferred_layer());
+}
+
+#[open_gpui::test]
+fn combobox_initial_selection_projects_label_without_overriding_default_query(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .child(
+                    Combobox::new("seeded-combobox", "Seeded combobox")
+                        .default_selected("alpha")
+                        .option(ComboboxOption::new("alpha", "Alpha")),
+                )
+                .child(
+                    Combobox::new("queried-combobox", "Queried combobox")
+                        .selected(Some("alpha".to_owned()))
+                        .default_query("br")
+                        .option(ComboboxOption::new("alpha", "Alpha"))
+                        .option(ComboboxOption::new("bravo", "Bravo")),
+                )
+        }
+    }
+
+    cx.update(init_text_input);
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    assert!(cx.activate_accessibility());
+
+    let update = cx
+        .latest_accessibility_tree_update()
+        .expect("initial Combobox accessibility tree should publish");
+    let (_, seeded_input) = accessibility_node_with_label_and_role(
+        &update,
+        "Seeded combobox",
+        accesskit::Role::TextInput,
+    );
+    let (_, queried_input) = accessibility_node_with_label_and_role(
+        &update,
+        "Queried combobox",
+        accesskit::Role::TextInput,
+    );
+
+    assert_eq!(seeded_input.value(), Some("Alpha"));
+    assert_eq!(queried_input.value(), Some("br"));
+}
+
+#[open_gpui::test]
+fn combobox_uncontrolled_resolved_label_refreshes_without_overwriting_user_query(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        option_label: Option<String>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut combobox = Combobox::new("async-label-combobox", "Async label combobox")
+                .default_selected("alpha");
+            if let Some(label) = self.option_label.as_ref() {
+                combobox = combobox.option(ComboboxOption::new("alpha", label.clone()));
+            }
+            combobox
+        }
+    }
+
+    cx.update(init_text_input);
+    let (view, cx) = cx.add_window_view(|_, _| TestView { option_label: None });
+    assert!(cx.activate_accessibility());
+
+    let initial = cx
+        .latest_accessibility_tree_update()
+        .expect("initial Combobox accessibility tree should publish");
+    let (_, input) = accessibility_node_with_label_and_role(
+        &initial,
+        "Async label combobox",
+        accesskit::Role::TextInput,
+    );
+    assert_ne!(input.value(), Some("Alpha"));
+
+    view.update(cx, |view, cx| {
+        view.option_label = Some("Alpha".to_owned());
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let loaded = cx
+        .latest_accessibility_tree_update()
+        .expect("loaded Combobox option should publish its label");
+    let (_, input) = accessibility_node_with_label_and_role(
+        &loaded,
+        "Async label combobox",
+        accesskit::Role::TextInput,
+    );
+    assert_eq!(input.value(), Some("Alpha"));
+
+    view.update(cx, |view, cx| {
+        view.option_label = Some("Renamed Alpha".to_owned());
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let renamed = cx
+        .latest_accessibility_tree_update()
+        .expect("renamed Combobox option should refresh the projected label");
+    let (_, input) = accessibility_node_with_label_and_role(
+        &renamed,
+        "Async label combobox",
+        accesskit::Role::TextInput,
+    );
+    assert_eq!(input.value(), Some("Renamed Alpha"));
+
+    view.update(cx, |view, cx| {
+        view.option_label = None;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let removed = cx
+        .latest_accessibility_tree_update()
+        .expect("removed Combobox option should clear its projected label");
+    let (_, input) = accessibility_node_with_label_and_role(
+        &removed,
+        "Async label combobox",
+        accesskit::Role::TextInput,
+    );
+    assert_eq!(input.value(), Some(""));
+
+    let editor = cx
+        .debug_bounds("text-input:async-label-combobox-input:root")
+        .expect("Combobox editor should render");
+    cx.simulate_click(editor.center(), Default::default());
+    cx.simulate_keystrokes("ctrl-a backspace");
+    cx.simulate_input("query");
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    view.update(cx, |view, cx| {
+        view.option_label = Some("Latest Alpha".to_owned());
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let queried = cx
+        .latest_accessibility_tree_update()
+        .expect("user query should survive an option label refresh");
+    let (_, input) = accessibility_node_with_label_and_role(
+        &queried,
+        "Async label combobox",
+        accesskit::Role::TextInput,
+    );
+    assert_eq!(input.value(), Some("query"));
+
+    view.update(cx, |view, cx| {
+        view.option_label = None;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("ctrl-a backspace");
+    cx.simulate_input("Alpha");
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    view.update(cx, |view, cx| {
+        view.option_label = Some("Alpha".to_owned());
+        cx.notify();
+    });
+    cx.run_until_parked();
+    view.update(cx, |view, cx| {
+        view.option_label = Some("Collision Renamed".to_owned());
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let collision_renamed = cx
+        .latest_accessibility_tree_update()
+        .expect("renaming a colliding option label should publish");
+    let (_, input) = accessibility_node_with_label_and_role(
+        &collision_renamed,
+        "Async label combobox",
+        accesskit::Role::TextInput,
+    );
+    assert_eq!(
+        input.value(),
+        Some("Alpha"),
+        "a user query equal to the previous selected label must remain user-owned"
+    );
+
+    view.update(cx, |view, cx| {
+        view.option_label = None;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let collision_removed = cx
+        .latest_accessibility_tree_update()
+        .expect("removing a colliding option label should publish");
+    let (_, input) = accessibility_node_with_label_and_role(
+        &collision_removed,
+        "Async label combobox",
+        accesskit::Role::TextInput,
+    );
+    assert_eq!(input.value(), Some("Alpha"));
+}
+
+#[open_gpui::test]
+fn combobox_uncontrolled_selection_consumes_pending_user_edit_revision(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        selected_label: String,
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+            Combobox::new("pending-edit-combobox", "Pending edit combobox")
+                .default_open(true)
+                .option(ComboboxOption::new("alpha", "Alpha"))
+                .option(ComboboxOption::new("bravo", self.selected_label.clone()))
+                .on_select(move |selection, _, _| {
+                    selections.borrow_mut().push(selection.value().to_owned());
+                })
+        }
+    }
+
+    cx.update(init_text_input);
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        selected_label: "Bravo".to_owned(),
+        selections: selections.clone(),
+    });
+    assert!(cx.activate_accessibility());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let editor = cx
+        .debug_bounds("text-input:pending-edit-combobox-input:root")
+        .expect("Combobox editor should render");
+    let bravo_selector =
+        required_nested_listbox_option_selector(cx, "pending-edit-combobox", "bravo");
+    let bravo = cx
+        .debug_bounds(&bravo_selector)
+        .expect("the old frame should expose the selectable option");
+
+    cx.simulate_click(editor.center(), Default::default());
+    cx.simulate_input("a");
+    cx.simulate_click(bravo.center(), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_eq!(selections.borrow().as_slice(), ["bravo"]);
+    let selected = cx
+        .latest_accessibility_tree_update()
+        .expect("selected option should publish before its label changes");
+    let (_, input) = accessibility_node_with_label_and_role(
+        &selected,
+        "Pending edit combobox",
+        accesskit::Role::TextInput,
+    );
+    assert_eq!(input.value(), Some("Bravo"));
+
+    view.update(cx, |view, cx| {
+        view.selected_label = "Renamed Bravo".to_owned();
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let renamed = cx
+        .latest_accessibility_tree_update()
+        .expect("renamed selected option should publish");
+    let (_, input) = accessibility_node_with_label_and_role(
+        &renamed,
+        "Pending edit combobox",
+        accesskit::Role::TextInput,
+    );
+    assert_eq!(
+        input.value(),
+        Some("Renamed Bravo"),
+        "selection must consume the pending user-edit revision before label projection resumes"
+    );
 }
 
 #[open_gpui::test]
@@ -1431,28 +2074,25 @@ fn combobox_runtime_filters_input_and_selects_filtered_option(cx: &mut open_gpui
         "toggle activation should preserve the real editor focus"
     );
     assert!(
-        cx.debug_bounds("listbox:runtime-combobox-listbox:option:react")
-            .is_some(),
+        nested_listbox_option_selector(cx, "runtime-combobox", "react").is_some(),
         "React should match query text"
     );
     assert!(
-        cx.debug_bounds("listbox:runtime-combobox-listbox:option:remix")
-            .is_some(),
+        nested_listbox_option_selector(cx, "runtime-combobox", "remix").is_some(),
         "Remix should match query keyword"
     );
     assert!(
-        cx.debug_bounds("listbox:runtime-combobox-listbox:option:solid")
-            .is_none(),
+        nested_listbox_option_selector(cx, "runtime-combobox", "solid").is_none(),
         "Solid should be filtered out by query text"
     );
     assert!(
-        cx.debug_bounds("listbox:runtime-combobox-listbox:option:ember")
-            .is_none(),
+        nested_listbox_option_selector(cx, "runtime-combobox", "ember").is_none(),
         "disabled Ember should still be filtered out when it does not match"
     );
 
+    let remix_selector = required_nested_listbox_option_selector(cx, "runtime-combobox", "remix");
     let remix = cx
-        .debug_bounds("listbox:runtime-combobox-listbox:option:remix")
+        .debug_bounds(&remix_selector)
         .expect("filtered Remix option should be rendered");
     cx.simulate_click(remix.center(), Default::default());
     cx.update(|window, cx| {
@@ -1680,6 +2320,7 @@ fn controlled_combobox_selection_refusal_preserves_editor_and_callback_order(
 ) {
     struct TestView {
         open: bool,
+        selected_value: String,
         events: Rc<RefCell<Vec<String>>>,
     }
 
@@ -1692,6 +2333,7 @@ fn controlled_combobox_selection_refusal_preserves_editor_and_callback_order(
                 "Controlled selection combobox",
             )
             .open(self.open)
+            .selected(Some(self.selected_value.clone()))
             .option(ComboboxOption::new("alpha", "Alpha"))
             .option(ComboboxOption::new("bravo", "Bravo"))
             .on_select(move |selection, _, _| {
@@ -1711,23 +2353,30 @@ fn controlled_combobox_selection_refusal_preserves_editor_and_callback_order(
     let events = Rc::new(RefCell::new(Vec::new()));
     let (view, cx) = cx.add_window_view(|_, _| TestView {
         open: true,
+        selected_value: "alpha".to_owned(),
         events: events.clone(),
     });
     cx.update(|window, cx| window.draw(cx).clear());
+    assert!(cx.activate_accessibility());
 
     let editor = cx
         .debug_bounds("text-input:controlled-selection-combobox-input:root")
         .expect("controlled Combobox editor should render");
     cx.simulate_click(editor.center(), Default::default());
-    let alpha = cx
-        .debug_bounds("listbox:controlled-selection-combobox-listbox:option:alpha")
+    cx.simulate_keystrokes("ctrl-a backspace");
+    cx.simulate_input("br");
+    cx.update(|window, cx| window.draw(cx).clear());
+    let bravo_selector =
+        required_nested_listbox_option_selector(cx, "controlled-selection-combobox", "bravo");
+    let bravo = cx
+        .debug_bounds(&bravo_selector)
         .expect("controlled Combobox option should render");
-    cx.simulate_click(alpha.center(), Default::default());
+    cx.simulate_click(bravo.center(), Default::default());
     cx.update(|window, cx| window.draw(cx).clear());
 
     assert_eq!(
         events.borrow().as_slice(),
-        ["select:alpha", "open:false"],
+        ["select:bravo", "open:false"],
         "selection effects must run before registered close observers"
     );
     let snapshot = cx.update(|window, cx| {
@@ -1748,8 +2397,22 @@ fn controlled_combobox_selection_refusal_preserves_editor_and_callback_order(
             .is_some()
     );
     assert!(cx.debug_selector_is_focused("text-input:controlled-selection-combobox-input:root"));
+    let refused_tree = cx
+        .latest_accessibility_tree_update()
+        .expect("controlled Combobox refusal should publish the retained query");
+    let (_, input) = accessibility_node_with_label_and_role(
+        &refused_tree,
+        "Controlled selection combobox",
+        accesskit::Role::TextInput,
+    );
+    assert_eq!(
+        input.value(),
+        Some("br"),
+        "a rejected controlled selection must not project its label into the editor"
+    );
 
     cx.update_window_entity(&view, |view, _, cx| {
+        view.selected_value = "bravo".to_owned();
         view.open = false;
         cx.notify();
     });
@@ -1769,6 +2432,15 @@ fn controlled_combobox_selection_refusal_preserves_editor_and_callback_order(
         .expect("hidden Combobox registration should remain reusable");
     assert_eq!(committed.phase(), OverlayLayerPhase::Hidden);
     assert!(cx.debug_selector_is_focused("text-input:controlled-selection-combobox-input:root"));
+    let committed_tree = cx
+        .latest_accessibility_tree_update()
+        .expect("owner-committed Combobox selection should publish its label");
+    let (_, input) = accessibility_node_with_label_and_role(
+        &committed_tree,
+        "Controlled selection combobox",
+        accesskit::Role::TextInput,
+    );
+    assert_eq!(input.value(), Some("Bravo"));
 }
 
 #[open_gpui::test]
@@ -1972,7 +2644,7 @@ fn command_state_filters_groups_shortcuts_loading_and_dialog_policy() {
         .placeholder("Type a command")
         .open(true)
         .default_query("file")
-        .selected("new-file")
+        .selected(Some("new-file".to_owned()))
         .loading("Indexing commands", Some(45))
         .dialog("Command palette")
         .dialog_description("Run a workspace command")
@@ -2147,13 +2819,13 @@ fn command_state_ranks_label_and_value_matches_before_keyword_only_matches() {
 #[test]
 fn command_state_tracks_active_and_selected_by_value_after_reorder() {
     let first = Command::new("first-command", "Commands")
-        .selected("target")
+        .selected(Some("target".to_owned()))
         .active("target")
         .item(CommandItem::new("other", "Other"))
         .item(CommandItem::new("target", "Target"))
         .state();
     let reordered = Command::new("reordered-command", "Commands")
-        .selected("target")
+        .selected(Some("target".to_owned()))
         .active("target")
         .item(CommandItem::new("target", "Target"))
         .item(CommandItem::new("other", "Other"))
@@ -2173,7 +2845,7 @@ fn command_state_tracks_active_and_selected_by_value_after_reorder() {
 fn command_state_keeps_disabled_matches_visible_but_non_activatable() {
     let state = Command::new("disabled-command", "Commands")
         .default_query("delete")
-        .selected("delete-project")
+        .selected(Some("delete-project".to_owned()))
         .active("delete-project")
         .item(CommandItem::new("delete-project", "Delete Project").disabled(true))
         .state();
@@ -2239,6 +2911,45 @@ fn command_state_models_multi_selected_values_and_hidden_chips() {
 }
 
 #[test]
+fn command_state_keeps_global_disabled_and_duplicate_values_fail_closed_after_filtering() {
+    let disabled = Command::new("disabled-command-state", "Disabled commands")
+        .disabled(true)
+        .item(CommandItem::new("disabled-item", "Disabled item"))
+        .state();
+    assert!(disabled.items()[0].disabled());
+    assert!(CommandSelection::from_item(&disabled.items()[0]).is_none());
+
+    let ambiguous = Command::new("ambiguous-command-state", "Ambiguous commands")
+        .default_query("visible")
+        .selected(Some("duplicate".to_owned()))
+        .item(CommandItem::new("duplicate", "Visible duplicate"))
+        .item(CommandItem::new("duplicate", "Hidden duplicate"))
+        .state();
+    assert_eq!(ambiguous.filtered_item_count(), 1);
+    assert!(ambiguous.items()[0].disabled());
+    assert!(!ambiguous.items()[0].selected());
+    assert!(!ambiguous.items()[0].active());
+    assert_eq!(ambiguous.selected_value(), None);
+    assert!(CommandSelection::from_item(&ambiguous.items()[0]).is_none());
+}
+
+#[test]
+fn command_single_mode_does_not_project_retained_multi_selection_values() {
+    let state = Command::new("single-command", "Commands")
+        .selected_values(["open-file"])
+        .selection_mode(CommandSelectionMode::Single)
+        .selected(None)
+        .item(CommandItem::new("open-file", "Open File"))
+        .state();
+
+    assert_eq!(state.selection_mode(), CommandSelectionMode::Single);
+    assert_eq!(state.selected_value(), None);
+    assert!(state.selected_values().is_empty());
+    assert!(state.selected_chips().is_empty());
+    assert!(!state.items()[0].selected());
+}
+
+#[test]
 fn command_index_snapshot_matches_equivalent_local_descriptors() {
     let snapshot = CommandIndexSnapshot::new("commands-v1")
         .item(CommandItemDescriptor::new("open-file", "Open File").shortcut("Ctrl+O"))
@@ -2251,7 +2962,7 @@ fn command_index_snapshot_matches_equivalent_local_descriptors() {
         );
     let local = Command::new("local-command", "Commands")
         .default_query("file")
-        .selected("new-file")
+        .selected(Some("new-file".to_owned()))
         .active("new-file")
         .item(CommandItem::new("open-file", "Open File").shortcut("Ctrl+O"))
         .group(
@@ -2262,7 +2973,7 @@ fn command_index_snapshot_matches_equivalent_local_descriptors() {
         .state();
     let indexed = Command::new("indexed-command", "Commands")
         .default_query("file")
-        .selected("new-file")
+        .selected(Some("new-file".to_owned()))
         .active("new-file")
         .index_snapshot(snapshot)
         .state();
@@ -2443,12 +3154,12 @@ fn command_index_snapshot_revision_preserves_selection_by_value_after_reorder() 
         .item(CommandItemDescriptor::new("target", "Target"))
         .item(CommandItemDescriptor::new("other", "Other"));
     let first_state = Command::new("snapshot-revision-command", "Commands")
-        .selected("target")
+        .selected(Some("target".to_owned()))
         .active("target")
         .index_snapshot(first)
         .state();
     let second_state = Command::new("snapshot-revision-command", "Commands")
-        .selected("target")
+        .selected(Some("target".to_owned()))
         .active("target")
         .index_snapshot(second)
         .state();
@@ -2643,7 +3354,7 @@ fn command_palette_projection_adapts_center_query_shortcuts_providers_and_diagno
 
     let state = Command::new("palette-projected-command", "Projected commands")
         .palette_projection(&projection)
-        .selected("provider.open.alpha")
+        .selected(Some("provider.open.alpha".to_owned()))
         .active("provider.open.alpha")
         .state();
 
@@ -2823,7 +3534,7 @@ fn command_palette_controller_refreshes_registered_provider_into_command_project
 
     let state = Command::new("controller-command", "Controller commands")
         .palette_projection(update.palette_projection())
-        .selected("provider.open.alpha")
+        .selected(Some("provider.open.alpha".to_owned()))
         .active("provider.open.alpha")
         .state();
 
@@ -3289,7 +4000,7 @@ fn command_palette_controller_tracks_async_provider_requests_and_stale_responses
 
     let state = Command::new("async-controller-command", "Async commands")
         .palette_projection(ready.palette_projection())
-        .selected("provider.open.beta")
+        .selected(Some("provider.open.beta".to_owned()))
         .active("provider.open.beta")
         .state();
 
@@ -3366,7 +4077,7 @@ fn command_provider_palette_projection_maps_refresh_projection_to_prefiltered_in
 
     let state = Command::new("provider-command", "Provider commands")
         .provider_refresh_projection(&projection)
-        .selected("provider.open.alpha")
+        .selected(Some("provider.open.alpha".to_owned()))
         .active("provider.open.alpha")
         .state();
 
@@ -3442,7 +4153,7 @@ fn command_behavior_snapshot_virtualizes_large_result_sets_with_stable_rows() {
             .row_height(ui_px(28.0))
             .overscan(4)
             .active("item-0104")
-            .selected("item-0101")
+            .selected(Some("item-0101".to_owned()))
             .items((0..10_000).map(|index| {
                 CommandItem::new(format!("item-{index:04}"), format!("Item {index:04}"))
             }));
@@ -3564,6 +4275,147 @@ fn command_state_models_empty_disabled_and_escape_policy() {
     );
     assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
     assert!(!state.overlay().should_render_deferred_layer());
+}
+
+#[open_gpui::test]
+fn command_runtime_disabled_and_ambiguous_rows_reject_pointer_and_accesskit(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let disabled_selections = self.selections.clone();
+            let ambiguous_selections = self.selections.clone();
+            div()
+                .child(
+                    Command::new("disabled-runtime-command", "Disabled runtime command")
+                        .disabled(true)
+                        .item(CommandItem::new("disabled-item", "Disabled command item"))
+                        .on_select(move |selection, _, _| {
+                            disabled_selections
+                                .borrow_mut()
+                                .push(selection.value().to_owned());
+                        }),
+                )
+                .child(
+                    Command::new("ambiguous-runtime-command", "Ambiguous runtime command")
+                        .default_query("visible")
+                        .item(CommandItem::new("duplicate", "Visible duplicate command"))
+                        .item(CommandItem::new("duplicate", "Hidden duplicate command"))
+                        .on_select(move |selection, _, _| {
+                            ambiguous_selections
+                                .borrow_mut()
+                                .push(selection.value().to_owned());
+                        }),
+                )
+        }
+    }
+
+    cx.update(init_text_input);
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(cx.activate_accessibility());
+
+    let disabled_bounds = cx
+        .debug_bounds("listbox:disabled-runtime-command-listbox:option:disabled-item")
+        .expect("disabled command item should remain rendered");
+    let ambiguous_bounds = cx
+        .debug_bounds("listbox:ambiguous-runtime-command-listbox:option:duplicate")
+        .expect("the filtered duplicate command item should remain rendered");
+    cx.simulate_click(disabled_bounds.center(), Default::default());
+    cx.simulate_click(ambiguous_bounds.center(), Default::default());
+
+    let update = cx
+        .latest_accessibility_tree_update()
+        .expect("Command accessibility tree should publish");
+    let (disabled_node_id, disabled_node) = accessibility_node_with_label_and_role(
+        &update,
+        "Disabled command item",
+        accesskit::Role::ListBoxOption,
+    );
+    let (ambiguous_node_id, ambiguous_node) = accessibility_node_with_label_and_role(
+        &update,
+        "Visible duplicate command",
+        accesskit::Role::ListBoxOption,
+    );
+    assert!(disabled_node.is_disabled());
+    assert!(ambiguous_node.is_disabled());
+    assert_exact_actions(disabled_node, &[]);
+    assert_exact_actions(ambiguous_node, &[]);
+    assert!(cx.dispatch_accessibility_action(accesskit::ActionRequest {
+        action: accesskit::Action::Click,
+        target_tree: accesskit::TreeId::ROOT,
+        target_node: disabled_node_id,
+        data: None,
+    }));
+    assert!(cx.dispatch_accessibility_action(accesskit::ActionRequest {
+        action: accesskit::Action::Click,
+        target_tree: accesskit::TreeId::ROOT,
+        target_node: ambiguous_node_id,
+        data: None,
+    }));
+    assert!(selections.borrow().is_empty());
+}
+
+#[open_gpui::test]
+fn uncontrolled_inline_command_selection_notifies_keyed_runtime(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .child(
+                    Command::new("single-notify-command", "Single notify command")
+                        .item(CommandItem::new("alpha", "Single Alpha"))
+                        .item(CommandItem::new("beta", "Single Beta")),
+                )
+                .child(
+                    Command::new("multi-notify-command", "Multi notify command")
+                        .multi_select(true)
+                        .item(CommandItem::new("alpha", "Multi Alpha"))
+                        .item(CommandItem::new("beta", "Multi Beta")),
+                )
+        }
+    }
+
+    cx.update(init_text_input);
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(cx.activate_accessibility());
+
+    let single_beta = cx
+        .debug_bounds("listbox:single-notify-command-listbox:option:beta")
+        .expect("single-select command item should render");
+    cx.simulate_click(single_beta.center(), Default::default());
+    cx.run_until_parked();
+    let update = cx
+        .latest_accessibility_tree_update()
+        .expect("single selection notify should publish a new tree");
+    let (_, single_beta) = accessibility_node_with_label_and_role(
+        &update,
+        "Single Beta",
+        accesskit::Role::ListBoxOption,
+    );
+    assert_eq!(single_beta.is_selected(), Some(true));
+
+    let multi_beta = cx
+        .debug_bounds("listbox:multi-notify-command-listbox:option:beta")
+        .expect("multi-select command item should render");
+    cx.simulate_click(multi_beta.center(), Default::default());
+    cx.run_until_parked();
+    assert!(
+        cx.debug_bounds("command:multi-notify-command:selected-chip:beta")
+            .is_some(),
+        "multi-select commit should schedule the chip projection without an external redraw"
+    );
 }
 
 #[open_gpui::test]
@@ -4074,6 +4926,8 @@ fn controlled_command_selection_refusal_preserves_modal_editor_and_callback_orde
 ) {
     struct TestView {
         open: bool,
+        selection_controlled: bool,
+        selected_value: String,
         events: Rc<RefCell<Vec<String>>>,
     }
 
@@ -4081,21 +4935,28 @@ fn controlled_command_selection_refusal_preserves_modal_editor_and_callback_orde
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let select_events = self.events.clone();
             let open_events = self.events.clone();
-            Command::new("controlled-command", "Controlled command")
+            let command = Command::new("controlled-command", "Controlled command")
                 .dialog("Command palette")
                 .open(self.open)
                 .item(CommandItem::new("open-file", "Open File"))
                 .item(CommandItem::new("close-window", "Close Window"))
-                .on_select(move |selection, _, _| {
+                .on_select(move |selection, window, cx| {
                     select_events
                         .borrow_mut()
                         .push(format!("select:{}", selection.value()));
+                    window.draw(cx).clear();
                 })
                 .on_open_change(move |intent, _, _| {
                     open_events
                         .borrow_mut()
                         .push(format!("open:{}", intent.desired_open()));
-                })
+                });
+
+            if self.selection_controlled {
+                command.selected(Some(self.selected_value.clone()))
+            } else {
+                command
+            }
         }
     }
 
@@ -4103,25 +4964,28 @@ fn controlled_command_selection_refusal_preserves_modal_editor_and_callback_orde
     let events = Rc::new(RefCell::new(Vec::new()));
     let (view, cx) = cx.add_window_view(|_, _| TestView {
         open: true,
+        selection_controlled: true,
+        selected_value: "open-file".to_owned(),
         events: events.clone(),
     });
     cx.update(|window, cx| window.draw(cx).clear());
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear());
+    assert!(cx.activate_accessibility());
 
     let input = cx
         .debug_bounds("text-input:controlled-command-input:root")
         .expect("controlled Command editor should render");
     cx.simulate_click(input.center(), Default::default());
-    let open_file = cx
-        .debug_bounds("listbox:controlled-command-listbox:option:open-file")
+    let close_window = cx
+        .debug_bounds("listbox:controlled-command-listbox:option:close-window")
         .expect("controlled Command option should render");
-    cx.simulate_click(open_file.center(), Default::default());
+    cx.simulate_click(close_window.center(), Default::default());
     cx.update(|window, cx| window.draw(cx).clear());
 
     assert_eq!(
         events.borrow().as_slice(),
-        ["select:open-file", "open:false"],
+        ["select:close-window", "open:false"],
         "selection effects must run before registered close observers"
     );
     let snapshot = cx.update(|window, cx| {
@@ -4145,7 +5009,46 @@ fn controlled_command_selection_refusal_preserves_modal_editor_and_callback_orde
     );
     assert!(cx.debug_selector_is_focused("text-input:controlled-command-input:root"));
 
+    let refused_tree = cx
+        .latest_accessibility_tree_update()
+        .expect("controlled Command refusal should publish the retained selection");
+    let (_, open_file) = accessibility_node_with_label_and_role(
+        &refused_tree,
+        "Open File",
+        accesskit::Role::ListBoxOption,
+    );
+    let (_, close_window) = accessibility_node_with_label_and_role(
+        &refused_tree,
+        "Close Window",
+        accesskit::Role::ListBoxOption,
+    );
+    assert_eq!(open_file.is_selected(), Some(true));
+    assert_eq!(close_window.is_selected(), Some(false));
+
     cx.update_window_entity(&view, |view, _, cx| {
+        view.selection_controlled = false;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let released_tree = cx
+        .latest_accessibility_tree_update()
+        .expect("released Command ownership should publish its adapter state");
+    let (_, open_file) = accessibility_node_with_label_and_role(
+        &released_tree,
+        "Open File",
+        accesskit::Role::ListBoxOption,
+    );
+    let (_, close_window) = accessibility_node_with_label_and_role(
+        &released_tree,
+        "Close Window",
+        accesskit::Role::ListBoxOption,
+    );
+    assert_eq!(open_file.is_selected(), Some(true));
+    assert_eq!(close_window.is_selected(), Some(false));
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.selection_controlled = true;
+        view.selected_value = "close-window".to_owned();
         view.open = false;
         cx.notify();
     });
@@ -4172,6 +5075,8 @@ fn command_runtime_multi_select_toggles_chips_without_closing_dialog(
     cx: &mut open_gpui::TestAppContext,
 ) {
     struct TestView {
+        selection_controlled: bool,
+        accept_changes: Rc<Cell<bool>>,
         selected_values: Rc<RefCell<Vec<String>>>,
         changes: Rc<RefCell<Vec<CommandSelectionChange>>>,
     }
@@ -4181,28 +5086,42 @@ fn command_runtime_multi_select_toggles_chips_without_closing_dialog(
             let selected_values = self.selected_values.borrow().clone();
             let next_values = self.selected_values.clone();
             let changes = self.changes.clone();
+            let accept_changes = self.accept_changes.clone();
 
-            div().size_full().child(
-                Command::new("multi-runtime-command", "Runtime command")
-                    .dialog("Command palette")
-                    .trigger_label("Open command")
-                    .multi_select(true)
-                    .selected_values(selected_values)
-                    .item(CommandItem::new("open-file", "Open File"))
-                    .item(CommandItem::new("new-file", "New File"))
-                    .item(CommandItem::new("delete-file", "Delete File").disabled(true))
-                    .on_selected_values_change(move |change, _, _| {
+            let command = Command::new("multi-runtime-command", "Runtime command")
+                .dialog("Command palette")
+                .trigger_label("Open command")
+                .multi_select(true)
+                .item(CommandItem::new("open-file", "Open File"))
+                .item(CommandItem::new("new-file", "New File"))
+                .item(CommandItem::new("delete-file", "Delete File").disabled(true))
+                .on_selected_values_change(move |change, _, _| {
+                    if accept_changes.get() {
                         *next_values.borrow_mut() = change.values().to_vec();
-                        changes.borrow_mut().push(change);
-                    }),
-            )
+                    }
+                    changes.borrow_mut().push(change);
+                });
+            let command = if self.selection_controlled {
+                command.selected_values(selected_values)
+            } else {
+                command
+            };
+
+            div().size_full().child(command)
         }
     }
 
     cx.update(init_text_input);
-    let selected_values = Rc::new(RefCell::new(vec!["open-file".to_string()]));
+    let selected_values = Rc::new(RefCell::new(vec![
+        "open-file".to_string(),
+        "missing".to_string(),
+        "delete-file".to_string(),
+    ]));
     let changes = Rc::new(RefCell::new(Vec::new()));
-    let (_, cx) = cx.add_window_view(|_, _| TestView {
+    let accept_changes = Rc::new(Cell::new(false));
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        selection_controlled: true,
+        accept_changes: accept_changes.clone(),
         selected_values: selected_values.clone(),
         changes: changes.clone(),
     });
@@ -4223,6 +5142,14 @@ fn command_runtime_multi_select_toggles_chips_without_closing_dialog(
             .is_some(),
         "initial selected value should render as a chip"
     );
+    assert!(
+        cx.debug_bounds("command:multi-runtime-command:selected-chip:missing")
+            .is_none()
+    );
+    assert!(
+        cx.debug_bounds("command:multi-runtime-command:selected-chip:delete-file")
+            .is_none()
+    );
 
     let new_file = cx
         .debug_bounds("listbox:multi-runtime-command-listbox:option:new-file")
@@ -4239,15 +5166,65 @@ fn command_runtime_multi_select_toggles_chips_without_closing_dialog(
     );
     assert_eq!(
         selected_values.borrow().as_slice(),
-        &["open-file".to_string(), "new-file".to_string()]
+        &[
+            "open-file".to_string(),
+            "missing".to_string(),
+            "delete-file".to_string(),
+        ],
+        "the owner should be able to refuse a multi-selection intent"
     );
     assert_eq!(changes.borrow().len(), 1);
     assert!(changes.borrow()[0].selected());
     assert_eq!(changes.borrow()[0].toggled().value(), "new-file");
+    assert_eq!(
+        changes.borrow()[0].values(),
+        ["open-file", "missing", "delete-file", "new-file"],
+        "intent payloads must preserve owner values that are not currently projectable"
+    );
+    assert!(
+        cx.debug_bounds("command:multi-runtime-command:selected-chip:new-file")
+            .is_none(),
+        "a refused controlled value must not render as a chip"
+    );
+
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.selection_controlled = false;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(
+        cx.debug_bounds("command:multi-runtime-command:selected-chip:new-file")
+            .is_none(),
+        "releasing ownership must not expose a hidden rejected value"
+    );
+
+    accept_changes.set(true);
+    cx.update_window_entity(&view, |view, _, cx| {
+        view.selection_controlled = true;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let new_file = cx
+        .debug_bounds("listbox:multi-runtime-command-listbox:option:new-file")
+        .expect("New File option should remain rendered after ownership returns");
+    cx.simulate_click(new_file.center(), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    assert_eq!(
+        selected_values.borrow().as_slice(),
+        &[
+            "open-file".to_string(),
+            "missing".to_string(),
+            "delete-file".to_string(),
+            "new-file".to_string(),
+        ]
+    );
+    assert_eq!(changes.borrow().len(), 2);
+    assert!(changes.borrow()[1].selected());
     assert!(
         cx.debug_bounds("command:multi-runtime-command:selected-chip:new-file")
             .is_some(),
-        "newly selected value should render as a chip after controlled feedback"
+        "the chip should appear only after controlled feedback"
     );
 
     let disabled = cx
@@ -4260,10 +5237,15 @@ fn command_runtime_multi_select_toggles_chips_without_closing_dialog(
 
     assert_eq!(
         selected_values.borrow().as_slice(),
-        &["open-file".to_string(), "new-file".to_string()],
+        &[
+            "open-file".to_string(),
+            "missing".to_string(),
+            "delete-file".to_string(),
+            "new-file".to_string(),
+        ],
         "disabled command should not alter the multi-selection set"
     );
-    assert_eq!(changes.borrow().len(), 1);
+    assert_eq!(changes.borrow().len(), 2);
 
     let open_file = cx
         .debug_bounds("listbox:multi-runtime-command-listbox:option:open-file")
@@ -4275,11 +5257,15 @@ fn command_runtime_multi_select_toggles_chips_without_closing_dialog(
 
     assert_eq!(
         selected_values.borrow().as_slice(),
-        &["new-file".to_string()]
+        &[
+            "missing".to_string(),
+            "delete-file".to_string(),
+            "new-file".to_string(),
+        ]
     );
-    assert_eq!(changes.borrow().len(), 2);
-    assert!(!changes.borrow()[1].selected());
-    assert_eq!(changes.borrow()[1].toggled().value(), "open-file");
+    assert_eq!(changes.borrow().len(), 3);
+    assert!(!changes.borrow()[2].selected());
+    assert_eq!(changes.borrow()[2].toggled().value(), "open-file");
 }
 
 #[open_gpui::test]

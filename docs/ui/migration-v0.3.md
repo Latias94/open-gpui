@@ -79,6 +79,63 @@ through one activation transaction. `Activation` carries the typed source, while
 carry only the item or value facts required by the callback. Use an `ActivationHandle` for
 application-driven activation instead of synthesizing pointer coordinates or key events.
 
+### Listbox Selection And Activation
+
+`Listbox::selected` now accepts `Option<String>` and is always caller-owned. Use
+`Listbox::default_selected` when the Listbox adapter should own subsequent selection commits. Bind
+programmatic selection by stable option value with `Listbox::activation_handle`:
+
+```rust
+use open_gpui_ui_components::{ActivationHandle, Listbox};
+use open_gpui_ui_components::listbox::ListboxOption;
+
+let beta = ActivationHandle::new();
+let listbox = Listbox::new("frameworks", "Frameworks")
+    .default_selected("alpha")
+    .option(ListboxOption::new("alpha", "Alpha"))
+    .option(ListboxOption::new("beta", "Beta"))
+    .activation_handle("beta", &beta)
+    .on_select(|selection, window, cx| {
+        record_selection(selection.value(), window, cx);
+    });
+```
+
+An option-level `ListboxOption::on_select` replaces the Listbox-level public fallback; the two are
+not both delivered. When the option is rendered inside Select or Combobox, the owning adapter still
+commits its controlled/uncontrolled transaction, input projection, and overlay close before it
+delivers the chosen item or family callback. Disabled, structural, and duplicate-value rows reject
+pointer, keyboard, AccessKit, and programmatic activation. Separators no longer use reserved String
+sentinels, so every caller-provided option value remains legal.
+
+### Select, Combobox, And Command Selection Ownership
+
+`Select::selected`, `Combobox::selected`, and `Command::selected` now match Listbox: they accept
+`Option<String>` and always represent the caller-owned render-frame value. Use each component's
+`default_selected` builder when its adapter should own later single-selection commits. Command
+multi-selection keeps `selected_values(...)` as its caller-owned input and adds
+`default_selected_values(...)` for adapter-owned state.
+
+```rust
+let controlled = Select::new("framework", "Framework")
+    .selected(selected_framework.clone())
+    .option(ListboxOption::new("alpha", "Alpha"));
+
+let uncontrolled = Command::new("tools", "Tools")
+    .default_selected("search")
+    .item(CommandItem::new("search", "Search"));
+```
+
+A controlled selection callback emits one intent without changing hidden adapter state. If the
+owner refuses it, selection and Combobox input text remain unchanged; the new value or label is
+projected only after a later caller prop commit. Selection callbacks may synchronously redraw.
+The matching overlay close observer is still delivered exactly once after an ordinary rebind,
+while a genuinely superseding request, owner commit, ownership change, or unregister invalidates
+the older dispatch.
+Command multi-select callbacks toggle the raw caller/runtime value set. Values that are currently
+missing, disabled, or filtered out stay in the emitted set even though they do not project as chips
+or selected options. Toggling an existing value removes every duplicate occurrence of that value,
+so the emitted collection cannot report deselection while retaining the same logical member.
+
 ### Toolbar Activation
 
 `ToolbarSelection` and both `Toolbar::on_select` and `ToolbarItem::on_select` are deleted. Replace
@@ -229,6 +286,9 @@ let occurrence = state
     .source_row_identity_at("duplicate", 1)
     .expect("the current source snapshot contains a second occurrence");
 let retained = TableSourceRowIdentity::explicit("duplicate", "retained-instance");
+let selected_state = state
+    .clone()
+    .with_selected_rows([unique.clone(), retained.clone()]);
 let exact_pin = TableRowPinTarget::exact(TableRowIdentity::source_instance(
     "duplicate",
     "retained-instance",
@@ -242,6 +302,18 @@ by `source_row_identity_at` is valid through `TableState` clones and row-model t
 `with_rows` replacement or reorder creates a different snapshot and lookup returns
 `TableSourceRowLookup::StaleSnapshot`. Use `TableRow::with_instance_id` and
 `TableSourceRowIdentity::explicit` for identity retained across source replacement or reorder.
+Row selection now follows the same rule: `TableState::with_selected_rows` accepts exact
+`TableSourceRowIdentity` values, `selected_rows()` returns that exact set, and
+`TableRowSelectionChange::current_selection()` returns caller-owned explicit selection roots in
+source-model order. Derived descendants are not promoted into explicit state. With
+`TableSubRowSelectionPolicy::Descendants`, canceling a selected parent removes its explicit subtree;
+canceling an inherited selected descendant removes the explicit ancestor that covers it, so
+committing the callback payload makes that descendant unselected. Duplicate business ids no longer
+select or deselect every occurrence together. The unimplemented
+`TableSelectionScope` surface has been removed; any future business-id bulk selection must use a
+separately named target rather than an implicit conversion. `Table::on_row_expansion_request` is
+also strictly controlled: a pointer or keyboard request does not render an expanded branch until
+the caller commits a changed `TableState`.
 
 Cell edits now target the exact `(TableRowIdentity, TableColumnId)` pair. Construct an
 application-owned edit with `TableCellEditRequest::new(TableSourceRowIdentity, ...)`; the
@@ -270,6 +342,9 @@ readout and must not be passed back as though it uniquely identified the resolve
 | `TableRowActivation::row_id()` | `identity()`; optional `source_row_id()` readout |
 | `TableRowExpansionToggle::row_id()` | `identity()`; optional `source_row_id()` readout |
 | `TableRowSelectionChange::row_id()` | `identity()`; optional `source_row_id()` readout |
+| `TableState::with_selected_rows(TableRowId...)` / `selected_rows() -> BTreeSet<TableRowId>` | Pass exact `TableSourceRowIdentity` values; `selected_rows()` returns `BTreeSet<TableSourceRowIdentity>`. |
+| `TableRowSelectionChange::current_selection() -> &[TableRowId]` | `current_selection() -> &[TableSourceRowIdentity]` as caller-owned explicit roots in source-model order. |
+| `TableSelectionScope` | Removed. Only exact row selection exists; add an explicitly named bulk target if a real consumer requires one. |
 | `TableExpansionState::rows(TableRowId...)` / `is_expanded(&TableRowId)` | `rows(TableRowIdentity...)` / `is_expanded(&TableRowIdentity)` |
 | `TableCellEditChange::for_row(...)` / `for_source_identity(...)` | `TableCellEditRequest::new(TableSourceRowIdentity, ...)` for programmatic edits; runtime callbacks receive `TableCellEditChange` |
 | `TableCellEditChange::row_id()` | `identity()` for the exact callback row; optional `source_row_id()` readout |
@@ -283,6 +358,7 @@ readout and must not be passed back as though it uniquely identified the resolve
 | `TableRowPinning::pinned_top(TableRowId...)` / `pinned_bottom(TableRowId...)` | Pass exact `TableRowIdentity` targets, or explicit `TableRowPinTarget::all_source_rows(TableRowId)` bulk targets. |
 | `TableRowPinning::top()` / `bottom()` | `top_targets()` / `bottom_targets()` returning ordered `TableRowPinTarget` slices |
 | `TableRowAction::render_key()` / `TableCellEditChange::render_key()` | No like-for-like string accessor. Retain `identity()` as authority, use `identity().key()` only when a typed `TableRowIdentityKey` is required, and use `TableDebugSelector` builders for official selectors. |
+| `TableDebugSelector::select_editor_option(...)` | Removed without replacement. Table owns the cell-editor identity, while the nested Listbox owns rendered option selectors. Render the editor and query the unique Listbox option within that editor owner instead of synthesizing a cross-component selector. |
 | `Table::default_focused_row(TableRowId)` | `Table::default_focused_row(TableRowIdentity)` |
 | generic `VirtualizerSnapshot` string keys | `TableVirtualizerSnapshotItem::new(TableRowIdentity, size)` |
 | `TableColumnOrderChange::apply_to_order(column_order)` | `apply_to(TableState) -> TableState`; the state supplies the full source-column authority used to normalize partial order before the move |

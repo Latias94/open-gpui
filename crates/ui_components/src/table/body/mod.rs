@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{collections::BTreeSet, rc::Rc};
 
 mod keyboard;
 mod layout;
@@ -11,7 +11,7 @@ use open_gpui::{
     Axis, Entity, FocusHandle, IntoElement, ParentElement, ScrollHandle, Styled, div, px,
 };
 use open_gpui_ui_core::{
-    TableExpansionState, TableResolvedState, TableRowId, TableRowRegion, TableSelectionPolicy, UiPx,
+    TableResolvedState, TableRowRegion, TableSelectionPolicy, TableSourceRowIdentity, UiPx,
 };
 
 use crate::geometry::gpui_px_from_ui;
@@ -34,9 +34,8 @@ pub(super) struct TableBodyRenderInput {
     pub(super) vertical_scroll_handle: ScrollHandle,
     pub(super) runtime: Entity<TableRuntime>,
     pub(super) runtime_snapshot: Rc<TableRuntimeRenderSnapshot>,
-    pub(super) current_expansion: TableExpansionState,
     pub(super) selection_policy: TableSelectionPolicy,
-    pub(super) selected_row_ids: Rc<Vec<TableRowId>>,
+    pub(super) explicit_selected_rows: Rc<BTreeSet<TableSourceRowIdentity>>,
     pub(super) on_row_selection_change: Option<TableRowSelectionHandler>,
     pub(super) on_row_activate: Option<TableRowActivationHandler>,
     pub(super) on_row_expansion_request: Option<TableRowExpansionHandler>,
@@ -54,9 +53,8 @@ pub(super) struct TableBodyRenderContext {
     pub(super) resolved_table: Rc<TableResolvedState>,
     pub(super) top_row_count: usize,
     pub(super) center_total_row_count: usize,
-    pub(super) current_expansion: TableExpansionState,
     pub(super) selection_policy: TableSelectionPolicy,
-    pub(super) selected_row_ids: Rc<Vec<TableRowId>>,
+    pub(super) explicit_selected_rows: Rc<BTreeSet<TableSourceRowIdentity>>,
     pub(super) on_row_selection_change: Option<TableRowSelectionHandler>,
     pub(super) on_row_activate: Option<TableRowActivationHandler>,
     pub(super) on_row_expansion_request: Option<TableRowExpansionHandler>,
@@ -112,9 +110,8 @@ pub(super) fn render_table_body(
         resolved_table,
         top_row_count,
         center_total_row_count,
-        current_expansion: input.current_expansion,
         selection_policy: input.selection_policy,
-        selected_row_ids: input.selected_row_ids,
+        explicit_selected_rows: input.explicit_selected_rows,
         on_row_selection_change: input.on_row_selection_change,
         on_row_activate: input.on_row_activate,
         on_row_expansion_request: input.on_row_expansion_request,

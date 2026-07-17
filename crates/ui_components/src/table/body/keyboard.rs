@@ -1,10 +1,7 @@
 use open_gpui::{App, Entity, FocusHandle, KeyDownEvent, ScrollHandle, Window};
-use open_gpui_ui_core::{
-    TableExpansionState, TableResolvedRow, TableRowIdentity, TableRowModel, UiPx,
-};
+use open_gpui_ui_core::{TableResolvedRow, TableRowIdentity, TableRowModel, UiPx};
 
 use crate::scroll_surface::{ScrollSurfaceRevealStrategy, reveal_fixed_row, reveal_row_geometry};
-use crate::table::interaction::toggle_table_expansion;
 use crate::table::{
     TableInputModifiers, TableRowAction, TableRowActivation, TableRowActivationHandler,
     TableRowActivationKind, TableRowExpansionHandler, TableRowExpansionToggle, TableRowRenderPlan,
@@ -107,7 +104,6 @@ pub(in crate::table) struct TableKeyboardDispatchContext<'a> {
     pub(in crate::table) fallback_row_height: UiPx,
     pub(in crate::table) fallback_viewport_extent: UiPx,
     pub(in crate::table) runtime: &'a Entity<TableRuntime>,
-    pub(in crate::table) current_expansion: TableExpansionState,
     pub(in crate::table) on_row_activate: Option<TableRowActivationHandler>,
     pub(in crate::table) on_row_expansion_request: Option<TableRowExpansionHandler>,
 }
@@ -226,11 +222,8 @@ impl TableKeyboardDispatchContext<'_> {
             TableRowKeyboardAction::Toggle { index, expanded } => {
                 let row = &self.final_model.rows()[index];
                 let identity = source.identity(row);
-                let next_expansion =
-                    toggle_table_expansion(self.current_expansion, identity.clone(), expanded);
                 self.runtime.update(cx, |runtime, cx| {
                     runtime.set_focused(identity, cx);
-                    runtime.set_expansion_override(next_expansion.clone(), cx);
                 });
                 if let Some(on_row_expansion_request) = self.on_row_expansion_request.as_ref() {
                     let action = source.row_action(

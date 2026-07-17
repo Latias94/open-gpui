@@ -292,7 +292,7 @@ impl TablePredicateFilterState {
                     .map(|option| ListboxOption::new(option.value(), option.label().to_owned()))
                     .collect::<Vec<_>>(),
             )
-            .selected(operator.as_str())
+            .selected(Some(operator.as_str().to_owned()))
             .placeholder("Operator")
             .with_size(size)
             .disabled(disabled)

@@ -96,6 +96,7 @@ impl WindowOverlayRuntimeState {
             lifecycle,
             generation,
             registration_revision: 1,
+            open_change_revision: 0,
             focus_active,
             focus_entered: false,
             scope_id,
@@ -427,14 +428,17 @@ impl WindowOverlayRuntimeState {
                     .lifecycle
                     .request_controlled(open, reason)
                     .expect("controlled request was checked for duplication");
+                entry.open_change_revision = entry.open_change_revision.wrapping_add(1);
                 OpenChangeDispatch {
                     layer_id: id.clone(),
                     lease_token: entry.lease_token,
                     generation: entry.generation,
                     registration_revision: entry.registration_revision,
+                    open_change_revision: entry.open_change_revision,
+                    ownership,
                     focus_transition: FocusTransition::None,
                     uncontrolled_commit: None,
-                    on_open_change: entry.on_open_change.clone(),
+                    notify_open_change: entry.on_open_change.is_some(),
                     intent: Some(OpenIntentDispatch {
                         desired_open: open,
                         reason,
@@ -467,6 +471,7 @@ impl WindowOverlayRuntimeState {
             .entries
             .get_mut(id)
             .expect("overlay existence was checked");
+        entry.open_change_revision = entry.open_change_revision.wrapping_add(1);
         if old_phase != next_phase {
             entry.generation = OverlayLayerGeneration(entry.generation.0.wrapping_add(1));
         }
@@ -486,9 +491,10 @@ impl WindowOverlayRuntimeState {
                 && !matches!(&focus_transition, FocusTransition::Deactivate { .. }));
         let generation = entry.generation;
         let registration_revision = entry.registration_revision;
+        let open_change_revision = entry.open_change_revision;
         let lease_token = entry.lease_token;
         let uncontrolled_commit = entry.uncontrolled_commit.clone();
-        let on_open_change = entry.on_open_change.clone();
+        let notify_open_change = entry.on_open_change.is_some();
         self.sync_stack(id, old_phase, next_phase, open);
         if mouse_authority_changed {
             self.bump_mouse_authority();
@@ -498,9 +504,11 @@ impl WindowOverlayRuntimeState {
             lease_token,
             generation,
             registration_revision,
+            open_change_revision,
+            ownership,
             focus_transition,
             uncontrolled_commit,
-            on_open_change,
+            notify_open_change,
             intent: Some(OpenIntentDispatch {
                 desired_open: open,
                 reason,
@@ -561,6 +569,9 @@ impl WindowOverlayRuntimeState {
             .entries
             .get_mut(id)
             .expect("overlay existence was checked before ancestor close");
+        if !intent_already_pending {
+            entry.open_change_revision = entry.open_change_revision.wrapping_add(1);
+        }
         if old_phase != next_phase {
             entry.generation = OverlayLayerGeneration(entry.generation.0.wrapping_add(1));
         }
@@ -586,13 +597,13 @@ impl WindowOverlayRuntimeState {
         };
         let generation = entry.generation;
         let registration_revision = entry.registration_revision;
+        let open_change_revision = entry.open_change_revision;
         let lease_token = entry.lease_token;
         let uncontrolled_commit = (owner_was_open && ownership == OverlayOwnership::Uncontrolled)
             .then(|| entry.uncontrolled_commit.clone())
             .flatten();
-        let on_open_change = (owner_was_open && !intent_already_pending)
-            .then(|| entry.on_open_change.clone())
-            .flatten();
+        let notify_open_change =
+            owner_was_open && !intent_already_pending && entry.on_open_change.is_some();
         self.sync_stack(id, old_phase, next_phase, false);
         if mouse_authority_changed {
             self.bump_mouse_authority();
@@ -602,9 +613,11 @@ impl WindowOverlayRuntimeState {
             lease_token,
             generation,
             registration_revision,
+            open_change_revision,
+            ownership,
             focus_transition,
             uncontrolled_commit,
-            on_open_change,
+            notify_open_change,
             intent: Some(OpenIntentDispatch {
                 desired_open: false,
                 reason,
@@ -1040,6 +1053,40 @@ impl WindowOverlayRuntimeState {
                 && entry.registration_revision == registration_revision
                 && !entry.pending_unregister
         })
+    }
+
+    pub(super) fn current_open_change_callback(
+        &self,
+        layer_id: &OverlayLayerId,
+        lease_token: u64,
+        open_change_revision: u64,
+        ownership: OverlayOwnership,
+        intent: OpenIntentDispatch,
+    ) -> Option<OpenChangeCallback> {
+        let entry = self.entries.get(layer_id)?;
+        if entry.lease_token != lease_token
+            || entry.open_change_revision != open_change_revision
+            || entry.ownership != ownership
+            || entry.pending_unregister
+        {
+            return None;
+        }
+
+        match (ownership, intent.revision) {
+            (OverlayOwnership::Controlled, Some(revision)) => {
+                let pending = entry.lifecycle.pending()?;
+                if pending.open != intent.desired_open
+                    || pending.reason != intent.reason
+                    || pending.revision != revision
+                {
+                    return None;
+                }
+            }
+            (OverlayOwnership::Uncontrolled, None) => {}
+            _ => return None,
+        }
+
+        entry.on_open_change.clone()
     }
 
     pub(super) fn finalize_forced_descendants(

@@ -427,27 +427,26 @@ impl WindowOverlayRuntime {
             if let Some(commit) = dispatch.uncontrolled_commit {
                 commit(intent.desired_open, window, cx);
             }
-            if let Some(callback) = dispatch.on_open_change {
+            if dispatch.notify_open_change {
                 callbacks.push((
                     dispatch.layer_id,
                     dispatch.lease_token,
-                    dispatch.generation,
-                    dispatch.registration_revision,
+                    dispatch.open_change_revision,
+                    dispatch.ownership,
                     intent,
-                    callback,
                 ));
             }
         }
         effect(window, cx);
-        for (layer_id, lease_token, generation, registration_revision, intent, callback) in
-            callbacks
-        {
-            if self.state.read(cx).dispatch_is_current(
+        for (layer_id, lease_token, open_change_revision, ownership, intent) in callbacks {
+            let callback = self.state.read(cx).current_open_change_callback(
                 &layer_id,
                 lease_token,
-                generation,
-                registration_revision,
-            ) {
+                open_change_revision,
+                ownership,
+                intent,
+            );
+            if let Some(callback) = callback {
                 callback(
                     OverlayOpenIntent::new(
                         intent.desired_open,

@@ -132,18 +132,37 @@ fn table_source_select_editor_selector(
     )
 }
 
-fn table_source_select_option_selector(
+fn required_table_source_select_option_selector(
+    cx: &mut VisualTestContext,
     table_id: &str,
     row_id: impl Into<TableRowId>,
     column_id: impl Into<TableColumnId>,
     option_value: &str,
 ) -> String {
-    TableDebugSelector::select_editor_option(
+    let owner_id = TableDebugSelector::cell_editor_id(
         table_id,
         &table_source_row_identity(row_id),
         &column_id.into(),
-        option_value,
-    )
+    );
+    let suffix = format!(":option:{option_value}");
+    let candidates = cx.debug_selectors_with_prefix("listbox:");
+    let mut matches = candidates
+        .iter()
+        .filter(|selector| {
+            owner_id
+                .split(':')
+                .filter(|segment| !segment.is_empty())
+                .all(|segment| selector.contains(segment))
+                && selector.ends_with(&suffix)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "table select option must resolve uniquely for owner {owner_id:?} and value {option_value:?}: matches={matches:?}, candidates={candidates:?}"
+    );
+    matches.pop().expect("one selector was required")
 }
 
 fn table_header_selector(table_id: &str, identity: &TableResolvedHeaderIdentity) -> String {

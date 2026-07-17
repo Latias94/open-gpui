@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
     OverlayPlacementAlignment, OverlayPlacementSide, Role, Size, ThemeTokens,
@@ -74,6 +76,7 @@ pub struct ComboboxState {
     placeholder: String,
     query: String,
     selected_value: Option<String>,
+    selected_label: Option<String>,
     total_option_count: usize,
     filtered_option_count: usize,
     empty_label: String,
@@ -177,10 +180,27 @@ impl ComboboxState {
                 .iter()
                 .map(|group| group.options_ref().len())
                 .sum::<usize>();
+        let raw_collection = ChoiceCollection::resolve_unique(
+            false,
+            flatten_combobox_choice_options(&raw_groups, &raw_options),
+            selected_value.as_deref(),
+            active_value.as_deref(),
+            ChoiceInteractionPolicy::listbox(),
+        );
+        let ambiguous_values = raw_collection
+            .items()
+            .iter()
+            .filter(|option| option.ambiguous_value())
+            .map(|option| option.value().to_owned())
+            .collect::<BTreeSet<_>>();
         let filtered_options = raw_options
             .iter()
             .filter(|option| option.matches_normalized_query(normalized_query.as_str()))
-            .map(ComboboxOptionDescriptor::to_listbox_descriptor)
+            .map(|option| {
+                option
+                    .to_listbox_descriptor()
+                    .disabled(option.disabled_state() || ambiguous_values.contains(option.value()))
+            })
             .collect::<Vec<_>>();
         let filtered_groups = raw_groups
             .iter()
@@ -189,7 +209,11 @@ impl ComboboxState {
                     .options_ref()
                     .iter()
                     .filter(|option| option.matches_normalized_query(normalized_query.as_str()))
-                    .map(ComboboxOptionDescriptor::to_listbox_descriptor)
+                    .map(|option| {
+                        option.to_listbox_descriptor().disabled(
+                            option.disabled_state() || ambiguous_values.contains(option.value()),
+                        )
+                    })
                     .collect::<Vec<_>>();
                 (!options.is_empty()).then(|| {
                     ListboxGroupDescriptor::new(group.value().to_owned(), group.label().to_owned())
@@ -202,14 +226,10 @@ impl ComboboxState {
                 .iter()
                 .map(|group| group.options_ref().len())
                 .sum::<usize>();
-        let raw_collection = ChoiceCollection::resolve(
-            false,
-            flatten_combobox_choice_options(&raw_groups, &raw_options),
-            selected_value.as_deref(),
-            active_value.as_deref(),
-            ChoiceInteractionPolicy::listbox(),
-        );
         let selected_value = raw_collection.selected_value().map(str::to_owned);
+        let selected_label = raw_collection
+            .selected_item()
+            .map(|item| item.label().to_owned());
         let listbox = ListboxState::resolve(
             size,
             disabled,
@@ -254,6 +274,7 @@ impl ComboboxState {
             placeholder,
             query,
             selected_value,
+            selected_label,
             total_option_count,
             filtered_option_count,
             empty_label,
@@ -320,6 +341,11 @@ impl ComboboxState {
     /// Returns selected option value.
     pub fn selected_value(&self) -> Option<&str> {
         self.selected_value.as_deref()
+    }
+
+    /// Returns the selected option label.
+    pub fn selected_label(&self) -> Option<&str> {
+        self.selected_label.as_deref()
     }
 
     /// Returns active option value.
@@ -470,7 +496,7 @@ mod tests {
             .open(true)
             .disabled(disabled)
             .default_query("re")
-            .selected("solid")
+            .selected(Some("solid".to_owned()))
             .option(ComboboxOption::new("react", "React"))
             .option(ComboboxOption::new("solid", "Solid"))
             .option(ComboboxOption::new("relay", "Relay"))

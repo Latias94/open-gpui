@@ -12,9 +12,8 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::choice_overlay_runtime::{
-    ChoiceOverlayRuntimeState, commit_registered_choice_overlay_single_value,
-};
+use crate::choice::{ChoiceSelectionOwnership, SingleChoiceSelectionControl};
+use crate::choice_overlay_runtime::request_registered_choice_selection;
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::gpui_px_from_ui;
 use crate::listbox::{Listbox, ListboxGroup, ListboxOption};
@@ -37,12 +36,23 @@ struct SelectRuntime {
     open: bool,
     active_value: Option<String>,
     selected_value: Option<String>,
+    selection_ownership: ChoiceSelectionOwnership,
     overlay_binding: Option<OverlayLayerBinding>,
 }
 
-impl ChoiceOverlayRuntimeState for SelectRuntime {
-    fn commit_single_value(&mut self, value: String) {
-        self.selected_value = Some(value.clone());
+impl SelectRuntime {
+    fn sync_selection(&mut self, selection: &SingleChoiceSelectionControl) {
+        if selection.is_controlled() && self.selected_value.as_ref() != selection.value().as_ref() {
+            self.selected_value = selection.value().clone();
+        }
+        self.selection_ownership =
+            ChoiceSelectionOwnership::from_controlled(selection.is_controlled());
+    }
+
+    fn commit_selection(&mut self, value: String) {
+        if !self.selection_ownership.caller_owned() {
+            self.selected_value = Some(value.clone());
+        }
         self.active_value = Some(value);
     }
 }
@@ -60,7 +70,7 @@ pub struct Select {
     full_width: bool,
     open: Option<bool>,
     default_open: bool,
-    selected_value: Option<String>,
+    selection: SingleChoiceSelectionControl,
     active_value: Option<String>,
     placement_side: OverlayPlacementSide,
     placement_alignment: OverlayPlacementAlignment,
@@ -86,7 +96,7 @@ impl Select {
             full_width: false,
             open: None,
             default_open: false,
-            selected_value: None,
+            selection: SingleChoiceSelectionControl::uncontrolled(None),
             active_value: None,
             placement_side: OverlayPlacementSide::Bottom,
             placement_alignment: OverlayPlacementAlignment::Start,
@@ -153,9 +163,18 @@ impl Select {
         self
     }
 
-    /// Applies selected option value.
-    pub fn selected(mut self, value: impl Into<String>) -> Self {
-        self.selected_value = Some(value.into());
+    /// Applies the caller-owned selected option value.
+    pub fn selected(mut self, value: Option<String>) -> Self {
+        self.selection = SingleChoiceSelectionControl::controlled(value);
+        self
+    }
+
+    /// Applies the default selected option value for adapter-owned runtime state.
+    pub fn default_selected(mut self, value: impl Into<String>) -> Self {
+        let value = value.into();
+        if !self.selection.is_controlled() {
+            self.selection = SingleChoiceSelectionControl::uncontrolled(Some(value));
+        }
         self
     }
 
@@ -227,7 +246,7 @@ impl Select {
             default_open: self.default_open,
             label: self.label.to_string(),
             placeholder: self.placeholder.to_string(),
-            selected_value: self.selected_value.clone(),
+            selected_value: self.selection.value().clone(),
             active_value: self.active_value.clone(),
             groups: self.groups.iter().map(ListboxGroup::descriptor).collect(),
             options: self.options.iter().map(ListboxOption::descriptor).collect(),
@@ -254,8 +273,14 @@ impl RenderOnce for Select {
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| SelectRuntime {
             open: self.default_open,
             active_value: self.active_value.clone(),
-            selected_value: self.selected_value.clone(),
+            selected_value: self.selection.value().clone(),
+            selection_ownership: ChoiceSelectionOwnership::from_controlled(
+                self.selection.is_controlled(),
+            ),
             overlay_binding: None,
+        });
+        runtime.update(cx, |runtime, _| {
+            runtime.sync_selection(&self.selection);
         });
         let runtime_state = runtime.read(cx).clone();
         let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
@@ -267,10 +292,7 @@ impl RenderOnce for Select {
             });
         }
 
-        let selected_value = self
-            .selected_value
-            .as_deref()
-            .or(runtime_state.selected_value.as_deref());
+        let selected_value = runtime_state.selected_value.as_deref();
         let active_value = self
             .active_value
             .as_deref()
@@ -513,7 +535,6 @@ fn select_content_element(
     let metrics = state.metrics();
     let colors = state.colors();
     let listbox_runtime = runtime.clone();
-    let listbox_select = on_select.clone();
     let listbox_window_overlay_runtime = window_overlay_runtime.clone();
     let listbox_overlay_binding = overlay_binding.clone();
     let selected_value = state.selected_value().map(str::to_owned);
@@ -529,28 +550,30 @@ fn select_content_element(
         .with_size(state.size())
         .embedded(true)
         .active_focus_handle(overlay_binding.surface_focus().clone())
-        .on_select(move |selection, window, cx| {
-            let selection = SelectSelection::from(selection);
-            let selected_value = selection.value().to_owned();
-            let on_select = listbox_select.clone();
-            commit_registered_choice_overlay_single_value(
+        .selection_transaction(move |intent, window, cx| {
+            let selected_value = intent.selection().value().to_owned();
+            let listbox_runtime = listbox_runtime.clone();
+            request_registered_choice_selection(
                 &listbox_window_overlay_runtime,
                 &listbox_overlay_binding,
-                listbox_runtime.clone(),
-                selected_value,
                 window,
                 cx,
                 move |window, cx| {
-                    if let Some(on_select) = on_select.as_ref() {
-                        on_select(selection, window, cx);
-                    }
+                    listbox_runtime.update(cx, |runtime, _| {
+                        runtime.commit_selection(selected_value);
+                    });
+                    intent.deliver(window, cx);
                 },
             );
         });
-    let mut listbox = listbox;
-    if let Some(selected_value) = selected_value {
-        listbox = listbox.selected(selected_value);
-    }
+    let listbox = if let Some(on_select) = on_select {
+        listbox.on_select(move |selection, window, cx| {
+            on_select(SelectSelection::from(selection), window, cx);
+        })
+    } else {
+        listbox
+    };
+    let mut listbox = listbox.selected(selected_value);
     if let Some(active_value) = explicit_active_value {
         listbox = listbox.active(active_value);
     }

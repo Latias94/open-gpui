@@ -12,10 +12,8 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::choice;
-use crate::choice_overlay_runtime::{
-    ChoiceOverlayRuntimeState, commit_registered_choice_overlay_single_value,
-};
+use crate::choice::{self, ChoiceSelectionOwnership, SingleChoiceSelectionControl};
+use crate::choice_overlay_runtime::request_registered_choice_selection;
 use crate::focus::focus_ring_shadow_with_theme;
 use crate::geometry::gpui_px_from_ui;
 use crate::listbox::Listbox;
@@ -40,18 +38,68 @@ use super::render_plan::ComboboxRenderPlan;
 type ComboboxOpenChangeHandler = Rc<dyn Fn(OverlayOpenIntent, &mut Window, &mut App)>;
 type ComboboxSelectionHandler = Rc<dyn Fn(ComboboxSelection, &mut Window, &mut App)>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComboboxInputValueSource {
+    SelectedLabelProjection,
+    UserQuery,
+}
+
 #[derive(Clone)]
 struct ComboboxRuntime {
     open: bool,
     active_value: Option<String>,
     selected_value: Option<String>,
+    selection_ownership: ChoiceSelectionOwnership,
+    observed_selected_label: Option<Option<String>>,
+    observed_input_user_edit_revision: u64,
+    input_value_source: ComboboxInputValueSource,
     overlay_binding: Option<OverlayLayerBinding>,
 }
 
-impl ChoiceOverlayRuntimeState for ComboboxRuntime {
-    fn commit_single_value(&mut self, value: String) {
-        self.selected_value = Some(value.clone());
+impl ComboboxRuntime {
+    fn sync_selection(&mut self, selection: &SingleChoiceSelectionControl) -> bool {
+        let selection_ownership =
+            ChoiceSelectionOwnership::from_controlled(selection.is_controlled());
+        let mut changed = self.selection_ownership != selection_ownership;
+        if selection.is_controlled() && self.selected_value.as_ref() != selection.value().as_ref() {
+            self.selected_value = selection.value().clone();
+            changed = true;
+        }
+        self.selection_ownership = selection_ownership;
+        changed
+    }
+
+    fn commit_selection(&mut self, value: String, input_user_edit_revision: u64) -> bool {
+        let adapter_owned = !self.selection_ownership.caller_owned();
+        if adapter_owned {
+            self.selected_value = Some(value.clone());
+            self.observed_input_user_edit_revision = input_user_edit_revision;
+            self.input_value_source = ComboboxInputValueSource::SelectedLabelProjection;
+        }
         self.active_value = Some(value);
+        adapter_owned
+    }
+
+    fn sync_selected_label(&mut self, selected_label: Option<&str>) -> bool {
+        let current = selected_label.map(str::to_owned);
+        match self.observed_selected_label.as_ref() {
+            None => {
+                self.observed_selected_label = Some(current);
+                false
+            }
+            Some(previous) if previous.as_deref() == selected_label => false,
+            Some(_) => {
+                self.observed_selected_label = Some(current);
+                true
+            }
+        }
+    }
+
+    fn sync_input_user_edit_revision(&mut self, revision: u64) {
+        if self.observed_input_user_edit_revision != revision {
+            self.observed_input_user_edit_revision = revision;
+            self.input_value_source = ComboboxInputValueSource::UserQuery;
+        }
     }
 }
 
@@ -69,7 +117,7 @@ pub struct Combobox {
     open: Option<bool>,
     default_open: bool,
     default_query: String,
-    selected_value: Option<String>,
+    selection: SingleChoiceSelectionControl,
     active_value: Option<String>,
     empty_label: SharedString,
     placement_side: OverlayPlacementSide,
@@ -97,7 +145,7 @@ impl Combobox {
             open: None,
             default_open: false,
             default_query: String::new(),
-            selected_value: None,
+            selection: SingleChoiceSelectionControl::uncontrolled(None),
             active_value: None,
             empty_label: "No results".into(),
             placement_side: OverlayPlacementSide::Bottom,
@@ -172,9 +220,18 @@ impl Combobox {
         self
     }
 
-    /// Applies selected option value.
-    pub fn selected(mut self, value: impl Into<String>) -> Self {
-        self.selected_value = Some(value.into());
+    /// Applies the caller-owned selected option value.
+    pub fn selected(mut self, value: Option<String>) -> Self {
+        self.selection = SingleChoiceSelectionControl::controlled(value);
+        self
+    }
+
+    /// Applies the default selected option value for adapter-owned runtime state.
+    pub fn default_selected(mut self, value: impl Into<String>) -> Self {
+        let value = value.into();
+        if !self.selection.is_controlled() {
+            self.selection = SingleChoiceSelectionControl::uncontrolled(Some(value));
+        }
         self
     }
 
@@ -242,7 +299,7 @@ impl Combobox {
             label: self.label.to_string(),
             placeholder: self.placeholder.to_string(),
             query: self.default_query.to_string(),
-            selected_value: self.selected_value.clone(),
+            selected_value: self.selection.value().clone(),
             active_value: self.active_value.clone(),
             empty_label: self.empty_label.to_string(),
             groups: self.groups.iter().map(ComboboxGroup::descriptor).collect(),
@@ -274,14 +331,41 @@ impl RenderOnce for Combobox {
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| ComboboxRuntime {
             open: self.default_open,
             active_value: self.active_value.clone(),
-            selected_value: self.selected_value.clone(),
+            selected_value: self.selection.value().clone(),
+            selection_ownership: ChoiceSelectionOwnership::from_controlled(
+                self.selection.is_controlled(),
+            ),
+            observed_selected_label: None,
+            observed_input_user_edit_revision: 0,
+            input_value_source: if self.default_query.is_empty() {
+                ComboboxInputValueSource::SelectedLabelProjection
+            } else {
+                ComboboxInputValueSource::UserQuery
+            },
             overlay_binding: None,
         });
         let input_state_key: ElementId = (self.id.clone(), "input-state").into();
         let input_controller = window.use_keyed_state(input_state_key, cx, |_, cx| {
-            let mut input = TextInputController::with_value(self.default_query.clone(), cx);
+            let initial_value = if self.default_query.is_empty() {
+                self.state().selected_label().unwrap_or_default().to_owned()
+            } else {
+                self.default_query.clone()
+            };
+            let mut input = TextInputController::with_value(initial_value, cx);
             input.set_placeholder(self.placeholder.clone(), cx);
             input
+        });
+        let selection_projection_changed =
+            runtime.update(cx, |runtime, _| runtime.sync_selection(&self.selection));
+        let (query, input_user_edit_revision) = {
+            let controller = input_controller.read(cx);
+            (
+                controller.value().to_owned(),
+                controller.user_edit_revision(),
+            )
+        };
+        runtime.update(cx, |runtime, _| {
+            runtime.sync_input_user_edit_revision(input_user_edit_revision);
         });
         let runtime_state = runtime.read(cx).clone();
         let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
@@ -293,11 +377,7 @@ impl RenderOnce for Combobox {
             });
         }
 
-        let query = input_controller.read(cx).value().to_owned();
-        let selected_value = self
-            .selected_value
-            .as_deref()
-            .or(runtime_state.selected_value.as_deref());
+        let selected_value = runtime_state.selected_value.as_deref();
         let active_value = self
             .active_value
             .as_deref()
@@ -328,7 +408,25 @@ impl RenderOnce for Combobox {
             focus_restore_intent: self.focus_restore_intent.clone(),
             tokens: self.tokens,
         });
+        let selected_label = state.selected_label().unwrap_or_default().to_owned();
+        let selected_label_changed = runtime.update(cx, |runtime, _| {
+            runtime.sync_selected_label(state.selected_label())
+        });
+        let controlled_selection_committed =
+            runtime_state.selection_ownership.caller_owned() && selection_projection_changed;
+        let should_project_selected_label = controlled_selection_committed
+            || (runtime_state.input_value_source
+                == ComboboxInputValueSource::SelectedLabelProjection
+                && selected_label_changed);
+        if should_project_selected_label {
+            runtime.update(cx, |runtime, _| {
+                runtime.input_value_source = ComboboxInputValueSource::SelectedLabelProjection;
+            });
+        }
         input_controller.update(cx, |controller, cx| {
+            if should_project_selected_label && controller.value() != selected_label {
+                controller.set_value(selected_label.clone(), cx);
+            }
             if controller.placeholder() != self.placeholder.as_ref() {
                 controller.set_placeholder(self.placeholder.clone(), cx);
             }
@@ -475,17 +573,27 @@ impl RenderOnce for Combobox {
                                     let selected_label = selection.label().to_owned();
                                     let input_controller = input_controller.clone();
                                     let on_select = on_select.clone();
-                                    commit_registered_choice_overlay_single_value(
+                                    let effect_runtime = runtime.clone();
+                                    request_registered_choice_selection(
                                         &window_overlay_runtime,
                                         &overlay_binding,
-                                        runtime.clone(),
-                                        selected_value,
                                         window,
                                         cx,
                                         move |window, cx| {
-                                            input_controller.update(cx, |controller, cx| {
-                                                controller.set_value(selected_label, cx);
-                                            });
+                                            let input_user_edit_revision =
+                                                input_controller.read(cx).user_edit_revision();
+                                            let committed =
+                                                effect_runtime.update(cx, |runtime, _| {
+                                                    runtime.commit_selection(
+                                                        selected_value,
+                                                        input_user_edit_revision,
+                                                    )
+                                                });
+                                            if committed {
+                                                input_controller.update(cx, |controller, cx| {
+                                                    controller.set_value(selected_label, cx);
+                                                });
+                                            }
                                             if let Some(on_select) = on_select.as_ref() {
                                                 on_select(selection, window, cx);
                                             }
@@ -631,42 +739,47 @@ fn combobox_content_element(
         .empty_label(state.empty_label().to_owned())
         .embedded(true)
         .editor_owned_focus()
-        .on_select({
+        .selection_transaction({
             let input_controller = input_controller.clone();
             let runtime = runtime.clone();
-            let on_select = on_select.clone();
-            move |selection, window, cx| {
-                let payload = ComboboxSelection::new(
-                    selection.value().to_owned(),
-                    selection.label().to_owned(),
-                );
-                let payload_value = payload.value().to_owned();
-                let payload_label = payload.label().to_owned();
+            move |intent, window, cx| {
+                let payload_value = intent.selection().value().to_owned();
+                let payload_label = intent.selection().label().to_owned();
                 let input_controller = input_controller.clone();
-                let on_select = on_select.clone();
-                commit_registered_choice_overlay_single_value(
+                let runtime = runtime.clone();
+                request_registered_choice_selection(
                     &listbox_window_overlay_runtime,
                     &listbox_overlay_binding,
-                    runtime.clone(),
-                    payload_value,
                     window,
                     cx,
                     move |window, cx| {
-                        input_controller.update(cx, |controller, cx| {
-                            controller.set_value(payload_label, cx);
+                        let input_user_edit_revision =
+                            input_controller.read(cx).user_edit_revision();
+                        let committed = runtime.update(cx, |runtime, _| {
+                            runtime.commit_selection(payload_value, input_user_edit_revision)
                         });
-                        if let Some(on_select) = on_select.as_ref() {
-                            on_select(payload, window, cx);
+                        if committed {
+                            input_controller.update(cx, |controller, cx| {
+                                controller.set_value(payload_label, cx);
+                            });
                         }
+                        intent.deliver(window, cx);
                     },
                 );
             }
         });
-    let listbox = if let Some(selected_value) = selected_value {
-        listbox.selected(selected_value)
+    let listbox = if let Some(on_select) = on_select {
+        listbox.on_select(move |selection, window, cx| {
+            on_select(
+                ComboboxSelection::new(selection.value().to_owned(), selection.label().to_owned()),
+                window,
+                cx,
+            );
+        })
     } else {
         listbox
     };
+    let listbox = listbox.selected(selected_value);
     let listbox = if let Some(active_value) = active_value {
         listbox.active(active_value)
     } else {

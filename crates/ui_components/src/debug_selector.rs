@@ -182,6 +182,75 @@ pub(crate) struct StableValueRenderIdentity {
     occurrence_fingerprint: AuthoredSnapshotFingerprint,
 }
 
+struct StableValueIdentityParts {
+    element_id: ElementId,
+    debug_selector: String,
+    occurrence_fingerprint: Option<AuthoredSnapshotFingerprint>,
+}
+
+fn materialize_stable_value_identities(
+    component: &str,
+    component_id: &str,
+    part: &str,
+    inputs: impl IntoIterator<Item = (String, Option<AuthoredSnapshotFingerprint>)>,
+    retain_occurrence_fingerprint: bool,
+) -> Vec<StableValueIdentityParts> {
+    let inputs = inputs.into_iter().collect::<Vec<_>>();
+    let mut snapshots = BTreeMap::<String, AuthoredSnapshot>::new();
+    for (value, authored_snapshot) in &inputs {
+        if let Some(authored_snapshot) = authored_snapshot {
+            snapshots
+                .entry(value.clone())
+                .or_default()
+                .push_opaque_fingerprint(authored_snapshot);
+        }
+    }
+    let snapshots = snapshots
+        .into_iter()
+        .map(|(value, snapshot)| (value, snapshot.finish()))
+        .collect::<BTreeMap<_, _>>();
+
+    inputs
+        .into_iter()
+        .enumerate()
+        .map(|(index, (value, authored_snapshot))| {
+            let selector_value = debug_selector_segment(&value);
+            if authored_snapshot.is_some() {
+                let snapshot = snapshots
+                    .get(value.as_str())
+                    .expect("ambiguous values must have an authored snapshot");
+                let base_id =
+                    ElementId::named_usize(format!("{component}-{part}-{value}"), index);
+                StableValueIdentityParts {
+                    element_id: ElementId::NamedChild(
+                        Arc::new(base_id),
+                        SharedString::from(format!("snapshot-{}", snapshot.as_str())),
+                    ),
+                    debug_selector: format!(
+                        "{component}:{component_id}:duplicate-{part}:{index}:{selector_value}:snapshot:{}",
+                        snapshot.as_str()
+                    ),
+                    occurrence_fingerprint: retain_occurrence_fingerprint.then(|| {
+                        AuthoredSnapshot::new()
+                            .field(&value)
+                            .field(index.to_string())
+                            .opaque_fingerprint(snapshot)
+                            .finish()
+                    }),
+                }
+            } else {
+                StableValueIdentityParts {
+                    element_id: format!("{component}-{part}-{value}").into(),
+                    debug_selector: format!("{component}:{component_id}:{part}:{selector_value}"),
+                    occurrence_fingerprint: retain_occurrence_fingerprint.then(|| {
+                        AuthoredSnapshot::new().field("unique").field(&value).finish()
+                    }),
+                }
+            }
+        })
+        .collect()
+}
+
 impl StableValueRenderIdentity {
     pub(crate) fn resolve(
         component: &str,
@@ -194,71 +263,27 @@ impl StableValueRenderIdentity {
             *counts.entry(input.value.clone()).or_insert(0usize) += 1;
             counts
         });
-        let mut snapshots = BTreeMap::<String, AuthoredSnapshot>::new();
-        for input in &inputs {
-            if value_counts
-                .get(input.value.as_str())
-                .is_some_and(|count| *count > 1)
-            {
-                let snapshot = snapshots.entry(input.value.clone()).or_default();
-                snapshot.push_opaque_fingerprint(&input.authored_snapshot);
-            }
-        }
-        let snapshots = snapshots
-            .into_iter()
-            .map(|(value, snapshot)| (value, snapshot.finish()))
-            .collect::<BTreeMap<_, _>>();
-
-        inputs
-            .into_iter()
-            .enumerate()
-            .map(|(index, input)| {
-                let selector_value = debug_selector_segment(&input.value);
+        materialize_stable_value_identities(
+            component,
+            component_id,
+            part,
+            inputs.into_iter().map(|input| {
                 let ambiguous = value_counts
                     .get(input.value.as_str())
                     .is_some_and(|count| *count > 1);
-                if ambiguous {
-                    let snapshot = snapshots
-                        .get(input.value.as_str())
-                        .expect("ambiguous values must have an authored snapshot");
-                    let base_id = ElementId::named_usize(
-                        format!("{component}-{part}-{}", input.value),
-                        index,
-                    );
-                    let element_id = ElementId::NamedChild(
-                        Arc::new(base_id),
-                        SharedString::from(format!("snapshot-{}", snapshot.as_str())),
-                    );
-                    let occurrence_fingerprint = AuthoredSnapshot::new()
-                        .field(&input.value)
-                        .field(index.to_string())
-                        .opaque_fingerprint(snapshot)
-                        .finish();
-                    let debug_selector = format!(
-                        "{component}:{component_id}:duplicate-{part}:{index}:{selector_value}:snapshot:{}",
-                        snapshot.as_str()
-                    );
-                    Self {
-                        element_id,
-                        debug_selector,
-                        occurrence_fingerprint,
-                    }
-                } else {
-                    let element_id = format!("{component}-{part}-{}", input.value).into();
-                    let debug_selector =
-                        format!("{component}:{component_id}:{part}:{selector_value}");
-                    let occurrence_fingerprint = AuthoredSnapshot::new()
-                        .field("unique")
-                        .field(&input.value)
-                        .finish();
-                    Self {
-                        element_id,
-                        debug_selector,
-                        occurrence_fingerprint,
-                    }
-                }
-            })
-            .collect()
+                (input.value, ambiguous.then_some(input.authored_snapshot))
+            }),
+            true,
+        )
+        .into_iter()
+        .map(|parts| Self {
+            element_id: parts.element_id,
+            debug_selector: parts.debug_selector,
+            occurrence_fingerprint: parts
+                .occurrence_fingerprint
+                .expect("general stable identities retain occurrence fingerprints"),
+        })
+        .collect()
     }
 
     pub(crate) fn occurrence_fingerprint(&self) -> &AuthoredSnapshotFingerprint {
@@ -274,6 +299,31 @@ pub(crate) struct StableValueItemRenderIdentity {
     pub(crate) activation_state_key: ElementId,
 }
 
+/// Identity input for a stable-value item whose ambiguity was resolved by its collection model.
+pub(crate) struct StableValueItemRenderIdentityInput {
+    value: String,
+    authored_snapshot: Option<AuthoredSnapshotFingerprint>,
+}
+
+impl StableValueItemRenderIdentityInput {
+    pub(crate) fn unique(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            authored_snapshot: None,
+        }
+    }
+
+    pub(crate) fn ambiguous(
+        value: impl Into<String>,
+        authored_snapshot: AuthoredSnapshotFingerprint,
+    ) -> Self {
+        Self {
+            value: value.into(),
+            authored_snapshot: Some(authored_snapshot),
+        }
+    }
+}
+
 impl StableValueItemRenderIdentity {
     pub(crate) fn from_render_identity(
         identity: StableValueRenderIdentity,
@@ -284,6 +334,34 @@ impl StableValueItemRenderIdentity {
             debug_selector,
             ..
         } = identity;
+        Self::from_parts(element_id, debug_selector, activation_kind)
+    }
+
+    pub(crate) fn resolve_known_ambiguity(
+        component: &str,
+        component_id: &str,
+        part: &str,
+        activation_kind: &str,
+        inputs: impl IntoIterator<Item = StableValueItemRenderIdentityInput>,
+    ) -> Vec<Self> {
+        materialize_stable_value_identities(
+            component,
+            component_id,
+            part,
+            inputs
+                .into_iter()
+                .map(|input| (input.value, input.authored_snapshot)),
+            false,
+        )
+        .into_iter()
+        .map(|parts| {
+            debug_assert!(parts.occurrence_fingerprint.is_none());
+            Self::from_parts(parts.element_id, parts.debug_selector, activation_kind)
+        })
+        .collect()
+    }
+
+    fn from_parts(element_id: ElementId, debug_selector: String, activation_kind: &str) -> Self {
         let activation_identity = ElementId::NamedChild(
             Arc::new(element_id.clone()),
             SharedString::new_static("activation"),
@@ -386,6 +464,38 @@ mod tests {
         let updated = resolve("After");
         assert_eq!(initial.element_id, updated.element_id);
         assert_eq!(initial.debug_selector, updated.debug_selector);
+    }
+
+    #[test]
+    fn known_ambiguity_item_resolution_matches_general_identity_resolution() {
+        let snapshots = ["Alpha", "Before", "After"]
+            .map(|label| AuthoredSnapshot::new().field(label).field("false").finish());
+        let general = StableValueRenderIdentity::resolve(
+            "listbox",
+            "identity-probe",
+            "option",
+            [
+                StableValueRenderIdentityInput::new("alpha", snapshots[0].clone()),
+                StableValueRenderIdentityInput::new("duplicate", snapshots[1].clone()),
+                StableValueRenderIdentityInput::new("duplicate", snapshots[2].clone()),
+            ],
+        )
+        .into_iter()
+        .map(|identity| StableValueItemRenderIdentity::from_render_identity(identity, "select"))
+        .collect::<Vec<_>>();
+        let known = StableValueItemRenderIdentity::resolve_known_ambiguity(
+            "listbox",
+            "identity-probe",
+            "option",
+            "select",
+            [
+                StableValueItemRenderIdentityInput::unique("alpha"),
+                StableValueItemRenderIdentityInput::ambiguous("duplicate", snapshots[1].clone()),
+                StableValueItemRenderIdentityInput::ambiguous("duplicate", snapshots[2].clone()),
+            ],
+        );
+
+        assert_eq!(known, general);
     }
 
     #[test]

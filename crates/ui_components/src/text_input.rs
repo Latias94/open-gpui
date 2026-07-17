@@ -237,6 +237,7 @@ pub(crate) mod adapter {
         is_selecting: bool,
         disabled: bool,
         read_only: bool,
+        user_edit_revision: u64,
         on_change: Option<TextInputChangeHandler>,
     }
 
@@ -276,6 +277,7 @@ pub(crate) mod adapter {
                 is_selecting: false,
                 disabled: false,
                 read_only: false,
+                user_edit_revision: 0,
                 on_change: None,
             }
         }
@@ -294,6 +296,10 @@ pub(crate) mod adapter {
         /// Returns the current input value.
         pub fn value(&self) -> &str {
             self.content.as_ref()
+        }
+
+        pub(crate) const fn user_edit_revision(&self) -> u64 {
+            self.user_edit_revision
         }
 
         /// Returns the current display mode.
@@ -853,6 +859,7 @@ pub(crate) mod adapter {
             let previous = self.content.clone();
             self.replace_text_in_range_inner(range_utf16, new_text);
             if previous != self.content {
+                self.user_edit_revision = self.user_edit_revision.wrapping_add(1);
                 self.dispatch_change(_window, cx);
             }
             cx.notify();
@@ -872,6 +879,7 @@ pub(crate) mod adapter {
             let previous = self.content.clone();
             self.replace_and_mark_text_in_range_inner(range_utf16, new_text, selected_utf16);
             if previous != self.content {
+                self.user_edit_revision = self.user_edit_revision.wrapping_add(1);
                 self.dispatch_change(_window, cx);
             }
             cx.notify();

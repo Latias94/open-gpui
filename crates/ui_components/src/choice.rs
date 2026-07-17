@@ -2,9 +2,32 @@
 
 use std::collections::BTreeMap;
 
-use open_gpui_ui_core::Orientation;
+use open_gpui_ui_core::{ControllableState, Orientation};
 
 use crate::roving_focus::{first_enabled, last_enabled, next_enabled};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChoiceSelectionOwnership {
+    AdapterOwned,
+    CallerOwned,
+}
+
+impl ChoiceSelectionOwnership {
+    pub(crate) const fn from_controlled(controlled: bool) -> Self {
+        if controlled {
+            Self::CallerOwned
+        } else {
+            Self::AdapterOwned
+        }
+    }
+
+    pub(crate) const fn caller_owned(self) -> bool {
+        matches!(self, Self::CallerOwned)
+    }
+}
+
+pub(crate) type SingleChoiceSelectionControl = ControllableState<Option<String>>;
+pub(crate) type MultiChoiceSelectionControl = ControllableState<Vec<String>>;
 
 /// Flat stable-value item projected from a choice surface descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,6 +38,7 @@ pub(crate) struct ChoiceItemProjection<T> {
     label: String,
     text_value: Option<String>,
     disabled: bool,
+    structural: bool,
     ambiguous_value: bool,
     item: T,
 }
@@ -36,9 +60,17 @@ impl<T> ChoiceItemProjection<T> {
             label: label.into(),
             text_value: None,
             disabled,
+            structural: false,
             ambiguous_value: false,
             item,
         }
+    }
+
+    /// Marks a non-domain row that participates in layout but not value identity.
+    pub(crate) const fn structural(mut self) -> Self {
+        self.structural = true;
+        self.disabled = true;
+        self
     }
 
     /// Sets the text candidate used by typeahead matching.
@@ -446,15 +478,20 @@ impl<T> ChoiceCollection<T> {
 }
 
 fn mark_ambiguous_values<T>(items: &mut [ChoiceItemProjection<T>]) {
-    let value_counts = items.iter().fold(BTreeMap::new(), |mut counts, item| {
-        *counts.entry(item.value.clone()).or_insert(0usize) += 1;
-        counts
-    });
+    let value_counts =
+        items
+            .iter()
+            .filter(|item| !item.structural)
+            .fold(BTreeMap::new(), |mut counts, item| {
+                *counts.entry(item.value.clone()).or_insert(0usize) += 1;
+                counts
+            });
 
     for item in items {
-        item.ambiguous_value = value_counts
-            .get(item.value())
-            .is_some_and(|count| *count > 1);
+        item.ambiguous_value = !item.structural
+            && value_counts
+                .get(item.value())
+                .is_some_and(|count| *count > 1);
         item.disabled |= item.ambiguous_value;
     }
 }

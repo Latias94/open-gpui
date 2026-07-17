@@ -80,6 +80,8 @@ mod domain_actions;
 mod handles;
 #[path = "semantic_activation/link.rs"]
 mod link;
+#[path = "semantic_activation/listbox.rs"]
+mod listbox;
 #[path = "semantic_activation/sidebar.rs"]
 mod sidebar;
 #[path = "semantic_activation/tabs.rs"]

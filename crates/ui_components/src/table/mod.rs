@@ -68,7 +68,7 @@ pub use identity::TableDebugSelector;
 pub use interaction::{
     TableColumnOrderChange, TableColumnOrderPlacement, TableColumnSizingChange, TableHeaderAction,
     TableInputModifiers, TableRowAction, TableRowActivation, TableRowActivationKind,
-    TableRowExpansionToggle, TableRowSelectionChange, TableSelectionScope,
+    TableRowExpansionToggle, TableRowSelectionChange,
 };
 use layout::resolve_table_column_offsets;
 pub use metrics::TableMetrics;
@@ -368,28 +368,12 @@ impl RenderOnce for Table {
             runtime.sync_rows(&plan, window, cx);
             plan
         });
-        let (runtime_snapshot, expansion_override) = {
-            let runtime = runtime.read(cx);
-            (
-                Rc::new(runtime.render_snapshot()),
-                runtime.expansion_override.clone(),
-            )
-        };
-        let current_expansion =
-            expansion_override.unwrap_or_else(|| self.state.expansion().clone());
+        let runtime_snapshot = Rc::new(runtime.read(cx).render_snapshot());
         let table_id = plan.table_id().to_owned();
         let label = plan.label().to_owned();
         let metrics = plan.metrics();
         let selection_policy = plan.selection_policy();
-        let selected_row_ids = Rc::new(
-            plan.table()
-                .core_model()
-                .rows()
-                .iter()
-                .filter(|row| row.selected())
-                .filter_map(|row| row.source_row_id().cloned())
-                .collect::<Vec<_>>(),
-        );
+        let explicit_selected_rows = Rc::new(self.state.selected_rows().clone());
         let on_row_activate = self.on_row_activate.clone();
         let on_row_selection_change = self.on_row_selection_change.clone();
         let on_row_expansion_request = self.on_row_expansion_request.clone();
@@ -398,7 +382,6 @@ impl RenderOnce for Table {
         let proxy_rows = plan.resolved_table();
         let proxy_scroll_handle = scroll_handle.clone();
         let proxy_runtime = runtime.clone();
-        let proxy_expansion = current_expansion.clone();
         let proxy_on_row_activate = on_row_activate.clone();
         let proxy_on_row_expansion_request = on_row_expansion_request.clone();
         let proxy_row_height = metrics.row_height();
@@ -440,7 +423,6 @@ impl RenderOnce for Table {
                             fallback_row_height: proxy_row_height,
                             fallback_viewport_extent: proxy_viewport_extent,
                             runtime: &proxy_runtime,
-                            current_expansion: proxy_expansion.clone(),
                             on_row_activate: proxy_on_row_activate.clone(),
                             on_row_expansion_request: proxy_on_row_expansion_request.clone(),
                         }
@@ -479,9 +461,8 @@ impl RenderOnce for Table {
                     vertical_scroll_handle: scroll_handle.clone(),
                     runtime: runtime.clone(),
                     runtime_snapshot,
-                    current_expansion,
                     selection_policy,
-                    selected_row_ids,
+                    explicit_selected_rows,
                     on_row_selection_change,
                     on_row_activate,
                     on_row_expansion_request,

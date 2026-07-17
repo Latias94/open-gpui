@@ -929,11 +929,8 @@ pub(crate) fn component_listbox_samples_section(
                         Listbox::new(format!("component-listbox:{}", sample.id), label.clone())
                             .with_size(state.size())
                             .disabled(state.disabled())
-                            .tokens(tokens);
-
-                    if let Some(selected) = state.selected_value() {
-                        listbox = listbox.selected(selected);
-                    }
+                            .tokens(tokens)
+                            .selected(state.selected_value().map(str::to_owned));
 
                     if let Some(active) = state.active_value() {
                         listbox = listbox.active(active);
@@ -1043,9 +1040,7 @@ pub(crate) fn component_select_samples_section(
                             .disabled(state.disabled())
                             .tokens(tokens);
 
-                    if let Some(selected) = state.selected_value() {
-                        select = select.selected(selected);
-                    }
+                    select = select.selected(state.selected_value().map(str::to_owned));
 
                     if let Some(active) = state.active_value() {
                         select = select.active(active);
@@ -1168,9 +1163,7 @@ pub(crate) fn component_combobox_samples_section(
                             .disabled(state.disabled())
                             .tokens(tokens);
 
-                    if let Some(selected) = state.selected_value() {
-                        combobox = combobox.selected(selected);
-                    }
+                    combobox = combobox.selected(state.selected_value().map(str::to_owned));
 
                     if let Some(active) = state.active_value() {
                         combobox = combobox.active(active);
@@ -1297,13 +1290,14 @@ pub(crate) fn component_command_samples_section(
                         command = command.index_snapshot(snapshot);
                     }
 
-                    if let Some(selected) = state.selected_value() {
-                        command = command.selected(selected);
-                    }
-
-                    if state.selection_mode() == CommandSelectionMode::Multiple {
-                        command = command.selected_values(sample.selected_values.iter().cloned());
-                    }
+                    command = match state.selection_mode() {
+                        CommandSelectionMode::Single => {
+                            command.selected(state.selected_value().map(str::to_owned))
+                        }
+                        CommandSelectionMode::Multiple => {
+                            command.selected_values(sample.selected_values.iter().cloned())
+                        }
+                    };
 
                     if let Some(active) = state.active_value() {
                         command = command.active(active);

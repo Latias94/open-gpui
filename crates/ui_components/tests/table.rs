@@ -13,7 +13,7 @@ use open_gpui_ui_components::{
     TableHeaderAction, TablePredicateFilter, TablePredicateFilterChange,
     TablePredicateFilterOperator, TablePredicateFilterOperatorOptionState,
     TablePredicateFilterState, TableRangeFilter, TableRangeFilterChange, TableRangeFilterState,
-    TableRowMeasureMode, TableSelectionScope, TableToolbar, TableToolbarState,
+    TableRowMeasureMode, TableRowSelectionChange, TableToolbar, TableToolbarState,
     TableVirtualizerSnapshot, TableVirtualizerSnapshotItem,
     gpui_adapter::{TableDebugSelector, init_text_input},
 };
@@ -25,8 +25,9 @@ use open_gpui_ui_core::{
     TableGlobalFacetSummary, TableNumericFilterOperator, TablePagination, TableRow,
     TableRowChildrenLoadState, TableRowId, TableRowIdentity, TableRowPinning,
     TableRowPinningPolicy, TableRowRegion, TableSelectOption, TableSelectionActivationMode,
-    TableSelectionMode, TableSort, TableSortDirection, TableSourceRowIdentity, TableStageMode,
-    TableState, TableTextFilterOperator, UiPx, VirtualizerRange, ui_px,
+    TableSelectionMode, TableSelectionPolicy, TableSort, TableSortDirection,
+    TableSourceRowIdentity, TableStageMode, TableState, TableSubRowSelectionPolicy,
+    TableTextFilterOperator, UiPx, VirtualizerRange, ui_px,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -56,6 +57,10 @@ fn sample_table_state(row_count: usize) -> TableState {
 
 fn table_source_row_identity(row_id: impl Into<TableRowId>) -> TableRowIdentity {
     TableRowIdentity::source(row_id)
+}
+
+fn table_source_selection_identity(row_id: impl Into<TableRowId>) -> TableSourceRowIdentity {
+    TableSourceRowIdentity::unique(row_id)
 }
 
 fn table_source_row_selector(table_id: &str, row_id: impl Into<TableRowId>) -> String {
@@ -141,18 +146,37 @@ fn table_source_select_editor_selector(
     )
 }
 
-fn table_source_select_option_selector(
+fn required_table_source_select_option_selector(
+    cx: &mut open_gpui::VisualTestContext,
     table_id: &str,
     row_id: impl Into<TableRowId>,
     column_id: impl Into<TableColumnId>,
     option_value: &str,
 ) -> String {
-    TableDebugSelector::select_editor_option(
+    let owner_id = TableDebugSelector::cell_editor_id(
         table_id,
         &table_source_row_identity(row_id),
         &column_id.into(),
-        option_value,
-    )
+    );
+    let suffix = format!(":option:{option_value}");
+    let candidates = cx.debug_selectors_with_prefix("listbox:");
+    let mut matches = candidates
+        .iter()
+        .filter(|selector| {
+            owner_id
+                .split(':')
+                .filter(|segment| !segment.is_empty())
+                .all(|segment| selector.contains(segment))
+                && selector.ends_with(&suffix)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "table select option must resolve uniquely for owner {owner_id:?} and value {option_value:?}: matches={matches:?}, candidates={candidates:?}"
+    );
+    matches.pop().expect("one selector was required")
 }
 
 fn text_facet_counts(facet: &TableColumnFacets) -> Vec<(String, usize)> {

@@ -141,7 +141,7 @@ the chosen design.
 | Stable lifecycle identity | Equivalent rerenders retain `NodeId`; unmounted or recycled identities disappear and reject stale actions | Final-tree lifecycle and virtualization tests |
 | No parallel evidence authority | No semantic evidence row, Gallery claim, lookup consumer, or source parser remains | Public-surface, Gallery, and UI-contract absence gates |
 | DevTools privacy | Unique free-text canaries never enter capture, history, diff, export, report, or fixture payloads | DevTools redaction tests |
-| Table exact identity | Duplicate instances never alias edits, callbacks, focus, nodes, or measurements; focus proxy no-steal and fallback tests pass | Focused Table identity and accessibility tests |
+| Table exact identity | Duplicate instances never alias selection, edits, callbacks, focus, nodes, or measurements; focus proxy no-steal and fallback tests pass | Focused Table identity and accessibility tests |
 
 # Risks And Mitigations
 

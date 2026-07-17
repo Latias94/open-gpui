@@ -639,9 +639,6 @@ fn components_gallery_smoke_select_table_cell_updates_sample_rows(
     const STATUS_CONTENT: &str =
         "select:Edit status for row select-release-row-000:select-content-scroll:content";
     let status_select = table_source_select_editor_selector(TABLE_ID, SOURCE_ROW_ID, "status");
-    let blocked_option =
-        table_source_select_option_selector(TABLE_ID, SOURCE_ROW_ID, "status", "blocked");
-
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     cx.set_global(pages::components::TableSampleRuntimeLog::default());
     let table_entry = pages::components::COMPONENT_CATALOG
@@ -670,6 +667,13 @@ fn components_gallery_smoke_select_table_cell_updates_sample_rows(
     assert!(
         cx.debug_bounds(STATUS_CONTENT).is_some(),
         "select content should open from the table trigger"
+    );
+    let blocked_option = required_table_source_select_option_selector(
+        cx,
+        TABLE_ID,
+        SOURCE_ROW_ID,
+        "status",
+        "blocked",
     );
     let blocked = bounds(cx, &blocked_option);
     cx.simulate_click(blocked.center(), Default::default());

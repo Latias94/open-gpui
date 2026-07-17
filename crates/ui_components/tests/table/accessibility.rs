@@ -153,7 +153,7 @@ fn table_runtime_final_accessibility_tree(cx: &mut open_gpui::TestAppContext) {
                 TableColumn::new("name", "Name"),
                 TableColumn::new("score", "Score"),
             ])
-            .with_selected_rows(["alpha"]);
+            .with_selected_rows([table_source_selection_identity("alpha")]);
             let table = Table::new("semantic-table", "Release table", state)
                 .row_height(ui_px(24.0))
                 .viewport_extent(ui_px(96.0))

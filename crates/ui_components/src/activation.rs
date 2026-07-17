@@ -329,15 +329,21 @@ impl ActivationBinding {
     where
         E: StatefulInteractiveElement + Sized,
     {
-        self.bind_programmatic_handle();
+        let keyboard = self.clone();
+        keyboard.bind_keyboard(self.bind_pointer_and_accessibility(element))
+    }
+
+    pub(crate) fn bind_pointer_and_accessibility<E>(self, element: E) -> E
+    where
+        E: StatefulInteractiveElement + Sized,
+    {
+        let programmatic_dispatcher = self
+            .bind_programmatic_handle()
+            .then(|| self.dispatcher.clone());
 
         let pointer = self.clone();
         let pointer_down = self.clone();
-        let key_down = self.clone();
-        let key_up = self.clone();
         let accessibility = self;
-        let key_down_runtime = key_down.runtime.clone();
-        let key_up_runtime = key_up.runtime.clone();
 
         let element = if pointer.dispatcher.enabled() {
             let pointer_down_runtime = pointer_down.runtime.clone();
@@ -367,6 +373,26 @@ impl ActivationBinding {
         } else {
             element
         };
+
+        let element = element.on_ui_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+            accessibility.dispatch(ActivationSource::Accessibility, window, cx);
+        });
+
+        if let Some(dispatcher) = programmatic_dispatcher {
+            element.retain_for_frame(dispatcher)
+        } else {
+            element
+        }
+    }
+
+    pub(crate) fn bind_keyboard<E>(self, element: E) -> E
+    where
+        E: StatefulInteractiveElement + Sized,
+    {
+        let key_down = self.clone();
+        let key_up = self;
+        let key_down_runtime = key_down.runtime.clone();
+        let key_up_runtime = key_up.runtime.clone();
 
         element
             .on_key_down(move |event: &KeyDownEvent, window, cx| {
@@ -431,9 +457,6 @@ impl ActivationBinding {
                     window.prevent_default();
                 }
                 key_up.dispatch(ActivationSource::Keyboard(key), window, cx);
-            })
-            .on_ui_a11y_action(AccessibleAction::Click, move |_, window, cx| {
-                accessibility.dispatch(ActivationSource::Accessibility, window, cx);
             })
     }
 

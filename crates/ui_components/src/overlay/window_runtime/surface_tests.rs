@@ -264,6 +264,139 @@ impl Render for A11yOverlaySurfaceProbe {
     }
 }
 
+#[derive(Clone, Copy)]
+enum OpenChangeEffect {
+    Redraw,
+    Commit,
+    Supersede,
+    Unregister,
+}
+
+struct OpenChangeEffectProbe {
+    runtime: WindowOverlayRuntime,
+    binding: Option<OverlayLayerBinding>,
+    render_layer: bool,
+    committed_open: bool,
+    effect: OpenChangeEffect,
+    events: Rc<RefCell<Vec<(bool, DismissReason)>>>,
+}
+
+impl OpenChangeEffectProbe {
+    fn new(
+        effect: OpenChangeEffect,
+        events: Rc<RefCell<Vec<(bool, DismissReason)>>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            runtime: WindowOverlayRuntime::for_window(window, cx),
+            binding: None,
+            render_layer: true,
+            committed_open: false,
+            effect,
+            events,
+        }
+    }
+}
+
+impl Render for OpenChangeEffectProbe {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.render_layer {
+            return div().into_any_element();
+        }
+        let presence = if self.committed_open {
+            OverlayPresence::open()
+        } else {
+            OverlayPresence::hidden()
+        };
+        let events = self.events.clone();
+        let registration = OverlayLayerRegistration::new(
+            "controlled-open-effect",
+            OverlayLayerPolicy::new(OverlayLayerKind::NonModalDismissible, presence),
+            OverlayOwnership::Controlled,
+        )
+        .focus_mode(OverlayFocusMode::None)
+        .on_open_change(move |intent, _, _| {
+            events
+                .borrow_mut()
+                .push((intent.desired_open(), intent.reason()));
+        });
+        let binding = self
+            .runtime
+            .bind_component_layer(
+                &cx.entity(),
+                self.binding.as_ref(),
+                registration,
+                window,
+                cx,
+            )
+            .expect("controlled effect probe should bind its layer");
+        self.binding = Some(binding.clone());
+
+        let runtime = self.runtime.clone();
+        let effect_runtime = self.runtime.clone();
+        let effect_binding = binding.clone();
+        let owner = cx.entity().downgrade();
+        let effect = self.effect;
+        div()
+            .id("controlled-open-effect-trigger")
+            .role(Role::Button)
+            .aria_label("Controlled open effect trigger")
+            .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+                let effect_runtime = effect_runtime.clone();
+                let effect_binding = effect_binding.clone();
+                let owner = owner.clone();
+                runtime
+                    .request_open_change_with_effect(
+                        &binding,
+                        true,
+                        DismissReason::Trigger,
+                        window,
+                        cx,
+                        move |window, cx| match effect {
+                            OpenChangeEffect::Redraw => {
+                                window.draw(cx).clear();
+                            }
+                            OpenChangeEffect::Commit | OpenChangeEffect::Supersede => {
+                                owner
+                                    .update(cx, |probe, cx| {
+                                        probe.committed_open = true;
+                                        cx.notify();
+                                    })
+                                    .expect("controlled effect owner should remain live");
+                                window.draw(cx).clear();
+                                if matches!(effect, OpenChangeEffect::Supersede) {
+                                    effect_runtime
+                                        .request_open_change(
+                                            &effect_binding,
+                                            false,
+                                            DismissReason::Programmatic,
+                                            window,
+                                            cx,
+                                        )
+                                        .expect("new close request should supersede open observer");
+                                }
+                            }
+                            OpenChangeEffect::Unregister => {
+                                owner
+                                    .update(cx, |probe, cx| {
+                                        probe.render_layer = false;
+                                        probe.binding = None;
+                                        cx.notify();
+                                    })
+                                    .expect("controlled effect owner should remain live");
+                                effect_runtime
+                                    .unregister_layer(&effect_binding, window, cx)
+                                    .expect("effect should unregister its current layer");
+                            }
+                        },
+                    )
+                    .expect("controlled effect should request open");
+            })
+            .into_any_element()
+    }
+}
+
 fn layer_registration(id: &'static str) -> OverlayLayerRegistration {
     OverlayLayerRegistration::new(
         id,
@@ -305,6 +438,301 @@ fn a11y_node_id_with_label(update: &accesskit::TreeUpdate, label: &str) -> acces
         .iter()
         .find_map(|(id, node)| (node.label() == Some(label)).then_some(*id))
         .unwrap_or_else(|| panic!("missing accessibility node labelled {label:?}"))
+}
+
+fn run_controlled_open_effect(
+    cx: &mut open_gpui::TestAppContext,
+    effect: OpenChangeEffect,
+) -> (
+    Vec<(bool, DismissReason)>,
+    Option<(OverlayLayerPhase, Option<bool>, Option<DismissReason>)>,
+) {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let probe_events = events.clone();
+    let window = cx
+        .add_window(move |window, cx| OpenChangeEffectProbe::new(effect, probe_events, window, cx));
+    let any_window = window.clone().into();
+    cx.update_window(any_window, |_, window, cx| window.draw(cx).clear())
+        .expect("controlled effect window should draw");
+
+    assert!(cx.activate_accessibility(any_window));
+    let tree = cx
+        .latest_accessibility_tree_update(any_window)
+        .expect("controlled effect trigger should publish accessibility");
+    let trigger = a11y_node_id_with_label(&tree, "Controlled open effect trigger");
+    assert!(cx.dispatch_accessibility_action(
+        any_window,
+        accesskit::ActionRequest {
+            action: AccessibleAction::Click,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node: trigger,
+            data: None,
+        },
+    ));
+
+    let projection = window
+        .update(cx, |probe, window, cx| {
+            probe
+                .runtime
+                .snapshot(window, cx)
+                .expect("controlled effect snapshot should resolve")
+                .layers()
+                .iter()
+                .find(|layer| layer.id().as_str() == "controlled-open-effect")
+                .map(|layer| (layer.phase(), layer.pending_open(), layer.pending_intent()))
+        })
+        .expect("controlled effect window should remain open");
+    let events = events.borrow().clone();
+    (events, projection)
+}
+
+#[open_gpui::test]
+fn controlled_open_observer_survives_effect_redraw_rebind(cx: &mut open_gpui::TestAppContext) {
+    let (events, projection) = run_controlled_open_effect(cx, OpenChangeEffect::Redraw);
+
+    assert_eq!(events, [(true, DismissReason::Trigger)]);
+    assert_eq!(
+        projection,
+        Some((
+            OverlayLayerPhase::Hidden,
+            Some(true),
+            Some(DismissReason::Trigger),
+        )),
+        "an unrelated redraw must preserve the unresolved controlled-open request"
+    );
+}
+
+#[open_gpui::test]
+fn controlled_open_observer_is_invalidated_by_owner_commit(cx: &mut open_gpui::TestAppContext) {
+    let (events, projection) = run_controlled_open_effect(cx, OpenChangeEffect::Commit);
+
+    assert!(events.is_empty());
+    assert_eq!(
+        projection,
+        Some((OverlayLayerPhase::Open, None, None)),
+        "owner commit must resolve the request before its stale observer runs"
+    );
+}
+
+#[open_gpui::test]
+fn controlled_open_observer_is_invalidated_by_superseding_request(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (events, projection) = run_controlled_open_effect(cx, OpenChangeEffect::Supersede);
+
+    assert_eq!(events, [(false, DismissReason::Programmatic)]);
+    assert_eq!(
+        projection,
+        Some((
+            OverlayLayerPhase::CloseRequested,
+            Some(false),
+            Some(DismissReason::Programmatic),
+        )),
+        "only the newest controlled request may reach an observer"
+    );
+}
+
+#[open_gpui::test]
+fn controlled_open_observer_is_invalidated_by_unregister(cx: &mut open_gpui::TestAppContext) {
+    let (events, _) = run_controlled_open_effect(cx, OpenChangeEffect::Unregister);
+
+    assert!(events.is_empty());
+}
+
+#[open_gpui::test]
+fn controlled_child_pending_close_observer_survives_ancestor_commit(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let child_events = events.clone();
+    let window = cx.add_window(SurfaceProjectionProbe::new);
+
+    let child_projection = window
+        .update(cx, |probe, window, cx| {
+            let runtime = probe.surface_runtime.clone();
+            let parent = runtime
+                .register_layer(
+                    OverlayLayerRegistration::new(
+                        "pending-close-parent",
+                        OverlayLayerPolicy::new(
+                            OverlayLayerKind::NonModalDismissible,
+                            OverlayPresence::open(),
+                        ),
+                        OverlayOwnership::Controlled,
+                    )
+                    .focus_mode(OverlayFocusMode::None),
+                    window,
+                    cx,
+                )
+                .expect("pending-close parent should register");
+            let child = runtime
+                .register_layer(
+                    OverlayLayerRegistration::new(
+                        "pending-close-child",
+                        OverlayLayerPolicy::new(
+                            OverlayLayerKind::NonModalDismissible,
+                            OverlayPresence::open(),
+                        ),
+                        OverlayOwnership::Controlled,
+                    )
+                    .focus_mode(OverlayFocusMode::None)
+                    .parent("pending-close-parent")
+                    .on_open_change(move |intent, _, _| {
+                        child_events
+                            .borrow_mut()
+                            .push((intent.desired_open(), intent.reason()));
+                    }),
+                    window,
+                    cx,
+                )
+                .expect("pending-close child should register");
+
+            let effect_runtime = runtime.clone();
+            runtime
+                .request_open_change_with_effect(
+                    &child,
+                    false,
+                    DismissReason::Selection,
+                    window,
+                    cx,
+                    move |window, cx| {
+                        effect_runtime
+                            .rebind_layer(
+                                &parent,
+                                OverlayLayerRegistration::new(
+                                    "pending-close-parent",
+                                    OverlayLayerPolicy::new(
+                                        OverlayLayerKind::NonModalDismissible,
+                                        OverlayPresence::hidden(),
+                                    ),
+                                    OverlayOwnership::Controlled,
+                                )
+                                .focus_mode(OverlayFocusMode::None),
+                                window,
+                                cx,
+                            )
+                            .expect("parent owner should commit hidden presence");
+                    },
+                )
+                .expect("child selection should request close");
+
+            runtime
+                .snapshot(window, cx)
+                .expect("pending-close snapshot should resolve")
+                .layers()
+                .iter()
+                .find(|layer| layer.id().as_str() == "pending-close-child")
+                .map(|layer| (layer.phase(), layer.pending_open(), layer.pending_intent()))
+                .expect("pending-close child should remain registered")
+        })
+        .expect("pending-close window should remain open");
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        [(false, DismissReason::Selection)]
+    );
+    assert_eq!(
+        child_projection,
+        (
+            OverlayLayerPhase::Hidden,
+            Some(false),
+            Some(DismissReason::Selection),
+        ),
+        "ancestor commit must preserve the already queued child close request"
+    );
+}
+
+#[open_gpui::test]
+fn controlled_reopen_observer_survives_closing_presence_rebind(cx: &mut open_gpui::TestAppContext) {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let open_events = events.clone();
+    let window = cx.add_window(SurfaceProjectionProbe::new);
+
+    let projection = window
+        .update(cx, |probe, window, cx| {
+            let runtime = probe.surface_runtime.clone();
+            let rebound_events = events.clone();
+            let binding = runtime
+                .register_layer(
+                    OverlayLayerRegistration::new(
+                        "controlled-closing-reopen",
+                        OverlayLayerPolicy::new(
+                            OverlayLayerKind::NonModalDismissible,
+                            OverlayPresence::closing(),
+                        ),
+                        OverlayOwnership::Controlled,
+                    )
+                    .focus_mode(OverlayFocusMode::None)
+                    .on_open_change(move |intent, _, _| {
+                        open_events
+                            .borrow_mut()
+                            .push((intent.desired_open(), intent.reason()));
+                    }),
+                    window,
+                    cx,
+                )
+                .expect("controlled closing layer should register");
+
+            let effect_runtime = runtime.clone();
+            let effect_binding = binding.clone();
+            runtime
+                .request_open_change_with_effect(
+                    &binding,
+                    true,
+                    DismissReason::Programmatic,
+                    window,
+                    cx,
+                    move |window, cx| {
+                        effect_runtime
+                            .rebind_layer(
+                                &effect_binding,
+                                OverlayLayerRegistration::new(
+                                    "controlled-closing-reopen",
+                                    OverlayLayerPolicy::new(
+                                        OverlayLayerKind::NonModalDismissible,
+                                        OverlayPresence::closing(),
+                                    ),
+                                    OverlayOwnership::Controlled,
+                                )
+                                .focus_mode(OverlayFocusMode::None)
+                                .on_open_change(
+                                    move |intent, _, _| {
+                                        rebound_events
+                                            .borrow_mut()
+                                            .push((intent.desired_open(), intent.reason()));
+                                    },
+                                ),
+                                window,
+                                cx,
+                            )
+                            .expect("same closing presence should rebind");
+                    },
+                )
+                .expect("closing layer should request reopen");
+
+            runtime
+                .snapshot(window, cx)
+                .expect("controlled reopen snapshot should resolve")
+                .layers()
+                .iter()
+                .find(|layer| layer.id().as_str() == "controlled-closing-reopen")
+                .map(|layer| (layer.phase(), layer.pending_open(), layer.pending_intent()))
+                .expect("controlled closing layer should remain registered")
+        })
+        .expect("controlled reopen window should remain open");
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        [(true, DismissReason::Programmatic)]
+    );
+    assert_eq!(
+        projection,
+        (
+            OverlayLayerPhase::Closing,
+            Some(true),
+            Some(DismissReason::Programmatic),
+        ),
+    );
 }
 
 #[open_gpui::test]

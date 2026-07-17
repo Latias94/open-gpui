@@ -150,6 +150,30 @@ fn table_runtime_row_click_and_tree_toggle_emit_controlled_payloads(
         toggles.borrow().as_slice(),
         &[("root".to_owned(), true, 0, Some(false))]
     );
+    assert!(
+        cx.debug_bounds(&table_source_row_selector("tree-runtime-table", "child"))
+            .is_none(),
+        "a controlled expansion request must not mutate hidden table state"
+    );
+
+    cx.simulate_keystrokes("right");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        toggles.borrow().as_slice(),
+        &[
+            ("root".to_owned(), true, 0, Some(false)),
+            ("root".to_owned(), true, 0, Some(false)),
+        ],
+        "a refused controlled request must leave keyboard intent resolved from caller state"
+    );
+    assert!(
+        cx.debug_bounds(&table_source_row_selector("tree-runtime-table", "child"))
+            .is_none(),
+        "keyboard expansion intent must also wait for a caller state commit"
+    );
 }
 
 #[open_gpui::test]
@@ -157,13 +181,7 @@ fn table_runtime_row_click_selection_is_controlled_and_preserves_activation(
     cx: &mut open_gpui::TestAppContext,
 ) {
     type ActivationLog = Vec<String>;
-    type SelectionLog = Vec<(
-        String,
-        bool,
-        TableSelectionMode,
-        TableSelectionScope,
-        Vec<String>,
-    )>;
+    type SelectionLog = Vec<(String, bool, TableSelectionMode, Vec<String>)>;
 
     struct TestView {
         activations: Rc<RefCell<ActivationLog>>,
@@ -189,7 +207,7 @@ fn table_runtime_row_click_selection_is_controlled_and_preserves_activation(
             .with_pagination(TablePagination::disabled())
             .with_selection_mode(TableSelectionMode::Multiple)
             .with_selection_activation_mode(TableSelectionActivationMode::RowClick)
-            .with_selected_rows(["row-a"]);
+            .with_selected_rows([table_source_selection_identity("row-a")]);
             let table = Table::new("selection-runtime-table", "Selection runtime", state)
                 .row_height(ui_px(24.0))
                 .viewport_extent(ui_px(96.0))
@@ -202,11 +220,10 @@ fn table_runtime_row_click_selection_is_controlled_and_preserves_activation(
                             .to_owned(),
                         change.selected(),
                         change.selection_mode(),
-                        change.scope(),
                         change
                             .current_selection()
                             .iter()
-                            .map(|row_id| row_id.as_str().to_owned())
+                            .map(|identity| identity.row_id().as_str().to_owned())
                             .collect(),
                     ));
                 })
@@ -252,10 +269,181 @@ fn table_runtime_row_click_selection_is_controlled_and_preserves_activation(
             "row-a".to_owned(),
             false,
             TableSelectionMode::Multiple,
-            TableSelectionScope::Row,
             Vec::<String>::new(),
         )],
         "row-click selection should emit the next selected-row ids without swallowing activation"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_duplicate_row_selection_emits_exact_controlled_identities(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<Vec<TableSourceRowIdentity>>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+            let state = TableState::new([
+                TableRow::new("duplicate")
+                    .with_instance_id("first")
+                    .with_cell("name", "First"),
+                TableRow::new("duplicate")
+                    .with_instance_id("second")
+                    .with_cell("name", "Second"),
+            ])
+            .with_columns([TableColumn::new("name", "Name").with_width(ui_px(180.0))])
+            .with_pagination(TablePagination::disabled())
+            .with_selection_mode(TableSelectionMode::Multiple)
+            .with_selection_activation_mode(TableSelectionActivationMode::RowClick)
+            .with_selected_rows([TableSourceRowIdentity::explicit("duplicate", "second")]);
+            let table = Table::new(
+                "duplicate-selection-runtime-table",
+                "Duplicate selection runtime",
+                state,
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(96.0))
+            .on_row_selection_change(move |change, _, _| {
+                selections
+                    .borrow_mut()
+                    .push(change.current_selection().to_vec());
+            });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let first_identity = TableRowIdentity::source_instance("duplicate", "first");
+    let first = cx
+        .debug_bounds(&TableDebugSelector::row(
+            "duplicate-selection-runtime-table",
+            &first_identity,
+        ))
+        .expect("the first duplicate row should render with its exact selector");
+    for _ in 0..2 {
+        cx.simulate_click(first.center(), Default::default());
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+    }
+
+    let expected = vec![
+        TableSourceRowIdentity::explicit("duplicate", "first"),
+        TableSourceRowIdentity::explicit("duplicate", "second"),
+    ];
+    assert_eq!(
+        selections.borrow().as_slice(),
+        &[expected.clone(), expected],
+        "a refused controlled commit must not merge duplicate ids or change hidden selection state"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_descendant_selection_emits_explicit_roots_and_commits_cleanly(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        selected_rows: Vec<TableSourceRowIdentity>,
+        changes: Rc<RefCell<Vec<TableRowSelectionChange>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let changes = self.changes.clone();
+            let state = TableState::new([TableRow::new("parent")
+                .with_cell("name", "Parent")
+                .with_child(TableRow::new("child").with_cell("name", "Child"))
+                .with_child(TableRow::new("sibling").with_cell("name", "Sibling"))])
+            .with_columns([TableColumn::new("name", "Name").with_width(ui_px(180.0))])
+            .with_pagination(TablePagination::disabled())
+            .with_all_rows_expanded()
+            .with_selection_policy(TableSelectionPolicy::new(
+                TableSelectionMode::Multiple,
+                TableSelectionActivationMode::RowClick,
+                TableSubRowSelectionPolicy::Descendants,
+            ))
+            .with_selected_rows(self.selected_rows.clone());
+            let table = Table::new(
+                "descendant-selection-runtime-table",
+                "Descendant selection runtime",
+                state,
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(96.0))
+            .on_row_selection_change(move |change, _, _| {
+                changes.borrow_mut().push(change);
+            });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        selected_rows: vec![table_source_selection_identity("parent")],
+        changes: changes.clone(),
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let parent = cx
+        .debug_bounds(&table_source_row_selector(
+            "descendant-selection-runtime-table",
+            "parent",
+        ))
+        .expect("selected parent row should render");
+    let child = cx
+        .debug_bounds(&table_source_row_selector(
+            "descendant-selection-runtime-table",
+            "child",
+        ))
+        .expect("inherited selected child row should render");
+
+    cx.simulate_click(parent.center(), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.simulate_click(child.center(), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let changes_snapshot = changes.borrow().clone();
+    assert_eq!(changes_snapshot.len(), 2);
+    assert!(!changes_snapshot[0].selected());
+    assert!(changes_snapshot[0].current_selection().is_empty());
+    assert!(!changes_snapshot[1].selected());
+    assert!(
+        changes_snapshot[1].current_selection().is_empty(),
+        "canceling an inherited child selection must remove its explicit selected ancestor"
+    );
+
+    view.update(cx, |view, cx| {
+        view.selected_rows = changes_snapshot[1].current_selection().to_vec();
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let child = cx
+        .debug_bounds(&table_source_row_selector(
+            "descendant-selection-runtime-table",
+            "child",
+        ))
+        .expect("child row should remain rendered after committing deselection");
+    cx.simulate_click(child.center(), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let changes = changes.borrow();
+    let committed_child_change = changes.last().expect("child re-selection should emit");
+    assert!(committed_child_change.selected());
+    assert_eq!(
+        committed_child_change.current_selection(),
+        [table_source_selection_identity("child")]
     );
 }
 
@@ -270,7 +458,7 @@ fn table_runtime_explicit_control_selection_ignores_row_click(cx: &mut open_gpui
             let selections = self.selections.clone();
             let state = sample_table_state(4)
                 .with_selection_activation_mode(TableSelectionActivationMode::ExplicitControl)
-                .with_selected_rows(["row-0001"]);
+                .with_selected_rows([table_source_selection_identity("row-0001")]);
             let table = Table::new("explicit-selection-table", "Explicit selection", state)
                 .row_height(ui_px(24.0))
                 .viewport_extent(ui_px(96.0))

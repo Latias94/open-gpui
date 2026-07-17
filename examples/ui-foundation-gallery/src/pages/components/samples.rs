@@ -41,8 +41,8 @@ use open_gpui_ui_core::{
     TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId,
     TableColumnPinning, TableColumnSizing, TableFacetValueCount, TableFilter,
     TableGroupRowIdentity, TablePagination, TableRow, TableRowIdentity, TableRowPinning,
-    TableSelectOption, TableSort, TableStageMode, TableState, ThemeTokens, UiPx,
-    VirtualizerItemKey, VirtualizerSnapshot, VirtualizerSnapshotItem, ui_px,
+    TableSelectOption, TableSort, TableSourceRowIdentity, TableStageMode, TableState, ThemeTokens,
+    UiPx, VirtualizerItemKey, VirtualizerSnapshot, VirtualizerSnapshotItem, ui_px,
 };
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;

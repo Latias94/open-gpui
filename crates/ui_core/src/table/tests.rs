@@ -139,6 +139,10 @@ fn source_identity(row_id: &str) -> TableRowIdentity {
     TableRowIdentity::source(row_id)
 }
 
+fn source_selection_identity(row_id: &str) -> TableSourceRowIdentity {
+    TableSourceRowIdentity::unique(row_id)
+}
+
 fn group_identity(column_id: &str, value: &str) -> TableRowIdentity {
     TableRowIdentity::group(TableGroupRowIdentity::new(column_id, value))
 }
@@ -507,7 +511,7 @@ fn resolved_column_sizing_is_stable_across_row_model_changes() {
     let base_sizing = base.resolve().visible_column_sizing().clone();
     let changed_rows = base
         .with_sorting([TableSort::descending("score")])
-        .with_selected_rows(["row-a"])
+        .with_selected_rows([source_selection_identity("row-a")])
         .with_pagination(TablePagination::new(0, 1))
         .resolve()
         .visible_column_sizing()
@@ -1453,13 +1457,16 @@ fn overlapping_raw_row_pinning_state_resolves_without_duplicates() {
 fn selection_policy_single_keeps_only_one_selected_row() {
     let state = TableState::new(sample_rows())
         .with_selection_mode(TableSelectionMode::Single)
-        .with_selected_rows(["row-a", "row-c"]);
+        .with_selected_rows([
+            source_selection_identity("row-a"),
+            source_selection_identity("row-c"),
+        ]);
 
     assert_eq!(
         state
             .selected_rows()
             .iter()
-            .map(TableRowId::as_str)
+            .map(|identity| identity.row_id().as_str())
             .collect::<Vec<_>>(),
         ["row-a"]
     );
@@ -1477,7 +1484,7 @@ fn selection_policy_descendants_propagates_to_tree_children() {
                 .with_sub_row_policy(TableSubRowSelectionPolicy::Descendants),
         )
         .with_all_rows_expanded()
-        .with_selected_rows(["pkg"])
+        .with_selected_rows([source_selection_identity("pkg")])
         .resolve();
 
     let selected_ids = resolved
@@ -1495,12 +1502,62 @@ fn selection_policy_descendants_propagates_to_tree_children() {
 }
 
 #[test]
+fn selection_and_descendant_propagation_distinguish_duplicate_source_instances() {
+    let first = TableSourceRowIdentity::explicit("duplicate", "first");
+    let second = TableSourceRowIdentity::explicit("duplicate", "second");
+    let resolved = TableState::new([
+        TableRow::new("duplicate")
+            .with_instance_id("first")
+            .with_child(TableRow::new("first-child")),
+        TableRow::new("duplicate")
+            .with_instance_id("second")
+            .with_child(TableRow::new("second-child")),
+    ])
+    .with_selection_policy(
+        TableSelectionPolicy::default()
+            .with_sub_row_policy(TableSubRowSelectionPolicy::Descendants),
+    )
+    .with_all_rows_expanded()
+    .with_selected_rows([first.clone()])
+    .resolve();
+
+    assert!(
+        resolved
+            .core_model()
+            .row(&TableRowIdentity::Source(first))
+            .is_some_and(TableResolvedRow::selected)
+    );
+    assert!(
+        resolved
+            .core_model()
+            .row(&TableRowIdentity::source("first-child"))
+            .is_some_and(TableResolvedRow::selected)
+    );
+    assert!(
+        resolved
+            .core_model()
+            .row(&TableRowIdentity::Source(second))
+            .is_some_and(|row| !row.selected())
+    );
+    assert!(
+        resolved
+            .core_model()
+            .row(&TableRowIdentity::source("second-child"))
+            .is_some_and(|row| !row.selected())
+    );
+}
+
+#[test]
 fn selection_summaries_report_all_some_and_none() {
     let all = TableState::new(sample_rows())
-        .with_selected_rows(["row-a", "row-b", "row-c"])
+        .with_selected_rows([
+            source_selection_identity("row-a"),
+            source_selection_identity("row-b"),
+            source_selection_identity("row-c"),
+        ])
         .resolve();
     let some = TableState::new(sample_rows())
-        .with_selected_rows(["row-a"])
+        .with_selected_rows([source_selection_identity("row-a")])
         .resolve();
     let none = TableState::new(sample_rows()).resolve();
 
@@ -1515,7 +1572,7 @@ fn selection_summaries_report_all_some_and_none() {
 #[test]
 fn full_and_current_page_selection_summaries_use_different_scopes() {
     let resolved = TableState::new(sample_rows())
-        .with_selected_rows(["row-c"])
+        .with_selected_rows([source_selection_identity("row-c")])
         .with_pagination(TablePagination::new(0, 1))
         .resolve();
 
@@ -2002,9 +2059,9 @@ fn row_lookup_does_not_depend_on_numeric_index_positions() {
 }
 
 #[test]
-fn selection_follows_row_ids_after_filtering_and_sorting() {
+fn selection_follows_exact_source_identity_after_filtering_and_sorting() {
     let resolved = TableState::new(sample_rows())
-        .with_selected_rows(["row-c"])
+        .with_selected_rows([source_selection_identity("row-c")])
         .with_filters([TableFilter::contains("team", "ops")])
         .with_sorting([TableSort::ascending("score")])
         .resolve();
@@ -2087,7 +2144,7 @@ fn expanded_tree_rows_show_descendants_with_parent_depth_and_selection() {
             TableRowIdentity::source("pkg"),
             TableRowIdentity::source("pkg-core"),
         ])
-        .with_selected_rows(["pkg-core-test"])
+        .with_selected_rows([source_selection_identity("pkg-core-test")])
         .resolve();
 
     assert_eq!(
@@ -2525,7 +2582,7 @@ fn expanded_groups_show_descendants_with_parent_depth_and_selection() {
     let resolved = TableState::new(sample_rows())
         .with_grouping(["team"])
         .with_expanded_rows([group_identity("team", "ops")])
-        .with_selected_rows(["row-c"])
+        .with_selected_rows([source_selection_identity("row-c")])
         .resolve();
 
     assert_eq!(

@@ -503,7 +503,9 @@ impl TableRowNode {
 
 pub(super) fn build_source_row_nodes(
     rows: &[TableRow],
-    selected_rows: &BTreeSet<TableRowId>,
+    selected_rows: &BTreeSet<TableSourceRowIdentity>,
+    propagate_selected_descendants: bool,
+    ancestor_selected: bool,
     expansion: &TableExpansionState,
     include_children: bool,
     identity_cursor: &mut TableSourceIdentityCursor<'_>,
@@ -515,11 +517,17 @@ pub(super) fn build_source_row_nodes(
             let (current_source_index, identity) = identity_cursor.resolve();
             let loaded_child_count = row.children().len();
             let can_expand = row.can_expand();
+            let selected = identity
+                .source_identity()
+                .is_some_and(|source| selected_rows.contains(source))
+                || (propagate_selected_descendants && ancestor_selected);
 
             let children = if include_children {
                 build_source_row_nodes(
                     row.children(),
                     selected_rows,
+                    propagate_selected_descendants,
+                    selected,
                     expansion,
                     include_children,
                     identity_cursor,
@@ -542,13 +550,8 @@ pub(super) fn build_source_row_nodes(
                     row.children_load_state().clone(),
                 )
             });
-            let resolved = TableResolvedRow::from_row(
-                row,
-                identity,
-                current_source_index,
-                selected_rows.contains(row.id()),
-                tree,
-            );
+            let resolved =
+                TableResolvedRow::from_row(row, identity, current_source_index, selected, tree);
 
             TableRowNode {
                 row: resolved,

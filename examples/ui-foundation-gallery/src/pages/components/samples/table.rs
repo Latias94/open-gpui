@@ -311,7 +311,7 @@ fn build_table_samples() -> Vec<TableSample> {
             .with_columns(table_columns())
             .with_column_order(["name", "team", "status", "score"])
             .with_sorting([TableSort::descending("score")])
-            .with_selected_rows(["release-queue-row-0005"])
+            .with_selected_rows([TableSourceRowIdentity::unique("release-queue-row-0005")])
             .with_pagination(TablePagination::disabled()),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
@@ -329,7 +329,7 @@ fn build_table_samples() -> Vec<TableSample> {
             .with_column_order(["name", "team", "status", "score"])
             .with_filters([TableFilter::contains("team", "UI")])
             .with_sorting([TableSort::descending("score")])
-            .with_selected_rows(["filter-board-row-177"])
+            .with_selected_rows([TableSourceRowIdentity::unique("filter-board-row-177")])
             .with_pagination(TablePagination::new(0, 24)),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
@@ -349,7 +349,7 @@ fn build_table_samples() -> Vec<TableSample> {
             .with_manual_filtering()
             .with_sorting([TableSort::ascending("score")])
             .with_manual_sorting()
-            .with_selected_rows(["server-paged-row-0018"])
+            .with_selected_rows([TableSourceRowIdentity::unique("server-paged-row-0018")])
             .with_pagination(TablePagination::manual(2, 8, 64))
             .with_manual_facets([
                 TableColumnFacets::manual("score", 64).with_numeric_range(1.0, 64.0),
@@ -397,7 +397,7 @@ fn build_table_samples() -> Vec<TableSample> {
         state: TableState::new(editable_release_rows.clone())
             .with_columns(content_fit_release_table_columns())
             .with_column_order(["name", "team", "status", "score"])
-            .with_selected_rows(["editable-release-row-002"])
+            .with_selected_rows([TableSourceRowIdentity::unique("editable-release-row-002")])
             .with_pagination(TablePagination::disabled()),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
@@ -420,7 +420,7 @@ fn build_table_samples() -> Vec<TableSample> {
                     .with_width("status", ui_px(128.0))
                     .with_width("score", ui_px(84.0)),
             )
-            .with_selected_rows(["editable-release-row-002"])
+            .with_selected_rows([TableSourceRowIdentity::unique("editable-release-row-002")])
             .with_pagination(TablePagination::disabled()),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
@@ -443,7 +443,7 @@ fn build_table_samples() -> Vec<TableSample> {
                     .with_width("status", ui_px(128.0))
                     .with_width("score", ui_px(84.0)),
             )
-            .with_selected_rows(["toggle-release-row-002"])
+            .with_selected_rows([TableSourceRowIdentity::unique("toggle-release-row-002")])
             .with_pagination(TablePagination::disabled()),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
@@ -466,7 +466,7 @@ fn build_table_samples() -> Vec<TableSample> {
                     .with_width("team", ui_px(128.0))
                     .with_width("score", ui_px(84.0)),
             )
-            .with_selected_rows(["select-release-row-002"])
+            .with_selected_rows([TableSourceRowIdentity::unique("select-release-row-002")])
             .with_pagination(TablePagination::disabled()),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
@@ -489,7 +489,7 @@ fn build_table_samples() -> Vec<TableSample> {
                     .with_width("status", ui_px(112.0))
                     .with_width("score", ui_px(84.0)),
             )
-            .with_selected_rows(["multiline-release-row-002"])
+            .with_selected_rows([TableSourceRowIdentity::unique("multiline-release-row-002")])
             .with_pagination(TablePagination::disabled()),
         size: Size::Small,
         viewport_extent: ui_px(220.0),
@@ -520,7 +520,7 @@ fn build_table_samples() -> Vec<TableSample> {
                 TableAggregation::sum("score"),
             ])
             .with_sorting([TableSort::descending("score")])
-            .with_selected_rows(["grouped-release-row-000"])
+            .with_selected_rows([TableSourceRowIdentity::unique("grouped-release-row-000")])
             .with_pagination(TablePagination::disabled()),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
@@ -558,7 +558,9 @@ fn build_table_samples() -> Vec<TableSample> {
                 TableCellValue::Number(score + 1.0)
             })
             .with_sorting([TableSort::descending("score")])
-            .with_selected_rows(["grouped-custom-aggregation-row-000"])
+            .with_selected_rows([TableSourceRowIdentity::unique(
+                "grouped-custom-aggregation-row-000",
+            )])
             .with_pagination(TablePagination::disabled()),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
@@ -580,7 +582,7 @@ fn build_table_samples() -> Vec<TableSample> {
                     .pinned_right(["status"]),
             )
             .with_sorting([TableSort::descending("metric_13")])
-            .with_selected_rows(["release-matrix-row-005"])
+            .with_selected_rows([TableSourceRowIdentity::unique("release-matrix-row-005")])
             .with_pagination(TablePagination::disabled()),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
@@ -609,7 +611,7 @@ fn build_table_samples() -> Vec<TableSample> {
                         TableRowIdentity::source("row-pinning-row-070"),
                     ]),
             )
-            .with_selected_rows(["row-pinning-row-030"])
+            .with_selected_rows([TableSourceRowIdentity::unique("row-pinning-row-030")])
             .with_pagination(TablePagination::new(2, 12)),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
@@ -641,7 +643,7 @@ fn build_table_samples() -> Vec<TableSample> {
                     .with_width("status", ui_px(132.0)),
             )
             .with_expanded_rows([TableRowIdentity::source("dependency-workspace")])
-            .with_selected_rows(["dependency-ui"])
+            .with_selected_rows([TableSourceRowIdentity::unique("dependency-ui")])
             .with_pagination(TablePagination::disabled()),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
@@ -1067,7 +1069,7 @@ pub(crate) fn server_tree_table_state(loaded: bool) -> TableState {
                 .with_width("status", ui_px(132.0)),
         )
         .with_manual_expansion()
-        .with_selected_rows(["server-workspace"])
+        .with_selected_rows([TableSourceRowIdentity::unique("server-workspace")])
         .with_pagination(TablePagination::disabled())
 }
 

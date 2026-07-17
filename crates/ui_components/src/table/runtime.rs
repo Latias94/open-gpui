@@ -4,8 +4,8 @@ use std::rc::Rc;
 use open_gpui::{Context, FocusHandle, Window};
 use open_gpui_ui_core::virtualizer::VirtualizerGeometryCache;
 use open_gpui_ui_core::{
-    TableColumnResizeState, TableExpansionState, TableResolvedRow, TableResolvedState,
-    TableRowIdentity, TableRowModel, TableStateCacheKey, UiPx, VirtualizerResolvedState,
+    TableColumnResizeState, TableResolvedRow, TableResolvedState, TableRowIdentity, TableRowModel,
+    TableStateCacheKey, UiPx, VirtualizerResolvedState,
 };
 
 use crate::scroll_surface::ScrollSurfaceRuntime;
@@ -39,7 +39,6 @@ pub(super) struct TableRuntime {
     row_geometry_cache: VirtualizerGeometryCache,
     row_geometry_revision: TableRuntimeRevision,
     center_virtualizer: Option<VirtualizerResolvedState>,
-    pub(super) expansion_override: Option<TableExpansionState>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,7 +146,6 @@ impl TableRuntime {
             row_geometry_cache: VirtualizerGeometryCache::default(),
             row_geometry_revision: TableRuntimeRevision::default(),
             center_virtualizer: None,
-            expansion_override: None,
         }
     }
 
@@ -250,18 +248,6 @@ impl TableRuntime {
             cx.notify();
         }
         self.focus_handles.get(&identity).cloned()
-    }
-
-    pub(super) fn set_expansion_override(
-        &mut self,
-        expansion: TableExpansionState,
-        cx: &mut Context<Self>,
-    ) {
-        if self.expansion_override.as_ref() != Some(&expansion) {
-            self.expansion_override = Some(expansion);
-            self.resolved = None;
-            cx.notify();
-        }
     }
 
     pub(super) fn set_row_measurement(

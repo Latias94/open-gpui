@@ -21,7 +21,7 @@ use crate::table::runtime::TableRuntimeRenderSnapshot;
 use crate::table::scroll::render_table_scroll_viewport;
 use crate::table::{
     TableCenterColumnWindowPlan, TableInputModifiers, TableRowAction, TableRowActivation,
-    TableRowActivationKind, TableRowRenderPlan, TableSelectionScope,
+    TableRowActivationKind, TableRowRenderPlan,
 };
 
 use super::{TableBodyRenderContext, TableRowRenderContext};
@@ -199,8 +199,8 @@ fn render_table_row(context: TableRowRenderContext) -> impl IntoElement {
                     request_table_row_selection_change(
                         &action,
                         selection_policy,
-                        TableSelectionScope::Row,
-                        context.body.selected_row_ids.clone(),
+                        context.body.resolved_table.as_ref(),
+                        context.body.explicit_selected_rows.as_ref(),
                         context.body.on_row_selection_change.clone(),
                         window,
                         cx,
@@ -237,7 +237,6 @@ fn render_table_row(context: TableRowRenderContext) -> impl IntoElement {
                     fallback_row_height: metrics.row_height(),
                     fallback_viewport_extent: metrics.viewport_extent(),
                     runtime: &context.body.runtime,
-                    current_expansion: context.body.current_expansion.clone(),
                     on_row_activate: context.body.on_row_activate.clone(),
                     on_row_expansion_request: context.body.on_row_expansion_request.clone(),
                 }

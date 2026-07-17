@@ -8,7 +8,7 @@ pub use columns::{
 pub use modifiers::TableInputModifiers;
 pub use rows::{
     TableRowAction, TableRowActivation, TableRowActivationKind, TableRowExpansionToggle,
-    TableRowSelectionChange, TableSelectionScope,
+    TableRowSelectionChange,
 };
 
-pub(super) use rows::{request_table_row_selection_change, toggle_table_expansion};
+pub(super) use rows::request_table_row_selection_change;

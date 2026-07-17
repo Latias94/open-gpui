@@ -111,6 +111,14 @@ Composite families resolve callback and identity authority before binding input:
 
 - An item's explicit handler overrides the family fallback. The fallback is used only when the item
   has no handler, so one activation cannot invoke both.
+- That callback precedence does not replace a mandatory owner transaction. An embedding Select or
+  Combobox applies adapter-owned selection/input changes and requests the overlay transition before
+  delivering the chosen item handler or family fallback. Caller-owned selection remains unchanged
+  until a later prop commit.
+- A callback-triggered redraw may replace an overlay registration callback without replacing the
+  pending open-change request. Dispatch identity therefore follows the request and controlled intent
+  revision, not the render registration revision; a superseding request or committed lifecycle
+  transition still invalidates the older observer.
 - Render keys, debug selectors, activation state keys, accessibility identity, and programmatic
   targeting derive from one stable, collision-free item identity rather than string concatenation.
 - A business value that does not resolve uniquely is ambiguous. Duplicate items may remain visible,
@@ -192,6 +200,7 @@ command dispatch and make simple value controls depend on application action inf
 | Role conformance | Every distinct role-matrix row covers allowed and rejected keys, key-up timing, repeat rejection, and Space default behavior where applicable | Semantic activation and navigation tests |
 | Ownership correctness | Uncontrolled state commits before observation; controlled callbacks observe committed caller state and cause no hidden mutation | Controlled/uncontrolled component tests |
 | Composite safety | Nested children suppress parent activation, item handlers override fallbacks, and ambiguous duplicates fail closed | Choice, Toolbar, Table, Tree, and collection tests |
+| Table controlled state | Selection collections use exact source identities, and expansion intent cannot create an adapter-owned override before caller commit | Table core and runtime interaction tests |
 | Command separation | Existing action/keybinding dispatch remains authoritative and receives no duplicate invocation | ActionDescriptor and command integration tests |
 
 # Risks And Mitigations

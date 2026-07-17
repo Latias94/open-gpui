@@ -127,19 +127,6 @@ impl TableDebugSelector {
         )
     }
 
-    /// Returns the selector for one option in a select cell editor.
-    pub fn select_editor_option(
-        table_id: &str,
-        identity: &TableRowIdentity,
-        column_id: &TableColumnId,
-        option_value: &str,
-    ) -> String {
-        format!(
-            "listbox:{}-listbox:option:{option_value}",
-            Self::cell_editor_id(table_id, identity, column_id)
-        )
-    }
-
     /// Returns the selector for one resolved header fragment.
     pub fn header(table_id: &str, identity: &TableResolvedHeaderIdentity) -> String {
         table_header_debug_selector(table_id, identity)

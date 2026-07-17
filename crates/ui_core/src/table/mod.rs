@@ -300,7 +300,7 @@ pub struct TableState {
     expansion: TableExpansionState,
     expansion_mode: TableExpansionMode,
     selection_policy: TableSelectionPolicy,
-    selected_rows: BTreeSet<TableRowId>,
+    selected_rows: BTreeSet<TableSourceRowIdentity>,
     pagination: TablePagination,
 }
 
@@ -635,10 +635,10 @@ impl TableState {
         self
     }
 
-    /// Applies selected row ids.
+    /// Applies exact selected source-row identities.
     pub fn with_selected_rows(
         mut self,
-        selected_rows: impl IntoIterator<Item = impl Into<TableRowId>>,
+        selected_rows: impl IntoIterator<Item = impl Into<TableSourceRowIdentity>>,
     ) -> Self {
         self.selected_rows = self.selection_policy.normalize_selected_rows(selected_rows);
         self
@@ -811,8 +811,8 @@ impl TableState {
         self.selection_policy
     }
 
-    /// Returns selected row ids.
-    pub const fn selected_rows(&self) -> &BTreeSet<TableRowId> {
+    /// Returns exact selected source-row identities.
+    pub const fn selected_rows(&self) -> &BTreeSet<TableSourceRowIdentity> {
         &self.selected_rows
     }
 
@@ -886,13 +886,12 @@ impl TableState {
         let row_identity_diagnostics = self.source_identities.diagnostics();
         let include_source_children = self.grouping.is_empty();
         let global_filterable_columns = self.global_filterable_column_ids();
-        let selected_rows = self
-            .selection_policy
-            .resolve_selected_rows(&self.rows, &self.selected_rows);
         let mut source_identity_cursor = self.source_identities.cursor();
         let source_nodes = build_source_row_nodes(
             &self.rows,
-            &selected_rows,
+            &self.selected_rows,
+            self.selection_policy.propagates_descendant_selection(),
+            false,
             &self.expansion,
             include_source_children,
             &mut source_identity_cursor,
@@ -1154,7 +1153,7 @@ pub struct TableStateCacheKey {
     expansion: TableExpansionState,
     expansion_mode: TableExpansionMode,
     selection_policy: TableSelectionPolicy,
-    selected_rows: BTreeSet<TableRowId>,
+    selected_rows: BTreeSet<TableSourceRowIdentity>,
     pagination: TablePagination,
 }
 
